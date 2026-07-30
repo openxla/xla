@@ -1613,9 +1613,13 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 
-  auto* gpu_collectives = gpu_executable_run_options->collectives();
+  ASSIGN_OR_RETURN(xla::Collectives * collectives,
+                   xla::CollectivesRegistry::Default("gpu"));
+  xla::gpu::GpuCollectives* gpu_collectives =
+      absl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+
   if (gpu_collectives == nullptr) {
-    gpu_collectives = gpu::GpuCollectives::Resolve(platform_name);
+    return absl::InternalError("Failed to get GPU collectives");
   }
 
   size_t num_processes = global_topology.processes().size();
