@@ -446,9 +446,10 @@ void HostDeallocate(Context* context, void* location) {
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to deallocate host memory at " << location << ": "
                << ToString(res);
+  } else {
+    VLOG(2) << "deallocated host memory at " << location << " for context "
+            << context;
   }
-  VLOG(2) << "deallocated host memory at " << location << " for context "
-          << context;
 }
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
