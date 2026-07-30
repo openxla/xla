@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <random>
@@ -109,6 +110,78 @@ TEST(NanoIfrtClientTest, BigResult) {
     // Should be (a+a)^2 * 1024
     EXPECT_EQ(v, 692224.0);
   }
+}
+
+TEST(NanoIfrtClientTest, Transposed3dOutputBatch2) {
+  absl::string_view kProgram = R"(
+    module {
+      func.func @main(%arg0: tensor<2x1x4xf32>,
+                      %arg1: tensor<3x4x1xf32>) -> tensor<2x3x1xf32> {
+        %0 = "stablehlo.dot_general"(%arg0, %arg1) {
+          dot_dimension_numbers =
+              #stablehlo.dot<lhs_contracting_dimensions = [2],
+                             rhs_contracting_dimensions = [1]>
+        } : (tensor<2x1x4xf32>, tensor<3x4x1xf32>) -> tensor<2x1x3x1xf32>
+        %1 = stablehlo.transpose %0, dims = [2, 1, 0, 3]
+            : (tensor<2x1x3x1xf32>) -> tensor<3x1x2x1xf32>
+        %2 = stablehlo.reshape %1
+            : (tensor<3x1x2x1xf32>) -> tensor<3x1x2xf32>
+        %3 = stablehlo.transpose %2, dims = [0, 2, 1]
+            : (tensor<3x1x2xf32>) -> tensor<3x2x1xf32>
+        %4 = stablehlo.transpose %3, dims = [1, 0, 2]
+            : (tensor<3x2x1xf32>) -> tensor<2x3x1xf32>
+        return %4 : tensor<2x3x1xf32>
+      }
+    })";
+  auto client = NanoIfrtClient::Create();
+  auto compiler = client->GetDefaultCompiler();
+
+  mlir::MLIRContext context;
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseMlirModuleString(kProgram, context));
+
+  auto executable =
+      compiler
+          ->CompileAndLoad(std::make_unique<ifrt::HloProgram>(*module), nullptr)
+          .Await();
+  ASSERT_OK(executable);
+
+  ifrt::DType dtype(ifrt::DType::kF32);
+  std::vector<float> arg0_data = {1.0f, 0.0f, 0.0f, 0.0f,
+                                  2.0f, 0.0f, 0.0f, 0.0f};
+  std::vector<float> arg1_data = {1.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f,
+                                  0.0f, 0.0f, 3.0f, 0.0f, 0.0f, 0.0f};
+
+  auto arg0_array = client->MakeArrayFromHostBuffer(
+      arg0_data.data(), dtype, ifrt::Shape({2, 1, 4}), std::nullopt,
+      client->default_sharding(),
+      /*layout=*/nullptr, ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
+      /*on_done_with_host_buffer=*/nullptr);
+  ASSERT_OK(arg0_array);
+
+  auto arg1_array = client->MakeArrayFromHostBuffer(
+      arg1_data.data(), dtype, ifrt::Shape({3, 4, 1}), std::nullopt,
+      client->default_sharding(),
+      /*layout=*/nullptr, ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
+      /*on_done_with_host_buffer=*/nullptr);
+  ASSERT_OK(arg1_array);
+
+  ifrt::ArrayRef args[] = {*arg0_array, *arg1_array};
+  ASSERT_OK_AND_ASSIGN(
+      auto result,
+      (*executable)->Execute(absl::MakeSpan(args), {}, std::nullopt));
+  ASSERT_EQ(result.outputs.size(), 1);
+
+  std::vector<float> result_data(6);
+  std::vector<int64_t> byte_strides = {12, 4, 4};
+  ASSERT_OK(result.outputs[0]
+                ->CopyToHostBuffer(result_data.data(),
+                                   absl::MakeConstSpan(byte_strides),
+                                   ifrt::ArrayCopySemantics::kAlwaysCopy)
+                .Await());
+
+  std::vector<float> expected_data = {1.0f, 2.0f, 3.0f, 2.0f, 4.0f, 6.0f};
+  EXPECT_EQ(result_data, expected_data);
 }
 
 //===----------------------------------------------------------------------===//
