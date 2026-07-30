@@ -114,6 +114,10 @@ class RcclCommunicator : public GpuCommunicator {
   absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
       se::DeviceAddressBase addr) final;
 
+  PlatformCommunicatorHandle platform_comm() const final {
+    return PlatformCommunicatorHandle{comm_};
+  }
+
   std::string ToString() const final;
 
   ncclComm_t comm() const { return comm_; }
