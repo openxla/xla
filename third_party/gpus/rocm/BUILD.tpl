@@ -169,6 +169,7 @@ rocm_lib_import(
         ":hiprtc_libs",
         ":hsa_rocr_libs",
         ":rocprofiler_register_libs",
+        ":rocprofiler_sdk",
         ":system_libs",
     ],
 )
