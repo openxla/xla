@@ -246,7 +246,6 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
       int64_t alignment = 1,
       BufferAssigner::CanUseAllocation can_use_allocation =
           BufferAssigner::DefaultCanUseAllocation(),
-      BufferAssigner::Colorer colorer = BufferAssigner::DefaultColorer(),
       buffer_assignment::BufferAssignmentAlgorithmProto::Value algorithm =
           buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT) {
     HloSchedule schedule(module);
@@ -255,7 +254,6 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
     BufferAssigner::Options opts;
     opts.allocate_buffers_for_constants = true;
     opts.can_use_allocation = std::move(can_use_allocation);
-    opts.colorer = std::move(colorer);
     opts.buffer_assignment_algorithm = algorithm;
     return BufferAssigner::Run(
                module, std::make_unique<SequentialHloOrdering>(schedule),
@@ -1053,12 +1051,12 @@ ENTRY main {
   p_d = f32[2048]{0} parameter(0)
   p_a = f32[1024]{0} parameter(1)
   p_k = f32[256]{0} parameter(2)
-  d = f32[2048]{0} negate(p_d)
+  d = f32[2048]{0:S(1)} negate(p_d)
   zero = f32[] constant(0)
   d_sum = f32[] reduce(d, zero), dimensions={0}, to_apply=add_s
   a = f32[1024]{0} negate(p_a)
   b = f32[1024]{0} abs(a)
-  k = f32[256]{0} negate(p_k)
+  k = f32[256]{0:S(1)} negate(p_k)
   k_sum = f32[] reduce(k, zero), dimensions={0}, to_apply=add_s
   b_sum = f32[] reduce(b, zero), dimensions={0}, to_apply=add_s
   partial = f32[] add(d_sum, k_sum)
@@ -1082,23 +1080,11 @@ ENTRY main {
   HloInstruction* partial = FindInstruction(module.get(), "partial");
   HloInstruction* out = FindInstruction(module.get(), "out");
 
-  BufferAssigner::Colorer colorer =
-      [d, k](HloAliasAnalysis* alias_analysis, const HloOrdering&) {
-        for (HloValue* value :
-             alias_analysis->dataflow_analysis().values()) {
-          HloInstruction* instruction = value->instruction();
-          value->set_color(instruction == d || instruction == k
-                               ? BufferValue::Color(1)
-                               : BufferValue::Color(0));
-        }
-        return absl::OkStatus();
-      };
-
   std::vector<HloInstruction*> sequence = {
       p_d, p_a, p_k, d, zero, d_sum, a, b, k, k_sum, b_sum, partial, out};
   auto assignment = RunBufferAssignmentWithInstructionSequence(
       module.get(), sequence, /*alignment=*/1,
-      BufferAssigner::AllowCrossColorReuse(0, 1), std::move(colorer),
+      BufferAssigner::AllowCrossColorReuse(0, 1),
       buffer_assignment::BufferAssignmentAlgorithmProto::TEMPORAL);
 
   const HloValue& d_value =
@@ -1118,10 +1104,10 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice b_slice,
                        assignment->GetUniqueSlice(b, {}));
 
-  EXPECT_EQ(d_value.color(), 1);
-  EXPECT_EQ(k_value.color(), 1);
-  EXPECT_EQ(a_value.color(), 0);
-  EXPECT_EQ(b_value.color(), 0);
+  EXPECT_EQ(d_value.shape().layout().memory_space(), 1);
+  EXPECT_EQ(k_value.shape().layout().memory_space(), 1);
+  EXPECT_EQ(a_value.shape().layout().memory_space(), 0);
+  EXPECT_EQ(b_value.shape().layout().memory_space(), 0);
   EXPECT_EQ(d_slice.index(), k_slice.index());
   EXPECT_EQ(d_slice.index(), a_slice.index());
   EXPECT_EQ(d_slice.index(), b_slice.index());
