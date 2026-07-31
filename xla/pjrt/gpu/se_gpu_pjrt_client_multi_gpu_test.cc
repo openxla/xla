@@ -281,52 +281,52 @@ TEST(StreamExecutorGpuClientTest, DistributedInitWithAbortCollectivesOnFailure) 
                                         num_nodes);
     for (int i = 0; i < num_nodes; ++i) {
       thread_pool.Schedule([i, num_nodes, kServiceAddress, &statuses]() {
-      DistributedRuntimeClient::Options distributed_options;
-      distributed_options.node_id = i;
-      distributed_options.init_timeout = absl::Seconds(120);
-      auto distributed_client =
-          GetDistributedRuntimeClient(kServiceAddress, distributed_options);
-      statuses[i] = distributed_client->Connect();
-      if (!statuses[i].ok()) {
-        return;
-      }
+        DistributedRuntimeClient::Options distributed_options;
+        distributed_options.node_id = i;
+        distributed_options.init_timeout = absl::Seconds(120);
+        auto distributed_client =
+            GetDistributedRuntimeClient(kServiceAddress, distributed_options);
+        statuses[i] = distributed_client->Connect();
+        if (!statuses[i].ok()) {
+          return;
+        }
 
-      GpuClientOptions options = GetTestGpuClientOptions(2);
-      options.node_id = i;
-      options.num_nodes = num_nodes;
-      options.enable_mock_nccl = true;
-      options.abort_collectives_on_failure = true;
-      options.distributed_client = distributed_client;
-      options.kv_store =
-          GetDistributedKeyValueStore(distributed_client, "abort:");
+        GpuClientOptions options = GetTestGpuClientOptions(2);
+        options.node_id = i;
+        options.num_nodes = num_nodes;
+        options.enable_mock_nccl = true;
+        options.abort_collectives_on_failure = true;
+        options.distributed_client = distributed_client;
+        options.kv_store =
+            GetDistributedKeyValueStore(distributed_client, "abort:");
 
-      absl::StatusOr<std::unique_ptr<PjRtClient>> client_status =
-          GetStreamExecutorGpuClient(options);
-      if (!client_status.ok()) {
-        statuses[i] = client_status.status();
-        return;
-      }
-      std::unique_ptr<PjRtClient>& client = *client_status;
-      auto* gpu_client =
-          tsl::down_cast<StreamExecutorGpuClient*>(client.get());
-      ExecuteOptions exec_options;
-      const gpu::GpuExecutableRunOptions* run_options =
-          gpu_client->gpu_run_options(exec_options);
-      if (run_options == nullptr ||
-          !run_options->execution_timeout_handler()) {
-        statuses[i] = absl::InternalError(
-            "execution_timeout_handler not configured when "
-            "abort_collectives_on_failure is enabled");
-        return;
-      }
+        absl::StatusOr<std::unique_ptr<PjRtClient>> client_status =
+            GetStreamExecutorGpuClient(options);
+        if (!client_status.ok()) {
+          statuses[i] = client_status.status();
+          return;
+        }
+        std::unique_ptr<PjRtClient>& client = *client_status;
+        auto* gpu_client =
+            tsl::down_cast<StreamExecutorGpuClient*>(client.get());
+        ExecuteOptions exec_options;
+        const gpu::GpuExecutableRunOptions* run_options =
+            gpu_client->gpu_run_options(exec_options);
+        if (run_options == nullptr ||
+            !run_options->execution_timeout_handler()) {
+          statuses[i] = absl::InternalError(
+              "execution_timeout_handler not configured when "
+              "abort_collectives_on_failure is enabled");
+          return;
+        }
 
-      EXPECT_TRUE(client->platform_name() == xla::CudaName() ||
-                  client->platform_name() == xla::RocmName() ||
-                  client->platform_name() == xla::OneapiName());
-      EXPECT_EQ(client->addressable_device_count(), 2);
-      EXPECT_EQ(client->device_count(), 4);
-      statuses[i] = absl::OkStatus();
-    });
+        EXPECT_TRUE(client->platform_name() == xla::CudaName() ||
+                    client->platform_name() == xla::RocmName() ||
+                    client->platform_name() == xla::OneapiName());
+        EXPECT_EQ(client->addressable_device_count(), 2);
+        EXPECT_EQ(client->device_count(), 4);
+        statuses[i] = absl::OkStatus();
+      });
     }
   }  // Join all worker threads before reading statuses.
 
