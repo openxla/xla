@@ -309,9 +309,8 @@ TEST(StreamExecutorGpuClientTest, DistributedInitWithAbortCollectivesOnFailure) 
         std::unique_ptr<PjRtClient>& client = *client_status;
         auto* gpu_client =
             tsl::down_cast<StreamExecutorGpuClient*>(client.get());
-        ExecuteOptions exec_options;
         const gpu::GpuExecutableRunOptions* run_options =
-            gpu_client->gpu_run_options(exec_options);
+            gpu_client->gpu_run_options();
         if (run_options == nullptr ||
             !run_options->execution_timeout_handler()) {
           statuses[i] = absl::InternalError(
@@ -342,9 +341,8 @@ TEST(StreamExecutorGpuClientTest,
   ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
   auto* gpu_client = tsl::down_cast<StreamExecutorGpuClient*>(client.get());
-  ExecuteOptions exec_options;
   const gpu::GpuExecutableRunOptions* run_options =
-      gpu_client->gpu_run_options(exec_options);
+      gpu_client->gpu_run_options();
   ASSERT_NE(run_options, nullptr);
   ASSERT_TRUE(run_options->execution_timeout_handler());
 
@@ -414,9 +412,8 @@ TEST(StreamExecutorGpuClientTest,
 
   auto* gpu_client0 =
       tsl::down_cast<StreamExecutorGpuClient*>(pjrt_clients[0].get());
-  ExecuteOptions exec_options;
   const gpu::GpuExecutableRunOptions* run_options =
-      gpu_client0->gpu_run_options(exec_options);
+      gpu_client0->gpu_run_options();
   ASSERT_NE(run_options, nullptr);
   ASSERT_TRUE(run_options->execution_timeout_handler());
 
