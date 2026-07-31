@@ -103,6 +103,13 @@ class MoriCollectives : public GpuCollectives {
   absl::Status InitPe(int32_t rank, int32_t nranks, const CliqueId& clique_id,
                       stream_executor::StreamExecutor* executor);
 
+  using LocalDevIdMap = absl::flat_hash_map<LocalDeviceId, GlobalDeviceId>;
+
+  // Eagerly initializes a set of local PEs concurrently. All PEs across all
+  // processes must run this concurrently for MORI's bootstrap to rendezvous.
+  absl::Status EagerInitLocalPes(const LocalDevIdMap& local_dev_id_map,
+                                 int32_t nranks, const CliqueId& clique_id);
+
   bool initialized_ = false;
 };
 

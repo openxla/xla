@@ -1597,6 +1597,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   VLOG(3) << absl::StreamFormat(
       "Set GPU device id map for process %d: %s", process_id,
       absl::StrJoin(gpu_device_ids, ",", absl::PairFormatter("->")));
+  absl::flat_hash_map<LocalDeviceId, GlobalDeviceId> local_device_global_ids(
+      gpu_device_ids.begin(), gpu_device_ids.end());
   gpu_executable_run_options->set_gpu_global_device_ids(
       std::move(gpu_device_ids));
 
@@ -1611,7 +1613,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
         auto clique_id_callback,
         gpu_collectives->InitializeTopology(
             {ProcessId(process_id), num_processes, local_device_states.size(),
-             kv_store, device_to_process}));
+             kv_store, device_to_process, std::move(local_device_global_ids)}));
     gpu_executable_run_options->set_clique_id_callback(
         std::move(clique_id_callback));
   }
