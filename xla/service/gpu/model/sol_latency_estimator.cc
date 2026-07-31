@@ -461,8 +461,7 @@ SolLatencyEstimator::Create(
 
 /*static*/ bool SolLatencyEstimator::IsSupportedForModule(
     const HloModule& module, const se::DeviceDescription& gpu_device_info) {
-  const se::GpuComputeCapability& cc =
-      gpu_device_info.gpu_compute_capability();
+  const se::GpuComputeCapability& cc = gpu_device_info.gpu_compute_capability();
   bool is_supported_device =
       gpu_device_info.cuda_compute_capability().IsHopper() ||
       gpu_device_info.cuda_compute_capability().IsBlackwell() ||
@@ -577,7 +576,8 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
   }
 
   // matmul_interpolator_ may be null when no measured table is available for
-  // this device (graceful degrade); fall through to the perf-model/wrapped path.
+  // this device (graceful degrade); fall through to the perf-model/wrapped
+  // path.
   if (matmul_interpolator_ != nullptr) {
     if (std::optional<absl::Duration> matmul_duration =
             matmul_interpolator_->EstimatedRuntime(*instr);
