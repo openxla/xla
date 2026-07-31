@@ -1,3 +1,59 @@
+diff --git b/BUILD b/BUILD
+--- a/BUILD
++++ b/BUILD
+@@ -5,3 +5,4 @@
+ load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
++load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
+ # copybara:uncomment load("//tools/build_defs/license:license.bzl", "license")
+@@ -545,7 +546,7 @@
+         "lib/Dialect/TritonGPU/Transforms/Utility.cpp",  # Avoid circular dependency.
+         "lib/Dialect/TritonNvidiaGPU/Transforms/ClusterBarrierMbarAllocator.cpp",  # Avoid circular dependency.
+         "lib/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.cpp",  # Avoid circular dependency.
+-    ],
++    ] + if_sycl_is_configured(["//third_party/intel:TritonIntelGPU_srcs"]),
+     hdrs = glob([
+         "include/triton/Dialect/Gluon/IR/*.h",
+         "include/triton/Dialect/Triton/IR/*.h",
+@@ -565,7 +566,7 @@
+         # it would be better if upstream moved it there.
+         "include/triton/Conversion/MLIRTypes.h",
+         "include/triton/Dialect/TritonInstrument/Transforms/ConSanTargetHooks.h",
+-    ],
++    ] + if_sycl_is_configured(["//third_party/intel:TritonIntelGPU_hdrs"]),
+     copts = select({
+         ":compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -576,7 +577,10 @@
+             "-Wno-implicit-fallthrough",
+         ],
+     }),
+-    includes = ["include"],
++    includes = ["include"] + if_sycl_is_configured([
++         "third_party",
++         "third_party/intel/include",
++    ]),
+     deps = [
+         ":Dump",
+         ":GetEnv",  # for Utility
+@@ -633,7 +638,16 @@
+         "@llvm-project//mlir:UBDialect",
+         "@triton//third_party/f2reduce",  # for Utility
+         "@triton//third_party/nvidia:NVGPUDialect",
+-    ],
++    ] + if_sycl_is_configured([
++        "@llvm-project//llvm:AsmParser",
++        "@llvm-project//mlir:SPIRVDialect",
++        "@triton//third_party/intel:triton_gen_attr_defs_inc_gen",
++        "@triton//third_party/intel:triton_gen_dialect_inc_gen",
++        "@triton//third_party/intel:triton_gen_ops_inc_gen",
++        "@triton//third_party/intel:triton_intel_gpu_attr_defs_inc_gen",
++        "@triton//third_party/intel:triton_intel_gpu_ops_inc_gen",
++        "@triton//third_party/intel:triton_intel_gpu_dialect_inc_gen",
++    ]),
+     alwayslink = True,
+ )
+ 
 diff --git b/third_party/intel/BUILD b/third_party/intel/BUILD
 new file mode 100644
 --- /dev/null
