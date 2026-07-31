@@ -2750,8 +2750,9 @@ ENTRY entry {
 TEST_P(SpmdPartitioningTest,
        DynamicSliceReplicatedResultUsesCollectiveBroadcast) {
   SpmdPartitionerOptions options;
-  EXPECT_TRUE(options.enable_dynamic_slice_collective_broadcast);
+  EXPECT_FALSE(options.enable_dynamic_slice_collective_broadcast);
   EXPECT_EQ(options.max_dynamic_slice_collective_broadcast_partitions, 32);
+  options.enable_dynamic_slice_collective_broadcast = true;
 
   ASSERT_OK_AND_ASSIGN(auto module,
                        PartitionComputation(kReplicatedDynamicSliceHlo,
@@ -2831,8 +2832,12 @@ ENTRY entry {
     dynamic_slice_sizes={8,1}, sharding={replicated}
 })";
 
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  SpmdPartitionerOptions options;
+  options.enable_dynamic_slice_collective_broadcast = true;
+
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/4, options));
 
   EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kAllGather), 1);
   EXPECT_EQ(NumOfInstructions(module.get(), HloOpcode::kCollectiveBroadcast),
@@ -3586,6 +3591,59 @@ ENTRY entry {
   auto concat = op::Concatenate(left_halo, local_data);
 
   EXPECT_THAT(root, op::Tuple(op::Slice(concat), op::Slice(concat)));
+}
+
+TEST_P(SpmdPartitioningTest, CustomCallXladebugLog) {
+  class DummyDebugLogPartitioner : public CustomCallPartitioner {
+   public:
+    absl::Status Partition(spmd::SpmdPartitioningVisitor* visitor,
+                           HloInstruction* hlo) const override {
+      std::vector<HloInstruction*> new_operands;
+      new_operands.reserve(hlo->operand_count());
+      for (const HloInstruction* operand : hlo->operands()) {
+        new_operands.push_back(visitor->GetPartitionedHlo(operand).hlo());
+      }
+      HloInstruction* clone = visitor->builder()->AddInstruction(
+          hlo->CloneWithNewOperands(hlo->shape(), new_operands));
+      if (hlo->has_sharding()) {
+        clone->set_sharding(hlo->sharding());
+      }
+      visitor->SetPartitionedHlo(
+          hlo, spmd::PartitionedHlo(clone, hlo->shape(),
+                                    visitor->MakePartitioningState()));
+      return absl::OkStatus();
+    }
+    bool CanSideEffectingHaveReplicatedSharding() const override {
+      return true;
+    }
+  };
+  RegisterCustomCallPartitioner("xla.debug.Log",
+                                std::make_unique<DummyDebugLogPartitioner>());
+
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[12] parameter(0), sharding={devices=[4]<=[4]}
+  ROOT %custom-call = () custom-call(%param0),
+    custom_call_target="xla.debug.Log",
+    custom_call_has_side_effect=true,
+    sharding={replicated}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  // Verify that the parameter got the attribute.
+  auto param0 = module->entry_computation()->parameter_instruction(0);
+  ASSERT_NE(param0, nullptr);
+  EXPECT_TRUE(
+      param0->frontend_attributes().map().contains("original_sharding"));
+  EXPECT_THAT(param0->frontend_attributes().map().at("original_sharding"),
+              ::testing::AnyOf(::testing::HasSubstr("devices=[4]<=[4]"),
+                               ::testing::HasSubstr("axis_0"),
+                               ::testing::HasSubstr("devices=[4]0,1,2,3")));
 }
 
 TEST_P(SpmdPartitioningTest, CustomCallMultiSliceRealWorldPaddingBug) {
@@ -18116,6 +18174,30 @@ ENTRY entry {
       R"("a)" + std::string(kOriginalValuePlaceholderDelimiter) + R"(0")");
 }
 
+TEST_P(SpmdPartitioningTest, OriginalValueWithManualSubgroupSharding) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param.1 = f32[8,1024,1024] parameter(0), sharding={devices=[2,1,1,2,2]<=[8] last_tile_dims={manual, replicated}}
+  %param.2 = f32[8,1024,1024] parameter(1), sharding={devices=[2,1,1,2,2]<=[8] last_tile_dims={manual, replicated}}
+  ROOT %add = f32[8,1024,1024]{2,1,0} add(%param.1, %param.2), sharding={devices=[2,1,1,2,2]<=[8] last_tile_dims={manual, replicated}}, origin={{"broadcast.443"}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  EXPECT_EQ(module->original_value_recovery_table().size(), 1);
+  const HloComputation* recovery_computation =
+      module->original_value_recovery_table()
+          .begin()
+          ->second.second->entry_computation();
+  const HloInstruction* param_instruction =
+      recovery_computation->parameter_instruction(0);
+  EXPECT_TRUE(param_instruction->has_sharding());
+  EXPECT_TRUE(param_instruction->sharding().IsManualSubgroup());
+  std::cerr << "module: " << module->ToString() << "\n";
+}
+
 TEST_P(SpmdPartitioningTest, ShardingPreprocessOrderWhile) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -18630,6 +18712,27 @@ ENTRY entry {
   const auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Copy(op::Reshape(op::Reshape(op::Transpose(op::AllToAll(
                         op::Reshape(op::Reshape(op::Parameter(0)))))))));
+}
+
+TEST_F(SpmdPartitioningV3Test,
+       ReshardPartialReplicateToFullReplicateNamedSharding) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param = f32[1] parameter(0), sharding={mesh['x'=2,'y'=2] [{'x'}]}
+  ROOT %copy = f32[1] copy(%param), sharding={mesh['x'=2,'y'=2] replicated}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  const HloInstruction* all_reduce =
+      FindInstruction(module.get(), HloOpcode::kAllReduce);
+  ASSERT_NE(all_reduce, nullptr);
+  EXPECT_EQ(all_reduce->replica_groups().size(), 2);
+  EXPECT_THAT(all_reduce->replica_groups()[0].replica_ids(), ElementsAre(0, 2));
+  EXPECT_THAT(all_reduce->replica_groups()[1].replica_ids(), ElementsAre(1, 3));
 }
 
 TEST_F(SpmdPartitioningV3Test, ReshardPartialReplicateWithAllToAllMultiAxis) {

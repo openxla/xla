@@ -42,7 +42,9 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
+#include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
+#include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -361,14 +363,19 @@ ENTRY e {
   EXPECT_THAT(entry_root, GmockMatch(m::Fusion()));
 }
 
-class PersistedAutotuningTest : public HloTestBase {
+class PersistedAutotuningTest : public HloTestBase,
+                                public ::testing::WithParamInterface<bool> {
  protected:
   void SetUp() override {
     AutotunerCache::ClearAutotuneResults();
+    InMemoryStore::Clear();
     xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
   }
 
-  void TearDown() override { AutotunerCache::ClearAutotuneResults(); }
+  void TearDown() override {
+    AutotunerCache::ClearAutotuneResults();
+    InMemoryStore::Clear();
+  }
 
   static constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -395,14 +402,30 @@ ENTRY e {
         xla_gpu_dump_autotune_results_to_);
     options.set_xla_gpu_load_autotune_results_from(
         xla_gpu_load_autotune_results_from_);
+    options.set_xla_gpu_use_new_autotune_cache_format(GetParam());
     return options;
+  }
+
+  void ExpectValidAutotuneResults(absl::string_view autotune_results_str,
+                                  bool use_new_format) {
+    if (use_new_format) {
+      autotuner::AutotuneCache results;
+      EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+          autotune_results_str, &results));
+      EXPECT_FALSE(results.entries().empty());
+    } else {
+      AutotuneResults results;
+      EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+          autotune_results_str, &results));
+      EXPECT_FALSE(results.results().empty());
+    }
   }
 
   std::string xla_gpu_dump_autotune_results_to_;
   std::string xla_gpu_load_autotune_results_from_;
 };
 
-TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
+TEST_P(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
   constexpr absl::string_view kInvalidTextProto = "Invalid!";
 
   HloModuleConfig config = GetModuleConfigForTest();
@@ -411,9 +434,7 @@ TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
   {
     ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
                          ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
-    AutotuneResults results;
-    EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(autotune_results_str,
-                                                           &results));
+    ExpectValidAutotuneResults(autotune_results_str, GetParam());
   }
 
   // Overwrite results with an invalid textproto.
@@ -426,13 +447,11 @@ TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
   {
     ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
                          ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
-    AutotuneResults results;
-    EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(autotune_results_str,
-                                                           &results));
+    ExpectValidAutotuneResults(autotune_results_str, GetParam());
   }
 }
 
-TEST_F(PersistedAutotuningTest, SingleOperationGetsAutotuned) {
+TEST_P(PersistedAutotuningTest, SingleOperationGetsAutotuned) {
   TF_EXPECT_OK(GetOptimizedModuleForExecutable(R"(
 e {
   a = f32[64,128] parameter(0)
@@ -443,11 +462,11 @@ e {
 
   ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
                        ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
-  AutotuneResults results;
-  EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(autotune_results_str,
-                                                         &results));
-  EXPECT_THAT(results.results(), Not(IsEmpty()));
+  ExpectValidAutotuneResults(autotune_results_str, GetParam());
 }
+
+INSTANTIATE_TEST_SUITE_P(PersistedAutotuningTestInstantiation,
+                         PersistedAutotuningTest, ::testing::Bool());
 
 int64_t CountCopies(const HloComputation& computation) {
   int64_t count = 0;
@@ -467,7 +486,7 @@ int64_t CountCopies(const HloModule& module) {
   return count;
 }
 
-TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
+TEST_F(GpuCompilerTest, CollectivePipeliningModes) {
   // Simple IR with AllReduce subjectible to pipelining.
   absl::string_view kHloString = R"(
      HloModule module
@@ -496,7 +515,8 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
           current-loop-index, constant.0, constant.0),
             dynamic_slice_sizes={1,8,128}
         all-reduce = bf16[1,8,128] all-reduce(sliced-input-buffer),
-          replica_groups={}, to_apply=add, channel_id=1
+          replica_groups={}, to_apply=add, channel_id=1,
+          frontend_attributes={FRONTEND_ATTRIBUTES}
         dynamic-update-slice = bf16[3,8,128] dynamic-update-slice(output-buffer,
           all-reduce, current-loop-index, constant.0, constant.0)
         ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(
@@ -513,23 +533,64 @@ TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
       }
   )";
 
-  HloModuleConfig config = GetModuleConfigForTest();
-  auto& debug_options = config.mutable_debug_options();
-  debug_options.set_xla_gpu_enable_pipelined_all_reduce(true);
-  debug_options.set_xla_gpu_all_reduce_combine_threshold_bytes(0);
-  ASSERT_OK_AND_ASSIGN(auto module_and_executable,
-                       GetOptimizedModuleForExecutable(kHloString, config));
-  const HloModule* module = module_and_executable.first;
+  struct TestCase {
+    absl::string_view name;
+    DebugOptions::CollectivePipeliningMode mode;
+    ExecutionOptions::EffortLevel optimization_level;
+    float exec_time_optimization_effort;
+    absl::string_view frontend_attributes;
+    bool expect_pipelined;
+  };
 
-  absl::string_view kExpected = R"(
-    CHECK: all-reduce-start{{.*}}"is_pipelined":true
-  )";
-  HloPrintOptions options;
-  options.set_print_operand_shape(false);
-  options.set_print_result_shape(false);
-  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                       RunFileCheck(module->ToString(options), kExpected));
-  EXPECT_TRUE(filecheck_matched);
+  const std::vector<TestCase> test_cases = {
+      {"default_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+      {"default_at_o0_with_execution_effort",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O0, 0.2f, "", true},
+      {"default_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
+       ExecutionOptions::EFFORT_O1, 0.0f, "", true},
+      {"on_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_ON,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", true},
+      {"explicit_marked_at_o0",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O0, 0.0f, R"(is_pipelineable="1")", true},
+      {"explicit_unmarked_at_o0",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+      {"explicit_unmarked_at_o1",
+       DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
+       ExecutionOptions::EFFORT_O1, 0.0f, "", false},
+      {"explicit_off_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF,
+       ExecutionOptions::EFFORT_O1, 0.0f, R"(is_pipelineable="1")", false},
+  };
+
+  for (const TestCase& test_case : test_cases) {
+    SCOPED_TRACE(test_case.name);
+    std::string hlo_string = absl::StrReplaceAll(
+        kHloString, {{"FRONTEND_ATTRIBUTES", test_case.frontend_attributes}});
+
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.set_optimization_level(test_case.optimization_level);
+    config.set_exec_time_optimization_effort(
+        test_case.exec_time_optimization_effort);
+
+    DebugOptions& debug_options = config.mutable_debug_options();
+    debug_options.set_xla_gpu_pipeline_all_reduce(test_case.mode);
+    debug_options.set_xla_gpu_all_reduce_combine_threshold_bytes(0);
+
+    ASSERT_OK_AND_ASSIGN(auto module_and_executable,
+                         GetOptimizedModuleForExecutable(hlo_string, config));
+    const HloModule* module = module_and_executable.first;
+
+    HloPrintOptions options;
+    options.set_print_operand_shape(false);
+    options.set_print_result_shape(false);
+    std::string optimized_hlo = module->ToString(options);
+    EXPECT_EQ(absl::StrContains(optimized_hlo, "\"is_pipelined\":true"),
+              test_case.expect_pipelined)
+        << optimized_hlo;
+  }
 }
 
 TEST_F(GpuCompilerTest, RemovesUnnecessaryCopyAfterScheduling) {

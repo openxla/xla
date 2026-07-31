@@ -614,9 +614,18 @@ absl::Status BufferAllocation::AddAssignment(const HloValue& buffer,
   CHECK(!assigned_buffers_.contains(&buffer))
       << "LogicalBuffer " << buffer << " already assigned to allocation "
       << index_;
-  CHECK_LE(offset, size_) << "LogicalBuffer " << buffer
-                          << " offset out of range";
-  CHECK_LE(offset + size, size_)
+  // TF_RET_CHECK (rather than CHECK_LE) so that a malformed offset/size --
+  // e.g. deserialized from an untrusted BufferAssignmentProto -- returns an
+  // error instead of crashing the process. Negative values are checked
+  // explicitly: a bare `offset <= size_` check does not catch a negative
+  // offset, since -1 <= size_ is true for any non-negative allocation size.
+  TF_RET_CHECK(offset >= 0)
+      << "LogicalBuffer " << buffer << " has a negative offset: " << offset;
+  TF_RET_CHECK(size >= 0) << "LogicalBuffer " << buffer
+                          << " has a negative size: " << size;
+  TF_RET_CHECK(offset <= size_)
+      << "LogicalBuffer " << buffer << " offset out of range";
+  TF_RET_CHECK(offset + size <= size_)
       << "LogicalBuffer " << buffer
       << " size out of range at offset: " << offset << " with size: " << size;
   if (IsInputOrOutput()) {
@@ -1839,21 +1848,31 @@ bool BufferAssigner::LiveRangeInterferes(
     BufferAssignment* assignment) {
   CHECK((assignment->hlo_live_range().total_order_scheduled()));
 
-  // Check if a user value can share the same buffer as its operand.
+  // An HloValue can hold multiple instruction positions during its lifetime
+  // (e.g. when passed into a while loop tuple or bitcast view).
+  // operand_live_range.end_position points to the last instruction in
+  // schedule order (which may be a tuple instruction inside a loop body).
+  // However, a downstream user instruction might directly consume a
+  // different position of the value (such as the definition instruction
+  // before the loop). Therefore, we must check all positions of the
+  // HloValue to see if any instruction can share its buffer with the user.
   auto can_share_as_operand =
       [&assignment, this](
           const HloValue* user_value, const HloValue* operand_value,
           const HloLiveRange::LiveRangeBounds& operand_live_range) {
-        // An hlo value can hold multiple instructions during its life time. We
-        // only look at the last instruction and check if it can be shared with
-        // the operand.
-        HloPosition operand_end_position = operand_live_range.end_position;
-        return user_value->instruction()->opcode() != HloOpcode::kCopy &&
-               user_value->instruction()->IsUserOf(
-                   operand_end_position.instruction) &&
-               assignment->dataflow_analysis().CanShareOperandBufferWithUser(
-                   operand_end_position.instruction, operand_end_position.index,
-                   user_value->instruction(), user_value->index(), alias_info_);
+        if (user_value->instruction()->opcode() == HloOpcode::kCopy) {
+          return false;
+        }
+        for (const HloPosition& operand_pos : operand_value->positions()) {
+          if (user_value->instruction()->IsUserOf(operand_pos.instruction) &&
+              assignment->dataflow_analysis().CanShareOperandBufferWithUser(
+                  operand_pos.instruction, operand_pos.index,
+                  user_value->instruction(), user_value->index(),
+                  alias_info_)) {
+            return true;
+          }
+        }
+        return false;
       };
 
   if (!(live_range1.start > live_range2.end ||
@@ -2061,6 +2080,16 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
     const HloBuffer* hlo_buffer, bool is_thread_local,
     BufferAllocationsManagerForComputationsWithoutOrdering* allocation_manager,
     BufferAssignment* assignment) {
+  // "View" buffers are pointer stand-ins that alias into another allocation, so
+  // they get no allocation of their own.
+  if (opts_.dus_view_color.has_value()) {
+    ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer->color());
+    if (buffer_color == *opts_.dus_view_color) {
+      VLOG(3) << "Not allocating buffer for view buffer: " << *hlo_buffer;
+      return true;
+    }
+  }
+
   const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->instruction()->opcode() == HloOpcode::kConstant) {

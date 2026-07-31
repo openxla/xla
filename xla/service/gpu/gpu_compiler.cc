@@ -57,7 +57,9 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -116,6 +118,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/gemm_fusion.h"
 #include "xla/backends/gpu/transforms/gemm_fusion_swap_operands.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
+#include "xla/backends/gpu/transforms/gpu_copy_async_wrapper.h"
 #include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
 #include "xla/backends/gpu/transforms/layout_assignment.h"
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
@@ -377,7 +380,7 @@ tsl::thread::ThreadPool* GetGpuCompilationThreadPool() {
   return GetCompilationThreadPool();
 }
 
-using MaybeOwningThreadPool = MaybeOwning<tsl::thread::ThreadPool>;
+using MaybeOwningThreadPool = tsl::MaybeOwning<tsl::thread::ThreadPool>;
 
 MaybeOwningThreadPool CreateMaybeOwningThreadPool(
     int parallelism, tsl::thread::ThreadPool* default_thread_pool,
@@ -1014,6 +1017,22 @@ absl::Status RunOptimizationPasses(
       .status();
 }
 
+template <HloOpcode opcode>
+static HloPredicate CollectivePipeliningPredicate(
+    DebugOptions::CollectivePipeliningMode mode) {
+  switch (mode) {
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_ON:
+      return HloPredicateIsOp<opcode>;
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT:
+      return HloPredicateIsPipelineableOp<opcode>();
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT:
+    case DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF:
+      return HloPredicateFalse;
+    default:
+      return HloPredicateFalse;
+  }
+}
+
 absl::Status RunCollectiveOptimizationPasses(
     HloModule* hlo_module, const GpuCompiler::CompileOptions& options,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
@@ -1076,8 +1095,18 @@ absl::Status RunCollectiveOptimizationPasses(
   collectives_pipeline.AddPass<HloDCE>();
 
   collectives_pipeline.AddPass<CollectivePipeliningAnalyzer>(pointer_size);
-  if (debug_options.xla_gpu_enable_pipelined_all_reduce() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  const DebugOptions::CollectivePipeliningMode effort_default =
+      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)
+          ? DebugOptions::COLLECTIVE_PIPELINING_MODE_ON
+          : DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF;
+  DebugOptions::CollectivePipeliningMode all_reduce_pipelining =
+      debug_options.xla_gpu_pipeline_all_reduce();
+  if (all_reduce_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    all_reduce_pipelining = effort_default;
+  }
+  if (all_reduce_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1086,7 +1115,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllReduce>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kAllReduce>(
+            all_reduce_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1100,8 +1131,14 @@ absl::Status RunCollectiveOptimizationPasses(
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
-  if (debug_options.xla_gpu_enable_pipelined_all_gather() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode all_gather_pipelining =
+      debug_options.xla_gpu_pipeline_all_gather();
+  if (all_gather_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    all_gather_pipelining = effort_default;
+  }
+  if (all_gather_pipelining != DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1110,7 +1147,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kBackward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllGather>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kAllGather>(
+            all_gather_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1124,8 +1163,15 @@ absl::Status RunCollectiveOptimizationPasses(
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
-  if (debug_options.xla_gpu_enable_pipelined_reduce_scatter() ||
-      IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
+
+  DebugOptions::CollectivePipeliningMode reduce_scatter_pipelining =
+      debug_options.xla_gpu_pipeline_reduce_scatter();
+  if (reduce_scatter_pipelining ==
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT) {
+    reduce_scatter_pipelining = effort_default;
+  }
+  if (reduce_scatter_pipelining !=
+      DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -1134,7 +1180,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kReduceScatter>,
+        /*should_process=*/
+        CollectivePipeliningPredicate<HloOpcode::kReduceScatter>(
+            reduce_scatter_pipelining),
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1451,7 +1499,16 @@ void AddCollectiveCombinerPasses(
   // of the NCCL ring model.  Only added when the Triton collective kernel flag
   // is enabled; when the flag is off all collectives keep
   // KERNEL_STRATEGY_DEFAULT.
-  if (opts.xla_gpu_unsupported_use_all_reduce_one_shot_kernel()) {
+  // Run the annotator if any collective kernel type is enabled.
+  // It annotates AllReduce and AllGather instructions with the
+  // kernel strategy determined at compile time (before scheduling),
+  // so that SolLatencyEstimator and the thunk emitter can consume it.
+  if (absl::c_linear_search(
+          opts.xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)) ||
+      absl::c_linear_search(
+          opts.xla_gpu_experimental_use_collective_kernels(),
+          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER))) {
     pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
         gpu_topology, /*is_multimem_enabled=*/false);
   }
@@ -3074,6 +3131,8 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     pipeline.AddPass<DynamicSliceCopyFusionAsyncWrapper>();
   }
+  // GpuCopyAsyncWrapper is disabled when xla_gpu_async_copy_min_bytes is -1.
+  pipeline.AddPass<GpuCopyAsyncWrapper>();
   if (module->config().debug_options().xla_gpu_collect_cost_model_stats()) {
     GpuHloCostAnalysis::Options cost_analysis_options{
         ShapeSizeBytesFunction(),
@@ -3280,10 +3339,26 @@ absl::Status GpuCompiler::LoadAutotuneResultsFromFile(
   if (absl::string_view file_path =
           debug_options.xla_gpu_load_autotune_results_from();
       !file_path.empty()) {
+    bool use_new_format = debug_options.xla_gpu_use_new_autotune_cache_format();
     static absl::once_flag once;
     absl::Status status = absl::OkStatus();
-    absl::call_once(once, [&file_path, &status] {
-      status = AutotunerCache::LoadAutotuneResultsFromFile(file_path);
+    absl::call_once(once, [file_path, use_new_format, &status] {
+      if (use_new_format) {
+        std::string resolved_path;
+        if (!tsl::io::ResolveTestPrefixes(file_path, resolved_path)) {
+          status = absl::FailedPreconditionError(
+              absl::StrCat("File path can not be resolved: ", file_path));
+          return;
+        }
+        if (!tsl::Env::Default()->FileExists(resolved_path).ok()) {
+          status = absl::FailedPreconditionError(absl::StrCat(
+              "Autotune results file does not exist: ", resolved_path));
+          return;
+        }
+        status = InMemoryStore::LoadFromFile(resolved_path);
+      } else {
+        status = AutotunerCache::LoadAutotuneResultsFromFile(file_path);
+      }
     });
     RETURN_IF_ERROR(status);
   }
@@ -3298,7 +3373,17 @@ absl::Status GpuCompiler::SerializeAutotuneResultsToFile(
       !file_path.empty()) {
     // Warning: This writes the autotune results at every compilation,
     // possibly multiple times per process.
-    RETURN_IF_ERROR(AutotunerCache::SerializeAutotuneResultsToFile(file_path));
+    if (debug_options.xla_gpu_use_new_autotune_cache_format()) {
+      std::string resolved_path;
+      if (!tsl::io::ResolveTestPrefixes(file_path, resolved_path)) {
+        return absl::FailedPreconditionError(
+            absl::StrCat("File path can not be resolved: ", file_path));
+      }
+      RETURN_IF_ERROR(InMemoryStore::DumpToFile(resolved_path));
+    } else {
+      RETURN_IF_ERROR(
+          AutotunerCache::SerializeAutotuneResultsToFile(file_path));
+    }
   }
   return absl::OkStatus();
 }

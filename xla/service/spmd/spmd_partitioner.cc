@@ -72,6 +72,7 @@ limitations under the License.
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shape_inference.h"
@@ -1451,15 +1452,19 @@ HloInstruction* PartitionedHlo::ReplicatePartial(
 
   HloInstruction* broadcast = hlo_;
   if (!broadcast_dims.empty()) {
+    HloSharding v2_sharding =
+        sharding().UseNamedShardingLeaf()
+            ? HloSharding::V3ToV2Sharding(sharding().named_sharding())
+            : sharding();
     std::vector<int64_t> other_dims;
-    for (int64_t i = 0; i < sharding().num_dimensions(); ++i) {
+    for (int64_t i = 0; i < v2_sharding.num_dimensions(); ++i) {
       if (!absl::c_linear_search(broadcast_dims, i)) {
         other_dims.push_back(i);
       }
     }
     HloSharding original_sharding = sharding();
     auto grouped =
-        hlo_sharding_util::GroupShardingOnDims(original_sharding, other_dims);
+        hlo_sharding_util::GroupShardingOnDims(v2_sharding, other_dims);
     std::vector<int64_t> dev_indices(grouped.sharding.num_dimensions(), 0);
     // TODO(b/476984041): Update tile_assignment() use case once GroupedSharding
     // supports HloShardingV3
@@ -2679,49 +2684,57 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
 
   // Temporarily replace manual sharding to one-device sharding so that the
   // partitioner will not change the HLOs.
-  auto manual_to_onedevice = [&](HloOpcode opcode, const Shape& shape,
-                                 const HloSharding& sharding) {
+  auto manual_to_onedevice =
+      [&](HloOpcode opcode, const HloInstruction* inst,
+          const HloSharding& sharding) -> std::optional<HloSharding> {
     // If a tuple's elements are all manual, then sharding.IsManual() == True,
     // so we test whether it is tuple first.
     if (sharding.IsTuple()) {
       std::vector<HloSharding> subshardings = sharding.tuple_elements();
+      bool changed = false;
       for (HloSharding& subsharding : subshardings) {
         // Delay manual sharding substitution for CustomCalls.
         if (subsharding.IsManual() && opcode != HloOpcode::kCustomCall) {
           subsharding = HloSharding::SingleDevice(0);
+          changed = true;
         }
       }
-      return HloSharding::Tuple(shape, subshardings);
+      if (changed) {
+        if (inst->opcode() != HloOpcode::kOutfeed) {
+          return HloSharding::Tuple(inst->shape(), subshardings);
+        }
+        std::vector<Shape> operand_shapes(inst->operand_count());
+        for (int i = 0; i < inst->operand_count(); ++i) {
+          operand_shapes[i] = inst->operand(i)->shape();
+        }
+        return HloSharding::Tuple(ShapeUtil::MakeTupleShape(operand_shapes),
+                                  subshardings);
+      }
+      return std::nullopt;
     }
     // Delay manual sharding substitution for CustomCalls and PartitionIds.
     if (sharding.IsManual() && opcode != HloOpcode::kCustomCall &&
         opcode != HloOpcode::kPartitionId) {
       return HloSharding::SingleDevice(0);
     }
-    return sharding;
+    return std::nullopt;
   };
 
   if (hlo->sharding().IsManual() &&
       !hlo->IsCustomCall("SPMDFullToShardShape")) {
-    visiting_hlo_sharding_ = hlo->sharding();
-    auto get_sharding_shape = [](const HloInstruction* hlo) {
-      if (hlo->opcode() != HloOpcode::kOutfeed) {
-        return hlo->shape();
-      }
-      std::vector<Shape> operand_shapes(hlo->operand_count());
-      for (int i = 0; i < hlo->operand_count(); ++i) {
-        operand_shapes[i] = hlo->operand(i)->shape();
-      }
-      return ShapeUtil::MakeTupleShape(operand_shapes);
-    };
-    hlo->set_sharding(manual_to_onedevice(
-        hlo->opcode(), get_sharding_shape(hlo), *visiting_hlo_sharding_));
+    visiting_hlo_sharding_ = hlo->sharding_ptr();
+    if (auto new_sharding =
+            manual_to_onedevice(hlo->opcode(), hlo, *visiting_hlo_sharding_)) {
+      hlo->set_sharding(std::move(*new_sharding));
+    }
 
     visiting_hlo_operand_shardings_.reserve(hlo->operand_count());
     for (HloInstruction* operand : hlo->unique_operands()) {
-      visiting_hlo_operand_shardings_.push_back(operand->sharding());
-      operand->set_sharding(manual_to_onedevice(
-          hlo->opcode(), get_sharding_shape(operand), operand->sharding()));
+      visiting_hlo_operand_shardings_.push_back(operand->sharding_ptr());
+      if (auto new_op_sharding = manual_to_onedevice(hlo->opcode(), operand,
+                                                     operand->sharding())) {
+        operand->set_sharding(std::move(*new_op_sharding));
+      }
       GetPartitionedHlo(operand).hlo()->copy_sharding(operand);
     }
   } else if (hlo->sharding().IsManualSubgroup() &&
@@ -2771,7 +2784,7 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
     ASSIGN_OR_RETURN(auto group_sharding,
                      get_grouped_sharding(hlo->sharding(), hlo->shape()));
     // Update sharding.
-    visiting_hlo_sharding_ = hlo->sharding();
+    visiting_hlo_sharding_ = hlo->sharding_ptr();
     hlo->set_sharding(group_sharding.sharding);
     // Update device_groups and num_partitions.
     // Set device_groups_, visiting_partition_id_ and
@@ -2791,7 +2804,7 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
     visiting_hlo_operand_shardings_.reserve(hlo->operand_count());
     visiting_state_.reserve(hlo->operand_count());
     for (HloInstruction* operand : hlo->unique_operands()) {
-      visiting_hlo_operand_shardings_.push_back(operand->sharding());
+      visiting_hlo_operand_shardings_.push_back(operand->sharding_ptr());
       auto old_state = GetPartitionedHlo(operand).state();
       visiting_state_.push_back(old_state);
       if (operand->shape().IsArray() && operand->IsConstant() &&
@@ -2820,15 +2833,15 @@ absl::Status SpmdPartitioningVisitor::Postprocess(HloInstruction* hlo) {
   visiting_hlo_ = nullptr;
   b_.set_visiting_hlo(nullptr);
   // Revert fake one-device shardings for manually partitioned ops.
-  if (visiting_hlo_sharding_) {
-    hlo->set_sharding(*visiting_hlo_sharding_);
-    GetPartitionedHlo(hlo).hlo()->set_sharding(*visiting_hlo_sharding_);
+  if (visiting_hlo_sharding_ != nullptr) {
+    hlo->set_sharding(visiting_hlo_sharding_);
+    GetPartitionedHlo(hlo).hlo()->set_sharding(visiting_hlo_sharding_);
     int64_t i = 0;
     for (HloInstruction* operand : hlo->unique_operands()) {
       operand->set_sharding(visiting_hlo_operand_shardings_[i++]);
       GetPartitionedHlo(operand).hlo()->copy_sharding(operand);
     }
-    visiting_hlo_sharding_.reset();
+    visiting_hlo_sharding_ = nullptr;
     visiting_hlo_operand_shardings_.clear();
   }
 
@@ -7402,6 +7415,23 @@ absl::Status SpmdPartitioner::PreprocessSharding(
             << hlo->ToString();
       }
 
+      // Store the original sharding of operands for xla.debug.Log before they
+      // risk losing fidelity in ConvertUnreducedSharding or other
+      // simplification passes. This is necessary for full reconstruction of
+      // logged tensors.
+      // TODO(b/449756032): When original value tracking has a better solution
+      // to store original shardings, we can remove this workaround.
+      if (hlo->opcode() == HloOpcode::kCustomCall &&
+          hlo->custom_call_target() == "xla.debug.Log") {
+        for (HloInstruction* operand : hlo->operands()) {
+          if (operand->has_sharding() &&
+              !operand->sharding().IsReplicatedOrSingleDevice()) {
+            operand->add_frontend_attribute("original_sharding",
+                                            operand->sharding().ToString());
+          }
+        }
+      }
+
       // For unassigned HLOs, annotate with replicated sharding.
       //
       // Among side-effecting ops, only Rng is allowed to omit the annotation.
@@ -8046,6 +8076,14 @@ void SpmdPartitioningVisitor::SetPartitionedHlo(
                                            partitioning_state);
       // Creates computation to recover the partitioned value.
       param_partitioned_hlo.Replicate();
+      // SpmdPartitioner::Preprocess overwrites the manual subgroup sharding
+      // with an automatically manageable sharding attribute. The original
+      // sharding is saved in visiting_hlo_sharding_. This recovers the original
+      // sharding so tools like the TPU logger that need the manual dimensions
+      // in the manual subgroup sharding can work correctly.
+      if (visiting_hlo_sharding_ != nullptr) {
+        param->set_sharding(*visiting_hlo_sharding_);
+      }
       recovery_module->AddEntryComputation(builder.Build());
       return recovery_module;
     };

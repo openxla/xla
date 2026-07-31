@@ -64,6 +64,7 @@ cc_library(
     name = "passes",
     srcs = [
         "fuse_elementwise_pass.cc",
+        "hoist_alloca.cc",
         "initialize_allocs.cc",
         "linalg_elementwise_to_vector_pass.cc",
         "lower_xtile_entry.cc",
@@ -88,6 +89,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:BufferizationDialect",
+        "@llvm-project//mlir:ComplexDialect",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncTransforms",
