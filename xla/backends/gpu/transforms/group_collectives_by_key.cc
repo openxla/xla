@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/group_collectives_by_key.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -37,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/shape.h"
@@ -47,6 +49,11 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+struct CollectiveGroup {
+  std::string key;
+  std::vector<HloInstruction*> collectives;
+};
 
 // Trivial ops we drop from the printed reachability chain — they carry no
 // useful debugging signal beyond reshape/element-extract bookkeeping.
@@ -164,7 +171,8 @@ std::string FormatReachabilityChain(const HloInstruction* from,
 // computation is added with a neutral base name; AddEmbeddedComputation
 // uniquifies it against the module.
 HloComputation* BuildGroupComputation(
-    HloModule* module, absl::Span<HloInstruction* const> collectives) {
+    HloModule* module, absl::Span<HloInstruction* const> collectives,
+    absl::string_view execution_thread) {
   HloComputation::Builder builder("collectives_group");
 
   std::vector<HloInstruction*> new_collectives;
@@ -196,14 +204,43 @@ HloComputation* BuildGroupComputation(
   }
 
   builder.AddInstruction(HloInstruction::CreateTuple(new_collectives));
-  return module->AddEmbeddedComputation(builder.Build());
+  HloComputation* group_computation =
+      module->AddEmbeddedComputation(builder.Build());
+  group_computation->SetExecutionThread(execution_thread);
+  return group_computation;
+}
+
+// Appends a flat sharding for every leaf of `instruction`. Unknown shardings
+// preserve partially annotated tuples without inventing a placement for an
+// unannotated member.
+void AppendShardingLeaves(const HloInstruction& instruction,
+                          std::vector<HloSharding>* shardings) {
+  int64_t leaf_count = ShapeUtil::GetLeafCount(instruction.shape());
+  if (leaf_count == 0) {
+    // Empty tuples may carry one sharding despite having no ShapeTree leaves.
+    leaf_count = 1;
+  }
+
+  if (!instruction.has_sharding()) {
+    shardings->insert(shardings->end(), leaf_count, HloSharding::Unknown());
+    return;
+  }
+
+  const HloSharding& sharding = instruction.sharding();
+  if (sharding.IsTuple()) {
+    shardings->insert(shardings->end(), sharding.tuple_elements().begin(),
+                      sharding.tuple_elements().end());
+  } else {
+    shardings->insert(shardings->end(), leaf_count, sharding);
+  }
 }
 
 absl::Status CreateCollectivesGroup(
-    HloComputation* computation,
-    absl::Span<HloInstruction* const> collectives) {
+    HloComputation* computation, absl::Span<HloInstruction* const> collectives,
+    absl::string_view execution_thread) {
   HloModule* module = computation->parent();
-  HloComputation* group_comp = BuildGroupComputation(module, collectives);
+  HloComputation* group_comp =
+      BuildGroupComputation(module, collectives, execution_thread);
   absl::string_view group_name = group_comp->name();
 
   std::vector<HloInstruction*> call_operands;
@@ -224,9 +261,9 @@ absl::Status CreateCollectivesGroup(
   Shape start_shape = ShapeUtil::MakeTupleShape(
       {ShapeUtil::MakeTupleShapeWithPtrs(param_shapes), done_shape});
 
-  HloInstruction* async_start = computation->AddInstruction(
-      HloInstruction::CreateAsyncStart(start_shape, call_operands, group_comp,
-                                       HloInstruction::kMainExecutionThread));
+  HloInstruction* async_start =
+      computation->AddInstruction(HloInstruction::CreateAsyncStart(
+          start_shape, call_operands, group_comp, execution_thread));
   async_start->SetAndSanitizeName(absl::StrCat(group_name, "-start"));
   HloInstruction* async_done = computation->AddInstruction(
       HloInstruction::CreateAsyncDone(done_shape, async_start));
@@ -245,6 +282,42 @@ absl::Status CreateCollectivesGroup(
   // Preserve metadata and backend config from a representative member.
   async_start->set_metadata(collectives.front()->metadata());
   async_done->set_metadata(collectives.front()->metadata());
+  async_start->CopyBackendConfigFrom(collectives.front());
+  async_done->CopyBackendConfigFrom(collectives.front());
+
+  bool has_operand_sharding = false;
+  for (const HloInstruction* operand : call_operands) {
+    has_operand_sharding |= operand->has_sharding();
+  }
+  bool has_output_sharding = false;
+  for (const HloInstruction* collective : collectives) {
+    has_output_sharding |= collective->has_sharding();
+  }
+
+  std::vector<HloSharding> done_shardings;
+  if (has_output_sharding) {
+    for (const HloInstruction* collective : collectives) {
+      AppendShardingLeaves(*collective, &done_shardings);
+    }
+    HloSharding done_sharding = HloSharding::Tuple(done_shape, done_shardings);
+    async_done->set_sharding(done_sharding);
+    group_comp->root_instruction()->set_sharding(std::move(done_sharding));
+  }
+
+  if (has_operand_sharding || has_output_sharding) {
+    std::vector<HloSharding> start_shardings;
+    for (const HloInstruction* operand : call_operands) {
+      AppendShardingLeaves(*operand, &start_shardings);
+    }
+    if (done_shardings.empty()) {
+      for (const HloInstruction* collective : collectives) {
+        AppendShardingLeaves(*collective, &done_shardings);
+      }
+    }
+    start_shardings.insert(start_shardings.end(), done_shardings.begin(),
+                           done_shardings.end());
+    async_start->set_sharding(HloSharding::Tuple(start_shape, start_shardings));
+  }
 
   // Rewire each member's uses to a get-tuple-element of the async-done result,
   // preserving per-output sharding, and relay external control dependencies
@@ -267,8 +340,79 @@ absl::Status CreateCollectivesGroup(
   return absl::OkStatus();
 }
 
+// Contracting every group into one async node must leave the dependency graph
+// acyclic. Pairwise independence within a group is not sufficient: two groups
+// can depend on each other through different, individually independent members.
+absl::Status ValidateGroupGraphIsAcyclic(
+    absl::Span<const CollectiveGroup> groups,
+    const HloReachabilityMap& reachability,
+    absl::string_view computation_name) {
+  std::vector<std::vector<size_t>> successors(groups.size());
+  std::vector<int64_t> in_degree(groups.size(), 0);
+
+  for (size_t i = 0; i < groups.size(); ++i) {
+    for (size_t j = 0; j < groups.size(); ++j) {
+      if (i == j) {
+        continue;
+      }
+
+      bool is_reachable = false;
+      for (const HloInstruction* from : groups[i].collectives) {
+        for (const HloInstruction* to : groups[j].collectives) {
+          if (reachability.IsReachable(from, to)) {
+            is_reachable = true;
+            break;
+          }
+        }
+        if (is_reachable) {
+          break;
+        }
+      }
+      if (is_reachable) {
+        successors[i].push_back(j);
+        ++in_degree[j];
+      }
+    }
+  }
+
+  std::vector<size_t> ready;
+  ready.reserve(groups.size());
+  for (size_t i = 0; i < groups.size(); ++i) {
+    if (in_degree[i] == 0) {
+      ready.push_back(i);
+    }
+  }
+
+  size_t visited = 0;
+  while (!ready.empty()) {
+    size_t group = ready.back();
+    ready.pop_back();
+    ++visited;
+    for (size_t successor : successors[group]) {
+      if (--in_degree[successor] == 0) {
+        ready.push_back(successor);
+      }
+    }
+  }
+
+  if (visited != groups.size()) {
+    std::vector<absl::string_view> cycle_keys;
+    for (size_t i = 0; i < groups.size(); ++i) {
+      if (in_degree[i] != 0) {
+        cycle_keys.push_back(groups[i].key);
+      }
+    }
+    return FailedPrecondition(
+        "Grouping collectives in computation %s would create a dependency "
+        "cycle among collective_group_key values {%s}",
+        computation_name, absl::StrJoin(cycle_keys, ", "));
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<bool> GroupCollectivesInComputation(
-    HloComputation* computation, const HloPredicate& predicate) {
+    HloComputation* computation, const HloPredicate& predicate,
+    absl::string_view execution_thread) {
   VLOG(1) << "Finding collectives to group in computation "
           << computation->name();
 
@@ -298,7 +442,7 @@ absl::StatusOr<bool> GroupCollectivesInComputation(
   // mutation — forming a group inserts async-start/done and GTE instructions
   // that are absent from the map. Deferring all mutation to phase two also
   // guarantees an invalid later key never leaves earlier keys half-transformed.
-  std::vector<std::vector<HloInstruction*>> groups_to_form;
+  std::vector<CollectiveGroup> groups_to_form;
   groups_to_form.reserve(key_to_collectives.size());
   for (auto& [key, collectives] : key_to_collectives) {
     if (collectives.size() <= 1) {
@@ -346,14 +490,18 @@ absl::StatusOr<bool> GroupCollectivesInComputation(
               << "} with collective_group_key=" << key;
     }
 
-    groups_to_form.push_back(std::move(collectives));
+    groups_to_form.push_back({key, std::move(collectives)});
   }
+
+  RETURN_IF_ERROR(ValidateGroupGraphIsAcyclic(groups_to_form, *reachability,
+                                              computation->name()));
 
   // Phase two: every group validated against a consistent, mutation-free map,
   // so it is now safe to form them.
   bool changed = false;
-  for (const std::vector<HloInstruction*>& collectives : groups_to_form) {
-    RETURN_IF_ERROR(CreateCollectivesGroup(computation, collectives));
+  for (const CollectiveGroup& group : groups_to_form) {
+    RETURN_IF_ERROR(CreateCollectivesGroup(computation, group.collectives,
+                                           execution_thread));
     changed = true;
   }
   return changed;
@@ -374,7 +522,8 @@ absl::StatusOr<bool> GroupCollectivesByKey::RunImpl(
       continue;
     }
     ASSIGN_OR_RETURN(bool comp_changed,
-                     GroupCollectivesInComputation(comp, predicate_));
+                     GroupCollectivesInComputation(comp, predicate_,
+                                                   comp->execution_thread()));
     changed |= comp_changed;
   }
   return changed;
