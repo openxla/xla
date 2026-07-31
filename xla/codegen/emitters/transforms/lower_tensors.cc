@@ -947,7 +947,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
                                    rewriter);
         }
         if (device_spec_.IsIntelGpu()) {
-          return emitSPIRVAtomicFAdd(loc, modifier_arg, addr, rewriter, op);
+          return emitSPIRVAtomicFAdd(loc, modifier_arg, addr, rewriter);
         }
         return emitNVidiaAtomicFAdd(
             loc, modifier_arg, addr,
@@ -1113,8 +1113,7 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
   }
 
   LogicalResult emitSPIRVAtomicFAdd(Location loc, Value modifier_arg,
-                                    Value addr, OpBuilder& b,
-                                    AtomicRMWOp& op) const {
+                                    Value addr, OpBuilder& b) const {
     Type element_type = modifier_arg.getType();
     if (auto vector_type = dyn_cast_or_null<mlir::VectorType>(element_type)) {
       return failure();
