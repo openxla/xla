@@ -480,12 +480,19 @@ class TopkDecomposerVisitor : public DfsHloRewriteVisitor {
     auto* topk = DynCast<HloTopKInstruction>(inst);
 
     // Use packed BF16 sort optimization when applicable: BF16 input with
-    // largest=true, both values and indices used, and the last dimension size
-    // fits in 16 bits so indices can be packed.
+    // largest=true, both values and indices used, the last dimension size
+    // fits in 16 bits so indices can be packed, and total elements fit within
+    // memory budget for 32-bit temporaries (<= 10M elements). For very large
+    // vocabulary TopKs (e.g. >10M elements), the multiple 32-bit packed
+    // temporaries cause compile-time HBM OOM, so fall back to standard
+    // two-operand sort.
     constexpr int32_t kLow16BitsLimit = int32_t{1} << 16;
+    constexpr int64_t kMaxPackedTopKElements = 10 * 1024 * 1024;
     if (topk->largest() && topk->operand(0)->shape().element_type() == BF16 &&
         !HasSingleUserReadingOnlyTheValueOutput(topk) &&
-        topk->operand(0)->shape().dimensions().back() < kLow16BitsLimit) {
+        topk->operand(0)->shape().dimensions().back() < kLow16BitsLimit &&
+        ShapeUtil::ElementsIn(topk->operand(0)->shape()) <=
+            kMaxPackedTopKElements) {
       return DecomposeTopKWithSorting(topk);
     }
 
