@@ -1530,6 +1530,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKCustomCall(
           (n < 1024) || (n == 1024 && k > 12) || (n > 1024 && k >= 8);
     } else if (dtype == PrimitiveType::BF16) {
       use_raft_select_k = n < 1024 || k >= 8;
+    } else if (dtype == PrimitiveType::U64) {
+      use_raft_select_k = true;
     }
 
     VLOG(3) << "EmitTopKCustomCall: dtype=" << dtype << ", n=" << n
