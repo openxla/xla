@@ -65,6 +65,7 @@ jobs:
         - /data/ci-cert.key:/data/ci-cert.key
         - /data:/data
       options: >-
+        --init
         --device=/dev/dri
         --device=/dev/kfd
         --ipc=host
