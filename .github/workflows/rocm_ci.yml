@@ -108,10 +108,12 @@ jobs:
             --action_env=JAX_ENABLE_X64=0 \
             --repo_env=HERMETIC_PYTHON_VERSION=3.14 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
-            --repo_env=ROCM_PATH="" \
             --repo_env=ROCM_DISTRO_URL="https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-linux-gfx950-dcgpu-7.14.0.tar.gz" \
             --repo_env=ROCM_DISTRO_HASH="12afeccd06e6caf0699d86d688f16083aafa35474d0ec1d8063477fb5c119d49" \
+            --repo_env=TF_ROCM_RBE_POOL=linux_x64_gpu_do_gfx950 \
             --repo_env=SYSROOT_DIST=linux_glibc_2_31 \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx950" \
+            --jobs=20 \
             --bes_keywords=xla \
             --bes_keywords=jax \
             --bes_keywords=upstream \
