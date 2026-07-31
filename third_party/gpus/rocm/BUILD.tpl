@@ -530,7 +530,6 @@ filegroup(
         "%{rocm_root}/bin/rocminfo",
     ] + [
         ":hsa_rocr_libs_data",
-        ":rocm_core_libs_data",
         ":rocprofiler_register_libs_data",
         ":system_libs_data",
     ],
