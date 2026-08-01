@@ -162,6 +162,7 @@ cc_library(
     hdrs = ["array_util.h"],
     deps = [
         ":array_util_proto_cc",
+        "//xla:overflow_util",
         "//xla/python/ifrt",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
