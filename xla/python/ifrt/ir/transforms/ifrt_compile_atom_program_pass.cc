@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/utils.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
@@ -125,8 +126,12 @@ class IfrtCompileAtomProgramPass
       CallOp call_op, mlir::ModuleOp module_op);
 
   // Gets the XLA compile options for the given atom program module.
-  absl::StatusOr<xla::CompileOptions> GetXlaCompileOptions(
+  absl::StatusOr<XlaCompileOptions*> GetXlaCompileOptions(
       CallOp call_op, mlir::ModuleOp module_op);
+
+  // Get the xla::CompileOptions for the given atom program module.
+  xla::CompileOptions GetCompileOptions(CallOp call_op,
+                                        XlaCompileOptions* xla_compile_options);
 
   // Compiles an atom XLA program.
   // Returns a future of a AtomProgramCompileResult for the compiled module.
@@ -155,23 +160,30 @@ class IfrtCompileAtomProgramPass
   UserContextRef user_context_;
 };
 
-absl::StatusOr<xla::CompileOptions>
+absl::StatusOr<XlaCompileOptions*>
 IfrtCompileAtomProgramPass::GetXlaCompileOptions(CallOp call_op,
                                                  mlir::ModuleOp module_op) {
   // If the CallOp has a compile options key, then try to use the provided
   // compile options.
   if (auto compile_options_key =
           call_op->getAttrOfType<mlir::StringAttr>(kIfrtCompileOptionsKey)) {
-    ASSIGN_OR_RETURN(
-        std::optional<xla::CompileOptions> compile_options_override,
-        GetModuleXlaCompileOverrides(compile_options_key,
-                                     compile_options_overrides_));
+    ASSIGN_OR_RETURN(XlaCompileOptions * compile_options_override,
+                     GetModuleXlaCompileOverrides(compile_options_key,
+                                                  compile_options_overrides_));
 
-    if (compile_options_override.has_value()) {
-      return *compile_options_override;
+    if (compile_options_override != nullptr) {
+      return compile_options_override;
     }
   }
 
+  return nullptr;
+}
+
+xla::CompileOptions IfrtCompileAtomProgramPass::GetCompileOptions(
+    CallOp call_op, XlaCompileOptions* xla_compile_options) {
+  if (xla_compile_options != nullptr) {
+    return xla_compile_options->compile_options;
+  }
   return GetDefaultCompileOptions(call_op,
                                   /*enable_sharding_propagation=*/false,
                                   /*enable_parameter_tupling=*/false);
@@ -179,8 +191,10 @@ IfrtCompileAtomProgramPass::GetXlaCompileOptions(CallOp call_op,
 
 absl::StatusOr<AtomProgramCompileResult> IfrtCompileAtomProgramPass::CompileXla(
     CallOp call_op, mlir::ModuleOp module_op) {
-  ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
+  ASSIGN_OR_RETURN(XlaCompileOptions * xla_compile_options,
                    GetXlaCompileOptions(call_op, module_op));
+  xla::CompileOptions compile_options =
+      GetCompileOptions(call_op, xla_compile_options);
   // In order to be able to compile multiple XLA computations in parallel, we
   // need to:
   // 1. Use an MLIR context with threading disabled to ensure MLIR doesn't
