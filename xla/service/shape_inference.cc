@@ -221,8 +221,18 @@ absl::StatusOr<Shape> InferWindowOutputShape(const Shape& base_shape,
     } else {
       const int64_t dilated_base = window_util::DilatedBound(
           ShapeUtil::GetDimension(base_shape, i), dim.base_dilation());
-      const int64_t padded_dilated_base =
-          dim.padding_low() + dilated_base + dim.padding_high();
+      auto padded_low = OverflowSafeAdd(dim.padding_low(), dilated_base);
+      auto padded_dilated_base_opt =
+          padded_low.has_value()
+              ? OverflowSafeAdd(*padded_low, dim.padding_high())
+              : std::optional<int64_t>{};
+      if (!padded_dilated_base_opt.has_value()) {
+        return InvalidArgument(
+            "Window padding overflows int64: padding_low=%d, dilated_base=%d, "
+            "padding_high=%d",
+            dim.padding_low(), dilated_base, dim.padding_high());
+      }
+      const int64_t padded_dilated_base = *padded_dilated_base_opt;
       const int64_t dilated_window =
           window_util::DilatedBound(dim.size(), dim.window_dilation());
 
