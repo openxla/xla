@@ -15,25 +15,94 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_spec.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/BLAKE3.h"
 #include "xla/stream_executor/kernel_args_packing_spec.h"
 #include "xla/stream_executor/kernel_spec.pb.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
+namespace {
+
+using CubinFingerprint = std::array<uint8_t, 32>;
+
+struct CubinFingerprintHash {
+  size_t operator()(const CubinFingerprint& fingerprint) const {
+    size_t low;
+    std::memcpy(&low, fingerprint.data(), sizeof(low));
+    return low;
+  }
+};
+
+CubinFingerprint ComputeCubinFingerprint(absl::Span<const uint8_t> bytes) {
+  return llvm::BLAKE3::hash(
+      llvm::ArrayRef<uint8_t>(bytes.data(), bytes.size()));
+}
+
+struct CubinCacheEntry {
+  CubinCacheEntry(const CubinFingerprint& fingerprint,
+                  std::vector<uint8_t> binary)
+      : fingerprint(fingerprint), binary(std::move(binary)) {}
+  ~CubinCacheEntry();
+
+  const CubinFingerprint fingerprint;
+  const std::vector<uint8_t> binary;
+};
+
+ABSL_CONST_INIT absl::Mutex cubin_cache_mu(absl::kConstInit);
+absl::NoDestructor<absl::flat_hash_map<
+    CubinFingerprint, std::weak_ptr<CubinCacheEntry>, CubinFingerprintHash>>
+    cubin_cache ABSL_GUARDED_BY(cubin_cache_mu);
+
+CubinCacheEntry::~CubinCacheEntry() {
+  absl::MutexLock lock(&cubin_cache_mu);
+  auto it = cubin_cache->find(fingerprint);
+  // A concurrent InternCubinBytes may have already replaced the
+  // slot with a fresh live entry for the same fingerprint.
+  if (it != cubin_cache->end() && it->second.expired()) {
+    cubin_cache->erase(it);
+  }
+}
+
+template <typename Bytes>
+std::shared_ptr<const std::vector<uint8_t>> InternCubinBytes(
+    Bytes&& cubin_bytes) {
+  const CubinFingerprint fingerprint = ComputeCubinFingerprint(cubin_bytes);
+
+  absl::MutexLock lock(&cubin_cache_mu);
+  std::weak_ptr<CubinCacheEntry>& slot = (*cubin_cache)[fingerprint];
+  std::shared_ptr<CubinCacheEntry> entry = slot.lock();
+  if (entry == nullptr) {
+    entry = std::make_shared<CubinCacheEntry>(fingerprint,
+                                              std::forward<Bytes>(cubin_bytes));
+    slot = entry;
+  }
+  return std::shared_ptr<const std::vector<uint8_t>>(entry, &entry->binary);
+}
+
+}  // namespace
 
 KernelLoaderSpec KernelLoaderSpec::CreateInProcessSymbolSpec(
     void* symbol, std::string kernel_name, size_t arity,
@@ -58,10 +127,19 @@ KernelLoaderSpec KernelLoaderSpec::CreateCudaCubinInMemorySpec(
 }
 
 KernelLoaderSpec KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
-    std::vector<uint8_t> cubin_bytes, std::string kernel_name, size_t arity,
+    std::vector<uint8_t>&& cubin_bytes, std::string kernel_name, size_t arity,
     KernelArgsPacking kernel_args_packing) {
-  return KernelLoaderSpec{OwningCudaCubinInMemory{std::move(cubin_bytes)},
-                          std::move(kernel_name), arity, kernel_args_packing};
+  return KernelLoaderSpec{
+      OwningCudaCubinInMemory{InternCubinBytes(std::move(cubin_bytes))},
+      std::move(kernel_name), arity, kernel_args_packing};
+}
+
+KernelLoaderSpec KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
+    const std::vector<uint8_t>& cubin_bytes, std::string kernel_name,
+    size_t arity, KernelArgsPacking kernel_args_packing) {
+  return KernelLoaderSpec{
+      OwningCudaCubinInMemory{InternCubinBytes(cubin_bytes)},
+      std::move(kernel_name), arity, kernel_args_packing};
 }
 
 KernelLoaderSpec KernelLoaderSpec::CreateCudaPtxInMemorySpec(
