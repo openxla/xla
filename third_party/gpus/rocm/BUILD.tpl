@@ -300,6 +300,7 @@ rocm_lib_import(
     name = "miopen",
     data = glob([
         "%{rocm_root}/lib/libMIOpen.so*",
+        "%{rocm_root}/lib/libMIOpenCK*.so*",
         "%{rocm_root}/share/miopen/**",
         "%{rocm_root}/lib/librocm-core.so*",
     ]),
