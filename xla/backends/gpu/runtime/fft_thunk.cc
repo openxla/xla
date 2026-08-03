@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/fft_thunk.h"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -171,7 +173,7 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
   if (fft_plan == nullptr) {
     const int64_t fft_rank = fft_len.size();
     CHECK_LE(fft_rank, 3);
-    int batch_size = 1;
+    int64_t batch_size = 1;
     for (int i = 0; i < input_shape.dimensions().size() - fft_rank; ++i) {
       batch_size *= input_shape.dimensions(i);
     }
@@ -193,10 +195,15 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
     }
 
     constexpr bool kInPlaceFft = false;
+    // batch_size is int64_t but CreateBatchedPlanWithScratchAllocator takes
+    // int; guard against overflow (in practice batch_size <= INT_MAX for
+    // supported input sizes, but be explicit).
+    CHECK_LE(batch_size, std::numeric_limits<int>::max())
+        << "FFT batch_size overflows int: " << batch_size;
     fft_plan = fft->CreateBatchedPlanWithScratchAllocator(
         stream, fft_rank, fft_length, input_embed, input_stride, input_distance,
         output_embed, output_stride, output_distance, fft_type, kInPlaceFft,
-        batch_size, &scratch_allocator);
+        static_cast<int>(batch_size), &scratch_allocator);
     TF_RET_CHECK(fft_plan != nullptr)
         << "Failed to create cuFFT batched plan with scratch allocator";
     fft_plan_ptr->scale_factor = output_distance;
@@ -206,6 +213,15 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
   }
 
   uint64_t scale_factor = fft_plan_ptr->scale_factor;
+
+  // cuBLAS *scal routines use a 32-bit signed int for the element count.
+  // For arrays with more than INT_MAX elements (e.g. 1536^3 ~ 3.6B > 2^31),
+  // passing the count directly overflows to a negative value and cuBLAS
+  // silently scales zero elements, skipping normalisation entirely.
+  // We therefore chunk large arrays into segments of at most INT_MAX elements.
+  const int64_t total_elements = ShapeUtil::ElementsIn(output_shape);
+  constexpr int64_t kMaxBlasCount =
+      static_cast<int64_t>(std::numeric_limits<int>::max());
 
   bool launch_ok;
   switch (fft_type) {
@@ -227,9 +243,16 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
         ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
-        launch_ok =
-            blas->DoBlasScal(stream, ShapeUtil::ElementsIn(output_shape),
-                             complex64(1.0f / scale_factor), &output_data, 1);
+        const complex64 alpha(1.0f / static_cast<float>(scale_factor));
+        for (int64_t offset = 0; launch_ok && offset < total_elements;
+             offset += kMaxBlasCount) {
+          const int64_t chunk =
+              std::min(kMaxBlasCount, total_elements - offset);
+          se::DeviceAddress<complex64> chunk_data =
+              output_data.GetSlice(offset, chunk);
+          launch_ok = blas->DoBlasScal(stream, static_cast<int64_t>(chunk),
+                                       alpha, &chunk_data, 1);
+        }
       }
       break;
     }
@@ -239,9 +262,16 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
         ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
-        launch_ok =
-            blas->DoBlasScal(stream, ShapeUtil::ElementsIn(output_shape),
-                             complex128(1.0 / scale_factor), &output_data, 1);
+        const complex128 alpha(1.0 / static_cast<double>(scale_factor));
+        for (int64_t offset = 0; launch_ok && offset < total_elements;
+             offset += kMaxBlasCount) {
+          const int64_t chunk =
+              std::min(kMaxBlasCount, total_elements - offset);
+          se::DeviceAddress<complex128> chunk_data =
+              output_data.GetSlice(offset, chunk);
+          launch_ok = blas->DoBlasScal(stream, static_cast<int64_t>(chunk),
+                                       alpha, &chunk_data, 1);
+        }
       }
       break;
     }
@@ -263,9 +293,16 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
         ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
-        launch_ok =
-            blas->DoBlasScal(stream, ShapeUtil::ElementsIn(output_shape),
-                             1.0f / scale_factor, &output_data, 1);
+        const float alpha = 1.0f / static_cast<float>(scale_factor);
+        for (int64_t offset = 0; launch_ok && offset < total_elements;
+             offset += kMaxBlasCount) {
+          const int64_t chunk =
+              std::min(kMaxBlasCount, total_elements - offset);
+          se::DeviceAddress<float> chunk_data =
+              output_data.GetSlice(offset, chunk);
+          launch_ok = blas->DoBlasScal(stream, static_cast<int64_t>(chunk),
+                                       alpha, &chunk_data, 1);
+        }
       }
       break;
     }
@@ -275,9 +312,16 @@ absl::Status RunFft(se::DeviceAddressBase input, const Shape& input_shape,
       launch_ok = fft->DoFft(stream, fft_plan.get(), input_data, &output_data);
       if (launch_ok) {
         ASSIGN_OR_RETURN(auto blas, GetBlas(stream));
-        launch_ok =
-            blas->DoBlasScal(stream, ShapeUtil::ElementsIn(output_shape),
-                             1.0 / scale_factor, &output_data, 1);
+        const double alpha = 1.0 / static_cast<double>(scale_factor);
+        for (int64_t offset = 0; launch_ok && offset < total_elements;
+             offset += kMaxBlasCount) {
+          const int64_t chunk =
+              std::min(kMaxBlasCount, total_elements - offset);
+          se::DeviceAddress<double> chunk_data =
+              output_data.GetSlice(offset, chunk);
+          launch_ok = blas->DoBlasScal(stream, static_cast<int64_t>(chunk),
+                                       alpha, &chunk_data, 1);
+        }
       }
       break;
     }
