@@ -24,7 +24,6 @@ limitations under the License.
 #include "xla/core/collectives/registered_memory.h"
 #include "xla/stream_executor/device_address.h"
 
-
 namespace xla::gpu {
 
 // A RCCL local buffer registration handle (ncclCommRegister). Registering a

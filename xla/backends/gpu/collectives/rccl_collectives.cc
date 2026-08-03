@@ -219,7 +219,8 @@ RcclCollectives::CreateCommunicatorsWithCancel(
   XLA_RCCL_RETURN_IF_ERROR(ncclGetVersion(&rccl_version));
   if (clique_ids->data().size() != 1 && rccl_version < NCCL_VERSION(2, 23, 0)) {
     return InvalidArgument(
-        "CliqueIds size must be 1 for communicator initialization for RCCL version "
+        "CliqueIds size must be 1 for communicator initialization for RCCL "
+        "version "
         " lower than 2.23 (the linked RCCL version is %d.%d.%d).",
         rccl_version / 10000, (rccl_version / 100) % 100, rccl_version % 100);
   }
