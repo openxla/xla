@@ -313,10 +313,9 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
 
 absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
     const gpu::GemmConfig& cfg, Epilogue epilogue) const {
-  // hipBLASLt has no complex GEMM kernels; redirect C64/C128 to rocBLAS while
-  // still consuming the cublasLt matmul custom call emitted by GemmRewriter.
-  // TODO(magaonka-amd): Once we get a hipBLASLt that supports complex GEMMs,
-  // clean up this routing code.
+  // hipBLASLt supports complex GEMM kernels in ROCm 7.14 and ROCm 10 and newer;
+  // on legacy ROCm versions, redirect C64/C128 complex matmuls to rocBLAS.
+#if !(TF_ROCM_VERSION == 71400 || TF_ROCM_VERSION >= 100000)
   if (cfg.output_layout.dtype == xla::C64 ||
       cfg.output_layout.dtype == xla::C128) {
     TF_RET_CHECK(epilogue == Epilogue::kDefault)
@@ -325,6 +324,7 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
         << static_cast<int>(epilogue);
     return std::make_unique<RocBlasGemmPlan>(*this, cfg);
   }
+#endif  // no hipBLASLt complex GEMM
 
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
        output_layout = cfg.output_layout, c_layout = cfg.c_layout;
@@ -566,6 +566,7 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   return plan;
 }
 
+#if !(TF_ROCM_VERSION == 71400 || TF_ROCM_VERSION >= 100000)
 absl::Status BlasLt::RocBlasGemmPlan::ExecuteOnStream(
     Stream* stream, const gpu::BlasLt::MemoryArgs& args,
     blas::ProfileResult* profile_result) const {
@@ -637,6 +638,7 @@ absl::Status BlasLt::RocBlasGemmPlan::ExecuteOnStream(
   xla::complex128 beta(cfg_.beta, 0.0);
   return run(alpha, beta);
 }
+#endif  // no hipBLASLt complex GEMM
 
 absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
     Stream* stream, const gpu::BlasLt::MemoryArgs& args,
