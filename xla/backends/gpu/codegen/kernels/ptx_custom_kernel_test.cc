@@ -103,11 +103,11 @@ TEST(PtxCustomKernelTest, GetPtxCustomKernel) {
   CHECK_OK(stream->Memset32(&b, 2, byte_length));
   CHECK_OK(stream->MemZero(&c, byte_length));
 
-  stream_executor::KernelArgsDeviceAddressArray args(
-      std::vector<se::DeviceAddressBase>({a, b, c}),
-      custom_kernel.shared_memory_bytes());
+  std::vector<se::DeviceAddressBase> buffers = {a, b, c};
+  std::unique_ptr<se::KernelArgsPackedArray> args =
+      se::PackKernelArgs(buffers, custom_kernel.shared_memory_bytes());
   CHECK_OK(kernel->Launch(custom_kernel.thread_dims(),
-                          custom_kernel.block_dims(), stream.get(), args));
+                          custom_kernel.block_dims(), stream.get(), *args));
 
   CHECK_OK(stream->BlockHostUntilDone());
 
@@ -143,11 +143,11 @@ TEST(PtxCustomKernelTest, GetPtxCustomKernelWithClusterDim) {
   CHECK_OK(stream->Memset32(&b, 2, byte_length));
   CHECK_OK(stream->MemZero(&c, byte_length));
 
-  stream_executor::KernelArgsDeviceAddressArray args(
-      std::vector<se::DeviceAddressBase>({a, b, c}),
-      custom_kernel.shared_memory_bytes());
+  std::vector<se::DeviceAddressBase> buffers = {a, b, c};
+  std::unique_ptr<se::KernelArgsPackedArray> args =
+      se::PackKernelArgs(buffers, custom_kernel.shared_memory_bytes());
   CHECK_OK(kernel->Launch(custom_kernel.thread_dims(),
-                          custom_kernel.block_dims(), stream.get(), args));
+                          custom_kernel.block_dims(), stream.get(), *args));
 
   CHECK_OK(stream->BlockHostUntilDone());
 
@@ -222,11 +222,11 @@ TEST(PtxCustomKernelTest, GetOwnedPtxCustomKernel) {
   CHECK_OK(stream->Memset32(&b, 2, byte_length));
   CHECK_OK(stream->MemZero(&c, byte_length));
 
-  stream_executor::KernelArgsDeviceAddressArray args(
-      std::vector<se::DeviceAddressBase>({a, b, c}),
-      custom_kernel.shared_memory_bytes());
+  std::vector<se::DeviceAddressBase> buffers = {a, b, c};
+  std::unique_ptr<se::KernelArgsPackedArray> args =
+      se::PackKernelArgs(buffers, custom_kernel.shared_memory_bytes());
   CHECK_OK(kernel->Launch(custom_kernel.thread_dims(),
-                          custom_kernel.block_dims(), stream.get(), args));
+                          custom_kernel.block_dims(), stream.get(), *args));
 
   CHECK_OK(stream->BlockHostUntilDone());
 
