@@ -43,10 +43,11 @@ class OnecclCommunicator : public GpuCommunicator {
   static absl::StatusOr<std::unique_ptr<OnecclCommunicator>> Create(
       absl::AnyInvocable<absl::StatusOr<onecclComm_t>()> make_comm,
       bool is_async, tsl::Env& env = *tsl::Env::Default());
-  onecclComm_t comm() const { return comm_; }
+
   ~OnecclCommunicator() override;
 
   absl::StatusOr<size_t> NumRanks() const final;
+
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group);
 
   Future<> AllReduce(se::DeviceAddressBase send_buffer,
@@ -75,6 +76,8 @@ class OnecclCommunicator : public GpuCommunicator {
                 size_t count, RankId peer, const Executor& executor) final;
 
   std::string ToString() const final;
+
+  onecclComm_t comm() const { return comm_; }
 
   Future<> AllToAll(absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
                     absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,

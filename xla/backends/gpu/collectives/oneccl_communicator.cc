@@ -391,7 +391,6 @@ absl::Status OnecclCommunicator::LaunchAllToAll(
       return absl::OkStatus();
 }
 
-
 absl::StatusOr<std::unique_ptr<OnecclCommunicator>> OnecclCommunicator::Create(
     absl::AnyInvocable<absl::StatusOr<onecclComm_t>()> make_comm, bool is_async,
     tsl::Env& env) {
