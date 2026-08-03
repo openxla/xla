@@ -333,6 +333,12 @@ llvm::LogicalResult InsertTileOp::bufferize(
     mlir::RewriterBase& rewriter,
     const mlir::bufferization::BufferizationOptions& options,
     mlir::bufferization::BufferizationState& state) {
+  if (getAccumulate()) {
+    // Atomic accumulation is only supported by the Triton lowering
+    // (triton_xla_lower_xtile_pass); a plain materialize would silently
+    // overwrite instead of accumulate.
+    return emitOpError("accumulate is not supported by bufferization");
+  }
   mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
 
   mlir::Value is_full_size = TileIsFullSize(builder, *this);

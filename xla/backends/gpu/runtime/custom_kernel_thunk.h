@@ -72,6 +72,12 @@ class CustomKernelThunk : public Command {
 
   const CustomKernel& custom_kernel() const { return custom_kernel_; }
 
+  // Buffer indices zeroed before each launch (ExecuteOnStream only; not
+  // recorded into command buffers).
+  const std::vector<int64_t>& zeroed_output_buffer_indices() const {
+    return zeroed_output_buffer_indices_;
+  }
+
   const std::vector<ShapedSlice>& arguments() const { return args_; }
 
   absl::string_view custom_kernel_name() const { return custom_kernel_.name(); }

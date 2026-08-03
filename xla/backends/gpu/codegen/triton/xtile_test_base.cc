@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "xla/backends/gpu/codegen/triton/fused_splitk.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
@@ -102,10 +103,17 @@ CreateXTileIrAndFileCheckLegacy(
                    TilingFromAnnotatedFusion(symbolic_tile_analysis,
                                              block_level_parameters));
 
+  // Mirror production (TritonFusion) split-K selection on the test device.
+  int64_t split_k = ChooseFusedSplitKForFusionRoot(
+      *computation.root_instruction(),
+      TestGpuDeviceInfo::RTXA6000DeviceInfo());
+
   ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
       xtile::EmitXTileModule("xtile_dialect_fn", *fusion,
-                             symbolic_tile_analysis, tiling, *mlir_context));
+                             symbolic_tile_analysis, tiling, *mlir_context,
+                             /*opaque_args_types=*/{}, /*gpu_cc=*/{},
+                             split_k));
   return xtile_dialect_module;
 }
 

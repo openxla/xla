@@ -537,6 +537,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_collective_multi_streaming(false);
   opts.set_xla_gpu_experimental_force_split_k(0);
+  opts.set_xla_gpu_enable_split_k_rewriter(true);
+  opts.set_xla_gpu_enable_fused_split_k(true);
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_detect_unstable_reductions_post_optimizations(
@@ -3371,6 +3373,22 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_force_split_k(),
       "Force a specific split_k value. Zero (default) means do not force "
       "split_k and use the heuristic."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_split_k_rewriter",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_split_k_rewriter),
+      debug_options->xla_gpu_enable_split_k_rewriter(),
+      "When true (default), the split-K rewriter rewrites narrow dots with a "
+      "long contracting (K) dimension into a split-K dot followed by a reduce. "
+      "When false, the rewriter is a no-op and the dot is left intact for "
+      "normal codegen."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_fused_split_k",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_fused_split_k),
+      debug_options->xla_gpu_enable_fused_split_k(),
+      "When true (default), narrow dots may be emitted as a fused split-K "
+      "Triton kernel with an in-kernel atomic reduction. Also disabled by "
+      "the determinism flags, since atomic float addition is "
+      "nondeterministic."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_triton_warp_specialization",
       bool_setter_for(

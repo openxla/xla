@@ -248,6 +248,10 @@ class InsertOpOffsetsSizesStridesFolder final
         op, op.getSrc(), op.getDst(), mixed_offsets, op.getStaticSizes(),
         op.getStaticStrides(), op.getDstShape(), op.getDstLayout());
     new_op->setDiscardableAttrs(disable_attrs);
+    // setDiscardableAttrs above does not carry inherent attributes.
+    if (op.getAccumulate()) {
+      new_op.setAccumulate(true);
+    }
     return success();
   }
 };

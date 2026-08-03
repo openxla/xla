@@ -39,6 +39,10 @@ struct BlockLevelParameters {
   bool is_warp_specialization_allowed = false;
   int num_tiles_per_pid = 1;
   int waves_per_eu = 0;
+  // Fused split-K factor for dot fusions. Not part of the proto config: set
+  // programmatically by TritonFusion (see
+  // backends/gpu/codegen/triton/fused_splitk.h).
+  int64_t split_k = 1;
 
   // Returns a BlockLevelParameters struct from a BlockLevelFusionConfig proto.
   static BlockLevelParameters FromBlockLevelFusionConfig(

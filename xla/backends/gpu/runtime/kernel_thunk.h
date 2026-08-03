@@ -108,6 +108,12 @@ class KernelThunk : public Command {
   const std::vector<ShapedSlice>& arguments() const { return args_; }
   const std::vector<bool>& written() const { return written_; }
 
+  // Buffer indices zeroed before each launch (ExecuteOnStream only; not
+  // recorded into command buffers).
+  const std::vector<int64_t>& zeroed_output_buffer_indices() const {
+    return zeroed_output_buffer_indices_;
+  }
+
   const std::string& kernel_name() const { return kernel_name_; }
   const LaunchDimensions& launch_dimensions() const {
     return launch_dimensions_;

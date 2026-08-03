@@ -1017,6 +1017,20 @@ message DebugOptions {
   // the heuristic.
   optional int32 xla_gpu_experimental_force_split_k = 472;
 
+  // When true (default), the split-K rewriter rewrites narrow dots with a long
+  // contracting (K) dimension into a split-K dot followed by a reduce. When
+  // false, the rewriter is a no-op and the dot is left intact for normal
+  // codegen. Disabling this also disables xla_gpu_experimental_force_split_k.
+  optional bool xla_gpu_enable_split_k_rewriter = 528;
+
+  // When true (default), narrow dots (tiny non-contracting dims, long
+  // contracting dimension) may be emitted as a fused split-K Triton kernel:
+  // several programs per output tile, each reducing a slice of K and
+  // atomically accumulating into the pre-zeroed output. The atomic float
+  // additions make results run-to-run nondeterministic, so this is also
+  // disabled by the determinism flags.
+  optional bool xla_gpu_enable_fused_split_k = 529;
+
   // Enable GEMM fusion v2 pass for building Triton fusions.
   optional bool xla_gpu_experimental_gemm_fusion_v2 = 475;
 
@@ -1773,7 +1787,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 528
+  // Next id: 530
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

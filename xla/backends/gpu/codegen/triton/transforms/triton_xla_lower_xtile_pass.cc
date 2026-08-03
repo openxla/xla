@@ -275,6 +275,9 @@ class XTileInsertToTriton : public mlir::OpRewritePattern<xtile::InsertTileOp> {
         rewriter, insert_op.getLoc(), insert_op.getSource(), memref_to_ptr,
         insert_op.getOffsets(), insert_op.getFullTileShape(),
         insert_op.getStrides(), destination_type.getShape(), minor_to_major);
+    if (insert_op.getAccumulate()) {
+      triton_insert_op.setAccumulate(true);
+    }
 
     rewriter.replaceOp(insert_op, triton_insert_op);
 

@@ -165,6 +165,108 @@ INSTANTIATE_TEST_SUITE_P(TritonEmitterTestWithTilingParamTestSuite,
                            return TilingParametersToString(info.param);
                          });
 
+// Split-K is only supported by the classic (non-propagation) tiling path.
+class TritonSplitKEmitterTest : public TritonEmitterTest {
+ public:
+  bool EnableTilingPropagation() const override { return false; }
+};
+
+// A batched narrow dot (tiny M/N, long K); the emitter splits the
+// contraction via the fused split-K heuristic, each program atomically
+// accumulating its partial into the pre-zeroed output. The atomics reorder the f32 additions, hence the
+// tolerance instead of an exact match.
+// The split-K atomics reorder the f32 additions, hence a tolerance instead
+// of an exact match.
+constexpr ErrorSpec kSplitKTolerance{/*aabs=*/1e-4, /*arel=*/1e-4};
+
+constexpr absl::string_view kSplitKDotHloText = R"(
+fdot {
+  p0 = bf16[8,2,4096] parameter(0)
+  p1 = bf16[8,4096,2] parameter(1)
+  ROOT dot = f32[8,2,2] dot(p0, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1},
+    backend_config={sizes:[64]}
+}
+
+ENTRY entry {
+  p0 = bf16[8,2,4096] parameter(0)
+  p1 = bf16[8,4096,2] parameter(1)
+  ROOT fusion = f32[8,2,2] fusion(p0, p1),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1","16","16"]}],
+          "num_warps":"4",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
+
+TEST_F(TritonSplitKEmitterTest, SplitKDotEmitsDecomposedPidAndAccumulate) {
+  // The fused split-K factor is chosen by the device heuristic
+  // (fused_splitk.h): on the RTXA6000 test device (84 SMs) with 8 output
+  // tiles and 64 contraction tiles it picks split_k=32, so the K loop
+  // shrinks to 64/32 = 2 iterations. The program id must be decomposed into
+  // (output tile, split) via divui/remui, and the output tile store must
+  // carry the `accumulate` unit attribute (later lowered to an atomic fadd).
+  TF_EXPECT_OK(CreateXTileIrAndFileCheck(kSplitKDotHloText, "fdot", R"(
+CHECK: arith.remui
+CHECK: arith.divui
+CHECK: scf.for {{.*}} to %c2 step
+CHECK: xtile.insert
+CHECK-SAME: accumulate
+)")
+                   .status());
+}
+
+TEST_F(TritonSplitKEmitterTest, SplitKDotAccumulatesCorrectly) {
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kSplitKDotHloText, kSplitKTolerance));
+}
+
+// Same split-K dot with a tiny (unpadded) output tile: the dot must be
+// emitted as an FMA-style multiply+reduce (no stablehlo.dot_general, which
+// would pad up to the 16x8 MMA tile and waste almost all of its lanes).
+constexpr absl::string_view kTinyTileSplitKDotHloText = R"(
+fdot {
+  p0 = bf16[8,2,4096] parameter(0)
+  p1 = bf16[8,4096,2] parameter(1)
+  ROOT dot = f32[8,2,2] dot(p0, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1},
+    backend_config={sizes:[64]}
+}
+
+ENTRY entry {
+  p0 = bf16[8,2,4096] parameter(0)
+  p1 = bf16[8,4096,2] parameter(1)
+  ROOT fusion = f32[8,2,2] fusion(p0, p1),
+    kind=kCustom, calls=fdot, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1","2","2"]}],
+          "num_warps":"4",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
+
+TEST_F(TritonSplitKEmitterTest, TinyTileSplitKDotUsesFmaReduction) {
+  TF_EXPECT_OK(CreateXTileIrAndFileCheck(kTinyTileSplitKDotHloText, "fdot", R"(
+CHECK-NOT: stablehlo.dot_general
+CHECK: stablehlo.multiply
+CHECK: stablehlo.reduce
+CHECK: xtile.insert
+CHECK-SAME: accumulate
+)")
+                   .status());
+}
+
+TEST_F(TritonSplitKEmitterTest, TinyTileSplitKDotAccumulatesCorrectly) {
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(kTinyTileSplitKDotHloText, kSplitKTolerance));
+}
+
 class TmaParameterizedTritonEmitterTest
     : public TritonEmitterTest,
       public ::testing::WithParamInterface<std::tuple<bool, bool>> {

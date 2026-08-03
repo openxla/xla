@@ -44,7 +44,9 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
@@ -181,7 +183,27 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
         return std::nullopt;
       }
     case Thunk::kCustomKernel:
+      // Pre-launch output zeroing happens only in ExecuteOnStream and is not
+      // recorded into command buffers; converting such a thunk would make
+      // its atomic accumulation reuse stale outputs on every replay.
+      if (auto* custom_kernel_thunk =
+              dynamic_cast<const CustomKernelThunk*>(&thunk);
+          custom_kernel_thunk != nullptr &&
+          !custom_kernel_thunk->zeroed_output_buffer_indices().empty()) {
+        VLOG(2) << "Not converting custom kernel thunk with zeroed outputs: "
+                << thunk.profile_annotation();
+        return std::nullopt;
+      }
+      return DebugOptions::FUSION;
     case Thunk::kKernel:
+      if (auto* kernel_thunk = dynamic_cast<const KernelThunk*>(&thunk);
+          kernel_thunk != nullptr &&
+          !kernel_thunk->zeroed_output_buffer_indices().empty()) {
+        VLOG(2) << "Not converting kernel thunk with zeroed outputs: "
+                << thunk.profile_annotation();
+        return std::nullopt;
+      }
+      return DebugOptions::FUSION;
     case Thunk::kPartitionId:
     case Thunk::kReplicaId:
       return DebugOptions::FUSION;

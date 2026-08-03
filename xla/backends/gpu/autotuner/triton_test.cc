@@ -180,6 +180,88 @@ TEST_P(TritonBackendTest, GetSupportedConfigs) {
   }
 }
 
+const char kNarrowDotHlo[] = R"(
+  HloModule module
+
+  computation {
+    p0 = bf16[256,2,65536]{2,1,0} parameter(0)
+    p1 = bf16[256,65536,2]{2,1,0} parameter(1)
+    ROOT dot = f32[256,2,2]{2,1,0} dot(p0, p1),
+        lhs_batch_dims={0}, lhs_contracting_dims={2},
+        rhs_batch_dims={0}, rhs_contracting_dims={1}
+  }
+
+  ENTRY main {
+    p0 = bf16[256,2,65536]{2,1,0} parameter(0)
+    p1 = bf16[256,65536,2]{2,1,0} parameter(1)
+    ROOT fusion = f32[256,2,2]{2,1,0} fusion(p0, p1),
+      kind=kCustom, calls=computation,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })";
+
+TEST_P(TritonBackendTest, NarrowDotGetsTinyTileCandidate) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kNarrowDotHlo));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction())));
+  // A narrow f32-output dot with a long contraction must get a tiny-tile
+  // candidate (block_m/n = real M/N, emitted as an FMA multiply+reduce; the
+  // emitter applies fused split-K automatically) — unless fused split-K is
+  // unavailable, as under the experimental tiling emitter. No candidate
+  // carries the legacy split_k config field.
+  const bool fused_split_k_available = !GetParam();
+  EXPECT_EQ(std::any_of(configs.begin(), configs.end(),
+                        [](const auto& config) {
+                          return config->has_triton() &&
+                                 config->triton().block_m() <= 8 &&
+                                 config->triton().block_n() <= 8;
+                        }),
+            fused_split_k_available);
+  EXPECT_TRUE(std::none_of(configs.begin(), configs.end(),
+                           [](const auto& config) {
+                             return config->has_triton() &&
+                                    config->triton().split_k() > 1;
+                           }));
+}
+
+TEST_P(TritonBackendTest, NarrowDotDefaultConfigIsTinyTile) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kNarrowDotHlo));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BackendConfig> config,
+      backend_.GetDefaultConfig(
+          *(module->entry_computation()->root_instruction())));
+  ASSERT_TRUE(config->has_triton());
+  // Without autotuning, the default for a narrow dot must be the tiny-tile
+  // FMA config; the fused split-K factor itself is not a config parameter
+  // (the emitter picks it via the device heuristic in fused_splitk.h). Under
+  // the experimental tiling emitter fused split-K is unavailable, so the
+  // default falls back to a regular config.
+  if (!GetParam()) {
+    EXPECT_LE(config->triton().block_m(), 8);
+    EXPECT_LE(config->triton().block_n(), 8);
+  }
+  EXPECT_LE(config->triton().split_k(), 1);
+}
+
+TEST_P(TritonBackendTest, FatDotGetsNoTinyTileCandidate) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs,
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction())));
+  // Large dots must not get tiny-tile/split-K treatment: they parallelize
+  // fine over output tiles.
+  EXPECT_TRUE(std::none_of(configs.begin(), configs.end(),
+                           [](const auto& config) {
+                             return config->has_triton() &&
+                                    config->triton().split_k() > 1;
+                           }));
+}
+
 TEST_P(TritonBackendTest, GetSupportedConfigsForScaledDot) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kScaledDotHlo));

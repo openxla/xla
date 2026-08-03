@@ -142,6 +142,10 @@ def TTXLA_InsertOp : TTXLA_OpWithOffsetSizesAndStrides<"insert"> {
     insert. Shape and minor-to-major layout specify the layout of the
     destination pointer.
 
+    If `accumulate` is set, the tile is atomically added (fadd) to the
+    destination instead of overwriting it; the destination must be pre-zeroed
+    or hold a valid partial sum. Used for split-K style in-kernel reductions.
+
     Assembly format:
       %src into %dst as memref<...> [%offsets] [%sizes] [%strides] : tensor_type
 
@@ -173,7 +177,8 @@ def TTXLA_InsertOp : TTXLA_OpWithOffsetSizesAndStrides<"insert"> {
     DenseI64ArrayAttr:$static_sizes,
     DenseI64ArrayAttr:$static_strides,
     DenseI64ArrayAttr:$dst_shape,
-    DenseI64ArrayAttr:$dst_layout
+    DenseI64ArrayAttr:$dst_layout,
+    UnitAttr:$accumulate
   );
 
   let assemblyFormat = [{

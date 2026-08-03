@@ -496,8 +496,18 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
     SmallVector<unsigned> reduced_dims = to_vector(*reduction_mask);
     absl::c_sort(reduced_dims);
 
-    if (CanUseTma(op, allow_tma_, num_stages_, dst_shape, sizes, strides,
-                  offsets, op.getDst(), dst_layout)) {
+    if (op.getAccumulate()) {
+      // Split-K in-kernel reduction: atomically add the tile into the
+      // (pre-zeroed) destination. TMA/TDM descriptor stores cannot
+      // accumulate, so always go through a tensor of pointers.
+      auto [ptr, mask] = xtriton::CreateTensorOfPointersAndMask(
+          builder, op.getDst(), dst_shape, dst_layout, offsets, sizes, strides,
+          reduced_dims, tile_shape);
+      AtomicRMWOp::create(builder, op.getSrc().getType(), RMWOp::FADD, ptr,
+                          op.getSrc(), mask, MemSemantic::RELAXED,
+                          MemSyncScope::GPU);
+    } else if (CanUseTma(op, allow_tma_, num_stages_, dst_shape, sizes,
+                         strides, offsets, op.getDst(), dst_layout)) {
       if (auto result = CanonicalizeTileStrides(strides, sizes, dst_shape);
           !result.ok()) {
         return rewriter.notifyMatchFailure(op, result.message());

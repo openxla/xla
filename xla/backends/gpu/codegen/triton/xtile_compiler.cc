@@ -330,6 +330,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
                        constraints.Explain()));
     }
     VLOG(4) << "tiled computation: " << tiled_computation.ToString();
+    if (block_level_parameters.split_k > 1) {
+      // The launch grid is multiplied by split_k (see
+      // TritonFusion::GetLaunchConfig); silently ignoring it here would
+      // produce wrong results.
+      return absl::UnimplementedError(
+          "Split-K is not supported by the experimental tiling emitter");
+    }
     return xtile::EmitXTileModule(
         fn_name, fusion, tiled_computation, mlir_context,
         absl::MakeSpan(opaque_args_types),
@@ -357,7 +364,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
   return xtile::EmitXTileModule(
       fn_name, fusion, symbolic_tile_analysis, tiling, mlir_context,
       absl::MakeSpan(opaque_args_types),
-      std::make_optional(device_info.gpu_compute_capability()));
+      std::make_optional(device_info.gpu_compute_capability()),
+      block_level_parameters.split_k);
 }
 
 absl::StatusOr<TritonKernelSource> CreateTritonModule(

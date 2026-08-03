@@ -344,11 +344,22 @@ absl::StatusOr<TensorValue> EmitTiledBitcast(
                                   normalized_reshape);
 }
 
+// Split-K configuration threaded from EmitGeneric down to EmitDot. When
+// split_k > 1, each output tile is computed cooperatively by `split_k`
+// programs, each reducing a contiguous slice of the contraction dimension.
+// The partial results are atomically accumulated into the pre-zeroed output
+// (see the `accumulate` attribute on xtile::InsertTileOp).
+struct SplitKInfo {
+  int64_t split_k = 1;
+  Value k_split_id = nullptr;  // Index-typed split id; set iff split_k > 1.
+};
+
 absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
     Value pid,
-    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values);
+    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values,
+    const SplitKInfo& split_k_info);
 // Returns the number of iterations of the loop over the contracting
 // dimension of matrix multiplication.
 absl::StatusOr<int64_t> GetDotLoopIterationCount(
@@ -452,7 +463,8 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
     Value pid,
-    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values);
+    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values,
+    const SplitKInfo& split_k_info = {});
 
 absl::Status EmitTiledInstructionList(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
@@ -477,7 +489,8 @@ absl::StatusOr<TensorValue> EmitDot(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
     Value pid,
-    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
+    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values,
+    const SplitKInfo& split_k_info) {
   // Symbolic tiling analysis identifies instructions that belong to the dot
   // and puts them inside of the dot's `region`.
   //
@@ -506,13 +519,25 @@ absl::StatusOr<TensorValue> EmitDot(
 
   ASSIGN_OR_RETURN(int64_t loop_iteration_count,
                    GetDotLoopIterationCount(tiled_hlo_dot));
+  const int64_t split_k = split_k_info.split_k;
+  if (split_k > 1) {
+    TF_RET_CHECK(split_k_info.k_split_id != nullptr);
+    if (loop_iteration_count % split_k != 0) {
+      return absl::UnimplementedError(absl::StrCat(
+          "Split-K requires the contraction tile count (", loop_iteration_count,
+          ") to be divisible by split_k (", split_k, ")"));
+    }
+  }
+  const int64_t iters_per_split = loop_iteration_count / split_k;
   auto ctx = b.getContext();
   auto pid_dim = CreateDimExpr(0, ctx);
   auto ki_symbol = CreateSymbolExpr(0, /*num_dims=*/1, ctx);
   SmallVector<SymbolicExpr> result_exprs;
   result_exprs.push_back(pid_dim * loop_iteration_count + ki_symbol);
   // Instructions in the region are tiled with indexing map
-  // 'pid * loop_iter_count + ki'.
+  // 'pid * loop_iter_count + ki', where with split-K `ki` is the *global*
+  // k-iteration (k_split_id * iters_per_split + induction variable), so the
+  // same map and tail masking apply unchanged.
   IndexingMap computation_index_map{
       SymbolicMap::Get(ctx, /*num_dimensions=*/1, /*num_symbols=*/1,
                        result_exprs),
@@ -524,13 +549,18 @@ absl::StatusOr<TensorValue> EmitDot(
   auto for_op = mlir::scf::ForOp::create(
       b,
       /*lowerBound=*/MakeIndex(b, 0),
-      /*upperBound=*/MakeIndex(b, loop_iteration_count),
+      /*upperBound=*/MakeIndex(b, iters_per_split),
       /*step=*/MakeIndex(b, 1), accumulator);
 
   {  // Loop body.
     mlir::OpBuilder::InsertionGuard g(b);
     b.setInsertionPointToStart(for_op.getBody());
     Value ki = for_op.getInductionVar();
+    if (split_k > 1) {
+      Value split_base = arith::MulIOp::create(
+          b, split_k_info.k_split_id, MakeIndex(b, iters_per_split));
+      ki = arith::AddIOp::create(b, split_base, ki);
+    }
     Value computation_index = xla::ApplyIndexingOp::create(
                                   b, ValueRange{pid, ki}, computation_index_map)
                                   .getResult(0);
@@ -953,7 +983,8 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloInstruction& tiled_hlo, mlir::FunctionOpInterface fn,
     Value pid,
-    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
+    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values,
+    const SplitKInfo& split_k_info) {
   const HloInstruction* hlo = tiled_hlo.hlo();
   VLOG(4) << "EmitTiledHloInstruction: " << hlo->ToString();
 
@@ -1012,7 +1043,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kDot) {
-    return EmitDot(b, fusion, tiled_hlo, fn, pid, values);
+    return EmitDot(b, fusion, tiled_hlo, fn, pid, values, split_k_info);
   }
 
   if (hlo->opcode() == HloOpcode::kScaledDot) {
@@ -1102,7 +1133,8 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
     Value pid,
-    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
+    absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values,
+    const SplitKInfo& split_k_info) {
   VLOG(2) << "EmitTiledComputation: " << tiled_computation.ToString();
   for (const TiledHloInstruction* tiled_hlo :
        tiled_computation.instructions()) {
@@ -1121,9 +1153,9 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
       VLOG(1) << "Skipping nested fusion: " << hlo->ToString();
       continue;
     }
-    ASSIGN_OR_RETURN(
-        TensorValue result,
-        EmitTiledHloInstruction(b, fusion, *tiled_hlo, fn, pid, values));
+    ASSIGN_OR_RETURN(TensorValue result,
+                     EmitTiledHloInstruction(b, fusion, *tiled_hlo, fn, pid,
+                                             values, split_k_info));
     TF_RET_CHECK(values.insert({tiled_hlo, result}).second) << hlo->ToString();
     VLOG(8) << "Emitted " << hlo->ToString(HloPrintOptions::ShortParsable());
   }
@@ -1143,7 +1175,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
                          const HloFusionInstruction& fusion,
                          const SymbolicTileAnalysis& symbolic_tile_analysis,
                          const Tiling& tiling, xtile::EntryFuncOp fn,
-                         MLIRContext* mlir_context) {
+                         MLIRContext* mlir_context, int64_t split_k) {
   if (VLOG_IS_ON(6)) {
     VLOG(6) << "Emitting XTile IR for fusion\n"
             << ExtractInstructionIntoNewModule(fusion)->ToString();
@@ -1205,10 +1237,36 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
           << tiled_hlo_computation.ToString();
 
   Value tile_id = fn.getProgramId();
+  SplitKInfo split_k_info;
+  if (split_k > 1) {
+    // Split-K requires a single root which is the dot itself, and an output
+    // element type matching the f32 accumulator type: the atomic add is the
+    // cross-split reduction, so there is no place to round to a narrower
+    // output type without losing the partial sums. Callers gate on
+    // fused_splitk.h, so these are defensive checks for the public
+    // EmitXTileModule parameter.
+    if (roots.size() != 1 || root->opcode() != HloOpcode::kDot) {
+      return absl::UnimplementedError(
+          "Split-K is only supported for single-root dot fusions");
+    }
+    if (root->shape().element_type() != F32) {
+      return absl::UnimplementedError(
+          "Split-K requires an f32 dot output (the accumulator type)");
+    }
+    // The grid is num_output_tiles * split_k; decompose the program id so
+    // that consecutive programs cover different output tiles (spreading the
+    // atomic accumulations across the output).
+    int64_t num_output_tiles = tiled_hlo_computation.num_output_tiles();
+    Value num_tiles = MakeIndex(b, num_output_tiles);
+    Value raw_pid = tile_id;
+    tile_id = arith::RemUIOp::create(b, raw_pid, num_tiles);
+    split_k_info.split_k = split_k;
+    split_k_info.k_split_id = arith::DivUIOp::create(b, raw_pid, num_tiles);
+  }
   absl::flat_hash_map<const TiledHloInstruction*, TensorValue> values;
   ASSIGN_OR_RETURN(auto results,
                    EmitTiledComputation(b, fusion, tiled_hlo_computation, fn,
-                                        tile_id, values));
+                                        tile_id, values, split_k_info));
 
   const HloComputation* computation = fusion.fused_instructions_computation();
   for (auto [root, result, arg] :
@@ -1229,9 +1287,15 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
         auto tile_info,
         TileInfo::Construct(b, tile_id, /*runtime_values=*/{}, *root));
 
-    xtile::InsertTileOp::create(b, result, arg, tile_info.offsets(),
-                                tile_info.padded_tile_sizes(),
-                                tile_info.tile_strides());
+    auto insert_op = xtile::InsertTileOp::create(b, result, arg,
+                                                 tile_info.offsets(),
+                                                 tile_info.padded_tile_sizes(),
+                                                 tile_info.tile_strides());
+    if (split_k > 1) {
+      // Each split holds a partial sum; accumulate atomically into the
+      // pre-zeroed output instead of overwriting it.
+      insert_op.setAccumulate(true);
+    }
   }
 
   return absl::OkStatus();
@@ -1246,7 +1310,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     absl::string_view fn_name, const HloFusionInstruction& fusion,
     const SymbolicTileAnalysis& symbolic_tile_analysis, const Tiling& tiling,
     MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
-    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc) {
+    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc,
+    int64_t split_k) {
   const auto debug_options = fusion.GetModule()->config().debug_options();
 
   if (fusion.IsMultiOutputFusion() &&
@@ -1282,7 +1347,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   b.setInsertionPointToStart(&fn.front());
 
   RETURN_IF_ERROR(EmitGeneric(b, fusion, symbolic_tile_analysis, tiling, fn,
-                              &mlir_context));
+                              &mlir_context, split_k));
 
   b.create<xtile::EntryFuncReturnOp>();
 

@@ -24,6 +24,7 @@ limitations under the License.
 #include "google/protobuf/any.pb.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/numeric/bits.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/triton/cost_model_config_optimization.h"
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
+#include "xla/backends/gpu/codegen/triton/fused_splitk.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
@@ -179,6 +181,26 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
     *config->mutable_triton() = gemm_config.ToProto();
     configs.push_back(std::move(config));
   }
+
+  // For narrow dots, add a tiny-tile candidate and order it first: with an
+  // unpadded output tile the dot is emitted as an FMA multiply+reduce, and
+  // the emitter applies fused split-K automatically (see
+  // backends/gpu/codegen/triton/fused_splitk.h). Ordering it first makes it
+  // the no-autotuning default (GetDefaultConfig).
+  if (std::optional<NarrowDotSizes> sizes = FusedSplitKQualifyingSizes(dot);
+      sizes.has_value() && dot == dot->parent()->root_instruction() &&
+      FusedSplitKEnabled(dot->GetModule()->config())) {
+    auto config = std::make_unique<BackendConfig>();
+    // block_k=256 is always valid here since qualification requires
+    // k >= 4096; one stage and four warps match the FMA reduction kernel.
+    *config->mutable_triton() =
+        TritonGemmConfig(
+            static_cast<int>(absl::bit_ceil(static_cast<uint64_t>(sizes->m))),
+            static_cast<int>(absl::bit_ceil(static_cast<uint64_t>(sizes->n))),
+            /*block_k=*/256, /*num_stages=*/1, /*num_warps=*/4)
+            .ToProto();
+    configs.insert(configs.begin(), std::move(config));
+  }
   return configs;
 }
 
@@ -300,6 +322,8 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
   // FromProto has validation checks, that's why we call it here.
   RETURN_IF_ERROR(TritonGemmConfig::FromProto(triton_config_proto).status());
   if (triton_config_proto.split_k() > 1) {
+    // Fused split-K is an emitter heuristic, not a config parameter (see
+    // backends/gpu/codegen/triton/fused_splitk.h).
     return absl::InvalidArgumentError(
         "TritonBackend no longer supports split-k (split_k > 1).");
   }

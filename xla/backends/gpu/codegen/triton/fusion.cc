@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
+#include "xla/backends/gpu/codegen/triton/fused_splitk.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
@@ -67,6 +68,20 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+// Returns the fused split-K factor for this fusion; see fused_splitk.h.
+// This is the single decision point: the launch grid, the kernel emission
+// and the output pre-zeroing all derive from it.
+static int64_t GetFusedSplitK(const HloFusionAnalysis& analysis) {
+  if (analysis.fusion_root_count() != 1) {
+    return 1;
+  }
+  const HloInstruction& root = analysis.fusion_root(0).instruction();
+  if (!FusedSplitKEnabled(root.GetModule()->config())) {
+    return 1;
+  }
+  return ChooseFusedSplitKForFusionRoot(root, analysis.device_info());
+}
 
 // Since we are creating the kernel and splicing the impl_fn into it, we
 // need to manually annotate the kernel with the nvvm.annotations.
@@ -106,6 +121,7 @@ xla::Future<TritonWrapperResult> TritonFusion::GenerateTritonKernelAndWrapper(
   BlockLevelParameters block_level_parameters =
       BlockLevelParameters::FromBlockLevelFusionConfig(
           analysis_.fusion_backend_config().block_level_fusion_config());
+  block_level_parameters.split_k = GetFusedSplitK(analysis_);
   ASSIGN_OR_RETURN(
       TritonKernelSource kernel_source,
       CreateTritonModule(impl_fn_name, fusion, device_info,
@@ -128,10 +144,11 @@ AsyncThunkSequence TritonFusion::Emit(
     const HloFusionInstruction& fusion) const {
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       &fusion, ir_emitter_context.GetNextThunkId());
+  const int64_t split_k = GetFusedSplitK(analysis_);
   return Emit(ir_emitter_context, fusion, nullptr, {})
       .Map(
-          [thunk_info = std::move(thunk_info)](
-              EmitResult result) -> absl::StatusOr<ThunkSequence> {
+          [thunk_info = std::move(thunk_info),
+           split_k](EmitResult result) -> absl::StatusOr<ThunkSequence> {
             ASSIGN_OR_RETURN(
                 CustomKernel custom_kernel,
                 kernel::CreateOwnedCubinCustomKernel(
@@ -140,9 +157,23 @@ AsyncThunkSequence TritonFusion::Emit(
                     result.entry.launch_dimensions.block_counts(),
                     result.entry.launch_dimensions.thread_counts_per_block(),
                     result.entry.shmem_bytes));
+            // With split-K, programs atomically accumulate partial results
+            // into the outputs, so the output buffers must be zeroed first.
+            std::vector<int64_t> zeroed_outputs;
+            if (split_k > 1) {
+              const auto& args = result.kernel_arguments.args();
+              for (size_t i = 0; i < args.size(); ++i) {
+                if (args[i].written()) {
+                  zeroed_outputs.push_back(i);
+                }
+              }
+            }
+            // Programmatic dependent launch could start the kernel before
+            // the pre-zeroing completes; keep them mutually exclusive.
+            const bool use_pdl = result.entry.use_pdl && zeroed_outputs.empty();
             return ThunkSequence::Of<CustomKernelThunk>(
                 thunk_info, std::move(custom_kernel), result.kernel_arguments,
-                result.entry.use_pdl, std::vector<int64_t>{},
+                use_pdl, std::move(zeroed_outputs),
                 result.entry.tma_metadata);
           });
 }
@@ -305,6 +336,10 @@ std::optional<TritonFusion::LaunchConfig> TritonFusion::GetLaunchConfig(
                                block_level_parameters.output_tile_sizes[i]),
              num_blocks);
   }
+  // Fused split-K (see fused_splitk.h): `split_k` programs cooperate on each
+  // output tile, atomically accumulating into the pre-zeroed output.
+  block_level_parameters.split_k = GetFusedSplitK(*analysis);
+  num_blocks *= block_level_parameters.split_k;
 
   LaunchConfig launch_config;
   // TODO(b/451901200): We eventually also want to be able to predict this

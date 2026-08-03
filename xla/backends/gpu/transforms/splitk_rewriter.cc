@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/codegen/triton/fused_splitk.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -394,6 +395,19 @@ class SplitkRewriterVisitor : public DfsHloRewriteVisitor {
                          .debug_options()
                          .xla_gpu_experimental_force_split_k();
     if (split_k == 0) {
+      if (FusedSplitKEnabled(dot->GetModule()->config()) &&
+          FusedSplitKQualifyingSizes(dot).has_value()) {
+        // Narrow f32-output dots are better served by the fused split-K
+        // emission (a single Triton kernel with an atomic reduction; see
+        // backends/gpu/codegen/triton/fused_splitk.h) than by the dot+reduce
+        // rewrite below, which costs a second kernel and an HBM round-trip
+        // of the partials. The force_split_k flag above still overrides.
+        // Note: fused emission only fires when the dot ends up as the root
+        // of a Triton dot fusion; when it does not (e.g. a fused epilogue),
+        // the dot stays unsplit, which measured faster than the dot+reduce
+        // rewrite for these narrow shapes anyway.
+        return absl::OkStatus();
+      }
       split_k = ChooseSplitK(GetDotDimensions(dot), device_description_);
     }
     if (split_k == 1) {
@@ -413,6 +427,11 @@ class SplitkRewriterVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> SplitkRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  if (!module->config().debug_options().xla_gpu_enable_split_k_rewriter()) {
+    // The rewriter is disabled; leave dots intact for normal codegen. This also
+    // takes precedence over xla_gpu_experimental_force_split_k.
+    return false;
+  }
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {

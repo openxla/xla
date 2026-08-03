@@ -215,6 +215,10 @@ def ExtractTileOp : XTile_Op<"extract", [TiledBufferInterface]> {
 def InsertTileOp : XTile_Op<"insert", [TiledBufferInterface]> {
   let summary = "Insert a tile into a memref.";
   let description = [{
+    If `accumulate` is set, the tile is atomically added to the destination
+    (which must be pre-zeroed or hold a valid partial sum) instead of
+    overwriting it. This is used for split-K style reductions where multiple
+    programs accumulate partial results into the same output tile.
   }];
 
   let arguments = (ins
@@ -222,7 +226,8 @@ def InsertTileOp : XTile_Op<"insert", [TiledBufferInterface]> {
     AnyMemRef:$destination,
     Variadic<Index>:$offsets,
     DenseI64ArrayAttr:$full_tile_shape,
-    DenseI64ArrayAttr:$strides
+    DenseI64ArrayAttr:$strides,
+    UnitAttr:$accumulate
   );
 
   let results = (outs);

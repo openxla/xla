@@ -17,6 +17,43 @@ package_group(
 )
 
 cc_library(
+    name = "fused_splitk",
+    srcs = ["fused_splitk.cc"],
+    hdrs = ["fused_splitk.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "//xla/service:matmul_indexing_utils",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "fused_splitk_test",
+    srcs = ["fused_splitk_test.cc"],
+    deps = [
+        ":fused_splitk",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "fusion",
     srcs = ["fusion.cc"],
     hdrs = ["fusion.h"],
@@ -25,6 +62,7 @@ cc_library(
         "//xla/service/gpu:__subpackages__",
     ],
     deps = [
+        ":fused_splitk",
         ":triton_kernel_source",
         ":xtile_compiler",
         "//xla:frontend_attributes",
@@ -514,6 +552,7 @@ cc_library(
     srcs = ["xtile_test_base.cc"],
     hdrs = ["xtile_test_base.h"],
     deps = [
+        ":fused_splitk",
         ":xtile_compiler",
         "//xla:status_macros",
         "//xla:util",

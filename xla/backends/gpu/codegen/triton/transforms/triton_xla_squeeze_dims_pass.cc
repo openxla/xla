@@ -180,9 +180,14 @@ LogicalResult SqueezeInsertTile(::xla::xtile::InsertTileOp op,
   }
 
   Value src = SqueezeTensorValue(rewriter, op.getSource(), squeeze_dims);
-  rewriter.replaceOpWithNewOp<::xla::xtile::InsertTileOp>(
+  auto new_op = rewriter.replaceOpWithNewOp<::xla::xtile::InsertTileOp>(
       op, src, op.getDestination(), op.getOffsets(), op.getFullTileShape(),
       op.getStrides());
+  // Dropping the inherent `accumulate` attribute would silently turn the
+  // split-K accumulation into an overwrite.
+  if (op.getAccumulate()) {
+    new_op.setAccumulate(true);
+  }
   return success();
 }
 

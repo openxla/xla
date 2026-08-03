@@ -147,6 +147,111 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
 
 namespace {
 
+// Maximum size of each non-contracting tile dimension for which the dot is
+// emitted as an FMA-style broadcast-multiply + reduce instead of a
+// stablehlo.dot_general. For such narrow dots the tensor-core lowering pads
+// the tile up to the 16x8 MMA shape, wasting almost all MMA lanes and (for
+// split-K narrow dots) leaving significant bandwidth on the floor.
+constexpr int64_t kMaxFmaReductionTileDim = 8;
+
+// Matches the canonical narrow-dot tile: one contracting dimension per side,
+// contracting last on the LHS and first (after batch) on the RHS, all batch
+// tile dimensions equal to 1, and tiny non-contracting dimensions.
+bool ShouldEmitDotAsFmaReduction(
+    mlir::stablehlo::DotDimensionNumbersAttr dims, mlir::RankedTensorType lhs_ty,
+    mlir::RankedTensorType rhs_ty) {
+  auto lhs_batch = dims.getLhsBatchingDimensions();
+  auto rhs_batch = dims.getRhsBatchingDimensions();
+  auto lhs_contract = dims.getLhsContractingDimensions();
+  auto rhs_contract = dims.getRhsContractingDimensions();
+  if (lhs_contract.size() != 1 || rhs_contract.size() != 1) {
+    return false;
+  }
+  int64_t lhs_rank = lhs_ty.getRank();
+  int64_t rhs_rank = rhs_ty.getRank();
+  // Batch dims must be the leading dims, all with tile size 1.
+  for (auto [i, d] : llvm::enumerate(lhs_batch)) {
+    if (d != static_cast<int64_t>(i) || lhs_ty.getDimSize(d) != 1) {
+      return false;
+    }
+  }
+  for (auto [i, d] : llvm::enumerate(rhs_batch)) {
+    if (d != static_cast<int64_t>(i) || rhs_ty.getDimSize(d) != 1) {
+      return false;
+    }
+  }
+  int64_t nb = lhs_batch.size();
+  if (rhs_batch.size() != nb || lhs_rank != nb + 2 || rhs_rank != nb + 2) {
+    return false;
+  }
+  // Canonical [B..,M,K] x [B..,K,N].
+  if (lhs_contract[0] != lhs_rank - 1 || rhs_contract[0] != nb) {
+    return false;
+  }
+  int64_t m = lhs_ty.getDimSize(nb);
+  int64_t n = rhs_ty.getDimSize(nb + 1);
+  int64_t k = lhs_ty.getDimSize(lhs_rank - 1);
+  return m <= kMaxFmaReductionTileDim && n <= kMaxFmaReductionTileDim &&
+         k > std::max(m, n);
+}
+
+// Emits `acc + lhs x rhs` as broadcast-multiply + reduce(add) over the
+// contraction: [M,K] x [K,N] -> mul into [M,K,N] -> sum over K -> [M,N].
+// Operands are cast to the accumulator element type first, so the reduction
+// runs at accumulator precision (like the MMA path's accumulator).
+absl::StatusOr<Value> EmitFmaReductionDotAndAdd(mlir::ImplicitLocOpBuilder& b,
+                                                Value lhs, Value rhs,
+                                                Value acc) {
+  auto acc_ty = mlir::cast<mlir::RankedTensorType>(acc.getType());
+  Type elem_ty = acc_ty.getElementType();
+  auto lhs_ty = mlir::cast<mlir::RankedTensorType>(lhs.getType());
+  auto rhs_ty = mlir::cast<mlir::RankedTensorType>(rhs.getType());
+  int64_t rank = lhs_ty.getRank();
+  int64_t m = lhs_ty.getDimSize(rank - 2);
+  int64_t k = lhs_ty.getDimSize(rank - 1);
+  int64_t n = rhs_ty.getDimSize(rank - 1);
+
+  // The reduction runs at accumulator precision (like the MMA path's
+  // accumulator); note this intentionally ignores the operand precision
+  // config, which only affects tt.dot lowering choices.
+  lhs = Cast(b, lhs, elem_ty);
+  rhs = Cast(b, rhs, elem_ty);
+
+  // Squeeze the (all-1) batch dims: [1..,M,K] -> [M,K], [1..,K,N] -> [K,N].
+  auto reshape = [&](Value v, llvm::ArrayRef<int64_t> shape) -> Value {
+    auto ty = mlir::RankedTensorType::get(shape, elem_ty);
+    return mlir::stablehlo::ReshapeOp::create(b, ty, v);
+  };
+  auto lhs2 = mlir::cast<TensorValue>(reshape(lhs, {m, k}));
+  auto rhs2 = mlir::cast<TensorValue>(reshape(rhs, {k, n}));
+
+  Value lhs_b = BroadcastInDims(b, lhs2, {m, k, n}, {0, 1});
+  Value rhs_b = BroadcastInDims(b, rhs2, {m, k, n}, {1, 2});
+  Value prod = mlir::stablehlo::MulOp::create(b, lhs_b, rhs_b);
+
+  // Sum over K (axis 1) at accumulator precision.
+  auto scalar_ty = mlir::RankedTensorType::get({}, elem_ty);
+  Value zero = CreateConst(b, elem_ty, 0.0f, /*shape=*/{});
+  auto reduce = mlir::stablehlo::ReduceOp::create(
+      b, mlir::TypeRange{mlir::RankedTensorType::get({m, n}, elem_ty)},
+      mlir::ValueRange{prod}, mlir::ValueRange{zero},
+      b.getDenseI64ArrayAttr({1}));
+  {
+    mlir::OpBuilder::InsertionGuard guard(b);
+    mlir::Block& block = reduce.getBody().emplaceBlock();
+    block.addArgument(scalar_ty, b.getLoc());
+    block.addArgument(scalar_ty, b.getLoc());
+    b.setInsertionPointToStart(&block);
+    Value sum = mlir::stablehlo::AddOp::create(b, block.getArgument(0),
+                                               block.getArgument(1));
+    mlir::stablehlo::ReturnOp::create(b, mlir::ValueRange{sum});
+  }
+
+  // Restore the batch dims and accumulate.
+  Value result = reshape(reduce.getResult(0), acc_ty.getShape());
+  return mlir::arith::AddFOp::create(b, acc, result).getResult();
+}
+
 Value EmitStableHloDotAndAdd(mlir::ImplicitLocOpBuilder& b, Value lhs,
                              Value rhs, Value acc, PrecisionSpec precision_spec,
                              mlir::stablehlo::DotDimensionNumbersAttr dims) {
@@ -303,9 +408,21 @@ absl::StatusOr<Value> EmitSingleTileDot(mlir::ImplicitLocOpBuilder& b,
       xla::stablehlo::ConvertDotDimensionNumbers(dot.dot_dimension_numbers(),
                                                  &b);
 
-  Value result = EmitStableHloDotAndAdd(b, dot_operands.lhs, dot_operands.rhs,
-                                        dot_operands.accumulator,
-                                        precision_spec, dot_dimension_numbers);
+  Value result;
+  if (algorithm == PrecisionConfig::ALG_UNSET &&
+      mlir::isa<mlir::FloatType>(ElementType(dot_operands.accumulator)) &&
+      ShouldEmitDotAsFmaReduction(
+          dot_dimension_numbers,
+          mlir::cast<mlir::RankedTensorType>(dot_operands.lhs.getType()),
+          mlir::cast<mlir::RankedTensorType>(dot_operands.rhs.getType()))) {
+    ASSIGN_OR_RETURN(result, EmitFmaReductionDotAndAdd(
+                                 b, dot_operands.lhs, dot_operands.rhs,
+                                 dot_operands.accumulator));
+  } else {
+    result = EmitStableHloDotAndAdd(b, dot_operands.lhs, dot_operands.rhs,
+                                    dot_operands.accumulator, precision_spec,
+                                    dot_dimension_numbers);
+  }
 
   // TODO(b/393299275): once we've moved on from the legacy emitter, we should
   // make sure that this accumulator type is equal to the one derived here.

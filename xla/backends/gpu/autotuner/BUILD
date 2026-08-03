@@ -294,6 +294,7 @@ cc_library(
     tags = ["gpu"],
     deps = [
         ":gpu_codegen_backend",
+        "//xla/backends/gpu/codegen/triton:fused_splitk",
         "//xla:autotuning_proto_cc",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -329,6 +330,7 @@ cc_library(
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

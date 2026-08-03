@@ -531,3 +531,35 @@ module {
 // CHECK-TDM-LABEL: tt.func @apply_mask_to_aligned_offset_with_out_of_bounds_reads_at_end
 // CHECK-TDM:         tt.descriptor_load
 // CHECK-TDM:         tt.descriptor_store
+
+// -----
+
+func.func @insert_accumulate(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>) {
+  %extracted_tensor = triton_xla.extract from %arg0
+      as memref<128x128xf32, #xtile.layout<[1, 0]>>
+      [0, 0] [16, 64] [1, 1] : tensor<16x64xf32>
+  triton_xla.insert %extracted_tensor into %arg1
+      as memref<256x256xf32, #xtile.layout<[1, 0]>>
+      [0, 0] [16, 64] [1, 1] {accumulate} : tensor<16x64xf32>
+  func.return
+}
+
+// The accumulate insert must lower to an atomic fadd rather than a store, so
+// that split-K programs can reduce into the same (pre-zeroed) output tile.
+// CHECK-LABEL: tt.func @insert_accumulate(
+// CHECK:         %[[LOAD:.*]] = tt.load
+// CHECK-NOT:     tt.store
+// CHECK:         tt.atomic_rmw fadd, relaxed, gpu, %{{.*}}, %[[LOAD]]
+// CHECK:         tt.return
+
+// Even with TMA enabled, accumulate must bypass descriptor stores (TMA cannot
+// accumulate) and still emit the atomic fadd.
+// CHECK-TMA-LABEL: tt.func @insert_accumulate
+// CHECK-TMA-NOT:     tt.descriptor_store
+// CHECK-TMA:         tt.atomic_rmw fadd, relaxed, gpu
+// CHECK-TMA-NOT:     tt.descriptor_store
+
+// CHECK-TDM-LABEL: tt.func @insert_accumulate
+// CHECK-TDM-NOT:     tt.descriptor_store
+// CHECK-TDM:         tt.atomic_rmw fadd, relaxed, gpu
+// CHECK-TDM-NOT:     tt.descriptor_store

@@ -45,12 +45,18 @@ namespace xla::xtile {
 // arguments for collectives in XLA:GPU.
 // gpu_cc: When set, used check for supported data types (e.g. FNUZ on ROCm),
 // Omit otherwise.
+// `split_k` > 1 emits a split-K dot kernel: the grid is multiplied by
+// `split_k`, each program reduces a contiguous slice of the contraction
+// dimension, and partial results are atomically accumulated into the
+// pre-zeroed output. Only supported for single-root dot fusions with an f32
+// output.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     absl::string_view fn_name, const HloFusionInstruction& fusion,
     const SymbolicTileAnalysis& symbolic_tile_analysis, const Tiling& tiling,
     mlir::MLIRContext& mlir_context,
     absl::Span<mlir::Type> opaque_args_types = {},
-    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc = {});
+    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc = {},
+    int64_t split_k = 1);
 
 }  // namespace xla::xtile
 

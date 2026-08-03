@@ -4010,6 +4010,7 @@ cc_library(
     srcs = ["splitk_rewriter.cc"],
     hdrs = ["splitk_rewriter.h"],
     deps = [
+        "//xla/backends/gpu/codegen/triton:fused_splitk",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:util",
