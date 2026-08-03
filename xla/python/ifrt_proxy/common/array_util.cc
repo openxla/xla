@@ -131,7 +131,7 @@ absl::StatusOr<ArrayMemRegion> ArrayMemRegion::FromZerothElementPointer(
       if (overflow) {
         return absl::InvalidArgumentError(absl::StrCat(
             "byte_stride[", i, "] * (dim[", i, "] - 1) overflows: stride=",
-            stride, " dim[", i, "]=", shape.dims()[i]));
+            stride, " dim=", shape.dims()[i]));
       }
       last_element_byte_offset += static_cast<uint64_t>(product);
     }
