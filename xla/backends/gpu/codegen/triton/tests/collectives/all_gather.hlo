@@ -38,6 +38,13 @@ ENTRY entry {
 // CHECK-SAME:   %[[ARG5:[a-zA-Z0-9_]+]]: !tt.ptr<!tt.ptr<f32>>,
 // CHECK-SAME:   %[[PID:[a-zA-Z0-9_]+]]: index)
 
+// A single cross-device barrier is emitted at the entry of the function
+// (before the peer reads) so every rank publishes its shard into symmetric
+// memory before any rank reads its peers via select_buffer.
+// CHECK:        ttg.barrier
+// CHECK:        triton_xla.block_barrier %[[ARG4]], %[[ARG2]], %[[ARG3]]
+// CHECK-NOT:    triton_xla.block_barrier
+
 // CHECK:        %[[IDX0:.*]] = xla.apply_indexing #[[MAP0]](%[[PID]])
 // CHECK:        %[[IDX1:.*]] = xla.apply_indexing #[[MAP1]](%[[PID]])
 // CHECK:        %[[IDX2:.*]] = xla.apply_indexing #[[MAP2]](%[[PID]])

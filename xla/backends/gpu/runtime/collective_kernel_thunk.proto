@@ -30,6 +30,9 @@ enum KernelArgTypeProto {
   KERNEL_ARG_TYPE_RUNTIME_RANK = 3;
   KERNEL_ARG_TYPE_INVOCATION_COUNT = 4;
   KERNEL_ARG_TYPE_SCRATCH_BUFFER = 5;
+  // A per-operand table of peer pointers (memref<Rxi64>) pointing to each
+  // rank's symmetric/collective-memory buffer for that operand.
+  KERNEL_ARG_TYPE_REPLICA_POINTER_TABLE = 6;
 }
 
 enum SymmetricMemoryTypeProto {

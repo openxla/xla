@@ -169,6 +169,45 @@ absl::StatusOr<TensorValue> EmitAllReduce(
   return mlir::cast<TensorValue>(all_reduce_op.getResult(0));
 }
 
+absl::StatusOr<TensorValue> EmitAllGather(
+    EmitterContext& emitter_ctx, const HloAllGatherInstruction* all_gather,
+    const ge::TiledHloInstruction& tiled_all_gather, ValueRange operands) {
+  if (all_gather->device_list()->replica_groups().empty()) {
+    return Internal(
+        "Triton emitting AllGather without replica groups is not supported.");
+  }
+  ImplicitLocOpBuilder& b = emitter_ctx.b();
+
+  llvm::SmallVector<int64_t> flattened_replica_group_ids;
+  for (const auto& replica_group : all_gather->replica_groups()) {
+    for (const auto& replica_id : replica_group.replica_ids()) {
+      flattened_replica_group_ids.push_back(replica_id);
+    }
+  }
+  auto replica_groups_type = mlir::RankedTensorType::get(
+      {static_cast<int64_t>(all_gather->replica_groups().size()),
+       static_cast<int64_t>(
+           all_gather->replica_groups()[0].replica_ids_size())},
+      b.getI64Type());
+  auto replica_groups_attr = mlir::DenseIntElementsAttr::get(
+      replica_groups_type, flattened_replica_group_ids);
+
+  std::optional<int64_t> channel_handle = all_gather->channel_id();
+  auto channel_handle_attr =
+      channel_handle ? mlir::stablehlo::ChannelHandleAttr::get(
+                           b.getContext(), *channel_handle, /*type=*/0)
+                     : nullptr;
+
+  // The operand is the already-gathered output tile. We keep the op as a
+  // barrier marker; the all_gather_dim is preserved for the lowering.
+  auto all_gather_op = mlir::stablehlo::AllGatherOp::create(
+      b, /*result_types=*/mlir::TypeRange(operands.front().getType()), operands,
+      /*all_gather_dim=*/all_gather->all_gather_dimension(),
+      replica_groups_attr, channel_handle_attr,
+      all_gather->use_global_device_ids());
+  return mlir::cast<TensorValue>(all_gather_op.getResult(0));
+}
+
 absl::StatusOr<TensorValue> EmitBroadcast(
     mlir::ImplicitLocOpBuilder& b,
     const ge::TiledHloInstruction& tiled_broadcast, TensorValue input) {
@@ -1187,7 +1226,19 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   // Please keep the cases in alphabetical order.
   switch (hlo->opcode()) {
     case HloOpcode::kAllGather: {
-      // AllGather is a no-op. Tile extraction handles the data movement.
+      // Tile extraction (via select_buffer) already performed the cross-device
+      // data movement. We still emit a `stablehlo.all_gather` marker op so the
+      // Triton lowering can bracket it with entry/exit block barriers to make
+      // the symmetric-memory reads safe.
+      const HloComputation* computation =
+          fusion.fused_instructions_computation();
+      const HloInstruction* root_instruction = computation->root_instruction();
+      if (root_instruction->opcode() == HloOpcode::kAllGather) {
+        return EmitAllGather(
+            emitter_ctx, xla::Cast<HloAllGatherInstruction>(root_instruction),
+            tiled_hlo, operands);
+      }
+      // Nested/non-root all-gather: fall back to the no-op behavior.
       return emitter_ctx.TiledHloToTensorValue(*tiled_hlo.operand(0));
     }
     case HloOpcode::kAllReduce: {
