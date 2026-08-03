@@ -1915,8 +1915,8 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
 
 TEST_F(DynamicSliceFusionRewriterV2Test, TupleOutputOneDUS) {
   // Hero produces (f32[8,8], f32[8,8]). Only the first output flows through
-  // DUS; the second is returned directly (passthrough). The fusion output
-  // must be a tuple containing both the DUS result and the passthrough GTE.
+  // DUS. External users of the sliced and passthrough outputs must read the
+  // corresponding fusion outputs.
   const char* hlo = R"(
     HloModule test
 
@@ -1930,11 +1930,13 @@ TEST_F(DynamicSliceFusionRewriterV2Test, TupleOutputOneDUS) {
           custom_call_target="fake_target"
       gte0 = f32[8,8] get-tuple-element(hero), index=0
       gte1 = f32[8,8] get-tuple-element(hero), index=1
+      gte0_external = f32[8,8] get-tuple-element(hero), index=0
       bc0 = f32[1,8,8] bitcast(gte0)
       dus = f32[4,8,8] dynamic-update-slice(buf, bc0, ivar, c0, c0)
+      new_prev = f32[8,8] add(gte0_external, gte1)
       c1 = s32[] constant(1)
       next_ivar = s32[] add(ivar, c1)
-      ROOT result = (s32[], f32[4,8,8], f32[8,8]) tuple(next_ivar, dus, gte1)
+      ROOT result = (s32[], f32[4,8,8], f32[8,8]) tuple(next_ivar, dus, new_prev)
     }
 
     condition {
@@ -1968,9 +1970,14 @@ TEST_F(DynamicSliceFusionRewriterV2Test, TupleOutputOneDUS) {
     ; CHECK:       ROOT {{.*}} tuple(
     ; CHECK:     }
     ; CHECK:     body
-    ; CHECK:       {{.*}} fusion(
+    ; CHECK:       [[FUSION:%[^ ]+]] = {{.*}} fusion(
     ; CHECK-SAME:         kind=kCustom
     ; CHECK-SAME:         "name":"dynamic_slice_fusion"
+    ; CHECK:       [[GTE0:%[^ ]+]] = f32[4,8,8]{{.*}} get-tuple-element([[FUSION]]), index=0
+    ; CHECK:       [[DS:%[^ ]+]] = f32[1,8,8]{{.*}} dynamic-slice([[GTE0]],
+    ; CHECK:       [[BC:%[^ ]+]] = f32[8,8]{{.*}} bitcast([[DS]])
+    ; CHECK:       [[GTE1:%[^ ]+]] = f32[8,8]{{.*}} get-tuple-element([[FUSION]]), index=1
+    ; CHECK:       {{.*}} = f32[8,8]{{.*}} add([[BC]], [[GTE1]])
     ; CHECK:     }
   )";
 
