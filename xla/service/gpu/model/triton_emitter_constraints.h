@@ -60,10 +60,13 @@ class TritonEmitterConstraints : public EmitterSpecificConstraints {
 
   // Holds the info needed to validate whether the tiling parameters satisfy the
   // constraint that they are either powers of 2, or equal to the dimension
-  // size.
+  // size, and to estimate the shared memory required to stage the root tile.
   struct RootTileInfo {
     SymbolicMap size_map;
     std::vector<int64_t> dim_sizes;
+    // Byte size of the element type of the root instruction, used to estimate
+    // the shared memory required to stage its tile.
+    int64_t element_byte_size;
   };
 
   explicit TritonEmitterConstraints(
@@ -109,7 +112,8 @@ class TritonEmitterConstraints : public EmitterSpecificConstraints {
   llvm::SmallVector<SymbolicMap, 4> tile_size_maps_;
 
   // Holds the info for all fusion roots necessary to check whether the tile
-  // sizes evaluate to powers of 2 or have the same size as the dimension.
+  // sizes evaluate to powers of 2 or have the same size as the dimension, and
+  // to estimate the shared memory required to stage the root tiles.
   llvm::SmallVector<RootTileInfo, 2> roots_;
 
   // Custom emitter-specific constraints to check in

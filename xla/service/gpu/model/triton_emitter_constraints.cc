@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
@@ -129,10 +130,13 @@ TritonEmitterConstraints::GetBuilder(
             return &instr.instruction() == tiled_hlo_instruction->hlo();
           })) {
         const auto& shape = tiled_hlo_instruction->hlo()->shape();
-        root_infos.push_back(
-            RootTileInfo{tiled_hlo_instruction->symbolic_tile().size_map(),
-                         shape.IsArray() ? SpanToVector(shape.dimensions())
-                                         : std::vector<int64_t>()});
+        root_infos.push_back(RootTileInfo{
+            tiled_hlo_instruction->symbolic_tile().size_map(),
+            shape.IsArray() ? SpanToVector(shape.dimensions())
+                            : std::vector<int64_t>(),
+            shape.IsArray()
+                ? ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type())
+                : 0});
       }
     }
 
@@ -168,6 +172,19 @@ int64_t NumberOfElementsInPaddedTile(
   }
 
   return num_elements;
+}
+
+// Returns a conservative estimate (in bytes) of the shared memory required to
+// stage the tile described by `tile_size_map`/`tiling_parameters` for an
+// instruction whose element type occupies `element_byte_size` bytes.
+//
+// The estimate is the product of the power-of-2-padded tile sizes (i.e. the
+// number of elements in the padded tile) multiplied by the element byte size.
+int64_t EstimateTileSharedMemoryBytes(
+    const SymbolicMap& tile_size_map,
+    absl::Span<const int64_t> tiling_parameters, int64_t element_byte_size) {
+  return NumberOfElementsInPaddedTile(tile_size_map, tiling_parameters) *
+         element_byte_size;
 }
 
 // Checks whether the number of programs to launch on the grid is under the
@@ -211,6 +228,23 @@ absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
   if (!NumberOfBlocksFitsOnDeviceGrid(root_shape_, tile_parameters,
                                       device_info_)) {
     VLOG(2) << "Number of blocks exceeds the device grid limit. Bailing out.";
+    return false;
+  }
+
+  // Verify that no root tile would require more shared memory than the device
+  // provides. We only check root (output) tiles because those are the tiles
+  // that get materialized in shared memory; intermediate/operand tiles (e.g.
+  // the full-row load of a reduction) are streamed and don't all live in shared
+  // memory at once.
+  const int64_t shared_memory_limit =
+      device_info_.shared_memory_per_block_optin();
+  if (absl::c_any_of(roots_, [&](const RootTileInfo& root) {
+        return EstimateTileSharedMemoryBytes(root.size_map, tile_parameters,
+                                             root.element_byte_size) >
+               shared_memory_limit;
+      })) {
+    VLOG(2) << "Found a root tile that would exceed the shared memory limit of "
+            << shared_memory_limit << " bytes. Bailing out.";
     return false;
   }
 
@@ -388,6 +422,32 @@ Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
             ", which is neither a power of 2 nor equal to the dimension size ",
             d, "."));
       }
+    }
+
+    // Shared memory limit.
+    // Estimate the shared memory required to stage the root tile as the product
+    // of the power-of-2-padded tile sizes multiplied by the element byte size,
+    // and reject tiles that would exceed the device shared memory limit.
+    // We only check root (output) tiles because those are the tiles that get
+    // materialized in shared memory; intermediate/operand tiles (e.g. the
+    // full-row load of a reduction) are streamed and don't all live in shared
+    // memory at once.
+    int64_t padded_root_tile_elements = 1;
+    for (int64_t t : root_tile_sizes) {
+      padded_root_tile_elements *= llvm::PowerOf2Ceil(t);
+    }
+    const int64_t element_byte_size =
+        ShapeUtil::ByteSizeOfPrimitiveType(root->hlo()->shape().element_type());
+    const int64_t shared_memory_bytes =
+        padded_root_tile_elements * element_byte_size;
+    const int64_t shared_memory_limit =
+        device_info.shared_memory_per_block_optin();
+    if (shared_memory_bytes > shared_memory_limit) {
+      return Decision::Forbid(absl::StrCat(
+          "Root instruction ", root->hlo()->name(),
+          " has a tile that requires an estimated ", shared_memory_bytes,
+          " bytes of shared memory, which exceeds the device limit of ",
+          shared_memory_limit, " bytes."));
     }
 
     // Check that the number of blocks fits on the device grid X.

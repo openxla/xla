@@ -177,6 +177,46 @@ ENTRY entry_computation {
               absl_testing::IsOkAndHolds(false));
 }
 
+TEST_F(TritonEmitterConstraintsTest, SharedMemoryConstraintIsEnforced) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT log = f32[1024,1024] log(param_0)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT fusion = f32[1024,1024] fusion(param_0), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)"));
+
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+  const HloInstruction* fusion_root =
+      module->entry_computation()->root_instruction()->fused_expression_root();
+
+  // The RTX A6000 test device has 99 * 1024 = 101376 bytes of opt-in shared
+  // memory. A [128, 128] f32 tile requires 128 * 128 * 4 = 65536 bytes, which
+  // fits.
+  EXPECT_THAT(analysis->ParametersSatisfyConstraints(
+                  Tiling({{fusion_root, FlatTiling({128, 128})}})),
+              absl_testing::IsOkAndHolds(true));
+
+  // A [256, 128] f32 tile requires 256 * 128 * 4 = 131072 bytes, which exceeds
+  // the shared memory limit. The tile is otherwise valid (32768 elements is
+  // below the tensor size limit, tile sizes are powers of 2, and the number of
+  // blocks fits on the grid), so it is the shared memory constraint that
+  // rejects it.
+  EXPECT_THAT(analysis->ParametersSatisfyConstraints(
+                  Tiling({{fusion_root, FlatTiling({256, 128})}})),
+              absl_testing::IsOkAndHolds(false));
+}
+
 TEST_F(TritonEmitterConstraintsTest, TooManyBlocksConstraintIsEnforced) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
@@ -426,6 +466,35 @@ ENTRY entry_computation {
   EXPECT_OK(CheckTiling(module.get(), {4, 4, 4}));
   EXPECT_THAT(CheckTiling(module.get(), {512, 4, 4}),
               StatusIs(_, HasSubstr("exceeds the maximum MMA dimension size")));
+}
+
+TEST_F(VerifyTritonConstraintsTest, SharedMemoryConstraintIsEnforced) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT log = f32[1024,1024] log(param_0)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT fusion = f32[1024,1024] fusion(param_0), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  // The RTX A6000 test device has 99 * 1024 = 101376 bytes of opt-in shared
+  // memory. A [128, 128] f32 tile requires 128 * 128 * 4 = 65536 bytes, which
+  // fits.
+  EXPECT_OK(CheckTiling(module.get(), {128, 128}));
+
+  // A [256, 128] f32 tile requires 256 * 128 * 4 = 131072 bytes, which exceeds
+  // the shared memory limit.
+  EXPECT_THAT(CheckTiling(module.get(), {256, 128}),
+              StatusIs(_, HasSubstr("exceeds the device limit")));
 }
 
 TEST_F(VerifyTritonConstraintsTest, TooManyBlocksConstraintIsEnforced) {
