@@ -37,7 +37,7 @@ class OnecclCollectives : public GpuCollectives {
  public:
   bool IsImplemented() const final { return true; }
 
-  sl::StatusOr<CliqueId> CreateUniqueCliqueId() const final;
+  absl::StatusOr<CliqueId> CreateUniqueCliqueId() const final;
 
   // TODO(Intel-tf): CreateCommunicatorsWithCancel is not supported yet. Will
   // add support once we have onecclCommAbort and onecclCommGetAsyncError
