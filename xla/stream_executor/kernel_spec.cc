@@ -15,10 +15,8 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_spec.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -37,43 +35,32 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/Support/BLAKE3.h"
 #include "xla/stream_executor/kernel_args_packing_spec.h"
 #include "xla/stream_executor/kernel_spec.pb.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/platform/fingerprint.h"
 
 namespace stream_executor {
 namespace {
 
-using CubinFingerprint = std::array<uint8_t, 32>;
-
-struct CubinFingerprintHash {
-  size_t operator()(const CubinFingerprint& fingerprint) const {
-    size_t low;
-    std::memcpy(&low, fingerprint.data(), sizeof(low));
-    return low;
-  }
-};
-
-CubinFingerprint ComputeCubinFingerprint(absl::Span<const uint8_t> bytes) {
-  return llvm::BLAKE3::hash(
-      llvm::ArrayRef<uint8_t>(bytes.data(), bytes.size()));
+tsl::Fprint128 ComputeCubinFingerprint(absl::Span<const uint8_t> bytes) {
+  return tsl::Fingerprint128(absl::string_view(
+      reinterpret_cast<const char*>(bytes.data()), bytes.size()));
 }
 
 struct CubinCacheEntry {
-  CubinCacheEntry(const CubinFingerprint& fingerprint,
+  CubinCacheEntry(const tsl::Fprint128& fingerprint,
                   std::vector<uint8_t> binary)
       : fingerprint(fingerprint), binary(std::move(binary)) {}
   ~CubinCacheEntry();
 
-  const CubinFingerprint fingerprint;
+  const tsl::Fprint128 fingerprint;
   const std::vector<uint8_t> binary;
 };
 
 ABSL_CONST_INIT absl::Mutex cubin_cache_mu(absl::kConstInit);
 absl::NoDestructor<absl::flat_hash_map<
-    CubinFingerprint, std::weak_ptr<CubinCacheEntry>, CubinFingerprintHash>>
+    tsl::Fprint128, std::weak_ptr<CubinCacheEntry>, tsl::Fprint128Hasher>>
     cubin_cache ABSL_GUARDED_BY(cubin_cache_mu);
 
 CubinCacheEntry::~CubinCacheEntry() {
@@ -89,7 +76,8 @@ CubinCacheEntry::~CubinCacheEntry() {
 template <typename Bytes>
 std::shared_ptr<const std::vector<uint8_t>> InternCubinBytes(
     Bytes&& cubin_bytes) {
-  const CubinFingerprint fingerprint = ComputeCubinFingerprint(cubin_bytes);
+  const size_t cubin_bytes_size = cubin_bytes.size();
+  const tsl::Fprint128 fingerprint = ComputeCubinFingerprint(cubin_bytes);
 
   absl::MutexLock lock(&cubin_cache_mu);
   std::weak_ptr<CubinCacheEntry>& slot = (*cubin_cache)[fingerprint];
@@ -99,6 +87,7 @@ std::shared_ptr<const std::vector<uint8_t>> InternCubinBytes(
                                               std::forward<Bytes>(cubin_bytes));
     slot = entry;
   }
+  CHECK_EQ(cubin_bytes_size, entry->binary.size());
   return std::shared_ptr<const std::vector<uint8_t>>(entry, &entry->binary);
 }
 
