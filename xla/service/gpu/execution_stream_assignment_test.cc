@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/side_effect_util.h"
 
 namespace xla::gpu {
 namespace {
@@ -408,6 +409,12 @@ TEST_F(ExecutionStreamAssignmentTest,
   EXPECT_THAT(
       assignment.GetExecutionStreamId(group_start),
       absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(3))));
+
+  group_start->set_frontend_attribute(kXlaStreamAnnotationAttr, "7");
+  assignment = ExecutionStreamAssignment(module.get());
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(group_start),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(7))));
   EXPECT_THAT(assignment.GetExecutionStreamId(
                   FindInstruction(module.get(), "group-done")),
               absl_testing::StatusIs(absl::StatusCode::kNotFound));

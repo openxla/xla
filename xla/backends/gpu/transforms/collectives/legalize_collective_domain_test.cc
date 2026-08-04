@@ -21,6 +21,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_format.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -36,6 +37,22 @@ using ::absl_testing::StatusIs;
 using ::testing::HasSubstr;
 
 class LegalizeCollectiveDomainTest : public HloHardwareIndependentTestBase {};
+
+TEST(CollectiveDomainTest, StringRoundTrip) {
+  for (CollectiveCommunicationDomain domain :
+       {kUnspecifiedCollectiveDomain, kScaleUpFabricCollectiveDomain}) {
+    EXPECT_THAT(
+        ParseCollectiveCommunicationDomain(absl::StrFormat("%v", domain)),
+        absl_testing::IsOkAndHolds(domain));
+  }
+}
+
+TEST(CollectiveDomainTest, ParsingIsCaseInsensitive) {
+  EXPECT_THAT(ParseCollectiveCommunicationDomain("UnSpEcIfIeD"),
+              absl_testing::IsOkAndHolds(kUnspecifiedCollectiveDomain));
+  EXPECT_THAT(ParseCollectiveCommunicationDomain("ScAlE_Up_FaBrIc"),
+              absl_testing::IsOkAndHolds(kScaleUpFabricCollectiveDomain));
+}
 
 TEST_F(LegalizeCollectiveDomainTest, PromotesFrontendAttribute) {
   const char* const hlo = R"(
@@ -60,9 +77,11 @@ TEST_F(LegalizeCollectiveDomainTest, PromotesFrontendAttribute) {
   LegalizeCollectiveDomain legalizer;
   EXPECT_THAT(legalizer.Run(module.get()), absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(RunFileCheck(module->ToString(), R"(
-// CHECK-NOT: collective_communication_domain
-// CHECK: ROOT %ar = {{.*}}all-reduce({{.*}}){{.*}}backend_config={{.*}}communication_domain{{.*}}COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC
-// CHECK-NOT: collective_communication_domain
+//  CHECK-NOT: collective_communication_domain
+//      CHECK: ROOT %ar = {{.*}}all-reduce({{.*}})
+// CHECK-SAME:   backend_config={{.*}}communication_domain
+// CHECK-SAME:   COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC
+//  CHECK-NOT: collective_communication_domain
 )"),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(legalizer.Run(module.get()), absl_testing::IsOkAndHolds(false));
@@ -170,9 +189,11 @@ TEST_F(LegalizeCollectiveDomainTest, PromotesLegacyAsyncCollective) {
   LegalizeCollectiveDomain legalizer;
   EXPECT_THAT(legalizer.Run(module.get()), absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(RunFileCheck(module->ToString(), R"(
-// CHECK-NOT: collective_communication_domain
-// CHECK: %start = {{.*}}all-reduce-start({{.*}}){{.*}}backend_config={{.*}}communication_domain{{.*}}COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC
-// CHECK: ROOT %done = {{.*}}all-reduce-done(%start)
+//  CHECK-NOT: collective_communication_domain
+//      CHECK: %start = {{.*}}all-reduce-start({{.*}})
+// CHECK-SAME:   backend_config={{.*}}communication_domain
+// CHECK-SAME:   COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC
+// CHECK:      ROOT %done = {{.*}}all-reduce-done(%start)
 // CHECK-NOT: collective_communication_domain
 )"),
               absl_testing::IsOkAndHolds(true));

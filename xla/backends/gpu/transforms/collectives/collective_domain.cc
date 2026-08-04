@@ -15,8 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 
+#include <string>
+
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -55,7 +58,11 @@ absl::Status ValidateCollectiveCommunicationDomain(
 
 absl::StatusOr<CollectiveCommunicationDomain>
 ParseCollectiveCommunicationDomain(absl::string_view value) {
-  if (value == "scale_up_fabric") {
+  std::string lowercase_value = absl::AsciiStrToLower(value);
+  if (lowercase_value == kUnspecifiedCollectiveDomainName) {
+    return kUnspecifiedCollectiveDomain;
+  }
+  if (lowercase_value == kScaleUpFabricCollectiveDomainName) {
     return kScaleUpFabricCollectiveDomain;
   }
   return InvalidArgument("Unsupported collective communication domain: %s",

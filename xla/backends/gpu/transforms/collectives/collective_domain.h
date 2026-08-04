@@ -24,7 +24,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
-using CollectiveCommunicationDomain =
+using CollectiveCommunicationDomain =  // NOLINT
     CollectiveBackendConfig::CollectiveCommunicationDomain;
 
 // Shorthands to avoid typing extremely long protobuf types.
@@ -33,14 +33,20 @@ inline constexpr CollectiveCommunicationDomain kUnspecifiedCollectiveDomain =
 inline constexpr CollectiveCommunicationDomain kScaleUpFabricCollectiveDomain =
     CollectiveBackendConfig::COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC;
 
+// Human-readable string representations of enums.
+inline constexpr absl::string_view kUnspecifiedCollectiveDomainName =
+    "unspecified";
+inline constexpr absl::string_view kScaleUpFabricCollectiveDomainName =
+    "scale_up_fabric";
+
 template <typename Sink>
 void AbslStringify(Sink& sink, CollectiveCommunicationDomain domain) {
   switch (domain) {
     case kUnspecifiedCollectiveDomain:
-      sink.Append("unspecified");
+      sink.Append(kUnspecifiedCollectiveDomainName);
       return;
     case kScaleUpFabricCollectiveDomain:
-      sink.Append("scale_up_fabric");
+      sink.Append(kScaleUpFabricCollectiveDomainName);
       return;
     default:
       absl::Format(&sink, "unknown(%d)", static_cast<int>(domain));

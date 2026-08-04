@@ -243,16 +243,17 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(const HloModule* module,
     for (const HloInstruction* hlo : instructions) {
       // Only assign execution stream IDs to scope-start operations.
       if (std::optional<ExecutionScopeKind> kind = IsExecutionScopeStart(hlo)) {
-        // Try to find explicitly assigned stream id, or use dedicated P2P
-        // stream for pipelined send/recv, otherwise generate a new execution
-        // stream id for the new execution scope.
-        std::optional<CollectiveCommunicationDomain> collective_domain =
-            FindCollectiveDomain(hlo, *kind);
-        std::optional<ExecutionStreamId> stream_id;
-        if (collective_domain.has_value()) {
-          stream_id = execution_streams.NextCollective(*collective_domain);
-        } else {
-          stream_id = FindAssignedStreamId(hlo, *kind);
+        // Prefer an explicitly assigned stream id, then a collective-domain
+        // stream or a dedicated P2P stream for pipelined send/recv. Otherwise,
+        // generate a new stream id for the execution scope.
+        std::optional<ExecutionStreamId> stream_id =
+            FindAssignedStreamId(hlo, *kind);
+        if (!stream_id.has_value()) {
+          std::optional<CollectiveCommunicationDomain> collective_domain =
+              FindCollectiveDomain(hlo, *kind);
+          if (collective_domain.has_value()) {
+            stream_id = execution_streams.NextCollective(*collective_domain);
+          }
         }
         if (!stream_id.has_value() && IsPipelinedP2P(hlo) &&
             options.number_of_communication_execution_streams > 1) {
