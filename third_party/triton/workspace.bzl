@@ -27,6 +27,8 @@ def _triton_archive_impl(repository_ctx):
         strip_prefix = "intel-xpu-backend-for-triton-" + XPU_TRITON_COMMIT
         urls = tf_mirror_urls("https://github.com/intel/intel-xpu-backend-for-triton/archive/{}.tar.gz".format(XPU_TRITON_COMMIT))
 
+    # Resolve labels before download_and_extract to prevent
+    # unnecessary re-downloads. Borrowed from tf_http_archive.
     for patch_file in patch_files:
         repository_ctx.path(Label(patch_file))
 

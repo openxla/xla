@@ -156,10 +156,7 @@ cc_library(
         "compilation_pipeline.cc",
         "compilation_pipeline_cuda.cc",
         "compilation_pipeline_rocm.cc",
-    ] + if_sycl_is_configured([
-        # TODO(intel-tf): Enable the oneAPI pipeline once it is ready in a future PR.
-        # "compilation_pipeline_oneapi.cc",
-    ]),
+    ],
     hdrs = ["compilation_pipeline.h"],
     deps = [
         ":extern_function_helper",
