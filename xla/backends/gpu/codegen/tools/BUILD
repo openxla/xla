@@ -86,7 +86,7 @@ xla_cc_binary(
 )
 
 xla_cc_binary(
-    name = "gpu_test_correctness",
+    name = "test_correctness",
     testonly = 1,
     srcs = ["gpu_test_correctness.cc"],
     # We want to use this tool for lit tests. Due to hermetic cuda, we need to

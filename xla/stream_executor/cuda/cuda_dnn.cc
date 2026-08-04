@@ -6882,12 +6882,20 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
       graph_.select_behavior_notes(
           {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
     }
+    if (engine_options.restrict_fallback_to_membound_tensor_ir_engine) {
+      // CUTLASS FALLBACK engines (eng0..eng2) report
+      // NUMERICAL_NOTE_TENSOR_CORE;
+      // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE (eng3) does not.
+      graph_.deselect_numeric_notes(
+          {cudnn_frontend::NumericalNote_t::TENSOR_CORE});
+    }
     return absl::OkStatus();
   };
 
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
+    auto context = cudnn_support.GetParent()->Activate();
     ASSIGN_OR_RETURN(auto cudnn_handle,
                      cudnn_support.cudnn_->GetCompilationHandle());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
@@ -6914,6 +6922,7 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
+    auto context = cudnn_support.GetParent()->Activate();
     ASSIGN_OR_RETURN(auto cudnn_handle,
                      cudnn_support.cudnn_->GetCompilationHandle());
     if (plan_id.has_value()) {

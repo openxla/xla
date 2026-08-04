@@ -571,6 +571,8 @@ class CudnnSupport : public dnn::DnnSupport {
   absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> DeserializeGraph(
       Stream& stream, absl::string_view serialized_data) const override;
 
+  StreamExecutor* GetParent() const { return parent_; }
+
  private:
   // Uses cuDNN handle for execution.
   friend class CudnnGraph;

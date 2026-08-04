@@ -122,7 +122,14 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
                      HloOpcode::kScaledDot, HloOpcode::kRaggedDot});
   if (hero == nullptr) {
     VLOG(1) << "Fusion does not contain a dot or convolution.";
-    return false;
+    // Only supported when non-gemm cuDNN fusion autotuning is enabled and the
+    // fusion is already marked as a cuDNN fusion.
+    auto gpu_config = instr.backend_config<GpuBackendConfig>();
+    if (!gpu_config.ok() ||
+        gpu_config->fusion_backend_config().kind() != kCuDnnFusionKind) {
+      return false;
+    }
+    return debug_options.xla_gpu_cudnn_non_gemm_fusion_level() >= 1;
   }
 
   PrecisionConfig::Algorithm algorithm = PrecisionConfig::ALG_UNSET;
