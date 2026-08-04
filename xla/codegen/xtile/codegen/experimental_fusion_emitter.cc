@@ -201,7 +201,7 @@ absl::StatusOr<TensorValue> EmitAllGather(
   // The operand is the already-gathered output tile. We keep the op as a
   // barrier marker; the all_gather_dim is preserved for the lowering.
   auto all_gather_op = mlir::stablehlo::AllGatherOp::create(
-      b, /*result_types=*/mlir::TypeRange(operands.front().getType()), operands,
+      b, /*resultType0=*/mlir::TypeRange(operands.front().getType()), operands,
       /*all_gather_dim=*/all_gather->all_gather_dimension(),
       replica_groups_attr, channel_handle_attr,
       all_gather->use_global_device_ids());

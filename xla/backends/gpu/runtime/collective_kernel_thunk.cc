@@ -503,8 +503,8 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
         state->metadata));
     if (VLOG_IS_ON(3)) {
       XLA_VLOG_DEVICE(3, params.executor->device_ordinal())
-          << "Constructed device state {" << " metadata rank: " << metadata.rank
-          << ", param_to_peers: ("
+          << "Constructed device state {"
+          << " metadata rank: " << metadata.rank << ", param_to_peers: ("
           << absl::StrJoin(param_to_peers_ptrs, ", ", PtrFormatter{})
           << "), multimem_addresses: ("
           << absl::StrJoin(multimem_addresses, ", ", PtrFormatter{}) << ")}";
@@ -574,7 +574,7 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
       const int64_t copy_bytes =
           std::min<int64_t>(operand.size(), staging.address().size());
       se::DeviceAddressBase staging_slot =
-          staging.address().GetByteSlice(/*offset=*/0, copy_bytes);
+          staging.address().GetByteSlice(/*offset_bytes=*/0, copy_bytes);
       RETURN_IF_ERROR(stream->Memcpy(&staging_slot, operand, copy_bytes));
       break;  // Only one operand supported for now.
     }

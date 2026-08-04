@@ -1261,8 +1261,7 @@ mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
 
   // Single cross-device barrier before the gathered (peer-read) tile is
   // consumed: this guarantees every rank has published its shard into symmetric
-  // memory before any rank reads its peers. Operand order matches all-reduce's
-  // EmitSync: (signal_buffers, device_rank, signal_value, world_size).
+  // memory before any rank reads its peers.
   mlir::Block& entry_block = xtile_entry_fn.front();
   builder.setInsertionPointToStart(&entry_block);
 

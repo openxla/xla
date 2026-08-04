@@ -23,8 +23,8 @@ limitations under the License.
 //   instead, and runtime-fallback detection (ScopedMockLog warnings) is
 //   replaced by compile-time eligibility checks.
 
-#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -32,8 +32,8 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/log_severity.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/array.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/error_spec.h"
@@ -54,13 +55,11 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -213,6 +212,7 @@ struct InputsOutputs {
 
   [[nodiscard]] std::vector<std::vector<Literal*>> InputLiteralPtrs() {
     std::vector<std::vector<Literal*>> result;
+    result.reserve(inputs.size());
     for (auto& input : inputs) {
       result.push_back(std::vector<Literal*>{&input});
     }
@@ -279,16 +279,16 @@ static absl::StatusOr<InputsOutputs> BuildTestInputsOutputs(
   const Shape& output_shape = instr->shape();
   for (int i = 0; i < num_replicas; ++i) {
     const std::vector<int64_t>& group = device_to_groups[i];
-    Literal output(output_shape);
+    ASSIGN_OR_RETURN(Literal output, Literal::Make(output_shape));
     int64_t offset = 0;
     for (int64_t replica : group) {
       const Literal& input = input_literals[replica];
       const int64_t slice_size = input_shape.dimensions(all_gather_dimension);
-      std::vector<int64_t> src_base(input_shape.dimensions_size(), 0);
-      std::vector<int64_t> dest_base(output_shape.dimensions_size(), 0);
+      std::vector<int64_t> src_base(input_shape.dimensions().size(), 0);
+      std::vector<int64_t> dest_base(output_shape.dimensions().size(), 0);
       dest_base[all_gather_dimension] = offset;
-      TF_RETURN_IF_ERROR(output.CopySliceFrom(input, src_base, dest_base,
-                                              input_shape.dimensions()));
+      RETURN_IF_ERROR(output.CopySliceFrom(input, src_base, dest_base,
+                                           input_shape.dimensions()));
       offset += slice_size;
     }
     expected_output_literals.push_back(std::move(output));
@@ -390,14 +390,14 @@ TEST_P(AllGatherTypesTest, SupportedTypes2GPUs) {
       kModuleStr, primitive_util::LowercasePrimitiveTypeName(element_type),
       absl::StrJoin(input_shape, ","), absl::StrJoin(output_shape, ","));
   SCOPED_TRACE(::testing::Message() << "module_str: " << module_str);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(module_str, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_str, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs(element_type, *module, kNumReplicas,
                               /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -430,18 +430,18 @@ TEST_P(AllGatherTest, F32_8GPUs_AllReplicasOneGroup) {
   std::vector<int64_t> output_shape = input_shape;
   output_shape[0] *= kNumReplicas;
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(
           absl::StrFormat(kModuleStr, absl::StrJoin(input_shape, ","),
                           absl::StrJoin(output_shape, ",")),
           kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -477,14 +477,14 @@ TEST_P(AllGatherTest, F32_8GPUs_2ReplicasPerGroup) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -517,18 +517,18 @@ TEST_P(AllGatherTest, F32TwoD4GPUs) {
   std::vector<int64_t> output_shape = input_shape;
   output_shape[0] *= kNumReplicas;
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(
           absl::StrFormat(kModuleStr, absl::StrJoin(input_shape, ","),
                           absl::StrJoin(output_shape, ",")),
           kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -562,18 +562,18 @@ TEST_P(AllGatherTest, F32_3D_2GPUs) {
   std::vector<int64_t> output_shape = input_shape;
   output_shape[0] *= kNumReplicas;
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(
           absl::StrFormat(kModuleStr, absl::StrJoin(input_shape, ","),
                           absl::StrJoin(output_shape, ",")),
           kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -605,18 +605,18 @@ TEST_P(AllGatherTest, F32_3D_2GPUs_PowerOf2) {
   std::vector<int64_t> output_shape = input_shape;
   output_shape[0] *= kNumReplicas;
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(
           absl::StrFormat(kModuleStr, absl::StrJoin(input_shape, ","),
                           absl::StrJoin(output_shape, ",")),
           kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -645,14 +645,14 @@ TEST_P(AllGatherTest, F32TwoD4GPUs_Dim1) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/1)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -680,14 +680,14 @@ TEST_P(AllGatherTest, F32_3D_2GPUs_Dim1) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/1)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -715,14 +715,14 @@ TEST_P(AllGatherTest, F32_3D_2GPUs_Dim2) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/2)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -751,14 +751,14 @@ TEST_P(AllGatherTest, BF16_1024Elements_2GPUs) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(InputsOutputs test_io,
-                          (BuildTestInputsOutputs<PrimitiveType::BF16>(
-                              *module, kNumReplicas,
-                              /*all_gather_dimension=*/0)));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(InputsOutputs test_io,
+                       (BuildTestInputsOutputs<PrimitiveType::BF16>(
+                           *module, kNumReplicas,
+                           /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -788,14 +788,14 @@ TEST_P(AllGatherTest, BF16_1024Elements_4GPUs) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(InputsOutputs test_io,
-                          (BuildTestInputsOutputs<PrimitiveType::BF16>(
-                              *module, kNumReplicas,
-                              /*all_gather_dimension=*/0)));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(InputsOutputs test_io,
+                       (BuildTestInputsOutputs<PrimitiveType::BF16>(
+                           *module, kNumReplicas,
+                           /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -825,14 +825,14 @@ TEST_P(AllGatherTest, BF16_1024Elements_8GPUs) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(InputsOutputs test_io,
-                          (BuildTestInputsOutputs<PrimitiveType::BF16>(
-                              *module, kNumReplicas,
-                              /*all_gather_dimension=*/0)));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(InputsOutputs test_io,
+                       (BuildTestInputsOutputs<PrimitiveType::BF16>(
+                           *module, kNumReplicas,
+                           /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -862,14 +862,14 @@ TEST_P(AllGatherTest, F32_MultiTilePerRank_2GPUs) {
     return;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
       (BuildTestInputsOutputs<PrimitiveType::F32>(*module, kNumReplicas,
                                                   /*all_gather_dimension=*/0)));
   CheckNoTritonFallback();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
                         /*arguments=*/test_io.InputLiteralPtrs()));
@@ -924,20 +924,20 @@ TEST_F(AllGatherTestNoParams, AsyncAllGather_F8E4M3FN_2GPUs) {
   Literal input_lit1 = LiteralUtil::CreateFromArray(input1);
   Literal input_lit2 = LiteralUtil::CreateFromArray(input2);
 
-  TF_ASSERT_OK_AND_ASSIGN(auto f16_module, ParseAndReturnVerifiedModule(
-                                               kF16ModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult f16_result,
-                          ExecuteReplicated(std::move(f16_module),
-                                            std::vector<std::vector<Literal*>>{
-                                                {&input_lit1}, {&input_lit2}}));
+  ASSERT_OK_AND_ASSIGN(auto f16_module, ParseAndReturnVerifiedModule(
+                                            kF16ModuleStr, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult f16_result,
+                       ExecuteReplicated(std::move(f16_module),
+                                         std::vector<std::vector<Literal*>>{
+                                             {&input_lit1}, {&input_lit2}}));
   VerifyAllGatherType(f16_result.optimized_module, F16);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto f8_module, ParseAndReturnVerifiedModule(kF8ModuleStr, kNumReplicas));
-  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult f8_result,
-                          ExecuteReplicated(std::move(f8_module),
-                                            std::vector<std::vector<Literal*>>{
-                                                {&input_lit1}, {&input_lit2}}));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult f8_result,
+                       ExecuteReplicated(std::move(f8_module),
+                                         std::vector<std::vector<Literal*>>{
+                                             {&input_lit1}, {&input_lit2}}));
   VerifyAllGatherType(f8_result.optimized_module, F8E4M3FN);
 
   ASSERT_EQ(f16_result.results.size(), kNumReplicas);
