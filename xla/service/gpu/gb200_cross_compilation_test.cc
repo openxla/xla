@@ -13,14 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -105,6 +104,14 @@ TEST_F(Gb200CrossCompilationTest, CrossCompilationToB200) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CompiledModule> result,
                        CrossCompileTo(GpuModel::B200));
   // Verify that the auto tuner ran.
+  ASSERT_OK_AND_ASSIGN(std::vector<autotuner::AutotuneEntry> entries,
+                       InMemoryStore().ReadAll());
+  EXPECT_TRUE(!AutotunerCache::ResultCacheIsEmpty() || !entries.empty());
+}
+
+TEST_F(Gb200CrossCompilationTest, CrossCompilationToVrNvl72) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CompiledModule> result,
+                       CrossCompileTo(GpuModel::VR_NVL72));
   ASSERT_OK_AND_ASSIGN(std::vector<autotuner::AutotuneEntry> entries,
                        InMemoryStore().ReadAll());
   EXPECT_TRUE(!AutotunerCache::ResultCacheIsEmpty() || !entries.empty());
