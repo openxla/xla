@@ -20,11 +20,12 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/base/attributes.h"
+#include "absl/base/const_init.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -64,7 +65,7 @@ absl::NoDestructor<absl::flat_hash_map<
     cubin_cache ABSL_GUARDED_BY(cubin_cache_mu);
 
 CubinCacheEntry::~CubinCacheEntry() {
-  absl::MutexLock lock(&cubin_cache_mu);
+  absl::MutexLock lock(cubin_cache_mu);
   auto it = cubin_cache->find(fingerprint);
   // A concurrent InternCubinBytes may have already replaced the
   // slot with a fresh live entry for the same fingerprint.
@@ -79,7 +80,7 @@ std::shared_ptr<const std::vector<uint8_t>> InternCubinBytes(
   const size_t cubin_bytes_size = cubin_bytes.size();
   const tsl::Fprint128 fingerprint = ComputeCubinFingerprint(cubin_bytes);
 
-  absl::MutexLock lock(&cubin_cache_mu);
+  absl::MutexLock lock(cubin_cache_mu);
   std::weak_ptr<CubinCacheEntry>& slot = (*cubin_cache)[fingerprint];
   std::shared_ptr<CubinCacheEntry> entry = slot.lock();
   if (entry == nullptr) {
