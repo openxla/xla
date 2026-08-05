@@ -67,7 +67,7 @@ absl::NoDestructor<absl::flat_hash_map<
 CubinCacheEntry::~CubinCacheEntry() {
   absl::MutexLock lock(cubin_cache_mu);
   auto it = cubin_cache->find(fingerprint);
-  // A concurrent InternCubinBytes may have already replaced the
+  // A concurrent CacheCubinBytes may have already replaced the
   // slot with a fresh live entry for the same fingerprint.
   if (it != cubin_cache->end() && it->second.expired()) {
     cubin_cache->erase(it);
@@ -75,7 +75,7 @@ CubinCacheEntry::~CubinCacheEntry() {
 }
 
 template <typename Bytes>
-std::shared_ptr<const std::vector<uint8_t>> InternCubinBytes(
+std::shared_ptr<const std::vector<uint8_t>> CacheCubinBytes(
     Bytes&& cubin_bytes) {
   const size_t cubin_bytes_size = cubin_bytes.size();
   const tsl::Fprint128 fingerprint = ComputeCubinFingerprint(cubin_bytes);
@@ -120,7 +120,7 @@ KernelLoaderSpec KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
     std::vector<uint8_t>&& cubin_bytes, std::string kernel_name, size_t arity,
     KernelArgsPacking kernel_args_packing) {
   return KernelLoaderSpec{
-      OwningCudaCubinInMemory{InternCubinBytes(std::move(cubin_bytes))},
+      OwningCudaCubinInMemory{CacheCubinBytes(std::move(cubin_bytes))},
       std::move(kernel_name), arity, kernel_args_packing};
 }
 
@@ -128,7 +128,7 @@ KernelLoaderSpec KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
     const std::vector<uint8_t>& cubin_bytes, std::string kernel_name,
     size_t arity, KernelArgsPacking kernel_args_packing) {
   return KernelLoaderSpec{
-      OwningCudaCubinInMemory{InternCubinBytes(cubin_bytes)},
+      OwningCudaCubinInMemory{CacheCubinBytes(cubin_bytes)},
       std::move(kernel_name), arity, kernel_args_packing};
 }
 
