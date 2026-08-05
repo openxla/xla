@@ -589,8 +589,8 @@ ENTRY entry {
   const HloInstruction* call_0 = FindInstruction(m.get(), "custom-call.0");
   const Layout input_layout = call_0->operand(0)->shape().layout();
   const Layout output_layout = call_0->shape().layout();
-  EXPECT_EQ(input_layout, LayoutUtil::GetDefaultLayoutForR3());
-  EXPECT_EQ(output_layout, LayoutUtil::GetDefaultLayoutForR3());
+  EXPECT_EQ(input_layout, LayoutUtil::MakeLayout({1, 2, 0}));
+  EXPECT_EQ(output_layout, LayoutUtil::MakeLayout({1, 2, 0}));
 }
 
 TEST_F(LayoutAssignmentTest, MoveToDeviceCustomCallConstrained) {
@@ -617,8 +617,8 @@ ENTRY entry {
   const HloInstruction* call_0 = FindInstruction(m.get(), "custom-call.0");
   const Layout input_layout = call_0->operand(0)->shape().layout();
   const Layout output_layout = call_0->shape().layout();
-  EXPECT_EQ(input_layout, LayoutUtil::GetDefaultLayoutForR3());
-  EXPECT_EQ(output_layout, LayoutUtil::GetDefaultLayoutForR3());
+  EXPECT_EQ(input_layout, LayoutUtil::MakeLayout({0, 1, 2}));
+  EXPECT_EQ(output_layout, LayoutUtil::MakeLayout({0, 1, 2}));
 }
 
 TEST_F(LayoutAssignmentTest, FP16ROCmConvolutionHasNCHWLayoutRDNA) {

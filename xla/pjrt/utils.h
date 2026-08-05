@@ -114,7 +114,8 @@ absl::StatusOr<Shape> LayoutModeToXlaShape(
     const LayoutMode& layout_mode, const Shape& unsharded_shape,
     const Shape& sharded_shape, MemorySpaceColor memory_space,
     std::function<absl::StatusOr<Shape>(Shape)>
-        choose_compact_layout_for_shape_function);
+        choose_compact_layout_for_shape_function,
+    bool allow_partial_layout = false);
 
 // Returns (arg shapes, output shape) with properly-set Layouts that can
 // be passed to XLA to reflect arg_layout_modes and out_layout_modes.
@@ -124,7 +125,8 @@ absl::StatusOr<std::pair<std::vector<Shape>, Shape>> LayoutModesToXlaShapes(
     const std::vector<MemorySpaceColor>& arg_memory_spaces,
     const std::vector<MemorySpaceColor>& out_memory_spaces,
     std::function<absl::StatusOr<Shape>(Shape)>
-        choose_compact_layout_for_shape_function);
+        choose_compact_layout_for_shape_function,
+    bool allow_partial_layout = false);
 
 // Generates useful data structures for communciating desired layouts to XLA:
 // * Returns a vector of argument xla::Shapes with properly-set Layouts
@@ -138,7 +140,8 @@ LayoutModesToXla(const XlaComputation& computation,
                  const std::vector<MemorySpaceColor>& out_memory_spaces,
                  std::function<absl::StatusOr<Shape>(Shape)>
                      choose_compact_layout_for_shape_function,
-                 ExecutableBuildOptions& build_options);
+                 ExecutableBuildOptions& build_options,
+                 bool allow_partial_layout = false);
 
 // Returns pointers to the argument layouts given an XlaComputation and
 // ExecutableBuildOptions.

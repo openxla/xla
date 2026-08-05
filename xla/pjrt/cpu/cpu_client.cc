@@ -310,7 +310,8 @@ absl::StatusOr<MlirCompilationSetup> SetupMlirCompilation(
       LayoutModesToXla(setup.computation, arg_layout_modes, out_layout_modes,
                        arg_memory_spaces, out_memory_spaces,
                        &LayoutUtil::GetWithDefaultLayout,
-                       options.executable_build_options));
+                       options.executable_build_options,
+                       /*allow_partial_layout=*/true));
   setup.argument_layouts = std::move(arg_layouts_and_pointers.first);
   setup.argument_layout_pointers = std::move(arg_layouts_and_pointers.second);
 
@@ -323,7 +324,8 @@ absl::StatusOr<MlirCompilationSetup> SetupMlirCompilation(
     XlaComputation temp_computation(XlaComputation(hlo_module.ToProto()));
     return LayoutModesToXlaShapes(
         temp_computation, arg_layout_modes, out_layout_modes, arg_memory_spaces,
-        out_memory_spaces, &LayoutUtil::GetWithDefaultLayout);
+        out_memory_spaces, &LayoutUtil::GetWithDefaultLayout,
+        /*allow_partial_layout=*/true);
   };
 
   return setup;

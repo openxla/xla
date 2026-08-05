@@ -396,7 +396,8 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
     XlaComputation xla_computation(XlaComputation(module.ToProto()));
     return LayoutModesToXlaShapes(
         xla_computation, arg_layout_modes, out_layout_modes, arg_memory_spaces,
-        out_memory_spaces, choose_compact_layout_for_shape);
+        out_memory_spaces, choose_compact_layout_for_shape,
+        /*allow_partial_layout=*/true);
   };
 
   ABSL_ASSIGN_OR_RETURN(
@@ -404,7 +405,8 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
       LayoutModesToXla(xla_computation, arg_layout_modes, out_layout_modes,
                        arg_memory_spaces, out_memory_spaces,
                        choose_compact_layout_for_shape,
-                       options.executable_build_options));
+                       options.executable_build_options,
+                       /*allow_partial_layout=*/true));
 
   options.argument_layouts = std::move(arg_layouts_and_pointers.first);
   options.executable_build_options.mutable_debug_options()

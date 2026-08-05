@@ -444,7 +444,8 @@ InterpreterClient::CompileAndLoad(MaybeOwningMlirModule module,
     XlaComputation xla_computation(XlaComputation(module.ToProto()));
     return LayoutModesToXlaShapes(
         xla_computation, arg_layout_modes, out_layout_modes, arg_memory_spaces,
-        out_memory_spaces, ChooseCompactLayoutForShape);
+        out_memory_spaces, ChooseCompactLayoutForShape,
+        /*allow_partial_layout=*/true);
   };
 
   // This call will update result_layout in options.executable_build_options.
@@ -453,7 +454,8 @@ InterpreterClient::CompileAndLoad(MaybeOwningMlirModule module,
       LayoutModesToXla(xla_computation, arg_layout_modes, out_layout_modes,
                        arg_memory_spaces, out_memory_spaces,
                        ChooseCompactLayoutForShape,
-                       options.executable_build_options));
+                       options.executable_build_options,
+                       /*allow_partial_layout=*/true));
   return CompileInternal(xla_computation, arg_layouts_and_pointers.second,
                          layout_callback, options);
 }

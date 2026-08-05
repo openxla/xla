@@ -524,7 +524,8 @@ absl::StatusOr<Shape> LayoutModeToXlaShape(
     const LayoutMode& layout_mode, const Shape& unsharded_shape,
     const Shape& sharded_shape, MemorySpaceColor memory_space,
     std::function<absl::StatusOr<Shape>(Shape)>
-        choose_compact_layout_for_shape_function) {
+        choose_compact_layout_for_shape_function,
+    bool allow_partial_layout) {
   if (unsharded_shape.IsToken() || unsharded_shape.IsOpaque()) {
     return unsharded_shape;
   }
@@ -539,7 +540,7 @@ absl::StatusOr<Shape> LayoutModeToXlaShape(
   Shape result = unsharded_shape;
   LayoutUtil::ClearLayout(&result);
   LayoutMode::Mode mode = layout_mode.mode;
-  if (mode == LayoutMode::Mode::kAuto &&
+  if (!allow_partial_layout && mode == LayoutMode::Mode::kAuto &&
       memory_space == Layout::kHostMemorySpace) {
     // Fall back to default layout mode so that the memory space is preserved,
     // in order to prevent the
@@ -565,7 +566,9 @@ absl::StatusOr<Shape> LayoutModeToXlaShape(
       break;
     }
     case LayoutMode::Mode::kAuto: {
-      // Don't set any layout on `result`.
+      if (memory_space != Layout::kDefaultMemorySpace) {
+        result.mutable_layout()->set_memory_space(memory_space);
+      }
       break;
     }
   }
@@ -582,7 +585,8 @@ absl::StatusOr<std::pair<std::vector<Shape>, Shape>> LayoutModesToXlaShapes(
     const std::vector<MemorySpaceColor>& arg_memory_spaces,
     const std::vector<MemorySpaceColor>& out_memory_spaces,
     std::function<absl::StatusOr<Shape>(Shape)>
-        choose_compact_layout_for_shape_function) {
+        choose_compact_layout_for_shape_function,
+    bool allow_partial_layout) {
   // Compute sharded argument and output shapes.
   ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
   ABSL_ASSIGN_OR_RETURN(auto sharded_shapes,
@@ -644,7 +648,8 @@ absl::StatusOr<std::pair<std::vector<Shape>, Shape>> LayoutModesToXlaShapes(
         Shape layout,
         LayoutModeToXlaShape(arg_layout_modes[i], unsharded_arg_shapes[i],
                              sharded_arg_shapes[i], arg_memory_spaces[i],
-                             choose_compact_layout_for_shape_function));
+                             choose_compact_layout_for_shape_function,
+                             allow_partial_layout));
     flat_arg_layouts.emplace_back(std::move(layout));
   }
 
@@ -659,7 +664,8 @@ absl::StatusOr<std::pair<std::vector<Shape>, Shape>> LayoutModesToXlaShapes(
         Shape layout,
         LayoutModeToXlaShape(out_layout_modes[i], unsharded_out_shapes[i],
                              sharded_out_shapes[i], out_memory_spaces[i],
-                             choose_compact_layout_for_shape_function));
+                             choose_compact_layout_for_shape_function,
+                             allow_partial_layout));
     flat_out_layouts.emplace_back(std::move(layout));
   }
 
@@ -683,12 +689,14 @@ LayoutModesToXla(const XlaComputation& computation,
                  const std::vector<MemorySpaceColor>& out_memory_spaces,
                  std::function<absl::StatusOr<Shape>(Shape)>
                      choose_compact_layout_for_shape_function,
-                 ExecutableBuildOptions& build_options) {
+                 ExecutableBuildOptions& build_options,
+                 bool allow_partial_layout) {
   ABSL_ASSIGN_OR_RETURN(
       auto pair,
       LayoutModesToXlaShapes(computation, arg_layout_modes, out_layout_modes,
                              arg_memory_spaces, out_memory_spaces,
-                             choose_compact_layout_for_shape_function));
+                             choose_compact_layout_for_shape_function,
+                             allow_partial_layout));
   std::vector<Shape>& arg_layouts = pair.first;
   Shape& out_layout = pair.second;
 

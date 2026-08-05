@@ -701,13 +701,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
             LayoutUtil::SetToDefaultLayout(subshape);
           });
       ABSL_RETURN_IF_ERROR(SetInstructionLayout(s, instruction));
-    } else if (IsCustomCallToMemoryPlacement(instruction)) {
-      // Make sure that host memory buffers use the default layout so that
-      // the compiler does not insert transposes on host memory buffers.
-      Shape operand_shape = instruction->operand(0)->shape();
-      LayoutUtil::SetToDefaultLayout(&operand_shape);
-      ABSL_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction, 0));
-      ABSL_RETURN_IF_ERROR(SetInstructionLayout(operand_shape, instruction));
+
     } else if (instruction->opcode() == HloOpcode::kAsyncStart) {
       HloComputation* called_computation =
           instruction->async_wrapped_computation();
