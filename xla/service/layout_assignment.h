@@ -748,10 +748,127 @@ class LayoutAssignment : public HloModulePass {
   // Initializes the layout assignment object for a new Run() call.
   absl::Status Init(HloModule* module);
 
+  // Clones conditional computations with multiple callsites and adds copies
+  // for operands of Send and layout-constrained CustomCall instructions.
+  absl::Status PrepareHloForLayoutAssignment(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
+  // Verifies that the entry computation layout is compatible with the entry
+  // computation shape.
+  absl::Status VerifyEntryComputationLayout(const HloModule* module) const;
+
+  // Sets up propagation by running points-to analysis, gathering computations
+  // to work on, and initializing entry computation constraints.
+  absl::StatusOr<std::vector<HloComputation*>> SetupPropagation(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
+
+  // Resolves input-output aliasing by resetting layouts to match if they
+  // mismatch. Returns true if any layouts were changed.
+  absl::StatusOr<bool> ResolveInputOutputAliasing(
+      HloModule* module, ComputationLayout* entry_constraint);
+
   // Adds constraints which must be satisfied for correctness on all
   // backends. Called once prior to propagating constraints.
   absl::Status AddMandatoryConstraints(
       ChannelLayoutConstraints* channel_constraints,
+      LayoutConstraints* constraints);
+
+  // Adds constraints for instructions that define values with pre-existing
+  // layouts.
+  absl::Status AddInstructionLayoutConstraints(
+      ChannelLayoutConstraints* channel_constraints,
+      LayoutConstraints* constraints);
+
+  absl::Status AddInfeedConstraints(HloInstruction* instruction);
+  absl::Status AddOutfeedConstraints(HloInstruction* instruction);
+  absl::Status AddParameterConstraints(HloInstruction* instruction,
+                                       LayoutConstraints* constraints);
+  absl::Status AddCollectiveConstraints(HloInstruction* instruction);
+  absl::Status AddCrossModuleAllReduceConstraints(
+      HloInstruction* instruction,
+      ChannelLayoutConstraints* channel_constraints);
+
+  // Adds constraints for instructions that call or interact with
+  // sub-computations.
+  absl::Status AddSubcomputationLayoutConstraints(
+      LayoutConstraints* constraints);
+
+  absl::Status AddCallConstraints(HloInstruction* instruction);
+  absl::Status AddWhileConstraints(HloInstruction* instruction,
+                                   LayoutConstraints* constraints);
+  absl::Status AddConditionalConstraints(HloInstruction* instruction);
+  absl::Status AddAsyncStartConstraints(HloInstruction* instruction);
+  absl::Status AddAsyncDoneConstraints(HloInstruction* instruction,
+                                       LayoutConstraints* constraints);
+
+  // Propagates layout constraints from the caller instruction into the inner
+  // async sub-computation.
+  // This is the forward propagation step: it takes the layouts of the operands
+  // and result of the async start/update instruction (which are in the parent
+  // computation) and propagates them to the parameters and result of the
+  // async sub-computation.
+  // If any layout in the sub-computation is updated, it resets the
+  // sub-computation layout with an elevated priority to ensure it is respected
+  // during the sub-computation's layout assignment. Returns the reconciled
+  // layout of the sub-computation.
+  ComputationLayout PropagateLayoutsToAsyncSubComputation(
+      const HloInstruction* instruction, LayoutConstraints* async_constraint);
+
+  // Propagates the operand array layouts of `instruction` to the parameter
+  // layouts defined in `async_layout`.
+  // Updates `async_layout` in-place and returns true if any parameter layout
+  // was changed.
+  bool PropagateOperandLayoutsToAsyncParameters(
+      const HloInstruction* instruction, ComputationLayout* async_layout);
+
+  // Propagates array layouts for a single operand `param_idx` of `instruction`
+  // to the corresponding parameter layout in `async_layout`.
+  // `instruction` operand `param_idx` is mapped to the parameter `param_idx`
+  // of the async sub-computation.
+  // Updates `async_layout` in-place and returns true if the layout was updated.
+  bool PropagateOperandLayoutToAsyncParameter(const HloInstruction* instruction,
+                                              int64_t param_idx,
+                                              ComputationLayout* async_layout);
+
+  // Propagates array layouts from the result shape of `instruction` (tuple
+  // element 1) to `async_layout`'s result layout.
+  // We assume the result shape of the async operation is at index {1} of the
+  // `instruction` (async start/update) output tuple.
+  // Updates `async_layout` in-place and returns true if the result layout was
+  // updated.
+  bool PropagateResultLayoutToAsyncSubComputation(
+      const HloInstruction* instruction, ComputationLayout* async_layout);
+
+  // Propagates async sub-computation parameter and result layout constraints
+  // back onto the caller instruction and its operands in the parent
+  // computation. This is the backward propagation step: it takes the resolved
+  // layouts from the async sub-computation and applies them as mandatory
+  // constraints on the caller instruction's shape (at index {1} for result) and
+  // its operands.
+  absl::Status PropagateLayoutsFromAsyncSubComputation(
+      HloInstruction* instruction, const ComputationLayout& async_layout,
+      LayoutConstraints* async_constraint);
+  // Sets the computation result layout based on constraints and
+  // sub-computations.
+  absl::Status AddComputationResultLayoutConstraints(
+      LayoutConstraints* constraints);
+
+  // Constrains layouts for custom calls that have specific layout requirements.
+  absl::Status AddCustomCallConstraints(LayoutConstraints* constraints);
+
+  // Initializes unconstrained_buffer_ids_ with all array-shaped logical buffers
+  // in the given computation.
+  void InitUnconstrainedBuffers(HloComputation* computation);
+
+  // Records instructions that lack layout constraints before applying default
+  // layouts.
+  void RecordUnconstrainedLayoutInstructions();
+
+  // Iteratively assigns layouts to remaining unconstrained buffers and
+  // propagates until all buffers are constrained.
+  absl::Status AssignLayoutsToUnconstrainedBuffers(
       LayoutConstraints* constraints);
 
   // Return a vector containing the constraints which have been added to the
@@ -906,6 +1023,9 @@ class LayoutAssignment : public HloModulePass {
   int64_t current_priority() const { return current_priority_; }
 
  private:
+  // Returns whether the given instruction is in a copy-disabled while loop.
+  bool IsWhileLoopCopyDisabled(const HloInstruction& instruction) const;
+
   // Map containing the layouts of all computations assigned so
   // far. Computations are handled in a topological sort where computations are
   // handled before their caller instructions so the layouts of caller
@@ -949,6 +1069,9 @@ class LayoutAssignment : public HloModulePass {
   // ClearAddedConstraints.
   std::vector<const LayoutConstraint*> added_constraints_;
   int64_t current_priority_ = LayoutConstraint::kBeginningPriority;
+
+  // Stores the set of while computations that have copy disabled.
+  absl::flat_hash_set<const HloComputation*> copy_disabled_while_computations_;
 };
 
 }  // namespace xla

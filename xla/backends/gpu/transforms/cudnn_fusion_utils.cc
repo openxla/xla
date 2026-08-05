@@ -38,6 +38,13 @@ bool IsEpilogueOpSupportedByCuDNN(const HloInstruction& hlo,
     return false;
   }
   const HloOpcode opcode = hlo.opcode();
+  // Do not fuse chained converts (a convert whose operand is already a
+  // convert). Note: Fusing chained converts could steal a convert from an
+  // convolution requiring it to compile.
+  if (opcode == HloOpcode::kConvert &&
+      hlo.operand(0)->opcode() == HloOpcode::kConvert) {
+    return false;
+  }
   switch (opcode) {
     case HloOpcode::kAbs:
     case HloOpcode::kAdd:
@@ -56,7 +63,6 @@ bool IsEpilogueOpSupportedByCuDNN(const HloInstruction& hlo,
     case HloOpcode::kNegate:
     case HloOpcode::kPower:
     case HloOpcode::kRsqrt:
-    case HloOpcode::kSelect:
     case HloOpcode::kSin:
     case HloOpcode::kSqrt:
     case HloOpcode::kSubtract:
@@ -72,7 +78,8 @@ bool IsEpilogueOpSupportedByCuDNN(const HloInstruction& hlo,
              IsEpilogueOpSupportedByCuDNN(*hlo.users()[0], can_fuse_reduce,
                                           is_nchw);
     case HloOpcode::kBroadcast:
-      return ShapeUtil::IsScalar(hlo.operand(0)->shape());
+      return ShapeUtil::IsScalar(hlo.operand(0)->shape()) ||
+             hlo.operand(0)->shape().dimensions().size() == 1;
     case HloOpcode::kConstant:
       return ShapeUtil::IsScalar(hlo.shape());
     case HloOpcode::kReduce:

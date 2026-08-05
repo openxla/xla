@@ -125,7 +125,9 @@ absl::Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
   if (arity) {
     RETURN_IF_ERROR(CheckOperandCount(hlo, *arity));
   }
-  if (!opts_.allow_unbounded_dynamism && hlo->shape().is_unbounded_dynamic()) {
+  if (hlo->shape().is_unbounded_dynamic() &&
+      (opts_.supported_unbounded_dynamic_op == nullptr ||
+       !opts_.supported_unbounded_dynamic_op(hlo))) {
     return InvalidArgument("Unbounded dynamism is disabled for instruction: %s",
                            hlo->ToString());
   }
@@ -1983,33 +1985,9 @@ absl::Status ShapeVerifier::CheckAsyncOpAliasConfig(
 
 bool ShapeVerifier::IsShapePrefix(const Shape& shape1,
                                   const Shape& shape2) const {
-  if (ShapesSame(shape1, shape2)) {
-    return true;
-  }
-
-  if (shape1.IsTuple() && shape1.tuple_shapes().empty()) {
-    return true;
-  }
-
-  if (shape1.IsTuple() && shape2.IsTuple()) {
-    auto size1 = shape1.tuple_shapes().size();
-    auto size2 = shape2.tuple_shapes().size();
-
-    if (size1 <= size2) {
-      for (uint64_t i = 0; i < size1; i++) {
-        const Shape& subshape1 = shape1.tuple_shapes(i);
-        const Shape& subshape2 = shape2.tuple_shapes(i);
-        if (!ShapesSame(subshape1, subshape2) &&
-            !IsShapePrefix(subshape1, subshape2)) {
-          return false;
-        }
-      }
-      return true;
-    }
-    return false;
-  }
-
-  return false;
+  return ShapeUtil::IsPrefix(
+      shape1, shape2,
+      [this](const Shape& a, const Shape& b) { return ShapesSame(a, b); });
 }
 
 absl::Status ShapeVerifier::CheckAsyncOpOutputShape(

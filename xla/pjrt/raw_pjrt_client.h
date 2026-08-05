@@ -25,11 +25,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/ref_count.h"
 
 namespace xla {
 
@@ -38,8 +40,6 @@ namespace xla {
 class PjRtRawLoadedExecutable {
  public:
   virtual ~PjRtRawLoadedExecutable() = default;
-
-  virtual PjRtDevice* device() = 0;
 
   struct RawExecuteResult {
     std::optional<tsl::Future<>> future;
@@ -55,7 +55,32 @@ class PjRtRawLoadedExecutable {
                                    bool fill_future) && = 0;
 };
 
-// PjRtRawClient provides an interface for directly enqueing fundamental
+// Represents state associated with a loaded executable that persists across
+// raw executable launches.
+class PjRtExecutableLoadState
+    : public tsl::ReferenceCounted<PjRtExecutableLoadState> {
+ public:
+  virtual ~PjRtExecutableLoadState() = default;
+
+  struct DeviceAndAssignment {
+    PjRtDevice* device;
+    std::shared_ptr<DeviceAssignment> device_assignment;
+    std::optional<int32_t> slice_id;
+    int replica;
+    int partition;
+  };
+
+  virtual void Delete() = 0;
+  virtual bool IsDeleted() const = 0;
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
+  LoadRawExecutable(tsl::AsyncValueRef<PjRtExecutable> executable,
+                    const ExecuteOptions& options, size_t host_callback_idx,
+                    xla::RunId run_id, DeviceAndAssignment device_and_assign,
+                    int attempt) = 0;
+};
+
+// PjRtRawClient provides an interface for directly enqueuing fundamental
 // operations (d2h, h2d, execute, allocation) in a platform agnostic way.
 // These operations are all performed on raw buffers (PjRtRawBuffer) and
 // chained through PjRtDeviceEvent dependencies.
@@ -104,6 +129,35 @@ class PjRtRawClient {
     return absl::UnimplementedError(
         "CreateLinkedEventPromise is not supported");
   }
+
+  // Creates a device event that signals completion of a dependency future.
+  virtual absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
+      PjRtMemorySpace* memory_space, Future<> dependency) = 0;
+
+  // Creates a device event that signals completion of work on an external
+  // stream.
+  virtual absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEventForStream(
+      PjRtMemorySpace* memory_space, std::intptr_t stream) {
+    return absl::UnimplementedError(
+        "CreateDeviceEventForStream is not supported");
+  }
+
+  // Returns the process-level key-value store, if supported.
+  virtual std::optional<std::shared_ptr<KeyValueStoreInterface>>
+  key_value_store() const {
+    return std::nullopt;
+  }
+
+  // Maps host memory for DMA transfers.
+  virtual absl::Status DmaMap(void* data, size_t size) = 0;
+
+  // Unmaps host memory previously mapped for DMA.
+  virtual absl::Status DmaUnmap(void* data) = 0;
+
+  // Imports foreign memory as a raw buffer.
+  virtual absl::StatusOr<PjRtRawBufferRef> ImportForeignMemory(
+      PjRtMemorySpace* memory_space, void* device_ptr, size_t size,
+      absl::AnyInvocable<void() &&> on_delete_callback) = 0;
 };
 
 }  // namespace xla

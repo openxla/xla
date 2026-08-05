@@ -68,6 +68,8 @@ class CommonPjRtClient : public PjRtClient {
   // TODO(parkers): make pure virtual and update all clients.
   virtual AsyncWorkRunner* async_work_runner() const { return nullptr; }
 
+  virtual PjRtRawClient* raw_client() const { return nullptr; }
+
   // Some clients do not support recursion eg: calling to_literal in host
   // callbacks. Those clients should return false here.
   virtual bool allows_recursion() const { return true; }
@@ -113,8 +115,8 @@ class CommonPjRtClient : public PjRtClient {
   }
 
   virtual bool ShouldRetryOnOom(int attempts, PjRtDevice* device,
-                                const PjRtLoadedExecutable* executable,
-                                absl::Status perpare_status) {
+                                PjRtExecutableLoadState* load_state,
+                                absl::Status prepare_status) {
     return false;
   }
 
@@ -142,7 +144,8 @@ class CommonPjRtClient : public PjRtClient {
   virtual absl::StatusOr<PjRtRawBufferRef> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
       bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) {
-    return absl::UnimplementedError("AllocateRawBuffer is not supported");
+    return raw_client()->AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                           retry_on_oom, allocate_after);
   }
 
   // Allocates a raw buffer of a particular size. Backends may support retrying
@@ -161,7 +164,9 @@ class CommonPjRtClient : public PjRtClient {
       void* device_ptr, absl::AnyInvocable<void() &&> on_delete_callback,
       size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
       bool is_mutable) {
-    return absl::UnimplementedError("ImportForeignMemory is not supported");
+    return raw_client()->ImportForeignMemory(memory_space, device_ptr,
+                                             on_device_bytes_count,
+                                             std::move(on_delete_callback));
   }
 
   // Linearizes a literal into a raw buffer and returns a DeviceEvent
@@ -238,8 +243,7 @@ class CommonPjRtClient : public PjRtClient {
       std::pair<PjRtDeviceEventPromiseRef, PjRtDeviceEventRef>>
   CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                            absl::string_view debug_info) {
-    return absl::UnimplementedError(
-        "CreateLinkedEventPromise is not supported");
+    return raw_client()->CreateLinkedEventPromise(memory_space, debug_info);
   }
 
   // Track a user-provided future with attached debug_info (if
@@ -279,7 +283,7 @@ class CommonPjRtClient : public PjRtClient {
 
   virtual absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
       PjRtMemorySpace* memory_space, Future<> dependency) {
-    return absl::UnimplementedError("CreateDeviceEvent is not supported");
+    return raw_client()->CreateDeviceEvent(memory_space, std::move(dependency));
   }
 
   // Registers the necessary debug information for an allocation event.
@@ -330,7 +334,8 @@ class CommonPjRtClient : public PjRtClient {
       std::pair<PjRtRawBufferRef, PjRtFulfillAliasRawBufferCallback>>
   CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                          size_t on_device_bytes_count) {
-    return absl::UnimplementedError("CreateRawBufferChannel is not supported");
+    return raw_client()->CreateRawBufferChannel(memory_space,
+                                                on_device_bytes_count);
   }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
@@ -527,7 +532,9 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     std::unique_ptr<Extras> extras;
   };
 
-  explicit CommonPjRtLoadedExecutable(DispatchInfo info)
+  CommonPjRtLoadedExecutable(
+      tsl::AsyncValueRef<PjRtExecutable> executable, DispatchInfo info,
+      tsl::RCReference<PjRtExecutableLoadState> load_state)
       : parameter_device_shapes_(std::move(info.parameter_device_shapes)),
         parameters_that_must_be_donated_(
             std::move(info.parameters_that_must_be_donated)),
@@ -542,16 +549,20 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
         addressable_device_logical_ids_(
             std::move(info.addressable_device_logical_ids)),
         device_assignment_(std::move(info.device_assignment)),
-        extras_(std::move(info.extras)) {}
+        extras_(std::move(info.extras)),
+        executable_(std::move(executable)),
+        load_state_(std::move(load_state)) {}
 
   CommonPjRtLoadedExecutable(
+      tsl::AsyncValueRef<PjRtExecutable> executable,
       std::vector<Shape> parameter_device_shapes,
       std::shared_ptr<const Shape> output_device_shape,
       std::vector<int> parameter_memory_space_kind_ids,
       std::vector<int> output_memory_space_kind_ids,
       std::vector<PjRtDevice*> addressable_devices,
       std::vector<LogicalDeviceIds> addressable_device_logical_ids,
-      std::shared_ptr<DeviceAssignment> device_assignment)
+      std::shared_ptr<DeviceAssignment> device_assignment,
+      tsl::RCReference<PjRtExecutableLoadState> load_state)
       : parameter_device_shapes_(std::move(parameter_device_shapes)),
         output_device_shape_(std::move(output_device_shape)),
         parameter_memory_space_kind_ids_(
@@ -560,7 +571,9 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
         addressable_devices_(std::move(addressable_devices)),
         addressable_device_logical_ids_(
             std::move(addressable_device_logical_ids)),
-        device_assignment_(std::move(device_assignment)) {}
+        device_assignment_(std::move(device_assignment)),
+        executable_(std::move(executable)),
+        load_state_(std::move(load_state)) {}
 
   CommonPjRtClient* client() const override = 0;
 
@@ -575,6 +588,32 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
       const override {
     return addressable_device_logical_ids_;
+  }
+
+  void Delete() override {
+    if (load_state_ != nullptr) {
+      load_state_->Delete();
+    }
+  }
+
+  bool IsDeleted() const override {
+    return load_state_ != nullptr && load_state_->IsDeleted();
+  }
+
+  const tsl::RCReference<PjRtExecutableLoadState>& load_state() const {
+    return load_state_;
+  }
+
+  const tsl::AsyncValueRef<PjRtExecutable>& executable() const {
+    return executable_;
+  }
+
+  PjRtExecutable* GetExecutable() const override {
+    tsl::BlockUntilReady(executable_);
+    if (auto* error = executable_.GetErrorIfPresent()) {
+      CHECK_OK(*error);
+    }
+    return &executable_.get();
   }
 
   using PjRtLoadedExecutable::Execute;
@@ -704,13 +743,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     const ExecuteOptions* options;
   };
 
-  struct DeviceAndAssignment {
-    PjRtDevice* device;
-    std::shared_ptr<DeviceAssignment> device_assignment;
-    std::optional<int32_t> slice_id;
-    int replica;
-    int partition;
-  };
+  using DeviceAndAssignment = PjRtExecutableLoadState::DeviceAndAssignment;
 
   virtual absl::StatusOr<DeviceAndAssignment> LookupDeviceAndAssignment(
       const ExecuteOptions& options, int replica, int partition,
@@ -719,7 +752,11 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   virtual absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
   LoadRawExecutable(const ExecuteOptions& options, size_t host_callback_idx,
                     xla::RunId run_id, DeviceAndAssignment device_and_assign,
-                    int attempt) const = 0;
+                    int attempt) const {
+    return load_state_->LoadRawExecutable(
+        executable_, options, host_callback_idx, run_id,
+        std::move(device_and_assign), attempt);
+  }
 
   // Returns a sorted list of the parameters that must be donated as a
   // side-effect of the execution. Derived classes may use custom logic.
@@ -789,6 +826,9 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   std::unique_ptr<DispatchInfo::Extras> extras_;
 
   std::function<void(PjRtDevice*)> execute_launch_hook_;
+
+  tsl::AsyncValueRef<PjRtExecutable> executable_;
+  tsl::RCReference<PjRtExecutableLoadState> load_state_;
 };
 
 class CommonPjRtRawBufferImpl : public PjRtRawBuffer {

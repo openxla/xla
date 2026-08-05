@@ -153,7 +153,9 @@ static FusionCompiler::Options FusionCompilerOptions(
       debug_options.xla_cpu_prefer_vector_width(),
       debug_options.xla_cpu_emitter_verification_level(),
       debug_options.xla_cpu_enable_fast_min_max(),
-      llvm_ir::GetCpuFastMathFlags(config)};
+      llvm_ir::GetCpuFastMathFlags(config),
+      debug_options.xla_cpu_use_new_xtile_lowering(),
+      options::IsMsanEnabled(config)};
 }
 
 static FusionCompiler FusionCompilerFactory(mlir::MLIRContext* context,

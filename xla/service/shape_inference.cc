@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/overflow_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -4078,7 +4079,12 @@ ShapeInference::InferCollectivePermuteDoneShape(const Shape& operand_shape) {
           output_non_degenerated.push_back(i);
         }
       }
-      if (output_non_degenerated.size() == 1) {
+      if (!output_non_degenerated.empty()) {
+        // Mark the most-major non-degenerate dimension as dynamic, matching
+        // how DynamicDimensionInference decomposes a split dynamic dimension
+        // (the runtime size is assumed to be a multiple of the static minor
+        // factors of the group). Dropping the dynamism here would silently
+        // bake the bound into consumers such as GetDimensionSize.
         inferred_shape.set_dynamic_dimension(output_non_degenerated[0], true);
       }
     }
