@@ -160,6 +160,7 @@ cc_library(
         ":api",
         ":execution_context",
         ":execution_state",
+        ":ffi_interop",
         ":type_registry",
         "//xla:executable_run_options",
         "//xla:shape_util",
