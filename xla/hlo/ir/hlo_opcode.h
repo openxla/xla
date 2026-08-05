@@ -82,9 +82,9 @@ namespace xla {
   V(kClz, "count-leading-zeros", 1)                                            \
   V(kCollectiveBroadcast, "collective-broadcast", kHloOpcodeIsVariadic)        \
   V(kCollectivePermute, "collective-permute", kHloOpcodeIsVariadic)            \
-  V(kCollectiveReduce, "collective-reduce", kHloOpcodeIsVariadic)              \
   V(kCollectivePermuteDone, "collective-permute-done", 1)                      \
   V(kCollectivePermuteStart, "collective-permute-start", kHloOpcodeIsVariadic) \
+  V(kCollectiveReduce, "collective-reduce", kHloOpcodeIsVariadic)              \
   V(kCompare, "compare", 2)                                                    \
   V(kComplex, "complex", 2)                                                    \
   V(kConcatenate, "concatenate", kHloOpcodeIsVariadic)                         \

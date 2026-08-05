@@ -130,9 +130,9 @@ class DfsHloVisitorBase {
   virtual absl::Status HandleAllToAll(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleCollectiveBroadcast(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleCollectivePermute(HloInstructionPtr hlo) = 0;
-  virtual absl::Status HandleCollectiveReduce(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleCollectivePermuteDone(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleCollectivePermuteStart(HloInstructionPtr hlo) = 0;
+  virtual absl::Status HandleCollectiveReduce(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleConvolution(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandleOptimizationBarrier(HloInstructionPtr hlo) = 0;
   virtual absl::Status HandlePartitionId(HloInstructionPtr hlo) = 0;
