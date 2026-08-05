@@ -109,6 +109,7 @@ extern const char kXlaNoOpSchedulingGroup[];
 extern const char kMustFuseAttr[];
 extern const char kMaximalFuseAttr[];
 extern const char kFuseLimitAttr[];
+extern const char kVmemLimitBytesAttr[];
 extern const char kXlaCseSafeZeroOperandAttr[];
 
 // Frontend attribute asking XLA to launch and schedule independent collectives
