@@ -890,7 +890,10 @@ class BufferAssigner {
     // If true, allocate buffers for constant instructions.
     bool allocate_buffers_for_constants = false;
 
-    // Functor used to assign colors to newly allocated logical buffers.
+    // Functor used to assign colors (representing target memory spaces) to all
+    // logical buffers (HloValues) in the module. Every logical buffer must be
+    // assigned a color; querying the color of an uncolored buffer during
+    // assignment will cause a check failure.
     Colorer colorer = DefaultColorer();
 
     // Functor used to decide whether a buffer of one color can use an
@@ -1007,8 +1010,8 @@ class BufferAssigner {
       BufferValue::SizeFunction buffer_size,
       LogicalBuffer::AlignmentFunction color_alignment);
 
-  // Tries to assign the given instruction to the given buffer. Returns if the
-  // assignment was successful.
+  // Tries to assign the given buffer to the given allocation. Returns true if
+  // the assignment was successful.
   absl::StatusOr<bool> MaybeAssignBuffer(BufferAllocation* allocation,
                                          const HloBuffer& buffer,
                                          BufferAssignment* assignment);
@@ -1162,6 +1165,83 @@ class BufferAssigner {
       const absl::flat_hash_set<const HloValue*>& buffers,
       absl::Span<const HloComputation* const> private_stack_computations,
       const CallGraph& call_graph) const;
+
+  // Filter and return the thread-local computations that are not fusions and
+  // not entry.
+  absl::StatusOr<std::vector<const HloComputation*>>
+  FilterThreadLocalComputations(
+      const HloModule* module,
+      const std::vector<const HloComputation*>& thread_local_computations);
+
+  // Perform post-assignment tasks: marking live-out and combining allocations.
+  absl::Status FinalizeAllocations(const HloModule* module,
+                                   BufferAssignment* assignment);
+
+  // Filter HloBuffers for the target computations and assign presets.
+  absl::StatusOr<std::vector<const HloBuffer*>> FilterBuffersForComputations(
+      const std::vector<const HloComputation*>& computations,
+      BufferAssignment* assignment,
+      absl::flat_hash_set<const HloBuffer*>* preset_assigned_buffers);
+
+  // Compute instruction post-order mapping for sorting tie-breaker.
+  absl::StatusOr<absl::flat_hash_map<const HloInstruction*, int>>
+  ComputeInstructionPostOrderPositions(
+      const std::vector<const HloComputation*>& computations);
+
+  // Create unified comparator for buffer sorting.
+  using BufferComparator =
+      std::function<bool(const HloBuffer* a, const HloBuffer* b)>;
+  BufferComparator CreateBufferComparator(
+      BufferOrder buffer_order, const HloAliasAnalysis& alias_analysis,
+      const absl::flat_hash_map<const HloInstruction*, int>&
+          post_order_position,
+      BufferAssignment& assignment,
+      absl::flat_hash_map<const HloBuffer*, int64_t>& min_start_cache,
+      buffer_assignment::
+          AssignmentAlgorithmForComputationsWithoutOrderingProto::Value
+              algorithm);
+
+  // Selects the concrete HeapAlgorithm based on options, colors, page size, and
+  // alignment.
+  std::unique_ptr<HeapAlgorithm<HloValue>> SelectHeapAlgorithm(
+      int64_t alignment, LogicalBuffer::Color color,
+      const absl::flat_hash_map<const HloComputation*,
+                                absl::flat_hash_set<const HloValue*>>&
+          buffers_to_assign_sequentially,
+      buffer_assignment::BufferAssignmentAlgorithmProto::Value
+          buffer_assignment_algorithm,
+      GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
+          heap_buffer_interval_compare,
+      const BufferAssignment* assignment);
+
+  // Runs whole module heap simulation on the given sequentially ordered
+  // buffers.
+  absl::Status AssignBuffersWithWholeModuleSimulation(
+      const absl::flat_hash_map<const HloComputation*,
+                                absl::flat_hash_set<const HloValue*>>&
+          buffers_to_assign_sequentially,
+      BufferAssignment* assignment,
+      buffer_assignment::BufferAssignmentAlgorithmProto::Value
+          buffer_assignment_algorithm,
+      const PrivateStacks& private_stacks,
+      GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
+          heap_buffer_interval_compare,
+      std::optional<BufferAssignment::BufferIsolationOptions>
+          isolation_options);
+
+  // Runs per-computation heap simulation on the given sequentially ordered
+  // buffers.
+  absl::Status AssignBuffersWithPerComputationSimulation(
+      const absl::flat_hash_map<const HloComputation*,
+                                absl::flat_hash_set<const HloValue*>>&
+          buffers_to_assign_sequentially,
+      BufferAssignment* assignment,
+      buffer_assignment::BufferAssignmentAlgorithmProto::Value
+          buffer_assignment_algorithm,
+      GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
+          heap_buffer_interval_compare,
+      std::optional<BufferAssignment::BufferIsolationOptions>
+          isolation_options);
 
   const AliasInfo* alias_info_;
   Options opts_;
