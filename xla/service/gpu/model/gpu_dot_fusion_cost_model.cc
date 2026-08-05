@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -53,6 +54,71 @@ namespace detail {
 
 namespace {
 using ::xla::primitive_util::BitWidth;
+
+struct BandwidthEntry {
+  int64_t dma_size_bytes;
+  float bandwidth_gbps;
+};
+
+struct MemoryBandwidthSpec {
+  double l2_cache_bandwidth_bytes_per_sec;
+  absl::InlinedVector<BandwidthEntry, 32> hbm_bandwidth_table_gbps;
+};
+
+// Peak memory bandwidth of H100 SXM in GB/s (3352.32 GB/s) from
+// third_party/tensorflow/compiler/xla/backends/gpu/target_config/specs/h100_sxm.txtpb:L26.
+constexpr float kH100SxmPeakMemoryBandwidthGBps = 3352.32f;
+
+MemoryBandwidthSpec GetMemoryBandwidthSpec(
+    const se::DeviceDescription& device_info) {
+  // Reference H100 SXM empirical HBM bandwidth table (dma_size -> GB/s),
+  // microbenchmarked on H100 SXM.
+  static constexpr std::array<BandwidthEntry, 18> kH100HbmBandwidthTable = {
+      {{8192, 1.42f},
+       {16384, 3.03f},
+       {32768, 6.02f},
+       {65536, 11.77f},
+       {131072, 23.68f},
+       {262144, 47.35f},
+       {524288, 92.56f},
+       {1048576, 179.06f},
+       {2097152, 346.75f},
+       {4194304, 639.38f},
+       {8388608, 1069.98f},
+       {16777216, 1583.95f},
+       {33554432, 1974.72f},
+       {67108864, 2343.19f},
+       {134217728, 2632.96f},
+       {268435456, 2766.69f},
+       {536870912, 2968.89f},
+       {1073741824, 3126.0f}}};
+
+  constexpr double kBytesPerGB = 1 << 30;
+  double bandwidth_scale = (device_info.memory_bandwidth() / kBytesPerGB) /
+                           kH100SxmPeakMemoryBandwidthGBps;
+
+  // TODO(karupayun): Instead of scaling, add explicit microbenchmarked tables
+  // for Blackwell (B200/GB200) and other architectures here as they are
+  // measured.
+  absl::InlinedVector<BandwidthEntry, 32> scaled_table(
+      kH100HbmBandwidthTable.begin(), kH100HbmBandwidthTable.end());
+  for (auto& entry : scaled_table) {
+    entry.bandwidth_gbps *= bandwidth_scale;
+  }
+
+  // L2 cache bandwidth scales proportionally to memory bandwidth relative to
+  // H100 SXM (measured at 6.65 TB/s on H100 SXM).
+  // TODO(maniananth): L2 bandwidth has been hardcoded for H100 based on
+  // microbenchmarking L2 bandwidth within a partition, but we should add this
+  // to the device info and extend for more GPUs.
+  constexpr double kH100L2CacheBandwidthBytesPerSec = 6.65 * 1e12;
+
+  return MemoryBandwidthSpec{
+      /*l2_cache_bandwidth_bytes_per_sec=*/kH100L2CacheBandwidthBytesPerSec *
+          bandwidth_scale,
+      /*hbm_bandwidth_table_gbps=*/scaled_table,
+  };
+}
 
 int64_t CalculateNumThreadblocks(const DotProblemInfo& dot,
                                  const DotTileSize& dot_tile) {
@@ -213,11 +279,8 @@ absl::StatusOr<ComputeAndFlops> CalculateComputeTimeWithTileAndWaveQuantization(
 absl::StatusOr<absl::Duration> CalculateL2Time(
     int64_t dot_k, int64_t tile_k, const se::DeviceDescription& device_info,
     int64_t l2_bytes_read, bool is_tma_allowed) {
-  // TODO(maniananth): L2 bandwidth has been hardcoded for H100 based on
-  // microbenchmarking L2 bandwidth within a partition, but we should add this
-  // to the device info and extend for more GPUs.
-
-  double device_l2_bandwidth = 6.65 * 1e12;  // Measured H100 L2 bandwidth.
+  double l2_cache_bandwidth_bytes_per_sec =
+      GetMemoryBandwidthSpec(device_info).l2_cache_bandwidth_bytes_per_sec;
   int64_t num_k_iters = CeilOfRatio<int64_t>(dot_k, tile_k);
 
   // Empirical overheads per K-dimension iteration.
@@ -231,56 +294,40 @@ absl::StatusOr<absl::Duration> CalculateL2Time(
   double k_loop_overhead =
       is_tma_allowed ? kTmaLoopOverheadSeconds : kLegacyLoopOverheadSeconds;
 
-  double base_time_seconds = 1.0f * l2_bytes_read / device_l2_bandwidth;
+  double base_time_seconds =
+      1.0 * l2_bytes_read / l2_cache_bandwidth_bytes_per_sec;
   return absl::Seconds(base_time_seconds + num_k_iters * k_loop_overhead);
 }
 
 // Returns the effective HBM bandwidth in bytes per second for a given dma_size.
 // dma_size is the total amount of data transferred to/from HBM in bytes.
-float GetEffectiveHbmBandwidth(const int64_t dma_size,
+float GetEffectiveHbmBandwidth(int64_t dma_size,
                                const se::DeviceDescription& device_info) {
-  using HbmBandwidthLookupEntry =
-      std::pair</*dma_size*/ int64_t, /*measured bandwidth*/ float>;
-  std::array<HbmBandwidthLookupEntry, 18> hbm_bandwidth_GBps_lookup_h100 = {
-      {{8192, 1.42f},
-       {16384, 3.03f},
-       {32768, 6.02f},
-       {65536, 11.77f},
-       {131072, 23.68f},
-       {262144, 47.35f},
-       {524288, 92.56f},
-       {1048576, 179.06f},
-       {2097152, 346.75f},
-       {4194304, 639.38f},
-       {8388608, 1069.98f},
-       {16777216, 1583.95f},
-       {33554432, 1974.72f},
-       {67108864, 2343.19f},
-       {134217728, 2632.96f},
-       {268435456, 2766.69f},
-       {536870912, 2968.89f},
-       {1073741824, 3126.0f}}};
+  constexpr float kBytesPerGigabyte = 1 << 30;
+  MemoryBandwidthSpec spec = GetMemoryBandwidthSpec(device_info);
+  const absl::InlinedVector<BandwidthEntry, 32>& hbm_bandwidth_table_gbps =
+      spec.hbm_bandwidth_table_gbps;
 
-  if (dma_size <= hbm_bandwidth_GBps_lookup_h100.front().first) {
-    return hbm_bandwidth_GBps_lookup_h100.front().second * (1 << 30);
+  if (dma_size <= hbm_bandwidth_table_gbps.front().dma_size_bytes) {
+    return hbm_bandwidth_table_gbps.front().bandwidth_gbps * kBytesPerGigabyte;
   }
-  if (dma_size >= hbm_bandwidth_GBps_lookup_h100.back().first) {
-    return hbm_bandwidth_GBps_lookup_h100.back().second * (1 << 30);
+  if (dma_size >= hbm_bandwidth_table_gbps.back().dma_size_bytes) {
+    return hbm_bandwidth_table_gbps.back().bandwidth_gbps * kBytesPerGigabyte;
   }
 
-  auto it2 = std::lower_bound(hbm_bandwidth_GBps_lookup_h100.begin(),
-                              hbm_bandwidth_GBps_lookup_h100.end(), dma_size,
-                              [](const std::pair<int64_t, float>& a,
-                                 const int64_t b) { return a.first < b; });
+  auto it2 = std::lower_bound(
+      hbm_bandwidth_table_gbps.begin(), hbm_bandwidth_table_gbps.end(),
+      dma_size,
+      [](const BandwidthEntry& a, int64_t b) { return a.dma_size_bytes < b; });
   auto it1 = it2 - 1;
 
   // Linear interpolation between the two entries in the lookup table. std::lerp
   // is not used as it is only available since C++20.
-  auto a = it1->second;
-  auto b = it2->second;
-  auto t =
-      (dma_size - it1->first) / static_cast<float>(it2->first - it1->first);
-  return (a + t * (b - a)) * (1 << 30);
+  float a = it1->bandwidth_gbps;
+  float b = it2->bandwidth_gbps;
+  float t = (dma_size - it1->dma_size_bytes) /
+            static_cast<float>(it2->dma_size_bytes - it1->dma_size_bytes);
+  return (a + t * (b - a)) * kBytesPerGigabyte;
 }
 
 HbmEstimates CalculateHbmTime(const DotProblemInfo& dot,
