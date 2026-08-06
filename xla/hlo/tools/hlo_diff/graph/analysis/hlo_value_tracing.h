@@ -114,6 +114,14 @@ class HloValueTracing {
   bool UpdateAsyncStartValueSet(HloInstruction* async_start);
   bool UpdateAsyncUpdateValueSet(HloInstruction* async_update);
   bool UpdateAsyncDoneValueSet(HloInstruction* async_done);
+  // Helpers shared by the async-op value-set updates, ported from
+  // HloDataflowAnalysis to handle async chains produced by SparseCore
+  // async-update prefetching (detached-operand async-start, native
+  // async-update, and loop-crossing chains).
+  bool UpdateAsyncChainOperandValueSet(HloInstruction* async_op,
+                                       int64_t operand_index,
+                                       const HloInstruction* operand);
+  bool UpdateAsyncChainOutputValueSet(HloInstruction* async_op);
   bool UpdateCopyStartValueSet(HloInstruction* copy_start);
   bool UpdateCopyDoneValueSet(HloInstruction* copy_done);
   bool UpdateOptimizationBarrierValueSet(HloInstruction* barrier);
