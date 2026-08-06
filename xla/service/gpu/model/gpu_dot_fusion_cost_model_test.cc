@@ -505,6 +505,44 @@ TEST_F(GpuDotFusionCostModelTest,
   EXPECT_GT(result_many_waves, result_one_wave);
 }
 
+TEST_F(GpuDotFusionCostModelTest,
+       EffectiveHbmBandwidthMatchesH100EmpiricalTable) {
+  constexpr float kBytesPerGigabyte = 1 << 30;
+
+  // 1. Min clamp / first table entry (8192 bytes -> 1.42 GB/s)
+  EXPECT_FLOAT_EQ(GetEffectiveHbmBandwidth(4096, ddh100_),
+                  1.42f * kBytesPerGigabyte);
+  EXPECT_FLOAT_EQ(GetEffectiveHbmBandwidth(8192, ddh100_),
+                  1.42f * kBytesPerGigabyte);
+
+  // 2. Exact table entry (65536 bytes -> 11.77 GB/s)
+  EXPECT_FLOAT_EQ(GetEffectiveHbmBandwidth(65536, ddh100_),
+                  11.77f * kBytesPerGigabyte);
+
+  // 3. Midpoint linear interpolation between 8192 (1.42 GB/s) and 16384 (3.03
+  // GB/s) -> 12288 bytes
+  float expected_midpoint = (1.42f + 3.03f) / 2.0f;
+  EXPECT_FLOAT_EQ(GetEffectiveHbmBandwidth(12288, ddh100_),
+                  expected_midpoint * kBytesPerGigabyte);
+
+  // 4. Max clamp / last table entry (1073741824 bytes -> 3126.0 GB/s)
+  EXPECT_FLOAT_EQ(GetEffectiveHbmBandwidth(1073741824, ddh100_),
+                  3126.0f * kBytesPerGigabyte);
+  EXPECT_FLOAT_EQ(GetEffectiveHbmBandwidth(2147483648, ddh100_),
+                  3126.0f * kBytesPerGigabyte);
+}
+
+TEST_F(GpuDotFusionCostModelTest, EffectiveHbmBandwidthScalesWithDeviceInfo) {
+  se::DeviceDescription ddb200 = TestGpuDeviceInfo::B200SXMDeviceInfo();
+  const int64_t dma_size = 134217728;  // 128 MiB
+  float bw_h100 = GetEffectiveHbmBandwidth(dma_size, ddh100_);
+  float bw_b200 = GetEffectiveHbmBandwidth(dma_size, ddb200);
+  EXPECT_GT(bw_b200, bw_h100);
+  double expected_ratio = static_cast<double>(ddb200.memory_bandwidth()) /
+                          ddh100_.memory_bandwidth();
+  EXPECT_NEAR(bw_b200 / bw_h100, expected_ratio, 1e-4);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
