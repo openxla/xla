@@ -3903,6 +3903,7 @@ cc_library(
     hdrs = ["cudnn_thunk.h"],
     deps = [
         ":command",
+        ":command_state",
         ":thunk",
         ":thunk_proto_cc",
         ":traced_command",
@@ -3918,6 +3919,7 @@ cc_library(
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

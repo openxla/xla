@@ -307,10 +307,9 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   // The last one is the workspace.
   TF_RET_CHECK(output_index == custom_call->shape().tuple_shapes().size() - 1);
 
-  const bool force_deterministic =
-      RequireDeterminism(custom_call->GetModule()->config());
-  config.set_force_deterministic(force_deterministic);
-  RETURN_IF_ERROR(custom_call->set_backend_config(gpu_config));
+  // Written into the backend config by SetBackwardFMHADeterminism() before the
+  // instruction is fingerprinted.
+  const bool force_deterministic = config.force_deterministic();
 
   ASSIGN_OR_RETURN(
       MatmulTensorDescriptor q,
@@ -359,6 +358,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   const HloComputation* score_mod_fwd_comp = nullptr;
   const HloComputation* score_mod_bwd_comp = nullptr;
   stream_executor::gpu::ScoreModFunc* score_mod = nullptr;
+  // Must outlive the graph build below, so it cannot live in the if-block.
+  std::optional<stream_executor::gpu::ScoreModFunc> smf;
   TF_RET_CHECK(computations.size() <= 1);
   if (computations.size() == 1) {
     score_mod_bwd_comp = computations[0];
@@ -369,9 +370,8 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
       return absl::InternalError("Can't find fmha fwd custom call.");
     }
     score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
-    auto smf = stream_executor::gpu::ScoreModFunc(score_mod_fwd_comp,
-                                                  score_mod_bwd_comp);
-    score_mod = &smf;
+    smf.emplace(score_mod_fwd_comp, score_mod_bwd_comp);
+    score_mod = &*smf;
     input_index += score_mod_fwd_comp->num_parameters() - 1;
   }
   TF_RET_CHECK(input_index == custom_call->operand_count());
@@ -523,6 +523,16 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
                                                  custom_call);
 }
 
+// Records the module-level determinism requirement in the backend config. It
+// changes the graph that gets built, so it has to be part of the instruction
+// fingerprint that keys both the workspace cache and the compilation results.
+absl::Status SetBackwardFMHADeterminism(HloInstruction* hlo) {
+  ASSIGN_OR_RETURN(auto gpu_config, hlo->backend_config<GpuBackendConfig>());
+  gpu_config.mutable_cudnn_fmha_backend_config()->set_force_deterministic(
+      RequireDeterminism(hlo->GetModule()->config()));
+  return hlo->set_backend_config(gpu_config);
+}
+
 class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
  public:
   explicit CuDnnCustomCallVisitor(se::dnn::DnnSupport* dnn_support,
@@ -546,6 +556,10 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
     if (!IsCustomCallTofMHA(*hlo) && !IsCustomCallTofMHAF8(*hlo) &&
         !IsCustomCallToBlockScaledDot(*hlo)) {
       return absl::OkStatus();
+    }
+
+    if (IsBwdCustomCallTofMHA(*hlo)) {
+      RETURN_IF_ERROR(SetBackwardFMHADeterminism(hlo));
     }
 
     ASSIGN_OR_RETURN(const std::string fingerprint_without_workspace,
