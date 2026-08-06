@@ -7198,9 +7198,35 @@ static HloSharding ResolveReductionOpForSharding(
   module->set_spmd_output_sharding(std::move(output_sharding));
 }
 
+namespace {
+bool HasPartialLayout(const Shape& shape) {
+  if (shape.IsTuple()) {
+    return absl::c_any_of(shape.tuple_shapes(), HasPartialLayout);
+  }
+  return shape.has_layout() && !shape.dimensions().empty() &&
+         shape.layout().minor_to_major().empty();
+}
+}  // namespace
+
 absl::StatusOr<bool> SpmdPartitioner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  for (int i = 0; i < module->entry_computation_layout().parameter_count();
+       ++i) {
+    if (HasPartialLayout(
+            module->entry_computation_layout().parameter_shape(i))) {
+      return InvalidArgument(
+          "SPMD partitioning does not support partial layouts on parameters: "
+          "%s",
+          module->entry_computation_layout().parameter_shape(i).ToString());
+    }
+  }
+  if (HasPartialLayout(module->entry_computation_layout().result_shape())) {
+    return InvalidArgument(
+        "SPMD partitioning does not support partial layouts on result: %s",
+        module->entry_computation_layout().result_shape().ToString());
+  }
+
   enable_rgv3_ =
       module->config().debug_options().xla_enable_rgv3_materialization();
   set_execution_threads(execution_threads);

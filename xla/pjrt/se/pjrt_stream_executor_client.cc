@@ -2369,7 +2369,8 @@ PjRtStreamExecutorClient::Compile(MaybeOwningMlirModule module,
           return local_client->backend()
               .transfer_manager()
               ->ChooseCompactLayoutForShape(shape);
-        });
+        },
+        /*allow_partial_layout=*/true);
   };
 
   // This call will update result_layout in options.executable_build_options.
@@ -2383,7 +2384,8 @@ PjRtStreamExecutorClient::Compile(MaybeOwningMlirModule module,
                              .transfer_manager()
                              ->ChooseCompactLayoutForShape(shape);
                        },
-                       options.executable_build_options));
+                       options.executable_build_options,
+                       /*allow_partial_layout=*/true));
 
   return CompileInternal(xla_computation, arg_layouts_and_pointers.second,
                          layout_callback, options, lookup_addressable_devices);

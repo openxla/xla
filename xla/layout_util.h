@@ -99,8 +99,9 @@ class LayoutUtil {
 
   // Validates that the provided layout satisfies invariants for the given
   // shape.
-  static absl::Status ValidateLayoutForShape(const Layout& layout,
-                                             const Shape& shape);
+  static absl::Status ValidateLayoutForShape(
+      const Layout& layout, const Shape& shape,
+      bool allow_missing_layouts = false);
 
   // Clears the layout in the given Shape. After this function is called,
   // HasLayout will return false for the shape.
@@ -135,6 +136,8 @@ class LayoutUtil {
   // returned only if all elements have layouts.
   static bool HasLayout(const Shape& shape);
   static bool HasAnyLayout(const Shape& shape);
+  static bool HasNonMemorySpaceLayout(const Shape& shape);
+  static bool HasAnyNonMemorySpaceLayout(const Shape& shape);
 
   // Returns whether all Shapes within the given ProgramShape have layouts.
   static bool HasLayout(const ProgramShape& program_shape);

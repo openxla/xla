@@ -214,6 +214,10 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
       return InvalidArgument("shape %s does not have a layout",
                              ShapeUtil::HumanString(shape));
     }
+    if (allow_missing_layouts && shape.layout().minor_to_major().empty() &&
+        !shape.dimensions().empty()) {
+      return absl::OkStatus();
+    }
     return ValidateLayoutForShape(shape.layout(), shape);
   }
   // Token, opaque, etc. shape.
@@ -221,7 +225,7 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
 }
 
 /* static */ absl::Status LayoutUtil::ValidateLayoutForShape(
-    const Layout& layout, const Shape& shape) {
+    const Layout& layout, const Shape& shape, bool allow_missing_layouts) {
   if (shape.IsTuple()) {
     return InvalidArgument("a single Layout is not valid for tuple shapes");
   }
@@ -231,6 +235,10 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   }
 
   if (layout.minor_to_major().size() != shape.dimensions().size()) {
+    if (allow_missing_layouts && layout.minor_to_major().empty() &&
+        !shape.dimensions().empty()) {
+      return absl::OkStatus();
+    }
     return InvalidArgument(
         "layout minor_to_major field contains %d elements, "
         "but shape has %d dimensions: {%s}; shape: %s",
@@ -401,6 +409,32 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   return shape.has_layout();
 }
 
+/* static */ bool LayoutUtil::HasNonMemorySpaceLayout(const Shape& shape) {
+  if (shape.IsTuple()) {
+    return absl::c_all_of(shape.tuple_shapes(), [](const Shape& s) {
+      return HasNonMemorySpaceLayout(s);
+    });
+  }
+  if (!shape.IsArray()) {
+    return true;
+  }
+  return shape.has_layout() && (shape.dimensions().empty() ||
+                                !shape.layout().minor_to_major().empty());
+}
+
+/* static */ bool LayoutUtil::HasAnyNonMemorySpaceLayout(const Shape& shape) {
+  if (shape.IsTuple()) {
+    return absl::c_any_of(shape.tuple_shapes(), [](const Shape& s) {
+      return HasAnyNonMemorySpaceLayout(s);
+    });
+  }
+  if (!shape.IsArray()) {
+    return true;
+  }
+  return shape.has_layout() && (shape.dimensions().empty() ||
+                                !shape.layout().minor_to_major().empty());
+}
+
 /* static */ bool LayoutUtil::HasLayout(const ProgramShape& program_shape) {
   for (auto& parameter_shape : program_shape.parameters()) {
     if (!LayoutUtil::HasLayout(parameter_shape)) {
@@ -469,7 +503,9 @@ absl::Status CopyLayoutInternal(const Shape& src, Shape* dst) {
       if (src.dimensions().size() != dst->dimensions().size()) {
         return InvalidArgument("cannot copy layout from shape: ranks differs");
       }
-      ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
+      ABSL_RETURN_IF_ERROR(
+          LayoutUtil::ValidateLayoutForShape(src.layout(), *dst,
+                                             /*allow_missing_layouts=*/true));
       *dst->mutable_layout() = src.layout();
     } else {
       dst->clear_layout();
