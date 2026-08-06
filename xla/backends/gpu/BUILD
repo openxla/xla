@@ -51,3 +51,31 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
     ],
 )
+
+cc_library(
+    name = "ffi_gpu_collectives",
+    srcs = ["ffi_gpu_collectives.cc"],
+    hdrs = ["ffi_gpu_collectives.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_communicator",
+        "//xla/backends/gpu/runtime:collective_clique_requests",
+        "//xla/backends/gpu/runtime:collective_cliques",
+        "//xla/backends/gpu/runtime:collective_execution",
+        "//xla/backends/gpu/runtime:collective_params",
+        "//xla/ffi:ffi_api",
+        "//xla/ffi/api:c_api",
+        "//xla/ffi/api:ffi_gpu_collectives",
+        "//xla/service:collective_ops_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)

@@ -1448,7 +1448,9 @@ xla_test(
         "//xla/core/collectives:reduction_kind",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
+        "//xla/ffi:ffi_interop",
         "//xla/ffi/api:c_api",
+        "//xla/ffi/api:ffi_gpu_collectives",
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/service:rendezvous",
@@ -1464,6 +1466,7 @@ xla_test(
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -1474,6 +1477,7 @@ xla_test(
         "@com_google_absl//absl/types:span",
     ] + if_cuda_is_configured([
         ":collective_ops_ffi_kernels_cuda",
+        "@local_config_nccl//:nccl",
     ]),
 )
 

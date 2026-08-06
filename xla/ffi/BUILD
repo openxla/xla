@@ -404,6 +404,7 @@ xla_cc_test(
         "//xla/backends/cpu:ffi",
         "//xla/backends/gpu:ffi",
         "//xla/ffi/api:c_api",
+        "//xla/ffi/api:ffi_gpu_collectives",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/tsl/concurrency:async_value",
