@@ -17,54 +17,17 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/status/status.h"
-#include "mori/shmem/shmem_api.hpp"
 #include "xla/primitive_util.h"
+
+// The CollectivesFacade owns the per-device staging + Run* entry points. Host
+// includers (mori_communicator.cc) see decl-only Run* templates; the device TU
+// (mori_kernels.cu.cc, compiled as HIP) pulls in the full device path and emits
+// the explicit float instantiations that resolve the host's references.
+#include "mori/collective/XLA/collectives_facade.hpp"
 
 namespace xla_mori {
 
-// using stream_executor::gpu::GpuStreamHandle;
-
 using GpuStreamHandle = std::intptr_t;
-
-// Zero-initialise signal flag memory (device memory / symmetric heap).
-void InitSignalMemory(void* ptr, size_t bytes);
-
-// Allocates a device int array of `count` elements and copies `host_values`
-// into it. Returns nullptr on failure. Free with FreeDeviceArray.
-int* AllocDeviceIntArray(const int* host_values, int count);
-
-// Frees memory previously returned by AllocDeviceIntArray.
-void FreeDeviceArray(void* device_ptr);
-
-absl::Status SendSDMA(void* recv_buffer, void* send_buffer, size_t bytes,
-                      int peer, std::intptr_t stream_handle);
-
-// Intra-node P2P Send via MORI (put model, single kernel).
-int Send(void* recv_buffer, void* send_buffer, size_t bytes, int peer,
-         uint32_t* signal_flags, std::intptr_t stream_handle);
-
-// Intra-node P2P Recv via MORI (put model – wait only).
-int Recv(void* recv_buffer, void* send_buffer, size_t bytes, int peer,
-         uint32_t* signal_flags, std::intptr_t stream_handle);
-
-// Barrier on the given stream.
-absl::Status BarrierOnStream(std::intptr_t stream_handle);
-
-// All-gather over the `num_ranks` participants of this collective. `my_rank` is
-// this participant's rank within the collective and `rank_to_pe` is a device
-// array mapping collective rank -> global MORI PE (so arbitrary device subsets
-// work, not just a contiguous prefix). `flags_buffer` is symmetric-heap memory
-// with at least `num_ranks` uint64 slots used for cross-rank completion, and
-// `generation` is a per-call monotonically increasing value.
-absl::Status AllGather(void* send_buffer, void* recv_buffer, size_t bytes,
-                       int my_rank, int num_ranks, const int* rank_to_pe,
-                       void* flags_buffer, uint64_t generation,
-                       std::intptr_t stream_handle);
-
-absl::Status ReduceScatter(void* send_buffer, void* recv_buffer,
-                           void* staging_buffer, void* group_counters,
-                           xla::PrimitiveType dtype, size_t count, int my_rank,
-                           int num_ranks, std::intptr_t stream_handle);
 
 }  // namespace xla_mori
 

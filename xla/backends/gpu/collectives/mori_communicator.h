@@ -204,27 +204,14 @@ class MoriCommunicator : public GpuCommunicator {
 
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
-  // Number of per-group block counters reserved for the push reduce-scatter
-  // (the kernel indexes groupCounters[g] for g in [0, S), with S <= 8).
-  static constexpr size_t kReduceScatterGroupCounters = 8;
-
   MoriCollectives* collectives_;  // Parent MoriCollectives instance
 
   // This communicator's participant set (NOT the global MORI clique). `rank_`
-  // is this rank within the collective, `num_ranks_` the participant count, and
-  // `rank_to_pe_dev_` a device array mapping collective rank -> global MORI PE.
+  // is this rank within the collective, `num_ranks_` the participant count.
+  // The staging buffer + group counters are owned by the per-device
+  // CollectivesFacade singleton, not by the communicator.
   int rank_ = 0;
   int num_ranks_ = 0;
-  int* rank_to_pe_dev_ = nullptr;
-  // Symmetric-heap completion flags for AllGather (kMaxRanks uint64 slots) and
-  // a per-communicator monotonically increasing generation counter.
-  void* allgather_flags_ = nullptr;
-  uint64_t allgather_gen_ = 0;
-
-  se::DeviceAddressBase staging_buffer_;
-  // Local-only per-group block counters for the push reduce-scatter, carved
-  // from the tail of the staging allocation and zeroed once at creation.
-  void* rs_group_counters_ = nullptr;
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;
   bool aborted_ = false;  // Has Abort() been called?

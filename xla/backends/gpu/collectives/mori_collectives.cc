@@ -104,6 +104,10 @@ static absl::StatusOr<shmem::mori_shmem_uniqueid_t> AsMoriUniqueId(
 
 void MoriCollectives::Finalize() {
   VLOG(3) << "Finilizing MORI";
+  // Release the per-device CollectivesFacade staging/counters (shared across
+  // all communicators on this device) before ShmemFinalize, since the staging
+  // lives on the symmetric heap.
+  ::mori::collective::CollectivesFacade::Get().Finalize();
   shmem::ShmemFinalize();
 }
 

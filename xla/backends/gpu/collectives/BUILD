@@ -1274,6 +1274,7 @@ cc_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/rocm:rocm_status",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/algorithm:container",
@@ -1298,6 +1299,7 @@ cc_library(
         "@tsl//tsl/platform:numbers",
     ] + if_rocm_is_configured([
         ":mori_kernels",
+        "@local_config_rocm//rocm:rocm_headers",
     ]),
     alwayslink = True,
 )

@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -51,8 +52,15 @@ limitations under the License.
 namespace shmem = ::mori::shmem;
 namespace xla::gpu {
 
+using ::mori::collective::CollectivesFacade;
+
 static auto AsRocmStream(se::Stream* stream) {
   return reinterpret_cast<std::intptr_t>(
+      stream->platform_specific_handle().stream);
+}
+
+static hipStream_t AsHipStream(se::Stream* stream) {
+  return reinterpret_cast<hipStream_t>(
       stream->platform_specific_handle().stream);
 }
 
@@ -76,48 +84,26 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
   }
   comm->rank_ = rank;
   comm->num_ranks_ = num_ranks;
-  comm->rank_to_pe_dev_ =
-      xla_mori::AllocDeviceIntArray(rank_to_pe.data(), num_ranks);
-  if (comm->rank_to_pe_dev_ == nullptr) {
-    return absl::InternalError(
-        "MoriCommunicator: failed to upload rank->PE map");
-  }
 
-  // NOTE NOTE NOTE we need to share allocated mem between different
-  // communicators since communicators can be created for a subset of the ranks
+  // The per-device CollectivesFacade owns the symmetric-heap staging buffer and
+  // the push reduce-scatter group counters. Init records this rank's identity
+  // (rank/num_ranks) and, on first call for the device, allocates the ~2GB
+  // staging (shared across communicators on the same device). Init is
+  // idempotent for the buffers; subsequent communicators just refresh
+  // myPe/nPes.
   const size_t buffer_size = 2UL << 30;  // 2GB
-  ASSIGN_OR_RETURN(void* addr, coll->Allocate(buffer_size));
-
-  // Carve a small, 8-byte-aligned tail of the staging allocation for the push
-  // reduce-scatter's local-only group counters and zero it once. The kernel
-  // self-zeroes these after each launch, so a single init here is sufficient.
-  const size_t counters_bytes = kReduceScatterGroupCounters * sizeof(uint32_t);
-  const size_t staging_bytes = buffer_size - counters_bytes;
-  comm->staging_buffer_ = se::DeviceAddressBase(addr, staging_bytes);
-  comm->rs_group_counters_ = static_cast<char*>(addr) + staging_bytes;
-  xla_mori::InitSignalMemory(comm->rs_group_counters_, counters_bytes);
-
-  // Symmetric-heap completion flags for AllGather. Must be allocated from the
-  // MORI heap (like staging) so peers can write into it via SDMA/P2P; the same
-  // allocation order on every participant keeps the heap offset symmetric.
-  const size_t flags_bytes = kMaxRanks * sizeof(uint64_t);
-  ASSIGN_OR_RETURN(comm->allgather_flags_, coll->Allocate(flags_bytes));
-  xla_mori::InitSignalMemory(comm->allgather_flags_, flags_bytes);
+  RETURN_IF_ERROR(se::gpu::ToStatus(
+      CollectivesFacade::Get().Init(rank, num_ranks, buffer_size),
+      "MORI CollectivesFacade::Init failed"));
 
   VLOG(1) << "Created " << *comm << " with participants: " << num_ranks;
   return comm;
 }
 
 MoriCommunicator::~MoriCommunicator() {
-  if (rank_to_pe_dev_ != nullptr) {
-    xla_mori::FreeDeviceArray(rank_to_pe_dev_);
-  }
-  if (allgather_flags_ != nullptr) {
-    collectives_->Deallocate(allgather_flags_).IgnoreError();
-  }
-  if (staging_buffer_ != nullptr) {
-    collectives_->Deallocate(staging_buffer_.opaque()).IgnoreError();
-  }
+  // The staging buffer + counters are owned by the per-device CollectivesFacade
+  // singleton (shared across communicators), so they are released once at
+  // MoriCollectives teardown, not here.
 }
 
 #define CHECK_CANCELLED()                                               \
@@ -144,7 +130,8 @@ absl::Status MoriCommunicator::Barrier(const Communicator::Executor& executor) {
   VLOG(1) << "Barrier: " << ToString();
   CHECK_CANCELLED()
   ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
-  return xla_mori::BarrierOnStream(AsRocmStream(stream));
+  CollectivesFacade::Get().RunBarrier<>(AsHipStream(stream));
+  return absl::OkStatus();
 }
 
 absl::StatusOr<size_t> MoriCommunicator::NumRanks() const {
@@ -267,10 +254,17 @@ absl::Status MoriCommunicator::LaunchAllGather(
           << " recv_buffer=" << recv_buffer.opaque() << " count=" << count
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
           << " stream=" << AsRocmStream(stream);
-  return xla_mori::AllGather(send_buffer.opaque(), recv_buffer.opaque(),
-                             ToMoriByteCount(dtype, count), rank_, num_ranks_,
-                             rank_to_pe_dev_, allgather_flags_,
-                             ++allgather_gen_, AsRocmStream(stream));
+  if (dtype != PrimitiveType::F32) {
+    return absl::UnimplementedError(
+        "MoriCommunicator::AllGather only supports F32");
+  }
+  // XLA `count` is the per-rank shard; the facade wants the TOTAL gathered
+  // element count N = count * num_ranks (chunk = N / num_ranks).
+  CollectivesFacade::Get().RunAllGather<float>(
+      static_cast<const float*>(send_buffer.opaque()),
+      static_cast<float*>(recv_buffer.opaque()), count * num_ranks_,
+      AsHipStream(stream));
+  return absl::OkStatus();
 }
 
 absl::Status MoriCommunicator::LaunchAllReduce(
@@ -280,43 +274,24 @@ absl::Status MoriCommunicator::LaunchAllReduce(
   CHECK_CANCELLED()
 
   ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
-  auto gpu_stream = AsRocmStream(stream);
-  (void)gpu_stream;
-  void* source_ptr = send_buffer.opaque();
-  void* dest_ptr = recv_buffer.opaque();
-  (void)source_ptr;
-  (void)dest_ptr;
-  if (primitive_util::IsComplexType(dtype)) {
-    count *= 2;
-  }
 
   VLOG(3) << absl::StreamFormat(
-      "Launch MORI AllReduce operation on device #%d; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; comm=node; "
-      "team=%p;"
-      "stream=%p",
-      -1,  // rocm_mori_team_my_pe(host_team_),
+      "Launch MORI AllReduce operation; send_buffer=%p; "
+      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; stream=%p",
       send_buffer.opaque(), recv_buffer.opaque(),
       primitive_util::LowercasePrimitiveTypeName(dtype), count, reduction_kind,
-      nullptr, stream);
+      stream);
 
-  // auto call = [&](auto T) -> absl::Status {
-  //   using Type = decltype(T);
-  //   auto *dest = static_cast< Type *>(dest_ptr);
-  //   const auto *source = static_cast< const Type *>(source_ptr);
-  //   return allreduce_on_stream< Type >(
-  //         teams_, kMaxTeams, dest, source, count, reduction_kind,
-  //         gpu_stream);
-  // };
-
-  // switch(dtype) {
-  // case PrimitiveType::F64: return call(double{});
-  // case PrimitiveType::F32: return call(float{});
-  // case PrimitiveType::S64: return call(longlong{});
-  // case PrimitiveType::S32: return call(int{});
-  // case PrimitiveType::S16: return call(short{});
-  // }
-  return absl::InternalError("Invalid MORI reduction type.");
+  if (dtype != PrimitiveType::F32 || reduction_kind != ReductionKind::SUM) {
+    return absl::UnimplementedError(
+        "MoriCommunicator::AllReduce only supports F32 + Sum");
+  }
+  // XLA `count` is the full vector length N; the facade splits it into
+  // num_ranks chunks internally (chunk = N / num_ranks).
+  CollectivesFacade::Get().RunAllReduce<float, ::SumOp<float>>(
+      static_cast<const float*>(send_buffer.opaque()),
+      static_cast<float*>(recv_buffer.opaque()), count, AsHipStream(stream));
+  return absl::OkStatus();
 }
 
 absl::Status MoriCommunicator::LaunchReduceScatter(
@@ -326,19 +301,21 @@ absl::Status MoriCommunicator::LaunchReduceScatter(
   CHECK_CANCELLED()
   ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
 
-  // TODO: check if staging buffer is large enough for the operation
-  if (staging_buffer_.size() < ToMoriByteCount(dtype, count)) {
-    return absl::InternalError("Staging buffer is too small for the operation");
-  }
-
   VLOG(3) << "LaunchReduceScatter: send_buffer=" << send_buffer.opaque()
           << " recv_buffer=" << recv_buffer.opaque() << " count=" << count
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
           << " stream=" << AsRocmStream(stream);
-  return xla_mori::ReduceScatter(send_buffer.opaque(), recv_buffer.opaque(),
-                                 staging_buffer_.opaque(), rs_group_counters_,
-                                 dtype, count, rank_, num_ranks_,
-                                 AsRocmStream(stream));
+  if (dtype != PrimitiveType::F32 || kind != ReductionKind::SUM) {
+    return absl::UnimplementedError(
+        "MoriCommunicator::ReduceScatter only supports F32 + Sum");
+  }
+  // XLA `count` is this rank's per-rank output block; the facade wants the
+  // TOTAL input element count N = count * num_ranks (chunk = N / num_ranks).
+  CollectivesFacade::Get().RunReduceScatter<float, ::SumOp<float>>(
+      static_cast<const float*>(send_buffer.opaque()),
+      static_cast<float*>(recv_buffer.opaque()), count * num_ranks_,
+      AsHipStream(stream));
+  return absl::OkStatus();
 }
 
 absl::Status MoriCommunicator::LaunchCollectivePermute(
@@ -361,13 +338,8 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
       source_rank ? absl::StrCat(source_rank->value()) : "<empty>",
       absl::StrJoin(target_ranks, ", ", rank_formatter), count, stream);
 
-  // NOTE normally we could merge these to a single kernel
-  for (auto target_rank : target_ranks) {
-    RETURN_IF_ERROR(
-        xla_mori::SendSDMA(recv_buffer.opaque(), send_buffer.opaque(), bytes,
-                           target_rank.value(), AsRocmStream(stream)));
-  }
-  return absl::OkStatus();
+  // CollectivePermute is not wired through the CollectivesFacade yet.
+  return absl::UnimplementedError("Not implemented");
 }
 
 // Performs point-to-point communication between two ranks using MORI.
