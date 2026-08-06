@@ -127,13 +127,13 @@ absl::Status FuseCandidate(HloInstruction* candidate,
   HloComputation* computation = candidate->parent();
   HloFusionInstruction* fusion_instr = CreateCollectiveFusionInstruction(
       computation, candidate, HloInstruction::FusionKind::kCustom);
-  RETURN_IF_ERROR(candidate->ReplaceAllUsesWith(fusion_instr));
-  RETURN_IF_ERROR(computation->RemoveInstruction(candidate));
+  ABSL_RETURN_IF_ERROR(candidate->ReplaceAllUsesWith(fusion_instr));
+  ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(candidate));
   if (should_flatten) {
-    RETURN_IF_ERROR(FlattenCollectiveFusion(fusion_instr));
+    ABSL_RETURN_IF_ERROR(FlattenCollectiveFusion(fusion_instr));
   }
   // NB: Must be done after flattening.
-  RETURN_IF_ERROR(TrySetGpuBackendConfigForCollective(
+  ABSL_RETURN_IF_ERROR(TrySetGpuBackendConfigForCollective(
       gpu_topology, fusion_instr, device_assignment));
   return absl::OkStatus();
 }
@@ -143,7 +143,7 @@ absl::Status FuseCandidate(HloInstruction* candidate,
 absl::StatusOr<bool> CollectiveFusion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       absl::flat_hash_set<HloOpcode> instructions_to_fuse,
       OpcodesForTritonCollectives(module->config().debug_options()));
   if (instructions_to_fuse.empty()) {
@@ -160,7 +160,7 @@ absl::StatusOr<bool> CollectiveFusion::RunImpl(
   VLOG(3) << "Found " << candidates.size()
           << " candidates for collective fusion.";
   for (HloInstruction* candidate : candidates) {
-    RETURN_IF_ERROR(FuseCandidate(candidate, gpu_topology_, device_assignment));
+    ABSL_RETURN_IF_ERROR(FuseCandidate(candidate, gpu_topology_, device_assignment));
   }
   return !candidates.empty();
 }

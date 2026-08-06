@@ -74,26 +74,26 @@ absl::StatusOr<absl::Duration> EstimateRunTimeWithConfig(
     GpuPerformanceModelWithIndexingAnalysis& cost_model,
     mlir::MLIRContext* mlir_context) {
   // Save the old backend config to restore later.
-  ASSIGN_OR_RETURN(Tile old_backend_config,
+  ABSL_ASSIGN_OR_RETURN(Tile old_backend_config,
                    context.dot->backend_config<Tile>());
 
   // Set the contracting dimension tile size.
   Tile tile_config;
   tile_config.add_sizes(config.block_k);
-  RETURN_IF_ERROR(context.dot->set_backend_config(tile_config));
+  ABSL_RETURN_IF_ERROR(context.dot->set_backend_config(tile_config));
 
-  ASSIGN_OR_RETURN(BlockLevelParameters block_params,
+  ABSL_ASSIGN_OR_RETURN(BlockLevelParameters block_params,
                    FindBlockLevelParameters(context.dot, config, mlir_context,
                                             context.device_description));
 
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(context.fusion);
 
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       EstimateRunTimeData estimate,
       cost_model.EstimateRunTimeForTiledFusion(*fusion_adaptor, block_params));
 
   // Restore the old backend config.
-  RETURN_IF_ERROR(context.dot->set_backend_config(old_backend_config));
+  ABSL_RETURN_IF_ERROR(context.dot->set_backend_config(old_backend_config));
 
   return estimate.exec_time;
 }
@@ -353,7 +353,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>> OptimizeConfigsWithCostModel(
       detail::CreateEstimationContext(dot, device_description, debug_options);
   const detail::EstimationContext& context = extracted.context;
 
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       detail::CostModelGemmTilingOptions options,
       detail::ParseCostModelGemmTilingOptions(
           debug_options.xla_gpu_experimental_cost_model_gemm_tiling_options()));
@@ -384,7 +384,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>> OptimizeConfigsWithCostModel(
   // Create the base set by either picking the top configs or estimating the
   // existing set.
   if (options.top.has_value()) {
-    ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         detail::OrderedEstimatesAndConfigs base_config_set,
         options.top_from_default
             ? EstimateConfigs(context, optimized_configs, mlir_context,
@@ -402,7 +402,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>> OptimizeConfigsWithCostModel(
     must_keep_original_configs = false;
   } else {
     VLOG(1) << "Cost Model: Using default set";
-    ASSIGN_OR_RETURN(detail::OrderedEstimatesAndConfigs base_config_set,
+    ABSL_ASSIGN_OR_RETURN(detail::OrderedEstimatesAndConfigs base_config_set,
                      EstimateConfigs(context, optimized_configs, mlir_context,
                                      use_experimental_tiling,
                                      enable_same_shape_multi_output_fusion));
@@ -413,7 +413,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>> OptimizeConfigsWithCostModel(
   if (options.mixin.has_value()) {
     VLOG(1) << "Cost Model: Mixing in top " << *options.mixin << " configs";
 
-    ASSIGN_OR_RETURN(const detail::OrderedEstimatesAndConfigs& all,
+    ABSL_ASSIGN_OR_RETURN(const detail::OrderedEstimatesAndConfigs& all,
                      get_estimated_all_configs());
 
     detail::OrderedEstimatesAndConfigs top_non_present =
@@ -458,7 +458,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>> SortConfigsWithCostModel(
   detail::ExtractedModuleAndContext extracted =
       detail::CreateEstimationContext(dot, device_description, debug_options);
 
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       detail::OrderedEstimatesAndConfigs estimated_configs,
       detail::EstimateConfigs(
           extracted.context, configs, mlir_context,

@@ -75,11 +75,11 @@ class AnnotateAndFusePipeline : public HloModulePass {
     bool changed = false;
     CollectiveKernelStrategyAnnotator annotator(gpu_topology_,
                                                 /*is_multimem_enabled=*/false);
-    ASSIGN_OR_RETURN(bool changed_annotator,
+    ABSL_ASSIGN_OR_RETURN(bool changed_annotator,
                      annotator.Run(module, execution_threads));
     changed |= changed_annotator;
     CollectiveFusion fusion(gpu_topology_);
-    ASSIGN_OR_RETURN(bool changed_fusion,
+    ABSL_ASSIGN_OR_RETURN(bool changed_fusion,
                      fusion.Run(module, execution_threads));
     changed |= changed_fusion;
     return changed;
