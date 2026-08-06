@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_group_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
+#include "xla/backends/gpu/runtime/collective_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_reorder_thunk.h"
@@ -533,10 +534,9 @@ absl::StatusOr<std::string> CanonicalGemmHlo(
          BackendConfigWrapper(gpu_config).GetRawString();
 }
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
@@ -1611,7 +1611,7 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
               buffer_assignment = &ir_emitter_context_->buffer_assignment(),
               &gpu_device_info = ir_emitter_context_->gpu_device_info()](
                  TritonWrapperResult result) mutable
-                 -> xla::Future<KernelReuseCache::Entry> {
+             -> xla::Future<KernelReuseCache::Entry> {
           auto local_module =
               std::move(result.kernel_source).thread_safe_module();
 
@@ -2147,11 +2147,13 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
           << "; partition count: " << partition_count
           << "; operand count: " << operand_count;
 
-  // A collective-broadcast may select its root rank at runtime, in which case
-  // the last operand is a root-rank vector rather than data to broadcast.
+  // A collective-broadcast or collective-reduce may select its root rank at run
+  // time, in which case the last operand is an S32 root-rank vector rather than
+  // data being broadcast/reduced.
   const bool has_dynamic_root = [](const HloInstType* inst) {
     if constexpr (std::is_same_v<HloInstType,
-                                 HloCollectiveBroadcastInstruction>) {
+                                 HloCollectiveBroadcastInstruction> ||
+                  std::is_same_v<HloInstType, HloCollectiveReduceInstruction>) {
       return inst->has_dynamic_root();
     }
     return false;
@@ -2239,6 +2241,14 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
     // the trailing root-rank buffer specially at run time.
     thunks = ThunkSequence::Of<CollectiveThunkType>(
         info, inst, /*buffers=*/std::move(buffers),
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        has_dynamic_root);
+  } else if constexpr (std::is_same_v<CollectiveThunkType,
+                                      CollectiveReduceThunk>) {
+    // CollectiveReduceThunk needs the dynamic-root flag so it can treat the
+    // trailing root-rank buffer specially at run time.
+    thunks = ThunkSequence::Of<CollectiveThunkType>(
+        thunk_info, inst, /*buffers=*/std::move(buffers),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
         has_dynamic_root);
   } else if constexpr (std::is_constructible_v<
@@ -2775,6 +2785,7 @@ Future<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:
