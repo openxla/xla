@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -41,9 +40,8 @@ absl::StatusOr<DenseDataIntermediate> LiteralToXlaFormat(
   int64_t byte_size = literal.size_bytes();
   if (primitive_util::IsSubByteNonPredType(element_type)) {
     auto bit_width = primitive_util::BitWidth(element_type);
-    std::vector<uint8_t> output(CeilOfRatio<int64_t>(byte_size, 8 / bit_width));
-    absl::Span<char> output_span =
-        absl::MakeSpan(reinterpret_cast<char*>(output.data()), output.size());
+    std::string output(CeilOfRatio<int64_t>(byte_size, 8 / bit_width), '\0');
+    absl::Span<char> output_span = absl::MakeSpan(output.data(), output.size());
     PackIntN(
         bit_width,
         absl::MakeSpan(reinterpret_cast<const char*>(literal.untyped_data()),
@@ -59,15 +57,14 @@ absl::StatusOr<DenseDataIntermediate> LiteralToXlaFormat(
 DenseDataIntermediateProto DenseDataIntermediate::ToProto() const {
   DenseDataIntermediateProto proto;
   absl::Span<const uint8_t> data = span();
-  proto.mutable_data()->assign(data.begin(), data.end());
+  proto.mutable_data()->assign(reinterpret_cast<const char*>(data.data()),
+                               data.size());
   return proto;
 }
 
 DenseDataIntermediate DenseDataIntermediate::FromProto(
     const DenseDataIntermediateProto& proto) {
-  const std::string& data = proto.data();
-  return DenseDataIntermediate::Own(
-      std::vector<uint8_t>(data.begin(), data.end()));
+  return DenseDataIntermediate::Own(proto.data());
 }
 
 }  // namespace gpu
