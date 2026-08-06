@@ -127,6 +127,22 @@ absl::StatusOr<stream_executor::GpuTargetConfigProto> GetGpuTargetConfig(
   return config;
 }
 
+absl::StatusOr<stream_executor::GpuTargetConfigProto>
+GetGpuTargetConfigFromDeviceKind(absl::string_view device_kind) {
+  const struct FileToc* toc = embed_gpu_specs_create();
+  for (size_t i = 0; i < embed_gpu_specs_size(); ++i) {
+    stream_executor::GpuTargetConfigProto proto;
+    if (google::protobuf::TextFormat::ParseFromString(
+            std::string(toc[i].data, toc[i].size), &proto)) {
+      if (proto.device_description_str() == device_kind) {
+        return proto;
+      }
+    }
+  }
+  return absl::NotFoundError(
+      absl::StrCat("No GPU spec found for device kind: ", device_kind));
+}
+
 GpuTargetConfig::GpuTargetConfig(se::StreamExecutor* s)
     : device_description(
           s->GetDeviceDescription().DeviceSpecificFieldsCleared()),
