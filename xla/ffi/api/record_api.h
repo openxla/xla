@@ -189,20 +189,19 @@ class RecordContextBase {
         std::size(dependencies), &out_command);
 
     if (err) {
-      return StatusOr<const XLA_FFI_Command*>(
-          ErrorPolicy::TakeError(api_, err));
+      return ErrorPolicy::TakeError(api_, err);
     }
     if (!out_command) {
-      return StatusOr<const XLA_FFI_Command*>(ErrorPolicy::FromErrorCode(
+      return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_INTERNAL,
           "out_command is null but no error was returned during "
-          "create_launch."));
+          "create_launch.");
     }
     if (!commands().push_back(out_command)) {
-      return StatusOr<const XLA_FFI_Command*>(ErrorPolicy::FromErrorCode(
+      return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_RESOURCE_EXHAUSTED,
           "Maximum number of commands that can be recorded per FFI::Record "
-          "call has been reached."));
+          "call has been reached.");
     }
     return out_command;
   }
@@ -228,20 +227,19 @@ class RecordContextBase {
         frame_->record_ctx, std::data(dependencies), std::size(dependencies),
         &out_command);
     if (err) {
-      return StatusOr<const XLA_FFI_Command*>(
-          ErrorPolicy::TakeError(api_, err));
+      return ErrorPolicy::TakeError(api_, err);
     }
     if (!out_command) {
-      return StatusOr<const XLA_FFI_Command*>(ErrorPolicy::FromErrorCode(
+      return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_INTERNAL,
           "out_command is null but no error was returned during "
-          "create_empty_command."));
+          "create_empty_command.");
     }
     if (!commands().push_back(out_command)) {
-      return StatusOr<const XLA_FFI_Command*>(ErrorPolicy::FromErrorCode(
+      return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_RESOURCE_EXHAUSTED,
           "Maximum number of commands that can be recorded per FFI::Record "
-          "call has been reached."));
+          "call has been reached.");
     }
     return out_command;
   }
@@ -265,20 +263,19 @@ class RecordContextBase {
         std::size(dependencies), &out_command);
 
     if (err) {
-      return StatusOr<const XLA_FFI_Command*>(
-          ErrorPolicy::TakeError(api_, err));
+      return ErrorPolicy::TakeError(api_, err);
     }
     if (!out_command) {
-      return StatusOr<const XLA_FFI_Command*>(ErrorPolicy::FromErrorCode(
+      return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_INTERNAL,
           "out_command is null but no error was returned during "
-          "create_memcpy_d2d."));
+          "create_memcpy_d2d.");
     }
     if (!commands().push_back(out_command)) {
-      return StatusOr<const XLA_FFI_Command*>(ErrorPolicy::FromErrorCode(
+      return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_RESOURCE_EXHAUSTED,
           "Maximum number of commands that can be recorded per FFI::Record "
-          "call has been reached."));
+          "call has been reached.");
     }
     return out_command;
   }
