@@ -21,6 +21,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/runtime/device_id.h"
 
 namespace stream_executor {
 class StreamExecutor;
@@ -102,6 +104,13 @@ class MoriCollectives : public GpuCollectives {
   // InitializeTopology path and the lazy CreateCommunicatorsWithCancel path.
   absl::Status InitPe(int32_t rank, int32_t nranks, const CliqueId& clique_id,
                       stream_executor::StreamExecutor* executor);
+
+  using LocalDevIdMap = absl::flat_hash_map<LocalDeviceId, GlobalDeviceId>;
+
+  // Eagerly initializes a set of local PEs concurrently. All PEs across all
+  // processes must run this concurrently for MORI's bootstrap to rendezvous.
+  absl::Status EagerInitLocalPes(const LocalDevIdMap& local_dev_id_map,
+                                 int32_t nranks, const CliqueId& clique_id);
 
   bool initialized_ = false;
 };
