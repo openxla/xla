@@ -218,8 +218,9 @@ static absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
 
 // Wraps the AddI32 PTX kernel (c[0] = a[0] + b[0]) as a CustomKernel and
 // returns a CustomKernelThunk bound to the given three allocations. The kernel
-// spec includes a custom args-packing function (required by command buffer
-// CreateLaunch/UpdateLaunch with KernelArgsDeviceAddressArray).
+// spec has no args-packing function; CustomKernelThunk::Record packs the
+// arguments itself, so command buffer CreateLaunch/UpdateLaunch never sees a
+// KernelArgsDeviceAddressArray (which would require one).
 static absl::StatusOr<std::unique_ptr<CustomKernelThunk>>
 MakeAddI32CustomKernelThunk(const std::vector<BufferAllocation>& allocs) {
   absl::string_view ptx =
