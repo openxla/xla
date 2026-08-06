@@ -178,6 +178,53 @@ ENTRY entry_computation {
 }
 
 TEST_F(TritonEmitterConstraintsTest, SharedMemoryConstraintIsEnforced) {
+  // A transpose is a layout-conversion op and is therefore charged to shared
+  // memory by the estimator. A plain elementwise fusion would NOT be, so we use
+  // a transpose here to exercise the shared-memory constraint.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT transpose = f32[1024,1024] transpose(param_0), dimensions={1,0}
+}
+
+ENTRY entry_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT fusion = f32[1024,1024] fusion(param_0), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)"));
+
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+  const HloInstruction* fusion_root =
+      module->entry_computation()->root_instruction()->fused_expression_root();
+
+  // The RTX A6000 test device has 99 * 1024 = 101376 bytes of opt-in shared
+  // memory. The transpose stages a [128, 128] f32 tile requiring
+  // 128 * 128 * 4 = 65536 bytes, which fits.
+  EXPECT_THAT(analysis->ParametersSatisfyConstraints(
+                  Tiling({{fusion_root, FlatTiling({128, 128})}})),
+              absl_testing::IsOkAndHolds(true));
+
+  // A [256, 128] f32 transpose tile requires 256 * 128 * 4 = 131072 bytes,
+  // which exceeds the shared memory limit. The tile is otherwise valid (32768
+  // elements is below the tensor size limit, tile sizes are powers of 2, and
+  // the number of blocks fits on the grid), so it is the shared memory
+  // constraint that rejects it.
+  EXPECT_THAT(analysis->ParametersSatisfyConstraints(
+                  Tiling({{fusion_root, FlatTiling({256, 128})}})),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(TritonEmitterConstraintsTest,
+       SharedMemoryConstraintIgnoresNonStagingOps) {
+  // A plain elementwise fusion does not stage any tile in shared memory, so
+  // even a large tile is not rejected by the shared-memory constraint (only the
+  // element-count / grid constraints apply).
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -200,21 +247,12 @@ ENTRY entry_computation {
   const HloInstruction* fusion_root =
       module->entry_computation()->root_instruction()->fused_expression_root();
 
-  // The RTX A6000 test device has 99 * 1024 = 101376 bytes of opt-in shared
-  // memory. A [128, 128] f32 tile requires 128 * 128 * 4 = 65536 bytes, which
-  // fits.
-  EXPECT_THAT(analysis->ParametersSatisfyConstraints(
-                  Tiling({{fusion_root, FlatTiling({128, 128})}})),
-              absl_testing::IsOkAndHolds(true));
-
-  // A [256, 128] f32 tile requires 256 * 128 * 4 = 131072 bytes, which exceeds
-  // the shared memory limit. The tile is otherwise valid (32768 elements is
-  // below the tensor size limit, tile sizes are powers of 2, and the number of
-  // blocks fits on the grid), so it is the shared memory constraint that
-  // rejects it.
+  // A [256, 128] f32 tile would exceed the shared memory limit if it were
+  // staged (256 * 128 * 4 = 131072 bytes > 101376), but a log is not a staging
+  // op, so the shared-memory constraint does not reject it.
   EXPECT_THAT(analysis->ParametersSatisfyConstraints(
                   Tiling({{fusion_root, FlatTiling({256, 128})}})),
-              absl_testing::IsOkAndHolds(false));
+              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(TritonEmitterConstraintsTest, TooManyBlocksConstraintIsEnforced) {
@@ -469,6 +507,41 @@ ENTRY entry_computation {
 }
 
 TEST_F(VerifyTritonConstraintsTest, SharedMemoryConstraintIsEnforced) {
+  // A transpose is a layout-conversion op and is therefore charged to shared
+  // memory by the estimator (a plain elementwise fusion would not be).
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT transpose = f32[1024,1024] transpose(param_0), dimensions={1,0}
+}
+
+ENTRY entry_computation {
+  param_0 = f32[1024,1024] parameter(0)
+  ROOT fusion = f32[1024,1024] fusion(param_0), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  // The RTX A6000 test device has 99 * 1024 = 101376 bytes of opt-in shared
+  // memory. The transpose stages a [128, 128] f32 tile requiring
+  // 128 * 128 * 4 = 65536 bytes, which fits.
+  EXPECT_OK(CheckTiling(module.get(), {128, 128}));
+
+  // A [256, 128] f32 transpose tile requires 256 * 128 * 4 = 131072 bytes,
+  // which exceeds the shared memory limit.
+  EXPECT_THAT(CheckTiling(module.get(), {256, 128}),
+              StatusIs(_, HasSubstr("exceeds the device limit")));
+}
+
+TEST_F(VerifyTritonConstraintsTest,
+       SharedMemoryConstraintIgnoresNonStagingOps) {
+  // A plain elementwise fusion does not stage any tile in shared memory, so a
+  // tile that would exceed the shared-memory budget if staged is still
+  // accepted (only the element-count / grid constraints apply).
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"hlo(
 HloModule m
@@ -486,15 +559,9 @@ ENTRY entry_computation {
 }
 )hlo"));
 
-  // The RTX A6000 test device has 99 * 1024 = 101376 bytes of opt-in shared
-  // memory. A [128, 128] f32 tile requires 128 * 128 * 4 = 65536 bytes, which
-  // fits.
-  EXPECT_OK(CheckTiling(module.get(), {128, 128}));
-
-  // A [256, 128] f32 tile requires 256 * 128 * 4 = 131072 bytes, which exceeds
-  // the shared memory limit.
-  EXPECT_THAT(CheckTiling(module.get(), {256, 128}),
-              StatusIs(_, HasSubstr("exceeds the device limit")));
+  // 256 * 128 * 4 = 131072 bytes would exceed the shared memory limit if
+  // staged, but a log is not a staging op, so it is accepted.
+  EXPECT_OK(CheckTiling(module.get(), {256, 128}));
 }
 
 TEST_F(VerifyTritonConstraintsTest, TooManyBlocksConstraintIsEnforced) {

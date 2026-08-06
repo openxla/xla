@@ -717,10 +717,25 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "triton_shared_memory_estimator",
+    srcs = ["triton_shared_memory_estimator.cc"],
+    hdrs = ["triton_shared_memory_estimator.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "triton_emitter_constraints",
     srcs = ["triton_emitter_constraints.cc"],
     hdrs = ["triton_emitter_constraints.h"],
     deps = [
+        ":block_level_parameters",
+        ":triton_shared_memory_estimator",
         "//xla:shape_util",
         "//xla:util",
         "//xla/codegen/tiling:constraint_expression",

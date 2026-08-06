@@ -325,7 +325,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     tiled_computation.Simplify();
     tiled_computation.SortInstructionsPostOrder();
     if (Decision constraints = experimental::VerifyTritonConstraints(
-            tiled_computation, device_info);
+            tiled_computation, device_info, block_level_parameters);
         !constraints) {
       return absl::InvalidArgumentError(
           absl::StrCat("Triton constraints violated during codegen: ",

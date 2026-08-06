@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -47,6 +48,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
+#include "xla/service/gpu/model/triton_shared_memory_estimator.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -119,24 +122,53 @@ TritonEmitterConstraints::GetBuilder(
   return [=](const std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>&
                  instructions,
              const HloFusionAdaptor& fusion_adaptor) {
+    // Conservative shared-memory model parameters for the symbolic (legacy)
+    // tiling path. The launch parameters (num_stages / num_warps) are not yet
+    // known during the symbolic tiling search, so we use the defaults
+    // (num_stages = 1, num_warps = 1), which yield a conservative estimate. The
+    // experimental path threads the concrete launch parameters through instead.
+    const SmemModelParams smem_params = MakeSmemModelParams(
+        device_description, /*num_stages=*/1, /*num_warps=*/1);
+
     absl::flat_hash_set<SymbolicMap> unique_tile_size_maps;
     llvm::SmallVector<RootTileInfo, 2> root_infos;
+    llvm::SmallVector<StagingTileInfo, 2> staging_infos;
     auto roots = fusion_adaptor.GetRoots();
     for (const auto& tiled_hlo_instruction : instructions) {
+      const HloInstruction* hlo = tiled_hlo_instruction->hlo();
       unique_tile_size_maps.insert(
           tiled_hlo_instruction->symbolic_tile().size_map());
+
+      // Collect shared-memory staging info for this instruction if it stages a
+      // tile in shared memory (see `triton_shared_memory_estimator.h`).
+      if (fusion_adaptor.ContainsInstruction(hlo) && hlo->shape().IsArray()) {
+        const SmemStagingKind kind = ClassifyStaging(*hlo, smem_params);
+        if (kind != SmemStagingKind::kNone) {
+          StagingTileInfo info;
+          info.name = std::string(hlo->name());
+          info.kind = kind;
+          info.element_byte_size =
+              ShapeUtil::ByteSizeOfPrimitiveType(hlo->shape().element_type());
+          info.size_map = tiled_hlo_instruction->symbolic_tile().size_map();
+          if (kind == SmemStagingKind::kDot) {
+            for (const auto& operand : tiled_hlo_instruction->operands()) {
+              info.operand_size_maps.push_back(
+                  operand->symbolic_tile().size_map());
+            }
+          }
+          staging_infos.push_back(std::move(info));
+        }
+      }
+
       if (absl::c_any_of(roots, [&tiled_hlo_instruction](
                                     const HloInstructionAdaptor& instr) {
             return &instr.instruction() == tiled_hlo_instruction->hlo();
           })) {
         const auto& shape = tiled_hlo_instruction->hlo()->shape();
-        root_infos.push_back(RootTileInfo{
-            tiled_hlo_instruction->symbolic_tile().size_map(),
-            shape.IsArray() ? SpanToVector(shape.dimensions())
-                            : std::vector<int64_t>(),
-            shape.IsArray()
-                ? ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type())
-                : 0});
+        root_infos.push_back(
+            RootTileInfo{tiled_hlo_instruction->symbolic_tile().size_map(),
+                         shape.IsArray() ? SpanToVector(shape.dimensions())
+                                         : std::vector<int64_t>()});
       }
     }
 
@@ -151,8 +183,8 @@ TritonEmitterConstraints::GetBuilder(
 
     return std::unique_ptr<TritonEmitterConstraints>(
         absl::WrapUnique(new TritonEmitterConstraints(
-            std::move(tile_size_maps), std::move(root_infos),
-            std::move(custom_constraints),
+            std::move(tile_size_maps), std::move(staging_infos),
+            std::move(root_infos), std::move(custom_constraints),
             /*root_shape=*/instructions.back()->hlo()->shape(),
             device_description, std::move(tiled_emitter_constraints))));
   };
@@ -174,17 +206,14 @@ int64_t NumberOfElementsInPaddedTile(
   return num_elements;
 }
 
-// Returns a conservative estimate (in bytes) of the shared memory required to
-// stage the tile described by `tile_size_map`/`tiling_parameters` for an
-// instruction whose element type occupies `element_byte_size` bytes.
-//
-// The estimate is the product of the power-of-2-padded tile sizes (i.e. the
-// number of elements in the padded tile) multiplied by the element byte size.
-int64_t EstimateTileSharedMemoryBytes(
-    const SymbolicMap& tile_size_map,
-    absl::Span<const int64_t> tiling_parameters, int64_t element_byte_size) {
-  return NumberOfElementsInPaddedTile(tile_size_map, tiling_parameters) *
-         element_byte_size;
+// Returns the number of power-of-2-padded elements in a static tile.
+int64_t NumberOfElementsInPaddedTile(
+    absl::Span<const int64_t> static_tile_sizes) {
+  int64_t num_elements = 1;
+  for (int64_t size : static_tile_sizes) {
+    num_elements *= llvm::PowerOf2Ceil(size);
+  }
+  return num_elements;
 }
 
 // Checks whether the number of programs to launch on the grid is under the
@@ -231,21 +260,43 @@ absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
     return false;
   }
 
-  // Verify that no root tile would require more shared memory than the device
-  // provides. We only check root (output) tiles because those are the tiles
-  // that get materialized in shared memory; intermediate/operand tiles (e.g.
-  // the full-row load of a reduction) are streamed and don't all live in shared
-  // memory at once.
-  const int64_t shared_memory_limit =
-      device_info_.shared_memory_per_block_optin();
-  if (absl::c_any_of(roots_, [&](const RootTileInfo& root) {
-        return EstimateTileSharedMemoryBytes(root.size_map, tile_parameters,
-                                             root.element_byte_size) >
-               shared_memory_limit;
-      })) {
-    VLOG(2) << "Found a root tile that would exceed the shared memory limit of "
-            << shared_memory_limit << " bytes. Bailing out.";
-    return false;
+  // Verify that the tiling does not require more shared memory than the device
+  // provides. This uses the same architecture-parameterized model and the same
+  // block-level aggregation (`EstimateBlockSmemBytes`) as the experimental
+  // path (see `triton_shared_memory_estimator.h`). The symbolic path does not
+  // know the concrete launch parameters yet, so a conservative model
+  // (num_stages = 1, num_warps = 1) is used here.
+  {
+    const SmemModelParams smem_params =
+        MakeSmemModelParams(device_info_, /*num_stages=*/1, /*num_warps=*/1);
+    llvm::SmallVector<SmemStagingOp, 2> staging_ops;
+    staging_ops.reserve(staging_infos_.size());
+    for (const StagingTileInfo& info : staging_infos_) {
+      SmemStagingOp op;
+      op.name = info.name;
+      op.kind = info.kind;
+      op.element_byte_size = info.element_byte_size;
+      if (info.kind == SmemStagingKind::kLayout) {
+        op.padded_tile_elements =
+            NumberOfElementsInPaddedTile(info.size_map, tile_parameters);
+      } else if (info.kind == SmemStagingKind::kDot) {
+        int64_t padded_operand_elements = 0;
+        for (const SymbolicMap& operand_size_map : info.operand_size_maps) {
+          padded_operand_elements +=
+              NumberOfElementsInPaddedTile(operand_size_map, tile_parameters);
+        }
+        op.padded_operand_tile_elements = padded_operand_elements;
+      }
+      staging_ops.push_back(op);
+    }
+    const BlockSmemEstimate estimate =
+        EstimateBlockSmemBytes(staging_ops, smem_params);
+    if (estimate.bytes > smem_params.smem_budget_bytes) {
+      VLOG(2) << "Tiling requires an estimated " << estimate.bytes
+              << " bytes of shared memory, which exceeds the device limit of "
+              << smem_params.smem_budget_bytes << " bytes. Bailing out.";
+      return false;
+    }
   }
 
   // Ensure that we satisfy the custom constraints we derived when padding tile
@@ -322,10 +373,22 @@ llvm::SmallVector<const TiledHloInstruction*> CollectAllInstructions(
   return all_instructions;
 }
 
+// Returns the number of power-of-2-padded elements in a static tile.
+int64_t NumberOfElementsInPaddedStaticTile(
+    absl::Span<const int64_t> static_tile_sizes) {
+  int64_t num_elements = 1;
+  for (int64_t size : static_tile_sizes) {
+    num_elements *= llvm::PowerOf2Ceil(size);
+  }
+  return num_elements;
+}
+
 }  // namespace
 
-Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
-                                 const se::DeviceDescription& device_info) {
+Decision VerifyTritonConstraints(
+    const TiledHloComputation& tiled_computation,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters) {
   llvm::SmallVector<const TiledHloInstruction*> all_instructions =
       CollectAllInstructions(tiled_computation);
 
@@ -383,6 +446,72 @@ Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
     }
   }
 
+  // 3. Shared memory limit.
+  // Estimate the per-block shared memory required by the tiling using the same
+  // architecture-parameterized model and block-level aggregation
+  // (`EstimateBlockSmemBytes`) as the symbolic (legacy) path (see
+  // `triton_shared_memory_estimator.h`), and reject tilings that would exceed
+  // the device shared-memory budget. This lets the tiling search fall back to a
+  // smaller tile instead of failing late with a shared-memory
+  // RESOURCE_EXHAUSTED error during Triton compilation.
+  //
+  // Only "staging" ops (layout conversions and dot operand staging) are charged
+  // to shared memory; everything else (elementwise, broadcast, reductions,
+  // etc.) is register-resident. Cross-wave reduction combine buffers are
+  // intentionally overlooked; see the estimator header for the full rationale.
+  // The authoritative `ttg.shared` check performed after Triton lowering
+  // remains the correctness backstop.
+  {
+    const SmemModelParams smem_params =
+        MakeSmemModelParams(device_info, block_level_parameters.num_stages,
+                            block_level_parameters.num_warps);
+
+    llvm::SmallVector<SmemStagingOp, 2> staging_ops;
+    for (const TiledHloInstruction* inst : all_instructions) {
+      const SmemStagingKind kind = ClassifyStaging(*inst->hlo(), smem_params);
+      if (kind == SmemStagingKind::kNone) {
+        continue;
+      }
+      SmemStagingOp op;
+      op.name = inst->hlo()->name();
+      op.kind = kind;
+      op.element_byte_size = ShapeUtil::ByteSizeOfPrimitiveType(
+          inst->hlo()->shape().element_type());
+      if (kind == SmemStagingKind::kLayout) {
+        auto tile_sizes_or = inst->tile().GetStaticTileSizes();
+        if (!tile_sizes_or.ok()) {
+          return Decision(tile_sizes_or.status());
+        }
+        op.padded_tile_elements =
+            NumberOfElementsInPaddedStaticTile(*tile_sizes_or);
+      } else if (kind == SmemStagingKind::kDot) {
+        int64_t padded_operand_elements = 0;
+        for (const TiledHloInstruction* operand : inst->operands()) {
+          auto op_tile_sizes_or = operand->tile().GetStaticTileSizes();
+          if (!op_tile_sizes_or.ok()) {
+            return Decision(op_tile_sizes_or.status());
+          }
+          padded_operand_elements +=
+              NumberOfElementsInPaddedStaticTile(*op_tile_sizes_or);
+        }
+        op.padded_operand_tile_elements = padded_operand_elements;
+      }
+      staging_ops.push_back(op);
+    }
+
+    const BlockSmemEstimate estimate =
+        EstimateBlockSmemBytes(staging_ops, smem_params);
+    if (estimate.bytes > smem_params.smem_budget_bytes) {
+      return Decision::Forbid(absl::StrCat(
+          "Tiling requires an estimated ", estimate.bytes,
+          " bytes of shared memory (dominated by instruction ",
+          estimate.dominant_op_name.empty() ? "<unknown>"
+                                            : estimate.dominant_op_name,
+          "), which exceeds the device limit of ",
+          smem_params.smem_budget_bytes, " bytes."));
+    }
+  }
+
   VLOG(2) << "VerifyTritonConstraints: checking roots. Count: "
           << tiled_computation.roots().size();
   for (const TiledHloInstruction* root : tiled_computation.roots()) {
@@ -422,32 +551,6 @@ Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
             ", which is neither a power of 2 nor equal to the dimension size ",
             d, "."));
       }
-    }
-
-    // Shared memory limit.
-    // Estimate the shared memory required to stage the root tile as the product
-    // of the power-of-2-padded tile sizes multiplied by the element byte size,
-    // and reject tiles that would exceed the device shared memory limit.
-    // We only check root (output) tiles because those are the tiles that get
-    // materialized in shared memory; intermediate/operand tiles (e.g. the
-    // full-row load of a reduction) are streamed and don't all live in shared
-    // memory at once.
-    int64_t padded_root_tile_elements = 1;
-    for (int64_t t : root_tile_sizes) {
-      padded_root_tile_elements *= llvm::PowerOf2Ceil(t);
-    }
-    const int64_t element_byte_size =
-        ShapeUtil::ByteSizeOfPrimitiveType(root->hlo()->shape().element_type());
-    const int64_t shared_memory_bytes =
-        padded_root_tile_elements * element_byte_size;
-    const int64_t shared_memory_limit =
-        device_info.shared_memory_per_block_optin();
-    if (shared_memory_bytes > shared_memory_limit) {
-      return Decision::Forbid(absl::StrCat(
-          "Root instruction ", root->hlo()->name(),
-          " has a tile that requires an estimated ", shared_memory_bytes,
-          " bytes of shared memory, which exceeds the device limit of ",
-          shared_memory_limit, " bytes."));
     }
 
     // Check that the number of blocks fits on the device grid X.
