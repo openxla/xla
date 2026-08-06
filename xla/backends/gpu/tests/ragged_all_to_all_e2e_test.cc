@@ -242,7 +242,8 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
     if (device_count() < 2) {
       GTEST_SKIP() << "Test requires at least 2 devices.";
     }
-    if (IsSymmetricNcclPath() &&
+    if ((IsSymmetricNcclPath() ||
+         impl_type_ == RaggedAllToAllImplType::kDeviceKernel) &&
         !Capability().cuda_compute_capability()->IsAtLeastHopper()) {
       GTEST_SKIP() << "NCCL backend is only supported on Hopper architecture "
                       "and above.";
