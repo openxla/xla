@@ -1833,7 +1833,7 @@ struct HasExtensionSupport<
 //     using CExtension = XLA_FFI_MyExtension;  // C API extension type
 //     using Type = MyContext;                  // decoded C++ context type
 //
-//     static constexpr std::string_view kName = "MyExtension";
+//     static constexpr auto kName = "MyExtension";
 //     static constexpr int64_t kExtensionType = ...;
 //     static constexpr int32_t kMajorVersion = ...;
 //     static constexpr int32_t kMinorVersion = ...;
@@ -1905,11 +1905,11 @@ struct CtxDecoding<Extension<T>> {
       }
     }
 
-    return T::Create(api,
-                     // T::kExtensionType is a contract that guarantees that the
-                     // extension is of type T.
-                     reinterpret_cast<const typename T::CExtension*>(
-                         args.extension));  // NOLINT
+    return T::Create(
+        api,
+        // T::kExtensionType is a contract that guarantees that the
+        // extension is of type T. NOLINTNEXTLINE.
+        reinterpret_cast<const typename T::CExtension*>(args.extension));
   }
 };
 

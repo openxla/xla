@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_FFI_FFI_H_
 #define XLA_FFI_FFI_H_
 
-#include <string_view>
 #ifdef XLA_FFI_API_FFI_H_
 #error Two different XLA FFI implementations cannot be included together. \
        See README.md for more details.
@@ -95,9 +94,8 @@ struct ErrorPolicy {
   static Status Ok() { return absl::OkStatus(); }
 
   static Status FromErrorCode(XLA_FFI_Error_Code errc,
-                              std::string_view message) {
-    return Status(static_cast<absl::StatusCode>(errc),
-                  absl::string_view(message.data(), message.size()));
+                              absl::string_view message) {
+    return Status(static_cast<absl::StatusCode>(errc), message);
   }
 
   static Status TakeError(const XLA_FFI_Api*, XLA_FFI_Error* error) {

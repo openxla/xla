@@ -162,7 +162,7 @@ class RecordContextBase {
     return static_cast<RecordAction>(frame_->action);
   }
 
-  // Instantiate a used facing command wrapper for convenience.
+  // Instantiate a user-facing command wrapper for convenience.
   BoundedCommandVector commands() const {
     return BoundedCommandVector(frame_->commands, frame_->num_commands,
                                 frame_->max_commands);
