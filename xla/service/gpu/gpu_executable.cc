@@ -232,9 +232,6 @@ absl::StatusOr<bool> ShouldCollectiveUseMinimalResource(
 
 using ::tsl::profiler::ScopedAnnotation;
 
-constexpr int kAsyncStreamTotal =
-    static_cast<int>(AsyncStreamKind::ASYNC_STREAM_KIND_MEMCPYP2P) + 1;
-
 // Returns the number of additional streams to allocate for a `GpuExecutable`.
 static GpuExecutable::NumAdditionalStreams GetNumAdditionalStreams(
     ThunkExecutor& executor, const DebugOptions& opts) {
@@ -242,9 +239,9 @@ static GpuExecutable::NumAdditionalStreams GetNumAdditionalStreams(
   int compute = opts.xla_gpu_executable_num_compute_streams();
   int comm = opts.xla_gpu_executable_num_communication_streams();
 
-  // Clamp it to minimum number of required streams.
+  // Clamp explicitly requested stream counts to non-negative values.
   compute = std::max(0, compute);
-  comm = std::max(kAsyncStreamTotal, comm);
+  comm = std::max(0, comm);
 
   // Then traverse all thunks to see if anyone requested more streams.
   for (const auto& thunk : executor.thunks()) {
@@ -483,6 +480,17 @@ GpuExecutable::GpuExecutable(
       buffer_assignment_proto_(std::move(buffer_assignment_proto)),
       thunk_pass_allocations_(std::move(thunk_pass_allocations)),
       alias_info_(std::move(alias_info)),
+      module_annotations_([&] {
+        const DebugOptions& annotation_options =
+            has_module() ? module_config().debug_options() : debug_options;
+        const TraceAnnotationLevel annotation_level =
+            static_cast<TraceAnnotationLevel>(
+                annotation_options.xla_gpu_trace_annotation_level());
+        if (has_module()) {
+          return ModuleAnnotations(module(), annotation_level);
+        }
+        return ModuleAnnotations(module_name_, annotation_level);
+      }()),
       debug_buffer_assignment_show_max_(
           debug_options.xla_debug_buffer_assignment_show_max()),
       constants_(std::move(constants)),
@@ -549,11 +557,6 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
 absl::Status RendezvousAfterInitialization(
     const ServiceExecutableRunOptions& run_options,
     const DebugOptions* absl_nullable debug_options);
-
-absl::Status BarrierAfterExecutable(
-    const ServiceExecutableRunOptions& run_options,
-    const DebugOptions* absl_nullable debug_options, se::Stream& stream_to_sync,
-    size_t num_participants);
 
 absl::Status GpuExecutable::ExecuteThunksImpl(
     const DebugOptions* debug_options, const std::string& module_name,
@@ -813,25 +816,6 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "End GpuExecutable::ExecuteOnStream module: " << module_name;
 
-  // Collective kernel thunks may request a barrier after the module execution.
-  // This might be needed for several reasons:
-  // 1. To make sure that at the end of graph execution all reads and writes to
-  //    the symmetric buffers are finished.
-  // 2. To make sure that cuda module which uses a multimem handler used by
-  //    another GPU will be unloaded only after all kernels are finished.
-  //    Otherwise module unloading can cause a deadlock.
-  absl::flat_hash_set<GlobalDeviceId> requested_barrier_devices =
-      collective_clique_requests.GetDevicesRequiringBarrier();
-  if (absl::c_linear_search(requested_barrier_devices,
-                            collective_params.global_device_id.value())) {
-    XLA_VLOG_DEVICE(1, collective_params.global_device_id.value())
-        << "Barrier after executable required by participants: ("
-        << absl::StrJoin(requested_barrier_devices, ", ") << ")";
-    RETURN_IF_ERROR(BarrierAfterExecutable(*run_options, debug_options,
-                                           *main_stream,
-                                           requested_barrier_devices.size()));
-  }
-
   return MaybeSyncAndProfile(run_options, execution_timer.get(),
                              block_host_until_done ? main_stream : nullptr);
 }
@@ -948,43 +932,6 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
   }
 
   return absl::OkStatus();
-}
-
-absl::Status BarrierAfterExecutable(
-    const ServiceExecutableRunOptions& run_options,
-    const DebugOptions* absl_nullable debug_options, se::Stream& stream,
-    const size_t num_participants) {
-  RETURN_IF_ERROR(stream.BlockHostUntilDone());
-
-  XLA_VLOG_DEVICE(1, run_options.device_ordinal()) << absl::StreamFormat(
-      "Join thunks in barrier after module execution rendezvous with %d "
-      "local "
-      "participants",
-      num_participants);
-
-  tsl::profiler::TraceMe trace([&] {
-    return tsl::profiler::TraceMeEncode(
-        "RendezvousAfterExecution",
-        {{"run_id", run_options.run_options().run_id().ToInt()},
-         {"num_local_participants", num_participants}});
-  });
-
-  auto rendezvous_key = InitializationKey{run_options.run_options().run_id()};
-  auto rendezvous_name = absl::StrFormat(
-      "thunk barrier after module execution completion for device ordinal "
-      "%d; run_id=%d",
-      run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
-
-  return Rendezvous(
-      rendezvous_name, rendezvous_key, num_participants,
-      absl::Seconds(
-          debug_options
-              ? debug_options->xla_gpu_executable_warn_stuck_timeout_seconds()
-              : 10),
-      absl::Seconds(
-          debug_options
-              ? debug_options->xla_gpu_executable_terminate_timeout_seconds()
-              : 30));
 }
 
 absl::StatusOr<const GpuExecutable::BufferAllocToDeviceMemoryMap*>

@@ -208,18 +208,18 @@ std::string SerializeGraphDataCompressed(const GraphData& data) {
   tsl::core::PutFixed32(&binary_data, data.nodes.size());
 
   for (const auto& node : data.nodes) {
-    int32_t id = node.id;
+    int64_t id = node.id;
     float x = node.x;
     float y = node.y;
     float diff_score = node.diff_score;
-    int32_t anchor_id = node.anchor_id;
+    int64_t anchor_id = node.anchor_id;
     uint16_t key_len = node.key.size();
 
-    tsl::core::PutFixed32(&binary_data, id);
+    tsl::core::PutFixed64(&binary_data, id);
     tsl::core::PutFixed32(&binary_data, absl::bit_cast<uint32_t>(x));
     tsl::core::PutFixed32(&binary_data, absl::bit_cast<uint32_t>(y));
     tsl::core::PutFixed32(&binary_data, absl::bit_cast<uint32_t>(diff_score));
-    tsl::core::PutFixed32(&binary_data, anchor_id);
+    tsl::core::PutFixed64(&binary_data, anchor_id);
     tsl::core::PutFixed16(&binary_data, key_len);
     binary_data.append(node.key.data(), key_len);
   }
@@ -227,11 +227,11 @@ std::string SerializeGraphDataCompressed(const GraphData& data) {
   tsl::core::PutFixed32(&binary_data, data.edges.size());
 
   for (const auto& edge : data.edges) {
-    int32_t supplier_id = edge.supplier_id;
-    int32_t consumer_id = edge.consumer_id;
+    int64_t supplier_id = edge.supplier_id;
+    int64_t consumer_id = edge.consumer_id;
 
-    tsl::core::PutFixed32(&binary_data, supplier_id);
-    tsl::core::PutFixed32(&binary_data, consumer_id);
+    tsl::core::PutFixed64(&binary_data, supplier_id);
+    tsl::core::PutFixed64(&binary_data, consumer_id);
   }
 
   std::string compressed;
@@ -664,10 +664,6 @@ TokenAnnotationMapping GetTokenAnnotationMapping(
                 // Deeper shape index (longer path) wins for background/border.
                 mapping.token_to_annotation.insert({abs_token_idx, annotation});
                 shape_tokens_indices[sid].push_back(abs_token_idx);
-                if (annotation->stack_frame_id) {
-                  mapping.token_stack_frame_ids[abs_token_idx] =
-                      *annotation->stack_frame_id;
-                }
               }
             }
           }
@@ -699,11 +695,56 @@ std::string GenerateHloHtmlContent(
     absl::flat_hash_map<std::string, std::string>& tooltip_data) {
   std::string parts;
   int tt_counter = 0;
-  absl::flat_hash_map<const TensorAnnotation*, std::string> ann_to_id;
+  absl::flat_hash_map<std::string, std::string> tooltip_str_to_id;
+  bool in_block = false;
+  int line_count = 0;
+  constexpr int kLinesPerBlock = 50;
+
+  auto open_block_if_needed = [&]() {
+    if (!in_block) {
+      absl::StrAppend(&parts, "<div class=\"hlo-block\">");
+      in_block = true;
+      line_count = 0;
+    }
+  };
+
+  auto close_block_if_open = [&]() {
+    if (in_block) {
+      absl::StrAppend(&parts, "</div>");
+      in_block = false;
+      line_count = 0;
+    }
+  };
+
   for (size_t i = 0; i < tokens.size(); ++i) {
     if (mapping.tokens_to_skip.count(i)) {
       continue;
     }
+
+    if (tokens[i].kind == TokKind::kText &&
+        absl::StrContains(tokens[i].value, '\n')) {
+      std::string val = tokens[i].value;
+      size_t pos = 0;
+      while (pos < val.size()) {
+        size_t nl_pos = val.find('\n', pos);
+        if (nl_pos == std::string::npos) {
+          open_block_if_needed();
+          absl::StrAppend(&parts, HtmlEscape(val.substr(pos)));
+          break;
+        }
+        open_block_if_needed();
+        absl::StrAppend(&parts, HtmlEscape(val.substr(pos, nl_pos - pos)),
+                        "\n");
+        line_count++;
+        if (line_count >= kLinesPerBlock) {
+          close_block_if_open();
+        }
+        pos = nl_pos + 1;
+      }
+      continue;
+    }
+
+    open_block_if_needed();
 
     if (mapping.span_starts.count(i)) {
       for (const auto* ann : mapping.span_starts.at(i)) {
@@ -714,12 +755,12 @@ std::string GenerateHloHtmlContent(
         std::string tooltip_attr;
         if (ann->tooltip_data) {
           std::string tt_id;
-          auto it = ann_to_id.find(ann);
-          if (it != ann_to_id.end()) {
+          auto it = tooltip_str_to_id.find(*ann->tooltip_data);
+          if (it != tooltip_str_to_id.end()) {
             tt_id = it->second;
           } else {
             tt_id = absl::StrCat("tt", tt_counter++);
-            ann_to_id[ann] = tt_id;
+            tooltip_str_to_id[*ann->tooltip_data] = tt_id;
             tooltip_data[tt_id] = *ann->tooltip_data;
           }
           tooltip_attr = absl::StrCat(" data-tooltip-id=\"", tt_id, "\"");
@@ -773,9 +814,19 @@ std::string GenerateHloHtmlContent(
                       anchor_attr, extra_attrs, style_attr, ">",
                       HtmlEscape(tokens[i].value), "</span>");
     } else {
-      const char* css_class = TokKindToClass(tokens[i].kind);
-      if (css_class[0] != '\0' || !anchor_attr.empty() ||
-          !extra_attrs.empty()) {
+      bool needs_span = !anchor_attr.empty() || !extra_attrs.empty() ||
+                        mapping.token_links.count(i) > 0;
+      if (!needs_span) {
+        TokKind kind = tokens[i].kind;
+        if (kind == TokKind::kComment || kind == TokKind::kCommentSpecial ||
+            kind == TokKind::kString || kind == TokKind::kKeyword ||
+            kind == TokKind::kKeywordType || kind == TokKind::kNameFunction ||
+            kind == TokKind::kNameComputation || kind == TokKind::kNumber) {
+          needs_span = true;
+        }
+      }
+      if (needs_span) {
+        const char* css_class = TokKindToClass(tokens[i].kind);
         absl::StrAppend(&parts, "<span class=\"", css_class, "\"", anchor_attr,
                         extra_attrs, ">", HtmlEscape(tokens[i].value),
                         "</span>");
@@ -794,6 +845,7 @@ std::string GenerateHloHtmlContent(
       }
     }
   }
+  close_block_if_open();
   return parts;
 }
 
@@ -926,9 +978,23 @@ std::string ConvertHloToHtml(
   std::string compressed_data_str;
   if (graph_data != nullptr) {
     compressed_data_str = SerializeGraphDataCompressed(*graph_data);
-    graph_content =
-        "<canvas id=\"dag-canvas\" style=\"width: 100%; height: 100%; display: "
-        "block;\"></canvas>";
+    graph_content = absl::StrCat(
+        "<div style=\"position: absolute; top: 10px; right: 10px; z-index: "
+        "10; background: rgba(255, 255, 255, 0.8); padding: 5px; "
+        "border-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); "
+        "display: flex; gap: 5px;\">",
+        "<button id=\"zoom-in-btn\" style=\"cursor: pointer; padding: 4px 8px; "
+        "border: 1px solid #ccc; background: #fff; border-radius: 2px; "
+        "font-weight: bold;\">+</button>",
+        "<button id=\"zoom-out-btn\" style=\"cursor: pointer; padding: 4px "
+        "8px; border: 1px solid #ccc; background: #fff; border-radius: 2px; "
+        "font-weight: bold;\">-</button>",
+        "<button id=\"zoom-fit-btn\" style=\"cursor: pointer; padding: 4px "
+        "8px; border: 1px solid #ccc; background: #fff; border-radius: 2px; "
+        "font-size: 12px;\">Fit</button>",
+        "</div>",
+        "<canvas id=\"dag-canvas\" style=\"width: 100%; height: 100%; "
+        "display: block;\"></canvas>");
   }
 
   std::string data_injection_script;
@@ -968,19 +1034,19 @@ absl::flat_hash_map<TensorKey, TensorAnnotation> PopulateMismatchAnnotations(
     const HloModule& module, absl::Span<const MismatchDetails> mismatches) {
   absl::flat_hash_map<TensorKey, TensorAnnotation> annotations;
 
-  absl::flat_hash_map<const HloComputation*, const HloInstruction*>
-      comp_to_fusion;
-  for (const HloComputation* comp : module.computations()) {
-    for (const HloInstruction* instr : comp->instructions()) {
-      if (instr->opcode() == HloOpcode::kFusion) {
-        comp_to_fusion[instr->fused_instructions_computation()] = instr;
-      }
-      TensorKey key = TensorKey::Create(instr->name(), ShapeIndex{});
-      TensorAnnotation ann;
-      ann.anchor_id = absl::StrCat("step", instr->unique_id());
-      annotations[key] = std::move(ann);
-    }
-  }
+  // absl::flat_hash_map<const HloComputation*, const HloInstruction*>
+  //     comp_to_fusion;
+  // for (const HloComputation* comp : module.computations()) {
+  //   for (const HloInstruction* instr : comp->instructions()) {
+  //     if (instr->opcode() == HloOpcode::kFusion) {
+  //       comp_to_fusion[instr->fused_instructions_computation()] = instr;
+  //     }
+  //     TensorKey key = TensorKey::Create(instr->name(), ShapeIndex{});
+  //     TensorAnnotation ann;
+  //     ann.anchor_id = absl::StrCat("step", instr->unique_id());
+  //     annotations[key] = std::move(ann);
+  //   }
+  // }
 
   absl::flat_hash_map<std::string, const HloInstruction*> name_to_instr;
   for (const HloComputation* comp : module.computations()) {
@@ -1042,16 +1108,28 @@ absl::flat_hash_map<TensorKey, TensorAnnotation> PopulateMismatchAnnotations(
     std::optional<std::string> tooltip_data = ann.tooltip_data;
     annotations[key] = std::move(ann);
 
-    const HloInstruction* cur = target_instr;
-    while (cur->opcode() == HloOpcode::kFusion) {
-      cur = cur->fused_instructions_computation()->root_instruction();
-      TensorKey inner_key = TensorKey::Create(cur->name(), ShapeIndex{});
-      TensorAnnotation inner_ann;
-      inner_ann.anchor_id = absl::StrCat("step", cur->unique_id());
-      inner_ann.background_color = "pink";
-      inner_ann.tooltip_data = tooltip_data;
-      annotations[inner_key] = std::move(inner_ann);
-    }
+    auto annotate_fusion_hierarchy = [&](auto& self,
+                                         const HloInstruction* instr) -> void {
+      if (instr->opcode() != HloOpcode::kFusion) {
+        return;
+      }
+      for (const HloInstruction* inner :
+           instr->fused_instructions_computation()->instructions()) {
+        if (inner->opcode() == HloOpcode::kParameter || inner->IsConstant()) {
+          continue;
+        }
+        TensorKey inner_key = TensorKey::Create(inner->name(), ShapeIndex{});
+        TensorAnnotation inner_ann;
+        inner_ann.anchor_id = absl::StrCat("step", inner->unique_id());
+        inner_ann.background_color = "pink";
+        inner_ann.tooltip_data = tooltip_data;
+        annotations[inner_key] = std::move(inner_ann);
+        if (inner->opcode() == HloOpcode::kFusion) {
+          self(self, inner);
+        }
+      }
+    };
+    annotate_fusion_hierarchy(annotate_fusion_hierarchy, target_instr);
   }
 
   return annotations;
@@ -1095,14 +1173,22 @@ GraphData PopulateMismatchGraphData(
   }
 
   absl::flat_hash_set<const HloInstruction*> root_instrs;
-  if (root != nullptr) {
-    const HloInstruction* cur = root;
-    root_instrs.insert(cur);
-    while (cur->opcode() == HloOpcode::kFusion) {
-      cur = cur->fused_instructions_computation()->root_instruction();
-      root_instrs.insert(cur);
+  auto collect_fusion_hierarchy = [&](auto& self,
+                                      const HloInstruction* instr) -> void {
+    if (instr == nullptr) {
+      return;
     }
-  }
+    root_instrs.insert(instr);
+    if (instr->opcode() == HloOpcode::kFusion) {
+      for (const HloInstruction* inner :
+           instr->fused_instructions_computation()->instructions()) {
+        if (inner->opcode() != HloOpcode::kParameter && !inner->IsConstant()) {
+          self(self, inner);
+        }
+      }
+    }
+  };
+  collect_fusion_hierarchy(collect_fusion_hierarchy, root);
 
   auto get_suppliers = [&](const HloInstruction* instr) {
     std::vector<const HloInstruction*> suppliers;

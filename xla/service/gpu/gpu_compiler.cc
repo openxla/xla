@@ -57,7 +57,9 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -117,6 +119,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/gemm_fusion_swap_operands.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/gpu_copy_async_wrapper.h"
+#include "xla/backends/gpu/transforms/group_collectives_by_key.h"
 #include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
 #include "xla/backends/gpu/transforms/layout_assignment.h"
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
@@ -231,6 +234,7 @@ limitations under the License.
 #include "xla/service/all_reduce_promotion.h"
 #include "xla/service/all_reduce_reassociate.h"
 #include "xla/service/all_reduce_simplifier.h"
+#include "xla/service/async_collective_custom_call_rewriter.h"
 #include "xla/service/batched_gather_scatter_normalizer.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/buffer_assignment.h"
@@ -302,7 +306,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/memory_annotations.h"
-#include "xla/service/multi_module_driver.h"
 #include "xla/service/reduce_scatter_reassociate.h"
 #include "xla/service/scan_expander.h"
 #include "xla/service/scatter_expander.h"
@@ -352,16 +355,20 @@ namespace xla {
 namespace gpu {
 namespace {
 
-bool IsTritonGemmEnabled(const DebugOptions& debug_options,
-                         const se::GpuComputeCapability& gpu_version) {
-  if (!debug_options.xla_gpu_enable_triton_gemm()) {
-    return false;
-  }
+bool IsTritonEnabled(const se::GpuComputeCapability& gpu_version) {
   const auto* cuda_cc = gpu_version.cuda_compute_capability();
   const auto* rocm_cc = gpu_version.rocm_compute_capability();
   return (cuda_cc != nullptr &&
           cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
          rocm_cc != nullptr;
+}
+
+bool IsTritonGemmEnabled(const DebugOptions& debug_options,
+                         const se::GpuComputeCapability& gpu_version) {
+  if (!debug_options.xla_gpu_enable_triton_gemm()) {
+    return false;
+  }
+  return IsTritonEnabled(gpu_version);
 }
 
 tsl::thread::ThreadPool* GetCompilationThreadPool() {
@@ -672,6 +679,8 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module,
   HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner", compilation_stats);
   // Run some IR cleanup passes before running the SPMD partitioning
   // passes.
+  pre_spmd_pipeline.AddPass<AsyncCollectiveCustomCallRewriter>(
+      /*use_legacy_collectives=*/false);
   pre_spmd_pipeline.AddPass<CuDnnCustomCallConverter>();
   pre_spmd_pipeline.AddPass<CompositeRewriter>();
   pre_spmd_pipeline.AddPass<ConvertMemoryPlacementToInternalAnnotations>();
@@ -1526,6 +1535,11 @@ absl::Status RunPostFusionPasses(
                               alias_info, pointer_size, options, gpu_topology,
                               mlir_context);
 
+  // Form async collective groups from collectives sharing a
+  // `collective_group_key` frontend attribute; runs after the combiner so
+  // combined collectives are grouped as a unit.
+  pipeline.AddPass<GroupCollectivesByKey>();
+
   pipeline.AddPass<AllReduceContiguous>();
 
   int32_t blueconnect_num_devices_per_host =
@@ -1569,7 +1583,11 @@ absl::Status RunPostFusionSimplificationPasses(
           .xla_gpu_experimental_stream_annotation()) {
     pipeline.AddPass<ExplicitStreamAnnotationAsyncWrapper>();
   }
+
+  // Rewrite any remaining hand-written `_collectives_group` calls into async
+  // pairs, these are non-inlineable calls in the original HLO module.
   pipeline.AddPass<ExplicitCollectivesGroupAsyncWrapper>();
+
   return pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
       .status();
 }
@@ -2121,7 +2139,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // in the softmax codegen pipeline. However we should run before
     // ReductionDimensionGrouper, as that makes matching the softmax pattern
     // harder.
-    if (IsTritonGemmEnabled(debug_options, gpu_version)) {
+    if (IsTritonEnabled(gpu_version)) {
       pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
                                                            gpu_version);
       pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
@@ -2273,17 +2291,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
-  if (MultiModuleDriver::ShouldProcess(*module)) {
-    VLOG(1) << "Triggering HLO module splitting for module: " << module->name();
-    MultiModuleDriver driver(
-        [this, stream_exec](std::unique_ptr<HloModule> m,
-                            const CompileOptions& opts) {
-          return this->RunHloPasses(std::move(m), stream_exec, opts);
-        },
-        GetGpuCompilationThreadPool()->AsExecutor());
-    return driver.Compile(std::move(module), {stream_exec}, options);
-  }
-
   // TODO rename slice_size to partition_size in CompileOptions
   if (options.slice_size > 0) {
     module->mutable_config().set_partition_size(options.slice_size);
@@ -2721,8 +2728,10 @@ GpuCompiler::CompileSingleModule(
       CompileTargetBinary(module_config, llvm_module, device_description,
                           relocatable, debug_module, shard_number));
 
-  const bool should_dump = DumpingEnabledForHloModule(
-      debug_module ? debug_module->name() : "", debug_options);
+  const bool should_dump =
+      DumpingEnabledForHloModule(debug_module ? debug_module->name() : "",
+                                 debug_options) &&
+      DumpingEnabledForEmitter("llvm", debug_options);
 
   if (should_dump) {
     if (debug_module) {
@@ -3142,7 +3151,10 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
         gpu_device_info, cost_analysis_options, mlir_context,
         module->config()
             .debug_options()
-            .xla_gpu_experimental_enable_tiling_propagation());
+            .xla_gpu_experimental_enable_tiling_propagation(),
+        module->config()
+            .debug_options()
+            .xla_gpu_experimental_enable_same_shape_multi_output_fusion());
     // S-curve model analysis for collectives.
     if (module->config()
             .debug_options()
@@ -3337,10 +3349,26 @@ absl::Status GpuCompiler::LoadAutotuneResultsFromFile(
   if (absl::string_view file_path =
           debug_options.xla_gpu_load_autotune_results_from();
       !file_path.empty()) {
+    bool use_new_format = debug_options.xla_gpu_use_new_autotune_cache_format();
     static absl::once_flag once;
     absl::Status status = absl::OkStatus();
-    absl::call_once(once, [&file_path, &status] {
-      status = AutotunerCache::LoadAutotuneResultsFromFile(file_path);
+    absl::call_once(once, [file_path, use_new_format, &status] {
+      if (use_new_format) {
+        std::string resolved_path;
+        if (!tsl::io::ResolveTestPrefixes(file_path, resolved_path)) {
+          status = absl::FailedPreconditionError(
+              absl::StrCat("File path can not be resolved: ", file_path));
+          return;
+        }
+        if (!tsl::Env::Default()->FileExists(resolved_path).ok()) {
+          status = absl::FailedPreconditionError(absl::StrCat(
+              "Autotune results file does not exist: ", resolved_path));
+          return;
+        }
+        status = InMemoryStore::LoadFromFile(resolved_path);
+      } else {
+        status = AutotunerCache::LoadAutotuneResultsFromFile(file_path);
+      }
     });
     RETURN_IF_ERROR(status);
   }
@@ -3355,7 +3383,17 @@ absl::Status GpuCompiler::SerializeAutotuneResultsToFile(
       !file_path.empty()) {
     // Warning: This writes the autotune results at every compilation,
     // possibly multiple times per process.
-    RETURN_IF_ERROR(AutotunerCache::SerializeAutotuneResultsToFile(file_path));
+    if (debug_options.xla_gpu_use_new_autotune_cache_format()) {
+      std::string resolved_path;
+      if (!tsl::io::ResolveTestPrefixes(file_path, resolved_path)) {
+        return absl::FailedPreconditionError(
+            absl::StrCat("File path can not be resolved: ", file_path));
+      }
+      RETURN_IF_ERROR(InMemoryStore::DumpToFile(resolved_path));
+    } else {
+      RETURN_IF_ERROR(
+          AutotunerCache::SerializeAutotuneResultsToFile(file_path));
+    }
   }
   return absl::OkStatus();
 }

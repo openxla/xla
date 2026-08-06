@@ -60,6 +60,27 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "raw_pjrt_client",
+    srcs = ["raw_pjrt_client.cc"],
+    hdrs = ["raw_pjrt_client.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        ":device_event",
+        ":pjrt_client",
+        ":raw_buffer",
+        "//xla:executable_run_options",
+        "//xla:future",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_client",
     hdrs = ["pjrt_c_api_client.h"],
     visibility = internal_visibility([":friends"]),
@@ -138,6 +159,7 @@ cc_library(
         ":pjrt_compiler",
         ":pjrt_executable",
         ":raw_buffer",
+        ":raw_pjrt_client",
         ":staging_buffer",
         ":transpose",
         ":utils",
@@ -157,6 +179,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util:maybe_owning",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -235,6 +258,7 @@ xla_cc_test(
         ":raw_buffer",
         "//xla:future",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
@@ -619,6 +643,7 @@ xla_cc_test(
         ":layout_mode",
         ":utils",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
@@ -1069,6 +1094,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:path",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -1093,7 +1119,6 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status_macros",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -1127,6 +1152,7 @@ cc_library(
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
         "@tsl//tsl/platform:path",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -1181,6 +1207,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:random",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -1198,6 +1225,16 @@ cc_library(
     ) + [
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "triton_test",
+    srcs = ["triton_test.cc"],
+    deps = [
+        ":triton",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

@@ -866,6 +866,57 @@ ENTRY main {
   EXPECT_EQ(neg_2_buffer.index(), neg_1_buffer.index());
 }
 
+TEST_F(BufferAssignmentTest,
+       IntermediateValueWithMultiplePositionsCanBeReused) {
+  // Verifies that an intermediate value with multiple positions (e.g. passed
+  // into a while loop via a tuple as well as a subsequent elementwise
+  // instruction) can share its buffer with the subsequent instruction even when
+  // its end_position recorded in HloLiveRange points to a secondary position
+  // inside the loop.
+  const char* const hlo_text = R"(
+HloModule test, is_scheduled=true
+
+while_cond {
+  param = (s32[], f32[100]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  five = s32[] constant(5)
+  ROOT cmp = pred[] compare(i, five), direction=LT
+}
+
+while_body {
+  param = (s32[], f32[100]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  val = f32[100] get-tuple-element(param), index=1
+  one = s32[] constant(1)
+  i_next = s32[] add(i, one)
+  ROOT tuple = (s32[], f32[100]) tuple(i_next, val)
+}
+
+ENTRY main {
+  p0 = f32[100]{0} parameter(0)
+  x_intermediate = f32[100]{0} negate(p0)
+  zero = s32[] constant(0)
+  init_tuple = (s32[], f32[100]) tuple(zero, x_intermediate)
+  loop = (s32[], f32[100]) while(init_tuple), condition=while_cond, body=while_body
+  s = f32[100] get-tuple-element(loop), index=1
+  abs = f32[100] abs(s)
+  x_final = f32[100] add(x_intermediate, abs)
+  ROOT res = (f32[100], f32[100]) tuple(x_final, abs)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* x_intermediate =
+      FindInstruction(module.get(), "x_intermediate");
+  HloInstruction* x_final = FindInstruction(module.get(), "x_final");
+
+  auto buffers = RunBufferAssignmentWithSequentialOrdering(module.get());
+  BufferAllocation x_inter_buffer = GetAllocation(*buffers, x_intermediate, {});
+  BufferAllocation x_final_buffer = GetAllocation(*buffers, x_final, {});
+
+  EXPECT_EQ(x_inter_buffer.index(), x_final_buffer.index());
+}
+
 TEST_F(BufferAssignmentTest, CanUseAllocationDoesNotMixInputOutputColors) {
   // Even when a backend allows S(0) temps to be assigned to S(1) temp
   // allocations, input/output allocations must match raw colors. They are
@@ -5617,6 +5668,80 @@ void BM_FastMergeManagerStress(::testing::benchmark::State& state) {
 }
 
 BENCHMARK(BM_FastMergeManagerStress)->Range(1'000, 10'000'000);
+
+// Tests that BufferAssignment::FromProto rejects a malformed proto containing
+// an assigned buffer with a negative offset or size.
+//
+// Without the fix, such values bypass the CHECK_LE guards in AddAssignment
+// (e.g. CHECK_LE(-1, 1024) is true for any real allocation size) and get
+// stored in assigned_buffers_. They are later used in LLVM IR pointer
+// arithmetic:
+//   tempbuf_address_base + b()->getInt64(slice.offset())
+// producing an out-of-bounds address.
+//
+// The fix mirrors the check added to Slice::FromProto in PR #44653, applied
+// to the Assigned buffer path in BufferAssignment::FromProto that PR missed.
+TEST_F(BufferAssignmentTest, FromProtoRejectsNegativeOffset) {
+  const char* const hlo_text = R"(
+    HloModule test
+    ENTRY e {
+      p0 = f32[4]{0} parameter(0)
+      ROOT neg = f32[4]{0} negate(p0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+
+  // Get a valid proto via normal round-trip, then corrupt one offset field.
+  // This simulates a malformed serialized AOT executable supplied by an
+  // attacker to CpuAotLoader::LoadAotCompilationResult().
+  auto buffers = RunBufferAssignment(module.get());
+  auto proto = buffers->ToProto();
+
+  bool mutated = false;
+  for (auto& alloc : *proto.mutable_buffer_allocations()) {
+    if (alloc.assigned_size() > 0) {
+      alloc.mutable_assigned(0)->set_offset(-1);
+      mutated = true;
+      break;
+    }
+  }
+  ASSERT_TRUE(mutated) << "Test setup: expected at least one assigned buffer";
+
+  // Must return an error — not crash via CHECK_LE, not silently store -1.
+  auto result = BufferAssignment::FromProto(proto, module.get(),
+                                            &BufferSizeBytes, &alias_info_);
+  EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(), ::testing::HasSubstr("negative"));
+}
+
+TEST_F(BufferAssignmentTest, FromProtoRejectsNegativeSize) {
+  const char* const hlo_text = R"(
+    HloModule test
+    ENTRY e {
+      p0 = f32[4]{0} parameter(0)
+      ROOT neg = f32[4]{0} negate(p0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+
+  auto buffers = RunBufferAssignment(module.get());
+  auto proto = buffers->ToProto();
+
+  bool mutated = false;
+  for (auto& alloc : *proto.mutable_buffer_allocations()) {
+    if (alloc.assigned_size() > 0) {
+      alloc.mutable_assigned(0)->set_size(-1);
+      mutated = true;
+      break;
+    }
+  }
+  ASSERT_TRUE(mutated) << "Test setup: expected at least one assigned buffer";
+
+  auto result = BufferAssignment::FromProto(proto, module.get(),
+                                            &BufferSizeBytes, &alias_info_);
+  EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(), ::testing::HasSubstr("negative"));
+}
 
 }  // namespace
 }  // namespace xla

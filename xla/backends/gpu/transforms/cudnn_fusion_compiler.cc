@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
+#include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -72,6 +73,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -522,6 +524,16 @@ class ConvDimensionAdapter {
       result.strides = std::vector<int64_t>(spatial_dims + 2, 1);
       return result;
     }
+    if (hlo.shape().dimensions().size() == 1) {
+      Result result;
+      int64_t spatial_dims =
+          std::max<int64_t>(2, dums_.input_spatial_dimensions_size());
+      result.sizes = std::vector<int64_t>(spatial_dims + 2, 1);
+      result.strides = std::vector<int64_t>(spatial_dims + 2, 0);
+      result.sizes[1] = hlo.shape().dimensions(0);
+      result.strides[1] = 1;
+      return result;
+    }
     // Placeholder FP32 data type here, it is not used.
     auto desc = se::dnn::TensorDescriptor::For(
         se::dnn::DataType::kFloat, hlo.shape().dimensions(),
@@ -538,15 +550,21 @@ class ConvDimensionAdapter {
     result.sizes.push_back(logical_dims[dums_.input_feature_dimension()]);
     result.strides.push_back(logical_strides[dums_.input_batch_dimension()]);
     result.strides.push_back(logical_strides[dums_.input_feature_dimension()]);
+    // cuDNN frontend expects tensor rank to be at least 4 (2 spatial dims).
+    // Prepend dummy spatial dimensions (e.g. H=1 for 1D convs) so 1D convs
+    // are represented as (N, C, 1, W).
+    while (result.sizes.size() + dums_.input_spatial_dimensions_size() < 4) {
+      result.sizes.push_back(1);
+      int64_t dummy_stride = 1;
+      if (dums_.input_spatial_dimensions_size() > 0) {
+        dummy_stride = logical_strides[dums_.input_spatial_dimensions(0)];
+      }
+      result.strides.push_back(dummy_stride);
+    }
     for (auto i = 0; i < dums_.input_spatial_dimensions_size(); ++i) {
       result.sizes.push_back(logical_dims[dums_.input_spatial_dimensions(i)]);
       result.strides.push_back(
           logical_strides[dums_.input_spatial_dimensions(i)]);
-    }
-    // cuDNN frontend expects tensor rank to be at least 4 (2 spatial dims).
-    while (result.sizes.size() < 4) {
-      result.sizes.push_back(1);
-      result.strides.push_back(1);
     }
     return result;
   }
@@ -947,12 +965,13 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
         dilation.push_back(dim.window_dilation());
       }
       // cuDNN frontend expects at least 2 spatial dimensions for conv
-      // operations.
+      // operations. Prepend dummy spatial dimensions (e.g. H=1 for 1D convs)
+      // so 1D convs are represented as (N, C, 1, W).
       while (pre_padding.size() < 2) {
-        pre_padding.push_back(0);
-        post_padding.push_back(0);
-        stride.push_back(1);
-        dilation.push_back(1);
+        pre_padding.insert(pre_padding.begin(), 0);
+        post_padding.insert(post_padding.begin(), 0);
+        stride.insert(stride.begin(), 1);
+        dilation.insert(dilation.begin(), 1);
       }
       const auto compute_dtype =
           GetComputeDataType(hlo->shape().element_type());
@@ -1107,10 +1126,18 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
         "crash inside the deviceless heuristics query.");
   }
   ASSIGN_OR_RETURN(se::gpu::CudnnGraph graph, HloFusionToCuDnnGraph(hlo));
+  PrecisionConfig precision_config = GetPrecisionConfig(hlo);
+
+  bool allow_tf32 =
+      tsl::tensor_float_32_execution_enabled() &&
+      absl::c_all_of(precision_config.operand_precision(), [](int precision) {
+        return precision <= PrecisionConfig::HIGH;
+      });
+
   RETURN_IF_ERROR(graph.Prepare(
       dnn_support, gpu_device_info,
       se::EngineOptions{RequireDeterminism(hlo.GetModule()->config()),
-                        /*allow_tf32=*/true,
+                        allow_tf32,
                         /*require_command_buffer=*/false}));
   return graph;
 }
@@ -1195,7 +1222,7 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
                                     *DynCast<HloFusionInstruction>(hlo)));
 
       if (fusion_backend_config.has_cudnn_fusion_config() &&
-          fusion_backend_config.cudnn_fusion_config().plan_id() >= 0) {
+          fusion_backend_config.cudnn_fusion_config().has_plan_id()) {
         const int64_t plan_id =
             fusion_backend_config.cudnn_fusion_config().plan_id();
         VLOG(4) << "Plan ID: " << plan_id;

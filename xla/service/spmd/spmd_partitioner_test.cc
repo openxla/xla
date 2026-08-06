@@ -3593,6 +3593,59 @@ ENTRY entry {
   EXPECT_THAT(root, op::Tuple(op::Slice(concat), op::Slice(concat)));
 }
 
+TEST_P(SpmdPartitioningTest, CustomCallXladebugLog) {
+  class DummyDebugLogPartitioner : public CustomCallPartitioner {
+   public:
+    absl::Status Partition(spmd::SpmdPartitioningVisitor* visitor,
+                           HloInstruction* hlo) const override {
+      std::vector<HloInstruction*> new_operands;
+      new_operands.reserve(hlo->operand_count());
+      for (const HloInstruction* operand : hlo->operands()) {
+        new_operands.push_back(visitor->GetPartitionedHlo(operand).hlo());
+      }
+      HloInstruction* clone = visitor->builder()->AddInstruction(
+          hlo->CloneWithNewOperands(hlo->shape(), new_operands));
+      if (hlo->has_sharding()) {
+        clone->set_sharding(hlo->sharding());
+      }
+      visitor->SetPartitionedHlo(
+          hlo, spmd::PartitionedHlo(clone, hlo->shape(),
+                                    visitor->MakePartitioningState()));
+      return absl::OkStatus();
+    }
+    bool CanSideEffectingHaveReplicatedSharding() const override {
+      return true;
+    }
+  };
+  RegisterCustomCallPartitioner("xla.debug.Log",
+                                std::make_unique<DummyDebugLogPartitioner>());
+
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[12] parameter(0), sharding={devices=[4]<=[4]}
+  ROOT %custom-call = () custom-call(%param0),
+    custom_call_target="xla.debug.Log",
+    custom_call_has_side_effect=true,
+    sharding={replicated}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  // Verify that the parameter got the attribute.
+  auto param0 = module->entry_computation()->parameter_instruction(0);
+  ASSERT_NE(param0, nullptr);
+  EXPECT_TRUE(
+      param0->frontend_attributes().map().contains("original_sharding"));
+  EXPECT_THAT(param0->frontend_attributes().map().at("original_sharding"),
+              ::testing::AnyOf(::testing::HasSubstr("devices=[4]<=[4]"),
+                               ::testing::HasSubstr("axis_0"),
+                               ::testing::HasSubstr("devices=[4]0,1,2,3")));
+}
+
 TEST_P(SpmdPartitioningTest, CustomCallMultiSliceRealWorldPaddingBug) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -12812,6 +12865,25 @@ ENTRY entry {
   EXPECT_THAT(root, AllOf(op::GetTupleElement(op::While(op::Tuple(
                               _, op::Multiply(local_fft, op::Exp()), _, _, _))),
                           op::Shape("c64[1,1,3]")));
+}
+
+TEST_P(SpmdPartitioningTest, Fft3DC128) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  input = c128[1,1,6] parameter(0),
+    sharding={devices=[1,1,2]<=[2]}
+  ROOT fft = c128[1,1,6] fft(input), fft_type=FFT, fft_length={6},
+    sharding={devices=[1,1,2]<=[2]}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      AllOf(op::GetTupleElement(op::While()), op::Shape("c128[1,1,3]")));
 }
 
 TEST_P(SpmdPartitioningTest, Fft3DSmallShardFallsBack) {

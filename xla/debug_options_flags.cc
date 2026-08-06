@@ -263,6 +263,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_use_acl(true);
 #endif
   opts.set_xla_cpu_use_xnnpack(true);
+  opts.set_xla_cpu_use_new_xtile_lowering(false);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
   opts.add_xla_cpu_experimental_ynn_fusion_type(
@@ -298,6 +299,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_enable_fast_min_max(true);
 
   opts.set_xla_gpu_enable_cublaslt(true);
+  opts.set_xla_gpu_trace_annotation_level(0);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -327,6 +329,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       kDefaultReduceScatterCombineThreshold);
   opts.set_xla_gpu_collective_permute_combine_threshold_bytes(
       kDefaultCollectivePermuteCombineThreshold);
+  opts.set_xla_while_loop_all_reduce_dus_code_motion_max_size_bytes(10240);
   opts.set_xla_gpu_collective_combine_threshold_count(
       kDefaultCollectiveCombineThresholdCount);
   opts.set_xla_gpu_enable_all_gather_combine_by_dim(false);
@@ -346,7 +349,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_enzyme_comms_opt(false);
   opts.set_xla_recognize_reduction_optimization_level(0);
 
-  opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(true);
   opts.set_xla_gpu_enable_dus_accumulator_zero_init_elimination(false);
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
@@ -406,6 +409,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_gemm_fusion_v2(false);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
   opts.set_xla_gpu_experimental_enable_tiling_propagation(false);
+  opts.set_xla_gpu_experimental_cost_model_gemm_tiling_default(false);
 
   // Moving reduce-scatter out of while loops can increase memory footprint, so
   // turning it off by default.
@@ -519,6 +523,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
+  opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer(
+      true);
   opts.add_xla_gpu_experimental_use_collective_kernels(
       DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
@@ -1556,6 +1562,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_cpu_use_xnnpack(),
                 "Use XNNPACK for supported operations."));
   flag_list->push_back(tsl::Flag(
+      "xla_cpu_use_new_xtile_lowering",
+      bool_setter_for(&DebugOptions::set_xla_cpu_use_new_xtile_lowering),
+      debug_options->xla_cpu_use_new_xtile_lowering(),
+      "Use new xtile lowering."));
+  flag_list->push_back(tsl::Flag(
       "xla_cpu_experimental_xnn_fusion_type",
       SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
           "xla_cpu_experimental_xnn_fusion_type",
@@ -2329,6 +2340,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "buffer it allocates. (So the buffer's total size will be increased by "
       "2x this value.)"));
   flag_list->push_back(tsl::Flag(
+      "xla_while_loop_all_reduce_dus_code_motion_max_size_bytes",
+      int64_setter_for(
+          &DebugOptions::
+              set_xla_while_loop_all_reduce_dus_code_motion_max_size_bytes),
+      debug_options->xla_while_loop_all_reduce_dus_code_motion_max_size_bytes(),
+      "Maximum size (in bytes) of an all-reduce that the while-loop all-reduce "
+      "code motion pass is allowed to hoist out of a loop for dynamic update "
+      "slice patterns."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_shape_checks", setter_for_xla_gpu_shape_checks,
       DebugOptions::ShapeChecks_Name(debug_options->xla_gpu_shape_checks()),
       "When to perform shape checks in XLA:GPU."));
@@ -2744,6 +2764,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Einsums that have partitioned operand(can be either LHS or RHS) that's "
       "larger than this threshold will be transformed to use windowed einsums."
       "Default is 100000"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_trace_annotation_level",
+      int32_setter_for(&DebugOptions::set_xla_gpu_trace_annotation_level),
+      debug_options->xla_gpu_trace_annotation_level(),
+      "GPU trace annotation detail level. Level 0 emits compact instruction "
+      "names and basic structured payloads. Level 1 additionally emits "
+      "detailed HLO and collective metadata in XProf annotation names and "
+      "structured payloads. NVTX names remain compact."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_operand_bytes_threshold_for_windowed_einsum",
       int64_setter_for(
@@ -3681,6 +3709,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "selection; comma-separated list of 'key=val' strings (=val may be "
       "omitted); no whitespace around commas."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_cost_model_gemm_tiling_default",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_cost_model_gemm_tiling_default),
+      debug_options->xla_gpu_experimental_cost_model_gemm_tiling_default(),
+      "If true, uses the cost model to suggest default GEMM tilings when "
+      "autotuning is disabled (e.g., in deviceless or deterministic mode)."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_ptx_compiler_extra_flags",
       setter_for_xla_gpu_ptx_compiler_extra_flags,
       /*default_value_for_display=*/"",
@@ -3823,6 +3859,9 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
 
 void ResetThreadLocalFuel() {
   absl::call_once(flags_init, &AllocateFlags, nullptr);
+  if (initial_fuel->empty()) {
+    return;
+  }
 
   thread_fuel = std::make_unique<
       absl::node_hash_map<std::string, std::atomic<int64_t>>>();
@@ -3834,6 +3873,9 @@ void ResetThreadLocalFuel() {
 
 bool PassFuelIsSet(absl::string_view pass) {
   absl::call_once(flags_init, &AllocateFlags, nullptr);
+  if (initial_fuel->empty()) {
+    return false;
+  }
   auto* fuel_pool = thread_fuel ? thread_fuel.get() : global_fuel;
   auto it = fuel_pool->find(pass);
   return it != fuel_pool->end();
@@ -3843,6 +3885,9 @@ bool ConsumeFuel(absl::string_view pass, bool* just_ran_out) {
   absl::call_once(flags_init, &AllocateFlags, nullptr);
   if (just_ran_out != nullptr) {
     *just_ran_out = false;
+  }
+  if (initial_fuel->empty()) {
+    return true;
   }
   auto* fuel_pool = thread_fuel ? thread_fuel.get() : global_fuel;
   if (fuel_pool->empty()) {

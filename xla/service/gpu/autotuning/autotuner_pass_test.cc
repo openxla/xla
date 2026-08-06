@@ -434,6 +434,7 @@ struct AutotuneLevelParams {
   bool expected_select_first_config;
   bool expected_check_buffers;
   bool expected_should_init_buffers;
+  int expected_redzone_padding_bytes;
 };
 
 class AutotunerFlagsTest
@@ -456,16 +457,18 @@ TEST_P(AutotunerFlagsTest, AutotuneLevel) {
       GetProfileOptions(debug_options, config_assigner_options);
   EXPECT_EQ(profile_options.should_init_buffers,
             params.expected_should_init_buffers);
+  EXPECT_EQ(profile_options.redzone_padding_bytes,
+            params.expected_redzone_padding_bytes);
 }
 
 INSTANTIATE_TEST_SUITE_P(
     AutotuneLevelTests, AutotunerFlagsTest,
     ::testing::ValuesIn<AutotuneLevelParams>({
-        {0, true, false, false},
-        {1, false, false, false},
-        {2, false, false, false},
-        {3, false, false, false},
-        {4, false, true, true},
+        {0, true, false, false, 0},
+        {1, false, false, false, 0},
+        {2, false, false, false, 0},
+        {3, false, false, false, 0},
+        {4, false, true, true, 8 * 1024 * 1024},
     }),
     [](const ::testing::TestParamInfo<AutotunerFlagsTest::ParamType>& info) {
       return std::to_string(info.param.autotune_level);
@@ -508,11 +511,10 @@ INSTANTIATE_TEST_SUITE_P(
                           info.param.fail_on_spill_flag);
     });
 
-TEST_F(AutotunerFlagsTest, DevicelessUsesDefaultConfig) {
+TEST_F(AutotunerFlagsTest, DevicelessUsesFirstConfig) {
   DebugOptions debug_options = GetDebugOptionsForTest();
-  EXPECT_EQ(GetConfigAssignerOptions(debug_options, /*is_deviceless=*/true)
-                .use_default_config,
-            true);
+  EXPECT_TRUE(GetConfigAssignerOptions(debug_options, /*is_deviceless=*/true)
+                  .select_first_config);
 }
 
 TEST_F(AutotunerFlagsTest, DeterministicAutotuningSetsSelectFirstConfig) {
