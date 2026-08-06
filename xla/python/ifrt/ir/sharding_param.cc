@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/sharding_param.h"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -166,11 +167,15 @@ mlir::LogicalResult ShardingParam::MinorToMajor::verify(
 void ShardingParam::MinorToMajor::ToDeviceList(
     llvm::SmallVectorImpl<int>& out_devices) const {
   llvm::SmallVector<int, 4> cum_sizes;
-  int cum_size = 1;
+  int64_t cum_size = 1;
   cum_sizes.reserve(axis_sizes.size());
   for (auto size : axis_sizes) {
-    cum_sizes.push_back(cum_size);
-    cum_size *= size;
+    CHECK_LE(cum_size, std::numeric_limits<int>::max())
+        << "axis_sizes product overflows int; this should have been "
+           "rejected by ShardingParam::verify() before reaching "
+           "ToDeviceList()";
+    cum_sizes.push_back(static_cast<int>(cum_size));
+    cum_size *= static_cast<int64_t>(size);
   }
   PopulateDevices(permutation, axis_sizes, cum_sizes, out_devices);
 }
@@ -246,11 +251,18 @@ absl::Status ShardingParam::verify() const {
   }
   // TODO(b/491122256): Improve validation logic to check if `dim_shards` can be
   // distributed over the device mesh.
-  int total_dim_shards_size = 1;
+  int64_t total_dim_shards_size = 1;
   for (const int dim_shard : dim_shards()) {
-    total_dim_shards_size *= dim_shard;
+    total_dim_shards_size *= static_cast<int64_t>(dim_shard);
+    if (total_dim_shards_size > std::numeric_limits<int>::max() ||
+        total_dim_shards_size < 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "`dim_shards` product overflows: ",
+          absl::StrJoin(dim_shards(), "x")));
+    }
   }
-  if (NumDevices() % total_dim_shards_size != 0) {
+  if (total_dim_shards_size == 0 ||
+      NumDevices() % total_dim_shards_size != 0) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Can't shard the dims ", absl::StrJoin(dim_shards(), "x"),
         " to the mesh of [", absl::StrJoin(minor_to_major().permutation, ","),
@@ -378,8 +390,10 @@ absl::StatusOr<ShardingParam> ShardingParam::FromProto(
     unreduced_axes = std::vector<int>(proto.unreduced_axes().begin(),
                                       proto.unreduced_axes().end());
   }
-  return ShardingParam(std::move(dim_shards), std::move(minor_to_major),
-                       std::move(unreduced_axes));
+  ShardingParam param(std::move(dim_shards), std::move(minor_to_major),
+                      std::move(unreduced_axes));
+  RETURN_IF_ERROR(param.verify());
+  return param;
 }
 
 absl::Status ShardingParam::ToProto(ShardingParamProto& proto,
