@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/collectives/gxl_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
@@ -415,6 +416,10 @@ RaggedAllToAllThunk::GetCliqueRequirements(const GpuCliqueKey& clique_key) {
   if (UsesDeviceKernel()) {
     clique_reqs.dev_comm = DeviceKernelLsaDevCommRequirements();
   }
+  if (use_multi_gpu_barrier_with_nccl_in_one_shot_kernel()) {
+    clique_reqs.barrier_reqs = CollectiveCliqueRequests::BarrierRequirements();
+    clique_reqs.barrier_reqs->use_cross_device_barrier = true;
+  }
   return clique_reqs;
 }
 
@@ -524,28 +529,9 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
 
   ASSIGN_OR_RETURN(RaggedAllToAllStreamState * state, InitializeOnce(params));
 
-  // If the symmetric memory handlers are not initialized, initialize it.
-  // This can happen in two scenarios:
-  //   1. This is the first time the thunk is initialized.
-  //   2. Original NCCL communicator was destroyed and symmetric memory handler
-  //      was released. NCCL communicator can be destroyed in comm splitting
-  //      process, but generally it should not change between executions, so
-  //      it's safe to cache the symmetric handler.
-  if (state->lsa_size.has_value() &&
-      state->lsa_size.value() == state->clique_key.num_devices()) {
-    ASSIGN_OR_RETURN(auto* comm, params.collective_cliques->GetComm(
-                                     state->clique_key, state->rank));
-
-    if (state->barrier_signal_symmetric_memory.Expired()) {
-      ASSIGN_OR_RETURN(
-          auto symmetric_memory,
-          comm->CreateSymmetricMemory(state->barrier_signal_buffer->address()));
-
-      ASSIGN_OR_RETURN(state->barrier_signal_symmetric_memory,
-                       params.collective_cliques->Tie(
-                           state->clique_key, std::move(symmetric_memory)));
-    }
-  } else if (is_local(params.local_device_count)) {
+  if ((!state->lsa_size.has_value() ||
+       state->lsa_size.value() != state->clique_key.num_devices()) &&
+      is_local(params.local_device_count)) {
     // Rendezvous - Exchange output pointers and barrier signal buffers.
     ASSIGN_OR_RETURN(
         std::vector<DeviceBufferPair> device_buffers,
@@ -857,9 +843,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
             out_slice.ToString(), clique_key);
       }
       return RunOneShotRaggedAllToAllWithNccl(
-          clique_key, stream, state->rank,
-          state->barrier_signal_symmetric_memory.Lock(),
-          state->barrier_signal_value->address(), output_sym_mem,
+          clique_key, stream, state->rank, gpu_comm, output_sym_mem,
           output_sym_offset, config_.num_total_updates, config_.num_input_rows,
           config_.num_row_elements, device_buffers);
     }
@@ -1120,11 +1104,9 @@ struct CharFormatter {
 // 3. Post-Kernel Barrier: Wait until all peers have finished writing.
 absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
-    std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
-    const se::DeviceAddressBase& barrier_signal_value,
-    SymmetricMemory* output_sym_mem, size_t output_sym_offset,
-    int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers) {
+    GpuCommunicator* comm, SymmetricMemory* output_sym_mem,
+    size_t output_sym_offset, int64_t num_total_updates, int64_t num_input_rows,
+    int64_t num_row_elements, absl::Span<DeviceBufferPair const> buffers) {
   int device_ordinal = stream.parent()->device_ordinal();
   const int64_t num_ranks = clique_key.num_devices();
 
@@ -1144,11 +1126,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
       << " output sym memory (handle=" << output_sym_mem
       << ", address=" << output_sym_mem->addr().opaque()
       << ", size=" << output_sym_mem->addr().size()
-      << ", sym_offset=" << output_sym_offset << ")"
-      << " barrier signal symmetric memory (handle="
-      << barrier_signal_symmetric_memory.get()
-      << ", address=" << barrier_signal_symmetric_memory->addr().opaque()
-      << ", size=" << barrier_signal_symmetric_memory->addr().size() << ")";
+      << ", sym_offset=" << output_sym_offset << ")";
 
   // 1. Barrier (Pre-Kernel)
   // Global synchronization before P2P writes.
@@ -1156,9 +1134,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   // are ready to receive data. This prevents the kernel from attempting to
   // write to a peer's memory before that peer has completed the rendezvous
   // setup.
-  RETURN_IF_ERROR(xla::gpu::LaunchMultiGpuBarrierWithNccl(
-      &stream, num_ranks, rank, barrier_signal_symmetric_memory.get(),
-      barrier_signal_value));
+  RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(GpuCollectives::On(stream)));
 
   // 2. Execution of RunRaggedAllToAllKernel
   const int64_t num_updates_per_replica = num_total_updates / num_ranks;
@@ -1180,9 +1156,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   // We wait for all peers to signal completion.
   // This guarantees that all P2P writes to our output buffer are complete and
   // safe to consume.
-  RETURN_IF_ERROR(xla::gpu::LaunchMultiGpuBarrierWithNccl(
-      &stream, num_ranks, rank, barrier_signal_symmetric_memory.get(),
-      barrier_signal_value));
+  RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(GpuCollectives::On(stream)));
 
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "RaggedAllToAll (One-Shot NCCL) FINISHED. Rank: " << rank.value();
