@@ -1677,17 +1677,12 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncUpdate(
     const Shape& shape, HloInstruction* operand) {
-  return absl::WrapUnique(
-      new HloAsyncInstruction(HloOpcode::kAsyncUpdate, shape, operand));
+  return CreateAsyncUpdate(shape, absl::Span<HloInstruction* const>({operand}));
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncUpdate(
     const Shape& shape, absl::Span<HloInstruction* const> operands) {
-  CHECK_GE(operands.size(), 1);
-  HloInstruction* prev_async = operands[0];
-  return absl::WrapUnique(new HloAsyncInstruction(
-      HloOpcode::kAsyncUpdate, shape, operands,
-      Cast<HloAsyncInstruction>(prev_async)->async_wrapped_opcode()));
+  return std::make_unique<HloAsyncUpdateInstruction>(shape, operands);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncDone(
@@ -6270,6 +6265,10 @@ const DomainMetadata& HloInstruction::user_side_metadata() const {
 
 HloInstruction* HloInstruction::async_chain_start() const {
   return Cast<HloAsyncInstruction>(this)->async_chain_start();
+}
+
+HloInstruction* HloInstruction::async_chain_next() const {
+  return Cast<HloAsyncInstruction>(this)->async_chain_next();
 }
 
 HloInstruction* HloInstruction::async_chain_done() const {
