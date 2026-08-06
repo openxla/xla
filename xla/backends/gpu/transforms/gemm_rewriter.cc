@@ -71,7 +71,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.h"
-#include "xla/stream_executor/sycl/sycl_matmul_utils.h"
+#include "xla/stream_executor/sycl/sycl_gemm_workspace.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -2822,28 +2822,6 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
         workspace = GemmConfig::kGFX950Workspace;
       }
     }
-    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
-    if (oneapi_cc != nullptr) {
-      // Getting the workspace size from the primitive descriptor
-      ASSIGN_OR_RETURN(GemmConfig gemm_config,
-                          GemmConfig::For(instr, gpu_version_));
-      ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                          instr->backend_config<GpuBackendConfig>());
-      const GemmBackendConfig& config = gpu_config.gemm_backend_config();
-
-      auto prim_desc_or =
-          stream_executor::sycl::CreateMatMulPrimDescFromGemmConfig(
-              gemm_config, config.epilogue());
-      if (prim_desc_or.ok()) {
-        // Get the scratchpad size from OneDNN primitive descriptor
-        size_t scratchpad_size = (*prim_desc_or)->scratchpad_desc().get_size();
-        workspace = std::max(workspace, static_cast<int64_t>(scratchpad_size));
-      } else {
-        VLOG(1) << "Failed to create OneDNN primitive descriptor for "
-                << instr->custom_call_target() << ": "
-                << prim_desc_or.status().message();
-      }
-    }
 
     // We do not know the workspace size required by cuBLAS, but we can guess
     // that in a worst case cuBLAS will transpose all operands into tiled
@@ -2864,6 +2842,26 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
     if (instr->custom_call_target() == kCublasLtGroupedMatmulCallTarget) {
       size_t num_groups = instr->operand(2)->shape().dimensions().back();
       workspace = GroupedGemmConfig::kUserArgsSizeBytes * num_groups;
+    }
+
+    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
+    if (oneapi_cc != nullptr) {
+      TF_ASSIGN_OR_RETURN(GemmConfig gemm_config,
+                          GemmConfig::For(instr, gpu_version_));
+      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                          instr->backend_config<GpuBackendConfig>());
+      const GemmBackendConfig& config = gpu_config.gemm_backend_config();
+
+      auto scratchpad_size_or = stream_executor::sycl::GetGemmScratchpadSize(
+          gemm_config, config.epilogue());
+      if (scratchpad_size_or.ok()) {
+        workspace =
+            std::max(workspace, static_cast<int64_t>(*scratchpad_size_or));
+      } else {
+        VLOG(1) << "Failed to compute OneDNN scratchpad size for "
+                << instr->custom_call_target() << ": "
+                << scratchpad_size_or.status().message();
+      }
     }
 
     // Append workspace buffer to instruction outputs.

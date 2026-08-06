@@ -576,7 +576,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/platform:initialize",
-        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/platform:statusor",
     ],
     alwayslink = True,
 )
@@ -644,5 +644,39 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "sycl_gemm_workspace",
+    srcs = ["sycl_gemm_workspace.cc"],
+    hdrs = ["sycl_gemm_workspace.h"],
+    local_defines = if_sycl_is_configured(["TENSORFLOW_USE_SYCL=1"]),
+    deps = [
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:matmul_utils",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ] + if_sycl_is_configured([
+        ":sycl_matmul_utils",
+    ]),
+)
+
+xla_test(
+    name = "gemm_sycl_test",
+    srcs = ["gemm_sycl_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "//xla:error_spec",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
     ],
 )

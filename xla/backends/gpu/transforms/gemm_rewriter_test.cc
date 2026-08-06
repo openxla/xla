@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>

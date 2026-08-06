@@ -21,14 +21,14 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
-#include "xla/tests/restricted/hlo_test_base_legacy.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 namespace {
 
-class ParameterizedGemmRewriteTest : public HloTestBaseLegacy,
+class ParameterizedGemmRewriteTest : public HloPjRtInterpreterReferenceMixin<HloTestBase> ,
                                       public ::testing::WithParamInterface<bool> {};
 
 TEST_P(ParameterizedGemmRewriteTest, MatmulNoFusion) {
@@ -38,7 +38,7 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulNoFusion) {
                            {"bf16", "bf16"}};
 
   for (const auto& type_combination : type_combinations) {
-    LOG(INFO) << "Testing type combination: "
+    VLOG(3) << "Testing type combination: "
             << std::get<0>(type_combination) << ", "
             << std::get<1>(type_combination);
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
@@ -70,7 +70,7 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulWithBias) {
                            {"f16", "f16"},
                            {"bf16", "bf16"}};
   for (const auto& type_combination : type_combinations) {
-    LOG(INFO) << "Testing type combination: "
+    VLOG(3) << "Testing type combination: "
             << std::get<0>(type_combination) << ", "
             << std::get<1>(type_combination);
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
@@ -107,7 +107,7 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulWithRELU) {
                            {"f16", "f16"},
                            {"bf16", "bf16"}};
   for (const auto& type_combination : type_combinations) {
-    LOG(INFO) << "Testing type combination: "
+    VLOG(3) << "Testing type combination: "
             << std::get<0>(type_combination) << ", "
             << std::get<1>(type_combination);
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
@@ -142,7 +142,7 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulWithApproxGELU) {
                            {"f16", "f16"},
                            {"bf16", "bf16"}};
   for (const auto& type_combination : type_combinations) {
-    LOG(INFO) << "Testing type combination: "
+    VLOG(3) << "Testing type combination: "
             << std::get<0>(type_combination) << ", "
             << std::get<1>(type_combination);
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
@@ -188,5 +188,4 @@ INSTANTIATE_TEST_SUITE_P(SyclMatmul,
                          ParameterizedGemmRewriteTest, ::testing::Values(true));
 
 }  // namespace
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
