@@ -485,7 +485,8 @@ class XlaBuilder {
   absl::StatusOr<Shape> GetShape(XlaOp op) const;
 
   // Returns the shape of the given op.
-  virtual absl::StatusOr<const Shape* absl_nonnull> GetShapePtr(XlaOp op) const;
+  virtual absl::StatusOr<const Shape * absl_nonnull> GetShapePtr(
+      XlaOp op) const;
 
   // Returns the OpSharding of the given op. If "op" has no sharding, return
   // std::nullopt.
@@ -981,6 +982,18 @@ class XlaBuilder {
       const std::optional<ChannelHandle>& channel_id = std::nullopt,
       const std::optional<Shape>& shape_with_layout = std::nullopt,
       std::optional<bool> use_global_device_ids = std::nullopt);
+
+  // Reduces `operands` with `computation` and writes the result only to the
+  // root rank (the first member of each replica group, or a runtime-selected
+  // rank when `has_dynamic_root` is set and the last operand is an S32 vector
+  // of per-operand roots). Returns a single op whose shape is a tuple when
+  // there is more than one data operand.
+  XlaOp CollectiveReduceWithDeviceList(
+      absl::Span<const XlaOp> operands, XlaComputationId computation,
+      const CollectiveDeviceListBase& replica_groups,
+      const std::optional<ChannelHandle>& channel_id = std::nullopt,
+      std::optional<bool> use_global_device_ids = std::nullopt,
+      bool has_dynamic_root = false);
 
   XlaOp ReduceScatter(
       XlaOp operand, XlaComputationId computation, int64_t scatter_dimension,
@@ -1805,6 +1818,11 @@ class XlaBuilder {
       const std::optional<ChannelHandle>& channel_id,
       const std::optional<Shape>& shape_with_layout,
       std::optional<bool> use_global_device_ids);
+  friend XlaOp CollectiveReduceWithDeviceList(
+      absl::Span<const XlaOp> operands, XlaComputationId computation,
+      const CollectiveDeviceListBase& replica_groups,
+      const std::optional<ChannelHandle>& channel_id,
+      std::optional<bool> use_global_device_ids, bool has_dynamic_root);
 
   friend XlaOp AllReduceTuple(absl::Span<const XlaOp> operand,
                               XlaComputationId computation,
@@ -3114,6 +3132,15 @@ XlaOp AllReduceTupleWithDeviceList(
     const std::optional<ChannelHandle>& channel_id = std::nullopt,
     const std::optional<Shape>& shape_with_layout = std::nullopt,
     std::optional<bool> use_global_device_ids = std::nullopt);
+
+// Reduces `operands` to a single root rank (see
+// XlaBuilder::CollectiveReduceWithDeviceList).
+XlaOp CollectiveReduceWithDeviceList(
+    absl::Span<const XlaOp> operands, XlaComputationId computation,
+    const CollectiveDeviceListBase& replica_groups,
+    const std::optional<ChannelHandle>& channel_id = std::nullopt,
+    std::optional<bool> use_global_device_ids = std::nullopt,
+    bool has_dynamic_root = false);
 
 XlaOp ReduceScatter(
     XlaOp operand, const XlaComputation& computation, int64_t scatter_dimension,
