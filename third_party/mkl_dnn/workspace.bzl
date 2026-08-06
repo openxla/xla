@@ -18,7 +18,7 @@ def repo():
         # Rename the gtest module in oneDNN's third_party to avoid
         # conflict with Google's gtest module
         patch_file = [
-            "//third_party/mkl_dnn:setting_tsan_race_v3_11_3.patch",
+            "//third_party/mkl_dnn:setting_tsan_race_v3_12_3.patch",
             "//third_party/mkl_dnn:rename_gtest.patch",
         ],
         sha256 = "12d8551668515c64adae2b26e5ebeeefa48b1ad1035717fe8718fd702c5e066b",
