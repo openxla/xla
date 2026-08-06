@@ -20,6 +20,7 @@ limitations under the License.
 #include <functional>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -215,6 +216,46 @@ class XEventVisitor : public XStatsOwner<XEvent> {
 
   bool IsAggregatedEvent() const {
     return event_->data_case() == XEvent::kNumOccurrences;
+  }
+
+  // Returns the XStat from XEvent or XEventMetadata (in that order), or nullopt
+  // if absent.
+  std::optional<XStatVisitor> GetEventOrMetadataStat(int64_t stat_type) const;
+
+  template <typename T>
+  T GetEventOrMetadataStat(int64_t stat_type, T default_val) const {
+    std::optional<XStatVisitor> stat = GetEventOrMetadataStat(stat_type);
+    if (!stat.has_value()) {
+      return default_val;
+    }
+    switch (stat->ValueCase()) {
+      case XStat::kInt64Value:
+        if constexpr (std::is_arithmetic_v<T>) {
+          return static_cast<T>(stat->IntValue());
+        }
+        break;
+      case XStat::kUint64Value:
+        if constexpr (std::is_arithmetic_v<T>) {
+          return static_cast<T>(stat->UintValue());
+        }
+        break;
+      case XStat::kDoubleValue:
+        if constexpr (std::is_arithmetic_v<T>) {
+          return static_cast<T>(stat->DoubleValue());
+        }
+        break;
+      case XStat::kStrValue:
+      case XStat::kRefValue:
+        if constexpr (std::is_constructible_v<T, absl::string_view>) {
+          return T(stat->StrOrRefValue());
+        }
+        break;
+      case XStat::kBytesValue:
+      case XStat::VALUE_NOT_SET:
+      default:
+        break;
+    }
+    return default_val;
   }
 
   bool operator<(const XEventVisitor& other) const {
