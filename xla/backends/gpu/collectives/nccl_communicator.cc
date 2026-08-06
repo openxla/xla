@@ -307,7 +307,7 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
   // single threaded executor.
   auto executor = std::make_unique<SingleThreadedExecutor>(env);
   ABSL_ASSIGN_OR_RETURN(ncclComm_t comm,
-                   MakeFutureOn<ncclComm_t>(*executor, f).Await());
+                        MakeFutureOn<ncclComm_t>(*executor, f).Await());
   auto comm_state = std::make_shared<NcclCommState>(comm);
   return absl::WrapUnique(new NcclCommunicator(
       stream_executor, comm_state, std::move(executor), std::move(cancel)));
@@ -575,10 +575,10 @@ absl::Status NcclCommunicator::LaunchAllReduce(
                reduction_kind, comm_->comm, stream);
 
     ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, /*is_reduction_op=*/true,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+                          ToNcclDataType(dtype, /*is_reduction_op=*/true,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
 
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllReduce(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -611,10 +611,10 @@ absl::Status NcclCommunicator::LaunchBroadcast(
                root.value(), comm_->comm, stream);
 
     ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, false,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+                          ToNcclDataType(dtype, false,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
 
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclBroadcast(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -622,6 +622,45 @@ absl::Status NcclCommunicator::LaunchBroadcast(
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status NcclCommunicator::LaunchReduce(se::DeviceAddressBase send_buffer,
+                                            se::DeviceAddressBase recv_buffer,
+                                            PrimitiveType dtype, size_t count,
+                                            ReductionKind reduction_kind,
+                                            RankId root,
+                                            const Executor& executor) {
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("NcclCommunicator aborted");
+  }
+  se::Stream* stream = ToStream(executor);
+
+  {
+    absl::MutexLock lock(comm_->mutex);
+    XLA_VLOG_DEVICE(3, stream->parent()->device_ordinal())
+        << absl::StreamFormat(
+               "Launch NCCL Reduce operation; send_buffer=%p; "
+               "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; "
+               "root=%d; comm=%p; stream=%p",
+               send_buffer.opaque(), recv_buffer.opaque(),
+               primitive_util::LowercasePrimitiveTypeName(dtype), count,
+               reduction_kind, root.value(), comm_->comm, stream);
+
+    ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
+                     ToNcclDataType(dtype, /*is_reduction_op=*/true,
+                                    stream->parent()
+                                        ->GetDeviceDescription()
+                                        .cuda_compute_capability()));
+
+    RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduce(
+        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
+        nccl_dtype, ToNcclReduction(reduction_kind), root.value(), comm_->comm,
+        AsCudaStream(stream))));
+  }
+  if (!IsInsideNcclGroupLaunch()) {
+    RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
 }
@@ -647,10 +686,10 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
                reduction_kind, comm_->comm, stream);
 
     ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, /*is_reduction_op=*/true,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+                          ToNcclDataType(dtype, /*is_reduction_op=*/true,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
 
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduceScatter(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -682,10 +721,10 @@ absl::Status NcclCommunicator::LaunchAllGather(
                comm_->comm, stream);
 
     ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, false,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+                          ToNcclDataType(dtype, false,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
 
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllGather(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -904,10 +943,10 @@ absl::Status NcclCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
                peer.value(), comm_->comm, stream);
 
     ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, false,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+                          ToNcclDataType(dtype, false,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(
         ncclSend(send_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
                  peer.value(), comm_->comm, AsCudaStream(stream))));
@@ -938,10 +977,10 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
                peer.value(), comm_->comm, stream);
 
     ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, false,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+                          ToNcclDataType(dtype, false,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(
         ncclRecv(recv_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
                  peer.value(), comm_->comm, AsCudaStream(stream))));
