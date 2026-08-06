@@ -178,12 +178,14 @@ cc_library(
     hdrs = ["gpu_executor.h"],
     deps = [
         ":multicast_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
     ],
 )
@@ -806,6 +808,7 @@ exports_files([
     "collective_signal.cu.h",
     "all_reduce_kernel_lib.cu.h",
     "multi_gpu_barrier_kernel.cu.h",
+    "ragged_all_to_all_device_kernel_lib.cu.h",
     "ragged_all_to_all_kernel_lib.cu.h",
     "repeat_buffer_kernel.cu.h",
     "redzone_allocator_kernel_lib.cu.h",
@@ -815,6 +818,15 @@ exports_files([
 cc_library(
     name = "make_batch_pointers_kernel",
     hdrs = ["make_batch_pointers_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "ragged_all_to_all_device_kernel",
+    hdrs = ["ragged_all_to_all_device_kernel.h"],
     deps = [
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",

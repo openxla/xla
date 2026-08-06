@@ -7,7 +7,6 @@ load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite_for_gpus")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/backends/gpu/tests:helper.bzl", "get_canonical_repo_name")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -453,11 +452,13 @@ xla_test(
         ":hlo_pjrt_gpu_test_base",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu:ffi",
         "//xla/backends/gpu/runtime:while_loop",
         "//xla/ffi",
+        "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/tests:literal_test_util",
@@ -799,7 +800,6 @@ lit_test_suite_for_gpus(
         "p100",
         "v100",
     ],
-    hermetic_cuda_data_dir = "%S/../../../../../" + get_canonical_repo_name("cuda_nvcc"),
     tags = ["no-oneapi"],
     tools = [
         "//xla/tools:hlo-opt",
@@ -964,12 +964,12 @@ xla_test(
         "nodebug",
     ],
     deps = [
+        ":hlo_pjrt_gpu_test_base",
         "//xla:error_spec",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/libraries/cub:cub_scratch_size_deviceless_lookup",
-        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/backends/gpu/transforms:sort_rewriter",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
@@ -1204,18 +1204,18 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    use_legacy_runtime = True,
     deps = [
+        ":collective_ops_e2e_test_base",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:xla_proto_cc",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests/restricted:hlo_test_base_legacy",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",

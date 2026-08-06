@@ -85,7 +85,7 @@ class CpuOptProvider : public CompiledOptProvider {
   absl::StatusOr<std::optional<std::string>> GenerateStage(
       std::unique_ptr<HloModule> module, absl::string_view s) override {
     if (s == "llvm-before-optimizations") {
-      ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
+      ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
                        GetExecutable(std::move(module)));
       return static_cast<cpu::CpuExecutable*>(executable.get())
           ->ir_module_string();
@@ -145,13 +145,8 @@ class CpuOptProvider : public CompiledOptProvider {
         /*cse_prevention_only=*/false,
         /*sharding_helper=*/nullptr);
 
-    auto spmd_partitioner_options =
-        spmd::StatefulRngSpmdPartitioner::GetDefaultOptions();
-    // XLA:CPU does not support kCollectiveBroadcast.
-    spmd_partitioner_options.enable_dynamic_slice_collective_broadcast = false;
     RegisterPass<spmd::StatefulRngSpmdPartitioner>(
-        module_config.num_partitions(), module_config.replica_count(),
-        std::move(spmd_partitioner_options));
+        module_config.num_partitions(), module_config.replica_count());
     if (module_config.debug_options().xla_enable_enzyme_comms_opt()) {
       RegisterPass<RecognizeReduceWindow>();
     }

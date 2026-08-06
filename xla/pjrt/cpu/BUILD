@@ -49,6 +49,33 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
+    name = "abstract_tracked_device_buffer_cpu_test",
+    srcs = ["abstract_tracked_device_buffer_cpu_test.cc"],
+    deps = [
+        ":abstract_cpu_buffer",
+        ":cpu_client",
+        ":cpu_event",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:util",
+        "//xla/pjrt:common_pjrt_client",
+        "//xla/pjrt:device_event",
+        "//xla/pjrt:pjrt_client",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+    ],
+)
+
 alias(
     name = "tracked_cpu_device_buffer_test",
     actual = ":cpu_device_memory_test",
@@ -196,6 +223,7 @@ cc_library(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:raw_buffer",
+        "//xla/pjrt:raw_pjrt_client",
         "//xla/pjrt:semaphore",
         "//xla/pjrt:thread_pool_async_work_runner",
         "//xla/pjrt:utils",
@@ -292,7 +320,7 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
-        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:FuncDialect",

@@ -114,7 +114,6 @@ class Thunk {
     kCublasLtMatmul,
     kCustomCall,
     kCustomKernel,
-    kDynamicSlice,
     kDynamicSliceFusion,
     kFft,
     kGemm,
@@ -266,12 +265,14 @@ class Thunk {
     ExecutionScopedState* execution_scoped_state = nullptr;
 
     // Optional allocation indices whose device addresses are stable for this
-    // execution. If absent, consumers that need address-change checks should
-    // conservatively treat allocation addresses as dynamic. Across execution
-    // steps, this may transition only from absent to present, and the
-    // transition must be passed to Initialize before ExecuteOnStream. Once
-    // present, the allocation indices must remain unchanged; consumers may
-    // rely on this invariant without revalidating the vector on each step.
+    // execution. The value is absent only while the allocation address policy
+    // is undecided (e.g. during the VA remapping profiling window); when
+    // absent, command buffer lowering is disabled for this step and
+    // CommandBufferThunk executes its fallback thunk sequence instead.
+    // Producers must pass a valid - possibly empty - span once the policy is
+    // decided. Once present, the allocation indices must remain unchanged;
+    // consumers may rely on this invariant without revalidating the vector on
+    // each step.
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices = std::nullopt;
   };
@@ -348,12 +349,14 @@ class Thunk {
     uint64_t rng_seed = 0;
 
     // Optional allocation indices whose device addresses are stable for this
-    // execution. If absent, consumers that need address-change checks should
-    // conservatively treat allocation addresses as dynamic. Across execution
-    // steps, this may transition only from absent to present, and the
-    // transition must be passed to Initialize before ExecuteOnStream. Once
-    // present, the allocation indices must remain unchanged; consumers may
-    // rely on this invariant without revalidating the vector on each step.
+    // execution. The value is absent only while the allocation address policy
+    // is undecided (e.g. during the VA remapping profiling window); when
+    // absent, command buffer lowering is disabled for this step and
+    // CommandBufferThunk executes its fallback thunk sequence instead.
+    // Producers must pass a valid - possibly empty - span once the policy is
+    // decided. Once present, the allocation indices must remain unchanged;
+    // consumers may rely on this invariant without revalidating the vector on
+    // each step.
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices = std::nullopt;
 
@@ -529,6 +532,9 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
   ThunkSequence(ThunkSequence&&) = default;
   ThunkSequence& operator=(ThunkSequence&&) = default;
 
+  // Returns an empty thunk sequence.
+  static ThunkSequence Empty() { return ThunkSequence(); }
+
   // Appends a thunk to this sequence.
   void Append(std::unique_ptr<Thunk> thunk);
 
@@ -583,7 +589,7 @@ std::invoke_result_t<F, Thunk*> Thunk::Walk(F&& callback) {
       return (f(thunk), absl::OkStatus());
     }).IgnoreError();  // Error can never happen here.
   } else {
-    RETURN_IF_ERROR(callback(this));
+    ABSL_RETURN_IF_ERROR(callback(this));
     return WalkNested(Walker([&](Thunk* thunk) { return callback(thunk); }));
   }
 }
