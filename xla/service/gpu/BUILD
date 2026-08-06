@@ -515,6 +515,7 @@ cc_library(
         "//xla/backends/gpu/runtime:async_execution",
         "//xla/backends/gpu/runtime:async_thunk",
         "//xla/backends/gpu/runtime:collective_broadcast_thunk",
+        "//xla/backends/gpu/runtime:collective_reduce_thunk",
         "//xla/backends/gpu/runtime:collective_group_thunk",
         "//xla/backends/gpu/runtime:collective_kernel_thunk",
         "//xla/backends/gpu/runtime:collective_params",

@@ -188,6 +188,7 @@ std::vector<HloInstruction*> AsyncCollectiveCreator::MatchCollectives(
     // We only care about collective ops here.
     if (op != HloOpcode::kAllReduce && op != HloOpcode::kAllGather &&
         op != HloOpcode::kCollectiveBroadcast &&
+        op != HloOpcode::kCollectiveReduce &&
         op != HloOpcode::kCollectivePermute && op != HloOpcode::kAllToAll &&
         op != HloOpcode::kReduceScatter && op != HloOpcode::kRaggedAllToAll) {
       continue;
@@ -216,6 +217,10 @@ std::vector<HloInstruction*> AsyncCollectiveCreator::MatchCollectives(
     } else if (op == HloOpcode::kCollectiveBroadcast) {
       bool convert = config_.convert_collective_broadcast(instruction);
       VLOG(2) << "kCollectiveBroadcast: convert=" << convert;
+      matched = convert;
+    } else if (op == HloOpcode::kCollectiveReduce) {
+      bool convert = config_.convert_collective_reduce(instruction);
+      VLOG(2) << "kCollectiveReduce: convert=" << convert;
       matched = convert;
     } else if (op == HloOpcode::kCollectivePermute) {
       bool convert = config_.convert_collective_permute(instruction);
@@ -279,7 +284,7 @@ absl::StatusOr<bool> AsyncCollectiveCreator::ReplaceCollectives(
   };
   for (HloInstruction* instruction : supported_collectives) {
     ABSL_ASSIGN_OR_RETURN(auto maybe_async_pair,
-                     handle_legacy_async_conversion(instruction));
+                          handle_legacy_async_conversion(instruction));
     ReplacedAsync async_pair;
     if (maybe_async_pair.has_value()) {
       async_pair = *maybe_async_pair;
@@ -350,8 +355,9 @@ absl::StatusOr<bool> AsyncCollectiveCreator::RunImpl(
     if (supported_collectives.empty()) {
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(bool comp_changed,
-                     ReplaceCollectives(computation, supported_collectives));
+    ABSL_ASSIGN_OR_RETURN(
+        bool comp_changed,
+        ReplaceCollectives(computation, supported_collectives));
     collectives_replaced += supported_collectives.size();
     changed |= comp_changed;
   }
