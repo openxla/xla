@@ -31,6 +31,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/numeric/int128.h"
@@ -489,6 +490,16 @@ void CollectiveMemoryDeallocate(Context* context, void* location) {
 
 }  // namespace
 
+namespace internal {
+
+ModuleHandle ModuleHandleFromImage(absl::Span<const uint8_t> image) {
+  size_t hash = absl::HashOf(absl::string_view(
+      reinterpret_cast<const char*>(image.data()), image.size()));
+  return ModuleHandle{reinterpret_cast<const void*>(hash | 1)};
+}
+
+}  // namespace internal
+
 RocmExecutor::~RocmExecutor() {
   for (auto& it : in_memory_modules_) {
     UnloadRocmModule(&rocm_context_, it.second);
@@ -661,10 +672,11 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
   const std::string& kernel_name = spec.kernel_name();
 
   if (spec.has_cuda_cubin_in_memory()) {
-    const char* hsaco = reinterpret_cast<const char*>(
-        spec.cuda_cubin_in_memory()->cubin_bytes.data());
+    const auto image = spec.cuda_cubin_in_memory()->cubin_bytes;
+    const char* hsaco = reinterpret_cast<const char*>(image.data());
     absl::MutexLock lock{in_memory_modules_mu_};
-    ABSL_ASSIGN_OR_RETURN(ModuleHandle module_handle, LoadModuleFromHsaco(hsaco));
+    ABSL_ASSIGN_OR_RETURN(ModuleHandle module_handle,
+                          LoadModuleFromHsaco(hsaco, image.size()));
     hipModule_t module = gpu_binary_to_module_.at(module_handle).first;
     kernel_to_gpu_binary_[rocm_kernel.get()] = module_handle;
 
@@ -724,21 +736,21 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
 
 absl::StatusOr<ModuleHandle> RocmExecutor::LoadModule(
     const MultiModuleLoaderSpec& spec) {
-  // We store the pointer to the HSACO binary as ModuleHandle::id().
-
   // TODO(ROCm): Need  generic term instead of cubin/cuda/ptx
   if (spec.has_cuda_cubin_in_memory()) {
     absl::MutexLock lock{in_memory_modules_mu_};
-    return LoadModuleFromHsaco(
-        reinterpret_cast<const char*>(spec.cuda_cubin_in_memory().data()));
+    const auto image = spec.cuda_cubin_in_memory();
+    return LoadModuleFromHsaco(reinterpret_cast<const char*>(image.data()),
+                               image.size());
   } else {
     return absl::InternalError("No HASCO binary found");
   }
 }
 
 absl::StatusOr<ModuleHandle> RocmExecutor::LoadModuleFromHsaco(
-    const char* hsaco) {
-  ModuleHandle module_handle{hsaco};
+    const char* hsaco, size_t size) {
+  ModuleHandle module_handle = internal::ModuleHandleFromImage(
+      absl::MakeConstSpan(reinterpret_cast<const uint8_t*>(hsaco), size));
   uint64_t module_refcount;
   hipModule_t module;
   std::tie(module, module_refcount) = gpu_binary_to_module_[module_handle];
