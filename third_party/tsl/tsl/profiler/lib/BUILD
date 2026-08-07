@@ -2,10 +2,15 @@ load("@xla//xla/tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_hea
 load("@xla//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@xla//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
 load("@xla//xla/tsl/platform:build_config_root.bzl", "if_static")
+load("@xla//xla/tsl:tsl.bzl", "if_google")
 load("@xla//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@xla//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+)
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
 )
 load(
     "@xla//xla/tsl/profiler/builds:build_config.bzl",
@@ -323,11 +328,26 @@ cc_library(
     name = "nvtx_utils_impl",
     srcs = if_cuda_is_configured(
         ["nvtx_utils.cc"],
-        ["nvtx_utils_stub.cc"],
+        if_rocm_is_configured(
+            ["roctx_utils.cc"],
+            ["nvtx_utils_stub.cc"],
+        ),
     ),
     hdrs = ["nvtx_utils.h"],
     visibility = ["//visibility:public"],
-    deps = if_cuda_is_configured(nvtx_headers()),
+    # Mirrors the nesting in srcs: exactly one backend is ever compiled, so a
+    # tree with both CUDA and ROCm configured must not link the roctx shim.
+    deps = if_cuda_is_configured(
+        nvtx_headers(),
+        if_rocm_is_configured([
+            "@com_google_absl//absl/log",
+            "@com_google_absl//absl/status",
+            "@local_config_rocm//rocm:rocm_headers",
+            "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+            "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+            "@xla//xla/tsl/util:env_var",
+        ]),
+    ),
 )
 
 cc_library(
@@ -376,6 +396,61 @@ tsl_cc_test(
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/platform:test_benchmark",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
+    ],
+)
+
+tsl_cc_test(
+    name = "roctx_utils_test",
+    size = "small",
+    srcs = ["roctx_utils_test.cc"],
+    # Both "gpu" and "rocm-only": the ROCm install is required to link
+    # (rocprofiler-sdk-roctx), but nothing here touches a GPU device.
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # Only run internally if ROCm config is enabled.
+        "manual",
+    ]),
+    deps = [
+        ":nvtx_utils",
+        ":scoped_annotation",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:test",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
+    ],
+)
+
+tsl_cc_test(
+    name = "roctx_utils_enabled_test",
+    size = "small",
+    srcs = ["roctx_utils_enabled_test.cc"],
+    # The feature under test is opt-in and DefaultProfilerDomain() latches its
+    # value in a function-local static on first call, so a process can only
+    # observe one configuration. Hence a second binary rather than a filter
+    # over roctx_utils_test: this one runs with the emitter on, that one with
+    # it off. Without this env attribute every assertion here silently
+    # degenerates into re-testing the disabled path.
+    env = {"XLA_ROCM_ENABLE_ROCTX": "1"},
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # Only run internally if ROCm config is enabled.
+        "manual",
+    ]),
+    deps = [
+        ":nvtx_utils",
+        ":scoped_annotation",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
     ],

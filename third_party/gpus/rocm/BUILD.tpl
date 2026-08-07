@@ -437,9 +437,12 @@ rocm_lib_import(
     name = "rocprofiler_sdk_roctx",
     data = glob(["%{rocm_root}/lib/librocprofiler-sdk-roctx.so*"]),
     interface_library = "%{rocm_root}/lib/librocprofiler-sdk-roctx.so",
-    # NEEDED librocprofiler-register.so, which the glob above does not match.
-    # Without this a hermetic build stages the shim without it and fails at load.
-    deps = [":rocprofiler_register_libs"],
+    # NEEDED librocprofiler-register.so (not matched by the glob above) and
+    # NEEDED librocm_sysdeps_dw.so.1 (in rocm_sysdeps/lib, staged by system_libs).
+    deps = [
+        ":rocprofiler_register_libs",
+        ":system_libs",
+    ],
 )
 
 rocm_lib_import(
