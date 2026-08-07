@@ -206,16 +206,6 @@ int64_t NumberOfElementsInPaddedTile(
   return num_elements;
 }
 
-// Returns the number of power-of-2-padded elements in a static tile.
-int64_t NumberOfElementsInPaddedTile(
-    absl::Span<const int64_t> static_tile_sizes) {
-  int64_t num_elements = 1;
-  for (int64_t size : static_tile_sizes) {
-    num_elements *= llvm::PowerOf2Ceil(size);
-  }
-  return num_elements;
-}
-
 // Checks whether the number of programs to launch on the grid is under the
 // limit enforced by the device.
 //

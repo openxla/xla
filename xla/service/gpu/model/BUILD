@@ -769,6 +769,7 @@ xla_cc_test(
     srcs = ["triton_emitter_constraints_test.cc"],
     deps = [
         ":triton_emitter_constraints",
+        ":triton_temporary_memory_estimator",
         "//xla/codegen/tiling:symbolic_tile_analysis",
         "//xla/codegen/tiling:tiling_specification",
         "//xla/codegen/tiling/experimental:tile",

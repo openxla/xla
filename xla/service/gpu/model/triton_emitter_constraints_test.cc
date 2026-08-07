@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/model/triton_temporary_memory_estimator.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -425,8 +426,8 @@ class VerifyTritonConstraintsTest : public HloHardwareIndependentTestBase {
         experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_));
     ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(tile_sizes));
     ABSL_ASSIGN_OR_RETURN(experimental::TiledHloComputation tiled_comp,
-                     experimental::TiledHloComputation::Tile(
-                         *fusion_adaptor, std::move(tiling_space)));
+                          experimental::TiledHloComputation::Tile(
+                              *fusion_adaptor, std::move(tiling_space)));
     tiled_comp.Simplify();
     tiled_comp.SortInstructionsPostOrder();
     Decision decision =
