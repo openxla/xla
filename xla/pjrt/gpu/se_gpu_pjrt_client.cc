@@ -53,12 +53,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/random.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
@@ -109,7 +103,6 @@ limitations under the License.
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/pjrt/se/se_raw_buffer.h"
 #include "xla/pjrt/se/tracked_device_buffer.h"
-#include "xla/pjrt/worker_thread.h"
 #include "xla/runtime/device_id.h"
 #include "xla/runtime/hang_watchdog.h"
 #include "xla/runtime/process_id.h"
@@ -135,6 +128,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/env.h"
@@ -143,6 +137,12 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/random.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/traceme.h"
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
     defined(TENSORFLOW_USE_SYCL)
@@ -629,19 +629,18 @@ StreamExecutorGpuRawClient::CrossHostTransferBuffers(
     }
     LocalDeviceState* local_device_state = *local_device_state_or;
 
-    // Launch ScheduleTransfersOnLocalDevice on either the async dispatch thread
-    // of the calling thread.
-    if (local_device_state->async_dispatch_thread()) {
-      local_device_state->async_dispatch_thread()->Schedule(
-          tsl::WithCurrentContext(
-              [this, local_device_state, device_id, transfer_dependencies,
-               curr_transfer_specs = std::move(curr_transfer_specs),
-               transfer_event = std::move(transfer_event)]() mutable {
-                ScheduleTransfersOnLocalDevice(local_device_state, device_id,
-                                               std::move(transfer_event),
-                                               std::move(transfer_dependencies),
-                                               std::move(curr_transfer_specs));
-              }));
+    // Launch ScheduleTransfersOnLocalDevice on either the async dispatch
+    // runner or the calling thread.
+    if (local_device_state->async_dispatch_runner()) {
+      local_device_state->async_dispatch_runner()->Execute(
+          [this, local_device_state, device_id, transfer_dependencies,
+           curr_transfer_specs = std::move(curr_transfer_specs),
+           transfer_event = std::move(transfer_event)]() mutable {
+            ScheduleTransfersOnLocalDevice(local_device_state, device_id,
+                                           std::move(transfer_event),
+                                           std::move(transfer_dependencies),
+                                           std::move(curr_transfer_specs));
+          });
     } else {
       ScheduleTransfersOnLocalDevice(
           local_device_state, device_id, std::move(transfer_event),
@@ -799,8 +798,8 @@ void StreamExecutorGpuRawClient::ScheduleTransfersOnLocalDevice(
             });
       };
 
-  // Schedule transfers on the execute thread.
-  local_device_state->execute_thread()->Schedule(
+  // Schedule transfers on the execution runner.
+  local_device_state->execution_runner()->Execute(
       std::move(execute_transfers_fn));
 }
 
@@ -1517,7 +1516,7 @@ GetStreamExecutorGpuDeviceAllocator(
 // thread is only used if there are multiple devices driven by a single process.
 void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
                                  const DeviceProto& device_proto,
-                                 WorkerThread* launcher_thread) {
+                                 tsl::Executor* launcher) {
   auto suffix = absl::StrFormat(
       ":#global=%d,local=%d,process=%d,partition=%d#",
       device_proto.global_device_id(), device_proto.local_device_ordinal(),
@@ -1529,7 +1528,7 @@ void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
   // until after ExchangeTopologies has been called so the global device
   // id and partition index are known. These are not available when the thread
   // is created.
-  launcher_thread->Schedule([name = absl::StrCat("XlaLauncher", suffix)] {
+  launcher->Execute([name = absl::StrCat("XlaLauncher", suffix)] {
     tsl::profiler::NameCurrentThread(name);
   });
 }
@@ -1758,7 +1757,7 @@ absl::StatusOr<PjRtDevicesAndTopology> BuildDistributedDevices(
             global_device_id;
         // Assign some descriptive names for profiling tools.
         NameDeviceAndLauncherThread(node, device_proto,
-                                    local_device->execute_thread());
+                                    local_device->execution_runner());
 
         local_device_states_vec.push_back(std::move(it->second));
       }
