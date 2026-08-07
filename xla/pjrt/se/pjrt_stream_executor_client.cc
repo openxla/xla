@@ -96,7 +96,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "riegeli/bytes/cord_reader.h"
@@ -166,6 +165,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/env.h"
@@ -177,7 +177,6 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/context.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/mem.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -335,11 +334,10 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
 }
 
 PjRtStreamExecutorRawClient::~PjRtStreamExecutorRawClient() {
-  // Properly quiesce async_dispatch_thread on all local devices.
+  // Quiesce per-device launch work before destroying state it may access.
   for (const auto& local_device_state : local_device_states_) {
-    if (local_device_state != nullptr &&
-        local_device_state->async_dispatch_thread() != nullptr) {
-      local_device_state->async_dispatch_thread()->Drain();
+    if (local_device_state != nullptr) {
+      local_device_state->QuiesceExecutionRunners();
     }
   }
 }
@@ -1732,16 +1730,16 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     return definition_event;
   };
   PjRtDeviceEventRef definition_event;
-  if (device_state->async_dispatch_thread()) {
+  if (device_state->async_dispatch_runner()) {
     auto definition_event_promise =
         tsl::MakeRef<PjRtStreamExecutorDeviceEventPromise>(
             raw_client_, device_state, raw_client_->async_work_runner());
     definition_event = definition_event_promise->event().CopyRef();
-    device_state->async_dispatch_thread()->Schedule(tsl::WithCurrentContext(
+    device_state->async_dispatch_runner()->Execute(
         [launch_on_device = std::move(launch_on_device),
          promise = std::move(definition_event_promise)]() mutable {
           promise->Set(launch_on_device());
-        }));
+        });
   } else {
     definition_event = launch_on_device();
   }
@@ -1774,8 +1772,7 @@ void PjRtStreamExecutorClient::LaunchOnDevice(
   const LocalDeviceState& device_state =
       *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
            ->local_device_state();
-  device_state.execute_thread()->Schedule(
-      tsl::WithCurrentContext(std::move(execute_fn)));
+  device_state.execution_runner()->Execute(std::move(execute_fn));
 }
 
 namespace {
