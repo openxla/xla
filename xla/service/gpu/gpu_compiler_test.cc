@@ -86,7 +86,7 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/gtl/value_or_die.h"
@@ -132,7 +132,7 @@ class GpuCompilerTest
 absl::StatusOr<std::string> ReadNonEmptyFile(absl::string_view file_path) {
   std::string str;
   tsl::Env* env = tsl::Env::Default();
-  RETURN_IF_ERROR(tsl::ReadFileToString(env, std::string(file_path), &str));
+  ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(env, std::string(file_path), &str));
   if (str.empty()) {
     return absl::InvalidArgumentError(
         absl::StrCat("File is empty: ", file_path));
@@ -1747,15 +1747,14 @@ HloModule m
 
 ENTRY main {
   p = f32[8,$0]{1,0} parameter(0)
-  ROOT t = (f32[8,$1]{1,0}, s32[8,$1]{1,0}) topk(p), k=$1, largest=true
+  ROOT t = (f32[8,$1]{1,0}, s32[8,$1]{1,0}) topk(p), k=$1, largest=true, is_stable=false
 }
 )",
                                           n, k);
 
-  // Configure module with debug options for experimental raft select_k.
+  // Configure module with debug options.
   HloModuleConfig config;
   DebugOptions debug_options = GetDebugOptionsForTest();
-  debug_options.set_xla_gpu_experimental_use_raft_select_k(true);
   config.set_debug_options(debug_options);
 
   ASSERT_OK_AND_ASSIGN(auto module,
@@ -1996,9 +1995,9 @@ TEST_P(OneShotRaggedAllToAllMemSpaceTest, DirectUsage) {
       kHloTemplate,
       {{"$0",
         use_input_output_alias ? ", input_output_alias={ {}: (1, {}) }" : ""}});
-
   HloModuleConfig config = GetModuleConfigForTest();
   DebugOptions& opts = config.mutable_debug_options();
+  opts.clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(true);
 
   // This test will run on a system with 1 GPU, so we need to disable the
@@ -2009,7 +2008,6 @@ TEST_P(OneShotRaggedAllToAllMemSpaceTest, DirectUsage) {
       optimized_module_and_executable;
   ASSERT_OK_AND_ASSIGN(optimized_module_and_executable,
                        GetOptimizedModuleForExecutable(hlo_text, config));
-
   const HloModule* optimized_module = optimized_module_and_executable.first;
 
   constexpr absl::string_view kS1TwoCopies = R"(
@@ -2080,6 +2078,7 @@ TEST_P(OneShotRaggedAllToAllMemSpaceTest, LoopUsage) {
 
   HloModuleConfig config = GetModuleConfigForTest();
   DebugOptions& opts = config.mutable_debug_options();
+  opts.clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(true);
 
   std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>
@@ -2142,6 +2141,8 @@ ENTRY test_computation {
         use_input_output_alias ? ", input_output_alias={ {}: (0, {}) }" : ""}});
 
   HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   if (GetParam().is_sym_mem) {
     config.mutable_debug_options().set_xla_gpu_collective_permute_mode(
         DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
@@ -2237,6 +2238,8 @@ TEST_P(RequiresCollectiveSymmetricMemorySpaceTest, LoopUsage) {
         use_input_output_alias ? ", input_output_alias={ {}: (0, {}) }" : ""}});
 
   HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   if (GetParam().is_sym_mem) {
     config.mutable_debug_options().set_xla_gpu_collective_permute_mode(
         DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
@@ -2354,6 +2357,8 @@ TEST_P(GpuCompilerParametersCopyCollectiveMemoryTest, DirectUsage) {
         use_input_output_alias ? ", input_output_alias={ {}: (0, {}) }" : ""}});
 
   HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   if (GetParam().xla_gpu_enable_nccl_buffers) {
     config.mutable_debug_options().set_xla_gpu_enable_nccl_user_buffers(true);
   }
@@ -2462,6 +2467,8 @@ TEST_P(GpuCompilerParametersCopyCollectiveMemoryTest, LoopUsage) {
         use_input_output_alias ? ", input_output_alias={ {}: (0, {}) }" : ""}});
 
   HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   if (GetParam().xla_gpu_enable_nccl_buffers) {
     config.mutable_debug_options().set_xla_gpu_enable_nccl_user_buffers(true);
   }
@@ -2820,6 +2827,8 @@ TEST_F(GpuCompilerTest, SymmetricBuffersFilter) {
   HloModuleConfig config = GetModuleConfigForTest();
   config.mutable_debug_options().set_xla_gpu_all_reduce_combine_threshold_bytes(
       0);
+  config.mutable_debug_options()
+      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   // Enable symmetric buffers only for AllReduce F32 up to 4096 bytes.
   auto* filter = config.mutable_debug_options()
                      .add_xla_enable_nccl_symmetric_buffers_for_collectives();
@@ -2881,6 +2890,8 @@ TEST_F(GpuCompilerTest, SymmetricBuffersMultipleCollectives) {
       0);
   config.mutable_debug_options().set_xla_gpu_all_gather_combine_threshold_bytes(
       0);
+  config.mutable_debug_options()
+      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
 
   // Enable symmetric buffers for ALL collectives F32 up to 4096 bytes.
   auto* filter = config.mutable_debug_options()

@@ -72,7 +72,7 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
               "Dot instruction ", hlo->name(),
               " does not have a backend config for tile sizes set."));
         }
-        ASSIGN_OR_RETURN(Tile tile_config, hlo->backend_config<Tile>());
+        ABSL_ASSIGN_OR_RETURN(Tile tile_config, hlo->backend_config<Tile>());
         if (tile_config.sizes().empty()) {
           return absl::FailedPreconditionError(
               absl::StrCat("Dot instruction ", hlo->name(),
@@ -155,14 +155,16 @@ absl::StatusOr<llvm::SmallVector<int64_t>> GetTilingSpaceConcreteSizes(
         break;
       case DimensionSemantics::kSequential: {
         if (dim.hlo->has_backend_config()) {
-          ASSIGN_OR_RETURN(Tile config, dim.hlo->backend_config<Tile>());
-          if (config.sizes_size() != 1) {
+          ABSL_ASSIGN_OR_RETURN(Tile config, dim.hlo->backend_config<Tile>());
+          int64_t output_rank = dim.hlo->shape().dimensions().size();
+          int64_t reduction_idx = dim.dim_position - output_rank;
+          if (reduction_idx < 0 || reduction_idx >= config.sizes_size()) {
             return Internal(
-                "Only single-reduction operations are supported "
-                "dimension. Got %d tile sizes in backend config.",
-                config.sizes_size());
+                "Sequential dimension index %d is out of bounds for backend "
+                "config sizes of size %d.",
+                reduction_idx, config.sizes_size());
           }
-          tile_sizes.push_back(config.sizes(0));
+          tile_sizes.push_back(config.sizes(reduction_idx));
         } else {
           VLOG(1) << "No backend_config set for HLO instruction of dimension "
                   << dim.ToString() << ". Using dimension size as tile size.";

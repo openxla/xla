@@ -93,6 +93,8 @@ cc_library(
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -316,19 +318,15 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:shape_util",
-        "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -343,7 +341,6 @@ xla_cc_test(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -526,7 +523,6 @@ cc_library(
         "//xla/backends/gpu/runtime:conditional_thunk",
         "//xla/backends/gpu/runtime:convolution_reorder_thunk",
         "//xla/backends/gpu/runtime:convolution_thunk",
-        "//xla/backends/gpu/runtime:copy_thunk",
         "//xla/backends/gpu/runtime:cudnn_thunk",
         "//xla/backends/gpu/runtime:custom_call_thunk",
         "//xla/backends/gpu/runtime:custom_kernel_thunk",
@@ -787,6 +783,26 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "execution_watchdog",
+    srcs = ["execution_watchdog.cc"],
+    hdrs = ["execution_watchdog.h"],
+    deps = [
+        ":gpu_executable_run_options",
+        "//xla:status_macros",
+        "//xla:xla_proto_cc",
+        "//xla/runtime:hang_watchdog",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_library(
     name = "gpu_executable",
     srcs = [
         "gpu_executable.cc",
@@ -801,6 +817,7 @@ cc_library(
         ":backend_configs_cc",
         ":buffer_allocations",
         ":dense_data_intermediate",
+        ":execution_watchdog",
         ":gpu_executable_buffer_allocator",
         ":gpu_executable_proto_cc",
         ":gpu_executable_run_options",
@@ -838,7 +855,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/runtime:device_id",
-        "//xla/runtime:hang_watchdog",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:computation_layout",
@@ -912,6 +928,23 @@ tf_proto_library(
         "//xla/service/cpu:executable_proto",
         "//xla/stream_executor:device_description_proto",
         "//xla/stream_executor/abi:executable_abi_version_proto",
+    ],
+)
+
+xla_cc_test(
+    name = "execution_watchdog_test",
+    srcs = ["execution_watchdog_test.cc"],
+    deps = [
+        ":execution_watchdog",
+        ":gpu_executable_run_options",
+        "//xla:xla_proto_cc",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -2161,7 +2194,7 @@ xla_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_interpreter_reference_mixin",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/lib/gtl:value_or_die",
