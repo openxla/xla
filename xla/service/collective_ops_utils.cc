@@ -1102,8 +1102,14 @@ bool IsNcclSymmetricBuffersEnabledForCollective(
   if (!IsNonFusionCollective(instruction)) {
     return false;
   }
+#if TENSORFLOW_USE_ROCM
+  // Disable symmetric memory for ROCM until we have a stable RCCL support
+  // across all ROCM versions.
+  return false;
+#else
   NcclSymmetricBuffersSpec spec(opts);
   return spec.IsEnabled(*instruction);
+#endif
 }
 
 absl::StatusOr<AsyncCollectiveConfig> ParseAsyncCollectiveConfig(
