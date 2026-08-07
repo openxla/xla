@@ -73,7 +73,6 @@ executable_and_options {
         xla_gpu_enable_pipelined_all_gather: false
         xla_gpu_redzone_padding_bytes: 8388608
         xla_gpu_enable_pipelined_reduce_scatter: true
-        xla_gpu_fused_attention_use_cudnn_rng: false
         xla_gpu_copy_insertion_use_region_analysis: false
         xla_gpu_collective_permute_decomposer_threshold: 9223372036854775807
         xla_gpu_collect_cost_model_stats: false
@@ -988,7 +987,6 @@ gpu_executable {
         xla_gpu_enable_pipelined_all_gather: false
         xla_gpu_redzone_padding_bytes: 8388608
         xla_gpu_enable_pipelined_reduce_scatter: true
-        xla_gpu_fused_attention_use_cudnn_rng: false
         xla_gpu_copy_insertion_use_region_analysis: false
         xla_gpu_collective_permute_decomposer_threshold: 9223372036854775807
         xla_gpu_collect_cost_model_stats: false
