@@ -2504,6 +2504,36 @@ bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
   return false;
 }
 
+// Symmetric buffers require registering the collective buffers with
+// ncclCommWindowRegister(..., NCCL_WIN_COLL_SYMMETRIC). RCCL declares that
+// entry point in rccl.h and reports an NCCL version above the one that
+// introduced it, so both the build-time and version-based checks pass, but it
+// rejects every registration at runtime with ncclInvalidUsage. Enabling
+// symmetric buffers therefore fails every multi-device collective on ROCm.
+//
+// This has to be decided from the device being compiled for, not from a
+// build-time define: the defaults are set in
+// DefaultDebugOptionsIgnoringFlags(), which is compiled into the
+// backend-agnostic jaxlib, while only the plugin and PJRT artifacts are built
+// with ROCm configured.
+void DisableSymmetricBuffersIfUnsupported(
+    HloModule* module, const se::DeviceDescription& device_description) {
+  if (device_description.gpu_compute_capability().rocm_compute_capability() ==
+      nullptr) {
+    return;
+  }
+  DebugOptions& opts = module->mutable_config().mutable_debug_options();
+  if (opts.xla_enable_nccl_symmetric_buffers_for_collectives().empty() &&
+      !opts.xla_gpu_experimental_enable_nccl_symmetric_buffers()) {
+    return;
+  }
+  LOG_FIRST_N(WARNING, 1)
+      << "Disabling NCCL symmetric buffers: RCCL does not implement collective "
+         "window registration (ncclCommWindowRegister).";
+  opts.clear_xla_enable_nccl_symmetric_buffers_for_collectives();
+  opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
+}
+
 void GpuCollectiveBufferAnalysis(
     HloModule* module, const HloAliasAnalysis& alias_analysis,
     std::function<void(HloInstruction*, const ShapeIndex&)> add_index_to_copy) {
@@ -2959,6 +2989,11 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   llvm::LLVMContext llvm_context;
   const se::DeviceDescription& gpu_device_info =
       gpu_topology.gpu_target_config().device_description;
+
+  // Must happen before CompileToBackendResult(): buffer assignment colors
+  // collective buffers into the collective memory space and thunk emission
+  // selects the symmetric kernels, both from these debug options.
+  DisableSymmetricBuffersIfUnsupported(module.get(), gpu_device_info);
 
   if (module->config().hlo_profiling_enabled() || VLOG_IS_ON(1)) {
     HloCostAnalysis::Options cost_analysis_options{ShapeSizeBytesFunction()};
