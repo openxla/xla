@@ -83,8 +83,12 @@ struct CudaCubinInMemory {
 };
 
 // Like CudaCubinInMemory but the CUBIN data is owned by the loader spec.
+//
+// The bytes are held behind a shared_ptr so that identical CUBIN blobs are
+// deduplicated: specs created via CreateOwningCudaCubinInMemorySpec with byte
+// identical payloads share a single backing allocation (see kernel_spec.cc).
 struct OwningCudaCubinInMemory {
-  std::vector<uint8_t> cubin_bytes;
+  std::shared_ptr<const std::vector<uint8_t>> cubin_bytes;
 };
 
 // Describes how to load a kernel on any subset of a number of target platforms.
@@ -134,8 +138,9 @@ class KernelLoaderSpec {
       return std::get<CudaCubinInMemory>(payload_);
     }
     if (std::holds_alternative<OwningCudaCubinInMemory>(payload_)) {
-      return CudaCubinInMemory{
-          std::get<OwningCudaCubinInMemory>(payload_).cubin_bytes};
+      const OwningCudaCubinInMemory& owning =
+          std::get<OwningCudaCubinInMemory>(payload_);
+      return CudaCubinInMemory{absl::MakeConstSpan(*owning.cubin_bytes)};
     }
     return std::nullopt;
   }
@@ -166,7 +171,11 @@ class KernelLoaderSpec {
       size_t arity,
       KernelArgsPacking kernel_args_packing = KernelArgsPackingFunc{});
   static KernelLoaderSpec CreateOwningCudaCubinInMemorySpec(
-      std::vector<uint8_t> cubin_bytes, std::string kernel_name, size_t arity,
+      std::vector<uint8_t>&& cubin_bytes, std::string kernel_name, size_t arity,
+      KernelArgsPacking kernel_args_packing = KernelArgsPackingFunc{});
+  static KernelLoaderSpec CreateOwningCudaCubinInMemorySpec(
+      const std::vector<uint8_t>& cubin_bytes, std::string kernel_name,
+      size_t arity,
       KernelArgsPacking kernel_args_packing = KernelArgsPackingFunc{});
   static KernelLoaderSpec CreateCudaPtxInMemorySpec(
       absl::string_view ptx, std::string kernel_name, size_t arity,

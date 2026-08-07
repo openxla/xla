@@ -17,23 +17,82 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/base/attributes.h"
+#include "absl/base/const_init.h"
+#include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/stream_executor/kernel_args_packing_spec.h"
 #include "xla/stream_executor/kernel_spec.pb.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/platform/fingerprint.h"
 
 namespace stream_executor {
+namespace {
+
+tsl::Fprint128 ComputeCubinFingerprint(absl::Span<const uint8_t> bytes) {
+  return tsl::Fingerprint128(absl::string_view(
+      reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+}
+
+struct CubinCacheEntry {
+  CubinCacheEntry(const tsl::Fprint128& fingerprint,
+                  std::vector<uint8_t> binary)
+      : fingerprint(fingerprint), binary(std::move(binary)) {}
+  ~CubinCacheEntry();
+
+  const tsl::Fprint128 fingerprint;
+  const std::vector<uint8_t> binary;
+};
+
+ABSL_CONST_INIT absl::Mutex cubin_cache_mu(absl::kConstInit);
+absl::NoDestructor<absl::flat_hash_map<
+    tsl::Fprint128, std::weak_ptr<CubinCacheEntry>, tsl::Fprint128Hasher>>
+    cubin_cache ABSL_GUARDED_BY(cubin_cache_mu);
+
+CubinCacheEntry::~CubinCacheEntry() {
+  absl::MutexLock lock(cubin_cache_mu);
+  auto it = cubin_cache->find(fingerprint);
+  // A concurrent CacheCubinBytes may have already replaced the
+  // slot with a fresh live entry for the same fingerprint.
+  if (it != cubin_cache->end() && it->second.expired()) {
+    cubin_cache->erase(it);
+  }
+}
+
+template <typename Bytes>
+std::shared_ptr<const std::vector<uint8_t>> CacheCubinBytes(
+    Bytes&& cubin_bytes) {
+  const size_t cubin_bytes_size = cubin_bytes.size();
+  const tsl::Fprint128 fingerprint = ComputeCubinFingerprint(cubin_bytes);
+
+  absl::MutexLock lock(cubin_cache_mu);
+  std::weak_ptr<CubinCacheEntry>& slot = (*cubin_cache)[fingerprint];
+  std::shared_ptr<CubinCacheEntry> entry = slot.lock();
+  if (entry == nullptr) {
+    entry = std::make_shared<CubinCacheEntry>(fingerprint,
+                                              std::forward<Bytes>(cubin_bytes));
+    slot = entry;
+  }
+  CHECK_EQ(cubin_bytes_size, entry->binary.size());
+  return std::shared_ptr<const std::vector<uint8_t>>(entry, &entry->binary);
+}
+
+}  // namespace
 
 KernelLoaderSpec KernelLoaderSpec::CreateInProcessSymbolSpec(
     void* symbol, std::string kernel_name, size_t arity,
@@ -58,10 +117,19 @@ KernelLoaderSpec KernelLoaderSpec::CreateCudaCubinInMemorySpec(
 }
 
 KernelLoaderSpec KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
-    std::vector<uint8_t> cubin_bytes, std::string kernel_name, size_t arity,
+    std::vector<uint8_t>&& cubin_bytes, std::string kernel_name, size_t arity,
     KernelArgsPacking kernel_args_packing) {
-  return KernelLoaderSpec{OwningCudaCubinInMemory{std::move(cubin_bytes)},
-                          std::move(kernel_name), arity, kernel_args_packing};
+  return KernelLoaderSpec{
+      OwningCudaCubinInMemory{CacheCubinBytes(std::move(cubin_bytes))},
+      std::move(kernel_name), arity, kernel_args_packing};
+}
+
+KernelLoaderSpec KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
+    const std::vector<uint8_t>& cubin_bytes, std::string kernel_name,
+    size_t arity, KernelArgsPacking kernel_args_packing) {
+  return KernelLoaderSpec{
+      OwningCudaCubinInMemory{CacheCubinBytes(cubin_bytes)},
+      std::move(kernel_name), arity, kernel_args_packing};
 }
 
 KernelLoaderSpec KernelLoaderSpec::CreateCudaPtxInMemorySpec(
