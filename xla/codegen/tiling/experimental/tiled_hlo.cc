@@ -63,7 +63,7 @@ using ::llvm::SmallVector;
 
 TiledHloRegion::TiledHloRegion(
     std::vector<absl_nonnull std::unique_ptr<TiledHloInstruction>> instructions,
-    llvm::SmallVector<const TiledHloInstruction* absl_nonnull, 4> roots)
+    llvm::SmallVector<const TiledHloInstruction * absl_nonnull, 4> roots)
     : instructions_(std::move(instructions)), roots_(std::move(roots)) {
   for (const TiledHloInstruction* root : roots_) {
     CHECK(absl::c_any_of(
@@ -275,7 +275,8 @@ RegionSchema GetRegionSchema(const TiledHloInstruction& tiled_hlo,
   };
   switch (opcode) {
     case HloOpcode::kDot:
-    case HloOpcode::kScaledDot: {
+    case HloOpcode::kScaledDot:
+    case HloOpcode::kRaggedDot: {
       return RegionSchema{/*region_roots=*/{iota(0, num_operands)},
                           /*operand_ids=*/{}};
     }
