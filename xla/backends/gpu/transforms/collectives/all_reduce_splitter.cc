@@ -492,10 +492,9 @@ absl::StatusOr<bool> AllReduceSplitter::RunImpl(
   for (auto* computation : module->computations(execution_threads)) {
     ARReplicaGroupMap replica_map = GetReplicaGroupsMap(*computation);
     for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
-      ABSL_ASSIGN_OR_RETURN(bool rewritten, 
-                            SplitAllReduce(*module, replica_map,
-                                           *computation, *instr,
-                                           ignore_profitability_check_));
+      ABSL_ASSIGN_OR_RETURN(
+          bool rewritten, SplitAllReduce(*module, replica_map, *computation,
+                                         *instr, ignore_profitability_check_));
       changed |= rewritten;
     }
   }
