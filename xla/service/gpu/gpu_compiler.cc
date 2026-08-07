@@ -1500,6 +1500,22 @@ void AddCollectiveCombinerPasses(
   // Assign collective backends after combining, so that combined collectives
   // get the correct backend config.
   pipeline.AddPass<CollectiveBackendAssigner>();
+  // Pattern based Collective fusion passes.
+  {
+    // Annotate collective ops with the Triton kernel strategy (one-shot /
+    // two-shot) that will be used at runtime. This annotation is consumed by
+    // SolLatencyEstimator to apply the correct NVLink-based cost model
+    // instead of the NCCL ring model.  Only added when the Triton collective
+    // kernel flag is enabled; when the flag is off all collectives keep
+    // KERNEL_STRATEGY_DEFAULT.
+    // Run the annotator if any collective kernel type is enabled.
+    // It annotates AllReduce and AllGather instructions with the
+    // kernel strategy determined at compile time (before scheduling),
+    // so that SolLatencyEstimator and the thunk emitter can consume it.
+    pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
+        gpu_topology, /*is_multimem_enabled=*/false);
+    pipeline.AddPass<CollectiveFusion>(gpu_topology);
+  }
 }
 
 absl::Status RunPostFusionPasses(
@@ -2082,22 +2098,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // AlgebraicSimplifier will simplify it away again.
     // TODO(b/375566188): Figure out whether we can get rid of this pass.
     pipeline.AddPass<DotNormalizer>();
-    // Pattern based Collective fusion passes.
-    {
-      // Annotate collective ops with the Triton kernel strategy (one-shot /
-      // two-shot) that will be used at runtime. This annotation is consumed by
-      // SolLatencyEstimator to apply the correct NVLink-based cost model
-      // instead of the NCCL ring model.  Only added when the Triton collective
-      // kernel flag is enabled; when the flag is off all collectives keep
-      // KERNEL_STRATEGY_DEFAULT.
-      // Run the annotator if any collective kernel type is enabled.
-      // It annotates AllReduce and AllGather instructions with the
-      // kernel strategy determined at compile time (before scheduling),
-      // so that SolLatencyEstimator and the thunk emitter can consume it.
-      pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
-          gpu_topology, /*is_multimem_enabled=*/false);
-      pipeline.AddPass<CollectiveFusion>(gpu_topology);
-    }
+
     if (IsTritonGemmEnabled(debug_options, gpu_version)) {
       pipeline.AddPass<DotDimensionNormalizer>(
           /*normalize_noncontracting_dimensions=*/!debug_options
