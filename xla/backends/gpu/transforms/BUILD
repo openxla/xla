@@ -2071,6 +2071,8 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/rocm:rocm_compute_capability",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
+        "//xla/stream_executor/sycl:sycl_gemm_workspace",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",

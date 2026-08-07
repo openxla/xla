@@ -19,6 +19,8 @@ limitations under the License.
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/stream_executor/sycl/sycl_matmul_utils.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace sycl {
@@ -34,8 +36,20 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& config,
 absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
     Stream* stream, const gpu::BlasLt::MemoryArgs& args,
     blas::ProfileResult* profile_result) const {
-  return absl::UnimplementedError(
-      "SyclBlasLt MatmulPlan::ExecuteOnStream not implemented");
+  absl::MutexLock lock(&mu_);
+  ASSIGN_OR_RETURN(auto epilogue,
+                      sycl_gemm::AsSYCLEpilogue(epilogue_));
+  int64_t algorithm = std::any_cast<int64_t>(algorithm_->opaque_algo);
+  absl::Status status =
+                  RunGemm(config_,
+                        args.a,     // se::DeviceMemoryBase lhs
+                        args.b,     // se::DeviceMemoryBase rhs
+                        args.c,     // se::DeviceMemoryBase c
+                        args.d,     // se::DeviceMemoryBase output
+                        args.bias,  // se::DeviceMemoryBase bias
+                        args.workspace,  // se::DeviceMemoryBase workspace
+                        stream, epilogue, algorithm, args.scratch_allocator);
+  return status;
 }
 
 auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,

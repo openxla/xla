@@ -71,6 +71,8 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/sycl/oneapi_compute_capability.h"
+#include "xla/stream_executor/sycl/sycl_gemm_workspace.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -2311,6 +2313,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<absl::string_view> GetNonFp8GemmCustomCallTarget(
       const HloInstruction& instr,
       const GemmBackendConfig& gemm_backend_config) const {
+    // TODO (intel-tf) : For SYCL, we currently route all GEMMs to cublasLt.
+    // We should check the capabilities and route accordingly.
+    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
+    if (oneapi_cc != nullptr) {
+      return absl::string_view(kCublasLtMatmulCallTarget);
+    }
+
     // All internal conditions are met, check if we meet the requirements of
     // cublasLt.
     ABSL_ASSIGN_OR_RETURN(bool gemm_is_supported_by_cublas_lt,
@@ -2834,6 +2843,26 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
     if (instr->custom_call_target() == kCublasLtGroupedMatmulCallTarget) {
       size_t num_groups = instr->operand(2)->shape().dimensions().back();
       workspace = GroupedGemmConfig::kUserArgsSizeBytes * num_groups;
+    }
+
+    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
+    if (oneapi_cc != nullptr) {
+      TF_ASSIGN_OR_RETURN(GemmConfig gemm_config,
+                          GemmConfig::For(instr, gpu_version_));
+      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                          instr->backend_config<GpuBackendConfig>());
+      const GemmBackendConfig& config = gpu_config.gemm_backend_config();
+
+      auto scratchpad_size_or = stream_executor::sycl::GetGemmScratchpadSize(
+          gemm_config, config.epilogue());
+      if (scratchpad_size_or.ok()) {
+        workspace =
+            std::max(workspace, static_cast<int64_t>(*scratchpad_size_or));
+      } else {
+        VLOG(1) << "Failed to compute OneDNN scratchpad size for "
+                << instr->custom_call_target() << ": "
+                << scratchpad_size_or.status().message();
+      }
     }
 
     // Append workspace buffer to instruction outputs.
