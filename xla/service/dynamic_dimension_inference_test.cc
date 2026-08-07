@@ -1031,16 +1031,15 @@ TEST_F(DynamicDimensionInferenceTest, ReduceWindowScanPaddingTest) {
   module_->AddEntryComputation(builder.Build());
 
   SCOPED_TRACE(module_->ToString());
-  TF_ASSERT_OK(RunInference());
+  ASSERT_OK(RunInference());
   HloInstruction* dynamic_size =
       inference_->GetDynamicSize(reduce_window, {}, 0);
   ASSERT_NE(dynamic_size, nullptr);
   // Was size - (window_size - 1) = -4 before the fix.
-  TF_ASSERT_OK_AND_ASSIGN(
-      Literal size_literal,
-      HloEvaluator().Evaluate(
-          dynamic_size, /*precomputed_analyses=*/{},
-          /*recursively_evaluate_nonconstant_operands=*/true));
+  ASSERT_OK_AND_ASSIGN(Literal size_literal,
+                       HloEvaluator().Evaluate(
+                           dynamic_size, /*precomputed_analyses=*/{},
+                           /*recursively_evaluate_nonconstant_operands=*/true));
   EXPECT_EQ(size_literal.Get<int32_t>({}), 3);
 }
 
@@ -1079,16 +1078,15 @@ TEST_F(DynamicDimensionInferenceTest, ReduceWindowOutputSizeClampedAtZero) {
   module_->AddEntryComputation(builder.Build());
 
   SCOPED_TRACE(module_->ToString());
-  TF_ASSERT_OK(RunInference());
+  ASSERT_OK(RunInference());
   HloInstruction* dynamic_size =
       inference_->GetDynamicSize(reduce_window, {}, 0);
   ASSERT_NE(dynamic_size, nullptr);
   // Without the clamp this evaluated to 0 + 1 - 8 + 1 = -6.
-  TF_ASSERT_OK_AND_ASSIGN(
-      Literal size_literal,
-      HloEvaluator().Evaluate(
-          dynamic_size, /*precomputed_analyses=*/{},
-          /*recursively_evaluate_nonconstant_operands=*/true));
+  ASSERT_OK_AND_ASSIGN(Literal size_literal,
+                       HloEvaluator().Evaluate(
+                           dynamic_size, /*precomputed_analyses=*/{},
+                           /*recursively_evaluate_nonconstant_operands=*/true));
   EXPECT_EQ(size_literal.Get<int32_t>({}), 0);
 }
 

@@ -2030,7 +2030,6 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
