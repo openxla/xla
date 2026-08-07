@@ -49,7 +49,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
-#include "xla/service/gpu/model/triton_shared_memory_estimator.h"
+#include "xla/service/gpu/model/triton_temporary_memory_estimator.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -509,6 +509,58 @@ Decision VerifyTritonConstraints(
                                             : estimate.dominant_op_name,
           "), which exceeds the device limit of ",
           smem_params.smem_budget_bytes, " bytes."));
+    }
+  }
+
+  // 4. Tensor memory limit (NVIDIA Blackwell / tcgen05 only).
+  // On architectures with dedicated tensor memory the dot accumulator lives in
+  // tensor memory rather than shared memory. Estimate the tensor-memory columns
+  // required by the dot accumulators and reject tilings that would exceed the
+  // device tensor-memory budget. On all other architectures (all AMD GPUs and
+  // all non-tcgen05 NVIDIA GPUs) the budget is 0 and this check is a no-op. The
+  // authoritative `ttg.tensor_memory_size` check after Triton lowering remains
+  // the correctness backstop.
+  {
+    const TmemModelParams tmem_params = MakeTmemModelParams(device_info);
+    if (tmem_params.tmem_columns_budget > 0) {
+      llvm::SmallVector<TmemUsingOp, 2> tmem_ops;
+      for (const TiledHloInstruction* inst : all_instructions) {
+        if (!UsesTensorMemory(*inst->hlo(), tmem_params)) {
+          continue;
+        }
+        auto tile_sizes_or = inst->tile().GetStaticTileSizes();
+        if (!tile_sizes_or.ok()) {
+          return Decision(tile_sizes_or.status());
+        }
+        const llvm::SmallVector<int64_t> tile_sizes = std::move(*tile_sizes_or);
+        // The dot accumulator tile is [block_m, block_n], i.e. the last two
+        // dimensions of the (2D+) output tile.
+        if (tile_sizes.size() < 2) {
+          continue;
+        }
+        TmemUsingOp op;
+        op.name = inst->hlo()->name();
+        op.padded_block_m =
+            llvm::PowerOf2Ceil(tile_sizes[tile_sizes.size() - 2]);
+        op.padded_block_n =
+            llvm::PowerOf2Ceil(tile_sizes[tile_sizes.size() - 1]);
+        op.accumulator_byte_size = ShapeUtil::ByteSizeOfPrimitiveType(
+            inst->hlo()->shape().element_type());
+        tmem_ops.push_back(op);
+      }
+
+      const BlockTmemEstimate tmem_estimate =
+          EstimateBlockTmemColumns(tmem_ops, tmem_params);
+      if (tmem_estimate.columns > tmem_params.tmem_columns_budget) {
+        return Decision::Forbid(
+            absl::StrCat("Tiling requires an estimated ", tmem_estimate.columns,
+                         " columns of tensor memory (dominated by instruction ",
+                         tmem_estimate.dominant_op_name.empty()
+                             ? "<unknown>"
+                             : tmem_estimate.dominant_op_name,
+                         "), which exceeds the device limit of ",
+                         tmem_params.tmem_columns_budget, " columns."));
+      }
     }
   }
 

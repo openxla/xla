@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
-#include "xla/service/gpu/model/triton_shared_memory_estimator.h"
+#include "xla/service/gpu/model/triton_temporary_memory_estimator.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 

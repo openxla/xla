@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/triton_shared_memory_estimator.h"
+#include "xla/service/gpu/model/triton_temporary_memory_estimator.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -23,8 +23,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
+
+// ===========================================================================
+// Shared memory.
+// ===========================================================================
 
 SmemModelParams MakeSmemModelParams(const se::DeviceDescription& device_info,
                                     int num_stages, int64_t num_warps) {
@@ -40,9 +45,9 @@ SmemModelParams MakeSmemModelParams(const se::DeviceDescription& device_info,
     // NVIDIA.
     //
     // Blackwell (tcgen05) moves the dot accumulator and (at least) one operand
-    // to dedicated tensor memory, which is accounted separately by the existing
-    // `ttg.tensor_memory_size` check. We therefore do not charge that portion
-    // to shared memory here.
+    // to dedicated tensor memory, which is accounted separately by the
+    // tensor-memory model below. We therefore do not charge that portion to
+    // shared memory here.
     params.dot_operands_use_smem = !cuda_cc->HasTcgen05();
 
     // Hopper `wgmma` sources operands from shared memory (descriptor-based), so
@@ -76,7 +81,7 @@ SmemStagingKind ClassifyStaging(const HloInstruction& hlo,
       // Dot operands are staged in shared memory only on architectures whose
       // MMA datapath uses shared memory for operand staging. On architectures
       // with dedicated tensor memory (NVIDIA tcgen05) the relevant portion is
-      // accounted by the separate tensor-memory check.
+      // accounted by the separate tensor-memory model.
       return params.dot_operands_use_smem ? SmemStagingKind::kDot
                                           : SmemStagingKind::kNone;
     default:
@@ -145,6 +150,71 @@ BlockSmemEstimate EstimateBlockSmemBytes(
     }
     if (op_bytes > estimate.bytes) {
       estimate.bytes = op_bytes;
+      estimate.dominant_op_name = op.name;
+    }
+  }
+  return estimate;
+}
+
+// ===========================================================================
+// Tensor memory (NVIDIA Blackwell / tcgen05 only).
+// ===========================================================================
+
+TmemModelParams MakeTmemModelParams(const se::DeviceDescription& device_info) {
+  TmemModelParams params;
+  // These are 0 on architectures without dedicated tensor memory (all AMD GPUs
+  // and all non-tcgen05 NVIDIA GPUs), which makes the tensor-memory estimate a
+  // no-op there.
+  params.tmem_columns_budget = device_info.tensor_memory_columns();
+  params.tmem_lanes = device_info.tensor_memory_lanes();
+  return params;
+}
+
+bool UsesTensorMemory(const HloInstruction& hlo,
+                      const TmemModelParams& params) {
+  if (params.tmem_columns_budget <= 0 || params.tmem_lanes <= 0) {
+    // No dedicated tensor memory on this architecture.
+    return false;
+  }
+  switch (hlo.opcode()) {
+    case HloOpcode::kDot:
+    case HloOpcode::kScaledDot:
+      return true;
+    default:
+      return false;
+  }
+}
+
+int64_t EstimateDotTensorMemoryColumns(int64_t padded_block_m,
+                                       int64_t padded_block_n,
+                                       int64_t accumulator_byte_size,
+                                       const TmemModelParams& params) {
+  if (params.tmem_columns_budget <= 0 || params.tmem_lanes <= 0) {
+    return 0;
+  }
+  // TMEM cells hold 32-bit (4-byte) values. Accumulators wider than 4 bytes
+  // occupy proportionally more columns.
+  constexpr int64_t kTmemCellBytes = 4;
+  const int64_t cells_per_element =
+      CeilOfRatio<int64_t>(accumulator_byte_size, kTmemCellBytes);
+  // A [block_m, block_n] accumulator maps block_m rows onto TMEM lanes; if
+  // block_m exceeds the number of lanes, multiple lane-groups are stacked into
+  // additional columns.
+  const int64_t lane_groups =
+      CeilOfRatio<int64_t>(padded_block_m, params.tmem_lanes);
+  return lane_groups * padded_block_n * cells_per_element;
+}
+
+BlockTmemEstimate EstimateBlockTmemColumns(
+    absl::Span<const TmemUsingOp> tmem_ops, const TmemModelParams& params) {
+  BlockTmemEstimate estimate;
+  // Accumulators are assumed to be reused across ops within the kernel, so the
+  // block-level estimate is the maximum over ops rather than their sum.
+  for (const TmemUsingOp& op : tmem_ops) {
+    const int64_t op_columns = EstimateDotTensorMemoryColumns(
+        op.padded_block_m, op.padded_block_n, op.accumulator_byte_size, params);
+    if (op_columns > estimate.columns) {
+      estimate.columns = op_columns;
       estimate.dominant_op_name = op.name;
     }
   }

@@ -95,6 +95,9 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::B200SXMDeviceInfo(
   b.set_shared_memory_per_block(128 * 1024);
   b.set_shared_memory_per_block_optin(227 * 1024);
   b.set_shared_memory_per_core(228 * 1024);
+  // Blackwell (tcgen05) tensor memory: 128 lanes x 512 columns.
+  b.set_tensor_memory_lanes(128);
+  b.set_tensor_memory_columns(512);
   b.set_threads_per_core_limit(2048);
   b.set_core_count(148);
   b.set_block_dim_limit_x(2'147'483'647);

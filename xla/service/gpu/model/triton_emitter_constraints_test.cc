@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/service/decision.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/instruction_fusion.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/test.h"
 
@@ -650,6 +651,71 @@ ENTRY entry_computation {
       .set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
   EXPECT_THAT(CheckTiling(module.get(), {1, 12, 12}),
               StatusIs(_, HasSubstr("neither a power of 2 nor equal")));
+}
+
+// Unit tests for the tensor-memory estimator. A full VerifyTritonConstraints
+// integration test cannot easily exercise the tensor-memory budget in
+// isolation, because any dot whose operand tiles are small enough to satisfy
+// the MMA dimension limit (<= 256) also keeps the accumulator within the 512
+// tensor-memory column budget. We therefore test the estimator functions
+// directly.
+TEST(TritonTensorMemoryEstimatorTest, NoTensorMemoryOnNonTcgen05) {
+  // The RTX A6000 has no dedicated tensor memory.
+  const se::DeviceDescription device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  const TmemModelParams params = MakeTmemModelParams(device);
+  EXPECT_EQ(params.tmem_columns_budget, 0);
+  EXPECT_EQ(params.tmem_lanes, 0);
+  EXPECT_EQ(EstimateDotTensorMemoryColumns(/*padded_block_m=*/128,
+                                           /*padded_block_n=*/256,
+                                           /*accumulator_byte_size=*/4, params),
+            0);
+}
+
+TEST(TritonTensorMemoryEstimatorTest, Tcgen05DeviceHasTensorMemory) {
+  // NVIDIA Blackwell (tcgen05): 128 lanes x 512 columns.
+  const se::DeviceDescription device =
+      TestGpuDeviceInfo::B200SXMDeviceInfo(se::CudaComputeCapability{10, 0});
+  const TmemModelParams params = MakeTmemModelParams(device);
+  EXPECT_EQ(params.tmem_columns_budget, 512);
+  EXPECT_EQ(params.tmem_lanes, 128);
+
+  // A [128, 256] fp32 accumulator: ceil(128/128) * 256 * ceil(4/4) = 256
+  // columns.
+  EXPECT_EQ(EstimateDotTensorMemoryColumns(/*padded_block_m=*/128,
+                                           /*padded_block_n=*/256,
+                                           /*accumulator_byte_size=*/4, params),
+            256);
+
+  // A [256, 512] fp32 accumulator spans two lane groups:
+  // ceil(256/128) * 512 * 1 = 1024 columns.
+  EXPECT_EQ(EstimateDotTensorMemoryColumns(/*padded_block_m=*/256,
+                                           /*padded_block_n=*/512,
+                                           /*accumulator_byte_size=*/4, params),
+            1024);
+}
+
+TEST(TritonTensorMemoryEstimatorTest, BlockEstimateIsMaxOverOps) {
+  const se::DeviceDescription device =
+      TestGpuDeviceInfo::B200SXMDeviceInfo(se::CudaComputeCapability{10, 0});
+  const TmemModelParams params = MakeTmemModelParams(device);
+
+  TmemUsingOp small;
+  small.name = "small_dot";
+  small.padded_block_m = 128;
+  small.padded_block_n = 128;
+  small.accumulator_byte_size = 4;
+
+  TmemUsingOp large;
+  large.name = "large_dot";
+  large.padded_block_m = 256;
+  large.padded_block_n = 512;
+  large.accumulator_byte_size = 4;
+
+  const TmemUsingOp ops[] = {small, large};
+  const BlockTmemEstimate estimate = EstimateBlockTmemColumns(ops, params);
+  // max(128, 1024) = 1024, dominated by the large dot.
+  EXPECT_EQ(estimate.columns, 1024);
+  EXPECT_EQ(estimate.dominant_op_name, "large_dot");
 }
 
 }  // namespace

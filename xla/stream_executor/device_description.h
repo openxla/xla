@@ -409,6 +409,16 @@ class DeviceDescription {
     return reserved_shared_memory_per_block_;
   }
 
+  // Returns the number of tensor-memory columns available per block, or 0 on
+  // architectures without dedicated tensor memory (all GPUs other than NVIDIA
+  // Blackwell / tcgen05 and up). Tensor memory holds (part of) the MMA
+  // datapath on tcgen05.
+  int64_t tensor_memory_columns() const { return tensor_memory_columns_; }
+
+  // Returns the number of tensor-memory lanes (rows), or 0 on architectures
+  // without dedicated tensor memory.
+  int64_t tensor_memory_lanes() const { return tensor_memory_lanes_; }
+
   // Returns the maximum number of thread blocks (CTAs) per multiprocessor.
   int64_t max_blocks_per_multiprocessor() const {
     return max_blocks_per_multiprocessor_;
@@ -556,6 +566,10 @@ class DeviceDescription {
   void set_reserved_shared_memory_per_block(int64_t value) {
     reserved_shared_memory_per_block_ = value;
   }
+  void set_tensor_memory_columns(int64_t value) {
+    tensor_memory_columns_ = value;
+  }
+  void set_tensor_memory_lanes(int64_t value) { tensor_memory_lanes_ = value; }
   void set_max_blocks_per_multiprocessor(int64_t value) {
     max_blocks_per_multiprocessor_ = value;
   }
@@ -652,6 +666,11 @@ class DeviceDescription {
   int64_t shared_memory_per_block_optin_ = kUninitialized<int64_t>;
   int64_t reserved_shared_memory_per_block_ = kUninitialized<int64_t>;
   int64_t max_blocks_per_multiprocessor_ = kUninitialized<int64_t>;
+
+  // Tensor-memory geometry (NVIDIA Blackwell / tcgen05 only). 0 on
+  // architectures without dedicated tensor memory.
+  int64_t tensor_memory_columns_ = 0;
+  int64_t tensor_memory_lanes_ = 0;
 
   float clock_rate_ghz_ = kUninitialized<float>;
 

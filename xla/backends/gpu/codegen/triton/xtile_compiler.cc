@@ -588,7 +588,8 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   if (auto* cuda_cc = gpu_cc.cuda_compute_capability();
       cuda_cc != nullptr && cuda_cc->HasTcgen05()) {
     // https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory
-    constexpr int kTensorMemoryColumns = 512;
+    const int64_t tensor_memory_columns_limit =
+        device_info.tensor_memory_columns();
     const int tensor_mem_columns =
         triton_source.module()
             ->getAttrOfType<mlir::IntegerAttr>("ttg.tensor_memory_size")
@@ -596,10 +597,10 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     if (tensor_mem_columns > 0) {
       VLOG(2) << "Tensor memory usage: " << tensor_mem_columns << " columns";
     }
-    if (tensor_mem_columns > kTensorMemoryColumns) {
+    if (tensor_mem_columns > tensor_memory_columns_limit) {
       return absl::ResourceExhaustedError(absl::StrFormat(
           "Tensor memory size limit exceeded: requested %d, available: %d",
-          tensor_mem_columns, kTensorMemoryColumns));
+          tensor_mem_columns, tensor_memory_columns_limit));
     }
   }
 

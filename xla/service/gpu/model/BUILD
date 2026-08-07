@@ -717,10 +717,11 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "triton_shared_memory_estimator",
-    srcs = ["triton_shared_memory_estimator.cc"],
-    hdrs = ["triton_shared_memory_estimator.h"],
+    name = "triton_temporary_memory_estimator",
+    srcs = ["triton_temporary_memory_estimator.cc"],
+    hdrs = ["triton_temporary_memory_estimator.h"],
     deps = [
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
@@ -735,7 +736,7 @@ cc_library(
     hdrs = ["triton_emitter_constraints.h"],
     deps = [
         ":block_level_parameters",
-        ":triton_shared_memory_estimator",
+        ":triton_temporary_memory_estimator",
         "//xla:shape_util",
         "//xla:util",
         "//xla/codegen/tiling:constraint_expression",
@@ -781,6 +782,7 @@ xla_cc_test(
         "//xla/service:instruction_fusion",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
