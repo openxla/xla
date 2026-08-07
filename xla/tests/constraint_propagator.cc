@@ -172,7 +172,7 @@ ConstraintPropagator::Run(
   ConstraintPropagator propagator(get_index_known_zeroes);
   auto computations = module.MakeComputationPostOrder();
   for (HloComputation* computation : computations) {
-    RETURN_IF_ERROR(propagator.Propagate(computation));
+    ABSL_RETURN_IF_ERROR(propagator.Propagate(computation));
   }
 
   // Extract only the parameters
@@ -186,12 +186,12 @@ ConstraintPropagator::Run(
 
 absl::Status ConstraintPropagator::Propagate(
     const HloComputation* computation) {
-  RETURN_IF_ERROR(SeedConstraints(computation));
-  RETURN_IF_ERROR(PropagateSeedConstraints(computation));
+  ABSL_RETURN_IF_ERROR(SeedConstraints(computation));
+  ABSL_RETURN_IF_ERROR(PropagateSeedConstraints(computation));
   absl::flat_hash_map<const HloInstruction*, ConstraintState> before;
   do {
     before = states_;
-    RETURN_IF_ERROR(PropagateConstraints(computation));
+    ABSL_RETURN_IF_ERROR(PropagateConstraints(computation));
   } while (before != states_);
   return absl::OkStatus();
 }
@@ -463,6 +463,7 @@ absl::Status ConstraintPropagator::PropagateConstraintsExact(
     }
     case HloOpcode::kBitcast:
     case HloOpcode::kBitcastConvert:
+    case HloOpcode::kConvert:
     case HloOpcode::kCopy:
     case HloOpcode::kDynamicReshape:
     case HloOpcode::kReshape:
@@ -482,6 +483,27 @@ absl::Status ConstraintPropagator::PropagateConstraintsExact(
       sc.no_duplicates = false;
       sc.needs_sorted_indices = false;
       states_[instruction->operand(0)].MergeStructural(sc);
+      break;
+    }
+    case HloOpcode::kPad: {
+      states_[instruction->operand(0)].AddConstraint(output_interval);
+      states_[instruction->operand(1)].AddConstraint(output_interval);
+      StructuralConstraints sc = output_structural;
+      sc.no_duplicates = false;
+      sc.needs_sorted_indices = false;
+      states_[instruction->operand(0)].MergeStructural(sc);
+      break;
+    }
+    case HloOpcode::kSelect: {
+      states_[instruction->operand(1)].AddConstraint(output_interval);
+      states_[instruction->operand(2)].AddConstraint(output_interval);
+      // Combining elements from two different branches breaks uniqueness
+      // and sorting order across the resulting tensor.
+      StructuralConstraints sc = output_structural;
+      sc.no_duplicates = false;
+      sc.needs_sorted_indices = false;
+      states_[instruction->operand(1)].MergeStructural(sc);
+      states_[instruction->operand(2)].MergeStructural(sc);
       break;
     }
     case HloOpcode::kBroadcast:
@@ -796,7 +818,7 @@ absl::Status ConstraintPropagator::PropagateSeedConstraints(
   auto instructions = computation->MakeInstructionPostOrder();
   for (auto it = instructions.rbegin(); it != instructions.rend(); ++it) {
     const HloInstruction* inst = *it;
-    RETURN_IF_ERROR(PropagateConstraintsExact(inst));
+    ABSL_RETURN_IF_ERROR(PropagateConstraintsExact(inst));
   }
   return absl::OkStatus();
 }
@@ -806,8 +828,8 @@ absl::Status ConstraintPropagator::PropagateConstraints(
   auto instructions = computation->MakeInstructionPostOrder();
   for (auto it = instructions.rbegin(); it != instructions.rend(); ++it) {
     const HloInstruction* inst = *it;
-    RETURN_IF_ERROR(PropagateConstraintsExact(inst));
-    RETURN_IF_ERROR(PropagateConstraintsApprox(inst));
+    ABSL_RETURN_IF_ERROR(PropagateConstraintsExact(inst));
+    ABSL_RETURN_IF_ERROR(PropagateConstraintsApprox(inst));
   }
   return absl::OkStatus();
 }

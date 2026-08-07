@@ -419,6 +419,20 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_collective_inflation_factor(1);
 
+  constexpr int64_t kSymmetricBuffersThreshold = 8 * 1024 * 1024;
+  auto* all_reduce_filter =
+      opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  all_reduce_filter->set_collective(DebugOptions::ALLREDUCE);
+  all_reduce_filter->set_max_size_bytes(kSymmetricBuffersThreshold);
+  auto* all_gather_filter =
+      opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  all_gather_filter->set_collective(DebugOptions::ALLGATHER);
+  all_gather_filter->set_max_size_bytes(kSymmetricBuffersThreshold);
+  auto* reduce_scatter_filter =
+      opts.add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  reduce_scatter_filter->set_collective(DebugOptions::REDUCESCATTER);
+  reduce_scatter_filter->set_max_size_bytes(kSymmetricBuffersThreshold);
+
   opts.set_xla_gpu_exhaustive_tiling_search(false);
 
   opts.set_xla_gpu_experimental_enable_triton_heroless_priority_fusion(false);
@@ -551,7 +565,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detect_unstable_reductions_post_optimizations(
       DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(true);
-  opts.set_xla_gpu_experimental_use_raft_select_k(false);
   opts.set_xla_early_exit_with_layouts(false);
   opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(true);
@@ -559,6 +572,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_ragged_all_to_all_mode(
       DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_device_kernel(false);
+  opts.set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
@@ -3451,12 +3465,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "optimizations. Acceptable values are: 'none', 'log', and "
       "'crash'. 'none' is the default."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_use_raft_select_k",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_use_raft_select_k),
-      debug_options->xla_gpu_experimental_use_raft_select_k(),
-      "If true, use the raft::matrix::select_k implementation of TopK."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_ragged_all_to_all_use_barrier",
       bool_setter_for(
           &DebugOptions::
@@ -3499,6 +3507,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_ragged_all_to_all_use_device_kernel(),
       "If true, use the device-initiated (NCCL GIN + LSA) kernel for "
       "ragged-all-to-all. Requires NCCL >= 2.29."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback),
+      debug_options->xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(),
+      "If true, allow fallback to NCCL Send/Recv path for ragged-all-to-all."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_async_copy_min_bytes",
       int64_setter_for(&DebugOptions::set_xla_gpu_async_copy_min_bytes),

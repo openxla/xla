@@ -331,6 +331,79 @@ ENTRY main {
   EXPECT_FALSE(p0_int.IsEmpty());
 }
 
+TEST_F(ConstraintPropagatorTest, LogConvert) {
+  const char* hlo = R"(
+HloModule TestModule
+ENTRY main {
+  param_0 = s32[8,128] parameter(0)
+  convert = f32[8,128] convert(param_0)
+  ROOT log = f32[8,128] log(convert)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  auto p0_int = states[module->entry_computation()->parameter_instruction(0)]
+                    .GetConstraintInterval();
+  EXPECT_TRUE(p0_int.IsPositiveStrict());
+}
+
+TEST_F(ConstraintPropagatorTest, LogConvertPad) {
+  const char* hlo = R"(
+HloModule TestModule
+ENTRY main {
+  param_0 = s32[4,128] parameter(0)
+  c_zero = s32[] constant(0)
+  pad = s32[8,128] pad(param_0, c_zero), padding=0_4x0_0
+  convert = f32[8,128] convert(pad)
+  ROOT log = f32[8,128] log(convert)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  auto p0_int = states[module->entry_computation()->parameter_instruction(0)]
+                    .GetConstraintInterval();
+  EXPECT_TRUE(p0_int.IsPositiveStrict());
+}
+
+TEST_F(ConstraintPropagatorTest, RsqrtSelect) {
+  const char* hlo = R"(
+HloModule TestModule
+ENTRY main {
+  pred_0 = pred[8,128] parameter(0)
+  c_one = f32[] constant(1)
+  b_one = f32[8,128] broadcast(c_one), dimensions={}
+  param_1 = f32[8,128] parameter(1)
+  select_in = f32[8,128] select(pred_0, b_one, param_1)
+  ROOT rsqrt = f32[8,128] rsqrt(select_in)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  auto p1_int = states[module->entry_computation()->parameter_instruction(1)]
+                    .GetConstraintInterval();
+  EXPECT_TRUE(p1_int.IsPositiveStrict());
+}
+
+TEST_F(ConstraintPropagatorTest, SqrtConvert) {
+  const char* hlo = R"(
+HloModule TestModule
+ENTRY main {
+  param_0 = s32[8,128] parameter(0)
+  convert = f32[8,128] convert(param_0)
+  ROOT sqrt = f32[8,128] sqrt(convert)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto states, ConstraintPropagator::Run(*module));
+
+  auto p0_int = states[module->entry_computation()->parameter_instruction(0)]
+                    .GetConstraintInterval();
+  EXPECT_TRUE(p0_int.IsPositive());
+}
+
 TEST_F(ConstraintPropagatorTest, TheoreticalLimitationConflictingConstraints) {
   // Test Log(x) vs Log(-Add(x,y))
   const char* hlo = R"(

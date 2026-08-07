@@ -27,6 +27,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "Eigen/Core"
-#include "xla/tsl/platform/status_macros.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -129,7 +129,7 @@ class TritonEmitterTest
   CreateXTileIrAndFileCheck(absl::string_view hlo_text,
                             absl::string_view triton_fusion_name,
                             absl::string_view filecheck_pattern) {
-    ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                      ParseAndReturnVerifiedModule(hlo_text));
     return XTileTestBase::CreateXTileIrAndFileCheck(
         std::move(module), triton_fusion_name, filecheck_pattern);
@@ -137,7 +137,7 @@ class TritonEmitterTest
   absl::Status CreateTritonIrFromHloTextAndFileCheck(
       absl::string_view hlo_text, absl::string_view triton_fusion_name,
       absl::string_view filecheck_pattern) {
-    ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                      ParseAndReturnVerifiedModule(hlo_text));
     return CreateTritonIrAndFileCheck(module.get(), triton_fusion_name,
                                       filecheck_pattern);
@@ -145,7 +145,7 @@ class TritonEmitterTest
   absl::Status CreateTritonIrFromHloTextAndFileCheckForDot(
       absl::string_view hlo_text, absl::string_view triton_fusion_name,
       absl::string_view filecheck_pattern) {
-    ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                      ParseAndReturnVerifiedModule(hlo_text));
     return CreateTritonIrAndFileCheckForDot(module.get(), triton_fusion_name,
                                             filecheck_pattern);

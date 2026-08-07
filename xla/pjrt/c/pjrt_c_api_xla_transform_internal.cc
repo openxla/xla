@@ -23,9 +23,9 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -103,7 +103,7 @@ class CApiXlaTransformAdapter : public HloXlaTransform {
       args.header.cleanup_fn(args.header.data);
     }
 
-    RETURN_IF_ERROR(status);
+    ABSL_RETURN_IF_ERROR(status);
     return changed;
   }
 
