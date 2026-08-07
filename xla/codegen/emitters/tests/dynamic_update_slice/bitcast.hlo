@@ -20,3 +20,5 @@ ENTRY main {
   %param_0_copy = f32[20,30] copy(%param_0)
   ROOT %fusion = f32[600] fusion(%param_0_copy, %param_1, %param_2, %param_3), kind=kLoop, calls=fusion
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

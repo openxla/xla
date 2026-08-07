@@ -9,3 +9,5 @@ fusion {
 // CHECK: #indexing_map{{.*}}domain:{{.*}}th_x in [0, [[N_THREADS:[0-9]+]]]
 // CHECK: %thread_id_x = gpu.thread_id  x {xla.range = [0 : index, [[N_THREADS]] : index]}
 // CHECK:  xla_gpu.allocate_shared : tensor<64x64xbf16>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

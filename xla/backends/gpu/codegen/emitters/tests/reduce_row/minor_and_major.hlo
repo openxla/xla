@@ -20,3 +20,5 @@ fusion {
 // CHECK-NOT: allocate_shared
 // CHECK: shuffle_reduce
 // CHECK-NOT: allocate_shared
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

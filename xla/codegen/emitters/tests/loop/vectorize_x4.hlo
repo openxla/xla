@@ -13,3 +13,4 @@ neg {
 // CHECK-NOT: tensor.
 // CHECK: vector.transfer_write {{.*}} vector<4xf32>
 // CHECK-NOT: tensor.
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -17,3 +17,5 @@ fusion {
     to_apply=%add
   ROOT %tuple = (f32[128], f32[128]) tuple(reduce.1, reduce.2)
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

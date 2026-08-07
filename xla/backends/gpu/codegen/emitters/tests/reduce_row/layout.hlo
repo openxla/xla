@@ -15,3 +15,5 @@ fusion {
 }
 
 // CHECK: xla.predicated_insert {{.*}} : tensor<17x19xf32, dense<[0, 1]> : tensor<2xi64>>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -9,3 +9,5 @@ fusion {
 }
 // CHECK-NOT: xla_gpu.allocate_shared : tensor<256x256xi4>
 // CHECK: xla_gpu.allocate_shared
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

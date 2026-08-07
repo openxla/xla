@@ -13,3 +13,5 @@ fusion {
 // CHECK: %[[NONZERO:.*]] = arith.cmpi eq, {{.*}}, %[[C0]]
 // CHECK: %[[CVT:.*]] = arith.extui %[[NONZERO]] : i1 to i8
 // CHECK: return %[[CVT]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

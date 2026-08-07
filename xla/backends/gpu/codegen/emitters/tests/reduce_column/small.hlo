@@ -11,3 +11,5 @@ fusion {
   c0 = f32[] constant(0)
   ROOT reduce = f32[3,4] reduce(param_0, c0), dimensions={1}, to_apply=add
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

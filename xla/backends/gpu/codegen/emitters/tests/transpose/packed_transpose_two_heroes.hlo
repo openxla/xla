@@ -18,3 +18,5 @@ fusion {
 // CHECK-SAME:   vector<2x2xi16>
 // CHECK:      vector.from_elements
 // CHECK-SAME:   vector<2x2xbf16>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

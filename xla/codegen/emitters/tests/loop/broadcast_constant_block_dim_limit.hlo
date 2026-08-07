@@ -14,3 +14,5 @@ bcast {
 // CHECK-SAME: iter_args(%[[ITER:.*]] = %[[FORALL_ARG0]])
 // CHECK:     %[[CST:.*]] = arith.constant 1.000
 // CHECK:     %[[INSERTED:.*]] = tensor.insert %[[CST]] into %[[ITER]][%[[RA]], %[[RB]], %[[RC]], %[[RD]], %[[RE]]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

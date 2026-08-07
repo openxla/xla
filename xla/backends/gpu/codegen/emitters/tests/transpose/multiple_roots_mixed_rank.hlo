@@ -19,3 +19,5 @@ ENTRY main {
 }
 
 // CHECK: module
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

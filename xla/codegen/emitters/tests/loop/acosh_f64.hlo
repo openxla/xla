@@ -7,3 +7,5 @@ fusion {
   ROOT acosh = f64[256] acosh(p0)
 }
 // CHECK: llvm.call @__nv_acosh(
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

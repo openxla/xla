@@ -48,3 +48,4 @@ ENTRY main {
 // CHECK:       %[[UPDATE:.*]] = xla.pure_call @fusion_updates
 // CHECK:       %[[INSERT:.*]] = tensor.insert %[[UPDATE:.*]] into %{{[a-z0-9]+}}[%[[ADD0]], %[[ADD1]]]
 // CHECK:       xla.yield %[[INSERT]]
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

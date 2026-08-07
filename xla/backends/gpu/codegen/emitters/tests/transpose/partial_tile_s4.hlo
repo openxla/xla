@@ -10,3 +10,5 @@ fusion {
 // TODO(b/415741994): TransposeEmitter is regressing for S4 when the last
 // dimension is being transposed and we are using LoopEmitter instead.
 // CHECK-NOT: xla_gpu.allocate_shared
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

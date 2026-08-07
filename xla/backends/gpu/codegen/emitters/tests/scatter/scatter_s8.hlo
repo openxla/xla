@@ -25,3 +25,4 @@ scatter_fusion {
 // There should be only one function in the module after inlining.
 // CHECK: func.func
 // CHECK-NOT: func.func
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

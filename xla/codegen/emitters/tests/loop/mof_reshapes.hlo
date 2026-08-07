@@ -331,3 +331,5 @@ ENTRY main {
 /*index=45*/f32[8192,1]{1,0}) fusion(
 	p0, p1, p2, p3, p4, p5, p6), kind=kLoop, calls=f
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

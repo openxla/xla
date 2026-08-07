@@ -22,3 +22,5 @@ fusion {
 // CHECK-SAME:    iter_args(%[[OUT_:.*]] = %[[OUT]])
 // CHECK:       %[[ABS:.*]] = xla.pure_call @fusion__epilogue__
 // CHECK:       tensor.insert %[[ABS]] into %[[OUT_]]
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

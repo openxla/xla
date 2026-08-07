@@ -27,3 +27,5 @@ fusion {
 // CHECK: gpu.shuffle down
 // CHECK: vector.transfer_read {{.*}} vector<4xf32>
 // CHECK: gpu.shuffle down
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -25,3 +25,4 @@ scatter {
     to_apply=add
 }
 // CHECK: vector.transfer_read {{.*}} : tensor<480000xf32>, vector<4xf32>
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

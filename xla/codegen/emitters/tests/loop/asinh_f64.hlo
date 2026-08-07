@@ -6,3 +6,5 @@ fusion {
   ROOT asinh = f64[256] asinh(p0)
 }
 // CHECK: llvm.call @__nv_asinh(
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

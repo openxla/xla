@@ -14,3 +14,5 @@ fusion {
 
 // CHECK: allocate_shared : tensor<32x9xf32>
 // CHECK: shuffle_reduce(%{{.*}}) to 16 combiner=@add_add
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

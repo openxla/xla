@@ -61,3 +61,5 @@ scatter {
 // CHECK:        %[[UPDATED:.*]] = tensor.insert %[[COMBINED]]
 // CHECK-SAME:     into %{{[a-z0-9]+}}[%{{.*}}, %[[RC]]] : tensor<10x5xf32>
 // CHECK:        xla.yield %[[UPDATED]] : tensor<10x5xf32>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

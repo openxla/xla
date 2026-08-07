@@ -24,3 +24,5 @@ fused_reduce {
       to_apply=add
   ROOT tuple = ((f32[3], f32[3]), (f32[3], f32[3])) tuple(reduce0, %reduce1)
 }
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

@@ -29,3 +29,5 @@ scatter {
 // CHECK: arith.constant dense<0.000000e+00> : vector<1xf32>
 // CHECK:      vector.transfer_read
 // CHECK-SAME:   tensor<2008xi32>, vector<4xi32>
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.

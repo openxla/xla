@@ -17,3 +17,5 @@ fusion {
 // CHECK-NOT: allocate_shared
 // Check that no fastmath flag is added
 // CHECK-NOT: fastmath
+
+// Touch to re-trigger flaky SIGSEGV investigation in CI.
