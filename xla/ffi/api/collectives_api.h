@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
 
@@ -72,7 +71,7 @@ class CommunicatorContextBase {
 
   // Returns the non-owning communicator handle for `groups`. The handle is
   // backend-defined; the caller reinterprets it (e.g. as `ncclComm_t`).
-  StatusOr<void*> GetCommunicator(
+  CommunicatorOrT GetCommunicator(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
@@ -129,20 +128,6 @@ struct CollectivesExtensionBase {
 };
 
 }  // namespace internal
-
-inline XLA_FFI_Collectives_Extension BuildCollectivesCExtension(
-    void* state, XLA_FFI_Communicator_Request* request_communicator,
-    XLA_FFI_Communicator_Get* get_communicator) {
-  XLA_FFI_Collectives_Extension ext;
-  // context type is not important for constructing the extension since we are
-  // not decoding the context here.
-  ext.extension_base =
-      MakeExtensionHeader<internal::CollectivesExtensionBase<void>>();
-  ext.state = state;
-  ext.request_communicator = request_communicator;
-  ext.get_communicator = get_communicator;
-  return ext;
-}
 
 }  // namespace xla::ffi
 

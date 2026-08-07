@@ -71,6 +71,20 @@ static XLA_FFI_Error* FakeGetCommunicator(
   return nullptr;
 }
 
+// Builds a collectives extension for the fake backend. Mirrors the small
+// builder each backend uses to publish the extension (see the GPU backend).
+static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
+    void* state, XLA_FFI_Communicator_Request* request_communicator,
+    XLA_FFI_Communicator_Get* get_communicator) {
+  XLA_FFI_Collectives_Extension ext;
+  ext.extension_base =
+      MakeExtensionHeader<internal::CollectivesExtensionBase<void>>();
+  ext.state = state;
+  ext.request_communicator = request_communicator;
+  ext.get_communicator = get_communicator;
+  return ext;
+}
+
 TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   bool called = false;
   void* got = nullptr;
@@ -96,7 +110,7 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   auto call_frame = builder.Build();
 
   FakeBackend backend;
-  XLA_FFI_Collectives_Extension ext = BuildCollectivesCExtension(
+  XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
       &backend, FakeRequestCommunicator, FakeGetCommunicator);
 
   InvokeContext context;
