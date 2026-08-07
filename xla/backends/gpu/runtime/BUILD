@@ -1087,6 +1087,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/backends/cpu:target_machine_options",
+        "//xla/backends/gpu:ffi_gpu_collectives",
         "//xla/ffi",
         "//xla/ffi:attribute_map",
         "//xla/ffi:call_frame",

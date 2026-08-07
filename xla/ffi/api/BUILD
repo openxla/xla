@@ -94,6 +94,13 @@ cc_library(
 )
 
 cc_library(
+    name = "ffi_gpu_collectives",
+    hdrs = ["ffi_gpu_collectives.h"],
+    visibility = ["//visibility:public"],
+    deps = [":c_api"],
+)
+
+cc_library(
     name = "ffi",
     hdrs = ["ffi.h"],
     deps = [

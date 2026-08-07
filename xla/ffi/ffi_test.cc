@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/ffi_gpu_collectives.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
@@ -362,6 +363,68 @@ TEST(FfiTest, DecodeExtensionNotFound) {
   EXPECT_FALSE(status.ok());
   EXPECT_THAT(status.message(), HasSubstr("Extension not found in context"));
   EXPECT_FALSE(handler_called);
+}
+
+static XLA_FFI_Error* MockCommunicatorRequest(
+    const XLA_FFI_Gpu_Collectives_Extension* self,
+    XLA_FFI_Gpu_Communicator_Request_Args* args) {
+  return nullptr;
+}
+
+static XLA_FFI_Error* MockCommunicatorGet(
+    const XLA_FFI_Gpu_Collectives_Extension* self,
+    XLA_FFI_Gpu_Communicator_Get_Args* args) {
+  return nullptr;
+}
+
+TEST(FfiTest, DecodeGpuCollectivesExtension) {
+  int fake_params = 0;
+  int fake_clique_requests = 0;
+  int fake_cliques = 0;
+
+  XLA_FFI_Gpu_Collectives_Extension test_ext;
+  test_ext.extension_base = MakeExtensionHeader<GpuCollectives>();
+  test_ext.collective_params = &fake_params;
+  test_ext.collective_clique_requests = &fake_clique_requests;
+  test_ext.collective_cliques = &fake_cliques;
+  test_ext.request_communicator = MockCommunicatorRequest;
+  test_ext.get_communicator = MockCommunicatorGet;
+
+  bool handler_called = false;
+
+  auto handler = Ffi::Bind().Ctx<Extension<GpuCollectives>>().To(
+      [&](const GpuCollectives::Type ext) -> absl::Status {
+        EXPECT_NE(ext, nullptr);
+        EXPECT_EQ(ext->extension_base.id.extension_type,
+                  GpuCollectives::kExtensionType);
+        EXPECT_EQ(ext->extension_base.id.major_version,
+                  GpuCollectives::kMajorVersion);
+        EXPECT_EQ(ext->extension_base.id.minor_version,
+                  GpuCollectives::kMinorVersion);
+        EXPECT_EQ(ext->collective_params, &fake_params);
+        EXPECT_EQ(ext->collective_clique_requests, &fake_clique_requests);
+        EXPECT_EQ(ext->collective_cliques, &fake_cliques);
+        EXPECT_EQ(ext->request_communicator, MockCommunicatorRequest);
+        EXPECT_EQ(ext->get_communicator, MockCommunicatorGet);
+        handler_called = true;
+        return absl::OkStatus();
+      });
+
+  CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
+  auto call_frame = builder.Build();
+
+  InvokeContext context;
+  context.extension_start = reinterpret_cast<XLA_FFI_Extension*>(&test_ext);
+
+  auto status = Invoke(Api(), *handler, call_frame, context);
+  EXPECT_TRUE(handler_called);
+  ASSERT_OK(status);
+
+  // A major-version mismatch fails the extension's Support() check.
+  test_ext.extension_base.id.major_version = GpuCollectives::kMajorVersion + 1;
+  status = Invoke(Api(), *handler, call_frame, context);
+  EXPECT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Extension version mismatch"));
 }
 
 TEST(FfiTest, BuiltinAttributes) {

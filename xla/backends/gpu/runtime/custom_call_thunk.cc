@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/ffi_gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -155,7 +156,7 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     std::unique_ptr<ffi::ExecutionState> execution_state,
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options) {
   ABSL_ASSIGN_OR_RETURN(ffi::HandlerRegistration registration,
-                   ffi::FindHandler(target_name, platform_name));
+                        ffi::FindHandler(target_name, platform_name));
 
   return Create(thunk_info, std::move(target_name),
                 std::move(registration.bundle), std::move(operands),
@@ -178,8 +179,9 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     if (bundle.instantiate) {
       // Build a call frame with placeholder buffers so the instantiate handler
       // can read operand/result types and shapes. Data pointers are nullptr.
-      ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                       BuildCallFramePrototype(operands, results, attributes));
+      ABSL_ASSIGN_OR_RETURN(
+          CallFrame call_frame,
+          BuildCallFramePrototype(operands, results, attributes));
 
       if (!cpu_target_machine_options.has_value()) {
         cpu_target_machine_options = xla::cpu::TargetMachineOptions();
@@ -188,13 +190,13 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
           execution_state.get(), &gpu_compute_capability,
           &*cpu_target_machine_options);
       ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), bundle.instantiate,
-                             call_frame, call_options,
-                             XLA_FFI_ExecutionStage_INSTANTIATE));
+                                  call_frame, call_options,
+                                  XLA_FFI_ExecutionStage_INSTANTIATE));
     }
   }
 
   ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                   BuildCallFramePrototype(operands, results, attributes));
+                        BuildCallFramePrototype(operands, results, attributes));
   return absl::WrapUnique(new CustomCallThunk(
       thunk_info, std::move(target_name), std::move(bundle),
       std::move(operands), std::move(results), std::move(call_frame),
@@ -220,8 +222,9 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
   if (bundle.instantiate) {
     // Build a call frame with placeholder buffers so the instantiate handler
     // can read operand/result types and shapes. Data pointers are nullptr.
-    ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                     BuildCallFramePrototype(operands, results, attributes));
+    ABSL_ASSIGN_OR_RETURN(
+        CallFrame call_frame,
+        BuildCallFramePrototype(operands, results, attributes));
 
     if (!cpu_target_machine_options.has_value()) {
       cpu_target_machine_options = xla::cpu::TargetMachineOptions();
@@ -229,12 +232,13 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     InvokeContext context = BuildInstantiateInvokeContext(
         execution_state.get(), &gpu_compute_capability,
         &*cpu_target_machine_options);
-    ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), *bundle.instantiate, call_frame,
-                           context, xla::ffi::ExecutionStage::kInstantiate));
+    ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), *bundle.instantiate,
+                                call_frame, context,
+                                xla::ffi::ExecutionStage::kInstantiate));
   }
 
   ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                   BuildCallFramePrototype(operands, results, attributes));
+                        BuildCallFramePrototype(operands, results, attributes));
   return absl::WrapUnique(new CustomCallThunk(
       thunk_info, std::move(target_name), std::move(bundle),
       std::move(operands), std::move(results), std::move(call_frame),
@@ -379,6 +383,11 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       collective_params, collective_clique_requests, collective_memory_requests,
       collective_cliques, collective_memory, execution_context,
       computation_streams);
+  XLA_FFI_Gpu_Collectives_Extension gpu_collectives =
+      MakeGpuCollectivesExtension(collective_params, collective_clique_requests,
+                                  collective_cliques);
+  gpu_collectives.extension_base.next = context.extension_start;
+  context.extension_start = &gpu_collectives.extension_base;
   return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
@@ -404,6 +413,11 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       collective_params, collective_clique_requests, collective_memory_requests,
       collective_cliques, collective_memory, execution_context,
       computation_streams);
+  XLA_FFI_Gpu_Collectives_Extension gpu_collectives =
+      MakeGpuCollectivesExtension(collective_params, collective_clique_requests,
+                                  collective_cliques);
+  gpu_collectives.extension_base.next = context.extension_start;
+  context.extension_start = &gpu_collectives.extension_base;
   return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
@@ -520,12 +534,12 @@ absl::StatusOr<ThunkProto> CustomCallThunk::ToProto() const {
 
   for (const NullableShapedSlice& operand : operands_) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_custom_call_thunk()->add_operands(),
-                     operand.ToProto());
+                          operand.ToProto());
   }
 
   for (const NullableShapedSlice& result : results_) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_custom_call_thunk()->add_results(),
-                     result.ToProto());
+                          result.ToProto());
   }
 
   if (attributes_.has_value()) {
@@ -568,7 +582,7 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::FromProto(
   }
 
   ABSL_ASSIGN_OR_RETURN(ffi::AttributesMap attributes,
-                   ffi::AttributesMap::FromProto(proto.attributes()));
+                        ffi::AttributesMap::FromProto(proto.attributes()));
 
   HloComputation* called_computation = nullptr;
   if (proto.has_called_computation()) {
