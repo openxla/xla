@@ -17,6 +17,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
@@ -25,7 +26,6 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -91,7 +91,7 @@ ENTRY entry {
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
   std::vector<int32_t> ones(64, 1);
   Literal arg = LiteralUtil::CreateR1<int32_t>(ones);
-  TF_ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&arg}));
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&arg}));
 
   // Cumulative sums of 48 ones: 1, 2, ..., 48.
   std::vector<int32_t> prefix_sums(48);

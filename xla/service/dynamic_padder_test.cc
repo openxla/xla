@@ -1134,8 +1134,8 @@ ENTRY main {
       LiteralUtil::CreateR1<int32_t>({2, 3, 4, -1, -1, -1, -1, -1});
   auto module = GetHloModule(hlo_text);
 
-  TF_ASSERT_OK_AND_ASSIGN(Literal result,
-                          PadAndExecute(std::move(module), {&operand}));
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       PadAndExecute(std::move(module), {&operand}));
 
   // Cumulative products of the valid prefix {2, 3, 4}.
   Literal expected = LiteralUtil::CreateR1<int32_t>({2, 6, 24});
