@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -47,7 +48,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
+#include "xla/service/gpu/model/triton_temporary_memory_estimator.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
@@ -118,12 +122,44 @@ TritonEmitterConstraints::GetBuilder(
   return [=](const std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>&
                  instructions,
              const HloFusionAdaptor& fusion_adaptor) {
+    // Conservative shared-memory model parameters for the symbolic (legacy)
+    // tiling path. The launch parameters (num_stages / num_warps) are not yet
+    // known during the symbolic tiling search, so we use the defaults
+    // (num_stages = 1, num_warps = 1), which yield a conservative estimate. The
+    // experimental path threads the concrete launch parameters through instead.
+    const SmemModelParams smem_params = MakeSmemModelParams(
+        device_description, /*num_stages=*/1, /*num_warps=*/1);
+
     absl::flat_hash_set<SymbolicMap> unique_tile_size_maps;
     llvm::SmallVector<RootTileInfo, 2> root_infos;
+    llvm::SmallVector<StagingTileInfo, 2> staging_infos;
     auto roots = fusion_adaptor.GetRoots();
     for (const auto& tiled_hlo_instruction : instructions) {
+      const HloInstruction* hlo = tiled_hlo_instruction->hlo();
       unique_tile_size_maps.insert(
           tiled_hlo_instruction->symbolic_tile().size_map());
+
+      // Collect shared-memory staging info for this instruction if it stages a
+      // tile in shared memory (see `triton_shared_memory_estimator.h`).
+      if (fusion_adaptor.ContainsInstruction(hlo) && hlo->shape().IsArray()) {
+        const SmemStagingKind kind = ClassifyStaging(*hlo, smem_params);
+        if (kind != SmemStagingKind::kNone) {
+          StagingTileInfo info;
+          info.name = std::string(hlo->name());
+          info.kind = kind;
+          info.element_byte_size =
+              ShapeUtil::ByteSizeOfPrimitiveType(hlo->shape().element_type());
+          info.size_map = tiled_hlo_instruction->symbolic_tile().size_map();
+          if (kind == SmemStagingKind::kDot) {
+            for (const auto& operand : tiled_hlo_instruction->operands()) {
+              info.operand_size_maps.push_back(
+                  operand->symbolic_tile().size_map());
+            }
+          }
+          staging_infos.push_back(std::move(info));
+        }
+      }
+
       if (absl::c_any_of(roots, [&tiled_hlo_instruction](
                                     const HloInstructionAdaptor& instr) {
             return &instr.instruction() == tiled_hlo_instruction->hlo();
@@ -147,8 +183,8 @@ TritonEmitterConstraints::GetBuilder(
 
     return std::unique_ptr<TritonEmitterConstraints>(
         absl::WrapUnique(new TritonEmitterConstraints(
-            std::move(tile_size_maps), std::move(root_infos),
-            std::move(custom_constraints),
+            std::move(tile_size_maps), std::move(staging_infos),
+            std::move(root_infos), std::move(custom_constraints),
             /*root_shape=*/instructions.back()->hlo()->shape(),
             device_description, std::move(tiled_emitter_constraints))));
   };
@@ -212,6 +248,45 @@ absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
                                       device_info_)) {
     VLOG(2) << "Number of blocks exceeds the device grid limit. Bailing out.";
     return false;
+  }
+
+  // Verify that the tiling does not require more shared memory than the device
+  // provides. This uses the same architecture-parameterized model and the same
+  // block-level aggregation (`EstimateBlockSmemBytes`) as the experimental
+  // path (see `triton_shared_memory_estimator.h`). The symbolic path does not
+  // know the concrete launch parameters yet, so a conservative model
+  // (num_stages = 1, num_warps = 1) is used here.
+  {
+    const SmemModelParams smem_params =
+        MakeSmemModelParams(device_info_, /*num_stages=*/1, /*num_warps=*/1);
+    llvm::SmallVector<SmemStagingOp, 2> staging_ops;
+    staging_ops.reserve(staging_infos_.size());
+    for (const StagingTileInfo& info : staging_infos_) {
+      SmemStagingOp op;
+      op.name = info.name;
+      op.kind = info.kind;
+      op.element_byte_size = info.element_byte_size;
+      if (info.kind == SmemStagingKind::kLayout) {
+        op.padded_tile_elements =
+            NumberOfElementsInPaddedTile(info.size_map, tile_parameters);
+      } else if (info.kind == SmemStagingKind::kDot) {
+        int64_t padded_operand_elements = 0;
+        for (const SymbolicMap& operand_size_map : info.operand_size_maps) {
+          padded_operand_elements +=
+              NumberOfElementsInPaddedTile(operand_size_map, tile_parameters);
+        }
+        op.padded_operand_tile_elements = padded_operand_elements;
+      }
+      staging_ops.push_back(op);
+    }
+    const BlockSmemEstimate estimate =
+        EstimateBlockSmemBytes(staging_ops, smem_params);
+    if (estimate.bytes > smem_params.smem_budget_bytes) {
+      VLOG(2) << "Tiling requires an estimated " << estimate.bytes
+              << " bytes of shared memory, which exceeds the device limit of "
+              << smem_params.smem_budget_bytes << " bytes. Bailing out.";
+      return false;
+    }
   }
 
   // Ensure that we satisfy the custom constraints we derived when padding tile
@@ -288,10 +363,22 @@ llvm::SmallVector<const TiledHloInstruction*> CollectAllInstructions(
   return all_instructions;
 }
 
+// Returns the number of power-of-2-padded elements in a static tile.
+int64_t NumberOfElementsInPaddedStaticTile(
+    absl::Span<const int64_t> static_tile_sizes) {
+  int64_t num_elements = 1;
+  for (int64_t size : static_tile_sizes) {
+    num_elements *= llvm::PowerOf2Ceil(size);
+  }
+  return num_elements;
+}
+
 }  // namespace
 
-Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
-                                 const se::DeviceDescription& device_info) {
+Decision VerifyTritonConstraints(
+    const TiledHloComputation& tiled_computation,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters) {
   llvm::SmallVector<const TiledHloInstruction*> all_instructions =
       CollectAllInstructions(tiled_computation);
 
@@ -345,6 +432,124 @@ Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
                 kMaxMMADimSize, "."));
           }
         }
+      }
+    }
+  }
+
+  // 3. Shared memory limit.
+  // Estimate the per-block shared memory required by the tiling using the same
+  // architecture-parameterized model and block-level aggregation
+  // (`EstimateBlockSmemBytes`) as the symbolic (legacy) path (see
+  // `triton_shared_memory_estimator.h`), and reject tilings that would exceed
+  // the device shared-memory budget. This lets the tiling search fall back to a
+  // smaller tile instead of failing late with a shared-memory
+  // RESOURCE_EXHAUSTED error during Triton compilation.
+  //
+  // Only "staging" ops (layout conversions and dot operand staging) are charged
+  // to shared memory; everything else (elementwise, broadcast, reductions,
+  // etc.) is register-resident. Cross-wave reduction combine buffers are
+  // intentionally overlooked; see the estimator header for the full rationale.
+  // The authoritative `ttg.shared` check performed after Triton lowering
+  // remains the correctness backstop.
+  {
+    const SmemModelParams smem_params =
+        MakeSmemModelParams(device_info, block_level_parameters.num_stages,
+                            block_level_parameters.num_warps);
+
+    llvm::SmallVector<SmemStagingOp, 2> staging_ops;
+    for (const TiledHloInstruction* inst : all_instructions) {
+      const SmemStagingKind kind = ClassifyStaging(*inst->hlo(), smem_params);
+      if (kind == SmemStagingKind::kNone) {
+        continue;
+      }
+      SmemStagingOp op;
+      op.name = inst->hlo()->name();
+      op.kind = kind;
+      op.element_byte_size = ShapeUtil::ByteSizeOfPrimitiveType(
+          inst->hlo()->shape().element_type());
+      if (kind == SmemStagingKind::kLayout) {
+        auto tile_sizes_or = inst->tile().GetStaticTileSizes();
+        if (!tile_sizes_or.ok()) {
+          return Decision(tile_sizes_or.status());
+        }
+        op.padded_tile_elements =
+            NumberOfElementsInPaddedStaticTile(*tile_sizes_or);
+      } else if (kind == SmemStagingKind::kDot) {
+        int64_t padded_operand_elements = 0;
+        for (const TiledHloInstruction* operand : inst->operands()) {
+          auto op_tile_sizes_or = operand->tile().GetStaticTileSizes();
+          if (!op_tile_sizes_or.ok()) {
+            return Decision(op_tile_sizes_or.status());
+          }
+          padded_operand_elements +=
+              NumberOfElementsInPaddedStaticTile(*op_tile_sizes_or);
+        }
+        op.padded_operand_tile_elements = padded_operand_elements;
+      }
+      staging_ops.push_back(op);
+    }
+
+    const BlockSmemEstimate estimate =
+        EstimateBlockSmemBytes(staging_ops, smem_params);
+    if (estimate.bytes > smem_params.smem_budget_bytes) {
+      return Decision::Forbid(absl::StrCat(
+          "Tiling requires an estimated ", estimate.bytes,
+          " bytes of shared memory (dominated by instruction ",
+          estimate.dominant_op_name.empty() ? "<unknown>"
+                                            : estimate.dominant_op_name,
+          "), which exceeds the device limit of ",
+          smem_params.smem_budget_bytes, " bytes."));
+    }
+  }
+
+  // 4. Tensor memory limit (NVIDIA Blackwell / tcgen05 only).
+  // On architectures with dedicated tensor memory the dot accumulator lives in
+  // tensor memory rather than shared memory. Estimate the tensor-memory columns
+  // required by the dot accumulators and reject tilings that would exceed the
+  // device tensor-memory budget. On all other architectures (all AMD GPUs and
+  // all non-tcgen05 NVIDIA GPUs) the budget is 0 and this check is a no-op. The
+  // authoritative `ttg.tensor_memory_size` check after Triton lowering remains
+  // the correctness backstop.
+  {
+    const TmemModelParams tmem_params = MakeTmemModelParams(device_info);
+    if (tmem_params.tmem_columns_budget > 0) {
+      llvm::SmallVector<TmemUsingOp, 2> tmem_ops;
+      for (const TiledHloInstruction* inst : all_instructions) {
+        if (!UsesTensorMemory(*inst->hlo(), tmem_params)) {
+          continue;
+        }
+        auto tile_sizes_or = inst->tile().GetStaticTileSizes();
+        if (!tile_sizes_or.ok()) {
+          return Decision(tile_sizes_or.status());
+        }
+        const llvm::SmallVector<int64_t> tile_sizes = std::move(*tile_sizes_or);
+        // The dot accumulator tile is [block_m, block_n], i.e. the last two
+        // dimensions of the (2D+) output tile.
+        if (tile_sizes.size() < 2) {
+          continue;
+        }
+        TmemUsingOp op;
+        op.name = inst->hlo()->name();
+        op.padded_block_m =
+            llvm::PowerOf2Ceil(tile_sizes[tile_sizes.size() - 2]);
+        op.padded_block_n =
+            llvm::PowerOf2Ceil(tile_sizes[tile_sizes.size() - 1]);
+        op.accumulator_byte_size = ShapeUtil::ByteSizeOfPrimitiveType(
+            inst->hlo()->shape().element_type());
+        tmem_ops.push_back(op);
+      }
+
+      const BlockTmemEstimate tmem_estimate =
+          EstimateBlockTmemColumns(tmem_ops, tmem_params);
+      if (tmem_estimate.columns > tmem_params.tmem_columns_budget) {
+        return Decision::Forbid(
+            absl::StrCat("Tiling requires an estimated ", tmem_estimate.columns,
+                         " columns of tensor memory (dominated by instruction ",
+                         tmem_estimate.dominant_op_name.empty()
+                             ? "<unknown>"
+                             : tmem_estimate.dominant_op_name,
+                         "), which exceeds the device limit of ",
+                         tmem_params.tmem_columns_budget, " columns."));
       }
     }
   }
