@@ -167,6 +167,25 @@ TmemModelParams MakeTmemModelParams(const se::DeviceDescription& device_info) {
   // no-op there.
   params.tmem_columns_budget = device_info.tensor_memory_columns();
   params.tmem_lanes = device_info.tensor_memory_lanes();
+
+  // Fall back to the tcgen05 architectural defaults (128 lanes x 512 columns)
+  // when the device description does not carry the tensor-memory geometry (e.g.
+  // devices built from a target-config spec that predates these fields). This
+  // keeps the pre-lowering estimate consistent with the authoritative
+  // post-lowering check in `CompileTritonToLLVM`.
+  // https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory
+  const auto* cuda_cc =
+      device_info.gpu_compute_capability().cuda_compute_capability();
+  if (cuda_cc != nullptr && cuda_cc->HasTcgen05()) {
+    constexpr int64_t kDefaultTensorMemoryColumns = 512;
+    constexpr int64_t kDefaultTensorMemoryLanes = 128;
+    if (params.tmem_columns_budget <= 0) {
+      params.tmem_columns_budget = kDefaultTensorMemoryColumns;
+    }
+    if (params.tmem_lanes <= 0) {
+      params.tmem_lanes = kDefaultTensorMemoryLanes;
+    }
+  }
   return params;
 }
 
