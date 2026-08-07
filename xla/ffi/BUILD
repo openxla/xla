@@ -260,6 +260,19 @@ cc_library(
 )
 
 cc_library(
+    name = "collectives_ffi",
+    hdrs = ["collectives_ffi.h"],
+    deps = [
+        ":api",
+        ":ffi",
+        "//xla/ffi/api:c_api",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "ffi_internal_api",
     srcs = ["ffi_internal_api.cc"],
     hdrs = ["ffi_internal_api.h"],
