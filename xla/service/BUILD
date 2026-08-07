@@ -6972,6 +6972,7 @@ cc_library(
         "//learning/brain/research/jax:__subpackages__",
         "//learning/pathways/compilation_service:__subpackages__",
         "//tensorflow/core/common_runtime/eager:__subpackages__",
+        "//xla/client:__subpackages__",
         ":__subpackages__",
         "//xla/tools:__subpackages__",
         "//xla/backends/gpu:__subpackages__",
