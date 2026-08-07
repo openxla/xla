@@ -115,7 +115,10 @@ cc_library(
         "%{rocm_root}/include/**",
         "%{rocm_root}/lib/llvm/lib/**/*.h",
     ]),
-    defines = ["MIOPEN_BETA_API=1"],
+    defines = {
+        "__HIP_DISABLE_CPP_FUNCTIONS__": "1",
+        "MIOPEN_BETA_API": "1",
+    },
     include_prefix = "rocm",
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
@@ -157,6 +160,7 @@ rocm_lib_import(
         [
             "%{rocm_root}/lib/libamdhip64.so*",
             "%{rocm_root}/lib/librocm_kpack.so*",
+            "%{rocm_root}/lib/librocm-core.so*",
         ],
     ),
     interface_library = "%{rocm_root}/lib/libamdhip64.so",
@@ -165,6 +169,7 @@ rocm_lib_import(
         ":hiprtc_libs",
         ":hsa_rocr_libs",
         ":rocprofiler_register_libs",
+        ":rocprofiler_sdk",
         ":system_libs",
     ],
 )
@@ -295,6 +300,7 @@ rocm_lib_import(
     name = "miopen",
     data = glob([
         "%{rocm_root}/lib/libMIOpen.so*",
+        "%{rocm_root}/lib/libMIOpenCK*.so*",
         "%{rocm_root}/share/miopen/**",
         "%{rocm_root}/lib/librocm-core.so*",
     ]),
