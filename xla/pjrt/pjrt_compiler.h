@@ -552,7 +552,7 @@ struct CompilationPhaseFunctions {
   // input programs based on the phase's logic and returns a vector of
   // `PjRtPartialProgramProto` or an error status if compilation fails.
   std::function<absl::StatusOr<std::vector<PjRtPartialProgramProto>>(
-      CompileOptions, const std::vector<PjRtPartialProgramProto>&,
+      CompileOptions, std::vector<PjRtPartialProgramProto>,
       const PjRtTopologyDescription&)>
       compiler;
 
@@ -588,7 +588,7 @@ class PjRtPhaseCompiler : public PjRtCompiler {
   // or an error status if any validation or compilation step fails.
   virtual absl::StatusOr<std::vector<PjRtPartialProgramProto>> RunPhases(
       CompileOptions options,
-      const std::vector<PjRtPartialProgramProto>& input_programs,
+      std::vector<PjRtPartialProgramProto> input_programs,
       const PjRtTopologyDescription& topology,
       const std::vector<std::string>& phases_to_run);
 
