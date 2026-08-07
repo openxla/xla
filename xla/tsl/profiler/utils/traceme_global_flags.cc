@@ -21,7 +21,7 @@ namespace tsl {
 namespace profiler {
 
 #ifdef _WIN32
-#define DECL_DLL_EXPORT __declspec(dllexport)
+#define DECL_DLL_EXPORT
 #else
 #define DECL_DLL_EXPORT
 #endif
