@@ -703,5 +703,121 @@ TEST(HloDumpUtilsTest, ConvertHloToHtmlCompactGte) {
   EXPECT_TRUE(absl::StrContains(html, "href=\"#instr_p0_0\""));
 }
 
+TEST(HloDumpUtilsTest, PopulateMismatchGraphData_ConstantNanAndInf) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule test_constant_nan_inf
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  c_norm = f32[] constant(1.0)
+  c_inf = f32[] constant(-inf)
+  c_nan = f32[] constant(nan)
+  b_inf = f32[10] broadcast(c_inf), dimensions={}
+  b_nan = f32[10] broadcast(c_nan), dimensions={}
+  b_norm = f32[10] broadcast(c_norm), dimensions={}
+  add = f32[10] add(p0, b_norm)
+  sel = f32[10] select(f32[10] p0, b_inf, b_nan)
+  ROOT root = f32[10] add(add, sel)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto graph_data = PopulateMismatchGraphData(*module, {});
+  absl::flat_hash_map<std::string, double> scores;
+  for (const auto& node : graph_data.nodes) {
+    scores[node.key] = node.diff_score;
+  }
+
+  EXPECT_EQ(scores["c_inf"], kConstantNanInfDiffScore);
+  EXPECT_EQ(scores["c_nan"], kConstantNanInfDiffScore);
+  EXPECT_EQ(scores["c_norm"], 0.0);
+}
+
+TEST(HloDumpUtilsTest, PopulateMismatchGraphData_ConstantNanInfInFusion) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule test_fusion_mask
+%fused_mask (p0: f32[10]) -> f32[10] {
+  %p0 = f32[10] parameter(0)
+  %c_inf = f32[] constant(-inf)
+  %b_inf = f32[10] broadcast(%c_inf), dimensions={}
+  ROOT %sel = f32[10] select(%p0, %b_inf, %p0)
+}
+
+ENTRY main {
+  %p0 = f32[10] parameter(0)
+  ROOT %mask_fusion = f32[10] fusion(%p0), kind=kCustom, calls=%fused_mask
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto graph_data = PopulateMismatchGraphData(*module, {});
+  absl::flat_hash_map<std::string, double> scores;
+  for (const auto& node : graph_data.nodes) {
+    scores[node.key] = node.diff_score;
+  }
+
+  EXPECT_EQ(scores["mask_fusion"], kConstantNanInfDiffScore);
+  EXPECT_EQ(scores["mask_fusion/c_inf"], kConstantNanInfDiffScore);
+}
+
+TEST(HloDumpUtilsTest, PopulateMismatchGraphData_RuntimeNanInfMismatch) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule test_runtime_nan
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  p1 = f32[10] parameter(1)
+  ROOT div = f32[10] divide(p0, p1)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  MismatchDetails nan_mismatch;
+  nan_mismatch.target_instruction_name = "div";
+  nan_mismatch.actual = std::numeric_limits<double>::quiet_NaN();
+  nan_mismatch.expected = 1.0;
+  nan_mismatch.rel_error = std::numeric_limits<double>::quiet_NaN();
+
+  auto graph_data = PopulateMismatchGraphData(*module, {nan_mismatch});
+  absl::flat_hash_map<std::string, double> scores;
+  for (const auto& node : graph_data.nodes) {
+    scores[node.key] = node.diff_score;
+  }
+
+  EXPECT_EQ(scores["div"], kRuntimeNanInfMismatchDiffScore);
+}
+
+TEST(HloDumpUtilsTest,
+     PopulateMismatchGraphData_CombinedConstantAndRuntimeNanInf) {
+  const absl::string_view hlo_string = R"hlo(
+HloModule test_combined
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  c_inf = f32[] constant(-inf)
+  b_inf = f32[10] broadcast(c_inf), dimensions={}
+  add = f32[10] add(p0, b_inf)
+  ROOT out = f32[10] multiply(add, p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  MismatchDetails inf_mismatch;
+  inf_mismatch.target_instruction_name = "out";
+  inf_mismatch.actual = std::numeric_limits<double>::infinity();
+  inf_mismatch.expected = 1.0;
+  inf_mismatch.rel_error = std::numeric_limits<double>::infinity();
+
+  auto graph_data = PopulateMismatchGraphData(*module, {inf_mismatch});
+  absl::flat_hash_map<std::string, double> scores;
+  for (const auto& node : graph_data.nodes) {
+    scores[node.key] = node.diff_score;
+  }
+
+  EXPECT_EQ(scores["c_inf"], kConstantNanInfDiffScore);
+  EXPECT_EQ(scores["out"], kRuntimeNanInfMismatchDiffScore);
+}
+
 }  // namespace
 }  // namespace xla::numerics::debug_info
