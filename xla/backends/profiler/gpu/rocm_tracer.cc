@@ -727,21 +727,22 @@ absl::Status RocmTracer::InitProfiling(void* tool_data) {
   }
 
   // ROCTX marker tracing: capture roctxRangePushA, roctxRangePop, and
-  // roctxMarkA so user-emitted ranges appear as named bands in the XPlane host
-  // thread timeline (kNVTXRange stat on Generic events).
+  // roctxMarkA so ranges appear as named bands in the XPlane host thread
+  // timeline (kNVTXRange stat on Generic events).
   //
-  // The producer is the application, not XLA. On ROCm, nvtx_utils_impl builds
-  // nvtx_utils_stub.cc, whose DefaultProfilerDomain() returns null, so
-  // scoped_annotation.h takes its AnnotationStack branch and XLA emits no
-  // roctx call. Only code that links librocprofiler-sdk-roctx and calls it
-  // directly reaches this callback. A follow-up adds the XLA-side emitter.
+  // Two producers reach this callback: any application or library that links
+  // librocprofiler-sdk-roctx and calls it directly, and -- when
+  // XLA_ROCM_ENABLE_ROCTX is set -- XLA's own ScopedAnnotation, via
+  // roctx_utils.cc's dual push. See DefaultProfilerDomain there for why the
+  // XLA-side producer is opt-in and latched.
+  //
   // Log and continue rather than RETURN_IF_ERROR. A failure here propagates to
   // toolInit, which returns -1 and tears down HIP-API, kernel-dispatch and
   // memcpy tracing along with it. That is far too much collateral for an
-  // optional feature whose producer is the application: MARKER_CORE_API may be
-  // absent in an older rocprofiler-sdk, or already claimed by another tool in
-  // the process (ROCPROFILER_STATUS_ERROR_SERVICE_ALREADY_CONFIGURED). Losing
-  // ROCTX bands is acceptable; losing all GPU profiling is not.
+  // optional feature: MARKER_CORE_API may be absent in an older
+  // rocprofiler-sdk, or already claimed by another tool in the process
+  // (ROCPROFILER_STATUS_ERROR_SERVICE_ALREADY_CONFIGURED). Losing ROCTX bands
+  // is acceptable; losing all GPU profiling is not.
   if (absl::Status marker_status = RocprofilerStatusToAbslStatus(
           rocprofiler_configure_callback_tracing_service(
               context_, ROCPROFILER_CALLBACK_TRACING_MARKER_CORE_API, nullptr,
