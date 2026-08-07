@@ -17,10 +17,12 @@ limitations under the License.
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -48,6 +50,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/shape_util.h"
 #include "xla/tools/hlo_dump/hlo_dump_assets.h"
 #include "xla/tools/hlo_dump/hlo_lexer.h"
@@ -61,6 +64,41 @@ namespace xla::numerics::debug_info {
 namespace {
 
 std::string JsStringEscape(absl::string_view s);
+
+bool LiteralContainsInfOrNan(const LiteralSlice& literal) {
+  if (literal.shape().IsTuple()) {
+    for (int i = 0; i < ShapeUtil::TupleElementCount(literal.shape()); ++i) {
+      if (LiteralContainsInfOrNan(LiteralSlice(literal, {i}))) {
+        return true;
+      }
+    }
+    return false;
+  }
+  bool contains_inf_or_nan = primitive_util::PrimitiveTypeSwitch<bool>(
+      [&](auto type) -> bool {
+        if constexpr (primitive_util::IsFloatingPointType(type)) {
+          using NativeT = primitive_util::NativeTypeOf<type>;
+          if (!std::numeric_limits<NativeT>::has_infinity &&
+              !std::numeric_limits<NativeT>::has_quiet_NaN) {
+            return false;
+          }
+          bool found = false;
+          literal.EachCellUntilFailure<NativeT>(
+              [&](absl::Span<const int64_t> /*indices*/,
+                  NativeT value) -> bool {
+                if (std::isinf(value) || std::isnan(value)) {
+                  found = true;
+                  return false;  // Abort iteration early.
+                }
+                return true;
+              });
+          return found;
+        }
+        return false;
+      },
+      literal.shape().element_type());
+  return contains_inf_or_nan;
+}
 
 bool IsSpaceToken(const Token& t) {
   return t.kind == TokKind::kText &&
@@ -1159,36 +1197,47 @@ GraphData PopulateMismatchGraphData(
     }
   }
 
+  bool is_nan_inf_mismatch = false;
   double root_score = 100.0;
   if (!mismatches.empty()) {
     double max_rel = 0.0;
     for (const auto& m : mismatches) {
+      if (std::isnan(m.actual) || std::isinf(m.actual) ||
+          std::isnan(m.expected) || std::isinf(m.expected) ||
+          std::isnan(m.rel_error) || std::isinf(m.rel_error)) {
+        is_nan_inf_mismatch = true;
+      }
       if (m.rel_error > max_rel) {
         max_rel = m.rel_error;
       }
     }
-    if (max_rel > 0.0) {
+    if (is_nan_inf_mismatch) {
+      root_score = kRuntimeNanInfMismatchDiffScore;
+    } else if (max_rel > 0.0) {
       root_score = max_rel * 100.0;
     }
   }
 
   absl::flat_hash_set<const HloInstruction*> root_instrs;
-  auto collect_fusion_hierarchy = [&](auto& self,
-                                      const HloInstruction* instr) -> void {
-    if (instr == nullptr) {
-      return;
-    }
-    root_instrs.insert(instr);
-    if (instr->opcode() == HloOpcode::kFusion) {
-      for (const HloInstruction* inner :
-           instr->fused_instructions_computation()->instructions()) {
-        if (inner->opcode() != HloOpcode::kParameter && !inner->IsConstant()) {
-          self(self, inner);
+  if (!mismatches.empty()) {
+    auto collect_fusion_hierarchy = [&](auto& self,
+                                        const HloInstruction* instr) -> void {
+      if (instr == nullptr) {
+        return;
+      }
+      root_instrs.insert(instr);
+      if (instr->opcode() == HloOpcode::kFusion) {
+        for (const HloInstruction* inner :
+             instr->fused_instructions_computation()->instructions()) {
+          if (inner->opcode() != HloOpcode::kParameter &&
+              !inner->IsConstant()) {
+            self(self, inner);
+          }
         }
       }
-    }
-  };
-  collect_fusion_hierarchy(collect_fusion_hierarchy, root);
+    };
+    collect_fusion_hierarchy(collect_fusion_hierarchy, root);
+  }
 
   auto get_suppliers = [&](const HloInstruction* instr) {
     std::vector<const HloInstruction*> suppliers;
@@ -1237,7 +1286,26 @@ GraphData PopulateMismatchGraphData(
     double y = next_y;
     next_y += 2.0;
 
-    double score = root_instrs.contains(instr) ? root_score : 0.0;
+    double score = 0.0;
+    if (root_instrs.contains(instr)) {
+      score = root_score;
+    } else if (instr->opcode() == HloOpcode::kConstant &&
+               LiteralContainsInfOrNan(instr->literal())) {
+      score = kConstantNanInfDiffScore;
+    } else if (instr->opcode() == HloOpcode::kFusion) {
+      bool fusion_has_constant_nan_inf = false;
+      for (const HloInstruction* inner :
+           instr->fused_instructions_computation()->instructions()) {
+        if (inner->opcode() == HloOpcode::kConstant &&
+            LiteralContainsInfOrNan(inner->literal())) {
+          fusion_has_constant_nan_inf = true;
+          break;
+        }
+      }
+      if (fusion_has_constant_nan_inf) {
+        score = kConstantNanInfDiffScore;
+      }
+    }
 
     std::vector<std::string> scopes;
     const HloComputation* cur_comp = instr->parent();
