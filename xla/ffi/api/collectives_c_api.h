@@ -24,8 +24,10 @@ limitations under the License.
 extern "C" {
 #endif
 
-//==============================================================================
+//===----------------------------------------------------------------------===//
 // XLA FFI Collectives API
+//===----------------------------------------------------------------------===//
+
 // Exposes the XLA-owned host collective communicator to FFI handlers.
 // `request_communicator` requests a clique in the Prepare stage;
 // `get_communicator` returns the handle once cliques are acquired. The
@@ -33,11 +35,8 @@ extern "C" {
 // XLA:GPU reinterprets it as `ncclComm_t`, XLA:CPU as its own comm type, etc.).
 // This API is backend agnostic; backend wiring lives in the runtime that
 // attaches the extension.
-//==============================================================================
 
-//==============================================================================
 // Version macros for the collectives extension.
-//==============================================================================
 #define XLA_FFI_Extension_Collectives 129
 #define XLA_FFI_Extension_Collectives_MajorVersion 0
 #define XLA_FFI_Extension_Collectives_MinorVersion 1

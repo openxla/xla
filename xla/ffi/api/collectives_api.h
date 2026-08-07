@@ -40,21 +40,22 @@ namespace internal {
 // C++ wrapper for the XLA FFI Collectives extension API.
 // Unified implementation for statically linked and dynamically linked FFI
 // modules.
-template <typename Converter>
+template <typename ErrorPolicy>
 class CommunicatorContextBase {
  public:
-  using StatusT = decltype(Converter::ToStatus(std::declval<XLA_FFI_Error*>()));
-  using CommunicatorOrT = decltype(Converter::ToStatusOr(
-      std::declval<void*>(), std::declval<XLA_FFI_Error*>()));
+  using Status = typename ErrorPolicy::Status;
+  template <typename T>
+  using StatusOr = typename ErrorPolicy::template StatusOr<T>;
 
-  explicit CommunicatorContextBase(const XLA_FFI_Collectives_Extension* ext)
-      : ext_(ext) {}
+  CommunicatorContextBase(const XLA_FFI_Api* api,
+                          const XLA_FFI_Collectives_Extension* ext)
+      : api_(api), ext_(ext) {}
 
   // Requests the clique for `groups` so it is acquired before execution.
   // Prepare stage only.
-  StatusT RequestCommunicator(GroupMode group_mode,
-                              const std::vector<std::vector<int64_t>>& groups,
-                              int64_t communication_id) {
+  Status RequestCommunicator(GroupMode group_mode,
+                             const std::vector<std::vector<int64_t>>& groups,
+                             int64_t communication_id) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
     XLA_FFI_Communicator_Request_Args args;
     args.struct_size = XLA_FFI_Communicator_Request_Args_STRUCT_SIZE;
@@ -63,12 +64,15 @@ class CommunicatorContextBase {
     args.groups = raw_groups.data();
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
-    return Converter::ToStatus(ext_->request_communicator(ext_, &args));
+    if (XLA_FFI_Error* err = ext_->request_communicator(ext_, &args)) {
+      return ErrorPolicy::TakeError(api_, err);
+    }
+    return ErrorPolicy::Ok();
   }
 
   // Returns the non-owning communicator handle for `groups`. The handle is
   // backend-defined; the caller reinterprets it (e.g. as `ncclComm_t`).
-  CommunicatorOrT GetCommunicator(
+  StatusOr<void*> GetCommunicator(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
@@ -80,8 +84,10 @@ class CommunicatorContextBase {
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
     args.communicator = nullptr;
-    XLA_FFI_Error* err = ext_->get_communicator(ext_, &args);
-    return Converter::ToStatusOr(args.communicator, err);
+    if (XLA_FFI_Error* err = ext_->get_communicator(ext_, &args)) {
+      return StatusOr<void*>(ErrorPolicy::TakeError(api_, err));
+    }
+    return args.communicator;
   }
 
  private:
@@ -97,6 +103,7 @@ class CommunicatorContextBase {
     return raw_groups;
   }
 
+  const XLA_FFI_Api* api_;
   const XLA_FFI_Collectives_Extension* ext_;
 };
 
@@ -115,8 +122,9 @@ struct CollectivesExtensionBase {
       XLA_FFI_Extension_Collectives_MinorVersion;
 
   // Builds a context from the extension.
-  static CommunicatorContextT Create(const CExtension* ext) {
-    return CommunicatorContextT(ext);
+  static CommunicatorContextT Create(const XLA_FFI_Api* api,
+                                     const CExtension* ext) {
+    return CommunicatorContextT(api, ext);
   }
 };
 
