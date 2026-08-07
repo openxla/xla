@@ -576,7 +576,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor/platform:initialize",
-        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
     ],
     alwayslink = True,
 )
@@ -642,7 +642,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/strings",
     ],
 )

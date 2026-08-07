@@ -16,7 +16,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 
-#include <math.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -40,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include <math.h>
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -95,7 +95,7 @@ absl::Status SetName(HloModule* module, HloInstruction* gemm) {
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   gemm->backend_config<GpuBackendConfig>());
+                        gemm->backend_config<GpuBackendConfig>());
   const GemmBackendConfig& config = gpu_config.gemm_backend_config();
   const DotDimensionNumbers& dot_dims = config.dot_dimension_numbers();
   bool is_batch_dot = !dot_dims.lhs_batch_dimensions().empty() ||
@@ -166,7 +166,7 @@ absl::StatusOr<HloInstruction*> InvertAndConvertScalar(HloInstruction* scalar,
     HloInstruction* one = scalar->parent()->AddInstruction(
         HloInstruction::CreateConstant(one_literal.Clone()));
     ABSL_ASSIGN_OR_RETURN(scalar, MakeBinaryHlo(HloOpcode::kDivide, one, scalar,
-                                           &scalar->metadata()));
+                                                &scalar->metadata()));
   }
   if (scalar->shape().element_type() != F32) {
     scalar = MakeConvertToHlo(scalar, F32, &scalar->metadata());
@@ -590,18 +590,20 @@ absl::StatusOr<HloInstruction*> NormalizeBatchDimensions(HloInstruction* dot) {
           operands[i]->shape().dimensions().size());
       absl::c_iota(permutation, 0);
       MoveSingleElement(absl::MakeSpan(permutation), b1, b1 < b0 ? b0 : b0 + 1);
-      ABSL_ASSIGN_OR_RETURN(operands[i], MakeTransposeHlo(operands[i], permutation));
+      ABSL_ASSIGN_OR_RETURN(operands[i],
+                            MakeTransposeHlo(operands[i], permutation));
       LayoutUtil::SetToDefaultLayout(operands[i]->mutable_shape());
       dims[i].ApplyPermutation(permutation);
     }
 
     ABSL_RETURN_IF_ERROR(dims[i].CollapseCategory(DotOperandDims::kBatch,
-                                             /*remove_if_empty=*/false));
-    ABSL_ASSIGN_OR_RETURN(operands[i], MakeReshapeHlo(dims[i].shape(), operands[i]));
+                                                  /*remove_if_empty=*/false));
+    ABSL_ASSIGN_OR_RETURN(operands[i],
+                          MakeReshapeHlo(dims[i].shape(), operands[i]));
   }
 
   ABSL_ASSIGN_OR_RETURN(DotDimensionNumbers new_dnums,
-                   DotOperandDims::CreateDotDimensionNumbers(dims));
+                        DotOperandDims::CreateDotDimensionNumbers(dims));
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * new_dot,
       MakeDotHlo(operands[0], operands[1], new_dnums,
@@ -609,7 +611,7 @@ absl::StatusOr<HloInstruction*> NormalizeBatchDimensions(HloInstruction* dot) {
                  dot_instr->shape().element_type(), &dot_instr->metadata()));
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * reshape,
-                   MakeReshapeHlo(dot->shape(), new_dot));
+                        MakeReshapeHlo(dot->shape(), new_dot));
 
   return reshape;
 }
@@ -665,7 +667,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     ABSL_ASSIGN_OR_RETURN(HloInstruction * normalized_instr,
-                     NormalizeBatchDimensions(instr));
+                          NormalizeBatchDimensions(instr));
     if (normalized_instr != instr) {
       ABSL_RETURN_IF_ERROR(ReplaceInstruction(instr, normalized_instr));
       // After normalization, the dot instruction is followed by a reshape,
@@ -679,15 +681,15 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             .debug_options()
             .xla_gpu_gemm_rewrite_size_threshold();
     ABSL_ASSIGN_OR_RETURN(bool is_matmul_tiny,
-                     IsMatrixMultiplicationTooSmallForRewriting(
-                         *instr, gemm_rewrite_size_threshold));
+                          IsMatrixMultiplicationTooSmallForRewriting(
+                              *instr, gemm_rewrite_size_threshold));
     if (is_matmul_tiny && IsDotSupportedByClassicalEmitters(*instr)) {
       return absl::OkStatus();
     }
 
     // Create a GemmBackendConfig based on the instruction.
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                     instr->backend_config<GpuBackendConfig>());
+                          instr->backend_config<GpuBackendConfig>());
     GemmBackendConfig& gemm_backend_config =
         *gpu_backend_config.mutable_gemm_backend_config();
     gemm_backend_config.set_alpha_real(1.0);
@@ -737,12 +739,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               toolkit_version_ < stream_executor::SemanticVersion{6, 2, 0} &&
               instr->shape().element_type() != F16 &&
               instr->shape().element_type() != F32) {
-            ABSL_ASSIGN_OR_RETURN(instr,
-                             TurnF8DotWithUnsupportedOutputTypeIntoF32(instr));
+            ABSL_ASSIGN_OR_RETURN(
+                instr, TurnF8DotWithUnsupportedOutputTypeIntoF32(instr));
           }
           ABSL_ASSIGN_OR_RETURN(bool created_call,
-                           CreateF8CustomCall(instr, gpu_backend_config,
-                                              a.value(), b.value()));
+                                CreateF8CustomCall(instr, gpu_backend_config,
+                                                   a.value(), b.value()));
           if (created_call) {
             return absl::OkStatus();
           }
@@ -771,7 +773,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                   output_shape,
                   {instr->mutable_operand(0), instr->mutable_operand(1)},
                   gemm_custom_call_target));
-          ABSL_RETURN_IF_ERROR(gemm_call->set_backend_config(gpu_backend_config));
+          ABSL_RETURN_IF_ERROR(
+              gemm_call->set_backend_config(gpu_backend_config));
           ABSL_RETURN_IF_ERROR(ReplaceInstruction(instr, gemm_call));
         }
       } break;
@@ -856,7 +859,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     gemm_backend_config.set_grad_x(attributes["grad_x"] == "true");
     gemm_backend_config.set_grad_y(attributes["grad_y"] == "true");
 
-    ABSL_RETURN_IF_ERROR(grouped_gemm_call->set_backend_config(gpu_backend_config));
+    ABSL_RETURN_IF_ERROR(
+        grouped_gemm_call->set_backend_config(gpu_backend_config));
 
     ABSL_RETURN_IF_ERROR(ReplaceInstruction(instr, grouped_gemm_call));
     return absl::OkStatus();
@@ -893,7 +897,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                   CublasLtMatmulMaybeF8(&existing_gemm).WithOneUser(),
                   m::Broadcast(m::ConstantScalar(&alpha)).WithOneUser()))) {
       ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                       existing_gemm->backend_config<GpuBackendConfig>());
+                            existing_gemm->backend_config<GpuBackendConfig>());
       GemmBackendConfig& config = *gpu_config.mutable_gemm_backend_config();
       // Do not fuse alpha into S32 GEMM, as they only support fixed values for
       // alpha/beta.
@@ -1097,8 +1101,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       HloInstruction* new_bitcast =
           MakeBitcastHlo(bias, existing_gemm->shape(), &bias->metadata());
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_add,
-                       MakeBinaryHlo(HloOpcode::kAdd, existing_gemm,
-                                     new_bitcast, &bias->metadata()));
+                            MakeBinaryHlo(HloOpcode::kAdd, existing_gemm,
+                                          new_bitcast, &bias->metadata()));
       ABSL_RETURN_IF_ERROR(
           ReplaceInstruction(instr, MakeBitcastHlo(new_add, instr->shape())));
 
@@ -1117,13 +1121,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                           .WithOneUser()),
                   m::Op(&bias).WithPredicate(is_not_broadcast)))) {
       ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                       existing_gemm->backend_config<GpuBackendConfig>());
+                            existing_gemm->backend_config<GpuBackendConfig>());
       const GemmBackendConfig& gemm_backend_config =
           gpu_backend_config.gemm_backend_config();
       // check if type combination is supported here
       ABSL_ASSIGN_OR_RETURN(bool types_are_supported,
-                       TypesAreSupportedByCublasLt(*existing_gemm,
-                                                   gemm_backend_config, instr));
+                            TypesAreSupportedByCublasLt(
+                                *existing_gemm, gemm_backend_config, instr));
 
       // for mix type gemm, only fuse add if there is no consumers
       // ROOT add
@@ -1183,7 +1187,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                       .WithOneUser(),
                   m::Broadcast(&zeros, m::ConstantScalar(0))))) {
       ABSL_RETURN_IF_ERROR(FuseReluActivation(instr, zeros, existing_gemm,
-                                         optional_slice_or_bitcast));
+                                              optional_slice_or_bitcast));
     }
     return absl::OkStatus();
   }
@@ -1242,7 +1246,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     se::CudaComputeCapability cuda_compute_capability;
     if (gpu_version_.IsCuda()) {
       ABSL_ASSIGN_OR_RETURN(cuda_compute_capability,
-                       GetCudaComputeCapability(gpu_version_));
+                            GetCudaComputeCapability(gpu_version_));
       // FP8 GEMM kernels are only available on Ada, Hopper, and later
       // architectures.
       if (!cuda_compute_capability.IsAtLeast(8, 9)) {
@@ -1261,7 +1265,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     if (gpu_version_.IsRocm()) {
       ABSL_ASSIGN_OR_RETURN(auto rocm_compute_capability,
-                       GetRocmComputeCapability(gpu_version_));
+                            GetRocmComputeCapability(gpu_version_));
       if (!rocm_compute_capability.has_fp8_support()) {
         VLOG(1) << "FP8 Custom Calls require MI300, or later architectures.";
         return false;
@@ -1299,7 +1303,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     if (gpu_version_.IsRocm()) {
       ABSL_ASSIGN_OR_RETURN(auto rocm_compute_capability,
-                       GetRocmComputeCapability(gpu_version_));
+                            GetRocmComputeCapability(gpu_version_));
       if (rocm_compute_capability.has_ocp_fp8_support()) {
         if (a_type == F8E5M2 && b_type == F8E5M2) {
           VLOG(1) << "Failed to rewrite " << instr->ToShortString()
@@ -1415,7 +1419,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         }
       }
       ABSL_ASSIGN_OR_RETURN(auto rocm_compute_capability,
-                       GetRocmComputeCapability(gpu_version_));
+                            GetRocmComputeCapability(gpu_version_));
       if (rocm_compute_capability.has_ocp_fp8_support()) {
         supported_d_types.insert(F8E4M3FN);
         supported_d_types.insert(F8E5M2);
@@ -1513,12 +1517,14 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     shift_ops(a.fp8_input, a.commutative_ops);
     shift_ops(b.fp8_input, b.commutative_ops);
 
-    ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> a_non_contracting_dims,
-                     GetNonContractingDims(a.fp8_input->shape(), a_batch_dims,
-                                           a_contracting_dims));
-    ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> b_non_contracting_dims,
-                     GetNonContractingDims(b.fp8_input->shape(), b_batch_dims,
-                                           b_contracting_dims));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<int64_t> a_non_contracting_dims,
+        GetNonContractingDims(a.fp8_input->shape(), a_batch_dims,
+                              a_contracting_dims));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<int64_t> b_non_contracting_dims,
+        GetNonContractingDims(b.fp8_input->shape(), b_batch_dims,
+                              b_contracting_dims));
     if (a_non_contracting_dims.size() != 1 ||
         b_non_contracting_dims.size() != 1) {
       VLOG(1) << "Failed to rewrite " << instr->ToShortString()
@@ -1527,8 +1533,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return false;
     }
 
-    ABSL_ASSIGN_OR_RETURN(GemmConfig gemm_config,
-                     GemmConfig::For(instr, gemm_backend_config, gpu_version_));
+    ABSL_ASSIGN_OR_RETURN(
+        GemmConfig gemm_config,
+        GemmConfig::For(instr, gemm_backend_config, gpu_version_));
 
     DotDimensionNumbers* dim_nums =
         gemm_backend_config.mutable_dot_dimension_numbers();
@@ -1573,7 +1580,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                 instr->shape().element_type(), new_output_shape.dimensions(),
                 instr->shape().layout().minor_to_major()),
             operands_list, kCublasLtMatmulF8CallTarget));
-    ABSL_RETURN_IF_ERROR(new_custom_call->set_backend_config(gpu_backend_config));
+    ABSL_RETURN_IF_ERROR(
+        new_custom_call->set_backend_config(gpu_backend_config));
     ABSL_RETURN_IF_ERROR(SetName(instr->GetModule(), new_custom_call));
 
     // Slice the result of the GEMM if the operands were padded.
@@ -1586,7 +1594,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           instr->shape().dimensions(), strides));
     }
 
-    ABSL_RETURN_IF_ERROR(ReplaceInstruction(instr, slice ? slice : new_custom_call));
+    ABSL_RETURN_IF_ERROR(
+        ReplaceInstruction(instr, slice ? slice : new_custom_call));
     VLOG(1) << instr->ToString() << " rewritten into FP8 Custom Call.";
     return true;
   }
@@ -1613,7 +1622,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // comment) is not valid for epilogues other than ReLU or when a matrix bias
     // has been fused.
     ABSL_ASSIGN_OR_RETURN(auto gpu_backend_config,
-                     existing_gemm->backend_config<GpuBackendConfig>());
+                          existing_gemm->backend_config<GpuBackendConfig>());
     const GemmBackendConfig& config = gpu_backend_config.gemm_backend_config();
     if ((config.epilogue() != GemmBackendConfig::DEFAULT &&
          config.epilogue() != GemmBackendConfig::RELU) ||
@@ -1622,9 +1631,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     // If necessary, invert the scaling factor of D and convert to F32.
-    ABSL_ASSIGN_OR_RETURN(d_scale,
-                     InvertAndConvertScalar(
-                         d_scale, HloPredicateIsOp<HloOpcode::kDivide>(instr)));
+    ABSL_ASSIGN_OR_RETURN(
+        d_scale, InvertAndConvertScalar(
+                     d_scale, HloPredicateIsOp<HloOpcode::kDivide>(instr)));
 
     ABSL_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWith(2, d_scale));
     ABSL_RETURN_IF_ERROR(ReplaceInstruction(instr, existing_gemm));
@@ -1674,7 +1683,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       // In the presence of a ReLU activation, the abs instruction is elided
       // since abs(ReLU(x)) = ReLU(x).
       ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                       existing_gemm->backend_config<GpuBackendConfig>());
+                            existing_gemm->backend_config<GpuBackendConfig>());
       const GemmBackendConfig& config = gpu_config.gemm_backend_config();
       for (int i = 0; i < gemm_users.size(); ++i) {
         HloInstruction* maybe_reduce = nullptr;
@@ -1716,7 +1725,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     ABSL_ASSIGN_OR_RETURN(auto gpu_backend_config,
-                     existing_gemm->backend_config<GpuBackendConfig>());
+                          existing_gemm->backend_config<GpuBackendConfig>());
     const GemmBackendConfig& gemm_backend_config =
         gpu_backend_config.gemm_backend_config();
 
@@ -1739,7 +1748,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // If necessary, invert the scaling factor of D and convert to F32. When no
     // scaling factor was captured, set the factor to one.
     if (d_scale) {
-      ABSL_ASSIGN_OR_RETURN(d_scale, InvertAndConvertScalar(d_scale, !mult_scale));
+      ABSL_ASSIGN_OR_RETURN(d_scale,
+                            InvertAndConvertScalar(d_scale, !mult_scale));
     } else {
       d_scale = instr->AddInstruction(
           HloInstruction::CreateConstant(LiteralUtil::One(F32)));
@@ -1773,7 +1783,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         instr->AddInstruction(existing_gemm->CloneWithNewShape(tuple_shape));
 
     ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                     gemm_and_damax->backend_config<GpuBackendConfig>());
+                          gemm_and_damax->backend_config<GpuBackendConfig>());
     GemmBackendConfig& config = *gpu_config.mutable_gemm_backend_config();
     config.set_damax_output(true);
     ABSL_RETURN_IF_ERROR(gemm_and_damax->set_backend_config(gpu_config));
@@ -2002,7 +2012,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     HloInstruction* bias = broadcast->mutable_operand(0);
 
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, gemm->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          gemm->backend_config<GpuBackendConfig>());
     GemmBackendConfig& config = GetMutableGemmBackendConfig(gpu_config);
     // # output column dims == # non-contracting rhs operand dims.
     const DotDimensionNumbers& dot_dims = config.dot_dimension_numbers();
@@ -2138,7 +2149,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, gemm->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          gemm->backend_config<GpuBackendConfig>());
     GemmBackendConfig& config = GetMutableGemmBackendConfig(gpu_config);
     if (config.epilogue() == GemmBackendConfig::DEFAULT) {
       config.set_epilogue(GemmBackendConfig::RELU);
@@ -2196,7 +2208,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, gemm->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          gemm->backend_config<GpuBackendConfig>());
     GemmBackendConfig& config = GetMutableGemmBackendConfig(gpu_config);
 
     if (config.epilogue() == GemmBackendConfig::DEFAULT) {
@@ -2229,8 +2242,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           std::unique_ptr<HloInstruction> new_dot_slice =
               slice_or_bitcast->CloneWithNewOperands(slice_or_bitcast->shape(),
                                                      {new_dot_output});
-          ABSL_RETURN_IF_ERROR(ReplaceWithNewInstruction(slice_or_bitcast,
-                                                    std::move(new_dot_slice)));
+          ABSL_RETURN_IF_ERROR(ReplaceWithNewInstruction(
+              slice_or_bitcast, std::move(new_dot_slice)));
         }
       }
       if (!gemm->IsDead()) {
@@ -2277,7 +2290,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, gemm->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          gemm->backend_config<GpuBackendConfig>());
     GemmBackendConfig& config = GetMutableGemmBackendConfig(gpu_config);
 
     if (config.epilogue() == GemmBackendConfig::DEFAULT) {
@@ -2314,15 +2328,15 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       const GemmBackendConfig& gemm_backend_config) const {
     // TODO (intel-tf) : For SYCL, we currently route all GEMMs to cublasLt.
     // We should check the capabilities and route accordingly.
-    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
-    if (oneapi_cc != nullptr) {
+    if (gpu_version_.IsOneAPI()) {
       return absl::string_view(kCublasLtMatmulCallTarget);
     }
 
     // All internal conditions are met, check if we meet the requirements of
     // cublasLt.
-    ABSL_ASSIGN_OR_RETURN(bool gemm_is_supported_by_cublas_lt,
-                     GemmIsSupportedByCublasLt(instr, gemm_backend_config));
+    ABSL_ASSIGN_OR_RETURN(
+        bool gemm_is_supported_by_cublas_lt,
+        GemmIsSupportedByCublasLt(instr, gemm_backend_config));
     if (gemm_is_supported_by_cublas_lt) {
       return absl::string_view(kCublasLtMatmulCallTarget);
     }
@@ -2350,7 +2364,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return false;
     }
     ABSL_ASSIGN_OR_RETURN(const se::blas::DataType output_dtype,
-                     se::gpu::AsBlasDataType(output_type));
+                          se::gpu::AsBlasDataType(output_type));
     ABSL_ASSIGN_OR_RETURN(
         const se::blas::ComputationType compute_type,
         se::gpu::GetBlasComputationType(
@@ -2453,7 +2467,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // cublasLt has a defined set of combinations of types that it supports.
     // Figure out the computeType and scaleType.
     ABSL_ASSIGN_OR_RETURN(const se::blas::DataType output_dtype,
-                     se::gpu::AsBlasDataType(output_type));
+                          se::gpu::AsBlasDataType(output_type));
     const int max_precision = *absl::c_max_element(
         backend_config.precision_config().operand_precision());
     const PrecisionConfig::Algorithm algorithm =
@@ -2464,9 +2478,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     ABSL_ASSIGN_OR_RETURN(const se::blas::ComputationType compute_type,
-                     se::gpu::GetBlasComputationType(
-                         algorithm, a_dtype, instr.shape().element_type(),
-                         max_precision, gpu_version_));
+                          se::gpu::GetBlasComputationType(
+                              algorithm, a_dtype, instr.shape().element_type(),
+                              max_precision, gpu_version_));
     se::blas::DataType scale_type =
         se::gpu::GetScaleType(output_dtype, compute_type);
 
@@ -2681,8 +2695,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       const GemmBackendConfig& gemm_backend_config) const {
     const Shape& output_shape = instr.shape();
 
-    ABSL_ASSIGN_OR_RETURN(bool types_are_supported_by_cublas_lt,
-                     TypesAreSupportedByCublasLt(instr, gemm_backend_config));
+    ABSL_ASSIGN_OR_RETURN(
+        bool types_are_supported_by_cublas_lt,
+        TypesAreSupportedByCublasLt(instr, gemm_backend_config));
     if (!types_are_supported_by_cublas_lt) {
       return false;
     }
@@ -2781,8 +2796,9 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
     bool has_aux_output = false;
     if (instr->custom_call_target() == kCublasLtMatmulCallTarget ||
         instr->custom_call_target() == kCublasLtMatmulF8CallTarget) {
-      ABSL_ASSIGN_OR_RETURN(const auto gpu_config,
-                       instr->backend_config<xla::gpu::GpuBackendConfig>());
+      ABSL_ASSIGN_OR_RETURN(
+          const auto gpu_config,
+          instr->backend_config<xla::gpu::GpuBackendConfig>());
       const xla::gpu::GemmBackendConfig& config =
           gpu_config.gemm_backend_config();
       xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
@@ -2844,12 +2860,11 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
       workspace = GroupedGemmConfig::kUserArgsSizeBytes * num_groups;
     }
 
-    auto oneapi_cc = gpu_version_.oneapi_compute_capability();
-    if (oneapi_cc != nullptr) {
-      TF_ASSIGN_OR_RETURN(GemmConfig gemm_config,
-                          GemmConfig::For(instr, gpu_version_));
-      TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                          instr->backend_config<GpuBackendConfig>());
+    if (gpu_version_.IsOneAPI()) {
+      ABSL_ASSIGN_OR_RETURN(GemmConfig gemm_config,
+                            GemmConfig::For(instr, gpu_version_));
+      ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                            instr->backend_config<GpuBackendConfig>());
       const GemmBackendConfig& config = gpu_config.gemm_backend_config();
 
       auto scratchpad_size_or = stream_executor::sycl::GetGemmScratchpadSize(
@@ -2937,8 +2952,9 @@ absl::StatusOr<bool> GemmRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        GetFusibleComputations(*module, execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation, gpu_version_,
-                                                   toolkit_version_, options_));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          RunOnComputation(computation, gpu_version_,
+                                           toolkit_version_, options_));
     changed |= result;
   }
   return changed;

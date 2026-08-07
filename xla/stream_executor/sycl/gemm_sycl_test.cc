@@ -28,23 +28,33 @@ namespace xla::gpu {
 
 namespace {
 
-class ParameterizedGemmRewriteTest : public HloPjRtInterpreterReferenceMixin<HloTestBase> ,
-                                      public ::testing::WithParamInterface<bool> {};
+class ParameterizedGemmRewriteTest
+    : public HloPjRtInterpreterReferenceMixin<HloTestBase> {
+ protected:
+  void TestGemmWithTypeVariations(absl::string_view hlo_template) {
+    std::vector<std::tuple<absl::string_view, absl::string_view>>
+        type_combinations = {{"f32", "f32"}, {"f16", "f16"}, {"bf16", "bf16"}};
 
-TEST_P(ParameterizedGemmRewriteTest, MatmulNoFusion) {
-  std::vector<std::tuple<absl::string_view, absl::string_view>>
-      type_combinations = {{"f32", "f32"},
-                           {"f16", "f16"},
-                           {"bf16", "bf16"}};
+    for (const auto& type_combination : type_combinations) {
+      VLOG(3) << "Testing type combination: " << std::get<0>(type_combination)
+              << ", " << std::get<1>(type_combination);
+      absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
+      replacements["<<ABType>>"] = std::get<0>(type_combination);
+      replacements["<<DType>>"] = std::get<1>(type_combination);
+      const auto hlo_text = absl::StrReplaceAll(hlo_template, replacements);
+      double tol = 1e-2;
+      if (std::get<0>(type_combination) == "f32" &&
+          std::get<1>(type_combination) == "f32") {
+        // f32 is more precise, so we can tighten the error bounds.
+        tol = 1e-4;
+      }
+      EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{tol, tol}));
+    }
+  }
+};
 
-  for (const auto& type_combination : type_combinations) {
-    VLOG(3) << "Testing type combination: "
-            << std::get<0>(type_combination) << ", "
-            << std::get<1>(type_combination);
-    absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
-    replacements["<<ABType>>"] = std::get<0>(type_combination);
-    replacements["<<DType>>"] = std::get<1>(type_combination);
-    const char* hlo_module = R"(
+TEST_F(ParameterizedGemmRewriteTest, MatmulNoFusion) {
+  const char* hlo_module = R"(
   HloModule module
 
   ENTRY module {
@@ -53,29 +63,10 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulNoFusion) {
     ROOT %dot = <<DType>>[256,8] dot(%parameter.1, %parameter.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   }
     )";
-    const auto hlo_text = absl::StrReplaceAll(hlo_module, replacements);
-    double tol = 1e-2;
-    if (std::get<0>(type_combination) == "f32" &&
-        std::get<1>(type_combination) == "f32") {
-      // f32 is more precise, so we can tighten the error bounds.
-      tol = 1e-4;
-    }
-    EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{tol, tol}));
-  }
+  TestGemmWithTypeVariations(hlo_module);
 }
 
-TEST_P(ParameterizedGemmRewriteTest, MatmulWithBias) {
-  std::vector<std::tuple<absl::string_view, absl::string_view>>
-      type_combinations = {{"f32", "f32"},
-                           {"f16", "f16"},
-                           {"bf16", "bf16"}};
-  for (const auto& type_combination : type_combinations) {
-    VLOG(3) << "Testing type combination: "
-            << std::get<0>(type_combination) << ", "
-            << std::get<1>(type_combination);
-    absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
-    replacements["<<ABType>>"] = std::get<0>(type_combination);
-    replacements["<<DType>>"] = std::get<1>(type_combination);
+TEST_F(ParameterizedGemmRewriteTest, MatmulWithBias) {
   const char* matmul_module_str = R"(
   HloModule matmul.biasadd.test
 
@@ -90,29 +81,10 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulWithBias) {
     tuple.12 = (<<DType>>[32,32,40,40]) tuple(reshape.11)
     ROOT get-tuple-element.13 = <<DType>>[32,32,40,40] get-tuple-element(tuple.12), index=0
   })";
-  const auto hlo_text = absl::StrReplaceAll(matmul_module_str, replacements);
-  double tol = 1e-2;
-  if (std::get<0>(type_combination) == "f32" &&
-      std::get<1>(type_combination) == "f32") {
-    // f32 is more precise, so we can tighten the error bounds.
-    tol = 1e-4;
-  }
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{tol, tol}));
-  }
+  TestGemmWithTypeVariations(matmul_module_str);
 }
 
-TEST_P(ParameterizedGemmRewriteTest, MatmulWithRELU) {
-  std::vector<std::tuple<absl::string_view, absl::string_view>>
-      type_combinations = {{"f32", "f32"},
-                           {"f16", "f16"},
-                           {"bf16", "bf16"}};
-  for (const auto& type_combination : type_combinations) {
-    VLOG(3) << "Testing type combination: "
-            << std::get<0>(type_combination) << ", "
-            << std::get<1>(type_combination);
-    absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
-    replacements["<<ABType>>"] = std::get<0>(type_combination);
-    replacements["<<DType>>"] = std::get<1>(type_combination);
+TEST_F(ParameterizedGemmRewriteTest, MatmulWithRELU) {
   const char* hlo_module = R"(
   HloModule module
 
@@ -125,29 +97,10 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulWithRELU) {
     ROOT out = <<DType>>[256,8] maximum(dot, c_bcast)
   }
     )";
-  const auto hlo_text = absl::StrReplaceAll(hlo_module, replacements);
-  double tol = 1e-2;
-  if (std::get<0>(type_combination) == "f32" &&
-      std::get<1>(type_combination) == "f32") {
-    // f32 is more precise, so we can tighten the error bounds.
-    tol = 1e-4;
-  }
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{tol, tol}));
-  }
+  TestGemmWithTypeVariations(hlo_module);
 }
 
-TEST_P(ParameterizedGemmRewriteTest, MatmulWithApproxGELU) {
-  std::vector<std::tuple<absl::string_view, absl::string_view>>
-      type_combinations = {{"f32", "f32"},
-                           {"f16", "f16"},
-                           {"bf16", "bf16"}};
-  for (const auto& type_combination : type_combinations) {
-    VLOG(3) << "Testing type combination: "
-            << std::get<0>(type_combination) << ", "
-            << std::get<1>(type_combination);
-    absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
-    replacements["<<ABType>>"] = std::get<0>(type_combination);
-    replacements["<<DType>>"] = std::get<1>(type_combination);
+TEST_F(ParameterizedGemmRewriteTest, MatmulWithApproxGELU) {
   const char* matmul_module_str = R"(
   HloModule matmul.test
   ENTRY module {
@@ -172,20 +125,8 @@ TEST_P(ParameterizedGemmRewriteTest, MatmulWithApproxGELU) {
     mul.4 = <<DType>>[256,8] multiply(add.2, bcast.3)
     ROOT out = <<DType>>[256,8] multiply(dot, mul.4)
   })";
-
-  const auto hlo_text = absl::StrReplaceAll(matmul_module_str, replacements);
-  double tol = 1e-2;
-  if (std::get<0>(type_combination) == "f32" &&
-      std::get<1>(type_combination) == "f32") {
-    // f32 is more precise, so we can tighten the error bounds.
-    tol = 1e-4;
-  }
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{tol, tol}));
-  }
+  TestGemmWithTypeVariations(matmul_module_str);
 }
-
-INSTANTIATE_TEST_SUITE_P(SyclMatmul,
-                         ParameterizedGemmRewriteTest, ::testing::Values(true));
 
 }  // namespace
 }  // namespace xla::gpu
