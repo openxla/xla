@@ -9,6 +9,7 @@ load(
 )
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//third_party/bazel_skylib:bzl_library.bzl", "bzl_library")
 load("//xla:lit.bzl", "lit_test_suite")
 load(
     "//xla:xla.default.bzl",
@@ -1505,4 +1506,22 @@ cc_binary(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:platform_port",
     ],
+)
+
+xla_cc_binary(
+    name = "source_hash_hasher",
+    srcs = ["source_hash_hasher.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+bzl_library(
+    name = "source_hash_bzl",
+    srcs = ["source_hash.bzl"],
+    visibility = ["//visibility:public"],
 )
