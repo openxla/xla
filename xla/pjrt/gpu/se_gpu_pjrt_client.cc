@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
@@ -51,7 +52,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
@@ -346,11 +346,10 @@ absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
     bool lookup_addressable_devices) {
   ABSL_RETURN_IF_ERROR(PjRtStreamExecutorClient::UpdateCompileOptionsInternal(
       options, returned_extras, lookup_addressable_devices));
-  options->executable_build_options.set_slice_size(
+  options->executable_build_options.set_gpu_topology(
       tensorflow::down_cast<const StreamExecutorGpuTopologyDescription*>(
           topology())
-          ->gpu_topology()
-          .slice_size());
+          ->gpu_topology());
   return absl::OkStatus();
 }
 
@@ -1731,7 +1730,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
         desc->shared_memory_per_block_optin());
     device_proto->set_numa_node(desc->numa_node());
     const se::DeviceInterconnectInfo& info = desc->device_interconnect_info();
-    if (!info.cluster_uuid.empty() && !info.clique_id.empty()) {
+    if (info.is_in_cluster() && !info.clique_id.empty()) {
       device_proto->set_fabric_uuid(
           absl::StrCat(info.cluster_uuid, "/", info.clique_id));
     }
@@ -2183,6 +2182,10 @@ static std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
         ordinal_and_device.second->executor()->GetDeviceDescription();
     const se::DeviceInterconnectInfo& info = desc.device_interconnect_info();
     int local_device_id = ordinal_and_device.second->local_device_id().value();
+    std::string fabric_uuid;
+    if (info.is_in_cluster() && !info.clique_id.empty()) {
+      fabric_uuid = absl::StrCat(info.cluster_uuid, "/", info.clique_id);
+    }
     auto device = std::make_unique<StreamExecutorGpuDevice>(
         /*id=*/ordinal_and_device.first,
         /*local_device_state=*/std::move(ordinal_and_device.second),
@@ -2197,7 +2200,7 @@ static std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
         /*process_index_in_partition=*/0,
         /*partition_index=*/0,
         /*numa_node=*/desc.numa_node(),
-        /*fabric_uuid=*/absl::StrCat(info.cluster_uuid, "/", info.clique_id));
+        /*fabric_uuid=*/std::move(fabric_uuid));
     devices.push_back(std::move(device));
   }
   return devices;
