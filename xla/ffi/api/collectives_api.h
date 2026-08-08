@@ -71,7 +71,7 @@ class CommunicatorContextBase {
 
   // Returns the non-owning communicator handle for `groups`. The handle is
   // backend-defined; the caller reinterprets it (e.g. as `ncclComm_t`).
-  CommunicatorOrT GetCommunicator(
+  StatusOr<void*> GetCommunicator(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
