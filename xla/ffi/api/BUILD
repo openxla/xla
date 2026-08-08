@@ -131,7 +131,6 @@ cc_library(
     name = "collectives_api",
     hdrs = ["collectives_api.h"],
     deps = [
-        ":api",
         ":c_api",
     ],
 )
@@ -140,8 +139,6 @@ cc_library(
     name = "collectives_ffi",
     hdrs = ["collectives_ffi.h"],
     deps = [
-        ":api",
-        ":c_api",
         ":collectives_api",
         ":ffi",
     ],

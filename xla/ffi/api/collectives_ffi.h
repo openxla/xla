@@ -21,8 +21,6 @@ limitations under the License.
        See README.md for more details.
 #endif  // XLA_FFI_COLLECTIVES_FFI_H_
 
-#include "xla/ffi/api/api.h"
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/ffi.h"
 
