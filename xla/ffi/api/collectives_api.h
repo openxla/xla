@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_FFI_API_COLLECTIVES_API_H_
 #define XLA_FFI_API_COLLECTIVES_API_H_
 
-#include <cstddef>
 #include <cstdint>
 #include <vector>
 
