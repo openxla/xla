@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_fusion.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +46,7 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/hlo/analysis/shape_tracker.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -64,6 +66,7 @@ limitations under the License.
 #include "xla/service/gpu/triton_tiling_propagation.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/instruction_fusion.h"
+#include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -1163,49 +1166,176 @@ FusionDecision ShouldFuseUser(mlir::MLIRContext& mlir_context,
   return FusionDecision::Forbid("Not obviously profitable to fuse as output.");
 }
 
-FusionDecision ShouldFuseOperand(mlir::MLIRContext& mlir_context,
-                                 HloInstruction* operand,
-                                 const HloInstruction& original_operand,
-                                 HloInstruction* fusion) {
+// Holds shape tracking information for an instruction during backward BFS.
+struct TrackerInfo {
+  // Tracker representing shape transformations from the instruction's output
+  // to a dot operand.
+  ShapeTracker tracker;
+  // Indicates which dot operand (LHS/0 or RHS/1) the tracker is associated
+  // with.
+  int64_t dot_operand_index;
+};
+
+FusionDecision ShouldFuseTranspose(const HloInstruction& transpose,
+                                   const HloInstruction& fusion,
+                                   const std::optional<TrackerInfo>& tracker) {
+  if (!tracker.has_value()) {
+    return FusionDecision::Forbid("No shape tracker found for transpose.");
+  }
+  const int64_t operand_index = tracker->dot_operand_index;
+  ShapeTracker transpose_tracker = tracker->tracker;
+
+  absl::Status status = transpose_tracker.PrependInstruction(&transpose);
+  if (!status.ok()) {
+    return FusionDecision::Forbid(
+        absl::StrCat("Failed to prepend transpose: ", status.message()));
+  }
+  auto inverted_tracker = transpose_tracker.GetInverted();
+  if (!inverted_tracker.ok()) {
+    return FusionDecision::Forbid(
+        absl::StrCat("Failed to invert shape tracker: ",
+                     inverted_tracker.status().message()));
+  }
+
+  const HloInstruction* dot = hlo_query::FindInstruction(
+      fusion.fused_instructions_computation(), HloOpcode::kDot);
+  if (dot == nullptr) {
+    return FusionDecision::Forbid("Dot not found in fusion.");
+  }
+  auto dims = DotOperandDims::FromDotOperand(dot, operand_index);
+  if (!dims.ok()) {
+    return FusionDecision::Forbid("Failed to get dot operand dims.");
+  }
+
+  absl::Span<const int64_t> contracting =
+      dims->Indices(DotOperandDims::kContracting);
+  absl::Span<const int64_t> non_contracting =
+      dims->Indices(DotOperandDims::kNonContracting);
+  if (!inverted_tracker->IsMemoryContiguous(contracting)) {
+    return FusionDecision::Forbid(
+        "Contracting dimension has non-contiguous section.");
+  }
+  if (operand_index == 1 &&
+      !inverted_tracker->IsMemoryContiguous(non_contracting)) {
+    return FusionDecision::Forbid(
+        "Non-contracting RHS dimension has non-contiguous section.");
+  }
+  return FusionDecision::Allow();
+}
+
+FusionDecision IsOperandProfitable(HloInstruction* operand,
+                                   const HloInstruction& original_operand,
+                                   HloInstruction* fusion,
+                                   const std::optional<TrackerInfo>& tracker) {
   int parameter_count = fusion->operand_count() + NumAddedParameters(*operand);
   if (parameter_count > TritonFusionAnalysis::kMaxParameterPerDotOperand * 2) {
     return FusionDecision::Forbid("Too many parameters.");
   }
-  if (IsBinaryElementwiseOfBroadcastParamOrConst(original_operand) ||
-      triton_fusion::IsInputWorthFusing(original_operand)) {
-    return CanFuse(mlir_context, operand, fusion);
+
+  switch (original_operand.opcode()) {
+    case HloOpcode::kTranspose:
+      return ShouldFuseTranspose(*operand, *fusion, tracker);
+    default:
+      break;
   }
-  return FusionDecision::Forbid("Not obviously profitable to fuse as input.");
+
+  if (!IsBinaryElementwiseOfBroadcastParamOrConst(original_operand) &&
+      !triton_fusion::IsInputWorthFusing(original_operand)) {
+    return FusionDecision::Forbid("Not obviously profitable to fuse as input.");
+  }
+  return FusionDecision::Allow();
+}
+
+FusionDecision ShouldFuseOperand(mlir::MLIRContext& mlir_context,
+                                 HloInstruction* operand,
+                                 const HloInstruction& original_operand,
+                                 HloInstruction* fusion,
+                                 const std::optional<TrackerInfo>& tracker) {
+  return IsOperandProfitable(operand, original_operand, fusion, tracker)
+      .And(CanFuse(mlir_context, operand, fusion));
+}
+
+// Propagates shape tracking information from `user` to `candidate` (operand of
+// `user`). Returns the updated TrackerInfo if propagation is successful. If
+// propagation fails (e.g. at an unsupported shape-changing operation like
+// concat), but the current tracker has no prior steps (it is identity), returns
+// a new identity tracker starting at the candidate's shape. Returns nullopt if
+// propagation fails and the tracker cannot be reset.
+std::optional<TrackerInfo> ComputeCandidateTracker(
+    const HloInstruction* candidate, const HloInstruction* user,
+    const TrackerInfo& user_info) {
+  if (user == nullptr) {
+    return std::nullopt;
+  }
+  TrackerInfo candidate_info = user_info;
+  absl::Status status = absl::OkStatus();
+  if (HloPredicateIsOp<HloOpcode::kTranspose, HloOpcode::kReshape,
+                       HloOpcode::kBitcast>(user)) {
+    status = candidate_info.tracker.PrependInstruction(user);
+  } else if (user->IsElementwise()) {
+    candidate_info.tracker.SetElementType(candidate->shape().element_type());
+  } else {
+    status = absl::InvalidArgumentError(
+        absl::StrCat("Unsupported opcode for shape tracking: ",
+                     HloOpcodeString(user->opcode())));
+  }
+
+  if (status.ok()) {
+    return candidate_info;
+  }
+  // If there have been no steps added to the tracker, then the memory has not
+  // changed and we can start from the candidate's shape (for example, the
+  // operand of a concatenate).
+  if (user_info.tracker.GetSteps().empty()) {
+    return TrackerInfo{ShapeTracker(candidate->shape()),
+                       user_info.dot_operand_index};
+  }
+
+  return std::nullopt;
 }
 
 // Attempts to fuse all candidates and their operands into the fusion.
 void FuseOperandsBFS(
     mlir::MLIRContext& mlir_context,
-    const HloInstruction::InstructionVector& candidates, HloInstruction* fusion,
+    const std::vector<std::pair<HloInstruction*, std::optional<TrackerInfo>>>&
+        candidates,
+    HloInstruction* fusion,
     const absl::flat_hash_map<HloInstruction*, HloInstruction*>&
         fused_to_original) {
-  std::queue<HloInstruction*> queue;
-  for (HloInstruction* operand : candidates) {
-    queue.push(operand);
+  std::queue<std::pair<HloInstruction*, std::optional<TrackerInfo>>> queue;
+  for (const auto& candidate : candidates) {
+    queue.push(candidate);
   }
 
   while (!queue.empty()) {
-    HloInstruction* candidate = queue.front();
+    auto [candidate, tracker] = queue.front();
     queue.pop();
+
+    // In case a candidate had multiple users, it's possible that it was already
+    // fused and is no longer a valid candidate.
+    if (!absl::c_linear_search(fusion->operands(), candidate)) {
+      continue;
+    }
 
     const HloInstruction& original_candidate =
         *FindOrDefault(fused_to_original, candidate, candidate);
-    if (FusionDecision decision = ShouldFuseOperand(mlir_context, candidate,
-                                                    original_candidate, fusion);
+    if (FusionDecision decision = ShouldFuseOperand(
+            mlir_context, candidate, original_candidate, fusion, tracker);
         !decision.IsAllowed()) {
       VLOG(5) << "Not fusing operand: " << candidate->ToString()
               << " due to decision: " << decision.Explain();
       continue;
     }
     VLOG(5) << "Fusing operand: " << candidate->ToString();
-    fusion->FuseInstruction(candidate);
-    for (HloInstruction* operand : candidate->operands()) {
-      queue.push(operand);
+    HloInstruction::InstructionVector operands = candidate->operands();
+    HloInstruction* fused_candidate = fusion->FuseInstruction(candidate);
+    for (HloInstruction* operand : operands) {
+      std::optional<TrackerInfo> operand_tracker;
+      if (tracker.has_value()) {
+        operand_tracker =
+            ComputeCandidateTracker(operand, fused_candidate, *tracker);
+      }
+      queue.push({operand, operand_tracker});
     }
   }
 }
@@ -1227,8 +1357,13 @@ absl::StatusOr<HloInstruction*> FuseUserAndOperands(
   CHECK_EQ(0, fusion->users().size());
   ABSL_RETURN_IF_ERROR(fusion->parent()->RemoveInstruction(fusion));
   if (new_fusion->operand_count() > operand_count) {
-    FuseOperandsBFS(mlir_context, new_fusion->operands(), new_fusion,
-                    fused_to_original);
+    std::vector<std::pair<HloInstruction*, std::optional<TrackerInfo>>>
+        candidates;
+    candidates.reserve(new_fusion->operand_count());
+    for (HloInstruction* operand : new_fusion->operands()) {
+      candidates.push_back({operand, std::nullopt});
+    }
+    FuseOperandsBFS(mlir_context, candidates, new_fusion, fused_to_original);
   }
   return new_fusion;
 }
@@ -1279,6 +1414,17 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
     return FusionDecision::Forbid("Cannot tile the dot instruction.");
   }
 
+  // Initialize candidates with trackers for dot operands.
+  std::vector<std::pair<HloInstruction*, std::optional<TrackerInfo>>>
+      candidates;
+  candidates.reserve(2);
+  candidates.emplace_back(
+      dot->mutable_operand(0),
+      TrackerInfo{ShapeTracker(dot->operand(0)->shape()), 0});
+  candidates.emplace_back(
+      dot->mutable_operand(1),
+      TrackerInfo{ShapeTracker(dot->operand(1)->shape()), 1});
+
   // Start with a fusion containing only the dot instruction.
   auto entry = fusion_search_space.entry();
   auto fusion = entry->AddInstruction(HloInstruction::CreateFusion(
@@ -1289,7 +1435,7 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
   HloInstruction* original_output = original_dot;
 
   // BFS of operands until we cannot tile.
-  FuseOperandsBFS(mlir_context, fusion->operands(), fusion,
+  FuseOperandsBFS(mlir_context, candidates, fusion,
                   fusion_search_space.fused_to_original());
 
   // Fuse in users until we cannot tile or reach the root.
