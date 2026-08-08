@@ -1,3 +1,4 @@
+#include "xla/pjrt/compiled_memory_stats.h"
 /* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +30,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/tsl/concurrency/future.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -54,9 +53,10 @@ struct CompileOptions;
 struct DeserializeExecutableOptions;
 
 struct ExecutableVersion : RTTIExtends<ExecutableVersion, Serializable> {
-  // Returns OK iff this version is compatible with `other`. The logic for
-  // checking the version compatibility is an implementation detail of
-  // `ExecutableVersion` subclasses.
+  // Returns OK if this version is compatible with `other` at a high level.
+  // Note that this is not a guarantee of execution compatibility, which depends
+  // on the specific runtime and devices, and must be checked via
+  // `Compiler::IsExecutableVersionCompatible`.
   virtual absl::Status IsCompatibleWith(
       const ExecutableVersion& other) const = 0;
 
