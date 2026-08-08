@@ -1882,4 +1882,88 @@ ENTRY entry {
                 .status());
 }
 
+// A while body that rotates its tuple state through precision-transparent
+// ops (copies and a fusion). The entry pins slot 0 of the while output to
+// F32 via the module root, while dot users make the other slots initially
+// eligible for BF16. Resolving requires the F32 requirement to ripple around
+// the rotation ring, one slot per body/condition fixed-point iteration, so
+// this covers the repeated re-resolution of called computations (and the
+// memoization that skips the no-op re-runs).
+TEST_F(BFloat16PropagationTest, WhileWithRotatingTupleState) {
+  const std::string module_str = R"(
+HloModule while_ring_ripple
+
+fused_scale {
+  fparam = f32[4,4] parameter(0)
+  ROOT fmul = f32[4,4] multiply(fparam, fparam)
+}
+
+cond {
+  cond_param = (f32[4,4], f32[4,4], f32[4,4]) parameter(0)
+  ROOT cond_root = pred[] constant(true)
+}
+
+body {
+  body_param = (f32[4,4], f32[4,4], f32[4,4]) parameter(0)
+  gte0 = f32[4,4] get-tuple-element(body_param), index=0
+  gte1 = f32[4,4] get-tuple-element(body_param), index=1
+  gte2 = f32[4,4] get-tuple-element(body_param), index=2
+  fus = f32[4,4] fusion(gte0), kind=kLoop, calls=fused_scale
+  new0 = f32[4,4] copy(gte2)
+  new1 = f32[4,4] copy(fus)
+  new2 = f32[4,4] copy(gte1)
+  ROOT body_root = (f32[4,4], f32[4,4], f32[4,4]) tuple(new0, new1, new2)
+}
+
+ENTRY entry {
+  a = f32[4,4] parameter(0)
+  b = f32[4,4] parameter(1)
+  init = (f32[4,4], f32[4,4], f32[4,4]) tuple(a, a, b)
+  while = (f32[4,4], f32[4,4], f32[4,4]) while(init), condition=cond, body=body
+  out0 = f32[4,4] get-tuple-element(while), index=0
+  out1 = f32[4,4] get-tuple-element(while), index=1
+  out2 = f32[4,4] get-tuple-element(while), index=2
+  dot1 = f32[4,4] dot(out1, out1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  dot2 = f32[4,4] dot(out2, out2),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  x = f32[4,4] add(a, b)
+  dot3 = f32[4,4] dot(x, x),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT out = (f32[4,4], f32[4,4], f32[4,4], f32[4,4]) tuple(out0, dot1, dot2, dot3)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_str));
+  EXPECT_TRUE(PropagatePrecision(module.get()));
+
+  // The F32 requirement on slot 0 must have rippled around the whole
+  // rotation ring: every while state slot, body root slot, and the fusion
+  // stay F32.
+  HloInstruction* while_hlo = FindInstruction(module.get(), "while");
+  ASSERT_NE(while_hlo, nullptr);
+  for (int64_t i = 0; i < 3; ++i) {
+    EXPECT_EQ(while_hlo->shape().tuple_shapes(i).element_type(), F32)
+        << "while slot " << i;
+    EXPECT_EQ(while_hlo->while_body()
+                  ->root_instruction()
+                  ->shape()
+                  .tuple_shapes(i)
+                  .element_type(),
+              F32)
+        << "body root slot " << i;
+  }
+  HloInstruction* fus = FindInstruction(module.get(), "fus");
+  ASSERT_NE(fus, nullptr);
+  EXPECT_FALSE(OutputsBF16(fus));
+  // The independent chain into dot3 still becomes BF16.
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  ASSERT_NE(x, nullptr);
+  EXPECT_TRUE(OutputsBF16(x));
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
+}
+
 }  // namespace xla

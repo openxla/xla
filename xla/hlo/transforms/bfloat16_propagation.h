@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_BFLOAT16_PROPAGATION_H_
 #define XLA_HLO_TRANSFORMS_BFLOAT16_PROPAGATION_H_
 
+#include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -26,6 +28,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
@@ -188,6 +191,46 @@ class BFloat16Propagation : public HloModulePass {
       HloComputation* computation,
       absl::flat_hash_set<const HloComputation*>* visited_computations);
 
+  // Records that the given value must be kept in F32, bumping the state
+  // versions if this is new information. All insertions into
+  // values_that_must_be_kept_as_f32_ must go through this method so that the
+  // state versions track every state change the resolving pass can observe.
+  void KeepValueAsF32(const HloValue* value);
+
+  // Registers an effective mutation of the state the resolving pass depends
+  // on (changes_to_bf16_ or values_that_must_be_kept_as_f32_) affecting an
+  // instruction or value in `computation`. Bumps the global state_version_
+  // as well as the per-computation write version of `computation` and all
+  // its transitive caller computations (a mutation inside a computation is
+  // observable from every computation that directly or transitively calls
+  // it, e.g. via called-computation parameter/root checks or forwarded
+  // dataflow values).
+  void BumpStateVersion(const HloComputation* computation);
+
+  // Returns the list of computations whose write version must be bumped for
+  // a mutation in `computation`: the computation itself plus all transitive
+  // caller computations. Lazily computed; valid while the module structure
+  // is unchanged.
+  const std::vector<const HloComputation*>& GetVersionBumpList(
+      const HloComputation* computation);
+
+  // Returns true if `computation` has callers and all of them are fusion
+  // instructions. Such computations are self-contained for the resolving
+  // pass: fusion parameters define their own dataflow values and fused root
+  // values do not escape to the caller, so all state read when resolving the
+  // computation lives in the computation itself or its (fusion-called)
+  // callees, and any mutation of that state bumps this computation's write
+  // version via BumpStateVersion. Lazily computed.
+  bool IsFusionOnlyComputation(const HloComputation* computation);
+
+  // Returns the version of the state that resolving `computation` can
+  // observe: the per-computation write version for fusion-only computations
+  // (see IsFusionOnlyComputation), and the global state_version_ otherwise
+  // (computations called from sequential context read caller/sibling state
+  // through forwarded dataflow values, so only the global version is a sound
+  // over-approximation for them).
+  int64_t RelevantStateVersion(const HloComputation* computation);
+
   // Makes the parameters of called computations match how they are called by
   // the given HLO.
   void AdjustCalledComputationParameters(HloInstruction* hlo);
@@ -247,6 +290,26 @@ class BFloat16Propagation : public HloModulePass {
   bool AllUsersConsumeBF16(const HloInstruction& hlo,
                            const ShapeIndex& index) const;
 
+  // Same as above, but takes the already-looked-up value set of (hlo, index)
+  // to avoid a redundant dataflow lookup in hot loops.
+  bool AllUsersConsumeBF16(const HloInstruction& hlo, const ShapeIndex& index,
+                           const HloValueSet& value_set) const;
+
+  // Memoized wrapper around the virtual ShouldKeepPrecisionUnchanged. The
+  // predicate only depends on the instruction structure and the original
+  // (unmutated) shapes, both of which are constant from the start of the
+  // backward pass until changes_to_bf16_ is applied to the HLOs in RunImpl,
+  // so within that window the result can be cached. The application loop in
+  // RunImpl must keep calling the virtual method directly because it mutates
+  // shapes as it goes.
+  bool ShouldKeepPrecisionUnchangedCached(const HloInstruction* inst);
+
+  // Memoized wrapper around AliasInfo::GetInPlaceInputOutputPairs, which only
+  // depends on the instruction structure. The resolving pass queries it for
+  // every (instruction, shape index) in every fixed-point sweep.
+  const std::vector<std::pair<HloOperandIndex, ShapeIndex>>&
+  GetInPlaceInputOutputPairsCached(const HloInstruction* hlo);
+
   // The output element type of the HLO at the given shape index after changes
   // in changes_to_bf16_ are applied.
   PrimitiveType OutputTypeAfterChange(HloInstruction* hlo,
@@ -256,6 +319,12 @@ class BFloat16Propagation : public HloModulePass {
   // applied.
   PrimitiveType ValueTypeAfterChange(const HloValue* value) const;
 
+  // Builds value_type_after_change_, a by-value-id cache of
+  // ValueTypeAfterChange kept up to date by AddToOrRemoveFromBF16ChangeSet.
+  // Called at the start of the resolving pass; the cache makes the per-value
+  // type lookups in the fixed-point sweeps O(1) array reads.
+  void BuildValueTypeCache();
+
   // If target_type == BF16, adds the HLO at the given index to
   // changes_to_bf16_; otherwise, target_type must be F32 and this function
   // removes the HLO at the given index from changes_to_bf16_ if it was earlier
@@ -264,8 +333,57 @@ class BFloat16Propagation : public HloModulePass {
                                       const ShapeIndex& index,
                                       PrimitiveType target_type);
 
-  // The set of F32 HLO values that must be kept in F32.
+  // The set of F32 HLO values that must be kept in F32. Mutated only through
+  // KeepValueAsF32 so that state_version_ tracks effective insertions.
   absl::flat_hash_set<const HloValue*> values_that_must_be_kept_as_f32_;
+
+  // Global version counter for the state the resolving pass depends on. It
+  // is bumped on every effective mutation of changes_to_bf16_ and
+  // values_that_must_be_kept_as_f32_. Together with
+  // resolve_completed_at_version_ below it allows
+  // ResolveInconsistencyOfAliasingBuffersHelper to skip re-runs that are
+  // provably no-ops.
+  int64_t state_version_ = 0;
+
+  // Per-computation write versions: how often state affecting the given
+  // computation (or one of its transitive callees) has been mutated. See
+  // BumpStateVersion and RelevantStateVersion.
+  absl::flat_hash_map<const HloComputation*, int64_t> comp_write_version_;
+
+  // Cache for GetVersionBumpList.
+  absl::flat_hash_map<const HloComputation*, std::vector<const HloComputation*>>
+      version_bump_lists_;
+
+  // Cache for IsFusionOnlyComputation.
+  absl::flat_hash_map<const HloComputation*, bool> fusion_only_computations_;
+
+  // Maps a computation to the value of RelevantStateVersion(computation) at
+  // which ResolveInconsistencyOfAliasingBuffersHelper last completed on it
+  // with a final sweep that observed no state changes. Re-running the helper
+  // on a computation while its relevant state version still has that value is
+  // a no-op, so such runs are skipped. Without this, every fixed-point sweep
+  // of a caller re-resolves all called computations (and the top-level walk
+  // in ResolveInconsistencyOfAliasingBuffers resolves them yet again), which
+  // multiplies across control-flow nesting levels and made this pass take
+  // tens of seconds on large fusion-heavy modules.
+  absl::flat_hash_map<const HloComputation*, int64_t>
+      resolve_completed_at_version_;
+
+  // Cache for ShouldKeepPrecisionUnchangedCached. Only valid while the module
+  // is unmutated (i.e., until changes_to_bf16_ is applied in RunImpl).
+  absl::flat_hash_map<const HloInstruction*, bool>
+      keep_precision_unchanged_cache_;
+
+  // Cache for GetInPlaceInputOutputPairsCached.
+  absl::flat_hash_map<const HloInstruction*,
+                      std::vector<std::pair<HloOperandIndex, ShapeIndex>>>
+      inplace_input_output_pairs_cache_;
+
+  // By-value-id cache of ValueTypeAfterChange, built by BuildValueTypeCache
+  // for the resolving pass and kept in sync by
+  // AddToOrRemoveFromBF16ChangeSet. Empty means "not built"; then
+  // ValueTypeAfterChange computes the type directly.
+  std::vector<PrimitiveType> value_type_after_change_;
 
   // Mapping from each HloComputation to the number of callers to it in the
   // module. Populated at the beginning of this pass.

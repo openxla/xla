@@ -15,9 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/bfloat16_propagation.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
@@ -175,7 +177,9 @@ void BFloat16Propagation::RevertIfFusionInternalBF16Changes(
         }
         auto* fused_parameter = inst->fused_parameter(i);
         if (has_changes(fused_parameter)) {
-          changes_to_bf16_.erase(fused_parameter);
+          if (changes_to_bf16_.erase(fused_parameter) > 0) {
+            BumpStateVersion(fused_parameter->parent());
+          }
           parameter_reverted = true;
         }
       }
@@ -194,7 +198,9 @@ void BFloat16Propagation::RevertIfFusionInternalBF16Changes(
       }
     }
     if (revert_changes) {
-      changes_to_bf16_.erase(inst);
+      if (changes_to_bf16_.erase(inst) > 0) {
+        BumpStateVersion(inst->parent());
+      }
     }
   }
 }
@@ -361,13 +367,18 @@ void BFloat16Propagation::DetermineCalledComputationsPrecision(
 
 bool BFloat16Propagation::AllUsersConsumeBF16(const HloInstruction& hlo,
                                               const ShapeIndex& index) const {
+  return AllUsersConsumeBF16(hlo, index, dataflow_->GetValueSet(&hlo, index));
+}
+
+bool BFloat16Propagation::AllUsersConsumeBF16(
+    const HloInstruction& hlo, const ShapeIndex& index,
+    const HloValueSet& value_set) const {
   // If the subshape isn't floating point then none of the users will be BF16.
   const Shape& subshape = ShapeUtil::GetSubshape(hlo.shape(), index);
   if (subshape.element_type() != BF16 && subshape.element_type() != F32) {
     return false;
   }
 
-  const auto& value_set = dataflow_->GetValueSet(&hlo, index);
   for (const HloValue* value : value_set.values()) {
     if (ContainsKey(values_that_must_be_kept_as_f32_, value)) {
       return false;
@@ -627,7 +638,7 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
           // affect HLO instructions beyond the root, e.g., if the root is a
           // Tuple HLO, then its operands are also affected.
           if (value->shape().element_type() == F32) {
-            values_that_must_be_kept_as_f32_.insert(value);
+            KeepValueAsF32(value);
           }
         }
       });
@@ -635,7 +646,7 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
     return;
   }
 
-  if (ShouldKeepPrecisionUnchanged(hlo) ||
+  if (ShouldKeepPrecisionUnchangedCached(hlo) ||
       (hlo->opcode() == HloOpcode::kParameter && skip_parameters)) {
     return;
   }
@@ -768,7 +779,7 @@ void BFloat16Propagation::AdjustCalledComputationRoot(HloInstruction* hlo) {
       if (OutputTypeAfterChange(root, index) == output_type) {
         return;
       }
-      if (output_type == BF16 && ShouldKeepPrecisionUnchanged(root)) {
+      if (output_type == BF16 && ShouldKeepPrecisionUnchangedCached(root)) {
         return;
       }
       AddToOrRemoveFromBF16ChangeSet(root, index, output_type);
@@ -785,7 +796,7 @@ void BFloat16Propagation::AdjustCalledComputationRoot(HloInstruction* hlo) {
           // correctness of the adjustment for HLOs that will be
           // processed later.
           if (value->shape().element_type() == F32) {
-            values_that_must_be_kept_as_f32_.insert(value);
+            KeepValueAsF32(value);
           }
         }
       }
@@ -924,27 +935,45 @@ bool BFloat16Propagation::AlignScanCarryPrecisions(HloInstruction* scan_hlo) {
 bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
     HloComputation* computation,
     absl::flat_hash_set<const HloComputation*>* visited_computations) {
+  // The adjustments below are deterministic functions of changes_to_bf16_ and
+  // values_that_must_be_kept_as_f32_ (beyond the immutable module structure),
+  // and every effective mutation of those bumps the state versions tracked by
+  // BumpStateVersion. If this computation already completed a run whose final
+  // sweep observed the current relevant version (see RelevantStateVersion),
+  // re-running it now would be a no-op, so skip it. This matters because the
+  // fixed-point sweeps re-enter called computations from every enclosing
+  // sweep iteration (and the top-level walk in
+  // ResolveInconsistencyOfAliasingBuffers visits them again), which otherwise
+  // multiplies across control-flow nesting levels and makes this pass very
+  // slow on large fusion-heavy modules.
+  const auto memo_it = resolve_completed_at_version_.find(computation);
+  if (memo_it != resolve_completed_at_version_.end() &&
+      memo_it->second == RelevantStateVersion(computation)) {
+    return false;
+  }
   bool parameter_changed = false;
   auto insts = computation->MakeInstructionPostOrder();
   // Do the adjustment on each instruction in the computation in reverse
   // topological order.
   while (true) {
+    const int64_t version_at_sweep_start = RelevantStateVersion(computation);
     bool any_change = false;
     for (auto inst_it = insts.rbegin(); inst_it != insts.rend(); ++inst_it) {
       auto hlo = *inst_it;
       auto adjust_hlo_output = [&](const Shape& /* subshape */,
                                    const ShapeIndex& index) {
-        if (ShouldKeepPrecisionUnchanged(hlo)) {
-          return;
-        }
         const PrimitiveType output_type = OutputTypeAfterChange(hlo, index);
-        VLOG(2) << "output_type is " << ((output_type == BF16) ? "BF16" : "F32")
-                << " for :" << hlo->ToString() << "\n";
         if (output_type != F32 && output_type != BF16) {
           return;
         }
+        if (ShouldKeepPrecisionUnchangedCached(hlo)) {
+          return;
+        }
+        VLOG(2) << "output_type is " << ((output_type == BF16) ? "BF16" : "F32")
+                << " for :" << hlo->ToString() << "\n";
         PrimitiveType type = BF16;
-        for (const auto* value : dataflow_->GetValueSet(hlo, index).values()) {
+        const HloValueSet& value_set = dataflow_->GetValueSet(hlo, index);
+        for (const auto* value : value_set.values()) {
           auto value_type = ValueTypeAfterChange(value);
           if (value_type == BF16) {
             continue;
@@ -960,7 +989,7 @@ bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
         // HloAliasAnalysis (e.g., their computation graphs may not have been
         // flattened yet).
         for (const auto& operand_and_output_index :
-             alias_info_->GetInPlaceInputOutputPairs(hlo)) {
+             GetInPlaceInputOutputPairsCached(hlo)) {
           if (operand_and_output_index.second == index) {
             const HloOperandIndex& operand_index =
                 operand_and_output_index.first;
@@ -984,19 +1013,18 @@ bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
         // It's possible that a user has been changed from BF16 to F32
         // during this final adjustment pass, so we need to check
         // AllUsersConsumeBF16() again.
-        if (type == BF16 && !AllUsersConsumeBF16(*hlo, index)) {
+        if (type == BF16 && !AllUsersConsumeBF16(*hlo, index, value_set)) {
           VLOG(2) << "Adjust to F32 due to All user consumeBF16 fail\n";
           type = F32;
         }
         if (type == F32) {
-          for (const auto* value :
-               dataflow_->GetValueSet(hlo, index).values()) {
+          for (const auto* value : value_set.values()) {
             // We rely on the fact that this adjustment works in reverse
             // topological order. Adding the value to
             // values_that_must_be_kept_as_f32_ will ensure the correctness
             // of the adjustment for HLOs that will be processed later.
             if (value->shape().element_type() == F32) {
-              values_that_must_be_kept_as_f32_.insert(value);
+              KeepValueAsF32(value);
             }
           }
         }
@@ -1077,10 +1105,21 @@ bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
       }
     }
     if (!any_change) {
+      // Record the completed run, but only if the final sweep observed one
+      // consistent state throughout: nested adjustments (called computation
+      // roots and parameters, recursive helper runs) may still change the
+      // state mid-sweep without setting any_change, in which case a future
+      // re-run can make progress and must not be skipped.
+      const int64_t version_at_sweep_end = RelevantStateVersion(computation);
+      if (version_at_sweep_end == version_at_sweep_start) {
+        resolve_completed_at_version_[computation] = version_at_sweep_end;
+      }
       break;
     }
   }
-  // Now adjust parameters of called computations.
+  // Now adjust parameters of called computations. If this changes anything,
+  // the state versions move past the version recorded above, so the next
+  // helper run on this computation is not skipped.
   for (auto inst_it = insts.rbegin(); inst_it != insts.rend(); ++inst_it) {
     AdjustCalledComputationParameters(*inst_it);
   }
@@ -1089,6 +1128,7 @@ bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
 
 void BFloat16Propagation::ResolveInconsistencyOfAliasingBuffers(
     HloModule* module) {
+  BuildValueTypeCache();
   const auto& computations_topological_order =
       module->MakeComputationPostOrder(execution_threads_);
   absl::flat_hash_set<const HloComputation*> resolved;
@@ -1230,6 +1270,14 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
   values_that_must_be_kept_as_f32_.clear();
   caller_counts_.clear();
   changes_to_bf16_.clear();
+  state_version_ = 0;
+  comp_write_version_.clear();
+  version_bump_lists_.clear();
+  fusion_only_computations_.clear();
+  resolve_completed_at_version_.clear();
+  keep_precision_unchanged_cache_.clear();
+  inplace_input_output_pairs_cache_.clear();
+  value_type_after_change_.clear();
   changed_ = false;
   execution_threads_ = execution_threads;
 
@@ -1451,29 +1499,144 @@ PrimitiveType BFloat16Propagation::OutputTypeAfterChange(
 
 PrimitiveType BFloat16Propagation::ValueTypeAfterChange(
     const HloValue* value) const {
+  if (!value_type_after_change_.empty()) {
+    return value_type_after_change_[value->id()];
+  }
   auto hlo = value->defining_instruction();
   const auto& position = value->defining_position();
   return OutputTypeAfterChange(hlo, position.index);
 }
 
+void BFloat16Propagation::BuildValueTypeCache() {
+  value_type_after_change_.clear();
+  HloValue::Id max_id = -1;
+  for (const HloValue* value : dataflow_->values()) {
+    max_id = std::max(max_id, value->id());
+  }
+  std::vector<PrimitiveType> types(max_id + 1, PRIMITIVE_TYPE_INVALID);
+  for (const HloValue* value : dataflow_->values()) {
+    types[value->id()] = ValueTypeAfterChange(value);
+  }
+  value_type_after_change_ = std::move(types);
+}
+
 void BFloat16Propagation::AddToOrRemoveFromBF16ChangeSet(
     HloInstruction* hlo, const ShapeIndex& index, PrimitiveType target_type) {
+  bool changed = false;
   if (target_type == BF16) {
     auto& entry = changes_to_bf16_[hlo];
-    entry.emplace(ShapeUtil::GetMutableSubshape(hlo->mutable_shape(), index),
-                  index);
+    changed =
+        entry
+            .emplace(ShapeUtil::GetMutableSubshape(hlo->mutable_shape(), index),
+                     index)
+            .second;
   } else {
     CHECK_EQ(target_type, F32);
     auto it = changes_to_bf16_.find(hlo);
     if (it == changes_to_bf16_.end()) {
       return;
     }
-    it->second.erase(
-        ShapeUtil::GetMutableSubshape(hlo->mutable_shape(), index));
+    changed = it->second.erase(ShapeUtil::GetMutableSubshape(
+                  hlo->mutable_shape(), index)) > 0;
     if (it->second.empty()) {
       changes_to_bf16_.erase(it);
     }
   }
+  if (!changed) {
+    return;
+  }
+  BumpStateVersion(hlo->parent());
+  if (!value_type_after_change_.empty() &&
+      dataflow_->ValueIsDefinedAt(hlo, index)) {
+    value_type_after_change_[dataflow_->GetValueDefinedAt(hlo, index).id()] =
+        OutputTypeAfterChange(hlo, index);
+  }
+}
+
+void BFloat16Propagation::KeepValueAsF32(const HloValue* value) {
+  if (values_that_must_be_kept_as_f32_.insert(value).second) {
+    BumpStateVersion(value->defining_instruction()->parent());
+  }
+}
+
+void BFloat16Propagation::BumpStateVersion(const HloComputation* computation) {
+  ++state_version_;
+  for (const HloComputation* comp : GetVersionBumpList(computation)) {
+    ++comp_write_version_[comp];
+  }
+}
+
+const std::vector<const HloComputation*>&
+BFloat16Propagation::GetVersionBumpList(const HloComputation* computation) {
+  auto it = version_bump_lists_.find(computation);
+  if (it != version_bump_lists_.end()) {
+    return it->second;
+  }
+  // Collect the computation and all transitive caller computations. The call
+  // graph is a DAG, so a plain worklist with a visited set terminates.
+  std::vector<const HloComputation*> list;
+  absl::flat_hash_set<const HloComputation*> visited;
+  std::vector<const HloComputation*> worklist = {computation};
+  visited.insert(computation);
+  while (!worklist.empty()) {
+    const HloComputation* comp = worklist.back();
+    worklist.pop_back();
+    list.push_back(comp);
+    for (const auto& [caller, count] : comp->caller_computations()) {
+      if (count > 0 && visited.insert(caller).second) {
+        worklist.push_back(caller);
+      }
+    }
+  }
+  return version_bump_lists_.emplace(computation, std::move(list))
+      .first->second;
+}
+
+bool BFloat16Propagation::IsFusionOnlyComputation(
+    const HloComputation* computation) {
+  auto it = fusion_only_computations_.find(computation);
+  if (it != fusion_only_computations_.end()) {
+    return it->second;
+  }
+  const auto callers = computation->caller_instructions();
+  const bool result = !callers.empty() &&
+                      absl::c_all_of(callers, [](const HloInstruction* caller) {
+                        return caller->opcode() == HloOpcode::kFusion;
+                      });
+  fusion_only_computations_.emplace(computation, result);
+  return result;
+}
+
+int64_t BFloat16Propagation::RelevantStateVersion(
+    const HloComputation* computation) {
+  if (IsFusionOnlyComputation(computation)) {
+    const auto it = comp_write_version_.find(computation);
+    return it == comp_write_version_.end() ? 0 : it->second;
+  }
+  return state_version_;
+}
+
+bool BFloat16Propagation::ShouldKeepPrecisionUnchangedCached(
+    const HloInstruction* inst) {
+  auto it = keep_precision_unchanged_cache_.find(inst);
+  if (it != keep_precision_unchanged_cache_.end()) {
+    return it->second;
+  }
+  const bool result = ShouldKeepPrecisionUnchanged(inst);
+  keep_precision_unchanged_cache_.emplace(inst, result);
+  return result;
+}
+
+const std::vector<std::pair<HloOperandIndex, ShapeIndex>>&
+BFloat16Propagation::GetInPlaceInputOutputPairsCached(
+    const HloInstruction* hlo) {
+  auto it = inplace_input_output_pairs_cache_.find(hlo);
+  if (it == inplace_input_output_pairs_cache_.end()) {
+    it = inplace_input_output_pairs_cache_
+             .emplace(hlo, alias_info_->GetInPlaceInputOutputPairs(hlo))
+             .first;
+  }
+  return it->second;
 }
 
 }  // namespace xla
