@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 
 #include <gtest/gtest.h>
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -234,9 +234,6 @@ ENTRY main {
 }
 )";
   auto module = ParseAndReturnVerifiedModule(hlo_text).value();
-  module->mutable_config()
-      .mutable_debug_options()
-      .clear_xla_enable_nccl_symmetric_buffers_for_collectives();
   EXPECT_EQ(CountCopies(*module), 4);
 
   const HloInstruction* while_op = hlo_query::GetFirstInstructionWithOpcode(

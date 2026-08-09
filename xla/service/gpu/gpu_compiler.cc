@@ -36,11 +36,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/DataLayout.h"
@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/collectives/all_reduce_splitter.h"
 #include "xla/backends/gpu/transforms/collectives/collective_backend_assigner.h"
 #include "xla/backends/gpu/transforms/collectives/collective_combiner_annotator.h"
+#include "xla/backends/gpu/transforms/collectives/collective_fusion.h"
 #include "xla/backends/gpu/transforms/collectives/collective_kernel_strategy_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_permute_cycle_decomposer.h"
 #include "xla/backends/gpu/transforms/collectives/collective_pipelining_analyzer.h"
@@ -153,6 +154,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
+#include "xla/core/host_offloading/host_offloading_executable.h"
 #include "xla/ffi/ffi_registry.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
@@ -1041,7 +1043,7 @@ static HloPredicate CollectivePipeliningPredicate(
 }
 
 absl::Status RunCollectiveOptimizationPasses(
-    HloModule* hlo_module, const GpuCompiler::CompileOptions& options,
+    HloModule* hlo_module, const GpuTopology& gpu_topology,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
     se::GpuComputeCapability gpu_version, int64_t pointer_size,
     CompilationStats* compilation_stats) {
@@ -1064,12 +1066,12 @@ absl::Status RunCollectiveOptimizationPasses(
       return debug_options
           .xla_gpu_unsupported_override_fast_interconnect_slice_size();
     }
-    return options.slice_size;
+    return static_cast<int64_t>(gpu_topology.slice_size());
   }();
 
-  // `fast_interconnect_slice_size` can be 0 if CompileOptions were not set up
-  // by the runner and the override flag is not set. In this case, we should not
-  // run the RaggedAllToAllMultiHostDecomposer.
+  // `fast_interconnect_slice_size` can be 0 if the slice size is 0 and the
+  // override flag is not set. In this case, we should not run the
+  // RaggedAllToAllMultiHostDecomposer.
   if (debug_options
           .xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer() &&  // NOLINT
       fast_interconnect_slice_size > 0) {
@@ -1472,7 +1474,7 @@ void AddCollectiveCombinerPasses(
   const DebugOptions& opts = module.config().debug_options();
 
   if (EnableHeuristicCollectiveCombining(module.config(), device_description,
-                                         options.slice_size)) {
+                                         gpu_topology.slice_size())) {
     pipeline.AddPass<CollectiveCombinerAnnotator>(
         device_description, alias_info, pointer_size, mlir_context);
   }
@@ -1499,26 +1501,6 @@ void AddCollectiveCombinerPasses(
   // Assign collective backends after combining, so that combined collectives
   // get the correct backend config.
   pipeline.AddPass<CollectiveBackendAssigner>();
-
-  // Annotate AllReduce ops with the Triton kernel strategy (one-shot /
-  // two-shot) that will be used at runtime. This annotation is consumed by
-  // SolLatencyEstimator to apply the correct NVLink-based cost model instead
-  // of the NCCL ring model.  Only added when the Triton collective kernel flag
-  // is enabled; when the flag is off all collectives keep
-  // KERNEL_STRATEGY_DEFAULT.
-  // Run the annotator if any collective kernel type is enabled.
-  // It annotates AllReduce and AllGather instructions with the
-  // kernel strategy determined at compile time (before scheduling),
-  // so that SolLatencyEstimator and the thunk emitter can consume it.
-  if (absl::c_linear_search(
-          opts.xla_gpu_experimental_use_collective_kernels(),
-          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE)) ||
-      absl::c_linear_search(
-          opts.xla_gpu_experimental_use_collective_kernels(),
-          static_cast<int>(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER))) {
-    pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
-        gpu_topology, /*is_multimem_enabled=*/false);
-  }
 }
 
 absl::Status RunPostFusionPasses(
@@ -1861,10 +1843,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
   // Set max_windowed_einsum_iteration to slice_size, as there will be
   // significant overhead when scaled beyond the maximum size of the
   // fast-interconnect domain.
-  ABSL_RETURN_IF_ERROR(RunSPMDPasses(
-      hlo_module, gpu_topology.gpu_target_config(), alias_info,
-      layout_insensitive_algsimp_opts,
-      /*max_windowed_einsum_iteration=*/options.slice_size, compilation_stats));
+  ABSL_RETURN_IF_ERROR(
+      RunSPMDPasses(hlo_module, gpu_topology.gpu_target_config(), alias_info,
+                    layout_insensitive_algsimp_opts,
+                    /*max_windowed_einsum_iteration=*/gpu_topology.slice_size(),
+                    compilation_stats));
 
   {
     HloPassPipeline pipeline("host-compute", compilation_stats);
@@ -1886,7 +1869,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
   ABSL_RETURN_IF_ERROR(RunCollectiveOptimizationPasses(
-      hlo_module, options, layout_insensitive_algsimp_opts, gpu_version,
+      hlo_module, gpu_topology, layout_insensitive_algsimp_opts, gpu_version,
       pointer_size_, compilation_stats));
 
   // Run target-specific HLO optimization passes for convolution
@@ -1912,8 +1895,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
 
   // Run target-specific HLO optimization passes after layout assignment.
   ABSL_RETURN_IF_ERROR(OptimizeHloPostLayoutAssignment(
-      hlo_module, stream_exec, options, gpu_topology.gpu_target_config(),
-      alias_info, thread_pool.get_mutable(), compilation_stats, mlir_context));
+      hlo_module, stream_exec, options, gpu_topology, alias_info,
+      thread_pool.get_mutable(), compilation_stats, mlir_context));
 
   // This is a "low effort, high impact" fusion that should be run first.
   ABSL_RETURN_IF_ERROR(RunDynamicSliceFusionPasses(
@@ -2019,11 +2002,12 @@ void AddGemmRewriterPasses(HloPassPipeline& pipeline,
 
 absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
-    const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
+    const CompileOptions& options, const GpuTopology& gpu_topology,
     const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
     CompilationStats* compilation_stats, mlir::MLIRContext* mlir_context) {
   // Constants:
   const DebugOptions& debug_options = hlo_module->config().debug_options();
+  const GpuTargetConfig& gpu_target_config = gpu_topology.gpu_target_config();
   const se::GpuComputeCapability gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
   const AlgebraicSimplifierOptions simplifier_options =
@@ -2099,6 +2083,21 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // AlgebraicSimplifier will simplify it away again.
     // TODO(b/375566188): Figure out whether we can get rid of this pass.
     pipeline.AddPass<DotNormalizer>();
+    // Pattern based Collective fusion passes.
+    {
+      // Annotate collective ops with the Triton kernel strategy (one-shot /
+      // two-shot) that will be used at runtime. This annotation is consumed by
+      // SolLatencyEstimator to apply the correct NVLink-based cost model
+      // instead of the NCCL ring model.  Only added when the Triton collective
+      // kernel flag is enabled; when the flag is off all collectives keep
+      // KERNEL_STRATEGY_DEFAULT.
+      // Run the annotator if any collective kernel type is enabled.
+      // It annotates AllReduce and AllGather instructions with the
+      // kernel strategy determined at compile time (before scheduling),
+      // so that SolLatencyEstimator and the thunk emitter can consume it.
+      pipeline.AddPass<CollectiveKernelStrategyAnnotator>(
+          gpu_topology, /*is_multimem_enabled=*/false);
+    }
     if (IsTritonGemmEnabled(debug_options, gpu_version)) {
       pipeline.AddPass<DotDimensionNormalizer>(
           /*normalize_noncontracting_dimensions=*/!debug_options
@@ -2291,11 +2290,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
-  // TODO rename slice_size to partition_size in CompileOptions
-  if (options.slice_size > 0) {
-    module->mutable_config().set_partition_size(options.slice_size);
-  }
-
   const DebugOptions debug_opts = module->config().debug_options();
   ABSL_RETURN_IF_ERROR(LoadAutotuneResultsFromFile(debug_opts));
 
@@ -2309,6 +2303,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   ABSL_ASSIGN_OR_RETURN(GpuTopology gpu_topology,
                    InferGpuTopology(module->config(), stream_exec, options,
                                     debug_opts, platform_id_));
+  if (gpu_topology.slice_size() > 0) {
+    module->mutable_config().set_partition_size(gpu_topology.slice_size());
+  }
   const std::optional<std::string> unoptimized_fingerprint =
       MaybeUploadUnoptimizedGpuSymbols(
           module.get(), gpu_topology.gpu_target_config().ToProto());
@@ -2760,7 +2757,7 @@ namespace {
 absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
     const HloModuleProto& hlo_proto,
     xla::cpu::TargetMachineOptions cpu_target_machine_options) {
-  xla::cpu::NanoRtClient client;
+  xla::cpu::NanoRtClient client(xla::SetHostOffloadingHloModuleConfig);
   XlaComputation computation(hlo_proto);
   Compiler::CompileOptions cpu_compile_options;
   cpu_compile_options.cpu_target_config.emplace(

@@ -27,10 +27,10 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -457,9 +457,10 @@ void CommandBufferThunk::EvictCommandBuffers() {
   }
 }
 
-absl::Status CommandBufferThunk::WalkNested(Walker callback) {
+absl::Status CommandBufferThunk::WalkNested(Walker pre_order,
+                                            Walker post_order) {
   if (thunks_ != nullptr) {
-    ABSL_RETURN_IF_ERROR(thunks_->Walk(callback));
+    ABSL_RETURN_IF_ERROR(thunks_->Walk(pre_order, post_order));
   }
   return absl::OkStatus();
 }

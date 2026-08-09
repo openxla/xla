@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -49,8 +49,8 @@ namespace {
 class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
  public:
   CollectiveOpsTestE2EShardedUnsharded()
-      : CollectiveOpsE2ETestBase(/*memory_size=*/128 * kMB,
-                                 /*collectives_memory_size=*/128 * kMB) {}
+      : CollectiveOpsE2ETestBase(/*memory_size=*/64 * kMB,
+                                 /*collectives_memory_size=*/0) {}
 
   void CollectiveOpsCompareShardedUnsharded(
       const std::string& hlo_text, const int64_t num_partitions = 2,

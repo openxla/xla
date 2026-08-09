@@ -22,10 +22,10 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -104,8 +104,9 @@ absl::Status CollectiveGroupThunk::ExecuteOnStream(
       comms, [&] { return executor_.ExecuteOnStream(params); });
 }
 
-absl::Status CollectiveGroupThunk::WalkNested(Walker callback) {
-  return executor_.thunks().WalkNested(callback);
+absl::Status CollectiveGroupThunk::WalkNested(Walker pre_order,
+                                              Walker post_order) {
+  return executor_.thunks().WalkNested(pre_order, post_order);
 }
 
 absl::Status CollectiveGroupThunk::TransformNested(Transformer callback) {
