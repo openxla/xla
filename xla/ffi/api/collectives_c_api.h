@@ -42,12 +42,12 @@ extern "C" {
 #define XLA_FFI_Extension_Collectives_MinorVersion 1
 
 // Mirrors `xla::CollectiveOpGroupMode`.
-typedef enum XLA_FFI_GroupMode {
+typedef enum XLA_FFI_CollectiveGroupMode {
   XLA_FFI_GROUP_CROSS_REPLICA = 0,
   XLA_FFI_GROUP_CROSS_PARTITION = 1,
   XLA_FFI_GROUP_CROSS_REPLICA_AND_PARTITION = 2,
   XLA_FFI_GROUP_FLATTENED_ID = 3,
-} XLA_FFI_GroupMode;
+} XLA_FFI_CollectiveGroupMode;
 
 typedef struct XLA_FFI_ReplicaGroup {
   const int64_t* ids;
@@ -56,11 +56,19 @@ typedef struct XLA_FFI_ReplicaGroup {
 
 typedef struct XLA_FFI_Collectives_Extension XLA_FFI_Collectives_Extension;
 
+// Opaque, backend-defined per-invocation collective state. Set by the runtime
+// that attaches the extension and interpreted only by the callbacks below.
+typedef struct XLA_FFI_CollectivesState XLA_FFI_CollectivesState;
+
+// Opaque, non-owning communicator handle. The backend defines the concrete
+// type; callers reinterpret it (e.g. as `ncclComm_t`).
+typedef struct XLA_FFI_Communicator XLA_FFI_Communicator;
+
 typedef struct XLA_FFI_Communicator_Request_Args {
   size_t struct_size;
   XLA_FFI_InternalExtension* extension_start;
 
-  XLA_FFI_GroupMode group_mode;
+  XLA_FFI_CollectiveGroupMode group_mode;
   const XLA_FFI_ReplicaGroup* groups;
   size_t num_groups;
   int64_t communication_id;
@@ -79,11 +87,11 @@ typedef struct XLA_FFI_Communicator_Get_Args {
   size_t struct_size;
   XLA_FFI_InternalExtension* extension_start;
 
-  XLA_FFI_GroupMode group_mode;
+  XLA_FFI_CollectiveGroupMode group_mode;
   const XLA_FFI_ReplicaGroup* groups;
   size_t num_groups;
   int64_t communication_id;
-  void* communicator;  // out
+  XLA_FFI_Communicator* communicator;  // out
 } XLA_FFI_Communicator_Get_Args;
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Get_Args, communicator);
@@ -98,9 +106,7 @@ typedef XLA_FFI_Error* XLA_FFI_Communicator_Get(
 struct XLA_FFI_Collectives_Extension {
   XLA_FFI_Extension extension_base;
 
-  // Opaque per-invocation backend state, set by the runtime that attaches the
-  // extension and interpreted only by the callbacks below.
-  void* state;
+  XLA_FFI_CollectivesState* state;
 
   XLA_FFI_Communicator_Request* request_communicator;
   XLA_FFI_Communicator_Get* get_communicator;

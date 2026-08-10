@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/ffi/api/collectives_ffi.h"
+#include "xla/ffi/collectives_ffi.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,11 +21,13 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
-#include "xla/ffi/api/ffi.h"
 #include "xla/ffi/call_frame.h"
+#include "xla/ffi/ffi.h"
 #include "xla/ffi/invoke.h"
 
 namespace xla::ffi {
@@ -93,20 +95,20 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   XLA_FFI_Communicator* got = nullptr;
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
-      [&](Communicator comm) -> Error {
+      [&](Communicator comm) -> absl::Status {
         called = true;
-        if (Error status = comm.RequestCommunicator(
+        if (absl::Status status = comm.RequestCommunicator(
                 GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
-            status.failure()) {
+            !status.ok()) {
           return status;
         }
-        ErrorOr<XLA_FFI_Communicator*> comm_or = comm.GetCommunicator(
+        absl::StatusOr<XLA_FFI_Communicator*> comm_or = comm.GetCommunicator(
             GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
-        if (comm_or.has_error()) {
-          return comm_or.error();
+        if (!comm_or.ok()) {
+          return comm_or.status();
         }
-        got = comm_or.value();
-        return Error::Success();
+        got = *comm_or;
+        return absl::OkStatus();
       });
 
   CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);

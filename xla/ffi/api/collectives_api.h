@@ -25,7 +25,7 @@ limitations under the License.
 // C++ wrapper for the XLA FFI Collectives API.
 namespace xla::ffi {
 
-// Mirrors `XLA_FFI_GroupMode` / `xla::CollectiveOpGroupMode`.
+// Mirrors `XLA_FFI_CollectiveGroupMode` / `xla::CollectiveOpGroupMode`.
 enum class GroupMode {
   kCrossReplica = XLA_FFI_GROUP_CROSS_REPLICA,
   kCrossPartition = XLA_FFI_GROUP_CROSS_PARTITION,
@@ -36,8 +36,7 @@ enum class GroupMode {
 namespace internal {
 
 // C++ wrapper for the XLA FFI Collectives extension API.
-// Unified implementation for statically linked and dynamically linked FFI
-// modules.
+// Unified implementation for internal and external FFI modules.
 template <typename ErrorPolicy>
 class CommunicatorContextBase {
  public:
@@ -58,7 +57,7 @@ class CommunicatorContextBase {
     XLA_FFI_Communicator_Request_Args args;
     args.struct_size = XLA_FFI_Communicator_Request_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
-    args.group_mode = static_cast<XLA_FFI_GroupMode>(group_mode);
+    args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
     args.groups = raw_groups.data();
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
@@ -70,20 +69,20 @@ class CommunicatorContextBase {
 
   // Returns the non-owning communicator handle for `groups`. The handle is
   // backend-defined; the caller reinterprets it (e.g. as `ncclComm_t`).
-  StatusOr<void*> GetCommunicator(
+  StatusOr<XLA_FFI_Communicator*> GetCommunicator(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
     XLA_FFI_Communicator_Get_Args args;
     args.struct_size = XLA_FFI_Communicator_Get_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
-    args.group_mode = static_cast<XLA_FFI_GroupMode>(group_mode);
+    args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
     args.groups = raw_groups.data();
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
     args.communicator = nullptr;
     if (XLA_FFI_Error* err = ext_->get_communicator(ext_, &args)) {
-      return StatusOr<void*>(ErrorPolicy::TakeError(api_, err));
+      return StatusOr<XLA_FFI_Communicator*>(ErrorPolicy::TakeError(api_, err));
     }
     return args.communicator;
   }
@@ -105,7 +104,7 @@ class CommunicatorContextBase {
   const XLA_FFI_Collectives_Extension* ext_;
 };
 
-// Common base struct for static and dynamic Collectives extensions.
+// Common base struct for internal and external Collectives extensions.
 // Defines traits for CtxDecoding<Extension<Collectives>>.
 template <typename CommunicatorContextT>
 struct CollectivesExtensionBase {
