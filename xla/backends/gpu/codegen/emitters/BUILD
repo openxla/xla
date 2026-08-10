@@ -57,6 +57,26 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "concatenate_test",
+    srcs = ["concatenate_test.cc"],
+    tags = ["gpu"],
+    deps = [
+        ":concatenate",
+        "//xla:debug_options_flags",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "//xla/tests:xla_internal_test_main",
+        "//xla:xla_proto_cc",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 cc_library(
     name = "mlir_kernel_emitter",
     srcs = ["mlir_kernel_emitter.cc"],
