@@ -67,9 +67,11 @@ cc_library(
     deps = [
         ":device_event",
         ":pjrt_client",
+        ":pjrt_executable",
         ":raw_buffer",
         "//xla:executable_run_options",
         "//xla:future",
+        "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/functional:any_invocable",
