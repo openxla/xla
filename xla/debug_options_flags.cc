@@ -551,6 +551,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(true);
   opts.set_xla_early_exit_with_layouts(false);
+  opts.set_xla_gpu_experimental_early_exit_after_autotuning(false);
   opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl(true);
   opts.set_xla_gpu_ragged_all_to_all_mode(
@@ -3685,6 +3686,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_early_exit_with_layouts(),
       "If true, exit early from the layout assignment pass after assigning "
       "layouts to entry computations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_early_exit_after_autotuning",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_early_exit_after_autotuning),
+      debug_options->xla_gpu_experimental_early_exit_after_autotuning(),
+      "Exits GPU compilation after autotuning (i.e. exits after the HLO "
+      "passes), and returns the HLO up to that point."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_print_compilation_stats",
       bool_setter_for(&DebugOptions::set_xla_gpu_print_compilation_stats),
