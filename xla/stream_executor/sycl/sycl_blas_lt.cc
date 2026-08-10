@@ -60,7 +60,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
   absl::MutexLock lock(&mu_);
   std::vector<MatmulAlgorithm> algorithms;
-  algorithms.push_back({/*opague_algo*/ kOneDnnGemm, /*workspace_size*/ 0});
+  algorithms.push_back({/*opaque_algo*/ kOneDnnGemm, /*workspace_size*/ 0});
   return std::move(algorithms);
 }
 

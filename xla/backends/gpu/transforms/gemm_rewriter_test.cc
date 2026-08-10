@@ -147,7 +147,7 @@ TEST_F(GemmRewriteTest, TestBatchedAutotuning) {
     GTEST_SKIP()
         << "There is no autotuning starting with the Nvidia Ampere generation";
   }
-  //TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
+  // TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
   if (IsSycl()) {
     GTEST_SKIP() << "Autotuning is not supported on SYCL platform.";
   }
@@ -310,14 +310,9 @@ ENTRY main {
   // Make sure the dot is lowered to a custom call. There is an algebraic
   // simplifier simplification which could turn the dot into a non-canonical dot
   // late in the pipeline, which will make it unsupported by the GemmRewriter.
-  if (IsSycl()) {
-    MatchOptimizedHlo(hlo_string, R"(
-    // CHECK: custom_call_target="__cublas$lt$matmul")");
-  } else {
-    MatchOptimizedHlo(hlo_string, R"(
-    // CHECK: custom_call_target="__cublas${{gemm|lt\$matmul}}"
-    )");
-  }
+  MatchOptimizedHlo(hlo_string, R"(
+  // CHECK: custom_call_target="__cublas${{gemm|lt\$matmul}}"
+  )");
 }
 
 TEST_F(GemmRewriteTest, DotWithBias) {
@@ -827,7 +822,7 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, VectorBiasSliced) {
-  //TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
+  // TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
   if (IsSycl()) {
     GTEST_SKIP() << "Autotuning is not supported on SYCL platform.";
   }
@@ -1216,7 +1211,7 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, ReluActivationSliced) {
-  //TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
+  // TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
   if (IsSycl()) {
     GTEST_SKIP() << "Autotuning is not supported on SYCL platform.";
   }
@@ -2738,7 +2733,7 @@ TEST_F(ParameterizedGemmRewriteTest, F64C64_CublasLtSupportTest) {
     GTEST_SKIP() << " hipblaslt doesn't support c64 c128 types";
   }
   // TODO(intel-tf): Remove this check once SYCL supports c64/c128.
-  if(IsSycl()) {
+  if (IsSycl()) {
     GTEST_SKIP() << "c64/c128 not supported on SYCL.";
   }
   // This test should fail if gemm rewriter does not correctly rewrite
@@ -3384,7 +3379,7 @@ TEST_F(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
         std::remove_if(type_combinations.begin(), type_combinations.end(),
                        [](const auto& combo) {
                          auto [input_type, output_type, should_rewrite] = combo;
-                         return input_type == "f64" || input_type == "c64" || 
+                         return input_type == "f64" || input_type == "c64" ||
                                 input_type == "c128";
                        }),
         type_combinations.end());

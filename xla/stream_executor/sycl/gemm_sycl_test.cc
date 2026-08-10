@@ -28,7 +28,7 @@ namespace xla::gpu {
 
 namespace {
 
-class ParameterizedGemmRewriteTest
+class GemmSyclTest
     : public HloPjRtInterpreterReferenceMixin<HloTestBase> {
  protected:
   void TestGemmWithTypeVariations(absl::string_view hlo_template) {
@@ -53,7 +53,7 @@ class ParameterizedGemmRewriteTest
   }
 };
 
-TEST_F(ParameterizedGemmRewriteTest, MatmulNoFusion) {
+TEST_F(GemmSyclTest, MatmulNoFusion) {
   const char* hlo_module = R"(
   HloModule module
 
@@ -66,7 +66,7 @@ TEST_F(ParameterizedGemmRewriteTest, MatmulNoFusion) {
   TestGemmWithTypeVariations(hlo_module);
 }
 
-TEST_F(ParameterizedGemmRewriteTest, MatmulWithBias) {
+TEST_F(GemmSyclTest, MatmulWithBias) {
   const char* matmul_module_str = R"(
   HloModule matmul.biasadd.test
 
@@ -84,7 +84,7 @@ TEST_F(ParameterizedGemmRewriteTest, MatmulWithBias) {
   TestGemmWithTypeVariations(matmul_module_str);
 }
 
-TEST_F(ParameterizedGemmRewriteTest, MatmulWithRELU) {
+TEST_F(GemmSyclTest, MatmulWithRELU) {
   const char* hlo_module = R"(
   HloModule module
 
@@ -100,7 +100,7 @@ TEST_F(ParameterizedGemmRewriteTest, MatmulWithRELU) {
   TestGemmWithTypeVariations(hlo_module);
 }
 
-TEST_F(ParameterizedGemmRewriteTest, MatmulWithApproxGELU) {
+TEST_F(GemmSyclTest, MatmulWithApproxGELU) {
   const char* matmul_module_str = R"(
   HloModule matmul.test
   ENTRY module {
