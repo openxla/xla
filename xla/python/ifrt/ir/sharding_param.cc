@@ -152,6 +152,20 @@ absl::Status ShardingParam::MinorToMajor::verify() const {
                        absl::StrJoin(axis_sizes, "x")));
     }
   }
+  // Validate close to where the unvalidated data enters: check that the
+  // cumulative product of `axis_sizes` (as computed by ToDeviceList()) fits
+  // in an `int` without relying on any assumption about the relative widths
+  // of `int` and `int64_t`.
+  int64_t cum_size = 1;
+  for (const int size : axis_sizes) {
+    if (__builtin_mul_overflow(cum_size, static_cast<int64_t>(size),
+                               &cum_size) ||
+        cum_size > std::numeric_limits<int>::max()) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("`axis_sizes` product overflows: [",
+                       absl::StrJoin(axis_sizes, "x"), "]"));
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -170,12 +184,18 @@ void ShardingParam::MinorToMajor::ToDeviceList(
   int64_t cum_size = 1;
   cum_sizes.reserve(axis_sizes.size());
   for (auto size : axis_sizes) {
-    CHECK_LE(cum_size, std::numeric_limits<int>::max())
+    // `cum_size` up to this point has already been range-checked below, so
+    // it is always safe to narrow here.
+    cum_sizes.push_back(static_cast<int>(cum_size));
+    // The product should already have been validated by verify(); this is a
+    // fail-closed defensive check against a caller that skipped verify(),
+    // written without assuming the relative widths of `int` and `int64_t`.
+    CHECK(!__builtin_mul_overflow(cum_size, static_cast<int64_t>(size),
+                                  &cum_size) &&
+         cum_size <= std::numeric_limits<int>::max())
         << "axis_sizes product overflows int; this should have been "
            "rejected by ShardingParam::verify() before reaching "
            "ToDeviceList()";
-    cum_sizes.push_back(static_cast<int>(cum_size));
-    cum_size *= static_cast<int64_t>(size);
   }
   PopulateDevices(permutation, axis_sizes, cum_sizes, out_devices);
 }
@@ -253,16 +273,24 @@ absl::Status ShardingParam::verify() const {
   // distributed over the device mesh.
   int64_t total_dim_shards_size = 1;
   for (const int dim_shard : dim_shards()) {
-    total_dim_shards_size *= static_cast<int64_t>(dim_shard);
-    if (total_dim_shards_size > std::numeric_limits<int>::max() ||
-        total_dim_shards_size < 0) {
+    if (dim_shard <= 0) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("`dim_shards` must be positive, got ", dim_shard,
+                       " in [", absl::StrJoin(dim_shards(), "x"), "]"));
+    }
+    if (__builtin_mul_overflow(total_dim_shards_size,
+                               static_cast<int64_t>(dim_shard),
+                               &total_dim_shards_size) ||
+        total_dim_shards_size > std::numeric_limits<int>::max()) {
       return absl::InvalidArgumentError(absl::StrCat(
           "`dim_shards` product overflows: ",
           absl::StrJoin(dim_shards(), "x")));
     }
   }
-  if (total_dim_shards_size == 0 ||
-      NumDevices() % total_dim_shards_size != 0) {
+  // `total_dim_shards_size` is guaranteed positive here since every
+  // `dim_shard` was checked to be > 0 above, so no separate zero check is
+  // needed before using it as a modulo divisor.
+  if (NumDevices() % total_dim_shards_size != 0) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Can't shard the dims ", absl::StrJoin(dim_shards(), "x"),
         " to the mesh of [", absl::StrJoin(minor_to_major().permutation, ","),
