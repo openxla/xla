@@ -25,7 +25,8 @@ limitations under the License.
 #include "oneapi/ccl.h"
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
-#include "xla/tsl/platform/status_macros.h"
+#include "absl/status/status_macros.h"
+#include "absl/strings/str_format.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/oneccl_errors.h"
 #include "xla/backends/gpu/collectives/single_threaded_executor.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
-#include "absl/strings/str_format.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/logging.h"
 #include <sycl/sycl.hpp>
