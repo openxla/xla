@@ -112,9 +112,6 @@ jobs:
             --repo_env=ROCM_DISTRO_HASH="baadd54cff7a064b3b0ae51c19606ee4bced0f4215a21c89f616cf9c01ea4b47" \
             --repo_env=SYSROOT_DIST=linux_glibc_2_31 \
             --jobs=20 \
-            --repo_env=TF_ROCM_RBE_POOL="linux_x64_gpu_do_gfx950" \
-            --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="linux_x64_gpu_do_gfx950" \
-            --repo_env=TF_ROCM_RBE_MULTI_GPU_POOL="linux_x64_gpu_do_gfx950" \
             --bes_keywords=xla \
             --bes_keywords=jax \
             --bes_keywords=upstream \
@@ -127,7 +124,7 @@ jobs:
     timeout-minutes: 220
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
-      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/pull/1072/head/build_tools/rocm/execute_ci_build_upstream.sh
+      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}/build_tools/rocm/execute_ci_build_upstream.sh
     container: *rocm_container
     defaults:
       run:
