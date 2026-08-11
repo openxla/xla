@@ -101,7 +101,7 @@ absl::StatusOr<bool> UsesMultipleCollectiveDomains(const HloModule& module) {
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                       GetCollectiveCommunicationDomain(*instruction));
+                            GetCollectiveCommunicationDomain(*instruction));
       if (first_domain.has_value() && *first_domain != domain) {
         return true;
       }
@@ -683,7 +683,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
   ABSL_ASSIGN_OR_RETURN(bool uses_multiple_collective_domains,
-                   UsesMultipleCollectiveDomains(*module));
+                        UsesMultipleCollectiveDomains(*module));
 
   pipeline.AddPass<LegalizeSchedulingAnnotations>(
       SchedulingAnnotationsConfig());
@@ -957,9 +957,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // See `xla::LatencyHidingScheduler::Run`.
   ABSL_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
-                   ScheduleGpuModuleWithMemoryScheduler(
-                       module, alias_info, pointer_size, &peak_memory_bytes));
+  ABSL_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
+                                           &peak_memory_bytes));
   ABSL_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =

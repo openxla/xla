@@ -90,9 +90,9 @@ class GpuLatencyHidingSchedulerBaseTest
     options.set_xla_gpu_pgle_accuracy_checker(strictness);
 
     ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, /*pointer_size=*/8,
-                                      gpu_device_info, &mlir_context_,
-                                      &alias_info)
-                        .status());
+                                           gpu_device_info, &mlir_context_,
+                                           &alias_info)
+                             .status());
     return module;
   }
 
