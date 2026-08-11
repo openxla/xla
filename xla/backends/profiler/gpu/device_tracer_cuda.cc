@@ -135,7 +135,8 @@ absl::Status GpuTracer::DoStart() {
 
   // A fresh V2 subscriber must exist before its timestamp API can be used.
   ABSL_RETURN_IF_ERROR(cupti_tracer_->PrepareForProfilerStart(options_));
-  uint64_t start_gputime_ns = cupti_tracer_->GetTimestampForSubscriber();
+  ABSL_ASSIGN_OR_RETURN(uint64_t start_gputime_ns,
+                        cupti_tracer_->GetTimestampForSubscriber());
   uint64_t start_walltime_ns = tsl::profiler::GetCurrentTimeNanos();
   cupti_collector_ = CreateCuptiCollector(collector_options, start_walltime_ns,
                                           start_gputime_ns);
