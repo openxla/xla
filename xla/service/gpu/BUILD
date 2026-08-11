@@ -291,6 +291,7 @@ cc_library(
     srcs = ["hlo_to_ir_bindings.cc"],
     hdrs = ["hlo_to_ir_bindings.h"],
     deps = [
+        "//xla/tsl/platform:logging",
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:util",
@@ -532,6 +533,7 @@ cc_library(
         "//xla/backends/gpu/runtime:host_to_device_copy_thunk",
         "//xla/backends/gpu/runtime:infeed_thunk",
         "//xla/backends/gpu/runtime:legacy_custom_call_thunk",
+        "//xla/backends/gpu/runtime:memset_thunk",
         "//xla/backends/gpu/runtime:norm_thunk",
         "//xla/backends/gpu/runtime:outfeed_thunk",
         "//xla/backends/gpu/runtime:ragged_all_to_all_thunk",
@@ -1112,6 +1114,7 @@ cc_library(
     hdrs = ["reduction_utils.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/tsl/platform:logging",
         ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:util",
@@ -1146,6 +1149,7 @@ cc_library(
     hdrs = ["cublas_cudnn.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/tsl/platform:statusor",
         ":backend_configs_cc",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -1459,6 +1463,7 @@ xla_cc_test(
     name = "fusion_process_dump_test",
     srcs = ["fusion_process_dump_test.cc"],
     deps = [
+        "//xla/tsl/platform:statusor",
         ":fusion_process_dump",
         ":fusion_process_dump_proto_cc",
         ":gpu_device_info_for_tests",
@@ -1553,6 +1558,9 @@ cc_library(
     srcs = ["gpu_transfer_manager.cc"],
     hdrs = ["gpu_transfer_manager.h"],
     deps = [
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         ":io_feed_manager",
         ":target_constants",
         "//xla:literal",
@@ -2382,6 +2390,7 @@ xla_test(
     srcs = ["gpu_offloading_test.cc"],
     backends = ["gpu"],
     deps = [
+        "//xla/tsl/platform:statusor",
         ":backend_configs_cc",
         "//xla:autotune_results_proto_cc",
         "//xla:error_spec",
@@ -2416,6 +2425,7 @@ xla_test(
     tags = ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
     use_legacy_runtime = True,
     deps = [
+        "//xla/tsl/platform:logging",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -2806,6 +2816,7 @@ cc_library(
     name = "xfeed_queue",
     hdrs = ["xfeed_queue.h"],
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
@@ -2823,6 +2834,9 @@ cc_library(
         "outfeed_manager.h",
     ],
     deps = [
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         ":xfeed_queue",
         "//xla:literal",
         "//xla:shape_tree",
@@ -2988,6 +3002,8 @@ xla_cc_test(
         "gpu_spmd_pipeline_test.cc",
     ],
     deps = [
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         ":gpu_spmd_pipeline",
         "//xla:shape_util",
         "//xla:util",
@@ -3113,6 +3129,7 @@ xla_cc_test(
     name = "gpu_asm_opts_util_test",
     srcs = ["gpu_asm_opts_util_test.cc"],
     deps = [
+        "//xla/tsl/platform:test",
         ":gpu_asm_opts_util",
         "//xla:xla_proto_cc",
         "//xla/tests:xla_internal_test_main",
@@ -3431,6 +3448,7 @@ xla_cc_test(
         "no_oss",
     ],
     deps = [
+        "//xla/tsl/platform:test",
         ":metrics",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/monitoring:collected_metrics",
@@ -3446,6 +3464,7 @@ cc_library(
     hdrs = ["hlo_fusion_stats.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
@@ -3505,6 +3524,7 @@ cc_library(
     srcs = ["conv_layout_normalization.cc"],
     hdrs = ["conv_layout_normalization.h"],
     deps = [
+        "//xla/tsl/platform:statusor",
         ":cublas_cudnn",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -3884,6 +3904,7 @@ xla_test(
     ]),
     use_legacy_runtime = True,
     deps = [
+        "//xla/stream_executor/sycl:sycl_platform_id",
         ":intel_gpu_compiler",
         "//xla/tests/restricted:hlo_test_base_legacy",
         "@com_google_googletest//:gtest_main",
