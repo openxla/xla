@@ -262,8 +262,8 @@ cc_library(
     name = "collectives_ffi",
     hdrs = ["collectives_ffi.h"],
     deps = [
-        ":api",
         ":ffi",
+        "//xla/ffi/api:collectives_api",
     ],
 )
 
@@ -501,6 +501,7 @@ xla_cc_test(
         ":ffi_api",  # buildcleaner: keep
         ":invoke",
         "//xla/ffi/api:c_api",
+        "//xla/ffi/api:collectives_api",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
