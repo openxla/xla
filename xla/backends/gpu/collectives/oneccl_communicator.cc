@@ -310,14 +310,14 @@ absl::Status OnecclCommunicator::LaunchCollectivePermute(
       ABSL_RETURN_IF_ERROR(GroupStart());
 
       for (auto target_rank : target_ranks) {
-        ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(
+        XLA_ONECCL_RETURN_IF_ERROR(
           onecclSend(send_buffer.opaque(), ToOnecclCount(dtype, count), ccl_dtype,
-                    target_rank.value(), comm_, sycl_queue)));
+                    target_rank.value(), comm_, sycl_queue));
       }
       if (source_rank) {
-        ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(onecclRecv(
-          recv_buffer.opaque(), ToOnecclCount(dtype, count), ccl_dtype,
-          source_rank->value(), comm_, sycl_queue)));
+        XLA_ONECCL_RETURN_IF_ERROR(
+          onecclRecv(recv_buffer.opaque(), ToOnecclCount(dtype, count), ccl_dtype,
+                    source_rank->value(), comm_, sycl_queue));
       }
       ABSL_RETURN_IF_ERROR(GroupEnd());
       return absl::OkStatus();
