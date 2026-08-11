@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
@@ -45,7 +46,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -1720,8 +1720,7 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
     const Shape& operand_subshape = ShapeUtil::GetSubshape(
         custom_call->operand(pair.second.first)->shape(), pair.second.second);
     if (opts_.layout_sensitive) {
-      bool operand_is_scalar = operand_subshape.IsArray() &&
-                               ShapeUtil::ElementsIn(operand_subshape) == 1;
+      bool operand_is_scalar = ShapeUtil::IsEffectiveScalar(operand_subshape);
       auto shape_equal_checker = Shape::Equal().IgnoreBuffer(ignore_buffer);
       if (operand_is_scalar) {
         shape_equal_checker.IgnoreMemorySpaceInLayout();
