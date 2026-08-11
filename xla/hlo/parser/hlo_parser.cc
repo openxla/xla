@@ -4001,11 +4001,10 @@ bool HloParserImpl::ParseCollectiveDeviceListBase(
   }
 
   if (Product(tile_assignment_dimensions) != Product(iota_reshape_dims)) {
-    VLOG(kErrorLevel)
-        << "Iota tile assignment size " << Product(iota_reshape_dims)
-        << " does not match the tile assignment dimensions product "
-        << Product(tile_assignment_dimensions);
-    return false;
+    return TokenError(absl::StrCat(
+        "collective device list iota size ", Product(iota_reshape_dims),
+        " does not match the tile assignment dimensions product ",
+        Product(tile_assignment_dimensions)));
   }
 
   *device_list = std::make_unique<IotaReplicaGroupList>(

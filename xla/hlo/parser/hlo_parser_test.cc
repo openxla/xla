@@ -3547,6 +3547,9 @@ ENTRY e {
 })";
   auto result = ParseAndReturnUnverifiedModule(original);
   EXPECT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              HasSubstr("does not match the tile assignment dimensions "
+                        "product"));
 }
 
 TEST_F(HloParserTest, WindowRhsReversalWrongSize) {
