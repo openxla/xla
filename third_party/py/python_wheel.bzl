@@ -169,47 +169,6 @@ FilePathInfo = provider(
     },
 )
 
-def _is_versioned_shared_object(basename):
-    # Matches versioned Linux shared objects: libfoo.so.1, libfoo.so.1.2,
-    # libclang-cpp.so.23.0git, ... . `File.extension` returns only the trailing
-    # component (e.g. "1" or "0git") for versioned SONAMEs, so the plain
-    # extension allowlist misses them even though the dynamic loader resolves
-    # DT_NEEDED entries by the versioned name. A version always begins with a
-    # digit but may carry a non-numeric tail (e.g. "git", "rc1"), so key off the
-    # first character rather than requiring the whole suffix to be numeric.
-    idx = basename.find(".so.")
-    if idx == -1:
-        return False
-    suffix = basename[idx + len(".so."):]
-    return suffix != "" and suffix[0].isdigit()
-
-def _is_rocm_library_database(f):
-    # ROCm math libraries (rocBLAS / hipBLASLt) load their Tensile kernel
-    # databases from a sibling `library/` directory at runtime. Those files
-    # (.dat/.hsaco/.co) and the packed `.kpack` archives are not covered by the
-    # extension allowlist. Staging a library's versioned SONAME without its
-    # database makes the loader bind an incomplete copy that aborts at runtime
-    # (e.g. "Cannot read TensileLibrary.dat: Illegal seek"), so collect the
-    # database alongside the shared objects.
-    #
-    # MIOpen behaves the same way: it resolves its performance/find databases
-    # and TunaNet AI heuristic models from `share/miopen/` next to libMIOpen.so
-    # (.kdb/.tn.model/.ktn.model/.fdb.txt/.db.txt). Without them MIOpen logs
-    # "Unable to load ND AI model file" and falls back to slower heuristics, so
-    # collect that tree too.
-    path = f.path
-    return (path.endswith(".kpack") or
-            "/rocblas/library/" in path or
-            "/hipblaslt/library/" in path or
-            "/share/miopen/" in path)
-
-def _is_wanted_data_file(f, extensions):
-    if f.extension in extensions:
-        return True
-    if "so" in extensions and _is_versioned_shared_object(f.basename):
-        return True
-    return _is_rocm_library_database(f)
-
 def _collect_data_aspect_impl(_, ctx):
     files = {}
     extensions = ctx.attr._extensions
@@ -218,8 +177,10 @@ def _collect_data_aspect_impl(_, ctx):
             for f in data.files.to_list():
                 if not f.owner.package:
                     continue
-                if _is_wanted_data_file(f, extensions):
-                    files[f] = True
+                for ext in extensions:
+                    if f.extension == ext:
+                        files[f] = True
+                        break
 
     if hasattr(ctx.rule.attr, "deps"):
         for dep in ctx.rule.attr.deps:
