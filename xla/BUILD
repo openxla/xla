@@ -311,6 +311,18 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "packing",
+    srcs = ["packing.cc"],
+    hdrs = ["packing.h"],
+    deps = [
+        "//xla/tsl/lib/math:math_util",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/types:span",
+        "@highway//:hwy",
+    ],
+)
+
+cc_library(
     name = "util",
     srcs = [
         "error_util.cc",
@@ -325,6 +337,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":packing",
         ":status_macros",
         ":types",
         ":xla_data_proto_cc",
@@ -720,8 +733,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@com_google_highway//:hwy",
         "@eigen_archive//:eigen3",
+        "@highway//:hwy",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -743,6 +756,7 @@ xla_cc_test(
         ":util",
         ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
+        "//xla/tests:constraint_state",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
@@ -1594,7 +1608,6 @@ bzl_library(
         "@bazel_skylib//lib:paths",
         "//xla/tsl:package_groups_bzl",
         "//xla/tsl:tsl_bzl",
-        "//xla/tsl:tsl_default_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
     ],
 )

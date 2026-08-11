@@ -45,10 +45,10 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
@@ -2086,7 +2086,7 @@ class HloInstruction {
   template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
   absl::StatusOr<ConfigProto> backend_config() const {
     ConfigProto proto;
-    RETURN_IF_ERROR(backend_config_->GetProto(&proto));
+    ABSL_RETURN_IF_ERROR(backend_config_->GetProto(&proto));
     return proto;
   }
 
@@ -2581,7 +2581,7 @@ class HloInstruction {
 
   // TODO(phui): reimplement this method
   void DetachFromOperands() {
-    for (HloInstruction* operand : operands_) {
+    for (HloInstruction* operand : unique_operands()) {
       operand->RemoveUser(this);
     }
     RemoveAllOperands();

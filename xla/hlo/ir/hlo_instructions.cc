@@ -32,11 +32,11 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -2792,7 +2792,7 @@ absl::Status HloFusionInstruction::DeduplicateFusionOperands() {
   for (int i = 0; i < count; ++i) {
     auto emplace_result = operand_indices.emplace(operand(i), i);
     if (!emplace_result.second) {
-      RETURN_IF_ERROR(fused_parameter(i)->ReplaceAllUsesWith(
+      ABSL_RETURN_IF_ERROR(fused_parameter(i)->ReplaceAllUsesWith(
           fused_parameter(emplace_result.first->second)));
       operands_to_remove.push_back(i);
     }
@@ -2800,7 +2800,7 @@ absl::Status HloFusionInstruction::DeduplicateFusionOperands() {
   if (operands_to_remove.empty()) {
     return absl::OkStatus();
   }
-  RETURN_IF_ERROR(fused_instructions_computation()
+  ABSL_RETURN_IF_ERROR(fused_instructions_computation()
                       ->RemoveUnusedParametersFromFusedComputation());
   RemoveOperandsAtAscendingIndices(operands_to_remove);
   return absl::OkStatus();
@@ -2822,7 +2822,7 @@ absl::Status HloFusionInstruction::PermuteFusionOperands(
     seen[permutation[i]] = true;
   }
 
-  RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       fused_instructions_computation()->PermuteParameters(permutation));
   InstructionVector new_operands(operand_count());
   for (int64_t i = 0; i < operand_count(); ++i) {

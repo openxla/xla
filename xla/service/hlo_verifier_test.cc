@@ -75,6 +75,14 @@ std::unique_ptr<HloModule> CreateUnverifiedModule() {
   return std::make_unique<HloModule>("module", HloModuleConfig());
 }
 
+// Create a verifier that supports unbounded dynamic shapes for parameter ops.
+HloVerifier CreateVerifierSupportsUnboundedDynamicParameter() {
+  return HloVerifier(HloVerifierOpts{}.WithSupportedUnboundedDynamicOp(
+      [](const HloInstruction* hlo) {
+        return hlo->opcode() == HloOpcode::kParameter;
+      }));
+}
+
 class HloVerifierTest : public HloHardwareIndependentTestBase {
  public:
   HloVerifierTest()
@@ -4062,32 +4070,68 @@ ENTRY entry {
   ASSERT_OK(status);
 }
 
-TEST_F(HloVerifierTest, UnboundedDynamism) {
-  const char* const hlo = R"(
+TEST_F(HloVerifierTest, UnboundedDynamismDefaultRejected) {
+  const char* const hlo = R"hlo(
   HloModule Module
 
   ENTRY entry {
     ROOT param0 = f32[?,784] parameter(0)
   }
-  )";
+  )hlo";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(), HasSubstr("Unbounded dynamism is disabled"));
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Unbounded dynamism is disabled")));
 }
 
 TEST_F(HloVerifierTest, EnableUnboundedDynamism) {
-  const char* const hlo = R"(
+  const char* const hlo = R"hlo(
   HloModule Module
 
   ENTRY entry {
     ROOT param0 = f32[?,784] parameter(0)
   }
-  )";
+  )hlo";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
-  HloVerifier verifier{HloVerifierOpts{}.WithAllowUnboundedDynamism(true)};
-  auto status = verifier.Run(module.get()).status();
-  ASSERT_TRUE(status.ok());
+  ASSERT_OK(
+      CreateVerifierSupportsUnboundedDynamicParameter().Run(module.get()));
+}
+
+TEST_F(HloVerifierTest, UnboundedDynamismRejectsUnsupportedOp) {
+  const char* const hlo = R"hlo(
+  HloModule Module
+
+  ENTRY entry {
+    param0 = f32[?,784] parameter(0)
+    param1 = f32[?,784] parameter(1)
+    ROOT add = f32[?,784] add(param0, param1)
+  }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(
+      CreateVerifierSupportsUnboundedDynamicParameter().Run(module.get()),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Unbounded dynamism is disabled")));
+}
+
+TEST_F(HloVerifierTest, UnboundedDynamismSupportsAliasingCustomCall) {
+  const char* const hlo = R"hlo(
+  HloModule Module
+
+  ENTRY entry {
+    param0 = f32[?] parameter(0)
+    ROOT add = f32[?] custom-call(param0), custom_call_target="dynamic",
+      output_to_operand_aliasing={{}:(0, {})}
+  }
+  )hlo";
+
+  auto verifier =
+      HloVerifier(HloVerifierOpts{}
+                      .WithSupportedUnboundedDynamicOp(
+                          [](const HloInstruction* hlo) { return true; })
+                      .WithLayoutSensitive(true));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_OK(verifier.Run(module.get()));
 }
 
 TEST_F(HloVerifierTestLayoutSensitive,

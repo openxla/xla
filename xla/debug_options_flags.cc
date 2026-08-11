@@ -299,6 +299,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_enable_fast_min_max(true);
 
   opts.set_xla_gpu_enable_cublaslt(true);
+  opts.set_xla_gpu_trace_annotation_level(0);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -408,6 +409,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_gemm_fusion_v2(false);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
   opts.set_xla_gpu_experimental_enable_tiling_propagation(false);
+  opts.set_xla_gpu_experimental_cost_model_gemm_tiling_default(false);
 
   // Moving reduce-scatter out of while loops can increase memory footprint, so
   // turning it off by default.
@@ -520,6 +522,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
+  opts.set_xla_gpu_all_reduce_splitter_ignore_profitability_check(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer(
       true);
@@ -546,7 +549,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detect_unstable_reductions_post_optimizations(
       DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(true);
-  opts.set_xla_gpu_experimental_use_raft_select_k(false);
   opts.set_xla_early_exit_with_layouts(false);
   opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(true);
@@ -554,6 +556,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_ragged_all_to_all_mode(
       DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_device_kernel(false);
+  opts.set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
@@ -2022,6 +2025,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_all_reduce_combine_threshold_bytes(),
       "[Stable] Size threshold (in bytes) for the GPU all-reduce combiner."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_all_reduce_splitter_ignore_profitability_check",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_all_reduce_splitter_ignore_profitability_check),
+      debug_options->xla_gpu_all_reduce_splitter_ignore_profitability_check(),
+      "If true, AllReduceSplitter rewrites AR+DS patterns even when the "
+      "profitability heuristic does not find an existing all-reduce that "
+      "shares either of the post-split replica group topologies."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_all_gather_combine_threshold_bytes",
       int64_setter_for(
           &DebugOptions::set_xla_gpu_all_gather_combine_threshold_bytes),
@@ -2763,6 +2775,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "larger than this threshold will be transformed to use windowed einsums."
       "Default is 100000"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_trace_annotation_level",
+      int32_setter_for(&DebugOptions::set_xla_gpu_trace_annotation_level),
+      debug_options->xla_gpu_trace_annotation_level(),
+      "GPU trace annotation detail level. Level 0 emits compact instruction "
+      "names and basic structured payloads. Level 1 additionally emits "
+      "detailed HLO and collective metadata in XProf annotation names and "
+      "structured payloads. NVTX names remain compact."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_operand_bytes_threshold_for_windowed_einsum",
       int64_setter_for(
           &DebugOptions::
@@ -3429,12 +3449,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "optimizations. Acceptable values are: 'none', 'log', and "
       "'crash'. 'none' is the default."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_use_raft_select_k",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_use_raft_select_k),
-      debug_options->xla_gpu_experimental_use_raft_select_k(),
-      "If true, use the raft::matrix::select_k implementation of TopK."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_ragged_all_to_all_use_barrier",
       bool_setter_for(
           &DebugOptions::
@@ -3477,6 +3491,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_ragged_all_to_all_use_device_kernel(),
       "If true, use the device-initiated (NCCL GIN + LSA) kernel for "
       "ragged-all-to-all. Requires NCCL >= 2.29."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback),
+      debug_options->xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(),
+      "If true, allow fallback to NCCL Send/Recv path for ragged-all-to-all."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_async_copy_min_bytes",
       int64_setter_for(&DebugOptions::set_xla_gpu_async_copy_min_bytes),
@@ -3698,6 +3719,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental options for adjusting cost-model guided GEMM tiling "
       "selection; comma-separated list of 'key=val' strings (=val may be "
       "omitted); no whitespace around commas."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_cost_model_gemm_tiling_default",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_cost_model_gemm_tiling_default),
+      debug_options->xla_gpu_experimental_cost_model_gemm_tiling_default(),
+      "If true, uses the cost model to suggest default GEMM tilings when "
+      "autotuning is disabled (e.g., in deviceless or deterministic mode)."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_ptx_compiler_extra_flags",
       setter_for_xla_gpu_ptx_compiler_extra_flags,

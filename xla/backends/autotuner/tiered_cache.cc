@@ -162,6 +162,7 @@ absl::Status TieredCache::MaybeWriteToStore(
       return store.Write(entry);
     }
     case CacheMode::kReadWrite:
+    case CacheMode::kWriteOnly:
       return store.Write(entry);
   }
   return absl::OkStatus();
@@ -191,7 +192,8 @@ std::optional<AutotunerCacheInterface::Config> TieredCache::Lookup(
                  << primary_entries.status();
   }
 
-  if (secondary_ == nullptr || !primary_entries.ok()) {
+  if (secondary_ == nullptr || !primary_entries.ok() ||
+      secondary_->GetMode() == CacheMode::kWriteOnly) {
     absl::MutexLock lock(stats_mutex_);
     stats_.misses++;
     return std::nullopt;
@@ -244,7 +246,7 @@ absl::StatusOr<std::string> TieredCache::Serialize(
   cache.set_explicit_version_scope(context_.explicit_version());
 
   if (instructions_to_serialize.empty()) {
-    ASSIGN_OR_RETURN(std::vector<autotuner::AutotuneEntry> all,
+    ABSL_ASSIGN_OR_RETURN(std::vector<autotuner::AutotuneEntry> all,
                      primary_->ReadAll());
     for (autotuner::AutotuneEntry& entry : all) {
       *cache.add_entries() = std::move(entry);
@@ -275,7 +277,7 @@ absl::Status TieredCache::Deserialize(absl::string_view serialized_cache) {
   }
   // Populate every tier so that subsequent lookups hit the hottest tier.
   for (const autotuner::AutotuneEntry& entry : cache.entries()) {
-    RETURN_IF_ERROR(primary_->Write(entry));
+    ABSL_RETURN_IF_ERROR(primary_->Write(entry));
   }
   return absl::OkStatus();
 }

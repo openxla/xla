@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -172,7 +173,7 @@ ConstraintPropagator::Run(
   ConstraintPropagator propagator(get_index_known_zeroes);
   auto computations = module.MakeComputationPostOrder();
   for (HloComputation* computation : computations) {
-    RETURN_IF_ERROR(propagator.Propagate(computation));
+    ABSL_RETURN_IF_ERROR(propagator.Propagate(computation));
   }
 
   // Extract only the parameters
@@ -184,14 +185,21 @@ ConstraintPropagator::Run(
   return result;
 }
 
+// Accurately modeling full relational semantics across multi-branch graphs
+// would require a general SMT/SAT constraint solver (e.g. Z3), which introduces
+// high latency, potential timeouts, and complex dependencies. Since we only
+// need a sound subset of valid inputs rather than the complete solution space,
+// we use fast, lightweight interval propagation and pattern-matching heuristics
+// with linear O(N) overhead.
 absl::Status ConstraintPropagator::Propagate(
     const HloComputation* computation) {
-  RETURN_IF_ERROR(SeedConstraints(computation));
-  RETURN_IF_ERROR(PropagateSeedConstraints(computation));
+  ABSL_RETURN_IF_ERROR(SeedConstraints(computation));
+  ABSL_RETURN_IF_ERROR(SeedMLPatternsConstraints(computation));
+  ABSL_RETURN_IF_ERROR(PropagateSeedConstraints(computation));
   absl::flat_hash_map<const HloInstruction*, ConstraintState> before;
   do {
     before = states_;
-    RETURN_IF_ERROR(PropagateConstraints(computation));
+    ABSL_RETURN_IF_ERROR(PropagateConstraints(computation));
   } while (before != states_);
   return absl::OkStatus();
 }
@@ -420,6 +428,81 @@ absl::Status ConstraintPropagator::SeedConstraints(
   return absl::OkStatus();
 }
 
+// ============================================================================
+// Domain-Specific & ML Pattern Seeding
+// ============================================================================
+//
+// Why this function exists:
+// Opcode-level passes (PropagateConstraintsExact and
+// PropagateConstraintsApprox) cannot infer relational invariants spanning
+// multiple instructions. High-level ML idioms frequently combine comparisons,
+// masks, and arithmetic into coordinated subgraphs. This pass bridges that gap
+// by recognizing known ML patterns and seeding their constraints directly.
+//
+// Tradeoffs:
+// - Pros:
+//   * Isolates multi-op ML heuristics from single-opcode transfer functions.
+//   * Solves complex multi-instruction cases that would otherwise require an
+//     expensive constraint solver.
+// - Cons:
+//   * Encodes specific subgraph patterns rather than general relational
+//   solving.
+//   * Assumes ML domain conventions (e.g. positive clipping thresholds).
+//
+// ML Patterns Handled:
+// 1. Guarded Division / Gradient & Activation Threshold Clipping:
+//    In deep learning models (e.g. GemFuse, diffusion models, transformers),
+//    gradients or activations are scaled down by a threshold tau > 0 when their
+//    norm/magnitude exceeds tau:
+//      scale(x) = where(x > tau, tau / x, 1.0)
+//    When combined with sequence/padding masks (x_masked = where(mask, x,
+//    0.0)):
+//      scale = where(x_masked > tau, tau / x_masked, 1.0)
+//    On masked/padding tokens (mask = false), x_masked is 0.0. Since tau > 0 in
+//    ML, the guard condition (0.0 > tau) evaluates to false, safely
+//    choosing 1.0 and avoiding division by zero. If tau is left unconstrained
+//    and generated as <= 0, (0.0 > tau) evaluates to true on masked lanes,
+//    producing division by zero (-inf). This pattern seeds tau > 0 on the
+//    threshold operand.
+// ============================================================================
+absl::Status ConstraintPropagator::SeedMLPatternsConstraints(
+    const HloComputation* computation) {
+  for (const HloInstruction* inst : computation->instructions()) {
+    // Pattern 1: Guarded Division / Threshold-based Gradient/Activation
+    // Clipping
+    //   select(compare(x, tau, GT/GE), divide(..., x), ...)
+    // or
+    //   select(compare(tau, x, LT/LE), divide(..., x), ...)
+    if (inst->opcode() == HloOpcode::kSelect) {
+      const HloInstruction* pred = inst->operand(0);
+      if (pred->opcode() == HloOpcode::kCompare) {
+        auto* cmp = Cast<HloCompareInstruction>(pred);
+        const HloInstruction* lhs = cmp->operand(0);
+        const HloInstruction* rhs = cmp->operand(1);
+        const HloInstruction* on_true = inst->operand(1);
+
+        if (on_true->opcode() == HloOpcode::kDivide) {
+          const HloInstruction* divisor = on_true->operand(1);
+          // Case 1: compare(x, tau, GT/GE) where divisor is x (lhs) -> tau is
+          // rhs
+          if ((cmp->direction() == ComparisonDirection::kGt ||
+               cmp->direction() == ComparisonDirection::kGe) &&
+              divisor == lhs) {
+            states_[rhs].AddConstraint(ConstraintInterval::StrictPositive());
+          } else if ((cmp->direction() == ComparisonDirection::kLt ||
+                      cmp->direction() == ComparisonDirection::kLe) &&
+                     divisor == rhs) {
+            // Case 2: compare(tau, x, LT/LE) where divisor is x (rhs) -> tau is
+            // lhs
+            states_[lhs].AddConstraint(ConstraintInterval::StrictPositive());
+          }
+        }
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status ConstraintPropagator::PropagateConstraintsExact(
     const HloInstruction* instruction) {
   ConstraintState output_state = states_[instruction];
@@ -463,8 +546,10 @@ absl::Status ConstraintPropagator::PropagateConstraintsExact(
     }
     case HloOpcode::kBitcast:
     case HloOpcode::kBitcastConvert:
+    case HloOpcode::kConvert:
     case HloOpcode::kCopy:
     case HloOpcode::kDynamicReshape:
+    case HloOpcode::kReducePrecision:
     case HloOpcode::kReshape:
     case HloOpcode::kTranspose:
       states_[instruction->operand(0)].Merge(output_state);
@@ -482,6 +567,27 @@ absl::Status ConstraintPropagator::PropagateConstraintsExact(
       sc.no_duplicates = false;
       sc.needs_sorted_indices = false;
       states_[instruction->operand(0)].MergeStructural(sc);
+      break;
+    }
+    case HloOpcode::kPad: {
+      states_[instruction->operand(0)].AddConstraint(output_interval);
+      states_[instruction->operand(1)].AddConstraint(output_interval);
+      StructuralConstraints sc = output_structural;
+      sc.no_duplicates = false;
+      sc.needs_sorted_indices = false;
+      states_[instruction->operand(0)].MergeStructural(sc);
+      break;
+    }
+    case HloOpcode::kSelect: {
+      states_[instruction->operand(1)].AddConstraint(output_interval);
+      states_[instruction->operand(2)].AddConstraint(output_interval);
+      // Combining elements from two different branches breaks uniqueness
+      // and sorting order across the resulting tensor.
+      StructuralConstraints sc = output_structural;
+      sc.no_duplicates = false;
+      sc.needs_sorted_indices = false;
+      states_[instruction->operand(1)].MergeStructural(sc);
+      states_[instruction->operand(2)].MergeStructural(sc);
       break;
     }
     case HloOpcode::kBroadcast:
@@ -796,7 +902,7 @@ absl::Status ConstraintPropagator::PropagateSeedConstraints(
   auto instructions = computation->MakeInstructionPostOrder();
   for (auto it = instructions.rbegin(); it != instructions.rend(); ++it) {
     const HloInstruction* inst = *it;
-    RETURN_IF_ERROR(PropagateConstraintsExact(inst));
+    ABSL_RETURN_IF_ERROR(PropagateConstraintsExact(inst));
   }
   return absl::OkStatus();
 }
@@ -806,8 +912,8 @@ absl::Status ConstraintPropagator::PropagateConstraints(
   auto instructions = computation->MakeInstructionPostOrder();
   for (auto it = instructions.rbegin(); it != instructions.rend(); ++it) {
     const HloInstruction* inst = *it;
-    RETURN_IF_ERROR(PropagateConstraintsExact(inst));
-    RETURN_IF_ERROR(PropagateConstraintsApprox(inst));
+    ABSL_RETURN_IF_ERROR(PropagateConstraintsExact(inst));
+    ABSL_RETURN_IF_ERROR(PropagateConstraintsApprox(inst));
   }
   return absl::OkStatus();
 }
