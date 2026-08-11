@@ -5808,7 +5808,6 @@ cc_library(
         "//xla/hlo/ir:collective_op_group_mode",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:device_id",
-        "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
