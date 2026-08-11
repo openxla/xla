@@ -1079,6 +1079,11 @@ message DebugOptions {
   //   coll.2-done = collective(coll.2-start)
   optional int32 xla_gpu_experimental_parallel_collective_overlap_limit = 336;
 
+  // If enabled, use the fast-interconnect partition size from GpuTopology to
+  // assign the SCALE_UP_FABRIC communication domain to collectives whose every
+  // participant group is contained in one topology partition.
+  optional bool xla_gpu_enable_scale_up_fabric_assignment = 534;
+
   optional PipelineParallelismOptLevel
       xla_gpu_experimental_pipeline_parallelism_opt_level = 351;
 
