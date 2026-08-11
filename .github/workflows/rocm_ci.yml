@@ -112,6 +112,9 @@ jobs:
             --repo_env=ROCM_DISTRO_HASH="baadd54cff7a064b3b0ae51c19606ee4bced0f4215a21c89f616cf9c01ea4b47" \
             --repo_env=SYSROOT_DIST=linux_glibc_2_31 \
             --jobs=20 \
+            --repo_env=TF_ROCM_RBE_POOL="linux_x64_gpu_do_gfx950" \
+            --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="linux_x64_gpu_do_gfx950" \
+            --repo_env=TF_ROCM_RBE_MULTI_GPU_POOL="linux_x64_gpu_do_gfx950" \
             --bes_keywords=xla \
             --bes_keywords=jax \
             --bes_keywords=upstream \
