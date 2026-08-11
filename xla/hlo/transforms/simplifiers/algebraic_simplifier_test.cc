@@ -8451,8 +8451,7 @@ TEST_F(AlgebraicSimplifierTest, BinaryConcatToBroadcast) {
       ROOT concat = f32[2,2,4] concatenate(p,p), dimensions={1}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   AlgebraicSimplifierOptions options = default_options_;
   AlgebraicSimplifier simplifier(options);
