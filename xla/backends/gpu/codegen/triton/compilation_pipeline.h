@@ -29,9 +29,15 @@ void CreateTritonXlaPipeline(
     bool enable_pdl);
 
 // Creates a Triton compilation pipeline.
+//
+// `emulate_tf32_as_bf16x3` corresponds to the
+// `xla_gpu_emulate_tf32_as_bf16x3` debug option. It only has an effect on
+// targets that lack a native XF32 matrix instruction (AMD gfx950); the
+// backend-specific pipeline applies that additional gate.
 void CreateTritonPipeline(mlir::OpPassManager* pm,
                           const stream_executor::GpuComputeCapability& gpu_cc,
-                          int num_warps, int num_ctas, int num_stages);
+                          int num_warps, int num_ctas, int num_stages,
+                          bool emulate_tf32_as_bf16x3 = true);
 
 // Returns the default PTX version for a given CUDA compute capability.
 int GetDefaultPtxVersion(const stream_executor::CudaComputeCapability& cuda_cc);

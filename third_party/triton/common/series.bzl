@@ -54,5 +54,6 @@ common_patch_list = [
     "//third_party/triton:common/llvm_cl959585509.patch",
     "//third_party/triton:common/old_ptxas.patch",
     "//third_party/triton:common/blackwell_nvfp4_mn_major_fallback.patch",
+    "//third_party/triton:common/tf32_bf16x3_gfx950.patch",
     # Add new patches just above this line
 ]
