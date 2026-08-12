@@ -108,6 +108,98 @@ std::string GetKvStoreKey(
                       backend_fingerprint, "_", shard_index);
 }
 
+// Attempts to compile estimated configs in sorted order with fastest first.
+// If only_with_estimates is set, stops at the first config without an
+// estimated runtime. Returns the first compilable config found, or
+// std::nullopt.
+std::optional<CodegenOrchestrator::EstimatedConfig>
+GetFirstCompilableEstimatedConfig(const CodegenOrchestrator& orchestrator,
+                                  const HloInstruction& instr,
+                                  bool only_with_estimates) {
+  absl::StatusOr<std::vector<CodegenOrchestrator::EstimatedConfig>>
+      estimated_configs = orchestrator.GetSupportedConfigsWithEstimates(instr);
+  if (!estimated_configs.ok()) {
+    VLOG(1) << "No estimated configs available: " << estimated_configs.status();
+    return std::nullopt;
+  }
+
+  // Order estimated configs putting configs with estimates first.
+  absl::c_stable_sort(*estimated_configs,
+                      [](const CodegenOrchestrator::EstimatedConfig& a,
+                         const CodegenOrchestrator::EstimatedConfig& b) {
+                        if (a.estimated_runtime.has_value() &&
+                            b.estimated_runtime.has_value()) {
+                          return *a.estimated_runtime < *b.estimated_runtime;
+                        }
+                        return a.estimated_runtime.has_value();
+                      });
+
+  for (CodegenOrchestrator::EstimatedConfig& config : *estimated_configs) {
+    if (only_with_estimates && !config.estimated_runtime.has_value()) {
+      break;
+    }
+
+    if (!orchestrator.Compile(instr, config.config).ok()) {
+      continue;
+    }
+
+    VLOG(1) << "Using compilable config (estimate: "
+            << (config.estimated_runtime.has_value()
+                    ? absl::FormatDuration(*config.estimated_runtime)
+                    : "[none]")
+            << "): " << config.config.ToString();
+    return std::move(config);
+  }
+
+  return std::nullopt;
+}
+
+// Gets the supported configs from the orchestrator and returns the first one
+// that compiles. If none compile, falls back to a default config.
+// If prefer_estimated_configs is set, tries to use the fastest estimated
+// configs first.
+absl::StatusOr<ConfigAssigner::Config> SelectFirstCompilableConfigOrDefault(
+    const CodegenOrchestrator& orchestrator, const HloInstruction& instr,
+    bool prefer_estimated_configs) {
+  if (prefer_estimated_configs) {
+    // Include configs without estimates to avoid duplicated compilations in
+    // case the first good config is a config without estimates.
+    std::optional<CodegenOrchestrator::EstimatedConfig> compilable_config =
+        GetFirstCompilableEstimatedConfig(orchestrator, instr,
+                                          /*only_with_estimates=*/false);
+    if (compilable_config.has_value()) {
+      return std::move(compilable_config->config);
+    }
+  }
+
+  absl::StatusOr<std::vector<ConfigAssigner::Config>> supported_configs =
+      orchestrator.GetSupportedConfigs(instr);
+
+  if (!supported_configs.ok()) {
+    VLOG(1) << "Failed to get supported configs: "
+            << supported_configs.status();
+  } else {
+    for (ConfigAssigner::Config& config : *supported_configs) {
+      if (orchestrator.Compile(instr, config).ok()) {
+        VLOG(1) << "Using compilable config: " << config.ToString();
+        return std::move(config);
+      }
+    }
+  }
+
+  absl::StatusOr<ConfigAssigner::Config> default_config =
+      orchestrator.GetDefaultConfig(instr);
+  if (default_config.ok()) {
+    VLOG(1) << "Using default config: " << default_config->ToString();
+    return default_config;
+  }
+
+  VLOG(1) << "Failed to get default config: " << default_config.status();
+  return absl::InternalError(absl::StrCat(
+      "No supported config found for HLO: ", instr.ToString(),
+      "; Default config status: ", default_config.status().ToString()));
+}
+
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<ConfigAssigner>> ConfigAssigner::Create(
@@ -310,34 +402,21 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
     return s;
   }
 
-  // TODO (b/446870267): Improve the cache fallback logic as we move to offline
-  // autotuning.
+  // Autotuning disabled, pick the first config that compiles
   if (options_.select_first_config) {
-    absl::StatusOr<std::vector<Config>> supported_configs =
-        orchestrator_->GetSupportedConfigs(*instr);
+    return SelectFirstCompilableConfigOrDefault(
+        *orchestrator_, *instr, options_.prefer_estimated_configs);
+  }
 
-    if (supported_configs.ok()) {
-      for (Config& config : *supported_configs) {
-        auto executable = orchestrator_->Compile(*instr, config);
-        if (executable.ok()) {
-          VLOG(1) << "Using first compilable config: " << config.ToString();
-          return std::move(config);
-        }
-      }
+  // Autotuning enabled but we prefer estimated configs if they are available
+  if (options_.prefer_estimated_configs) {
+    std::optional<CodegenOrchestrator::EstimatedConfig> compilable_config =
+        GetFirstCompilableEstimatedConfig(*orchestrator_, *instr,
+                                          /*only_with_estimates=*/true);
+    if (compilable_config.has_value()) {
+      ABSL_RETURN_IF_ERROR(Insert(instr, compilable_config->config));
+      return std::move(compilable_config->config);
     }
-
-    absl::StatusOr<Config> default_config =
-        orchestrator_->GetDefaultConfig(*instr);
-    if (default_config.ok()) {
-      VLOG(1) << "Using default config: " << default_config->ToString();
-      return default_config;
-    }
-
-    VLOG(1) << "Failed to get default config: " << default_config.status();
-    return absl::InternalError(absl::StrCat(
-        "No supported config found for HLO: ", instr->ToString(),
-        ". Supported configs status: ", supported_configs.status().ToString(),
-        "; Default config status: ", default_config.status().ToString()));
   }
 
   TF_RET_CHECK(autotuner_ != nullptr)
@@ -350,7 +429,6 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
         return std::move(config);
       });
 }
-
 
 std::optional<ConfigAssigner::Config> ConfigAssigner::LookUp(
     const HloInstruction* instr) const {
@@ -446,18 +524,17 @@ absl::Status ConfigAssigner::DumpHlo(const HloInstruction& instr,
   return absl::OkStatus();
 }
 
-
-
 std::string ConfigAssigner::Options::ToString() const {
   return absl::StrFormat(
       R"json({
   "expect_all_instructions_in_cache": %v,
   "select_first_config": %v,
+  "prefer_estimated_configs": %v,
   "dump_hlos": %v,
   "use_new_cache_format": %v
 })json",
-      expect_all_instructions_in_cache, select_first_config, dump_hlos,
-      use_new_cache_format);
+      expect_all_instructions_in_cache, select_first_config,
+      prefer_estimated_configs, dump_hlos, use_new_cache_format);
 }
 
 AutotunerCacheInterface::CacheStats ConfigAssigner::GetCacheStats() const {
