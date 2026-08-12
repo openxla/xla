@@ -174,8 +174,10 @@ TEST(StreamExecutorGpuClientTest, ResultsHaveIndividualDefinitionEvents) {
                        GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   ASSERT_OK_AND_ASSIGN(auto input, CreateDeviceBufferForTest(client.get()));
   ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kProgram, *client));
+  ExecuteOptions options;
+  options.individually_defined_output_indices = {0, 1};
   ASSERT_OK_AND_ASSIGN(auto results,
-                       executable->Execute({{input.get()}}, ExecuteOptions()));
+                       executable->Execute({{input.get()}}, options));
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 2);
 
@@ -216,8 +218,10 @@ TEST(StreamExecutorGpuClientTest, AsyncResultDefinitionEventUsesAsyncStream) {
   ASSERT_OK_AND_ASSIGN(
       auto executable,
       CompileExecutable(kProgram, *client, std::move(compile_options)));
+  ExecuteOptions options;
+  options.individually_defined_output_indices = {0};
   ASSERT_OK_AND_ASSIGN(auto results,
-                       executable->Execute({{input.get()}}, ExecuteOptions()));
+                       executable->Execute({{input.get()}}, options));
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 1);
 

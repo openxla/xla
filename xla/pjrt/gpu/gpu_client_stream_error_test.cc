@@ -134,6 +134,7 @@ TEST_P(PjRtGpuClientStreamErrorTest, AbortsOnStreamError) {
   TF_ASSERT_OK(context.ffi_context().Emplace<KernelHolder>());
   ExecuteOptions opts;
   opts.context = &context;
+  opts.individually_defined_output_indices = {0};
   using PjrtExecuteResult = std::vector<std::unique_ptr<PjRtBuffer>>;
   using PjrtExecuteAllResults = std::vector<PjrtExecuteResult>;
   absl::StatusOr<PjrtExecuteAllResults> async_result =

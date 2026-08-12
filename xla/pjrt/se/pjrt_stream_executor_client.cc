@@ -1478,15 +1478,19 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     gpu_run_options->set_incarnations(std::move(device_incarnations));
   }
 
-  std::vector<PjRtDeviceEventPromiseRef> result_definition_event_promises;
-  std::vector<PjRtDeviceEventRef> result_definition_events;
-  result_definition_event_promises.reserve(results.size());
-  result_definition_events.reserve(results.size());
-  for (size_t i = 0; i < results.size(); ++i) {
+  std::vector<PjRtDeviceEventPromiseRef> result_definition_event_promises(
+      results.size());
+  std::vector<PjRtDeviceEventRef> result_definition_events(results.size());
+  for (int result_index : options.individually_defined_output_indices) {
+    if (result_index < 0 ||
+        static_cast<uint64_t>(result_index) >= results.size()) {
+      continue;
+    }
     auto promise = tsl::MakeRef<PjRtStreamExecutorDeviceEventPromise>(
         raw_client_, device_state, raw_client_->async_work_runner());
-    result_definition_events.push_back(promise->event().CopyRef());
-    result_definition_event_promises.emplace_back(std::move(promise));
+    result_definition_events[result_index] = promise->event().CopyRef();
+    result_definition_event_promises[result_index] =
+        PjRtDeviceEventPromiseRef(std::move(promise));
   }
 
   auto launch_on_device =

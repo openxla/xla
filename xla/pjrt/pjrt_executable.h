@@ -299,6 +299,10 @@ struct ExecuteOptions {
   // specific input buffers.
   absl::flat_hash_set<int> non_donatable_input_indices;
 
+  // Flattened output indices that should use individual definition events when
+  // supported. Other outputs use the primary execute event.
+  absl::flat_hash_set<int> individually_defined_output_indices;
+
   // Execution stream ID identifies the series of executions that must be
   // executed in program order.  Executions with different execution stream IDs
   // may be executed in any order and concurrently.

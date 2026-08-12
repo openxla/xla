@@ -3287,6 +3287,7 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     std::optional<std::vector<PJRT_Event*>>& device_complete_events,
     SendRecvCallbackData& callback_data,
     std::vector<int64_t>& non_donatable_input_indices_storage,
+    std::vector<int64_t>& individually_defined_output_indices_storage,
     std::vector<int>& task_ids_storage,
     std::vector<int64_t>& incarnation_ids_storage) const {
   bool using_host_callbacks =
@@ -3313,6 +3314,15 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
       options.non_donatable_input_indices.size();
   args.options->non_donatable_input_indices =
       non_donatable_input_indices_storage.data();
+  if (pjrt_c_api()->pjrt_api_version.minor_version >= 115) {
+    individually_defined_output_indices_storage.assign(
+        options.individually_defined_output_indices.begin(),
+        options.individually_defined_output_indices.end());
+    args.options->individually_defined_output_indices =
+        individually_defined_output_indices_storage.data();
+    args.options->num_individually_defined_output_indices =
+        individually_defined_output_indices_storage.size();
+  }
   args.num_devices = argument_handles.size();
   if (pjrt_c_api()->pjrt_api_version.minor_version >= 76) {
     args.options->call_location = options.call_location.c_str();
@@ -3429,6 +3439,7 @@ PjRtCApiLoadedExecutable::Execute(
 
   std::vector<std::vector<PJRT_Buffer*>> c_argument_lists_storage;
   std::vector<int64_t> non_donatable_input_indices_storage;
+  std::vector<int64_t> individually_defined_output_indices_storage;
   std::vector<int> task_ids_storage;
   std::vector<int64_t> incarnation_ids_storage;
   std::vector<PJRT_Buffer**> c_arguments;
@@ -3460,6 +3471,7 @@ PjRtCApiLoadedExecutable::Execute(
                            c_argument_lists_storage, c_arguments,
                            device_complete_events, *callback_data,
                            non_donatable_input_indices_storage,
+                           individually_defined_output_indices_storage,
                            task_ids_storage, incarnation_ids_storage));
 
   // Allocates memory for output. `c_output_lists_storage` and `c_output_lists`
@@ -3524,6 +3536,7 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
 
   std::vector<std::vector<PJRT_Buffer*>> c_argument_lists_storage;
   std::vector<int64_t> non_donatable_input_indices_storage;
+  std::vector<int64_t> individually_defined_output_indices_storage;
   std::vector<int> task_ids_storage;
   std::vector<int64_t> incarnation_ids_storage;
   std::vector<PJRT_Buffer**> c_arguments;
@@ -3541,6 +3554,7 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
                            c_argument_lists_storage, c_arguments,
                            device_complete_events, *callback_data,
                            non_donatable_input_indices_storage,
+                           individually_defined_output_indices_storage,
                            task_ids_storage, incarnation_ids_storage));
 
   // Allocates memory for output. `c_output_lists_storage` and `c_output_lists`

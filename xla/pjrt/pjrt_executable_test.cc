@@ -81,6 +81,7 @@ TEST(ExecuteOptionsTest, Serialization) {
   src.strict_shape_checking = true;
   src.execution_mode = ExecuteOptions::ExecutionMode::kAsynchronous;
   src.non_donatable_input_indices = {2, 3};
+  src.individually_defined_output_indices = {0, 4};
   src.call_location = "foo:1";
   src.seed = 1234;
 
@@ -90,6 +91,8 @@ TEST(ExecuteOptionsTest, Serialization) {
   TF_ASSERT_OK_AND_ASSIGN(ExecuteOptionsProto output_proto, src.ToProto());
 
   EXPECT_EQ(proto.SerializeAsString(), output_proto.SerializeAsString());
+  EXPECT_EQ(src.individually_defined_output_indices,
+            output.individually_defined_output_indices);
 }
 
 TEST(ExecuteOptionsTest, SendRecvNotSupported) {

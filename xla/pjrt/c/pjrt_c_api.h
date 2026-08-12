@@ -118,7 +118,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 114
+#define PJRT_API_MINOR 115
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -2045,8 +2045,14 @@ struct PJRT_ExecuteOptions {
   // replicas and partitions, so this is a flat span. Must outlive execution.
   PJRT_HloOutputCallbackInfo* hlo_output_callbacks;
   size_t num_hlo_output_callbacks;
+  // Flattened output indices that should use individual definition events when
+  // supported. Other outputs use the primary execute event. The caller must
+  // keep this list alive for the duration of the call.
+  const int64_t* individually_defined_output_indices;
+  size_t num_individually_defined_output_indices;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, num_hlo_output_callbacks);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions,
+                          num_individually_defined_output_indices);
 
 struct PJRT_LoadedExecutable_Execute_Args {
   size_t struct_size;

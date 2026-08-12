@@ -2310,7 +2310,9 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
   auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
     const gpu::GpuExecutable::OutputInfo& output_info =
         gpu_exec->output_info().at(index);
-    result_indices_by_allocation[output_info.allocation_index].push_back(i);
+    if (result_definition_event_promises[i]) {
+      result_indices_by_allocation[output_info.allocation_index].push_back(i);
+    }
 
     const BufferAllocation* allocation =
         allocations[output_info.allocation_index];
@@ -2436,9 +2438,12 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
     return absl::OkStatus();
   };
 
-  ABSL_ASSIGN_OR_RETURN(auto definition_tracker,
-                        gpu::InstallDefinitionTracker(
-                            gpu_exec->definition_plan(), definition_callback));
+  std::optional<gpu::ThunkExecutor::ScopedDefinitionTracker> definition_tracker;
+  if (!result_indices_by_allocation.empty()) {
+    ABSL_ASSIGN_OR_RETURN(definition_tracker, gpu::InstallDefinitionTracker(
+                                                  gpu_exec->definition_plan(),
+                                                  definition_callback));
+  }
 
   absl::Status execute_status = allocation_scope->ExecuteWithBufferAllocations(
       buffer_allocations, device_ordinal,

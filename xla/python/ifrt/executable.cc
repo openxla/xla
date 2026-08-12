@@ -46,6 +46,9 @@ absl::Status ExecuteOptions::ToProto(ExecuteOptionsProto& proto,
   proto.set_launch_id(launch_id);
   proto.mutable_non_donatable_input_indices()->Add(
       non_donatable_input_indices.begin(), non_donatable_input_indices.end());
+  proto.mutable_individually_defined_output_indices()->Add(
+      individually_defined_output_indices.begin(),
+      individually_defined_output_indices.end());
   proto.set_fill_status(fill_status);
   proto.set_execution_stream_id(execution_stream_id);
   if (custom_options.has_value()) {
@@ -68,6 +71,9 @@ absl::StatusOr<ExecuteOptions> ExecuteOptions::FromProto(
   options.non_donatable_input_indices.insert(
       proto.non_donatable_input_indices().begin(),
       proto.non_donatable_input_indices().end());
+  options.individually_defined_output_indices.insert(
+      proto.individually_defined_output_indices().begin(),
+      proto.individually_defined_output_indices().end());
   options.fill_status = proto.fill_status();
   options.execution_stream_id = proto.execution_stream_id();
   if (proto.has_custom_options()) {

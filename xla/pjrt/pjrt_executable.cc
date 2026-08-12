@@ -202,6 +202,9 @@ absl::StatusOr<ExecuteOptionsProto> ExecuteOptions::ToProto() const {
 
   proto.mutable_non_donatable_input_indices()->Add(
       non_donatable_input_indices.begin(), non_donatable_input_indices.end());
+  proto.mutable_individually_defined_output_indices()->Add(
+      individually_defined_output_indices.begin(),
+      individually_defined_output_indices.end());
 
   if (execution_profile != nullptr) {
     return absl::UnimplementedError(
@@ -242,6 +245,9 @@ absl::StatusOr<ExecuteOptions> ExecuteOptions::FromProto(
   options.non_donatable_input_indices.insert(
       proto.non_donatable_input_indices().begin(),
       proto.non_donatable_input_indices().end());
+  options.individually_defined_output_indices.insert(
+      proto.individually_defined_output_indices().begin(),
+      proto.individually_defined_output_indices().end());
   options.seed = proto.seed();
   options.use_output_arena = proto.use_output_arena();
 
