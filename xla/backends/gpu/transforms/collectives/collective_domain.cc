@@ -85,6 +85,11 @@ JoinCollectiveCommunicationDomains(CollectiveCommunicationDomain lhs,
 }
 
 bool SupportsCollectiveCommunicationDomain(const HloInstruction& instruction) {
+  const HloInstruction& canonical = CanonicalAsyncStart(instruction);
+  if (&canonical != &instruction) {
+    return SupportsCollectiveCommunicationDomain(canonical);
+  }
+
   if (hlo_query::IsCollectiveCommunicationOp(instruction.opcode()) ||
       hlo_query::IsAsyncCollectiveDoneOp(&instruction)) {
     return true;

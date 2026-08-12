@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
 #include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -53,35 +52,12 @@ ParseDomainsToAssign(absl::string_view value) {
        absl::StrSplit(value, ',', absl::SkipWhitespace())) {
     domain_name = absl::StripAsciiWhitespace(domain_name);
     ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                     ParseCollectiveCommunicationDomain(domain_name));
+                          ParseCollectiveCommunicationDomain(domain_name));
     if (domain != kUnspecifiedCollectiveDomain) {
       domains.insert(domain);
     }
   }
   return domains;
-}
-
-absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>>
-GetCollectiveParticipantGroups(const HloInstruction& collective,
-                               const DeviceAssignment& device_assignment) {
-  ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(&collective));
-
-  if (HloPredicateIsOp<HloOpcode::kCollectivePermute,
-                       HloOpcode::kCollectivePermuteStart>(&collective)) {
-    std::vector<ReplicaGroup> source_target_groups;
-    source_target_groups.reserve(collective.source_target_pairs().size());
-    for (const auto& [source, target] : collective.source_target_pairs()) {
-      ReplicaGroup& group = source_target_groups.emplace_back();
-      group.add_replica_ids(source);
-      group.add_replica_ids(target);
-    }
-    return GetParticipatingDevicesGroups(device_assignment,
-                                         source_target_groups, group_mode);
-  }
-
-  return GetParticipatingDevicesGroups(device_assignment,
-                                       collective.replica_groups(), group_mode);
 }
 
 bool IsWithinScaleUpFabricDomain(absl::Span<const GlobalDeviceId> group,
@@ -119,13 +95,15 @@ absl::StatusOr<bool> IsScaleUpFabricCollective(
     const HloInstruction& collective, const DeviceAssignment& device_assignment,
     int32_t scale_up_fabric_size) {
   ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain current_domain,
-                   GetCollectiveCommunicationDomain(collective));
+                        GetCollectiveCommunicationDomain(collective));
   if (current_domain != kUnspecifiedCollectiveDomain) {
     return current_domain == kScaleUpFabricCollectiveDomain;
   }
-  ABSL_ASSIGN_OR_RETURN(auto participant_groups, GetCollectiveParticipantGroups(
-                                                collective, device_assignment));
-  return IsWithinScaleUpFabricDomain(participant_groups, scale_up_fabric_size);
+  ABSL_ASSIGN_OR_RETURN(
+      auto participating_device_groups,
+      GetParticipatingDevicesGroups(collective, device_assignment));
+  return IsWithinScaleUpFabricDomain(participating_device_groups,
+                                     scale_up_fabric_size);
 }
 
 absl::StatusOr<bool> IsScaleUpFabricEligible(
@@ -143,8 +121,8 @@ absl::StatusOr<bool> IsScaleUpFabricEligible(
     }
     has_collective = true;
     ABSL_ASSIGN_OR_RETURN(bool is_scale_up,
-                     IsScaleUpFabricCollective(*member, device_assignment,
-                                               scale_up_fabric_size));
+                          IsScaleUpFabricCollective(*member, device_assignment,
+                                                    scale_up_fabric_size));
     if (!is_scale_up) {
       return false;
     }
@@ -156,20 +134,20 @@ absl::StatusOr<bool> AssignDomain(HloInstruction& instruction,
                                   const DeviceAssignment& device_assignment,
                                   int32_t scale_up_fabric_size) {
   ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain current_domain,
-                   GetCollectiveCommunicationDomain(instruction));
+                        GetCollectiveCommunicationDomain(instruction));
   if (current_domain != kUnspecifiedCollectiveDomain) {
     return false;
   }
 
   ABSL_ASSIGN_OR_RETURN(bool is_eligible,
-                   IsScaleUpFabricEligible(instruction, device_assignment,
-                                           scale_up_fabric_size));
+                        IsScaleUpFabricEligible(instruction, device_assignment,
+                                                scale_up_fabric_size));
   if (!is_eligible) {
     return false;
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   config.mutable_collective_backend_config()->set_communication_domain(
       kScaleUpFabricCollectiveDomain);
   ABSL_RETURN_IF_ERROR(instruction.set_backend_config(config));
@@ -197,7 +175,7 @@ absl::StatusOr<bool> CollectiveDomainAssigner::RunImpl(
   absl::string_view domain_assignment =
       config.debug_options().xla_gpu_collective_domain_assignment();
   ABSL_ASSIGN_OR_RETURN(auto domains_to_assign,
-                   ParseDomainsToAssign(domain_assignment));
+                        ParseDomainsToAssign(domain_assignment));
   if (!domains_to_assign.contains(kScaleUpFabricCollectiveDomain)) {
     return false;
   }
