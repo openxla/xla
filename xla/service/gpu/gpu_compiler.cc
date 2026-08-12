@@ -141,6 +141,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/scalar_constant_sinker.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
 #include "xla/backends/gpu/transforms/scan_rewriter.h"
+#include "xla/backends/gpu/transforms/scan_rewriter_triton.h"
 #include "xla/backends/gpu/transforms/scatter_determinism_expander.h"
 #include "xla/backends/gpu/transforms/scatter_expander.h"
 #include "xla/backends/gpu/transforms/scatter_slice_simplifier.h"
@@ -774,7 +775,7 @@ absl::Status RunOptimizationPasses(
     const GpuTargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
     bool is_deviceless, bool is_early_exit_with_layouts,
-    CompilationStats* compilation_stats) {
+    mlir::MLIRContext* mlir_context, CompilationStats* compilation_stats) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   se::GpuComputeCapability gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
@@ -901,8 +902,14 @@ absl::Status RunOptimizationPasses(
   // so sharded scans are partitioned as scans (the partitioner replicates
   // unknown custom calls, and the CUB call's tuple result crashes the Shardy
   // sharding import). The scans that remain fall through to
-  // AssociativeScanRewriter and ScanExpander below.
+  // ScanRewriterTriton, AssociativeScanRewriter, and ScanExpander below.
   pipeline.AddPass<ScanRewriter>();
+
+  if (IsTritonEnabled(gpu_version)) {
+    pipeline.AddPass<ScanRewriterTriton>(gpu_target_config.device_description,
+                                         compiler.ShapeSizeBytesFunction(),
+                                         mlir_context);
+  }
 
   int64_t rw_length = debug_options.xla_reduce_window_rewrite_base_length();
   pipeline.AddPass<HloPassFix<AssociativeScanRewriter>>(rw_length);
@@ -1892,7 +1899,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
       *this, hlo_module, gpu_topology.gpu_target_config(),
       layout_insensitive_algsimp_opts,
       /*is_deviceless=*/stream_exec == nullptr, options.early_exit_with_layouts,
-      compilation_stats));
+      mlir_context, compilation_stats));
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
   ABSL_RETURN_IF_ERROR(RunCollectiveOptimizationPasses(
