@@ -41,7 +41,11 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/executable_run_options.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -134,8 +138,8 @@ static absl::Status InitializeInputBuffer(GpuInputBuffers& gpu_buffers,
   }
 
   se::DeviceAddressBase buffer = rz_buffers.input_buffers()[buffer_index];
-  ABSL_RETURN_IF_ERROR(stream->Memcpy(const_cast<se::DeviceAddressBase*>(&buffer),
-                                 values, size_bytes));
+  ABSL_RETURN_IF_ERROR(stream->Memcpy(
+      const_cast<se::DeviceAddressBase*>(&buffer), values, size_bytes));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
   return absl::OkStatus();
@@ -151,12 +155,63 @@ static absl::Status InitializeBuffersIfRequiredByOpcode(
     return absl::OkStatus();
   }
 
+  // Handle kFusion with kRaggedDot (kRaggedContracting autotuning).
+  // The kernel reads GS via function argument 2 (= ENTRY parameter(2) =
+  // input buffer 2). RunHloPasses replaces the FUSION's operand(2) with a
+  // balanced constant in the ENTRY computation, but the KERNEL still reads
+  // from arg[2]. Initialize buffer 2 with balanced GS values so the kernel
+  // computes correct start_m and m_loop_count instead of using random data.
+  if (instr->opcode() == HloOpcode::kFusion && instr->operand_count() >= 3) {
+    const HloComputation* fc = instr->fused_instructions_computation();
+    bool found_ragged_dot = false;
+    for (const HloInstruction* fi : fc->instructions()) {
+      if (fi->opcode() != HloOpcode::kRaggedDot) continue;
+      const auto* ragged_dot = Cast<HloRaggedDotInstruction>(fi);
+      // Verify that the ragged dot's group_sizes operand is parameter(2),
+      // so the mapping inner-operand(2) → outer-fusion-operand(2) holds.
+      const HloInstruction* gs_param = ragged_dot->operand(2);
+      CHECK(gs_param->opcode() == HloOpcode::kParameter &&
+            gs_param->parameter_number() == 2)
+          << "Expected group_sizes to be parameter(2), got "
+          << gs_param->ToString();
+      const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
+      const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+      const int64_t M_total =
+          ragged_dot->operand(0)->shape().dimensions(lhs_ragged_dim);
+      const Shape& gs_shape = instr->operand(2)->shape();
+      const int64_t G = gs_shape.dimensions(0);
+      if (G == 0) break;
+      const int64_t q = M_total / G;
+      const int64_t r = M_total % G;
+      if (gs_shape.element_type() == S32) {
+        std::vector<int32_t> gs_vals(G);
+        for (int64_t i = 0; i < G; ++i)
+          gs_vals[i] = static_cast<int32_t>(i < r ? q + 1 : q);
+        ABSL_RETURN_IF_ERROR(InitializeInputBuffer(
+            gpu_buffers, stream,
+            /*buffer_index=*/2, gs_vals.data(), G * sizeof(int32_t)));
+      } else {
+        std::vector<int64_t> gs_vals(G);
+        for (int64_t i = 0; i < G; ++i) gs_vals[i] = i < r ? q + 1 : q;
+        ABSL_RETURN_IF_ERROR(InitializeInputBuffer(
+            gpu_buffers, stream,
+            /*buffer_index=*/2, gs_vals.data(), G * sizeof(int64_t)));
+      }
+      LOG(INFO) << "GpuProfiler: initialized GS input buffer (arg[2]) with"
+                << " balanced values [q=" << q << ",r=" << r << ",G=" << G
+                << ",M_total=" << M_total << "]";
+      found_ragged_dot = true;
+      break;
+    }
+    if (found_ragged_dot) return absl::OkStatus();
+  }
+
   // Handle group-gemm operations
   if (instr->opcode() == HloOpcode::kCustomCall &&
       instr->custom_call_target() == "__cublas$lt$groupedMatmul") {
     // Get the backend config to extract ragged dimension information
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     instr->backend_config<GpuBackendConfig>());
+                          instr->backend_config<GpuBackendConfig>());
     const GroupedGemmBackendConfig& grouped_config =
         gpu_config.grouped_gemm_backend_config();
     const RaggedDotDimensionNumbers& ragged_dims =
@@ -306,12 +361,12 @@ absl::StatusOr<ProfileResult> GpuProfiler::Profile(
         CreateExecutionInputsFromBuffers(rz_buffers.input_buffers(),
                                          rz_buffers.input_shapes());
     ABSL_RETURN_IF_ERROR(Execute(executable, std::move(execution_inputs),
-                            /*profile=*/nullptr, warmup_alloc)
-                        .status());
+                                 /*profile=*/nullptr, warmup_alloc)
+                             .status());
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
     if (warmup_rz.has_value()) {
       ABSL_ASSIGN_OR_RETURN(se::RedzoneAllocator::RedzoneCheckStatus rz_check,
-                       warmup_rz->CheckRedzones());
+                            warmup_rz->CheckRedzones());
       if (!rz_check.ok()) {
         std::string redzone_failure_msg = rz_check.RedzoneFailureMsg();
         VLOG(1) << "Autotuning candidate discarded: out-of-bounds write "
@@ -366,8 +421,9 @@ absl::Status GpuProfiler::CheckInputBuffers(InputBuffers& buffers) {
   const GpuInputBuffers& gpu_buffers =
       absl::down_cast<const GpuInputBuffers&>(buffers);
   const RedzoneBuffers& rz_buffers = gpu_buffers.redzone_buffers;
-  ABSL_ASSIGN_OR_RETURN(se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
-                   rz_buffers.RedzoneAllocator().CheckRedzones());
+  ABSL_ASSIGN_OR_RETURN(
+      se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
+      rz_buffers.RedzoneAllocator().CheckRedzones());
   if (rz_check_status.ok()) {
     return absl::OkStatus();
   }
@@ -385,9 +441,10 @@ absl::Status GpuProfiler::CheckOutputBuffer(ScopedShapedBuffer& output,
         BufferComparator comparator(subshape, rtol,
                                     /*verbose=*/false);
 
-        ABSL_ASSIGN_OR_RETURN(bool outputs_match,
-                         comparator.CompareEqual(stream_, output.buffer(index),
-                                                 reference.buffer(index)));
+        ABSL_ASSIGN_OR_RETURN(
+            bool outputs_match,
+            comparator.CompareEqual(stream_, output.buffer(index),
+                                    reference.buffer(index)));
         if (outputs_match) {
           return absl::OkStatus();
         }
