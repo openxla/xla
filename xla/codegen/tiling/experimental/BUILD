@@ -30,6 +30,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/codegen/tiling:constraint_expression",
         "//xla/codegen/tiling:tiling_util",
         "//xla/hlo/analysis:indexing_analysis",
