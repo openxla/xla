@@ -66,9 +66,9 @@ absl::StatusOr<bool> AllReduceSimplifier::RunImpl(
     int64_t num_devices = config.num_partitions();
     int64_t num_replicas = config.replica_count();
     ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> participant_counts,
-                     GetPariticipantCountsForReplicaGroups(
-                         num_replicas, num_devices,
-                         all_reduce->replica_groups(), group_mode));
+                          GetParticipantCountsForReplicaGroups(
+                              num_replicas, num_devices,
+                              all_reduce->replica_groups(), group_mode));
     if (participant_counts.empty()) {
       return -1;
     }
@@ -144,7 +144,7 @@ absl::StatusOr<bool> AllReduceSimplifier::RunImpl(
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(int64_t group_size,
-                       get_participant_counts_for_replica_group(inst));
+                            get_participant_counts_for_replica_group(inst));
 
       // We will not simplify this all reduce if any of the following is true:
       // 1. All group do not have the same size.
