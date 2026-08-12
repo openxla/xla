@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/codegen/tiling/constraint_expression.h"
 #include "xla/codegen/tiling/experimental/tile.h"
 #include "xla/codegen/tiling/experimental/tiling_space_utils.h"
-#include "xla/codegen/tiling/tiling_util.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -105,15 +104,12 @@ void TilingSpace::AppendDimension(const HloInstruction* hlo,
 }
 
 void TilingSpace::AppendRTVar(const HloInstruction* hlo, int64_t operand_id,
-                              const HloInstruction* rt_var, int64_t upper_bound,
-                              std::optional<int64_t> sequential_dim_id,
-                              bool is_prefix_sum) {
+                              const HloInstruction* rt_var,
+                              int64_t upper_bound) {
   rt_vars_.push_back(RTVarInfo{
       static_cast<int64_t>(rt_vars_.size()),
       Interval{0, upper_bound},
       rt_var,
-      sequential_dim_id,
-      is_prefix_sum,
   });
   hlo_to_rt_var_[std::make_pair(hlo, operand_id)] = &rt_vars_.back();
 }
@@ -194,9 +190,11 @@ void TilingSpace::ProcessReduce(const HloInstruction& hlo) {
 //
 //   RTVar (ragged_dot, 2):  group_size[g]
 //     Bounds the M sequential loop for each group.
-//   RTVar (ragged_dot, -1): start_m[g]   (prefix sum, is_prefix_sum=true)
+//   RTVar (ragged_dot, -1): start_m[g]   (absolute M offset / prefix sum)
 //     Provides the absolute M offset.  G is kParallel so no loop-carried
-//     last_m.
+//     last_m.  How each of these RTVars is materialized at emit time (a
+//     per-iteration load vs. an explicit prefix-sum loop) is decided by the
+//     emitter based on the ragged-dot variant; see EmitRaggedDot.
 void TilingSpace::ProcessRaggedDot(const HloInstruction& hlo) {
   const auto* ragged_dot = Cast<HloRaggedDotInstruction>(&hlo);
   const RaggedDotDimensionNumbers& ragged_dims =
@@ -239,7 +237,6 @@ void TilingSpace::ProcessRaggedDot(const HloInstruction& hlo) {
         hlo.operand(1)->shape().dimensions(ragged_dims.rhs_group_dimensions(0));
     AppendDimension(&hlo, /*dim_position=*/output_rank, G,
                     DimensionSemantics::kSequential);
-    const int64_t g_sequential_dim_id = dimensions_.back().id.value();
 
     // Register K contracting dimension(s) as kSequential (dim_position =
     // output_rank + 1 + i).
@@ -253,31 +250,33 @@ void TilingSpace::ProcessRaggedDot(const HloInstruction& hlo) {
 
     // group_size[g]: array RTVar — at emit time load group_sizes[g_loop_iv].
     // The emitter uses this to mask the M dimension: offs_m < group_size_g.
-    // last_m is NOT registered here; it is a loop-carried iter_arg.
+    // last_m is NOT registered here; it is a loop-carried iter_arg maintained
+    // by the emitter (see EmitRaggedDot, kRaggedNonContracting).
     AppendRTVar(&hlo, /*operand_id=*/2, group_sizes_hlo,
-                /*upper_bound=*/M_total,
-                /*sequential_dim_id=*/g_sequential_dim_id,
-                /*is_prefix_sum=*/false);
-
-  } else {
-    // kRaggedContracting: G is kParallel (output dim 0, from grid).
-    // Grid = G × K × N.
-    // M sequential (inner accumulation); start_m computed as prefix sum.
-    AppendDimension(&hlo, /*dim_position=*/output_rank, M_total,
-                    DimensionSemantics::kSequential);
-
-    // group_size[g]: RTVar bounding the M sequential loop per group.
-    AppendRTVar(&hlo, /*operand_id=*/2, group_sizes_hlo,
-                /*upper_bound=*/M_total,
-                /*sequential_dim_id=*/std::nullopt,
-                /*is_prefix_sum=*/false);
-
-    // start_m[g]: prefix-sum RTVar for the absolute M offset.
-    AppendRTVar(&hlo, /*operand_id=*/-1, group_sizes_hlo,
-                /*upper_bound=*/M_total,
-                /*sequential_dim_id=*/std::nullopt,
-                /*is_prefix_sum=*/true);
+                /*upper_bound=*/M_total);
+    return;
   }
+
+  // kRaggedContracting: G is kParallel (output dim 0, from grid).
+  // Grid = G × K × N.
+  // M sequential (inner accumulation); start_m computed as prefix sum.
+  AppendDimension(&hlo, /*dim_position=*/output_rank, M_total,
+                  DimensionSemantics::kSequential);
+
+  // group_size[g]: RTVar bounding the M sequential loop per group.
+  // Keyed at operand_id=2.  Materialized by the emitter as a load of
+  // group_sizes[g] (see EmitRaggedDot, kRaggedContracting).
+  AppendRTVar(&hlo, /*operand_id=*/2, group_sizes_hlo,
+              /*upper_bound=*/M_total);
+
+  // start_m[g]: absolute M offset for the group.  Keyed at the sentinel
+  // operand_id=-1 to distinguish it from the group_size RTVar above (both
+  // reference the same group_sizes hlo).  Materialized by the emitter as an
+  // explicit prefix sum over group_sizes[0..g-1] (see EmitRaggedDot,
+  // kRaggedContracting), since G is kParallel and there is no loop-carried
+  // last_m to accumulate it.
+  AppendRTVar(&hlo, /*operand_id=*/-1, group_sizes_hlo,
+              /*upper_bound=*/M_total);
 }
 
 // Ensure scan dimensions are not tiled across CTAs.
@@ -433,6 +432,21 @@ absl::Status TilingSpace::AssignTileSizes(
   return absl::OkStatus();
 }
 
+namespace {
+
+bool AreShapeSizesEqual(absl::Span<const HloInstructionAdaptor> roots) {
+  if (roots.empty()) {
+    return true;
+  }
+  Shape::Equal eq = Shape::Equal().IgnoreElementType();
+  return absl::c_all_of(roots.subspan(1),
+                        [&](const HloInstructionAdaptor& root) {
+                          return eq(roots[0].shape(), root.shape());
+                        });
+}
+
+}  // namespace
+
 absl::Status TilingSpace::InitializeDimensions(
     absl::Span<const HloInstructionAdaptor> roots) {
   TF_RET_CHECK(dimensions_.empty()) << "Already initialized.";
@@ -455,13 +469,11 @@ absl::Status TilingSpace::InitializeDimensions(
   return absl::OkStatus();
 }
 
-absl::Status TilingSpace::InitializeDimensionsForSameShapeMultiOutputFusion(
+absl::Status TilingSpace::InitializeDimensionsForSimpleMultiOutputFusion(
     absl::Span<const HloInstructionAdaptor> roots) {
   TF_RET_CHECK(dimensions_.empty()) << "Already initialized.";
   TF_RET_CHECK(!roots.empty()) << "Roots cannot be empty.";
-  TF_RET_CHECK(
-      IsSameShapeMultiOutputFusion(roots, Shape::Equal().IgnoreElementType()))
-      << "Roots have different shapes.";
+  TF_RET_CHECK(AreShapeSizesEqual(roots)) << "Roots have different shapes.";
 
   // This handles the specific case where all roots of a multi-output fusion
   // share the same shape (ignoring element type). We assume we can reuse the
@@ -471,19 +483,30 @@ absl::Status TilingSpace::InitializeDimensionsForSameShapeMultiOutputFusion(
   const HloInstructionAdaptor& first_root = roots[0];
   absl::Span<const HloInstructionAdaptor> rest_roots = roots.subspan(1);
 
-  ABSL_RETURN_IF_ERROR(InitializeDimensions({first_root}));
+  const Shape& first_shape = GetFirstShape(&first_root.instruction());
+  for (auto [index, dim] : llvm::enumerate(first_shape.dimensions())) {
+    AppendDimension(&first_root.instruction(), index, dim,
+                    DimensionSemantics::kParallel);
+  }
 
   // Propagate the dimensions from the first root to the rest of the roots.
-  // We can reuse first roots' `dims` because all roots have the same shape.
-  absl::Span<const int64_t> dims =
-      GetFirstShape(&first_root.instruction()).dimensions();
+  for (const HloInstructionAdaptor& root : rest_roots) {
+    if (&root.instruction() == &first_root.instruction()) {
+      // We may see the same instruction in multiple roots, but we only need
+      // to process each instruction once.
+      continue;
+    }
 
-  for (auto [index, dim] : llvm::enumerate(dims)) {
-    const DimensionInfo& dim_info =
-        GetDimensionInfo(first_root.instruction(), index);
+    absl::Span<const int64_t> dims =
+        GetFirstShape(&root.instruction()).dimensions();
+    for (auto [index, dim] : llvm::enumerate(dims)) {
+      auto it = hlo_to_dimension_.find(
+          std::make_pair(&first_root.instruction(), index));
+      // We should have already added the dimensions for the first root.
+      CHECK(it != hlo_to_dimension_.end());
 
-    for (const HloInstructionAdaptor& root : rest_roots) {
-      hlo_to_dimension_[std::make_pair(&root.instruction(), index)] = &dim_info;
+      hlo_to_dimension_[std::make_pair(&root.instruction(), index)] =
+          it->second;
     }
   }
 
@@ -501,25 +524,21 @@ absl::StatusOr<std::unique_ptr<TilingSpace>> TilingSpace::Create(
   // Append dimensions. This is necessary because symbols are created using the
   // total number of dimensions, which needs to be known before any symbols are
   // generated.
+  // TODO(b/502910372): Support arbitrary multi-output fusions. The option name
+  // is misleading as it is not GPU specific.
   const HloModule* module = fusion.GetRoots().back().instruction().GetModule();
-  TF_RET_CHECK(module) << "Fusion has no module";
+  TF_RET_CHECK(module != nullptr) << "Fusion has no module";
   const DebugOptions& debug_options = module->config().debug_options();
-
-  if (roots.size() == 1) {
+  if (roots.size() == 1 ||
+      debug_options.xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    // General case.
     ABSL_RETURN_IF_ERROR(tiling_space->InitializeDimensions(roots));
-  } else if (
-      IsSameShapeMultiOutputFusion(roots, Shape::Equal().IgnoreElementType()) &&
-      debug_options
-          .xla_gpu_experimental_enable_same_shape_multi_output_fusion()) {
+  } else if (AreShapeSizesEqual(roots) &&
+             debug_options
+                 .xla_experimental_enable_same_shape_multi_output_fusion()) {
     ABSL_RETURN_IF_ERROR(
-        tiling_space->InitializeDimensionsForSameShapeMultiOutputFusion(roots));
-  } else if (debug_options
-                 .xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
-    // xla_gpu_unsupported_enable_triton_multi_output_fusion flag name is
-    // misleading, it is not GPU specific.
-    ABSL_RETURN_IF_ERROR(tiling_space->InitializeDimensions(roots));
+        tiling_space->InitializeDimensionsForSimpleMultiOutputFusion(roots));
   } else {
-    // TODO(b/502910372): Support arbitrary multi-output fusions.
     return absl::UnimplementedError(
         "TilingSpace does not support fusions with multiple roots.");
   }
@@ -538,12 +557,13 @@ absl::StatusOr<std::unique_ptr<TilingSpace>> TilingSpace::Create(
         GetFirstShape(&root.instruction()).dimensions();
     llvm::SmallVector<DimTile> dim_tiles;
     dim_tiles.reserve(dims.size());
-    for (auto [index, dim_size] : llvm::enumerate(dims)) {
-      TiledDimId dim_id =
-          tiling_space->GetDimensionInfo(root.instruction(), index).id;
-      SymbolicExpr tile_size =
-          CreateSymbolExpr(dim_id.value(), tiling_space->num_dimensions(), ctx);
-      dim_tiles.push_back(GetDefaultDimTile(dim_id, tile_size, dim_size));
+    for (auto [index, dim] : llvm::enumerate(dims)) {
+      int64_t global_dim_id =
+          tiling_space->GetDimensionInfo(root.instruction(), index).id.value();
+      dim_tiles.push_back(GetDefaultDimTile(
+          index,
+          CreateSymbolExpr(global_dim_id, tiling_space->num_dimensions(), ctx),
+          dim));
     }
     Tile tile{*tiling_space, std::move(dim_tiles)};
     if (root_shape.IsTuple()) {
@@ -618,7 +638,8 @@ TilingSpace::GetValidTilings() {
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto flat_tilings, GetFlatTilingsForInputSpace(input_space));
+  ABSL_ASSIGN_OR_RETURN(auto flat_tilings,
+                        GetFlatTilingsForInputSpace(input_space));
 
   for (auto& flat_tiling : flat_tilings) {
     for (const auto& [idx, dim] : llvm::enumerate(dimensions_)) {

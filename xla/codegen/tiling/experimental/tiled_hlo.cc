@@ -63,7 +63,7 @@ using ::llvm::SmallVector;
 
 TiledHloRegion::TiledHloRegion(
     std::vector<absl_nonnull std::unique_ptr<TiledHloInstruction>> instructions,
-    llvm::SmallVector<const TiledHloInstruction * absl_nonnull, 4> roots)
+    llvm::SmallVector<const TiledHloInstruction* absl_nonnull, 4> roots)
     : instructions_(std::move(instructions)), roots_(std::move(roots)) {
   for (const TiledHloInstruction* root : roots_) {
     CHECK(absl::c_any_of(
