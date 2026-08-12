@@ -512,7 +512,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_dot_merger_threshold_mb(64);
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
-  opts.set_xla_gpu_enable_scale_up_fabric_assignment(false);
+  opts.set_xla_gpu_collective_domain_assignment("");
   opts.set_xla_gpu_experimental_collective_start_as_early_as_possible(false);
   opts.set_xla_gpu_experimental_enable_selective_memcpy_overlap(false);
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
@@ -3160,14 +3160,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "This controls how many in-flight collectives "
       "latency hiding scheduler can schedule."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_scale_up_fabric_assignment",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_enable_scale_up_fabric_assignment),
-      debug_options->xla_gpu_enable_scale_up_fabric_assignment(),
-      "If enabled, use the fast-interconnect partition size from GpuTopology "
-      "to assign the SCALE_UP_FABRIC communication domain to collectives "
-      "whose every participant group is contained in one topology "
-      "partition."));
+      "xla_gpu_collective_domain_assignment",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_collective_domain_assignment),
+      debug_options->xla_gpu_collective_domain_assignment(),
+      "Comma-separated list of collective communication domains to assign "
+      "automatically."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_collective_start_as_early_as_possible",
       bool_setter_for(

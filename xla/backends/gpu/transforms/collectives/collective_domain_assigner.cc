@@ -23,6 +23,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
+#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
@@ -43,6 +45,21 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+absl::StatusOr<absl::flat_hash_set<CollectiveCommunicationDomain>>
+ParseDomainsToAssign(absl::string_view value) {
+  absl::flat_hash_set<CollectiveCommunicationDomain> domains;
+  for (absl::string_view domain_name :
+       absl::StrSplit(value, ',', absl::SkipWhitespace())) {
+    domain_name = absl::StripAsciiWhitespace(domain_name);
+    ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
+                          ParseCollectiveCommunicationDomain(domain_name));
+    if (domain != kUnspecifiedCollectiveDomain) {
+      domains.insert(domain);
+    }
+  }
+  return domains;
+}
 
 absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>>
 GetCollectiveParticipantGroups(const HloInstruction& collective,
@@ -176,9 +193,13 @@ CollectiveDomainAssigner::CollectiveDomainAssigner(
 absl::StatusOr<bool> CollectiveDomainAssigner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  if (!module->config()
-           .debug_options()
-           .xla_gpu_enable_scale_up_fabric_assignment()) {
+  const HloModuleConfig& config = module->config();
+
+  absl::string_view domain_assignment =
+      config.debug_options().xla_gpu_collective_domain_assignment();
+  ABSL_ASSIGN_OR_RETURN(auto domains_to_assign,
+                        ParseDomainsToAssign(domain_assignment));
+  if (!domains_to_assign.contains(kScaleUpFabricCollectiveDomain)) {
     return false;
   }
 
@@ -190,13 +211,14 @@ absl::StatusOr<bool> CollectiveDomainAssigner::RunImpl(
   // XLA:GPU supports IOTA device assignments. When a useful static assignment
   // is unavailable, use the corresponding zero-based IOTA assignment. The
   // all-zero case is a sentinel used by functional_hlo_runner.
-  DeviceAssignment default_device_assignment(module->config().replica_count(),
-                                             module->config().num_partitions());
+  DeviceAssignment default_device_assignment(config.replica_count(),
+                                             config.num_partitions());
   default_device_assignment.FillIota(0);
+
   const DeviceAssignment* device_assignment = &default_device_assignment;
-  if (module->config().has_static_device_assignment() &&
-      !module->config().static_device_assignment().IsAll(0)) {
-    device_assignment = &module->config().static_device_assignment();
+  if (config.has_static_device_assignment() &&
+      !config.static_device_assignment().IsAll(0)) {
+    device_assignment = &config.static_device_assignment();
   }
 
   bool changed = false;

@@ -39,7 +39,7 @@ class CollectiveDomainAssignerTest : public HloHardwareIndependentTestBase {
   void EnableAssignment(HloModule& module) {
     module.mutable_config()
         .mutable_debug_options()
-        .set_xla_gpu_enable_scale_up_fabric_assignment(true);
+        .set_xla_gpu_collective_domain_assignment("scale_up_fabric");
   }
 
   absl::StatusOr<bool> RunAssigner(HloModule& module) {
