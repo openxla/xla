@@ -1281,6 +1281,7 @@ rocm_library(
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
+        "no-oneapi",
         "rocm-only",
     ],
     deps = [
@@ -1303,6 +1304,8 @@ cc_library(
     ],
     tags = [
         "gpu",
+        "no-oneapi",
+        "rocm-only",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -1322,6 +1325,7 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
+        "//xla/core/collectives:symmetric_memory",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
