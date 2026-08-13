@@ -257,13 +257,16 @@ static std::string GpuPlatformVersionFromDevices(
     const se::DeviceDescription& desc =
         local_device_state->executor()->GetDeviceDescription();
     const se::SemanticVersion v = desc.runtime_version();
-    const int encoded_version =
-        v.major_version() * 1000 + v.minor_version() * 10 + v.patch_version();
     const se::GpuComputeCapability& cc = desc.gpu_compute_capability();
     if (cc.rocm_compute_capability() != nullptr) {
+      const int encoded_version = v.major_version() * 10000000 +
+                                  v.minor_version() * 100000 +
+                                  v.patch_version();
       return absl::StrCat("rocm ", encoded_version);
     }
     if (cc.cuda_compute_capability() != nullptr) {
+      const int encoded_version =
+          v.major_version() * 1000 + v.minor_version() * 10 + v.patch_version();
       return absl::StrCat("cuda ", encoded_version);
     }
     if (cc.oneapi_compute_capability() != nullptr) {
