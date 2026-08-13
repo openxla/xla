@@ -159,6 +159,9 @@ jobs:
           # generic limit; 0 = userns disabled, >0 = allowed
           cat /proc/sys/user/max_user_namespaces
 
+      - name: Check systemd
+        run: '[ -d /run/systemd/system ] && echo "systemd active" || echo "no systemd"'
+
       # - name: Test XLA [single_gpu]
       #   timeout-minutes: 120
       #   run: |
