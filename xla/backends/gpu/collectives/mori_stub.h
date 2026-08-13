@@ -75,88 +75,71 @@ inline void ShmemFree(void* /*ptr*/) {}
 }  // namespace shmem
 }  // namespace mori
 
-// Reduction functors are named as template args by the communicator dispatch
-// (::SumOp<T>, ...). The stub facade ignores Op, so forward decls suffice.
-template <class T>
-struct SumOp;
-template <class T>
-struct MaxOp;
-template <class T>
-struct MinOp;
-template <class T>
-struct ProdOp;
-
 namespace mori {
 namespace collective {
 
+// Element type + reduction op enums mirror the real facade's non-templated API
+// (mori/collective/collectives_facade.hpp), so the communicator's enum dispatch
+// compiles against either the stub or the real facade.
+enum class DataType {
+  F8E5M2,
+  F8E4M3FN,
+  F16,
+  BF16,
+  S8,
+  U8,
+  S32,
+  U32,
+  S64,
+  U64,
+  F32,
+  F64
+};
+enum class ReduceOpKind { SUM, PRODUCT, MIN, MAX };
+
 // Inert stand-in for the real MORI CollectivesFacade. Header-only, all Run* are
 // no-ops returning hipSuccess. Lets the collectives/communicator wiring compile
-// and link without @roc_mori. Swap for the real facade by defining
-// XLA_GPU_USE_REAL_MORI (see mori_kernels.h).
+// and link without @roc_mori.
 class CollectivesFacade {
   CollectivesFacade() = default;
 
  public:
-  enum class RsMode { kPush, kPull };
   using AddressVector = std::vector<std::pair<const void*, void*>>;
 
   CollectivesFacade(const CollectivesFacade&) = delete;
   CollectivesFacade& operator=(const CollectivesFacade&) = delete;
 
-  static std::unique_ptr<CollectivesFacade> Create(int myPe, int nPes,
+  static std::unique_ptr<CollectivesFacade> Create(int /*myPe*/, int /*nPes*/,
                                                    size_t /*maxStagingBytes*/) {
-    auto f = std::unique_ptr<CollectivesFacade>(new CollectivesFacade());
-    f->myPe_ = myPe;
-    f->nPes_ = nPes;
-    return f;
+    return std::unique_ptr<CollectivesFacade>(new CollectivesFacade());
   }
   ~CollectivesFacade() = default;
 
-  template <class T, class Op>
-  hipError_t RunReduceScatter(const T*, T*, size_t, hipStream_t) {
+  hipError_t RunReduceScatter(const void*, void*, size_t, DataType,
+                              ReduceOpKind, hipStream_t) {
     return hipSuccess;
   }
-  template <class T, class Op>
-  hipError_t RunAllReduce(const T*, T*, size_t, hipStream_t) {
+  hipError_t RunAllReduce(const void*, void*, size_t, DataType, ReduceOpKind,
+                          hipStream_t) {
     return hipSuccess;
   }
-  template <class = void>
   hipError_t RunAllGather(const void*, void*, size_t, hipStream_t) {
     return hipSuccess;
   }
-  template <class = void>
   hipError_t RunAllToAll(const AddressVector&, size_t, hipStream_t) {
     return hipSuccess;
   }
-  template <class = void>
-  hipError_t RunBarrier(hipStream_t) {
-    return hipSuccess;
-  }
-  template <class = void>
+  hipError_t RunBarrier(hipStream_t) { return hipSuccess; }
   hipError_t RunSend(const void*, size_t, int, hipStream_t) {
     return hipSuccess;
   }
-  template <class = void>
-  hipError_t RunRecv(void*, size_t, int, hipStream_t) {
-    return hipSuccess;
-  }
-  template <class = void>
+  hipError_t RunRecv(void*, size_t, int, hipStream_t) { return hipSuccess; }
   hipError_t RunCollectivePermute(const void*, void*, size_t, int, const int*,
                                   int, hipStream_t) {
     return hipSuccess;
   }
-  template <class = void>
-  hipError_t RunQuiet(hipStream_t) {
-    return hipSuccess;
-  }
-  template <class = void>
-  hipError_t RunFence() {
-    return hipSuccess;
-  }
-
- private:
-  int myPe_{0};
-  int nPes_{0};
+  hipError_t RunQuiet(hipStream_t) { return hipSuccess; }
+  hipError_t RunFence() { return hipSuccess; }
 };
 
 }  // namespace collective

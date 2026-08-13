@@ -11,38 +11,9 @@ limitations under the License.
 ==============================================================================*/
 
 // This is the single device translation unit for the MORI XLA collectives. It
-// is compiled as HIP, so including mori_kernels.h here pulls in the facade's
-// device path (kernels + Run* definitions). The explicit float instantiations
-// below emit the symbols that the host mori_communicator.cc references through
-// the decl-only host path of the same header.
+// is compiled as HIP and defines MORI_KERNELS_IMPL before including the facade,
+// so the facade's device path (kernels + non-templated Run* definitions) is
+// compiled here exactly once. The host mori_communicator.cc includes the same
+// header without MORI_KERNELS_IMPL (decl-only) and links against these symbols.
+#define MORI_KERNELS_IMPL
 #include "xla/backends/gpu/collectives/mori_kernels.h"
-
-namespace mori {
-namespace collective {
-
-#define PREFIX(NAME) template hipError_t CollectivesFacade::NAME
-
-// Emit RunReduceScatter/RunAllReduce symbols for every (dtype, op) combo.
-#define MORI_INST(PT, CT, RK, OP)                                            \
-  PREFIX(RunReduceScatter)<CT, OP<CT>>(const CT*, CT*, size_t, hipStream_t); \
-  PREFIX(RunAllReduce)<CT, OP<CT>>(const CT*, CT*, size_t, hipStream_t);
-#define MORI_INST_DTYPE(PT, CT) MORI_FOR_EACH_OP(MORI_INST, PT, CT)
-MORI_FOR_EACH_DTYPE(MORI_INST_DTYPE)
-
-PREFIX(RunAllGather)<>(const void*, void*, size_t, hipStream_t);
-PREFIX(RunAllToAll)<>(const CollectivesFacade::AddressVector&, size_t,
-                      hipStream_t);
-PREFIX(RunBarrier)<>(hipStream_t);
-PREFIX(RunSend)<>(const void*, size_t, int, hipStream_t);
-PREFIX(RunRecv)<>(void*, size_t, int, hipStream_t);
-PREFIX(RunCollectivePermute)<>(const void*, void*, size_t, int, const int*, int,
-                               hipStream_t);
-PREFIX(RunQuiet)<>(hipStream_t);
-PREFIX(RunFence)<>();
-
-#undef MORI_INST_DTYPE
-#undef MORI_INST
-#undef PREFIX
-
-}  // namespace collective
-}  // namespace mori

@@ -67,10 +67,47 @@ size_t ToMoriByteCount(PrimitiveType dtype, size_t count) {
   return count * primitive_util::BitWidth(dtype) / 8;
 }
 
-// Packs a (dtype, reduction) pair into a single switch key. ReductionKind has 4
-// values, so multiplying the dtype by 4 keeps every (dtype, kind) pair unique.
-constexpr int MoriRedKey(PrimitiveType t, ReductionKind r) {
-  return static_cast<int>(t) * 4 + static_cast<int>(r);
+absl::StatusOr<::mori::collective::DataType> ToMoriDataType(
+    PrimitiveType dtype) {
+#define MORI_TYPE_DISPATCH(x) \
+  case x:                     \
+    return ::mori::collective::DataType::x;
+  switch (dtype) {
+    MORI_TYPE_DISPATCH(F8E5M2)
+    MORI_TYPE_DISPATCH(F8E4M3FN)
+    MORI_TYPE_DISPATCH(F16)
+    MORI_TYPE_DISPATCH(BF16)
+    MORI_TYPE_DISPATCH(S8)
+    MORI_TYPE_DISPATCH(U8)
+    MORI_TYPE_DISPATCH(S32)
+    MORI_TYPE_DISPATCH(U32)
+    MORI_TYPE_DISPATCH(S64)
+    MORI_TYPE_DISPATCH(U64)
+    MORI_TYPE_DISPATCH(F32)
+    MORI_TYPE_DISPATCH(F64)
+    default:
+      return absl::UnimplementedError(absl::StrFormat(
+          "MORI: unsupported dtype: %d", static_cast<int>(dtype)));
+  }
+#undef MORI_TYPE_DISPATCH
+}
+
+// Translate an XLA ReductionKind to the facade's reduction-op enum.
+absl::StatusOr<::mori::collective::ReduceOpKind> ToMoriReduceOp(
+    ReductionKind r) {
+#define MORI_OP_DISPATCH(x) \
+  case ReductionKind::x:    \
+    return ::mori::collective::ReduceOpKind::x;
+  switch (r) {
+    MORI_OP_DISPATCH(SUM)
+    MORI_OP_DISPATCH(PRODUCT)
+    MORI_OP_DISPATCH(MIN)
+    MORI_OP_DISPATCH(MAX)
+    default:
+      return absl::UnimplementedError(absl::StrFormat(
+          "MORI: unsupported reduction op: %d", static_cast<int>(r)));
+  }
+#undef MORI_OP_DISPATCH
 }
 
 absl::StatusOr<se::Stream*> ToStream(const Communicator::Executor& executor) {
@@ -138,7 +175,7 @@ absl::Status MoriCommunicator::Barrier(const Executor& executor) {
   VLOG(1) << "Barrier: " << ToString();
   CHECK_CANCELLED()
   ABSL_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
-  return se::gpu::ToStatus(facade_->RunBarrier<>(AsHipStream(stream)));
+  return se::gpu::ToStatus(facade_->RunBarrier(AsHipStream(stream)));
 }
 
 absl::StatusOr<size_t> MoriCommunicator::NumRanks() const {
@@ -268,21 +305,11 @@ absl::Status MoriCommunicator::LaunchAllReduce(
       primitive_util::LowercasePrimitiveTypeName(dtype), count, reduction_kind,
       stream);
 
-  switch (MoriRedKey(dtype, reduction_kind)) {
-#define MORI_AR_CASE(PT, CT, RK, OP)                            \
-  case MoriRedKey(PrimitiveType::PT, ReductionKind::RK):        \
-    return se::gpu::ToStatus(facade_->RunAllReduce<CT, OP<CT>>( \
-        static_cast<const CT*>(send_buffer.opaque()),           \
-        static_cast<CT*>(recv_buffer.opaque()), count, AsHipStream(stream)));
-#define MORI_AR_DTYPE(PT, CT) MORI_FOR_EACH_OP(MORI_AR_CASE, PT, CT)
-    MORI_FOR_EACH_DTYPE(MORI_AR_DTYPE)
-#undef MORI_AR_DTYPE
-#undef MORI_AR_CASE
-    default:
-      return absl::UnimplementedError(absl::StrFormat(
-          "AllReduce unsupported dtype/op: %s/%v",
-          primitive_util::LowercasePrimitiveTypeName(dtype), reduction_kind));
-  }
+  ABSL_ASSIGN_OR_RETURN(auto dt, ToMoriDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(auto op, ToMoriReduceOp(reduction_kind));
+  return se::gpu::ToStatus(facade_->RunAllReduce(send_buffer.opaque(),
+                                                 recv_buffer.opaque(), count,
+                                                 dt, op, AsHipStream(stream)));
 }
 
 absl::Status MoriCommunicator::LaunchReduceScatter(
@@ -297,21 +324,11 @@ absl::Status MoriCommunicator::LaunchReduceScatter(
           << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
           << " stream=" << AsHipStream(stream);
 
-  switch (MoriRedKey(dtype, kind)) {
-#define MORI_RS_CASE(PT, CT, RK, OP)                                \
-  case MoriRedKey(PrimitiveType::PT, ReductionKind::RK):            \
-    return se::gpu::ToStatus(facade_->RunReduceScatter<CT, OP<CT>>( \
-        static_cast<const CT*>(send_buffer.opaque()),               \
-        static_cast<CT*>(recv_buffer.opaque()), count, AsHipStream(stream)));
-#define MORI_RS_DTYPE(PT, CT) MORI_FOR_EACH_OP(MORI_RS_CASE, PT, CT)
-    MORI_FOR_EACH_DTYPE(MORI_RS_DTYPE)
-#undef MORI_RS_DTYPE
-#undef MORI_RS_CASE
-    default:
-      return absl::UnimplementedError(absl::StrFormat(
-          "ReduceScatter unsupported dtype/op: %s/%v",
-          primitive_util::LowercasePrimitiveTypeName(dtype), kind));
-  }
+  ABSL_ASSIGN_OR_RETURN(auto dt, ToMoriDataType(dtype));
+  ABSL_ASSIGN_OR_RETURN(auto op, ToMoriReduceOp(kind));
+  return se::gpu::ToStatus(
+      facade_->RunReduceScatter(send_buffer.opaque(), recv_buffer.opaque(),
+                                count, dt, op, AsHipStream(stream)));
 }
 
 absl::Status MoriCommunicator::LaunchAllToAll(
@@ -343,7 +360,7 @@ absl::Status MoriCommunicator::LaunchAllToAll(
   for (int p = 0; p < num_ranks_; ++p) {
     addrs.emplace_back(send_buffers[p].opaque(), recv_buffers[p].opaque());
   }
-  return se::gpu::ToStatus(facade_->RunAllToAll<>(
+  return se::gpu::ToStatus(facade_->RunAllToAll(
       addrs, ToMoriByteCount(dtype, count), AsHipStream(stream)));
 }
 
@@ -359,8 +376,8 @@ absl::Status MoriCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
       send_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, peer.value(), AsHipStream(stream));
   return se::gpu::ToStatus(
-      facade_->RunSend<>(send_buffer.opaque(), ToMoriByteCount(dtype, count),
-                         static_cast<int>(peer.value()), AsHipStream(stream)));
+      facade_->RunSend(send_buffer.opaque(), ToMoriByteCount(dtype, count),
+                       static_cast<int>(peer.value()), AsHipStream(stream)));
 }
 
 absl::Status MoriCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
@@ -375,8 +392,8 @@ absl::Status MoriCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, peer.value(), AsHipStream(stream));
   return se::gpu::ToStatus(
-      facade_->RunRecv<>(recv_buffer.opaque(), ToMoriByteCount(dtype, count),
-                         static_cast<int>(peer.value()), AsHipStream(stream)));
+      facade_->RunRecv(recv_buffer.opaque(), ToMoriByteCount(dtype, count),
+                       static_cast<int>(peer.value()), AsHipStream(stream)));
 }
 
 absl::Status MoriCommunicator::LaunchCollectivePermute(
@@ -403,7 +420,7 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
     dstPes.push_back(static_cast<int>(rank.value()));
   }
   const int srcPe = source_rank ? static_cast<int>(source_rank->value()) : -1;
-  return se::gpu::ToStatus(facade_->RunCollectivePermute<>(
+  return se::gpu::ToStatus(facade_->RunCollectivePermute(
       send_buffer.opaque(), recv_buffer.opaque(), ToMoriByteCount(dtype, count),
       srcPe, dstPes.data(), static_cast<int>(dstPes.size()),
       AsHipStream(stream)));
@@ -425,13 +442,13 @@ absl::Status MoriCommunicator::Quiet(const Executor& executor) {
   VLOG(1) << "Quiet: " << ToString();
   CHECK_CANCELLED()
   ABSL_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
-  return se::gpu::ToStatus(facade_->RunQuiet<>(AsHipStream(stream)));
+  return se::gpu::ToStatus(facade_->RunQuiet(AsHipStream(stream)));
 }
 
 absl::Status MoriCommunicator::Fence() {
   VLOG(1) << "Fence: " << ToString();
   CHECK_CANCELLED()
-  return se::gpu::ToStatus(facade_->RunFence<>());
+  return se::gpu::ToStatus(facade_->RunFence());
 }
 
 absl::Status MoriCommunicator::PollUntilDone() const {
