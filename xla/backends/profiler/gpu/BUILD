@@ -596,6 +596,7 @@ xla_cc_test(
     name = "rocm_tracer_test",
     size = "small",
     srcs = ["rocm_tracer_test.cc"],
+    linkopts = ["-ldl"],  # for dlopen/dlsym in RealRoctxCallsProduceNvtxRangeInXSpace
     tags = [
         "gpu",
         "rocm-only",
@@ -608,7 +609,10 @@ xla_cc_test(
         ":rocm_tracer",
         ":rocm_tracer_utils",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env_time",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
@@ -634,6 +638,7 @@ xla_cc_test(
         ":rocm_collector",
         ":rocm_tracer_utils",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "//xla/tsl/profiler/utils:xplane_utils",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",

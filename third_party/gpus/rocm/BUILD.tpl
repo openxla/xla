@@ -419,6 +419,19 @@ rocm_lib_import(
 )
 
 rocm_lib_import(
+    name = "rocprofiler_sdk_roctx",
+    data = glob(["%{rocm_root}/lib/librocprofiler-sdk-roctx.so*"]),
+    interface_library = "%{rocm_root}/lib/librocprofiler-sdk-roctx.so",
+    # librocprofiler-sdk-roctx.so has NEEDED librocprofiler-register.so -- that
+    # registration is exactly what makes rocprofiler-sdk intercept these calls.
+    # The data glob above does not match it, so without this dep a hermetic
+    # build or a packaged wheel stages the roctx shim without its dependency
+    # and every ROCm binary fails at load, env var set or not. Matches how
+    # :hip and :hsa_rocr_libs declare it.
+    deps = [":rocprofiler_register_libs"],
+)
+
+rocm_lib_import(
     name = "rocsolver",
     data = glob([
         "%{rocm_root}/lib/librocsolver.so*",

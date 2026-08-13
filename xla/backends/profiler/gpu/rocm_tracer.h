@@ -16,8 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
 #define XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
 
+#include <atomic>
+#include <cstdint>
+#include <string>
+
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/node_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/optional.h"
@@ -72,6 +75,27 @@ class RocmTracer {
   void CodeObjectCallback(rocprofiler_callback_tracing_record_t record,
                           void* callback_data);
 
+  // Called from the MARKER_CORE_API callback. Handles roctxRangePushA,
+  // roctxRangePop, and roctxMarkA, emitting RocmTracerEvent(Generic) for each
+  // completed range or instantaneous mark.
+  void MarkerCallback(const rocprofiler_callback_tracing_record_t& record);
+
+  // Returns a copy of the label of the innermost ROCTX range active on the
+  // CALLING thread, or empty if none. Takes no thread id: the range stack is
+  // thread_local, and the HIP API callback that consumes this runs on the same
+  // thread that pushed the range.
+  //
+  // Returns by value rather than string_view because the frame it reads can be
+  // popped by the very next roctx call on this thread.
+  std::string GetCurrentRoctxLabel();
+
+  // Builds and hands a Generic (ROCTX marker) event to the collector. Shared
+  // by the range-pop and mark paths so the two cannot drift in how they set
+  // source/domain/ids -- an earlier duplicated version diverged on empty-label
+  // handling and emitted anonymous "Generic" bands.
+  void EmitMarkerEvent(std::string label, uint64_t start_ns, uint64_t end_ns,
+                       uint64_t tid);
+
   AnnotationMap* annotation_map() { return &annotation_map_; }
 
  protected:
@@ -94,6 +118,21 @@ class RocmTracer {
   bool activity_tracing_enabled_{false};
 
   AnnotationMap annotation_map_{/* default size, e.g. */ 1024 * 1024};
+
+  // ROCTX range state lives in a thread_local stack in rocm_tracer.cc, not
+  // here. roctx pushes and pops are thread-local by definition and the
+  // rocprofiler callback runs synchronously on the calling thread, so no
+  // shared structure is needed -- and the HIP API callback reads the current
+  // label on every single HIP call, which must not touch a process-wide lock.
+  // Keeping it thread_local also means no per-thread map entry outlives the
+  // thread, and there is no lock to order against collector_mutex_.
+  //
+  // Session isolation is by generation instead of by clearing: Enable() bumps
+  // this counter, and a pop whose frame carries an older generation is
+  // discarded rather than emitted into the new session. Relaxed ordering is
+  // sufficient -- a racing push either sees the old or the new value, and
+  // either way the frame is consistently tagged and consistently judged.
+  std::atomic<uint64_t> roctx_generation_{0};
 
  public:
   using kernel_symbol_data_t =

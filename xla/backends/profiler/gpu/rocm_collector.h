@@ -24,7 +24,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include "rocprofiler-sdk/agent.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
@@ -32,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "rocprofiler-sdk/agent.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
@@ -154,6 +154,7 @@ class PerDeviceCollector {
   void Export(uint64_t start_walltime_ns, uint64_t start_gputime_ns,
               uint64_t end_gputime_ns,
               tsl::profiler::XPlaneBuilder* device_plane,
+              tsl::profiler::XPlaneBuilder* marker_plane,
               tsl::profiler::XPlaneBuilder* host_plane);
 
   PerDeviceCollector() = default;
@@ -226,6 +227,12 @@ class RocmTraceCollectorImpl : public RocmTraceCollector {
   // This is for the APIs that we track because we need some information from
   // them to populate the corresponding activity that we actually track.
   absl::flat_hash_map<uint32_t, RocmTracerEvent> auxiliary_api_events_map_
+      ABSL_GUARDED_BY(event_maps_mutex_);
+
+  // Host-side events that need no API↔Activity join (e.g. ROCTX markers).
+  // Flushed directly to per_device_collector_ without going through
+  // ApiActivityInfoExchange.
+  std::vector<RocmTracerEvent> standalone_events_
       ABSL_GUARDED_BY(event_maps_mutex_);
 
   std::vector<RocmTracerEvent> ApiActivityInfoExchange()

@@ -136,6 +136,9 @@ struct RocmTracerEvent {
   // This points to strings in AnnotationMap, which should outlive the point
   // where serialization happens.
   absl::string_view annotation;
+  // Points into RocmTracer::roctx_strings_ (a node_hash_set, so pointers are
+  // stable). roctx_strings_ is cleared at Enable() time. Callers must
+  // Export() before the next Enable() to avoid dangling string_views.
   absl::string_view roctx_range;
   uint64_t start_time_ns = 0;
   uint64_t end_time_ns = 0;
@@ -156,6 +159,19 @@ struct RocmTracerEvent {
   };
 };
 
+// Represents one pending ROCTX range pushed via roctxRangePushA. Stored on
+// a per-thread stack in RocmTracer and consumed when roctxRangePop fires.
+struct RoctxFrame {
+  std::string message;  // the range label (owned here for lifetime safety)
+  uint64_t start_ns;    // timestamp captured at push time
+  // Profiling session this frame was pushed in. Frames live on a thread_local
+  // stack that no session boundary can reach, so a range pushed before
+  // Enable() and popped after it would otherwise emit an event with a
+  // previous session's start timestamp into the new session's collector.
+  // Enable() bumps the generation; a pop whose frame predates it is dropped.
+  uint64_t generation;
+};
+
 struct RocmTraceCollectorOptions {
   // Maximum number of events to collect from callback API; if -1, no limit.
   // if 0, the callback API is enabled to build a correlation map, but no
@@ -173,8 +189,10 @@ class AnnotationMap {
  public:
   explicit AnnotationMap(uint64_t max_size) : max_size_(max_size) {}
   void Add(uint32_t correlation_id, const std::string& annotation,
+           absl::string_view roctx_range = {},
            absl::Span<const int64_t> scope_range_ids = {});
   absl::string_view LookUp(uint32_t correlation_id);
+  absl::string_view LookUpRoctxRange(uint32_t correlation_id);
   int64_t LookUpScopeRangeId(uint32_t correlation_id);
   ScopeRangeIdTree TakeScopeRangeIdTree();
   void Clear();
@@ -188,6 +206,8 @@ class AnnotationMap {
     // an use the reference to the string in the map.
     absl::node_hash_set<std::string> annotations ABSL_GUARDED_BY(mutex);
     absl::flat_hash_map<uint32_t, absl::string_view> correlation_map
+        ABSL_GUARDED_BY(mutex);
+    absl::flat_hash_map<uint32_t, absl::string_view> roctx_range_map
         ABSL_GUARDED_BY(mutex);
     absl::flat_hash_map<uint32_t, int64_t> scope_range_id_map
         ABSL_GUARDED_BY(mutex);
