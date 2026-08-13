@@ -20,14 +20,43 @@ limitations under the License.
 
 namespace stream_executor::cuda {
 
-// Standard uncompressed CUDA Fatbinary container magic number (NVCC).
-inline constexpr uint32_t kFatbinMagicUncompressed = 0xba55d10a;
-
-// Compressed CUDA Fatbinary container magic number (CUDA 11+ / 12+ NVCC).
-inline constexpr uint32_t kFatbinMagicCompressed = 0xba55ed50;
+// Magic constants and container structures for CUDA fatbinaries and CUBINs.
+// References:
+//  - Official CUDA Toolkit header: <fatbinary_section.h> (defines
+//    __fatBinC_Wrapper_t, FATBINC_MAGIC = 0x466243B1, .nv_fatbin section names)
+//  - NVIDIA CUDA Binary Utilities Guide:
+//    https://docs.nvidia.com/cuda/cuda-binary-utilities/
+//  - GPU Ocelot FatBinaryContext: https://github.com/gtcasl/gpuocelot
+//  - How CUDA Binaries Work:
+//    https://thesoftwarefrontier.com/how-cuda-binaries-actually-work/
+//  - Deconstructing CUDA Binaries:
+//    https://evko.io/blog/deconstructing-cuda-binaries/
+constexpr uint32_t kFatbinMagicUncompressed = 0xba55d10a;
+constexpr uint32_t kFatbinMagicCompressed = 0xba55ed50;
 
 // Legacy/alternative CUDA Fatbinary payload header magic number.
-inline constexpr uint32_t kFatbinMagicLegacy = 0x00101001;
+constexpr uint32_t kFatbinMagicLegacy = 0x00101001;
+
+// NVIDIA CUDA ELF machine type (EM_CUDA). Not defined by every <elf.h>.
+constexpr uint16_t kElfMachineCuda = 190;
+
+// CUDA ELF ABI versions.
+constexpr uint8_t kCudaAbiVersionV1 = 7;
+constexpr uint8_t kCudaAbiVersionV2 = 8;
+
+// Bitmasks for e_flags in CUDA ELF headers.
+// ABI V1 (pre-Blackwell):
+constexpr uint32_t kCudaSmMaskV1 = 0xff;
+constexpr uint32_t kCudaAcceleratorMaskV1 = 0x800;
+constexpr uint32_t kCudaVirtualSmMaskV1 = 0xff0000;
+constexpr uint32_t kCudaVirtualSmShiftV1 = 16;
+
+// ABI V2 (Blackwell and later):
+constexpr uint32_t kCudaSmMaskV2 = 0xff00;
+constexpr uint32_t kCudaSmShiftV2 = 8;
+constexpr uint32_t kCudaAcceleratorMaskV2 = 0x8;
+constexpr uint32_t kCudaVirtualSmMaskV2 = 0xff0000;
+constexpr uint32_t kCudaVirtualSmShiftV2 = 16;
 
 // CUDA fatbin wrapper structure passed to __cudaRegisterFatBinary.
 //
