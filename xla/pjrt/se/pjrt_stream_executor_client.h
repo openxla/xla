@@ -749,6 +749,13 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
   ~PjRtStreamExecutorLoadedExecutable() override = default;
 
   const HloInputOutputAliasConfig& input_output_alias_config() const override;
+
+  using CommonPjRtLoadedExecutable::Execute;
+  absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
+      absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
+      const ExecuteOptions& options,
+      std::optional<std::vector<tsl::Future<void>>>& returned_futures)
+      const override;
 };
 
 }  // namespace xla
