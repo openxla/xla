@@ -72,6 +72,20 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     TritonKernelSource triton_source, mlir::MLIRContext& mlir_context,
     bool is_xla_fusion);
 
+// Emits and compiles the Triton kernel for `fusion` with the given
+// `block_level_parameters`. If compilation fails because the tile requires more
+// shared memory (or Blackwell tensor memory) than the device provides, this
+// retries with progressively smaller tile sizes (halving the largest output
+// tile dimension each attempt) and logs a warning, instead of failing with a
+// RESOURCE_EXHAUSTED error. All other errors, and
+// exhaustion that shrinking cannot resolve, are propagated unchanged.
+absl::StatusOr<TritonWrapperResult> CompileTritonWithMemoryFallback(
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters,
+    const llvm::Triple& target_triple, const std::string& data_layout,
+    mlir::MLIRContext& mlir_context);
+
 std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
                              const se::DeviceDescription& device_info);
 

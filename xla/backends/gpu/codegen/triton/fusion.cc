@@ -159,21 +159,15 @@ xla::Future<TritonWrapperResult> TritonFusion::GenerateTritonKernelAndWrapper(
   BlockLevelParameters block_level_parameters =
       BlockLevelParameters::FromBlockLevelFusionConfig(
           analysis_.fusion_backend_config().block_level_fusion_config());
-  ABSL_ASSIGN_OR_RETURN(
-      TritonKernelSource kernel_source,
-      CreateTritonModule(impl_fn_name, fusion, device_info,
-                         block_level_parameters, **borrowed_context));
 
-  // Forward PDL launch annotation from HLO to MLIR.
-  if (DoesPdlLaunch(fusion)) {
-    kernel_source.module()->setAttr(
-        kXlaPdlLaunch, mlir::UnitAttr::get(borrowed_context->get()));
-  }
-  return compiler->CompileTritonToLlvm(
-      impl_fn_name, *fusion.GetModule(), device_info, block_level_parameters,
-      target_triple, data_layout, std::move(kernel_source),
-      std::move(borrowed_context),
-      /*is_xla_fusion=*/true);
+  // Emit and compile the Triton kernel. If the tile requires more shared (or
+  // Blackwell tensor) memory than the device provides, this retries with
+  // progressively smaller tiles based on the actual on-chip memory usage
+  // reported by the compiled kernel, instead of failing with a
+  // RESOURCE_EXHAUSTED error.
+  return CompileTritonWithMemoryFallback(impl_fn_name, fusion, device_info,
+                                         block_level_parameters, target_triple,
+                                         data_layout, **borrowed_context);
 };
 
 AsyncThunkSequence TritonFusion::Emit(
@@ -282,14 +276,27 @@ xla::Future<TritonFusion::EmitResult> TritonFusion::Emit(
           // enabled. Ideally we should always pass the thread_dims value
           // extracted from the Triton compilation. However, we are keeping the
           // old code path to maintain the current behavior and be safe.
+          //
+          // The tile configuration actually used to compile the kernel may
+          // differ from the one in the fusion's backend config when the
+          // shared/tensor-memory fallback in `CompileTritonWithMemoryFallback`
+          // had to shrink the tiling to fit on-chip memory. In that case we
+          // MUST derive the launch grid from the tiling the kernel was really
+          // compiled with (`triton_wrapper_result.block_level_parameters`);
+          // otherwise the launch block count would be computed from the larger,
+          // requested tile and the kernel would only compute a fraction of the
+          // output.
           if (fusion->GetModule()
                   ->config()
                   .debug_options()
                   .xla_gpu_experimental_enable_triton_warp_specialization()) {
             launch_config =
-                GetLaunchConfig(analysis, triton_wrapper_result.thread_dims);
+                GetLaunchConfig(analysis, triton_wrapper_result.thread_dims,
+                                triton_wrapper_result.block_level_parameters);
           } else {
-            launch_config = GetLaunchConfig(analysis);
+            launch_config =
+                GetLaunchConfig(analysis, /*thread_dims_override=*/std::nullopt,
+                                triton_wrapper_result.block_level_parameters);
           }
           // This check should be enforced by `GenerateTritonKernelWrapper`.
           CHECK(launch_config.has_value());
@@ -353,14 +360,22 @@ int64_t GetNumberOfBlocks(absl::Span<const int64_t> dimensions,
 
 std::optional<TritonFusion::LaunchConfig> TritonFusion::GetLaunchConfig(
     const HloFusionAnalysis* analysis,
-    std::optional<se::ThreadDim> thread_dims_override) {
+    std::optional<se::ThreadDim> thread_dims_override,
+    std::optional<BlockLevelParameters> block_level_parameters_override) {
   if (!analysis->fusion_backend_config().has_block_level_fusion_config()) {
     // MatMul is not yet supported.
     return std::nullopt;
   }
+  // Prefer the block-level parameters the kernel was actually compiled with
+  // (e.g. after the shared/tensor-memory fallback shrank the tiling) over the
+  // ones requested in the fusion's backend config. The launch grid MUST match
+  // the tiling the kernel was compiled with, otherwise it would only compute a
+  // fraction of the output.
   BlockLevelParameters block_level_parameters =
-      BlockLevelParameters::FromBlockLevelFusionConfig(
-          analysis->fusion_backend_config().block_level_fusion_config());
+      block_level_parameters_override.has_value()
+          ? *block_level_parameters_override
+          : BlockLevelParameters::FromBlockLevelFusionConfig(
+                analysis->fusion_backend_config().block_level_fusion_config());
 
   // We expect all roots to have the same number of blocks. Otherwise we
   // cannot codegen it.

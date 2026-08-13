@@ -803,6 +803,7 @@ cc_library(
     hdrs = ["triton_wrapper_result.h"],
     deps = [
         "//xla/codegen:llvm_kernel_source",
+        "//xla/service/gpu/model:block_level_parameters",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor/gpu:tma_metadata",
         "@llvm-project//llvm:ir_headers",

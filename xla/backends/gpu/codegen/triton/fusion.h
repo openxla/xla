@@ -92,9 +92,17 @@ class TritonFusion : public FusionInterface {
   // compilation, but there are use-cases where we want to call the function
   // without compiling, e.g. during cost modelling. In that case, the function
   // calculates the values.
+  //
+  // If `block_level_parameters_override` is provided, its tile sizes and
+  // num_warps are used to compute the launch grid instead of the ones in the
+  // fusion's backend config. This must be set to the parameters the kernel was
+  // actually compiled with when the shared/tensor-memory fallback adjusted the
+  // tiling, so that the launch grid matches the compiled kernel.
   static std::optional<LaunchConfig> GetLaunchConfig(
       const HloFusionAnalysis* analysis,
-      std::optional<se::ThreadDim> thread_dims_override = std::nullopt);
+      std::optional<se::ThreadDim> thread_dims_override = std::nullopt,
+      std::optional<BlockLevelParameters> block_level_parameters_override =
+          std::nullopt);
 
   // Generates a Triton kernel for the given fusion into the provided LLVM
   // module, and returns the `TritonWrapperResult` corresponding to the

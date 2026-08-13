@@ -1423,6 +1423,49 @@ CHECK-COUNT-2: xtile.insert
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
+// The requested output tile [32, 16, 128] makes the transpose stage a
+// 32x2048-element tile in shared memory, which exceeds the shared memory budget
+// of some devices (e.g. gfx1201 with a 64KiB opt-in limit for bf16, or gfx950
+// for f32). Rather than failing with RESOURCE_EXHAUSTED, the non-autotuner
+// emission path (CompileTritonWithMemoryFallback) automatically retries with
+// progressively smaller / different-axis tiles until it finds one that both
+// satisfies the emitter's tiling constraints and fits in on-chip memory. This
+// test exercises that fallback end-to-end and checks the result is still
+// correct. It is parametrized over the tiling path so that both the symbolic
+// and the experimental tiling-propagation error surfaces are covered.
+TEST_P(TritonEmitterTestWithTilingParam,
+       TransposeExceedingSharedMemoryFallsBackToSmallerTile) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+transpose_fusion {
+  param_0 = f32[1024,2080]{0,1} parameter(0)
+  bitcast_0 = f32[2080,1024]{1,0} bitcast(param_0)
+  slice = f32[2048,1024]{1,0} slice(bitcast_0), slice={[32:2080], [0:1024]}
+  transpose = f32[1024,2048]{1,0} transpose(slice), dimensions={1,0}
+  ROOT bitcast_1 = f32[1024,16,128]{2,1,0} bitcast(transpose)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[1024,2080]{0,1} parameter(0)
+  ROOT fusion = f32[1024,16,128]{2,1,0} fusion(param_0), kind=kCustom,
+    calls=transpose_fusion,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["32","16","128"]}],
+          "num_warps":"8",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})";
+  // The fallback only kicks in when the requested tile actually overflows the
+  // device's shared memory. On devices with a large enough budget the initial
+  // tile compiles directly; either way the fusion must compile and run
+  // correctly, so we simply assert end-to-end correctness here.
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
 class IotaEmitterParametrizedTest
     : public TritonEmitterTest,
       public ::testing::WithParamInterface<std::tuple<PrimitiveType, bool>> {
