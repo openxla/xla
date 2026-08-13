@@ -72,6 +72,7 @@ jobs:
         --ipc=host
         --shm-size=64G
         --cap-add=SYS_PTRACE
+        --cap-add=SYS_ADMIN
         --security-opt=seccomp=unconfined
         --tmpfs /root/.cache/bazel:rw,exec,size=80g
         --group-add video
