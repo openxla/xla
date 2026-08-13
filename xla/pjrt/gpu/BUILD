@@ -464,6 +464,7 @@ xla_test(
         "//xla/runtime:device_id",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:platform_util",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
@@ -479,6 +480,7 @@ xla_test(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "//xla/util/split_proto:split_executable_and_options_writer",
         "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/algorithm:container",
@@ -508,6 +510,7 @@ xla_test(
         "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/bytes:string_writer",
         "@tsl//tsl/platform",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_compute_capability",
