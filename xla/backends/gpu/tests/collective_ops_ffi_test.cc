@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/collectives_c_api.h"
 #include "xla/ffi/collectives_ffi.h"
 #include "xla/ffi/ffi.h"
 #include "xla/future.h"
@@ -350,7 +351,7 @@ static absl::Status PublicApiAllReduce(se::Stream* stream,
                                        ffi::BufferR0<U32> src,
                                        ffi::Result<ffi::BufferR0<U32>> dst,
                                        ffi::Communicator comm) {
-  TF_ASSIGN_OR_RETURN(void* communicator,
+  TF_ASSIGN_OR_RETURN(XLA_FFI_Communicator * communicator,
                       comm.GetCommunicator(ffi::GroupMode::kFlattenedId,
                                            PublicApiReplicaGroups(),
                                            /*communication_id=*/0));

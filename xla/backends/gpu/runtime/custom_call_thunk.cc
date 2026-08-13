@@ -594,7 +594,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomCallThunk::Record(
     se::CommandBuffer* command_buffer) {
   se::StreamExecutor* executor = execute_params.stream->parent();
   ABSL_ASSIGN_OR_RETURN(auto call_frame,
-                   BuildCallFrame(execute_params.buffer_allocations));
+                        BuildCallFrame(execute_params.buffer_allocations));
 
   // Retrieve or create the state for recording.
   auto* state = record_params.state.GetOrCreate<CustomCallRecordState>(
