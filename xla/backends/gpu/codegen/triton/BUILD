@@ -161,6 +161,8 @@ cc_library(
         "compilation_pipeline.cc",
         "compilation_pipeline_cuda.cc",
         "compilation_pipeline_rocm.cc",
+        # SYCL uses XPU Triton instead of upstream Triton. Hence, the oneAPI
+        # pipeline must be guarded and a stub is needed for other backends.
     ] + if_sycl_build_is_configured(
         if_false = ["compilation_pipeline_oneapi_stub.cc"],
         if_true = ["compilation_pipeline_oneapi.cc"],
