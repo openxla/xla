@@ -16,9 +16,14 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_MORI_STUB_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_MORI_STUB_H_
 
+#include <hip/hip_runtime.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
 
 // Inert stand-in for the subset of the MORI shmem host API used by the MORI
 // collectives/communicator backbone. These placeholders let the backbone
@@ -68,6 +73,93 @@ inline void* ShmemMalloc(size_t /*size*/) { return nullptr; }
 inline void ShmemFree(void* /*ptr*/) {}
 
 }  // namespace shmem
+}  // namespace mori
+
+// Reduction functors are named as template args by the communicator dispatch
+// (::SumOp<T>, ...). The stub facade ignores Op, so forward decls suffice.
+template <class T>
+struct SumOp;
+template <class T>
+struct MaxOp;
+template <class T>
+struct MinOp;
+template <class T>
+struct ProdOp;
+
+namespace mori {
+namespace collective {
+
+// Inert stand-in for the real MORI CollectivesFacade. Header-only, all Run* are
+// no-ops returning hipSuccess. Lets the collectives/communicator wiring compile
+// and link without @roc_mori. Swap for the real facade by defining
+// XLA_GPU_USE_REAL_MORI (see mori_kernels.h).
+class CollectivesFacade {
+  CollectivesFacade() = default;
+
+ public:
+  enum class RsMode { kPush, kPull };
+  using AddressVector = std::vector<std::pair<const void*, void*>>;
+
+  CollectivesFacade(const CollectivesFacade&) = delete;
+  CollectivesFacade& operator=(const CollectivesFacade&) = delete;
+
+  static std::unique_ptr<CollectivesFacade> Create(int myPe, int nPes,
+                                                   size_t /*maxStagingBytes*/) {
+    auto f = std::unique_ptr<CollectivesFacade>(new CollectivesFacade());
+    f->myPe_ = myPe;
+    f->nPes_ = nPes;
+    return f;
+  }
+  ~CollectivesFacade() = default;
+
+  template <class T, class Op>
+  hipError_t RunReduceScatter(const T*, T*, size_t, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class T, class Op>
+  hipError_t RunAllReduce(const T*, T*, size_t, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunAllGather(const void*, void*, size_t, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunAllToAll(const AddressVector&, size_t, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunBarrier(hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunSend(const void*, size_t, int, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunRecv(void*, size_t, int, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunCollectivePermute(const void*, void*, size_t, int, const int*,
+                                  int, hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunQuiet(hipStream_t) {
+    return hipSuccess;
+  }
+  template <class = void>
+  hipError_t RunFence() {
+    return hipSuccess;
+  }
+
+ private:
+  int myPe_{0};
+  int nPes_{0};
+};
+
+}  // namespace collective
 }  // namespace mori
 
 #endif  // XLA_BACKENDS_GPU_COLLECTIVES_MORI_STUB_H_
