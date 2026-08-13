@@ -149,6 +149,15 @@ jobs:
       - name: Check SYS_ADMIN capability
         run: capsh --print | grep -i sys_admin
 
+      - name: Check user namespace settings
+        run: |
+          # Debian/Ubuntu-specific knob (may not exist on other kernels)
+          cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null \
+            || echo "not present (non-Debian kernel — governed only by max_user_namespaces)"
+
+          # generic limit; 0 = userns disabled, >0 = allowed
+          cat /proc/sys/user/max_user_namespaces
+
       # - name: Test XLA [single_gpu]
       #   timeout-minutes: 120
       #   run: |
