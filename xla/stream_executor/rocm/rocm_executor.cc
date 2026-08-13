@@ -96,6 +96,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/host_info.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/numbers.h"
 
@@ -627,6 +628,8 @@ void RocmExecutor::UnloadKernel(const Kernel* kernel) {
 }
 
 absl::Status RocmExecutor::Init() {
+  LOG(INFO) << "Hostname: " << tsl::port::Hostname();
+  CHECK_EQ(device_ordinal(), 0);
   ABSL_ASSIGN_OR_RETURN(device_, GetDevice(device_ordinal()));
   ABSL_ASSIGN_OR_RETURN(version_, GetGpuISAVersion(device_));
 
