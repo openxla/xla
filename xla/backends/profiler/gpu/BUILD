@@ -525,6 +525,37 @@ cc_library(
     ],
 )
 
+# Theoretical-occupancy model for AMDGPU kernels. Deliberately has NO ROCm
+# dependency and NO "rocm-only" tag: it is pure arithmetic, so it builds and
+# tests on a CPU-only host. Keeping it inside :rocm_collector -- which pulls in
+# hip_runtime.h and rocprofiler-sdk -- would mean the formula could never be
+# covered by CPU CI. Do not add ROCm deps here.
+cc_library(
+    name = "rocm_occupancy",
+    srcs = ["rocm_occupancy.cc"],
+    hdrs = ["rocm_occupancy.h"],
+    deps = [
+        "@com_google_absl//absl/log",
+    ],
+)
+
+xla_cc_test(
+    name = "rocm_occupancy_test",
+    size = "small",
+    srcs = ["rocm_occupancy_test.cc"],
+    # Untagged, on purpose, and do not add "gpu" here. openxla's CPU, ARM64 and
+    # Windows configs all filter -no_oss,-gpu,-requires-gpu-*, so any of those
+    # tags removes this target from every mainstream CI job and leaves it
+    # running only under ROCm's own ci_rocm_cpu, whose ",gpu," filter is
+    # positive. Untagged is what gets the golden table built and run on every
+    # PR, which is the whole reason the model is kept free of ROCm deps.
+    deps = [
+        ":rocm_occupancy",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "rocm_collector",
     srcs = ["rocm_collector.cc"],
