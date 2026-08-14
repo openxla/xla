@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.h"
-#include "xla/stream_executor/sycl/sycl_gemm_workspace.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -2844,25 +2843,6 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
     if (instr->custom_call_target() == kCublasLtGroupedMatmulCallTarget) {
       size_t num_groups = instr->operand(2)->shape().dimensions().back();
       workspace = GroupedGemmConfig::kUserArgsSizeBytes * num_groups;
-    }
-
-    if (gpu_version_.IsOneAPI()) {
-      ABSL_ASSIGN_OR_RETURN(GemmConfig gemm_config,
-                            GemmConfig::For(instr, gpu_version_));
-      ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                            instr->backend_config<GpuBackendConfig>());
-      const GemmBackendConfig& config = gpu_config.gemm_backend_config();
-
-      auto scratchpad_size_or = stream_executor::sycl::GetGemmScratchpadSize(
-          gemm_config, config.epilogue());
-      if (scratchpad_size_or.ok()) {
-        workspace =
-            std::max(workspace, static_cast<int64_t>(*scratchpad_size_or));
-      } else {
-        VLOG(1) << "Failed to compute OneDNN scratchpad size for "
-                << instr->custom_call_target() << ": "
-                << scratchpad_size_or.status().message();
-      }
     }
 
     // Append workspace buffer to instruction outputs.

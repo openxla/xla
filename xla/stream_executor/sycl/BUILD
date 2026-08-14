@@ -647,21 +647,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "sycl_gemm_workspace",
-    srcs = ["sycl_gemm_workspace.cc"],
-    hdrs = ["sycl_gemm_workspace.h"],
-    local_defines = if_sycl_is_configured(["TENSORFLOW_USE_SYCL=1"]),
-    deps = [
-        "//xla/service/gpu:backend_configs_cc",
-        "//xla/service/gpu:matmul_utils",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-    ] + if_sycl_is_configured([
-        ":sycl_matmul_utils",
-    ]),
-)
-
 xla_test(
     name = "gemm_sycl_test",
     srcs = ["gemm_sycl_test.cc"],
