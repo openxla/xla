@@ -386,7 +386,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rocm_smi",
+        "@local_config_rocm//rocm:smi",
     ],
 )
 
@@ -404,7 +404,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rocm_smi",
+        "@local_config_rocm//rocm:smi",
     ],
 )
 
@@ -435,7 +435,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rocm_smi",
+        "@local_config_rocm//rocm:smi",
     ],
 )
 
