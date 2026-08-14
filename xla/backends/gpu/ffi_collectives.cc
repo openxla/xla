@@ -33,11 +33,11 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/ffi/api/c_api.h"
-#include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
 #include "xla/ffi/ffi_interop.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/tsl/platform/errors.h"
+#include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 

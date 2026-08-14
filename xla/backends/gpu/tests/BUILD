@@ -1458,6 +1458,7 @@ xla_test(
         "//xla/ffi:collectives_ffi",
         "//xla/ffi:ffi_api",
         "//xla/ffi/api:c_api",
+        "//xla/ffi/api:collectives_api",
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/service:rendezvous",
@@ -1484,6 +1485,7 @@ xla_test(
         "@com_google_absl//absl/types:span",
     ] + if_cuda_is_configured([
         ":collective_ops_ffi_kernels_cuda",
+        "@local_config_cuda//cuda:cuda_headers",
         "@local_config_nccl//:nccl",
     ]),
 )

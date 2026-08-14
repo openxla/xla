@@ -58,6 +58,7 @@ cc_library(
     hdrs = ["ffi_collectives.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -68,9 +69,8 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/ffi:ffi_interop",
         "//xla/ffi/api:c_api",
-        "//xla/ffi/api:collectives_api",
+        "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
-        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
