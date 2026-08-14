@@ -59,6 +59,7 @@ tf_proto_library(
         "//xla:autotuning_proto",
         "//xla:xla_data_proto",
         "//xla:xla_proto",
+        "//xla/codegen/xtile:xtile_config_proto",
         "//xla/tsl/protobuf:dnn_proto",
     ],
 )
@@ -1063,6 +1064,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/codegen:ir_emission_utils",
+        "//xla/codegen/xtile:xtile_config_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",
@@ -3715,6 +3717,7 @@ xla_cc_test(
         ":gpu_device_info_for_tests",
         ":gpu_hlo_schedule",
         ":gpu_latency_hiding_scheduler",
+        "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms/collectives:collective_domain",
         "//xla/hlo/ir:hlo",

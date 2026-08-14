@@ -629,7 +629,7 @@ cc_library(
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:thread_annotations",
-    ] + tf_platform_deps("status"),
+    ],
 )
 
 tsl_cc_test(
@@ -673,9 +673,11 @@ cc_library(
         ":status",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
-    ] + tf_platform_deps("status"),
+        "@com_google_absl//absl/types:source_location",
+    ],
 )
 
 cc_library(
@@ -687,12 +689,13 @@ cc_library(
         ":macros",
         ":status",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform",
-    ] + tf_platform_deps("statusor"),
+    ],
 )
 
 tsl_cc_test(
