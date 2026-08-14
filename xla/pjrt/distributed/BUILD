@@ -135,13 +135,14 @@ cc_library(
     srcs = ["mtls.cc"],
     hdrs = ["mtls.h"],
     deps = [
-        "@com_github_grpc_grpc//:grpc",
-        "@com_github_grpc_grpc//:grpc++",
+        "//xla/tsl/platform:env",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@grpc",
+        "@grpc//:grpc++",
     ],
 )
 

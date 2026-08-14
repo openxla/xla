@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/distributed/mtls.h"
 
-#include <cerrno>
-#include <cstdio>
 #include <functional>
 #include <memory>
 #include <string>
@@ -39,6 +37,7 @@ limitations under the License.
 #include "grpcpp/security/tls_credentials_options.h"
 #include "grpcpp/support/status.h"
 #include "grpcpp/support/string_ref.h"
+#include "xla/tsl/platform/env.h"
 
 namespace xla {
 namespace {
@@ -98,42 +97,46 @@ absl::Status ValidateReadableFile(absl::string_view role,
     return absl::InvalidArgumentError(
         absl::StrCat("mTLS configuration is missing the ", role, " file"));
   }
-  FILE* file = fopen(path.c_str(), "r");
-  if (file == nullptr) {
-    const int err = errno;
-    return absl::ErrnoToStatus(
-        err, absl::StrCat("Cannot open mTLS ", role, " file ", path));
+  std::string contents;
+  absl::Status status =
+      tsl::ReadFileToString(tsl::Env::Default(), path, &contents);
+  if (!status.ok()) {
+    return absl::Status(
+        status.code(), absl::StrCat("Cannot open mTLS ", role, " file ", path,
+                                    ": ", status.message()));
   }
-  fclose(file);
   return absl::OkStatus();
 }
 
-// Validates the credential files in `config` and builds the certificate
-// provider shared by the root and identity roles.
-absl::StatusOr<
-    std::shared_ptr<grpc::experimental::CertificateProviderInterface>>
-MakeCertificateProvider(const MtlsConfig& config) {
+absl::Status ValidateMtlsConfig(const MtlsConfig& config) {
+  if (!config.peer_uri_prefix.empty() &&
+      !absl::EndsWith(config.peer_uri_prefix, "/")) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("mTLS peer_uri_prefix must end with '/', e.g. "
+                     "\"spiffe://example.org/\", to avoid accepting "
+                     "\"spiffe://example.org.evil/...\". Got \"",
+                     config.peer_uri_prefix, "\""));
+  }
   ABSL_RETURN_IF_ERROR(
       ValidateReadableFile("certificate (cert_file)", config.cert_file));
   ABSL_RETURN_IF_ERROR(
       ValidateReadableFile("private key (key_file)", config.key_file));
   ABSL_RETURN_IF_ERROR(
       ValidateReadableFile("root CA (ca_file)", config.ca_file));
-  return std::make_shared<grpc::experimental::FileWatcherCertificateProvider>(
-      /*private_key_path=*/config.key_file,
-      /*identity_certificate_path=*/config.cert_file,
-      /*root_cert_path=*/config.ca_file,
-      /*refresh_interval_sec=*/config.cert_refresh_interval_seconds);
+  return absl::OkStatus();
 }
 
 }  // namespace
 
 absl::StatusOr<std::shared_ptr<::grpc::ChannelCredentials>>
 GetMtlsClientCredentials(const MtlsConfig& config) {
-  ABSL_ASSIGN_OR_RETURN(
-      std::shared_ptr<grpc::experimental::CertificateProviderInterface>
-          cert_provider,
-      MakeCertificateProvider(config));
+  ABSL_RETURN_IF_ERROR(ValidateMtlsConfig(config));
+  auto cert_provider =
+      std::make_shared<grpc::experimental::FileWatcherCertificateProvider>(
+          /*private_key_path=*/config.key_file,
+          /*identity_certificate_path=*/config.cert_file,
+          /*root_cert_path=*/config.ca_file,
+          /*refresh_interval_sec=*/config.cert_refresh_interval_seconds);
   grpc::experimental::TlsChannelCredentialsOptions options;
   options.set_root_certificate_provider(cert_provider);
   options.set_identity_certificate_provider(std::move(cert_provider));
@@ -152,10 +155,13 @@ GetMtlsClientCredentials(const MtlsConfig& config) {
 
 absl::StatusOr<std::shared_ptr<::grpc::ServerCredentials>>
 GetMtlsServerCredentials(const MtlsConfig& config) {
-  ABSL_ASSIGN_OR_RETURN(
-      std::shared_ptr<grpc::experimental::CertificateProviderInterface>
-          cert_provider,
-      MakeCertificateProvider(config));
+  ABSL_RETURN_IF_ERROR(ValidateMtlsConfig(config));
+  auto cert_provider =
+      std::make_shared<grpc::experimental::FileWatcherCertificateProvider>(
+          /*private_key_path=*/config.key_file,
+          /*identity_certificate_path=*/config.cert_file,
+          /*root_cert_path=*/config.ca_file,
+          /*refresh_interval_sec=*/config.cert_refresh_interval_seconds);
   ABSL_ASSIGN_OR_RETURN(
       grpc::experimental::TlsServerCredentialsOptions options,
       grpc::experimental::TlsServerCredentialsOptions::Create(cert_provider));

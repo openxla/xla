@@ -51,8 +51,9 @@ struct MtlsConfig {
   // SAN of its leaf certificate starts with this prefix, e.g. for
   // SPIFFE-style identities whose certificates carry only URI SANs, or when
   // the server is dialed by an IP address its certificate does not name.
-  // Include a trailing delimiter (e.g. "spiffe://example.org/", not
-  // "spiffe://example.org"), or "spiffe://example.org.evil" would also match.
+  // Must end with '/' (e.g. "spiffe://example.org/", not
+  // "spiffe://example.org"), since otherwise "spiffe://example.org.evil/..."
+  // would also match; a prefix without the trailing '/' is rejected.
   std::string peer_uri_prefix;
 
   // How often the credential files are re-read.

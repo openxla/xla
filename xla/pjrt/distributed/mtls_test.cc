@@ -147,6 +147,16 @@ TEST_F(MtlsTest, HostnameVerificationRejectsUriSanOnlyServer) {
               absl_testing::StatusIs(absl::StatusCode::kDeadlineExceeded));
 }
 
+TEST_F(MtlsTest, PrefixWithoutTrailingSlashIsRejected) {
+  // "spiffe://example.org" would also match "spiffe://example.org.evil/...",
+  // so a prefix must end with '/'.
+  MtlsConfig config = MakeConfig("server", "spiffe://example.org");
+  EXPECT_THAT(GetMtlsServerCredentials(config),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(GetMtlsClientCredentials(config),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 // ---- default (no prefix) on both sides ----
 // `nouri` carries DNS:localhost, so clients using the default hostname
 // verification must dial "localhost".
