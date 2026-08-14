@@ -112,9 +112,7 @@ namespace xla {
 
 namespace {
 #ifdef __AVX__
-static constexpr int kMaxInnerBlockSizeBytes = sizeof(__m256i);
-#elif defined(XLA_HAS_VEC128)
-static constexpr int kMaxInnerBlockSizeBytes = sizeof(Vec128);
+static constexpr int kMaxInnerBlockSizeBytes = 32;
 #else
 static constexpr int kMaxInnerBlockSizeBytes = 16;
 #endif
@@ -233,7 +231,7 @@ void MacroKernel(const char* __restrict a, int64_t lda, int outer_bs_a,
 
   for (int i = 0; i < outer_bs_a; ++i) {
     for (int j = 0; j < outer_bs_b; ++j) {
-      TransposeMicroKernel<T, inner_bs>::Apply(
+      TransposeMicroKernelDispatch<T, inner_bs>(
           a + inner_bs * j * lda + i * inner_bs * sizeof(T), lda,
           b + inner_bs * i * ldb + j * inner_bs * sizeof(T), ldb);
     }

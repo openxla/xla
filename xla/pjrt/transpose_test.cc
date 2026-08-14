@@ -92,7 +92,7 @@ void TestMicroKernelEquivalence() {
 
       const int64_t lda = input_stride * sizeof(T);
       const int64_t ldb = output_stride * sizeof(T);
-      TransposeMicroKernel<T, bs>::Apply(
+      TransposeMicroKernelDispatch<T, bs>(
           reinterpret_cast<const char*>(input.data()), lda,
           reinterpret_cast<char*>(actual_output.data()), ldb);
 
@@ -105,26 +105,28 @@ void TestMicroKernelEquivalence() {
 }
 
 TEST(TransposeMicroKernelTest, ExactEquivalence) {
-  // AvxSquareTransposeMicroKernelImpl is triggered when a logical row of the
-  // tile (bs * sizeof(T)) is exactly 256 bits to fit in __m256i.
+  // TransposeMicroKernel256Square is triggered when a logical row of the tile
+  // (bs * sizeof(T)) is 256 bits (32 bytes).
   TestMicroKernelEquivalence<int8_t, 32>();
   TestMicroKernelEquivalence<int16_t, 16>();
   TestMicroKernelEquivalence<float, 8>();
   TestMicroKernelEquivalence<int64_t, 4>();
   TestMicroKernelEquivalence<absl::uint128, 2>();
 
-  // SseSquareTransposeMicroKernelImpl or AvxRectangularTransposeMicroKernelImpl
-  // is triggered when a logical row of the tile (bs * sizeof(T)) is exactly
-  // 128 bits. SseSquare operates directly on __m128i when gathering from memory
-  // (lda >= ldb && lda <= 64B) while AvxRectangular packs two rows into __m256i
-  // when scattering to memory (ldb > lda) or for large strides.
+  // TransposeMicroKernel128 or TransposeMicroKernel256Rect is triggered when a
+  // logical row of the tile (bs * sizeof(T)) is 128 bits (16 bytes).
+  // TransposeMicroKernel128 operates on 128-bit blocks when gathering from
+  // memory (lda >= ldb && lda <= 64B) while TransposeMicroKernel256Rect packs
+  // two rows into 256-bit vectors when scattering to memory (ldb > lda) or for
+  // large strides.
   TestMicroKernelEquivalence<int8_t, 16>();
   TestMicroKernelEquivalence<int16_t, 8>();
   TestMicroKernelEquivalence<bfloat16, 8>();
   TestMicroKernelEquivalence<float, 4>();
   TestMicroKernelEquivalence<int64_t, 2>();
 
-  // Smaller or larger cases fall back to either Vec128 or a for loop.
+  // Smaller or larger cases fall back to TransposeMicroKernel128 or scalar
+  // loop.
   TestMicroKernelEquivalence<int8_t, 8>();
   TestMicroKernelEquivalence<int16_t, 4>();
   TestMicroKernelEquivalence<bfloat16, 4>();
@@ -1339,7 +1341,7 @@ void BM_TransposeMicroKernel(::testing::benchmark::State& state) {
     benchmark::DoNotOptimize(outer_bs);
     for (int i = 0; i < outer_bs; ++i) {
       for (int j = 0; j < outer_bs; ++j) {
-        TransposeMicroKernel<T, bs>::Apply(
+        TransposeMicroKernelDispatch<T, bs>(
             a + bs * j * lda + i * bs * sizeof(T), lda,
             b + bs * i * ldb + j * bs * sizeof(T), ldb);
       }
