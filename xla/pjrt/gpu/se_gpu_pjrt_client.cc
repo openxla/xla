@@ -2192,12 +2192,14 @@ absl::Status ExchangeEmptyStreamExecutorGpuTopology(
     defined(TENSORFLOW_USE_SYCL)
 
 static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
-    LocalExecutable& exec, LocalDeviceState* local_device_state,
+    LocalExecutable& exec, PjRtStreamExecutorRawClient* raw_client,
+    LocalDeviceState* local_device_state,
     absl::Span<const PjRtRawBufferRef> flat_arguments,
     absl::Span<const PjRtRawBufferRef> results,
     absl::Span<PjRtDeviceEventPromiseRef> result_definition_event_promises,
     ExecutableRunOptions run_options_inp, bool parameter_is_tupled_arguments) {
-  TF_RET_CHECK(result_definition_event_promises.size() == results.size());
+  TF_RET_CHECK(result_definition_event_promises.empty() ||
+               result_definition_event_promises.size() == results.size());
 
   std::vector<const Shape*> argument_shapes;
   if (exec.executable() != nullptr) {
@@ -2310,7 +2312,8 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
   auto set_result = [&](const ShapeIndex& index, int i) -> absl::Status {
     const gpu::GpuExecutable::OutputInfo& output_info =
         gpu_exec->output_info().at(index);
-    if (result_definition_event_promises[i]) {
+    if (!result_definition_event_promises.empty() &&
+        result_definition_event_promises[i]) {
       result_indices_by_allocation[output_info.allocation_index].push_back(i);
     }
 
@@ -2382,20 +2385,16 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
     ABSL_RETURN_IF_ERROR(set_result({}, 0));
   }
 
-  auto* se_client =
-      absl::down_cast<PjRtStreamExecutorClient*>(device->client());
-  LocalDeviceState* local_device_state =
-      absl::down_cast<PjRtStreamExecutorDevice*>(device)->local_device_state();
-
   // Record a pre-launch compute-stream boundary. Any sync point captured by a
   // result allocation resolves to this event; result definition is separate.
-  if (local_device_state->allocation_model() ==
-      LocalDeviceState::kComputeSynchronized) {
+  if (!result_definition_event_promises.empty() &&
+      local_device_state->allocation_model() ==
+          LocalDeviceState::kComputeSynchronized) {
     ABSL_ASSIGN_OR_RETURN(
         BufferSequencingEventRef allocation_event,
         local_device_state->GetEventForComputeStreamSyncPoint(
             local_device_state->GetNextComputeStreamSyncPoint(),
-            se_client->raw_client()->async_work_runner()));
+            raw_client->async_work_runner()));
     DCHECK(allocation_event);
   }
 
@@ -2420,11 +2419,10 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
         << absl::StrJoin(indices, ", ") << "] and results ["
         << absl::StrJoin(result_indices, ", ") << "] on stream " << stream;
 
-    auto event = BufferSequencingEvent::Create(
-        se_client->raw_client()->async_work_runner());
+    auto event = BufferSequencingEvent::Create(raw_client->async_work_runner());
     event->AddErrorContext("executable_name", std::string(gpu_exec->name()));
 
-    ABSL_RETURN_IF_ERROR(se_client->raw_client()->AllocateAndRecordEvent(
+    ABSL_RETURN_IF_ERROR(raw_client->AllocateAndRecordEvent(
         event, local_device_state, stream,
         "RunGpuAsync::ResultBufferDefinition"));
 

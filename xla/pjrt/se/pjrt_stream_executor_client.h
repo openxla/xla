@@ -565,7 +565,8 @@ struct PjRtStreamExecutorExecutionOutput {
 };
 
 using RunAsyncHandlerFn = absl::StatusOr<PjRtStreamExecutorExecutionOutput> (*)(
-    LocalExecutable& exec, LocalDeviceState* local_device_state,
+    LocalExecutable& exec, PjRtStreamExecutorRawClient* raw_client,
+    LocalDeviceState* local_device_state,
     absl::Span<const PjRtRawBufferRef> flat_arguments,
     absl::Span<const PjRtRawBufferRef> results,
     absl::Span<PjRtDeviceEventPromiseRef> result_definition_event_promises,
