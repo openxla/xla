@@ -34,14 +34,14 @@ struct StablehloToHloOpImpl;
 template <typename StablehloOpTy>
 using StablehloToHloOp = typename StablehloToHloOpImpl<StablehloOpTy>::Type;
 
-#define MAP_STABLEHLO_TO_HLO(OpName)               \
-  template <>                                      \
-  struct HloToStablehloOpImpl<mhlo::OpName> {      \
-    using Type = stablehlo::OpName;                \
-  };                                               \
-  template <>                                      \
-  struct StablehloToHloOpImpl<stablehlo::OpName> { \
-    using Type = mhlo::OpName;                     \
+#define MAP_STABLEHLO_TO_HLO(OpName)                                           \
+  template <>                                                                  \
+  struct HloToStablehloOpImpl<mhlo::OpName> {                                  \
+    using Type = stablehlo::OpName;                                            \
+  };                                                                           \
+  template <>                                                                  \
+  struct StablehloToHloOpImpl<stablehlo::OpName> {                             \
+    using Type = mhlo::OpName;                                                 \
   };
 
 MAP_STABLEHLO_TO_HLO(AbsOp)
@@ -65,8 +65,8 @@ MAP_STABLEHLO_TO_HLO(CholeskyOp)
 MAP_STABLEHLO_TO_HLO(ClampOp)
 MAP_STABLEHLO_TO_HLO(ClzOp)
 MAP_STABLEHLO_TO_HLO(CollectiveBroadcastOp)
-MAP_STABLEHLO_TO_HLO(CollectiveReduceOp)
 MAP_STABLEHLO_TO_HLO(CollectivePermuteOp)
+MAP_STABLEHLO_TO_HLO(CollectiveReduceOp)
 MAP_STABLEHLO_TO_HLO(CompareOp)
 MAP_STABLEHLO_TO_HLO(ComplexOp)
 MAP_STABLEHLO_TO_HLO(CompositeOp)
@@ -163,14 +163,14 @@ MAP_STABLEHLO_TO_HLO(XorOp)
 
 #undef MAP_STABLEHLO_TO_HLO
 
-#define MAP_HLO_TO_HLO_TYPE_REWRITE(OpName)   \
-  template <>                                 \
-  struct HloToStablehloOpImpl<mhlo::OpName> { \
-    using Type = mhlo::OpName;                \
-  };                                          \
-  template <>                                 \
-  struct StablehloToHloOpImpl<mhlo::OpName> { \
-    using Type = mhlo::OpName;                \
+#define MAP_HLO_TO_HLO_TYPE_REWRITE(OpName)                                    \
+  template <>                                                                  \
+  struct HloToStablehloOpImpl<mhlo::OpName> {                                  \
+    using Type = mhlo::OpName;                                                 \
+  };                                                                           \
+  template <>                                                                  \
+  struct StablehloToHloOpImpl<mhlo::OpName> {                                  \
+    using Type = mhlo::OpName;                                                 \
   };
 MAP_HLO_TO_HLO_TYPE_REWRITE(AddDependencyOp)
 MAP_HLO_TO_HLO_TYPE_REWRITE(AsyncStartOp)
@@ -181,22 +181,20 @@ MAP_HLO_TO_HLO_TYPE_REWRITE(AsyncDoneOp)
 
 // TODO(mwhittaker): Remove this when we translate async ops between StableHLO
 // and MHLO.
-#define MAP_STABLEHLO_TO_STABLEHLO_TYPE_REWRITE(OpName) \
-  template <>                                           \
-  struct HloToStablehloOpImpl<stablehlo::OpName> {      \
-    using Type = stablehlo::OpName;                     \
-  };                                                    \
-  template <>                                           \
-  struct StablehloToHloOpImpl<stablehlo::OpName> {      \
-    using Type = stablehlo::OpName;                     \
+#define MAP_STABLEHLO_TO_STABLEHLO_TYPE_REWRITE(OpName)                        \
+  template <>                                                                  \
+  struct HloToStablehloOpImpl<stablehlo::OpName> {                             \
+    using Type = stablehlo::OpName;                                            \
+  };                                                                           \
+  template <>                                                                  \
+  struct StablehloToHloOpImpl<stablehlo::OpName> {                             \
+    using Type = stablehlo::OpName;                                            \
   };
 MAP_STABLEHLO_TO_STABLEHLO_TYPE_REWRITE(AsyncStartOp)
 MAP_STABLEHLO_TO_STABLEHLO_TYPE_REWRITE(AsyncDoneOp)
-// TODO(cl/958226692): Map CollectiveReduceOp to the corresponding HLO op.
-MAP_STABLEHLO_TO_STABLEHLO_TYPE_REWRITE(CollectiveReduceOp)
 #undef MAP_STABLEHLO_TO_STABLEHLO_TYPE_REWRITE
 
-}  // namespace stablehlo
-}  // namespace mlir
+} // namespace stablehlo
+} // namespace mlir
 
-#endif  // MLIR_HLO_MHLO_TRANSFORMS_MAP_STABLEHLO_TO_HLO_OP_H
+#endif // MLIR_HLO_MHLO_TRANSFORMS_MAP_STABLEHLO_TO_HLO_OP_H

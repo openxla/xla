@@ -6663,7 +6663,8 @@ evaluateMhloRegion(Region &region, ArrayRef<Attribute> inputs) {
     if (failed(op.fold(inputs, results)))
       return {};
     for (auto it : llvm::zip(op.getResults(), results)) {
-      if (!isa<Attribute>(std::get<1>(it))) return {};
+      if (!isa<Attribute>(std::get<1>(it)))
+        return {};
       values.insert({std::get<0>(it), cast<Attribute>(std::get<1>(it))});
     }
   }
