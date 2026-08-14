@@ -68,16 +68,30 @@ static bool is_in_thread_transpose_enabled(
   return rocm_cc.gfx9_mi300();
 }
 
+// CDNA4 (gfx950) dropped the XF32 MFMA that CDNA3 (gfx942) has, so a dot
+// requesting TF32 input precision there would otherwise silently lower to a
+// full-rate IEEE f32 MFMA. Route it through the 3xBF16 decomposition instead.
+// gfx942 must keep using its native XF32 MFMA.
+static bool is_tf32_as_bf16x3_emulation_enabled(
+    const stream_executor::RocmComputeCapability& rocm_cc,
+    bool emulate_tf32_as_bf16x3) {
+  return emulate_tf32_as_bf16x3 && rocm_cc.gfx9_mi350();
+}
+
 // Based on make_ttgir() in
 // @triton//:third_party/amd/backend/compiler.py
 static void MakeTTGIR(mlir::OpPassManager* pm,
                       const stream_executor::RocmComputeCapability& rocm_cc,
-                      int num_warps, int num_ctas, int num_stages) {
+                      int num_warps, int num_ctas, int num_stages,
+                      bool emulate_tf32_as_bf16x3) {
   pm->addPass(mt::createConvertTritonToTritonGPU(
       {absl::StrCat("hip:", rocm_cc.gfx_version()), num_warps,
        rocm_cc.threads_per_warp(), num_ctas}));
   pm->addPass(mt::gpu::createTritonGPUCoalesce());
-  pm->addPass(mt::gpu::createTritonGPUF32DotTC({false}));
+  pm->addPass(mt::gpu::createTritonGPUF32DotTC(
+      {/*emuTF32=*/false,
+       /*emulateTF32AsBF16x3=*/is_tf32_as_bf16x3_emulation_enabled(
+           rocm_cc, emulate_tf32_as_bf16x3)}));
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUOptimizeThreadLocality());
   pm->addPass(
@@ -190,9 +204,10 @@ static void MakeLLIR(mlir::OpPassManager* pm,
 void CreateTritonRocmPipeline(
     mlir::OpPassManager* pm,
     const stream_executor::RocmComputeCapability& rocm_cc, int num_warps,
-    int num_ctas, int num_stages) {
+    int num_ctas, int num_stages, bool emulate_tf32_as_bf16x3) {
   MakeTTIR(pm, rocm_cc);
-  MakeTTGIR(pm, rocm_cc, num_warps, num_ctas, num_stages);
+  MakeTTGIR(pm, rocm_cc, num_warps, num_ctas, num_stages,
+            emulate_tf32_as_bf16x3);
   MakeLLIR(pm, rocm_cc, num_stages);
 }
 

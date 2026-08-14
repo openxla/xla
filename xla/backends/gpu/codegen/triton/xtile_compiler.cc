@@ -541,7 +541,9 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                           block_level_parameters.is_warp_specialization_allowed,
                           enable_pdl);
 
-  CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages);
+  CreateTritonPipeline(
+      &pm, gpu_cc, num_warps, num_ctas, num_stages,
+      hlo_config.debug_options().xla_gpu_emulate_tf32_as_bf16x3());
 
   // Triton generates pointers to the global address space, while XLA needs a
   // kernel signature with pointers to the generic address space.

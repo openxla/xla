@@ -1,0 +1,161 @@
+diff --git a/include/triton/Dialect/TritonGPU/Transforms/Passes.td b/include/triton/Dialect/TritonGPU/Transforms/Passes.td
+index 5b3f6d8..935c0e5 100644
+--- a/include/triton/Dialect/TritonGPU/Transforms/Passes.td
++++ b/include/triton/Dialect/TritonGPU/Transforms/Passes.td
+@@ -168,11 +168,16 @@ def TritonGPUF32DotTC : Pass<"tritongpu-F32DotTC", "mlir::ModuleOp"> {
+       See https://arxiv.org/abs/1904.06376
+   }];
+ 
+-  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect"];
++  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
++                           "mlir::math::MathDialect"];
+   let options = [
+     Option<"emuTF32", "emu-tf32",
+            "bool", /*default*/"false",
+-           "whether to handle InputPrecision TF32xN for Nvidia GPUs">
++           "whether to handle InputPrecision TF32xN for Nvidia GPUs">,
++    Option<"emulateTF32AsBF16x3", "emulate-tf32-as-bf16x3",
++           "bool", /*default*/"false",
++           "whether to decompose InputPrecision TF32 dots via the BF16x3 trick, for "
++           "targets with f32 operands but no native TF32/XF32 tensor-core path">
+   ];
+ }
+ 
+diff --git a/lib/Dialect/TritonGPU/Transforms/F32DotTC.cpp b/lib/Dialect/TritonGPU/Transforms/F32DotTC.cpp
+index f66c3c1..c4f74cf 100644
+--- a/lib/Dialect/TritonGPU/Transforms/F32DotTC.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/F32DotTC.cpp
+@@ -1,7 +1,10 @@
++#include "mlir/Dialect/Math/IR/Math.h"
+ #include "mlir/IR/PatternMatch.h"
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+ #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
+ 
++#include <limits>
++
+ namespace mlir::triton::gpu {
+ 
+ #define GEN_PASS_DEF_TRITONGPUF32DOTTC
+@@ -52,17 +55,39 @@ Value dot(Value lhs, Value rhs, Value acc, PatternRewriter &rewriter,
+                        maxNumImpreciseAcc);
+ };
+ 
+-Value replaceNansWithZeros(Value value, PatternRewriter &rewriter) {
+-  auto nans = arith::CmpFOp::create(rewriter, value.getLoc(),
+-                                    arith::CmpFPredicate::UNO, value, value);
+-  auto zero = zeroLike(value, rewriter);
+-  return arith::SelectOp::create(rewriter, value.getLoc(), nans, zero, value);
++// Zeroes out non-finite partial products (NaN and +/-inf).
++//
++// A cross-product term can go non-finite two ways: NaN, when an operand is
++// infinite (inf - inf during the split), or +/-inf, when operands are merely
++// large enough that the term overflows f32 even though the exact result is
++// representable. Both carry no usable information. Zeroing only the NaNs is
++// not enough: a surviving +/-inf cross term produces inf + (-inf) = NaN in the
++// final accumulation, where the correct answer is +/-inf from the leading
++// hi*hi term. This matches the finiteness test XLA uses in its own BF16xN
++// emitter (ZeroNaNs in stablehlo_lower_to_triton.cc).
++Value replaceNonFiniteWithZeros(Value value, PatternRewriter &rewriter) {
++  auto loc = value.getLoc();
++  Value posInf = SplatOp::create(
++      rewriter, loc, value.getType(),
++      arith::ConstantOp::create(rewriter, loc,
++                                rewriter.getF32FloatAttr(
++                                    std::numeric_limits<float>::infinity())));
++  Value absValue = math::AbsFOp::create(rewriter, loc, value);
++  Value isFinite = arith::CmpFOp::create(
++      rewriter, loc, arith::CmpFPredicate::OGT, posInf, absValue);
++  return arith::SelectOp::create(rewriter, loc, isFinite, value,
++                                 zeroLike(value, rewriter));
+ };
+ 
+-unsigned getBF16Count(triton::InputPrecision precision) {
++unsigned getBF16Count(triton::InputPrecision precision,
++                      bool treatTF32AsBF16x3) {
+   switch (precision) {
+   default:
+     return 0;
++  case InputPrecision::TF32:
++    // On targets with f32 operands but no native TF32/XF32 tensor-core path,
++    // route TF32 through the same decomposition as BF16x3.
++    return treatTF32AsBF16x3 ? 2 : 0;
+   case InputPrecision::BF16x3:
+     // BF16x3 only needs the first 2 values derived from splitting an F32
+     return 2;
+@@ -77,7 +102,11 @@ unsigned getBF16Count(triton::InputPrecision precision) {
+ // As well as
+ // https://github.com/ROCm/rocm-libraries/blob/develop/projects/hipblaslt/tensilelite/Tensile/Components/LocalRead.py#L288-L330
+ struct BF16xN : public OpRewritePattern<DotOp> {
+-  using OpRewritePattern::OpRewritePattern;
++  BF16xN(MLIRContext *context, bool treatTF32AsBF16x3)
++      : OpRewritePattern<DotOp>(context),
++        treatTF32AsBF16x3(treatTF32AsBF16x3) {}
++
++  bool treatTF32AsBF16x3;
+ 
+   LogicalResult matchAndRewrite(DotOp dotOp,
+                                 PatternRewriter &rewriter) const override {
+@@ -85,7 +114,8 @@ struct BF16xN : public OpRewritePattern<DotOp> {
+     const unsigned hi = 0;
+     const unsigned mid = 1;
+     const unsigned lo = 2;
+-    const unsigned N = getBF16Count(dotOp.getInputPrecision());
++    const unsigned N =
++        getBF16Count(dotOp.getInputPrecision(), treatTF32AsBF16x3);
+ 
+     if (!isF32(dotOp.getA()) || !isF32(dotOp.getB()) || !N)
+       return failure();
+@@ -97,7 +127,9 @@ struct BF16xN : public OpRewritePattern<DotOp> {
+ 
+     switch (dotOp.getInputPrecision()) {
+     default:
+-      assert(false && "BF16DotTCPass expects BF16x6 or BF16x3");
++      assert(false &&
++             "BF16DotTCPass expects BF16x6, BF16x3, or (with "
++             "treatTF32AsBF16x3) TF32");
+       return failure();
+ 
+       // clang-format off
+@@ -114,12 +146,13 @@ struct BF16xN : public OpRewritePattern<DotOp> {
+       result = dot(lhs_parts[lo], rhs_parts[hi], result, rewriter);
+       result = dot(lhs_parts[hi], rhs_parts[lo], result, rewriter);
+ 
++    case InputPrecision::TF32:
+     case InputPrecision::BF16x3:
+       result = dot(lhs_parts[mid], rhs_parts[hi], result, rewriter);
+       result = dot(lhs_parts[hi], rhs_parts[mid], result, rewriter);
+-      result = replaceNansWithZeros(result, rewriter);
++      result = replaceNonFiniteWithZeros(result, rewriter);
+ 
+-      // NOTE: For BF16x1 bail without replaceNansWithZeros
++      // NOTE: For BF16x1 bail without replaceNonFiniteWithZeros
+       // case InputPrecision::BF16x1: break;
+     }
+ 
+@@ -140,7 +173,7 @@ struct BF16xN : public OpRewritePattern<DotOp> {
+ //  let bBig = f32ToTF32(b), bSmall = b - bBig;
+ //  let small = dot(aSmall, bBig, inputPrecision="tf32") +
+ //              dot(aBig, bSmall, inputPrecision="tf32")
+-//  let masked_nans = replaceNansWithZeros(small)
++//  let masked_nans = replaceNonFiniteWithZeros(small)
+ //  let big = dot(aBig, bBig, inputPrecision="tf32")
+ //  return big + masked_nans;
+ class TF32x3 : public OpRewritePattern<DotOp> {
+@@ -189,7 +222,7 @@ public:
+     // We would get the wrong result if we sum these partial products. Instead,
+     // we must override any accumulated result if the last partial product is
+     // non-finite.
+-    auto dot2withZeroedNans = replaceNansWithZeros(dot2, rewriter);
++    auto dot2withZeroedNans = replaceNonFiniteWithZeros(dot2, rewriter);
+     auto dot3 = dot(aBig, bBig, dot2withZeroedNans, rewriter,
+                     InputPrecision::TF32, dotOp.getMaxNumImpreciseAcc());
+ 
+@@ -212,7 +245,7 @@ struct F32DotTCPass : public impl::TritonGPUF32DotTCBase<F32DotTCPass> {
+     if (this->emuTF32) {
+       decomposePatterns.add<TF32x3>(context);
+     }
+-    decomposePatterns.add<BF16xN>(context);
++    decomposePatterns.add<BF16xN>(context, this->emulateTF32AsBF16x3);
+     if (applyPatternsGreedily(m, std::move(decomposePatterns)).failed()) {
+       signalPassFailure();
+     }

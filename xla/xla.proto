@@ -867,6 +867,15 @@ message DebugOptions {
   // Determine the while loop unrolling scheme.
   optional WhileLoopUnrolling xla_gpu_enable_while_loop_unrolling = 294;
 
+  // Emulates TF32 input precision using the 3xBF16 decomposition
+  // (https://arxiv.org/abs/1904.06376) in the Triton emitter, on targets that
+  // have no native XF32 matrix instruction. Only takes effect on AMD gfx950
+  // (CDNA4), which dropped the XF32 MFMA that CDNA3 has; without it, a dot
+  // requesting TF32 there silently falls back to a full-rate IEEE f32 MFMA.
+  // The emulation is both faster and more accurate than the TF32 it stands in
+  // for, but it is not bit-identical to f32, so this provides an opt-out.
+  optional bool xla_gpu_emulate_tf32_as_bf16x3 = 534;
+
   // Excludes non-deterministic ops from compiled executables.
   // This flag disables autotuning and selects the first __valid__ autotune
   // config.
