@@ -48,5 +48,4 @@ ENTRY main {
 }
 
 // NEW-VECTOR-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl
-// NEW-VECTOR-LLVM-COUNT-1: llvm.alloc
 // NEW-VECTOR-LLVM-NOT: llvm.alloc

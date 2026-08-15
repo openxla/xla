@@ -61,7 +61,6 @@ fusion {
 // CHECK-LLVM: llvm.intr.memcpy
 
 // NEW-VECTOR-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl
-// NEW-VECTOR-LLVM-COUNT-3: llvm.alloc
 // NEW-VECTOR-LLVM-NOT: llvm.alloc
 
 ENTRY main {

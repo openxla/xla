@@ -58,5 +58,4 @@ ENTRY main {
 // NEW-VECTOR:      vector.transfer_write %[[TRANS]], %{{.*}}[%[[C0]], %[[OFF0]], %[[OFF2]]], %[[MASK_WRITE]] : vector<16x8x4xf32>, memref<3x100x70xf32>
 
 // NEW-VECTOR-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl
-// NEW-VECTOR-LLVM-COUNT-4: llvm.alloc
 // NEW-VECTOR-LLVM-NOT: llvm.alloc
