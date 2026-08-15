@@ -45,12 +45,12 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
   int64_t algorithm = std::any_cast<int64_t>(algorithm_->opaque_algo);
   absl::Status status =
       RunGemm(config_,
-              args.a,          // se::DeviceMemoryBase lhs
-              args.b,          // se::DeviceMemoryBase rhs
-              args.c,          // se::DeviceMemoryBase c
-              args.d,          // se::DeviceMemoryBase output
-              args.bias,       // se::DeviceMemoryBase bias
-              args.workspace,  // se::DeviceMemoryBase workspace
+              args.a,          // se::DeviceAddressBase lhs
+              args.b,          // se::DeviceAddressBase rhs
+              args.c,          // se::DeviceAddressBase c
+              args.d,          // se::DeviceAddressBase output
+              args.bias,       // se::DeviceAddressBase bias
+              args.workspace,  // se::DeviceAddressBase workspace
               stream, epilogue, algorithm, args.scratch_allocator);
   return status;
 }
