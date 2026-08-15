@@ -28,8 +28,7 @@ namespace xla::gpu {
 
 namespace {
 
-class GemmSyclTest
-    : public HloPjRtInterpreterReferenceMixin<HloTestBase> {
+class GemmSyclTest : public HloPjRtInterpreterReferenceMixin<HloTestBase> {
  protected:
   void TestGemmWithTypeVariations(absl::string_view hlo_template) {
     std::vector<std::tuple<absl::string_view, absl::string_view>>

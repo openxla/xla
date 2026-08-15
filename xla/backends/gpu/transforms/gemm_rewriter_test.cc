@@ -2997,7 +2997,8 @@ ENTRY main {
 }
 
 TEST_F(ParameterizedGemmRewriteTest, ComplexAlphaSimpleRewrite) {
-  if ((IsSycl() || IsRocm()) && GetDebugOptionsForTest().xla_gpu_enable_cublaslt()) {
+  if ((IsSycl() || IsRocm()) &&
+      GetDebugOptionsForTest().xla_gpu_enable_cublaslt()) {
     GTEST_SKIP() << "TODO: Unsupported C64 gpublas-lt datatype on ROCM/SYCL.";
   }
   const char* hlo_text = R"(
@@ -3421,8 +3422,8 @@ TEST_F(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
     type_combinations.push_back({"c128", "c128", true});
   }
 
-  // TODO(intel-tf): Remove this check once SYCL supports f64, c64, c128 data types.
-  // SYCL does not support f64, c64, c128 data types in oneDNN matmul
+  // TODO(intel-tf): Remove this check once SYCL supports f64, c64, c128 data
+  // types. SYCL does not support f64, c64, c128 data types in oneDNN matmul
   if (IsSycl()) {
     type_combinations.erase(
         std::remove_if(type_combinations.begin(), type_combinations.end(),
@@ -3556,7 +3557,7 @@ class SmallDotGemmRewriteTest : public GemmRewriteTest {
 };
 
 TEST_F(SmallDotGemmRewriteTest, SkipSmallMatrixMultiplicationRewrite) {
-  //TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
+  // TODO(intel-tf): Remove this check when autotuning is supported on SYCL.
   if (IsSycl()) {
     GTEST_SKIP() << "Autotuning is not supported on SYCL platform.";
   }
