@@ -30,7 +30,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/IR/FuncDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
@@ -48,16 +48,19 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
-#include "xla/pjrt/mock_pjrt_client.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
-#include "xla/service/compiled_module.h"
+#include "xla/pjrt/se/pjrt_stream_executor_client.h"
+#include "xla/service/compiled_module_base.h"
 #include "xla/service/compiler.h"
+#include "xla/service/compiler_base.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu_topology.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/mock_compiled_module.h"
 #include "xla/service/mock_compiler.h"
 #include "xla/service/platform_util.h"
@@ -318,13 +321,13 @@ TEST(StreamExecutorGpuCompilerTest, GetTargetRuntimeAbiVersion) {
   EXPECT_OK(runtime_abi_version->IsCompatibleWith(*executable_abi_version));
 }
 
-std::vector<std::unique_ptr<CompiledModule>> MakeMockCompiledModule(
+std::vector<std::unique_ptr<CompiledModuleBase>> MakeMockCompiledModule(
     std::shared_ptr<HloModule> hlo_module =
         std::make_shared<HloModule>("name", HloModuleConfig())) {
   auto mock_compiled_module = std::make_unique<MockCompiledModule>();
   EXPECT_CALL(*mock_compiled_module, shared_optimized_module())
       .WillRepeatedly(Return(hlo_module));
-  std::vector<std::unique_ptr<CompiledModule>> aot_results;
+  std::vector<std::unique_ptr<CompiledModuleBase>> aot_results;
   aot_results.push_back(std::move(mock_compiled_module));
   return aot_results;
 }
@@ -353,7 +356,13 @@ TEST(StreamExecutorGpuCompilerTest, DevicelessCompilation) {
   EXPECT_CALL(mock_compiler_ref, Compile).Times(0);
   EXPECT_CALL(mock_compiler_ref,
               CompileAheadOfTime(
-                  _, Property(&AotCompilationOptions::executor, IsNull())))
+                  _, ::testing::ResultOf(
+                         [](const AotCompilationOptionsBase& options)
+                             -> const AotCompilationOptions& {
+                           return absl::down_cast<const AotCompilationOptions&>(
+                               options);
+                         },
+                         Property(&AotCompilationOptions::executor, IsNull()))))
       .WillOnce(Return(ByMove(MakeMockCompiledModule(hlo_module))));
 
   ASSERT_OK_AND_ASSIGN(XlaComputation computation, GetXlaComputation(kProgram));
@@ -405,15 +414,21 @@ TEST(StreamExecutorGpuCompilerTest, CrossCompilation) {
       mock_compiler_ref,
       CompileAheadOfTime(
           _,
-          ::testing::AllOf(
-              Property(&AotCompilationOptions::executor, stream_executor),
-              Property(&AotCompilationOptions::gpu_topology,
-                       Optional(::testing::AllOf(
-                           Property(&GpuTopology::host_target_machine_options,
-                                    Optional(host_target_machine_options)),
-                           Property(&GpuTopology::num_partitions, 1),
-                           Property(&GpuTopology::num_hosts_per_partition, 1),
-                           Property(&GpuTopology::num_devices_per_host, 1)))))))
+          ::testing::ResultOf(
+              [](const AotCompilationOptionsBase& options)
+                  -> const AotCompilationOptions& {
+                return absl::down_cast<const AotCompilationOptions&>(options);
+              },
+              ::testing::AllOf(
+                  Property(&AotCompilationOptions::executor, stream_executor),
+                  Property(
+                      &AotCompilationOptions::gpu_topology,
+                      Optional(::testing::AllOf(
+                          Property(&GpuTopology::host_target_machine_options,
+                                   Optional(host_target_machine_options)),
+                          Property(&GpuTopology::num_partitions, 1),
+                          Property(&GpuTopology::num_hosts_per_partition, 1),
+                          Property(&GpuTopology::num_devices_per_host, 1))))))))
       .WillOnce(Return(ByMove(MakeMockCompiledModule(hlo_module))));
 
   ASSERT_OK_AND_ASSIGN(XlaComputation computation, GetXlaComputation(kProgram));
@@ -464,7 +479,7 @@ TEST(StreamExecutorGpuCompilerTest, AutoLayoutIsPropagatedInCrossCompilation) {
   std::shared_ptr<HloModule> hlo_module;
   EXPECT_CALL(mock_compiler_ref, CompileAheadOfTime)
       .WillOnce([&](std::unique_ptr<HloModule> module,
-                    const AotCompilationOptions& options) {
+                    const AotCompilationOptionsBase& options) {
         hlo_module = std::move(module);
         return MakeMockCompiledModule(hlo_module);
       });
@@ -503,7 +518,7 @@ TEST(StreamExecutorGpuCompilerTest,
   std::shared_ptr<HloModule> hlo_module;
   EXPECT_CALL(mock_compiler_ref, CompileAheadOfTime)
       .WillOnce([&](std::unique_ptr<HloModule> module,
-                    const AotCompilationOptions& options) {
+                    const AotCompilationOptionsBase& options) {
         hlo_module = std::move(module);
         return MakeMockCompiledModule(hlo_module);
       });
@@ -540,7 +555,7 @@ TEST(StreamExecutorGpuCompilerTest,
   std::shared_ptr<HloModule> hlo_module;
   EXPECT_CALL(mock_compiler_ref, CompileAheadOfTime)
       .WillOnce([&](std::unique_ptr<HloModule> module,
-                    const AotCompilationOptions& options) {
+                    const AotCompilationOptionsBase& options) {
         hlo_module = std::move(module);
         return MakeMockCompiledModule(hlo_module);
       });
@@ -680,7 +695,7 @@ TEST(StreamExecutorGpuCompilerTest,
       AotCompilationOptions::EarlyExitPoint::kNone;
   EXPECT_CALL(mock_compiler_ref, CompileAheadOfTime)
       .WillOnce([&](std::unique_ptr<HloModule> module,
-                    const AotCompilationOptions& options) {
+                    const AotCompilationOptionsBase& options) {
         hlo_module = std::move(module);
         early_exit_point = options.early_exit_point();
         return MakeMockCompiledModule(hlo_module);

@@ -105,6 +105,7 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiled_module.h"
+#include "xla/service/compiled_module_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/cpu/cpu_compiler.h"
@@ -742,7 +743,7 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> CompileAheadOfTime(
   // TODO (basioli): honor build_options.run_backend_only() for AOT.
   // Compile AOT.
   ABSL_ASSIGN_OR_RETURN(
-      std::vector<std::unique_ptr<CompiledModule>> aot_results,
+      std::vector<std::unique_ptr<CompiledModuleBase>> aot_results,
       compiler.CompileAheadOfTime(std::move(hlo_module), compile_options));
 
   if (aot_results.size() != 1) {
@@ -753,7 +754,8 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> CompileAheadOfTime(
   // Technically not needed, but it makes sense so that we know serialization
   // and deserialization works.
   ABSL_ASSIGN_OR_RETURN(std::string serialized_aot_result,
-                        aot_results[0]->SerializeAsString());
+                        absl::down_cast<CompiledModule*>(aot_results[0].get())
+                            ->SerializeAsString());
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<CompiledModule> aot_result,
       compiler.LoadAotCompilationResult(serialized_aot_result));

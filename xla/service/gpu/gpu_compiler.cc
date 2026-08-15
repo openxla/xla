@@ -259,7 +259,9 @@ limitations under the License.
 #include "xla/service/collective_utils.h"
 #include "xla/service/compilation_stats.h"
 #include "xla/service/compiled_module.h"
+#include "xla/service/compiled_module_base.h"
 #include "xla/service/compiler.h"
+#include "xla/service/compiler_base.h"
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
@@ -3144,10 +3146,11 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   return static_cast<std::unique_ptr<Executable>>(std::move(gpu_executable));
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
+absl::StatusOr<std::vector<std::unique_ptr<CompiledModuleBase>>>
 GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
-                                const AotCompilationOptions& options) {
+                                const AotCompilationOptionsBase& options_base) {
   tsl::profiler::TraceMe traceme("CompileAheadOfTime");
+  auto& options = absl::down_cast<const AotCompilationOptions&>(options_base);
   // Check that we are on the platform (CUDA or ROCm) that was chosen for AOT
   // compilation.
   CHECK_EQ(options.PlatformId(), PlatformId());
@@ -3171,7 +3174,7 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
 
   if (options.early_exit_point() !=
       AotCompilationOptions::EarlyExitPoint::kNone) {
-    std::vector<std::unique_ptr<CompiledModule>> results;
+    std::vector<std::unique_ptr<CompiledModuleBase>> results;
     results.push_back(std::make_unique<EarlyExitCompilationResult>(
         std::move(optimized_hlo_module)));
     return results;
@@ -3181,7 +3184,7 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                         RunBackend(std::move(optimized_hlo_module),
                                    options.executor(), compile_options));
 
-  std::vector<std::unique_ptr<CompiledModule>> results;
+  std::vector<std::unique_ptr<CompiledModuleBase>> results;
   ABSL_ASSIGN_OR_RETURN(results.emplace_back(), Export(executable.get()));
   return results;
 }
