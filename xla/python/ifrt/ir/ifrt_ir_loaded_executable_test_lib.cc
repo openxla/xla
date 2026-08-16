@@ -2189,6 +2189,9 @@ module @auto_layout {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CustomLayoutPreservedWithCopyArrays) {
+  if (client_->platform_id() == xla::CpuId()) {
+    GTEST_SKIP() << "PjRt CPU does not support custom layouts.";
+  }
   if (GetNumDevices() < 4) {
     GTEST_SKIP() << "Insufficient devices to run this test.";
   }
@@ -2278,6 +2281,9 @@ module @custom_layout_copy_arrays {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CustomOutputLayoutPreservedWithCopyArrays) {
+  if (client_->platform_id() == xla::CpuId()) {
+    GTEST_SKIP() << "PjRt CPU does not support custom layouts.";
+  }
   if (GetNumDevices() < 4) {
     GTEST_SKIP() << "Insufficient devices to run this test.";
   }
