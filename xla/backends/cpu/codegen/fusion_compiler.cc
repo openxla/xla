@@ -401,6 +401,8 @@ void AddNewXtileToVectorPasses(mlir::OpPassManager& pm) {
 
   pm.addPass(xtile::createExpandXtileComplexOpsPass());
   pm.addPass(xtile::createStablehloLowerToArithPass());
+  pm.addPass(xtile::createLegalizeUnsignedIntegersAsSignlessPass());
+  pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(cpu::createVectorizeXTilePass());
 
   pm.addPass(cpu::createLowerXTileEntryPass());

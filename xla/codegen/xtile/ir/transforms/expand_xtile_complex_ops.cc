@@ -476,12 +476,17 @@ class ExpandXtileComplexOpsPass
             mlir::applyPatternsGreedily(module, std::move(patterns)))) {
       signalPassFailure();
     }
-    // Check if there are no unrealized_conversion_casts.
-    bool module_has_casts = module
-                                .walk([](UnrealizedConversionCastOp op) {
-                                  return mlir::WalkResult::interrupt();
-                                })
-                                .wasInterrupted();
+    // Check if there are no unrealized_conversion_casts from/to complex types.
+    bool module_has_casts =
+        module
+            .walk([](UnrealizedConversionCastOp op) {
+              if (llvm::any_of(mlir::TypeRange(op.getOperands()), HasComplex) ||
+                  llvm::any_of(mlir::TypeRange(op.getResults()), HasComplex)) {
+                return mlir::WalkResult::interrupt();
+              }
+              return mlir::WalkResult::advance();
+            })
+            .wasInterrupted();
     if (module_has_casts) {
       llvm::outs() << "ExpandXtileComplexOpsPass failed to converge";
       signalPassFailure();
