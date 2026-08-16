@@ -317,6 +317,9 @@ bool IsSupportedInstruction(const HloInstruction& inst,
         if (HasComplexType(inst)) {
           switch (opcode) {
             case HloOpcode::kAdd:
+            case HloOpcode::kComplex:
+            case HloOpcode::kImag:
+            case HloOpcode::kReal:
             case HloOpcode::kSubtract:
               return true;
             case HloOpcode::kMultiply:
@@ -324,9 +327,6 @@ bool IsSupportedInstruction(const HloInstruction& inst,
             case HloOpcode::kPower:
             case HloOpcode::kAbs:
             case HloOpcode::kNegate:
-            case HloOpcode::kComplex:
-            case HloOpcode::kReal:
-            case HloOpcode::kImag:
             case HloOpcode::kSelect:
             case HloOpcode::kCompare:
               return !use_new_xtile_lowering;
