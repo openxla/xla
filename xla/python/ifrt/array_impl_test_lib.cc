@@ -838,6 +838,59 @@ TEST(ArrayImplTest, CopyArraysToHostBufferShardsReplicated) {
   EXPECT_THAT(out, ElementsAre(0, 1, 2, 3, 4, 5));
 }
 
+TEST(ArrayImplTest,
+     CopyArraysToHostBufferShardsReplicatedWithNonAddressableDevice) {
+  ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (non_addressable_devices.empty()) {
+    GTEST_SKIP() << "Skipping test; needs at least 1 non-addressable device.";
+  }
+
+  DType dtype(DType::kF32);
+  Shape shape({2, 3});
+  std::vector<float> data(6);
+  absl::c_iota(data, 0);
+
+  std::vector<Device*> devices;
+  devices.reserve(2);
+  devices.push_back(non_addressable_devices.at(0));
+  devices.push_back(client->addressable_devices().at(0));
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList(devices));
+  ShardingRef sharding =
+      ConcreteEvenSharding::Create(std::move(device_list), MemoryKind(), shape,
+                                   /*shard_shape=*/shape,
+                                   /*is_fully_replicated=*/true);
+
+  ASSERT_OK_AND_ASSIGN(
+      auto array,
+      client->MakeArrayFromHostBuffer(
+          data.data(), dtype, shape,
+          /*byte_strides=*/std::nullopt, sharding, /*layout=*/nullptr,
+          Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr));
+
+  std::vector<float> out(6, 0.0f);
+
+  std::vector<Client::CopyArraysToHostBufferShardsSpec> copy_specs;
+  copy_specs.push_back({
+      /*array=*/array,
+      /*buffers=*/
+      {{out.data(), dtype, shape, /*byte_strides=*/std::nullopt}},
+  });
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<tsl::Future<>> futures,
+      client->CopyArraysToHostBufferShards(absl::MakeSpan(copy_specs),
+                                           ArrayCopySemantics::kAlwaysCopy));
+  ASSERT_THAT(futures, SizeIs(1));
+
+  EXPECT_OK(futures[0].Await());
+  EXPECT_THAT(out, ElementsAre(0, 1, 2, 3, 4, 5));
+}
+
 TEST(ArrayImplTest, MakeArraysFromHostBufferShardsWithDifferentDevices) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
   if (client->addressable_devices().size() < 2) {

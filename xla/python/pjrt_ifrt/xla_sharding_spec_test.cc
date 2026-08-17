@@ -283,6 +283,31 @@ TEST_F(HloShardingSpecTest, UniqueIndexDomainsWithTile) {
               absl_testing::IsOkAndHolds(ElementsAre(0, 1, 2, 3, 4, 5)));
 }
 
+TEST_F(HloShardingSpecTest, UniqueIndexDomainsWithV3Tile) {
+  int num_shards = 6;
+  // 6-way sharded along axis 0, 1-way sharded along axis 1.
+  auto xla_hlo_sharding = xla::HloSharding::ToV3Sharding(
+      xla::HloSharding::Tile(xla::TileAssignment({6, 1})));
+  EXPECT_TRUE(xla_hlo_sharding.UseNamedShardingLeaf());
+  std::shared_ptr<const HloShardingSpec> spec =
+      HloShardingSpec::Create(num_shards, xla_hlo_sharding);
+  EXPECT_TRUE(spec->xla_hlo_sharding().UseNamedShardingLeaf());
+
+  Shape shape({12, 20});
+  EXPECT_THAT(
+      spec->UniqueIndexDomains(shape),
+      absl_testing::IsOkAndHolds(ElementsAre(
+          FieldsAre(IndexDomain(Index({0, 0}), Shape({2, 20})), ElementsAre(0)),
+          FieldsAre(IndexDomain(Index({2, 0}), Shape({2, 20})), ElementsAre(1)),
+          FieldsAre(IndexDomain(Index({4, 0}), Shape({2, 20})), ElementsAre(2)),
+          FieldsAre(IndexDomain(Index({6, 0}), Shape({2, 20})), ElementsAre(3)),
+          FieldsAre(IndexDomain(Index({8, 0}), Shape({2, 20})), ElementsAre(4)),
+          FieldsAre(IndexDomain(Index({10, 0}), Shape({2, 20})),
+                    ElementsAre(5)))));
+  EXPECT_THAT(spec->ShardToUniqueIndexDomainIndex(),
+              absl_testing::IsOkAndHolds(ElementsAre(0, 1, 2, 3, 4, 5)));
+}
+
 TEST_F(HloShardingSpecTest, DisassembleWithTile) {
   int num_shards = 6;
   // 6-way sharded along axis 0, 1-way sharded along axis 1.
