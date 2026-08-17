@@ -262,6 +262,54 @@ TEST_F(ConvFusionRewriterUnitTest, ConvertPrologueNotFusedOnVolta) {
       /*run_algebraic_simplifier=*/false, volta_device);
 }
 
+TEST_F(ConvFusionRewriterUnitTest, ConvertEpilogueBf16NotFusedOnVolta) {
+  // Conversions from f32 to bf16 in the epilogue should not be fused on Volta
+  // GPUs because cuDNN only supports BF16 conversions starting from Ampere.
+  se::DeviceDescription volta_device;
+  volta_device.set_gpu_compute_capability(se::CudaComputeCapability::Volta());
+
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    ENTRY Test {
+      input_f32 = f32[4,48,96,64] parameter(0)
+      filter_f32 = f32[128,3,3,64] parameter(1)
+      conv = f32[4,24,48,128] convolution(input_f32, filter_f32),
+               window={size=3x3 stride=2x2 pad=0_1x0_1},
+               dim_labels=b01f_o01i->b01f
+      ROOT convert_out = bf16[4,24,48,128] convert(conv)
+    })",
+      m::Convert(m::Fusion(m::Parameter(0), m::Parameter(1))
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                     .WithShape(F32, {4, 24, 48, 128})),
+      /*run_algebraic_simplifier=*/false, volta_device);
+}
+
+TEST_F(ConvFusionRewriterUnitTest, ConvertEpilogueBf16FusedOnAmpere) {
+  // Conversions from f32 to bf16 in the epilogue should be fused on Ampere
+  // GPUs.
+  se::DeviceDescription ampere_device;
+  ampere_device.set_gpu_compute_capability(se::CudaComputeCapability::Ampere());
+
+  RunAndMatch(
+      R"(
+    HloModule Test
+
+    ENTRY Test {
+      input_f32 = f32[4,48,96,64] parameter(0)
+      filter_f32 = f32[128,3,3,64] parameter(1)
+      conv = f32[4,24,48,128] convolution(input_f32, filter_f32),
+               window={size=3x3 stride=2x2 pad=0_1x0_1},
+               dim_labels=b01f_o01i->b01f
+      ROOT convert_out = bf16[4,24,48,128] convert(conv)
+    })",
+      m::Fusion(m::Parameter(0), m::Parameter(1))
+          .WithFusionKind(HloInstruction::FusionKind::kCustom)
+          .WithShape(BF16, {4, 24, 48, 128}),
+      /*run_algebraic_simplifier=*/false, ampere_device);
+}
+
 TEST_F(ConvFusionRewriterUnitTest, ConvertS32ToF32PrologueNotFused) {
   // Conversions from s32 to f32 before an f32 convolution should not be fused
   // into the cuDNN prologue because cuDNN does not support s32 inputs for

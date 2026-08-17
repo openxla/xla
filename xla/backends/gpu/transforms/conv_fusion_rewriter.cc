@@ -85,7 +85,8 @@ bool IsConvFusionOutputsValid(const std::vector<HloInstruction*>& outputs) {
 }
 
 std::vector<HloInstruction*> GetAllReachableAndFusible(
-    HloInstruction* convolution, std::vector<HloInstruction*>& fusion_outputs) {
+    HloInstruction* convolution, std::vector<HloInstruction*>& fusion_outputs,
+    const se::DeviceDescription& device_info) {
   std::vector<HloInstruction*> fusible_users;
   // cuDNN frontend fusions do not support grouped convolutions with epilogues.
   if (convolution->feature_group_count() > 1) {
@@ -99,7 +100,7 @@ std::vector<HloInstruction*> GetAllReachableAndFusible(
 
   FusionState state{fusible_users, fusion_outputs, can_fuse_reduce};
   GrowFusionDFS(convolution, reachability.get(), state, fusible_cache,
-                IsNCHW(convolution), IsConvFusionOutputsValid);
+                device_info, IsNCHW(convolution), IsConvFusionOutputsValid);
 
   // Remove convolution from the users.
   fusible_users.pop_back();
@@ -153,17 +154,16 @@ std::pair<HloInstruction*, HloInstruction*> TryFuseConvolutionPrologue(
     std::vector<HloInstruction*>& fusion_params,
     absl::flat_hash_map<HloInstruction*, HloInstruction*>& fused_hlo_map,
     const se::DeviceDescription& device_info) {
-  const se::CudaComputeCapability* cuda_cc =
-      device_info.gpu_compute_capability().cuda_compute_capability();
-  auto is_fusable_convert = [cuda_cc,
+  auto is_fusable_convert = [&device_info,
                              &fusion_outputs](const HloInstruction* hlo) {
-    // CuDNN only supports convert fusions starting from Ampere.
-    if (cuda_cc == nullptr || !cuda_cc->IsAtLeastAmpere() ||
-        hlo->opcode() != HloOpcode::kConvert || hlo->user_count() != 1) {
+    if (hlo->opcode() != HloOpcode::kConvert || hlo->user_count() != 1) {
       return false;
     }
     PrimitiveType src_type = hlo->operand(0)->shape().element_type();
     PrimitiveType dst_type = hlo->shape().element_type();
+    if (!IsCuDnnConvertSupported(src_type, dst_type, device_info)) {
+      return false;
+    }
     if (primitive_util::IsF8Type(src_type)) {
       return dst_type == F32 || dst_type == F16 || dst_type == BF16;
     }
@@ -224,7 +224,7 @@ HloInstruction* CreateGpuConvFusion(
     HloInstruction* convolution, std::vector<HloInstruction*>& fusion_outputs,
     const se::DeviceDescription& device_info) {
   std::vector<HloInstruction*> fusible_users =
-      GetAllReachableAndFusible(convolution, fusion_outputs);
+      GetAllReachableAndFusible(convolution, fusion_outputs, device_info);
 
   HloComputation::Builder builder = CreateConvFusionBuilder(convolution);
 
@@ -244,7 +244,7 @@ HloInstruction* CreateGpuConvFusion(
   fused_hlo_map[convolution] = fused_conv;
 
   FuseTowardUsers(builder, fusion_params, fusible_users, fused_hlo_map,
-                  IsNCHW(convolution));
+                  device_info, IsNCHW(convolution));
 
   HloInstruction* root = nullptr;
   Shape root_shape;

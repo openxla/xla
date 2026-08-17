@@ -798,6 +798,8 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
