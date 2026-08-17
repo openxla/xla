@@ -277,10 +277,10 @@ HloInstruction* CreateGpuConvFusion(
 
 absl::StatusOr<bool> RunOnInstruction(
     HloInstruction* conv, const se::DeviceDescription& device_info) {
-  CHECK_NE(DynCast<HloConvolutionInstruction>(conv)->convolution_kind(),
-           CONVOLUTION_KIND_UNSET)
-      << "ConvolutionKind assignment pass must run before ConvFusionRewriter "
-         "pass.";
+  if (DynCast<HloConvolutionInstruction>(conv)->convolution_kind() ==
+      CONVOLUTION_KIND_UNSET) {
+    return false;
+  }
 
   std::vector<HloInstruction*> fusion_outputs;
   HloInstruction* conv_fusion =
