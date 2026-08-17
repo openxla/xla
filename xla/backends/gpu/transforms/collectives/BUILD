@@ -974,6 +974,7 @@ cc_library(
     deps = [
         ":collective_ops_utils",
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla/backends/gpu/codegen/triton:collective_emitter",
         "//xla/backends/gpu/runtime:all_reduce",
         "//xla/hlo/ir:hlo",
@@ -1012,6 +1013,7 @@ xla_cc_test(
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
