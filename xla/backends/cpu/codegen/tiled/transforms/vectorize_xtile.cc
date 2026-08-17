@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
+#include "xla/util.h"
 
 namespace xla::cpu {
 
@@ -145,6 +146,58 @@ mlir::ArrayAttr GetInBoundsAttr(mlir::OpBuilder& builder, int64_t rank,
   return builder.getBoolArrayAttr(llvm::SmallVector<bool>(rank, in_bounds));
 }
 
+template <typename EmitFn>
+void EmitElements(mlir::OpBuilder& builder, mlir::Location loc,
+                  llvm::ArrayRef<int64_t> shape, ValueRange offsets,
+                  llvm::ArrayRef<int64_t> strides,
+                  llvm::ArrayRef<int64_t> memref_shape, EmitFn&& emit_fn) {
+  int64_t rank = shape.size();
+  llvm::SmallVector<int64_t> vector_coords(rank, 0);
+  llvm::SmallVector<Value> memref_coords(rank);
+
+  int64_t num_elements = Product(shape);
+  for (int64_t idx = 0; idx < num_elements; ++idx) {
+    bool in_bounds = true;
+    for (int64_t d = 0; d < rank; ++d) {
+      int64_t stride_offset = vector_coords[d] * strides[d];
+      if (d < memref_shape.size() &&
+          !mlir::ShapedType::isDynamic(memref_shape[d])) {
+        int64_t dim_size = memref_shape[d];
+        std::optional<int64_t> const_offset =
+            mlir::getConstantIntValue(offsets[d]);
+        if (const_offset.has_value()) {
+          int64_t coord = *const_offset + stride_offset;
+          if (coord < 0 || coord >= dim_size) {
+            in_bounds = false;
+            break;
+          }
+        } else if (stride_offset >= dim_size) {
+          in_bounds = false;
+          break;
+        }
+      }
+      if (stride_offset == 0) {
+        memref_coords[d] = offsets[d];
+        continue;
+      }
+      Value delta_val =
+          ma::ConstantIndexOp::create(builder, loc, stride_offset);
+      memref_coords[d] =
+          ma::AddIOp::create(builder, loc, offsets[d], delta_val);
+    }
+    if (in_bounds) {
+      emit_fn(vector_coords, memref_coords);
+    }
+
+    for (int64_t d = rank - 1; d >= 0; --d) {
+      if (++vector_coords[d] < shape[d]) {
+        break;
+      }
+      vector_coords[d] = 0;
+    }
+  }
+}
+
 struct ConvertExtractTile
     : public mlir::OpConversionPattern<xtile::ExtractTileOp> {
   using mlir::OpConversionPattern<xtile::ExtractTileOp>::OpConversionPattern;
@@ -158,10 +211,29 @@ struct ConvertExtractTile
 
     ValueRange offsets = adaptor.getOffsets();
     Value source_memref = adaptor.getSource();
+    auto source_memref_type =
+        mlir::cast<mlir::MemRefType>(source_memref.getType());
 
     Value pad = ma::ConstantOp::create(
         rewriter, loc, result_vector_type.getElementType(),
         rewriter.getZeroAttr(result_vector_type.getElementType()));
+
+    if (llvm::any_of(op.getStrides(), llvm::not_equal_to<int64_t>(1))) {
+      mlir::Value res =
+          ma::ConstantOp::create(rewriter, loc, result_vector_type,
+                                 rewriter.getZeroAttr(result_vector_type));
+      EmitElements(rewriter, loc, result_vector_type.getShape(), offsets,
+                   op.getStrides(), source_memref_type.getShape(),
+                   [&](llvm::ArrayRef<int64_t> vector_coords,
+                       llvm::ArrayRef<Value> memref_coords) {
+                     mlir::Value elem = mlir::memref::LoadOp::create(
+                         rewriter, loc, source_memref, memref_coords);
+                     res = mv::InsertOp::create(rewriter, loc, elem, res,
+                                                vector_coords);
+                   });
+      rewriter.replaceOp(op, res);
+      return mlir::success();
+    }
 
     if (result_vector_type.getRank() == 0) {
       mlir::AffineMap permutation_map =
@@ -235,6 +307,21 @@ struct ConvertInsertTile
 
     ValueRange offsets = adaptor.getOffsets();
     Value dest_memref = adaptor.getDestination();
+    auto dest_memref_type = mlir::cast<mlir::MemRefType>(dest_memref.getType());
+
+    if (llvm::any_of(op.getStrides(), llvm::not_equal_to<int64_t>(1))) {
+      EmitElements(rewriter, loc, source_vector_type.getShape(), offsets,
+                   op.getStrides(), dest_memref_type.getShape(),
+                   [&](llvm::ArrayRef<int64_t> vector_coords,
+                       llvm::ArrayRef<Value> memref_coords) {
+                     mlir::Value elem = mv::ExtractOp::create(
+                         rewriter, loc, source_vector, vector_coords);
+                     mlir::memref::StoreOp::create(rewriter, loc, elem,
+                                                   dest_memref, memref_coords);
+                   });
+      rewriter.eraseOp(op);
+      return mlir::success();
+    }
 
     if (source_vector_type.getRank() == 0) {
       mlir::AffineMap permutation_map = mv::getTransferMinorIdentityMap(
@@ -601,9 +688,7 @@ struct VectorizeSliceOp : public mlir::OpConversionPattern<shlo::SliceOp> {
     llvm::ArrayRef<int64_t> shape = res_vec_ty.getShape();
     int64_t rank = res_vec_ty.getRank();
 
-    bool all_unit_strides =
-        llvm::all_of(op.getStrides(), [](int64_t s) { return s == 1; });
-    if (all_unit_strides) {
+    if (llvm::all_of(op.getStrides(), llvm::equal_to<int64_t>(1))) {
       llvm::SmallVector<int64_t> offsets(op.getStartIndices().begin(),
                                          op.getStartIndices().end());
       llvm::SmallVector<int64_t> strides(rank, 1);
