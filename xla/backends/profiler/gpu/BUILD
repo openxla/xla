@@ -14,7 +14,7 @@
 # ==============================================================================
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
@@ -568,6 +568,7 @@ cc_library(
         "manual",
     ]),
     deps = [
+        ":rocm_occupancy",
         ":rocm_tracer_utils",
         "//xla/stream_executor/rocm:roctracer_wrapper",
         "//xla/tsl/platform:status",
@@ -602,6 +603,7 @@ cc_library(
     ],
     deps = [
         ":rocm_collector",
+        ":rocm_occupancy",
         ":rocm_tracer_utils",
         "//xla/stream_executor/rocm:roctracer_wrapper",
         "//xla/tsl/platform:errors",
@@ -624,6 +626,18 @@ cc_library(
     ],
 )
 
+rocm_library(
+    name = "rocm_occupancy_test_kernel",
+    testonly = 1,
+    srcs = ["rocm_occupancy_test_kernel.hip.cc"],
+    hdrs = ["rocm_occupancy_test_kernel.h"],
+    tags = ["rocm-only"],
+    deps = [
+        "@local_config_rocm//rocm:hip",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
 xla_cc_test(
     name = "rocm_tracer_test",
     size = "small",
@@ -637,6 +651,7 @@ xla_cc_test(
     ]),
     deps = [
         ":rocm_collector",
+        ":rocm_occupancy_test_kernel",
         ":rocm_tracer",
         ":rocm_tracer_utils",
         "//xla/tsl/lib/core:status_test_util",
@@ -662,12 +677,12 @@ xla_cc_test(
         "manual",
     ]),
     deps = [
-        # ":rocm_tracer",
         ":rocm_collector",
+        ":rocm_occupancy",
         ":rocm_tracer_utils",
+        "//xla/tsl/profiler/utils:xplane_utils",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_googletest//:gtest_main",
-        "//xla/tsl/profiler/utils:xplane_utils",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )

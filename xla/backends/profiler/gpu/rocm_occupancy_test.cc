@@ -38,6 +38,7 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string>
 
 #include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
