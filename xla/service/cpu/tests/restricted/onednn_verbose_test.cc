@@ -20,6 +20,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "xla/array2d.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 
 #define EIGEN_USE_THREADS
@@ -77,9 +77,9 @@ absl::Status ExecuteOneDnnMatMul() {
   op_buffers.results_buffers = {out_slice};
   op_buffers.results_shapes = {out_shape};
 
-  TF_ASSIGN_OR_RETURN(auto thunk,
-                      OneDnnOpThunk::Create("__onednn$matmul", Thunk::Info(),
-                                            op_buffers, {}));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<OneDnnOpThunk> thunk,
+                         OneDnnOpThunk::Create("__onednn$matmul", Thunk::Info(),
+                                               op_buffers, {}));
 
   Thunk::ExecuteParams params;
   params.buffer_allocations = &allocations;
