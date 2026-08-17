@@ -772,6 +772,49 @@ LogicalResult RewriteStablehloSelectOp(shlo::SelectOp op,
   return mlir::success();
 }
 
+LogicalResult RewriteReshapeOp(shlo::ReshapeOp op, PatternRewriter& rewriter) {
+  auto tensor_type = mlir::dyn_cast<RankedTensorType>(op.getType());
+  if (!tensor_type || !mlir::isa<ComplexType>(tensor_type.getElementType())) {
+    return rewriter.notifyMatchFailure(op, "not a complex tensor");
+  }
+
+  auto loc = op.getLoc();
+  auto new_type = GetExpandedType(tensor_type);
+  Value operand = UnwrapCast(op.getOperand(), rewriter);
+
+  auto new_op = shlo::ReshapeOp::create(rewriter, loc, new_type, operand);
+  auto cast_to_orig_type = UnrealizedConversionCastOp::create(
+      rewriter, loc, tensor_type, new_op.getResult());
+  rewriter.replaceOp(op, cast_to_orig_type.getResult(0));
+  return mlir::success();
+}
+
+LogicalResult RewriteTransposeOp(shlo::TransposeOp op,
+                                 PatternRewriter& rewriter) {
+  auto tensor_type = mlir::dyn_cast<RankedTensorType>(op.getType());
+  if (!tensor_type || !mlir::isa<ComplexType>(tensor_type.getElementType())) {
+    return rewriter.notifyMatchFailure(op, "not a complex tensor");
+  }
+
+  auto loc = op.getLoc();
+  auto new_type = GetExpandedType(tensor_type);
+  Value operand = UnwrapCast(op.getOperand(), rewriter);
+
+  SmallVector<int64_t> new_permutation(op.getPermutation().begin(),
+                                       op.getPermutation().end());
+  auto operand_orig_type =
+      mlir::cast<RankedTensorType>(op.getOperand().getType());
+  new_permutation.push_back(operand_orig_type.getRank());
+
+  auto new_op =
+      shlo::TransposeOp::create(rewriter, loc, new_type, operand,
+                                rewriter.getDenseI64ArrayAttr(new_permutation));
+  auto cast_to_orig_type = UnrealizedConversionCastOp::create(
+      rewriter, loc, tensor_type, new_op.getResult());
+  rewriter.replaceOp(op, cast_to_orig_type.getResult(0));
+  return mlir::success();
+}
+
 class ExpandXtileComplexOpsPass
     : public impl::ExpandXtileComplexOpsPassBase<ExpandXtileComplexOpsPass> {
  public:
@@ -796,8 +839,10 @@ class ExpandXtileComplexOpsPass
     patterns.add(RewriteNegOp);
     patterns.add(RewritePowOp);
     patterns.add(RewriteRealOp);
+    patterns.add(RewriteReshapeOp);
     patterns.add(RewriteStablehloSelectOp);
     patterns.add(RewriteSubtractOp);
+    patterns.add(RewriteTransposeOp);
 
     if (mlir::failed(
             mlir::applyPatternsGreedily(module, std::move(patterns)))) {
