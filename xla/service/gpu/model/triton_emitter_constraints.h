@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,8 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/decision.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
+#include "xla/service/gpu/model/triton_temporary_memory_estimator.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -66,13 +69,34 @@ class TritonEmitterConstraints : public EmitterSpecificConstraints {
     std::vector<int64_t> dim_sizes;
   };
 
+  // Holds the info needed to estimate the shared memory required by a
+  // shared-memory-staging instruction (see `triton_shared_memory_estimator.h`
+  // for how staging ops are classified and sized). The size maps are evaluated
+  // at concrete tile parameters in `ParametersSatisfyConstraints` to build the
+  // `SmemStagingOp` descriptors passed to the shared `EstimateBlockSmemBytes`.
+  struct StagingTileInfo {
+    // Name of the staging instruction (for diagnostics).
+    std::string name;
+    // How the tile is staged in shared memory.
+    SmemStagingKind kind;
+    // Byte size of the element type of the staging instruction.
+    int64_t element_byte_size;
+    // Size map of the staging instruction's own tile (used for kLayout).
+    SymbolicMap size_map;
+    // For kDot: size maps of the operand tiles whose K-tile staging buffers are
+    // summed to size the shared-memory operand staging.
+    llvm::SmallVector<SymbolicMap, 2> operand_size_maps;
+  };
+
   explicit TritonEmitterConstraints(
       llvm::SmallVector<SymbolicMap, 4> tile_size_maps,
+      llvm::SmallVector<StagingTileInfo, 2> staging_infos,
       llvm::SmallVector<RootTileInfo, 2> roots,
       std::vector<CustomConstraints> custom_constraints,
       const Shape& root_shape, const se::DeviceDescription& device_info,
       std::unique_ptr<TiledEmitterConstraints> tiled_emitter_constraints)
       : tile_size_maps_(std::move(tile_size_maps)),
+        staging_infos_(std::move(staging_infos)),
         roots_(std::move(roots)),
         custom_constraints_(std::move(custom_constraints)),
         root_shape_(root_shape),
@@ -108,8 +132,14 @@ class TritonEmitterConstraints : public EmitterSpecificConstraints {
   // collection of unique maps to improve compilation time.
   llvm::SmallVector<SymbolicMap, 4> tile_size_maps_;
 
+  // Holds the info needed to estimate the shared memory required by each
+  // shared-memory-staging instruction, used to check the shared-memory
+  // constraint in `ParametersSatisfyConstraints`.
+  llvm::SmallVector<StagingTileInfo, 2> staging_infos_;
+
   // Holds the info for all fusion roots necessary to check whether the tile
-  // sizes evaluate to powers of 2 or have the same size as the dimension.
+  // sizes evaluate to powers of 2 or have the same size as the dimension, and
+  // to estimate the shared memory required to stage the root tiles.
   llvm::SmallVector<RootTileInfo, 2> roots_;
 
   // Custom emitter-specific constraints to check in
@@ -126,8 +156,13 @@ class TritonEmitterConstraints : public EmitterSpecificConstraints {
 
 namespace experimental {
 
-Decision VerifyTritonConstraints(const TiledHloComputation& tiled_computation,
-                                 const se::DeviceDescription& device_info);
+// Verifies the Triton emitter constraints for a concrete tiling.
+// `block_level_parameters` provides the launch parameters (num_stages /
+// num_warps) used by the shared-memory estimate.
+Decision VerifyTritonConstraints(
+    const TiledHloComputation& tiled_computation,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters = {});
 
 }  // namespace experimental
 
