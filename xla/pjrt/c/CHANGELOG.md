@@ -1,9 +1,5 @@
 # PJRT C API changelog
 
-## 0.115
-
-*   Added `individually_defined_output_indices` to `PJRT_ExecuteOptions`.
-
 ## 0.114
 
 *   Added types F6E2M3FN and F6E3M2FN.

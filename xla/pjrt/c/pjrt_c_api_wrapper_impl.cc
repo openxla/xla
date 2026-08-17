@@ -2393,15 +2393,6 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
       options.hlo_output_callbacks = *cpp_hlo_output_callbacks;
     }
   }
-  if (args->options->struct_size >=
-          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions,
-                           num_individually_defined_output_indices) &&
-      args->options->num_individually_defined_output_indices > 0) {
-    options.individually_defined_output_indices.insert(
-        args->options->individually_defined_output_indices,
-        args->options->individually_defined_output_indices +
-            args->options->num_individually_defined_output_indices);
-  }
 
   if (args->execute_device == nullptr) {
     std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> cpp_buffer_lists;

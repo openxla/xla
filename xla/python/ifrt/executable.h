@@ -138,10 +138,6 @@ struct ExecuteOptions {
   // input arrays.
   absl::flat_hash_set<int> non_donatable_input_indices;
 
-  // Flattened output indices that should use individual definition events when
-  // supported. Other outputs use the primary execute event.
-  absl::flat_hash_set<int> individually_defined_output_indices;
-
   // If true, populate `ExecuteResult::status`. Otherwise, the status is left as
   // an invalid future.
   bool fill_status = false;

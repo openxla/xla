@@ -25,7 +25,6 @@ message ExecuteOptionsProto {
   bool untuple_result = 2;
   int32 launch_id = 3;
   repeated int32 non_donatable_input_indices = 7;
-  repeated int32 individually_defined_output_indices = 13;
   bool fill_status = 9;
   int64 execution_stream_id = 11;
   AttributeMapProto custom_options = 10;

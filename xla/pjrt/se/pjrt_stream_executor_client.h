@@ -587,7 +587,7 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
       std::shared_ptr<DeviceAssignment> device_assignment,
       std::shared_ptr<LocalExecutable> executable,
       PjRtStreamExecutorRawClient* raw_client,
-      bool parameter_is_tupled_arguments)
+      const CompileOptions& compile_options)
       : replica_(replica),
         partition_(partition),
         run_id_(run_id),
@@ -595,7 +595,7 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
         device_assignment_(std::move(device_assignment)),
         executable_(std::move(executable)),
         raw_client_(raw_client),
-        parameter_is_tupled_arguments_(parameter_is_tupled_arguments) {}
+        compile_options_(compile_options) {}
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options, absl::Span<const PjRtRawBufferRef> inputs,
       absl::Span<const PjRtRawBufferRef> results,
@@ -612,7 +612,7 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
   std::shared_ptr<DeviceAssignment> device_assignment_;
   std::shared_ptr<LocalExecutable> executable_;
   PjRtStreamExecutorRawClient* raw_client_;
-  bool parameter_is_tupled_arguments_;
+  const CompileOptions& compile_options_;
 };
 
 // Wraps one or more XLA LocalExecutables (one per partition, as specified by

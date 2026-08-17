@@ -50,8 +50,6 @@ TEST_P(ExecuteOptionsSerDesTest, RoundTrip) {
   options.launch_id = 1234;
   options.non_donatable_input_indices.insert(0);
   options.non_donatable_input_indices.insert(3);
-  options.individually_defined_output_indices.insert(1);
-  options.individually_defined_output_indices.insert(4);
   options.fill_status = true;
   options.custom_options = AttributeMap(
       AttributeMap::Map({{"foo", AttributeMap::StringValue("bar")}}));
@@ -63,8 +61,6 @@ TEST_P(ExecuteOptionsSerDesTest, RoundTrip) {
   EXPECT_EQ(deserialized.launch_id, 1234);
   EXPECT_THAT(deserialized.non_donatable_input_indices,
               UnorderedElementsAre(0, 3));
-  EXPECT_THAT(deserialized.individually_defined_output_indices,
-              UnorderedElementsAre(1, 4));
   EXPECT_TRUE(deserialized.fill_status);
   ASSERT_TRUE(deserialized.custom_options.has_value());
   EXPECT_THAT(deserialized.custom_options->Get<std::string>("foo"),
