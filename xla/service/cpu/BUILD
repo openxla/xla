@@ -873,6 +873,7 @@ cc_library(
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:sort_utils",
         "//xla/runtime:resource_use",
         "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",

@@ -3306,6 +3306,7 @@ cc_library(
         "//xla/backends/gpu/libraries/cub:cub_scratch_size_deviceless_lookup",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:sort_utils",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor:device_description",
