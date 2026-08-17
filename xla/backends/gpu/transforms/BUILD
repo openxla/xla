@@ -526,6 +526,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_creation_utils",
         "//xla/service:shape_inference",
+        "//xla/service/gpu:conv_utils",
         "//xla/service/gpu:cublas_cudnn",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
