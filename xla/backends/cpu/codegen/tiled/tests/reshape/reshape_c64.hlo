@@ -51,9 +51,7 @@ fusion {
 // NEW-VECTOR:         %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
 // NEW-VECTOR:         scf.for
 // NEW-VECTOR:         %[[R0:.*]] = vector.transfer_read %[[ARG0]]
-// NEW-VECTOR:         %[[RESHAPE:.*]] = vector.shape_cast %[[R0]]
-// NEW-VECTOR-SAME:      : vector<1x4x2xf32> to vector<4x2xf32>
-// NEW-VECTOR:         vector.transfer_write %[[RESHAPE]], %[[ARG1]]
+// NEW-VECTOR:         vector.transfer_write %[[R0]], %[[ARG1]]
 
 // CHECK-LLVM: llvm.intr.memcpy
 // NEW-VECTOR-LLVM-LABEL: llvm.func internal @wrapped_fusion_impl

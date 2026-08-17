@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/cpu/codegen/tiled/transforms/lowering_utils.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
@@ -1008,6 +1010,14 @@ class VectorizeXTilePass
         type_converter, patterns, target);
     if (mlir::failed(mlir::applyPartialConversion(getOperation(), target,
                                                   std::move(patterns)))) {
+      signalPassFailure();
+    }
+
+    mlir::RewritePatternSet drop_dims_patterns(context);
+    mlir::vector::populateCastAwayVectorLeadingOneDimPatterns(
+        drop_dims_patterns);
+    if (mlir::failed(mlir::applyPatternsGreedily(
+            getOperation(), std::move(drop_dims_patterns)))) {
       signalPassFailure();
     }
   }
