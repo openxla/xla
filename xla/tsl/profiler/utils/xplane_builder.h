@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/meta/type_traits.h"
 #include "absl/strings/numbers.h"
@@ -348,7 +349,7 @@ class XLineBuilder {
 // NOTE: avoid to use two builders to wrap the same XPlane.
 class XPlaneBuilder : public XStatsBuilder<XPlane> {
  public:
-  explicit XPlaneBuilder(XPlane* plane);
+  explicit XPlaneBuilder(XPlane* absl_nonnull plane);
 
   int64_t Id() const { return plane_->id(); }
   void SetId(int64_t id) { plane_->set_id(id); }
