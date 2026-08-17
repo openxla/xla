@@ -198,6 +198,33 @@ func.func @test_xori(%arg0: tensor<8xi32>, %arg1: tensor<8xi32>) -> tensor<8xi32
 
 // -----
 
+func.func @test_shli(%arg0: tensor<8xi32>, %arg1: tensor<8xi32>) -> tensor<8xi32> {
+  %0 = arith.shli %arg0, %arg1 : tensor<8xi32>
+  return %0 : tensor<8xi32>
+}
+// CHECK-LABEL: @test_shli
+// CHECK: arith.shli %{{.*}}, %{{.*}} : vector<8xi32>
+
+// -----
+
+func.func @test_shrsi(%arg0: tensor<8xi32>, %arg1: tensor<8xi32>) -> tensor<8xi32> {
+  %0 = arith.shrsi %arg0, %arg1 : tensor<8xi32>
+  return %0 : tensor<8xi32>
+}
+// CHECK-LABEL: @test_shrsi
+// CHECK: arith.shrsi %{{.*}}, %{{.*}} : vector<8xi32>
+
+// -----
+
+func.func @test_shrui(%arg0: tensor<8xi32>, %arg1: tensor<8xi32>) -> tensor<8xi32> {
+  %0 = arith.shrui %arg0, %arg1 : tensor<8xi32>
+  return %0 : tensor<8xi32>
+}
+// CHECK-LABEL: @test_shrui
+// CHECK: arith.shrui %{{.*}}, %{{.*}} : vector<8xi32>
+
+// -----
+
 func.func @test_select(%arg0: tensor<8xi1>, %arg1: tensor<8xf32>, %arg2: tensor<8xf32>) -> tensor<8xf32> {
   %0 = arith.select %arg0, %arg1, %arg2 : tensor<8xi1>, tensor<8xf32>
   return %0 : tensor<8xf32>
@@ -312,6 +339,33 @@ func.func @test_index_cast(%arg0: tensor<8xindex>) -> tensor<8xi32> {
 }
 // CHECK-LABEL: @test_index_cast
 // CHECK: arith.index_cast %{{.*}} : vector<8xindex> to vector<8xi32>
+
+// -----
+
+func.func @test_index_castui(%arg0: tensor<8xindex>) -> tensor<8xi32> {
+  %0 = arith.index_castui %arg0 : tensor<8xindex> to tensor<8xi32>
+  return %0 : tensor<8xi32>
+}
+// CHECK-LABEL: @test_index_castui
+// CHECK: arith.index_castui %{{.*}} : vector<8xindex> to vector<8xi32>
+
+// -----
+
+func.func @test_arith_bitcast(%arg0: tensor<8xf32>) -> tensor<8xi32> {
+  %0 = arith.bitcast %arg0 : tensor<8xf32> to tensor<8xi32>
+  return %0 : tensor<8xi32>
+}
+// CHECK-LABEL: @test_arith_bitcast
+// CHECK: arith.bitcast %{{.*}} : vector<8xf32> to vector<8xi32>
+
+// -----
+
+func.func @test_tensor_bitcast(%arg0: tensor<8xf32>) -> tensor<8xi32> {
+  %0 = tensor.bitcast %arg0 : tensor<8xf32> to tensor<8xi32>
+  return %0 : tensor<8xi32>
+}
+// CHECK-LABEL: @test_tensor_bitcast
+// CHECK: arith.bitcast %{{.*}} : vector<8xf32> to vector<8xi32>
 
 // -----
 

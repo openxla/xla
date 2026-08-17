@@ -773,6 +773,23 @@ struct VectorizeIotaOp : public mlir::OpConversionPattern<shlo::IotaOp> {
   }
 };
 
+struct VectorizeBitcastOp
+    : public mlir::OpConversionPattern<mlir::tensor::BitcastOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::tensor::BitcastOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    mlir::Type new_type = this->getTypeConverter()->convertType(op.getType());
+    if (!new_type) {
+      return mlir::failure();
+    }
+    rewriter.replaceOpWithNewOp<ma::BitcastOp>(op, new_type,
+                                               adaptor.getSource());
+    return mlir::success();
+  }
+};
+
 template <typename OpTy>
 struct VectorizeElementwiseOp : public mlir::OpConversionPattern<OpTy> {
   using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
@@ -831,36 +848,76 @@ class VectorizeXTilePass
     target.addIllegalOp<shlo::BroadcastInDimOp, shlo::ConcatenateOp,
                         shlo::DotGeneralOp, shlo::IotaOp, shlo::ReduceOp,
                         shlo::ReshapeOp, shlo::SliceOp, shlo::TransposeOp,
-                        mlir::tensor::ExtractOp, mlir::tensor::FromElementsOp,
-                        xtile::ExtractTileOp, xtile::InsertTileOp,
-                        xtile::MaskOp>();
+                        mlir::tensor::BitcastOp, mlir::tensor::ExtractOp,
+                        mlir::tensor::FromElementsOp, xtile::ExtractTileOp,
+                        xtile::InsertTileOp, xtile::MaskOp>();
     target.addLegalOp<mlir::UnrealizedConversionCastOp>();
     target.addDynamicallyLegalDialect<ma::ArithDialect, mm::MathDialect>(
         [&](mlir::Operation* op) { return type_converter.isLegal(op); });
 
     mlir::RewritePatternSet patterns(context);
-    patterns
-        .add<ConvertExtractTile, ConvertInsertTile, VectorizeBroadcastInDimOp,
-             VectorizeConcatenateOp, VectorizeConstantOp, VectorizeDotGeneralOp,
-             VectorizeExtractOp, VectorizeFromElementsOp, VectorizeIotaOp,
-             VectorizeMaskOp, VectorizeReduceOp, VectorizeReshapeOp,
-             VectorizeSliceOp, VectorizeTransposeOp>(type_converter, context);
+    // clang-format off
+    patterns.add<
+      ConvertExtractTile,
+      ConvertInsertTile,
+      VectorizeBitcastOp,
+      VectorizeConcatenateOp,
+      VectorizeDotGeneralOp,
+      VectorizeExtractOp,
+      VectorizeIotaOp,
+      VectorizeMaskOp,
+      VectorizeReshapeOp,
+      VectorizeSliceOp,
+      VectorizeBroadcastInDimOp,
+      VectorizeConstantOp,
+      VectorizeFromElementsOp,
+      VectorizeReduceOp,
+      VectorizeTransposeOp
+    >(type_converter, context);
     populateVectorizePatterns<
-        ma::AddFOp, ma::AddIOp, ma::SubFOp, ma::SubIOp, ma::MulFOp, ma::MulIOp,
-        ma::DivFOp, ma::DivSIOp, ma::DivUIOp, ma::RemFOp, ma::RemSIOp,
-        ma::RemUIOp, ma::MaximumFOp, ma::MaxSIOp, ma::MaxUIOp, ma::MinimumFOp,
-        ma::MinSIOp, ma::MinUIOp, ma::AndIOp, ma::OrIOp, ma::XOrIOp, ma::NegFOp,
-        ma::SelectOp, ma::CmpFOp, ma::CmpIOp, ma::ExtFOp, ma::TruncFOp,
-        ma::ExtSIOp, ma::ExtUIOp, ma::FPToSIOp, ma::FPToUIOp, ma::SIToFPOp,
-        ma::UIToFPOp, ma::TruncIOp, ma::IndexCastOp, mm::AbsIOp, mm::AbsFOp,
-        mm::CeilOp, mm::FloorOp, mm::RoundEvenOp, mm::AcosOp, mm::AcoshOp,
-        mm::AsinOp, mm::AsinhOp, mm::Atan2Op, mm::AtanhOp, mm::CosOp,
-        mm::CoshOp, mm::ExpOp, mm::ErfOp, mm::ExpM1Op, mm::LogOp, mm::Log1pOp,
-        mm::IPowIOp, mm::PowFOp, mm::RsqrtOp, mm::SinOp, mm::SinhOp, mm::SqrtOp,
-        mm::TanOp, mm::TanhOp, mm::CbrtOp, mm::IsFiniteOp>(type_converter,
-                                                           patterns);
-    mlir::scf::populateSCFStructuralTypeConversionsAndLegality(
-        type_converter, patterns, target);
+      ma::AddFOp, ma::AddIOp,
+      ma::AndIOp,
+      ma::BitcastOp,
+      ma::CmpFOp, ma::CmpIOp,
+      ma::DivFOp, ma::DivSIOp, ma::DivUIOp,
+      ma::ExtFOp, ma::ExtSIOp, ma::ExtUIOp,
+      ma::FPToSIOp, ma::FPToUIOp,
+      ma::IndexCastOp, ma::IndexCastUIOp,
+      ma::MaxSIOp, ma::MaxUIOp, ma::MaximumFOp,
+      ma::MinSIOp, ma::MinUIOp, ma::MinimumFOp,
+      ma::MulFOp, ma::MulIOp,
+      ma::NegFOp,
+      ma::OrIOp,
+      ma::RemFOp, ma::RemSIOp, ma::RemUIOp,
+      ma::SIToFPOp,
+      ma::SelectOp,
+      ma::ShLIOp, ma::ShRSIOp, ma::ShRUIOp,
+      ma::SubFOp, ma::SubIOp,
+      ma::TruncFOp, ma::TruncIOp,
+      ma::UIToFPOp,
+      ma::XOrIOp,
+      mm::AbsFOp, mm::AbsIOp,
+      mm::AcosOp, mm::AcoshOp,
+      mm::AsinOp, mm::AsinhOp,
+      mm::Atan2Op, mm::AtanhOp,
+      mm::CbrtOp,
+      mm::CeilOp,
+      mm::CosOp, mm::CoshOp,
+      mm::ErfOp,
+      mm::ExpM1Op,
+      mm::ExpOp,
+      mm::FloorOp,
+      mm::IPowIOp,
+      mm::IsFiniteOp,
+      mm::Log1pOp, mm::LogOp,
+      mm::PowFOp,
+      mm::RoundEvenOp,
+      mm::RsqrtOp,
+      mm::SinOp, mm::SinhOp,
+      mm::SqrtOp,
+      mm::TanOp, mm::TanhOp
+    >(type_converter, patterns);
+    // clang-format on
 
     mlir::scf::populateSCFStructuralTypeConversionsAndLegality(
         type_converter, patterns, target);
