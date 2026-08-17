@@ -428,14 +428,15 @@ class HloInstruction {
       HloComputation* map_computation);
 
   // Creates a convolution op, where rhs is the convolutional filter
-  // and window describes how the filter is applied to lhs.
+  // and window describes how the filter is applied to lhs. Additionally,
+  // it supports structured sparsity and block scaling.
   static std::unique_ptr<HloInstruction> CreateConvolve(
-      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
       int64_t feature_group_count, int64_t batch_group_count,
       const Window& window,
       const ConvolutionDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config,
-      const SparsityConfig& sparsity_config = {},
+      const SparsityConfig& sparsity_config = SparsityConfig(),
       ConvolutionKind convolution_kind = CONVOLUTION_KIND_UNSET);
 
   // Creates an FFT op, of the type indicated by fft_type.

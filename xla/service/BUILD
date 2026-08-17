@@ -4932,7 +4932,6 @@ xla_cc_test(
         "//xla/hlo/testlib:test_helpers",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_matchers",
