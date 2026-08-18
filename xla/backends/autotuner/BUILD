@@ -304,7 +304,7 @@ cc_library(
     hdrs = ["autotune_cache_store.h"],
     deps = [
         ":autotuner_cache_interface",
-        ":autotuning_proto_cc",
+        "//xla:autotune_cache_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -315,9 +315,9 @@ xla_cc_test(
     srcs = ["directory_store_test.cc"],
     deps = [
         ":autotuner_cache_interface",
-        ":autotuning_proto_cc",
         ":backends_proto_cc",
         ":directory_store",
+        "//xla:autotune_cache_proto_cc",
         "//xla/tsl/platform:test",
         "//xla/tsl/testing:temporary_directory",
         "@com_google_absl//absl/status",
@@ -334,7 +334,7 @@ cc_library(
         ":autotune_cache_store",
         ":autotune_fingerprint",
         ":autotuner_cache_interface",
-        ":autotuning_proto_cc",
+        "//xla:autotune_cache_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/base:core_headers",
@@ -347,7 +347,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -359,7 +358,7 @@ cc_library(
     hdrs = ["in_memory_store.h"],
     deps = [
         ":autotune_cache_store",
-        ":autotuning_proto_cc",
+        "//xla:autotune_cache_proto_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/base:core_headers",
@@ -378,9 +377,9 @@ xla_cc_test(
     name = "in_memory_store_test",
     srcs = ["in_memory_store_test.cc"],
     deps = [
-        ":autotuning_proto_cc",
         ":backends_proto_cc",
         ":in_memory_store",
+        "//xla:autotune_cache_proto_cc",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
@@ -394,7 +393,7 @@ cc_library(
     deps = [
         ":autotune_cache_store",
         ":autotuner_cache_interface",
-        ":autotuning_proto_cc",
+        "//xla:autotune_cache_proto_cc",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -411,13 +410,13 @@ xla_cc_test(
     deps = [
         ":autotune_cache_store",
         ":autotuner_cache_interface",
-        ":autotuning_proto_cc",
         ":backends_proto_cc",
         ":codegen_backend",
         ":directory_store",
         ":fake_codegen_backend",
         ":in_memory_store",
         ":tiered_cache",
+        "//xla:autotune_cache_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/stream_executor:device_description",
@@ -480,11 +479,13 @@ cc_library(
 tf_proto_library(
     name = "backends_proto",
     srcs = ["backends.proto"],
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "backend_config_proto",
     srcs = ["backend_config.proto"],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla:autotuning_proto",
         "//xla/codegen/xtile:xtile_config_proto",
@@ -498,8 +499,7 @@ tf_proto_library(
     name = "autotuning_proto",
     srcs = ["autotuning.proto"],
     deps = [
-        ":backend_config_proto",
-        ":backends_proto",
+        "//xla:autotune_cache_proto",
         "@com_google_protobuf//:duration_proto",
     ],
 )
