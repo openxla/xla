@@ -114,7 +114,9 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
       std::unique_ptr<AsyncWorkRunner> async_work_runner,
-      se::StreamExecutor* executor = nullptr, bool cache_fabric_handles = false,
+      se::StreamExecutor* executor = nullptr,
+      std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr,
+      bool cache_fabric_handles = false,
       bool abort_collectives_on_failure = false,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options = nullptr,
       std::shared_ptr<gpu::AllocatorMemoryRegistration> memory_registration =
@@ -124,9 +126,18 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
             should_stage_host_to_device_transfers, std::move(async_work_runner),
             executor, std::move(gpu_run_options)),
         platform_id_(platform_id),
+        kv_store_(std::move(kv_store)),
         cache_fabric_handles_(cache_fabric_handles),
         abort_collectives_on_failure_(abort_collectives_on_failure),
         memory_registration_(std::move(memory_registration)) {}
+
+  std::optional<std::shared_ptr<KeyValueStoreInterface>> key_value_store()
+      const override {
+    if (!kv_store_) {
+      return std::nullopt;
+    }
+    return kv_store_;
+  }
 
   void ScheduleRemoteSend(PjRtMemorySpace* memory_space,
                           PjRtRawBufferRef raw_buffer,
@@ -175,6 +186,7 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
 
   PjRtPlatformId platform_id_;
 
+  std::shared_ptr<KeyValueStoreInterface> kv_store_;
   // Whether to cache fabric handles. Exporting and importing fabric handles can
   // be expensive, but it makes sense to cache them only if there are only a
   // handful of such handles, e.g., preallocation is enabled.
