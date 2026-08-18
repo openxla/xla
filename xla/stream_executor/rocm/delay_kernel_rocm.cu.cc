@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <hip/hip_runtime.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -20,7 +22,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/generic_memory_allocation.h"
 #include "xla/stream_executor/gpu/gpu_semaphore.h"

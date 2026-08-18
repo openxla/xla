@@ -972,6 +972,7 @@ rocm_library(
     name = "delay_kernel_rocm",
     srcs = ["delay_kernel_rocm.cu.cc"],
     hdrs = ["delay_kernel.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
         "rocm-only",
