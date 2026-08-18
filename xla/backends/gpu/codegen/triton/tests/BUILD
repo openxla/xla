@@ -163,7 +163,7 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
-    shard_count = 10,
+    shard_count = 20,
     tags = ["no_mac"],
     deps = [
         "//xla:autotuning_proto_cc",
