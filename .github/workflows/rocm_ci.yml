@@ -115,6 +115,10 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request
+      - name: Shutdown bazel
+        timeout-minutes: 5
+        run: |
+          bazel shutdown
   xla:
     needs: rocm-config
     name: XLA Linux x86 AMD Instinct GPU
@@ -176,3 +180,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=cpu \
             --bes_keywords=pull_request
+      - name: Shutdown bazel
+        timeout-minutes: 5
+        run: |
+          bazel shutdown
