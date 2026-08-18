@@ -3514,6 +3514,10 @@ cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
     hdrs = ["thunk.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
+    ]),
     deps = [
         ":collective_clique_requests",
         ":collective_cliques",
@@ -5198,6 +5202,10 @@ cc_library(
     name = "custom_kernel_thunk",
     srcs = ["custom_kernel_thunk.cc"],
     hdrs = ["custom_kernel_thunk.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
+    ]),
     deps = [
         ":command",
         ":print_buffer_contents",

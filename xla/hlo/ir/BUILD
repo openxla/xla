@@ -61,6 +61,10 @@ cc_library(
         "replica_group.h",
         "stack_frames.h",
     ],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
+    ]),
     deps = [
         ":backend_config",
         ":hlo_payload_deduplicator",
