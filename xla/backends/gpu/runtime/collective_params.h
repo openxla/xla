@@ -102,6 +102,12 @@ enum class KernelArgType : uint8_t {
   kInvocationCount,
   // A scratch buffer.
   kScratchBuffer,
+  // A per-operand table of peer pointers (memref<Rxi64>) pointing to each
+  // rank's symmetric/collective-memory buffer for that operand. Consumed by the
+  // experimental tiling all-gather kernel, which dereferences the table via
+  // xtile.select_buffer(table, replica_id). The `index` of the descriptor is
+  // the operand (input buffer) index whose peer pointers should be provided.
+  kReplicaPointerTable,
 };
 
 // Specifies how symmetric memory allocation and pointer exchange are handled

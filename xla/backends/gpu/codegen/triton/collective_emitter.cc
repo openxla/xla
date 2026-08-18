@@ -303,6 +303,122 @@ absl::StatusOr<std::vector<Shape>> GetAllReduceUnmanagedKernelArguments(
   return unmanaged_arguments;
 }
 
+// Returns the unmanaged (opaque) metadata kernel arguments for an all-gather
+// fusion.
+absl::StatusOr<std::vector<Shape>> GetAllGatherUnmanagedKernelArguments(
+    const HloComputation* computation,
+    const HloAllGatherInstruction* all_gather) {
+  const int32_t num_devices =
+      all_gather->device_list()->num_devices_per_group();
+  std::vector<Shape> unmanaged_arguments;
+  unmanaged_arguments.reserve(computation->num_parameters() +
+                              kNumCollectiveMetadataArgs);
+  // rank and signal_value
+  unmanaged_arguments.push_back(ShapeUtil::MakeShape(S32, {}));
+  unmanaged_arguments.push_back(ShapeUtil::MakeShape(S32, {}));
+  static constexpr int32_t kMaxBlocksPerGrid = 24;
+  unmanaged_arguments.push_back(
+      ShapeUtil::MakeShape(S32, {num_devices, kMaxBlocksPerGrid}));
+  // One symmetric staging buffer (peer pointer table) per input parameter.
+  for (const HloInstruction* instr : computation->parameter_instructions()) {
+    Shape shape =
+        ShapeUtil::InsertDimensionAtIndex(instr->shape(), 0, num_devices);
+    unmanaged_arguments.push_back(shape);
+  }
+  TF_RET_CHECK(unmanaged_arguments.size() ==
+               computation->num_parameters() + kNumCollectiveMetadataArgs);
+  return unmanaged_arguments;
+}
+
+// Computes the block-level fusion config for a tiling all-gather. The output
+// tile is derived greedily from the output shape; num_warps is derived from the
+// per-rank shard size using the all-reduce one-shot heuristics.
+absl::StatusOr<std::optional<BlockLevelFusionConfig>>
+GetBlockLevelFusionConfigForAllGather(
+    const GpuTopology& gpu_topology, const HloAllGatherInstruction* all_gather,
+    const DeviceAssignment* device_assignment) {
+  ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                   all_gather->backend_config<GpuBackendConfig>());
+  if (!IsTritonCollectiveKernel(
+          gpu_config.collective_backend_config().kernel_strategy())) {
+    VLOG(3) << "All-gather is not annotated with Triton strategy. Skipping.";
+    return std::nullopt;
+  }
+  const int64_t num_devices =
+      all_gather->device_list()->num_devices_per_group();
+  const Shape& output_shape = all_gather->shape();
+  const Shape& operand_shape = all_gather->operand(0)->shape();
+  const int64_t all_gather_dim = all_gather->all_gather_dimension();
+  const se::DeviceDescription& device_info =
+      gpu_topology.gpu_target_config().device_description;
+  const int64_t shard_elements = ShapeUtil::ElementsIn(operand_shape);
+  const LaunchDimensions launch_dims = AllReduceLaunchDimensions(
+      shard_elements, num_devices, AllReduceStrategy::kOneShot, device_info);
+  BlockLevelFusionConfig block_level_config;
+  block_level_config.set_num_warps(xla::CeilOfRatio(
+      static_cast<int64_t>(launch_dims.num_threads_per_block()),
+      WarpSize(device_info)));
+  block_level_config.set_num_ctas(1);
+  block_level_config.set_num_stages(1);
+  Tile* output_tile = block_level_config.add_output_tiles();
+  llvm::SmallVector<int64_t> tile_sizes(output_shape.dimensions().begin(),
+                                        output_shape.dimensions().end());
+  tile_sizes[all_gather_dim] = operand_shape.dimensions(all_gather_dim);
+  output_tile->mutable_sizes()->Assign(tile_sizes.begin(), tile_sizes.end());
+  VLOG(3) << "Block level fusion config for " << all_gather->name() << ": "
+          << block_level_config;
+  return block_level_config;
+}
+
+// Creates the collective kernel spec for a tiling all-gather. The operand is
+// consumed by the kernel as a replica pointer table (memref<Rxi64>); the kernel
+// also needs a signal scratch buffer and a symmetric staging buffer for the
+// operand shard.
+absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
+    const HloInstruction* instr, const LaunchDimensions& launch_dimensions) {
+  const HloAllGatherInstruction* all_gather =
+      DynCast<HloAllGatherInstruction>(instr);
+  TF_RET_CHECK(all_gather != nullptr)
+      << "Expected an all-gather instruction, but got: " << instr->ToString();
+
+  int64_t group_size = instr->GetModule()->config().replica_count();
+  if (!instr->replica_groups().empty() &&
+      instr->replica_groups()[0].replica_ids_size() > 0) {
+    group_size = instr->replica_groups()[0].replica_ids_size();
+  }
+  const int64_t shard_size_bytes =
+      ShapeUtil::ByteSizeOf(instr->operand(0)->shape());
+  const int64_t num_signal_flags = group_size * launch_dimensions.num_blocks();
+  const int64_t signal_size = xla::RoundUpTo<uint64_t>(
+      num_signal_flags * sizeof(int32_t), kXlaAllocatedBufferAlignBytes);
+  const int64_t remote_size =
+      xla::RoundUpTo<uint64_t>(shard_size_bytes, kXlaAllocatedBufferAlignBytes);
+
+  CollectiveKernelSpec kernel_spec = {
+      /* .input_buffer_specs= */
+      {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
+      /* .output_buffer_specs= */
+      {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
+      /* .scratch_buffers= */
+      {{signal_size, /*requires_multimem=*/false,  // Signal buffers.
+        SymmetricMemoryType::kXlaRendezvous,
+        /*should_memzero=*/true,
+        /*should_double_buffer=*/true},
+       {remote_size, /*requires_multimem=*/false,  // Symmetric shard staging.
+        SymmetricMemoryType::kXlaRendezvous,
+        /*should_memzero=*/false,
+        /*should_double_buffer=*/true}},
+      /* .argument_descriptors= */
+      {{KernelArgType::kReplicaPointerTable, /*index=*/1},
+       {KernelArgType::kOutputBuffer, /*index=*/0},
+       {KernelArgType::kRuntimeRank},
+       {KernelArgType::kInvocationCount},              // %arg3 signal_value
+       {KernelArgType::kScratchBuffer, /*index=*/0},   // %arg4 signal bufs
+       {KernelArgType::kScratchBuffer, /*index=*/1}},  // %arg5 remote bufs
+      /* .sync_count_increment = */ 1};
+  return kernel_spec;
+}
+
 mlir::LogicalResult PopulateReductionComputation(
     mlir::PatternRewriter& rewriter, mlir::stablehlo::AllReduceOp op,
     ReductionComputationEmitter& computation_emitter) {
@@ -1017,6 +1133,9 @@ GetCollectiveBlockLevelFusionConfig(const GpuTopology& gpu_topology,
     case HloOpcode::kAllReduce:
       return GetBlockLevelFusionConfigForAllReduce(
           gpu_topology, Cast<HloAllReduceInstruction>(root), device_assignment);
+    case HloOpcode::kAllGather:
+      return GetBlockLevelFusionConfigForAllGather(
+          gpu_topology, Cast<HloAllGatherInstruction>(root), device_assignment);
     default:
       return std::nullopt;
   }
@@ -1052,6 +1171,9 @@ absl::StatusOr<std::vector<Shape>> GetCollectiveUnmanagedKernelArguments(
     case HloOpcode::kAllReduce:
       return GetAllReduceUnmanagedKernelArguments(
           computation, Cast<HloAllReduceInstruction>(root));
+    case HloOpcode::kAllGather:
+      return GetAllGatherUnmanagedKernelArguments(
+          computation, Cast<HloAllGatherInstruction>(root));
     default:
       return std::vector<Shape>();
   }
@@ -1106,6 +1228,58 @@ mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
   return AllReduceEmitter::Emit(maybe_context.value(), rewriter);
 }
 
+mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
+                                     mlir::PatternRewriter& rewriter) {
+  const mlir::Location loc = op->getLoc();
+  auto xtile_entry_fn = op->getParentOfType<xtile::EntryFuncOp>();
+  if (!xtile_entry_fn) {
+    return rewriter.notifyMatchFailure(
+        loc, "AllGather op must be in an XTile entry function.");
+  }
+  auto replica_groups = xla::ConvertReplicaGroups(op.getReplicaGroups(), op);
+  if (!replica_groups.ok()) {
+    return rewriter.notifyMatchFailure(loc, replica_groups.status().ToString());
+  }
+  const int32_t world_size = (*replica_groups)->num_devices_per_group();
+
+  // The opaque collective-metadata arguments are appended right after the
+  // buffer args (one input pointer-table + one output) and before the trailing
+  // tile-index (pid) argument.
+  //   [start_idx + 0] rank            (i32)
+  //   [start_idx + 1] signal_value    (i32)
+  //   [start_idx + 2] signal_buffers  (!tt.ptr<!tt.ptr<i32>>)
+  //   [start_idx + 3] peer table      (!tt.ptr<!tt.ptr<T>>)
+  const int32_t num_input_output_args = op->getNumOperands() * 2;
+  const int32_t num_args = xtile_entry_fn.getNumArguments();
+  if (num_args < num_input_output_args + kNumCollectiveMetadataArgs) {
+    return rewriter.notifyMatchFailure(
+        loc, "AllGather entry function is missing collective metadata args.");
+  }
+  const int32_t start_idx = num_input_output_args;
+  mlir::Value device_rank = xtile_entry_fn.getArgument(start_idx);
+  mlir::Value signal_value = xtile_entry_fn.getArgument(start_idx + 1);
+  mlir::Value signal_buffers = xtile_entry_fn.getArgument(start_idx + 2);
+
+  mlir::ImplicitLocOpBuilder builder(loc, rewriter);
+
+  // Single cross-device barrier before the gathered (peer-read) tile is
+  // consumed: this guarantees every rank has published its shard into symmetric
+  // memory before any rank reads its peers.
+  mlir::Block& entry_block = xtile_entry_fn.front();
+  builder.setInsertionPointToStart(&entry_block);
+
+  // Single cross-device barrier. Operand order matches all-reduce's EmitSync:
+  // (signal_buffers, device_rank, signal_value, world_size).
+  mlir::triton::gpu::BarrierOp::create(builder,
+                                       mlir::triton::gpu::AddrSpace::Local);
+  mtx::BlockBarrierOp::create(builder, signal_buffers, device_rank,
+                              signal_value,
+                              builder.getI32IntegerAttr(world_size));
+
+  rewriter.replaceOp(op, op.getOperand(0));
+  return mlir::success();
+}
+
 absl::StatusOr<CollectiveKernelSpec> CreateCollectiveKernelSpec(
     const HloInstruction* instr, const LaunchDimensions& launch_dimensions) {
   const HloInstruction* collective = instr;
@@ -1115,6 +1289,8 @@ absl::StatusOr<CollectiveKernelSpec> CreateCollectiveKernelSpec(
   switch (collective->opcode()) {
     case HloOpcode::kAllReduce:
       return CreateAllReduceKernelSpec(collective, launch_dimensions);
+    case HloOpcode::kAllGather:
+      return CreateAllGatherKernelSpec(collective, launch_dimensions);
     default:
       return absl::UnimplementedError(
           absl::StrFormat("CollectiveKernelSpec creation not implemented for "

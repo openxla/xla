@@ -14,6 +14,7 @@ limitations under the License.*/
 
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -214,6 +215,21 @@ absl::StatusOr<std::vector<se::KernelArg>> BuildKernelArguments(
                              metadata, num_parameters, clique_key.num_devices(),
                              buffer_index + param_index_offset));
         kernel_args.push_back(peer_buf);
+        break;
+      }
+      case KernelArgType::kReplicaPointerTable: {
+        // The tiling all-gather kernel consumes a `memref<Rxi64>` table of peer
+        // pointers (one device pointer per rank) pointing at each rank's
+        // symmetric staging buffer for the operand. The `index` is the scratch
+        // buffer index of the symmetric staging buffer.
+        ASSIGN_OR_RETURN(
+            const int32_t buffer_index,
+            get_buffer_index(desc.index, kernel_spec.scratch_buffers.size()));
+        ASSIGN_OR_RETURN(se::DeviceAddressBase peer_table,
+                         GetParameterDeviceMemoryBase(
+                             metadata, num_parameters, clique_key.num_devices(),
+                             buffer_index + param_index_offset));
+        kernel_args.push_back(peer_table);
         break;
       }
       default:
@@ -522,6 +538,46 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
   state->invocation_count += kernel_spec_.sync_count_increment;
   TF_RET_CHECK(state->kernel != nullptr)
       << "Kernel is not initialized for collective kernel thunk.";
+
+  // For collectives that consume a replica pointer table (e.g. the tiling
+  // all-gather), the operand shard must live in symmetric/collective memory so
+  // that peers can read it. The HLO operand buffer is a standard
+  // (non-symmetric) buffer, so we stage it into this rank's symmetric staging
+  // scratch buffer before launching. The kernel's entry barrier then guarantees
+  // every rank has published its shard before any peer reads it.
+  {
+    StreamMemory* memory_state = nullptr;
+    {
+      absl::MutexLock lock(mutex_);
+      auto it = per_stream_memory_.find(stream->parent());
+      if (it != per_stream_memory_.end()) {
+        memory_state = it->second.get();
+      }
+    }
+    for (const KernelArgDescriptor& desc : kernel_spec_.argument_descriptors) {
+      if (desc.type != KernelArgType::kReplicaPointerTable) {
+        continue;
+      }
+      TF_RET_CHECK(desc.index.has_value() &&
+                   *desc.index < kernel_spec_.scratch_buffers.size())
+          << "Invalid replica pointer table scratch index.";
+      TF_RET_CHECK(memory_state != nullptr)
+          << "Stream memory not initialized for replica pointer table.";
+      // Stage this rank's operand shard into the *base* (offset 0) of the
+      // symmetric staging buffer.
+      se::DeviceAddressHandle& staging =
+          memory_state->scratch_allocations[*desc.index];
+      se::DeviceAddressBase operand =
+          params.buffer_allocations->GetDeviceAddress(
+              buffers_[0].source_buffer.slice);
+      const int64_t copy_bytes =
+          std::min<int64_t>(operand.size(), staging.address().size());
+      se::DeviceAddressBase staging_slot =
+          staging.address().GetByteSlice(/*offset_bytes=*/0, copy_bytes);
+      RETURN_IF_ERROR(stream->Memcpy(&staging_slot, operand, copy_bytes));
+      break;  // Only one operand supported for now.
+    }
+  }
 
   static constexpr auto has_multimem = [](const auto& buffer_spec) {
     return buffer_spec.requires_multimem;
