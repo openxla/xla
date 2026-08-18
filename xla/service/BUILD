@@ -3633,30 +3633,53 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "computation_placer",
-    srcs = ["computation_placer.cc"],
-    hdrs = ["computation_placer.h"],
+    name = "device_assignment",
+    srcs = ["device_assignment.cc"],
+    hdrs = ["device_assignment.h"],
     deps = [
         "//xla:array2d",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/runtime:device_id",
-        "//xla/stream_executor:platform_id",
-        "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/stream_executor/host:host_platform_id",
-        "//xla/stream_executor/rocm:rocm_platform_id",
-        "//xla/stream_executor/sycl:sycl_platform_id",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+xla_cc_test(
+    name = "device_assignment_test",
+    srcs = ["device_assignment_test.cc"],
+    deps = [
+        ":device_assignment",
+        "//xla:xla_data_proto_cc",
+        "//xla/runtime:device_id",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "computation_placer",
+    srcs = ["computation_placer.cc"],
+    hdrs = ["computation_placer.h"],
+    deps = [
+        ":device_assignment",
+        "//xla:util",
+        "//xla/stream_executor:platform_id",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor/host:host_platform_id",
+        "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
     ],
     alwayslink = True,  # Contains per-platform computation placer registration
@@ -3667,9 +3690,7 @@ xla_cc_test(
     srcs = ["computation_placer_test.cc"],
     deps = [
         ":computation_placer",
-        "//xla/runtime:device_id",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status",
+        ":device_assignment",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -3678,12 +3699,8 @@ cc_library(
     name = "computation_placer_hdr",
     hdrs = ["computation_placer.h"],
     deps = [
-        "//xla:array2d",
-        "//xla:xla_data_proto_cc",
-        "//xla/runtime:device_id",
+        ":device_assignment",
         "//xla/stream_executor:platform_id",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
     ],
 )
