@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/util/tied_ref.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -113,9 +112,6 @@ struct RaggedAllToAllStreamState {
   // MultiGpuBarrier: Device memory buffer for signal values (one per peer).
   // Peers write specific slots in this array to signal this device.
   std::unique_ptr<se::MemoryAllocation> barrier_signal_buffer;
-
-  // Reference to the symmetric memory handler for the barrier signal buffer.
-  tsl::TiedRef<xla::SymmetricMemory> barrier_signal_symmetric_memory;
 
   // MultiGpuBarrier: Device memory for the current local step counter.
   // This value is incremented locally by the kernel after every barrier.
@@ -301,11 +297,9 @@ absl::Status RunOneShotRaggedAllToAll(
 // requiring Event-based coordination, enabling compatibility with CUDA Graphs.
 absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
-    std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
-    const se::DeviceAddressBase& barrier_signal_value,
-    SymmetricMemory* output_sym_mem, size_t output_sym_offset,
-    int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers);
+    GpuCommunicator* comm, SymmetricMemory* output_sym_mem,
+    size_t output_sym_offset, int64_t num_total_updates, int64_t num_input_rows,
+    int64_t num_row_elements, absl::Span<DeviceBufferPair const> buffers);
 
 }  // namespace gpu
 }  // namespace xla
