@@ -523,6 +523,32 @@ int64_t CalculateSharedMemoryPerBlockBytes(const DotProblemInfo& dot_info,
   return (lhs_tile_bytes + rhs_tile_bytes) * num_stages;
 }
 
+int CalculateRegistersPerThread(const DotProblemInfo& dot_info,
+                                const DotTileSize& dot_tile,
+                                const BlockLevelParameters& block_params) {
+  const int64_t num_warps = block_params.num_warps;
+  constexpr int kThreadsPerWarp = 32;
+  constexpr int kBitsPerRegister = 32;
+  const int64_t total_threads = num_warps * kThreadsPerWarp;
+  if (total_threads <= 0 || dot_tile.m <= 0 || dot_tile.n <= 0) {
+    return 0;
+  }
+
+  // 1. Accumulator registers per thread:
+  // TileM x TileN accumulator elements distributed across all threads in the
+  // threadblock. Each physical register holds 32 bits.
+  const int64_t acc_bitwidth = BitWidth(dot_info.output_element_type);
+  const int accumulator_regs = static_cast<int>(
+      CeilOfRatio<int64_t>(dot_tile.m * dot_tile.n * acc_bitwidth,
+                           total_threads * kBitsPerRegister));
+
+  // 2. Base state register overhead for loop induction variables, pointer
+  // arithmetic, and synchronization barrier handles.
+  constexpr int kBaseStateRegs = 24;
+
+  return accumulator_regs + kBaseStateRegs;
+}
+
 double CalculateComputeUtilization(const EstimateRunTimeData& estimates,
                                    const se::DeviceDescription& device_info,
                                    xla::PrimitiveType output_element_type) {
@@ -722,6 +748,8 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
   // Assuming perfect overlap between compute and memory for the rest,
   // but main loop is now modeled precisely.
   estimates.exec_time = std::max({pipelined_loop_time, l2_time});
+  estimates.registers_per_thread =
+      detail::CalculateRegistersPerThread(dot_info, dot_tile, block_params);
   estimates.compute_utilization = detail::CalculateComputeUtilization(
       estimates, device_info, dot_info.output_element_type);
   estimates.memory_utilization =
