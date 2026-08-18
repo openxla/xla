@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_LIBRARIES_NATIVE_CUSTOM_CALL_THUNKS_NATIVE_CUSTOM_CALL_HANDLER_REGISTRY_H_
 #define XLA_BACKENDS_GPU_LIBRARIES_NATIVE_CUSTOM_CALL_THUNKS_NATIVE_CUSTOM_CALL_HANDLER_REGISTRY_H_
 
+#include <optional>
 #include <string>
 
 #include "absl/container/node_hash_map.h"
@@ -56,7 +57,7 @@ class NativeCustomCallHandlerRegistry {
   // Returns the process-global registry instance.
   static NativeCustomCallHandlerRegistry& GetGlobal();
 
-  absl::StatusOr<NativeCustomCallHandlerRef> Lookup(
+  std::optional<NativeCustomCallHandlerRef> Lookup(
       absl::string_view target) const;
 
   // Registers `handler` for `target`. Returns AlreadyExistsError if a handler

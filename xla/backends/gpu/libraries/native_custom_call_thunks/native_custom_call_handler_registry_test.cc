@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registry.h"
 
 #include <cstdint>
+#include <optional>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -47,22 +48,23 @@ absl::StatusOr<ThunkSequence> DummyHandler(
 XLA_GPU_REGISTER_NATIVE_CUSTOM_CALL_HANDLER(
     "xla.gpu.test_registry_macro_handler", DummyHandler);
 
-TEST(NativeCustomCallHandlerRegistryTest, LookupUnknownReturnsNotFound) {
-  EXPECT_THAT(NativeCustomCallHandlerRegistry::GetGlobal().Lookup(
-                  "xla.gpu.this_target_does_not_exist"),
-              StatusIs(absl::StatusCode::kNotFound));
+TEST(NativeCustomCallHandlerRegistryTest, LookupUnknownReturnsNullopt) {
+  EXPECT_EQ(NativeCustomCallHandlerRegistry::GetGlobal().Lookup(
+                "xla.gpu.this_target_does_not_exist"),
+            std::nullopt);
 }
 
 TEST(NativeCustomCallHandlerRegistryTest, MacroRegistersHandler) {
-  EXPECT_OK(NativeCustomCallHandlerRegistry::GetGlobal().Lookup(
-      "xla.gpu.test_registry_macro_handler"));
+  EXPECT_TRUE(NativeCustomCallHandlerRegistry::GetGlobal()
+                  .Lookup("xla.gpu.test_registry_macro_handler")
+                  .has_value());
 }
 
 TEST(NativeCustomCallHandlerRegistryTest, RegisterAndLookup) {
   NativeCustomCallHandlerRegistry registry;
-  EXPECT_THAT(registry.Lookup("target"), StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_EQ(registry.Lookup("target"), std::nullopt);
   EXPECT_OK(registry.Register("target", DummyHandler));
-  EXPECT_OK(registry.Lookup("target"));
+  EXPECT_TRUE(registry.Lookup("target").has_value());
 }
 
 TEST(NativeCustomCallHandlerRegistryTest,

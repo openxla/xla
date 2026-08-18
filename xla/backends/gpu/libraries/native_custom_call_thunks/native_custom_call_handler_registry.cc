@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registry.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -31,12 +32,11 @@ NativeCustomCallHandlerRegistry& NativeCustomCallHandlerRegistry::GetGlobal() {
   return *registry;
 }
 
-absl::StatusOr<NativeCustomCallHandlerRef>
+std::optional<NativeCustomCallHandlerRef>
 NativeCustomCallHandlerRegistry::Lookup(absl::string_view target) const {
   auto it = handlers_.find(target);
   if (it == handlers_.end()) {
-    return absl::NotFoundError(absl::StrCat(
-        "No native custom-call handler registered for target: ", target));
+    return std::nullopt;
   }
   return it->second;
 }
