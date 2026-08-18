@@ -44,7 +44,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -388,7 +388,7 @@ bool GpuScheduleCrossesOverlapLimit(
     }
     // Number of instances of 'resource' needed if this instruction was
     // to be scheduled.
-    int64_t num_resources_needed =
+    const int64_t num_resources_needed =
         sched_state.async_tracker->GetNumResourcesPerInstruction(
             resource, node->GetInstr());
 

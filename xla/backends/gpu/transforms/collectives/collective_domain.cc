@@ -90,13 +90,10 @@ bool SupportsCollectiveCommunicationDomain(const HloInstruction& instruction) {
     return SupportsCollectiveCommunicationDomain(canonical);
   }
 
-  if (hlo_query::IsCollectiveCommunicationOp(instruction.opcode()) ||
-      hlo_query::IsAsyncCollectiveDoneOp(&instruction)) {
+  if (hlo_query::IsCollectiveCommunicationOp(instruction.opcode())) {
     return true;
   }
-  if (instruction.opcode() == HloOpcode::kAsyncStart ||
-      instruction.opcode() == HloOpcode::kAsyncUpdate ||
-      instruction.opcode() == HloOpcode::kAsyncDone) {
+  if (HloPredicateIsOp<HloOpcode::kAsyncStart>(&instruction)) {
     return hlo_query::IsCollectiveCommunicationOp(
                instruction.async_wrapped_opcode()) ||
            instruction.frontend_attributes().map().contains(

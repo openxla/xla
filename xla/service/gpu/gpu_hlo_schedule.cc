@@ -60,7 +60,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
 #include "xla/service/buffer_value.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/flag_utils.h"
@@ -787,6 +787,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
   DefaultSchedulerCore::OverlapLimitRule overlap_limit_rule;
   if (options.xla_gpu_experimental_enable_collective_multi_streaming() ||
       uses_multiple_collective_domains) {
+    // XLA:GPU uses an all-zero static device assignment as a sentinel for
+    // compilation-only code paths when an HLO requires more logical devices
+    // than are available. This is distinct from an uninitialized
+    // DeviceAssignment, whose entries are -1. Treat the sentinel as the
+    // zero-based IOTA assignment supported by XLA:GPU.
     auto device_assignment = std::make_shared<DeviceAssignment>(
         module->config().replica_count(), module->config().num_partitions());
     device_assignment->FillIota(0);
