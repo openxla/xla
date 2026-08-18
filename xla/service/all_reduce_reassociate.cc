@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {
@@ -233,9 +233,11 @@ absl::StatusOr<bool> AllReduceReassociate::RunImpl(
       // Check Dynamic-slice pattern is identical
       if (lhs->opcode() == HloOpcode::kDynamicSlice) {
         HloInstruction* original_rhs_operand = rhs->mutable_operand(0);
-        ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, lhs->mutable_operand(0)));
+        ABSL_RETURN_IF_ERROR(
+            rhs->ReplaceOperandWith(0, lhs->mutable_operand(0)));
         if (!lhs->Identical(*rhs)) {
-          ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, original_rhs_operand));
+          ABSL_RETURN_IF_ERROR(
+              rhs->ReplaceOperandWith(0, original_rhs_operand));
           continue;
         }
         ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, original_rhs_operand));

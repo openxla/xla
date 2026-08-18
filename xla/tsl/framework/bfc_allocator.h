@@ -34,13 +34,13 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/numbers.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/allocator_retry.h"
 #include "xla/tsl/framework/scoped_allocation_trace.h"
 #include "xla/tsl/framework/shared_counter.h"
 #include "xla/tsl/lib/core/bits.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/numbers.h"
 
 namespace tensorflow {
 class MemoryDump;

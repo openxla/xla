@@ -28,6 +28,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction_utils.h"
@@ -42,8 +44,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -118,8 +118,8 @@ ConvertAsyncCollectivesToSync::ReplaceWithSyncVariant(
                       async_done->name(), async_start->name());
     }
     ABSL_ASSIGN_OR_RETURN(final_result,
-                     hlo_instruction_utils::async::PropagateDataflow(
-                         *forward_path, sync_instruction));
+                          hlo_instruction_utils::async::PropagateDataflow(
+                              *forward_path, sync_instruction));
   }
 
   ABSL_RETURN_IF_ERROR(async_done->ReplaceAllUsesWith(final_result));
@@ -160,9 +160,9 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
   absl::flat_hash_map<HloInstruction*, HloInstruction*> replaced_ops;
   for (auto& [async_start, async_done] : async_pairs) {
     ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> group_id,
-                     GetSchedulingAnnotationGroupId(async_done));
+                          GetSchedulingAnnotationGroupId(async_done));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * sync,
-                     ReplaceWithSyncVariant(async_start, async_done));
+                          ReplaceWithSyncVariant(async_start, async_done));
     if (group_id) {
       LOG(WARNING) << "Async collective pair (" << async_start->name() << ", "
                    << async_done->name() << ") with scheduling group id "
@@ -263,7 +263,8 @@ absl::StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
     return false;
   }
 
-  ABSL_RETURN_IF_ERROR(ConvertAsyncInstructionsToSync(computation, async_pairs));
+  ABSL_RETURN_IF_ERROR(
+      ConvertAsyncInstructionsToSync(computation, async_pairs));
   return true;
 }
 
@@ -282,7 +283,8 @@ absl::StatusOr<bool> ConvertAsyncCollectivesToSync::RunImpl(
               << " as it is not scheduled";
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(bool computation_changed, RunOnComputation(computation));
+    ABSL_ASSIGN_OR_RETURN(bool computation_changed,
+                          RunOnComputation(computation));
     changed |= computation_changed;
   }
   return changed;

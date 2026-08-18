@@ -118,7 +118,7 @@ class IrEmitterContext {
   absl::StatusOr<InlinedModule*> get_inlined_module() {
     if (inlined_module_ == nullptr) {
       ABSL_ASSIGN_OR_RETURN(InlinedModule inlined_module,
-                       GetInlinedModule(hlo_module_));
+                            GetInlinedModule(hlo_module_));
       inlined_module_ =
           std::make_unique<InlinedModule>(std::move(inlined_module));
     }

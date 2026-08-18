@@ -36,6 +36,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/host_offloading/gpu_host_offloading_allocator.h"
 #include "xla/backends/gpu/runtime/host_async_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -61,8 +63,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -340,7 +340,8 @@ HostExecuteAsyncEvents::CreateEvent(se::StreamExecutor* executor,
   VLOG(6) << "Adding event for executor at address " << executor
           << " and event id " << run_id.ToInt();
 
-  ABSL_ASSIGN_OR_RETURN(auto host_to_device_stream_event, executor->CreateEvent());
+  ABSL_ASSIGN_OR_RETURN(auto host_to_device_stream_event,
+                        executor->CreateEvent());
 
   auto event = tsl::MakeConstructedAsyncValueRef<std::unique_ptr<se::Event>>(
       std::move(host_to_device_stream_event));
@@ -403,8 +404,9 @@ absl::Status HostExecuteStartThunk::LoadExecutable() {
         "compilation result.");
   }
 
-  ABSL_ASSIGN_OR_RETURN(executable_, HostOffloadingNanoRtExecutable::LoadFromProto(
-                                    executable_proto_));
+  ABSL_ASSIGN_OR_RETURN(
+      executable_,
+      HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_));
   return absl::OkStatus();
 }
 
@@ -483,11 +485,11 @@ HostExecuteStartThunk::FromProto(
           absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4>&
               slices_and_shapes) -> absl::Status {
     for (const auto& shaped_slice_proto : shaped_slice_protos) {
-      ABSL_ASSIGN_OR_RETURN(auto slice,
-                       BufferAllocation::Slice::FromProto(
-                           shaped_slice_proto.slice(), buffer_allocations));
+      ABSL_ASSIGN_OR_RETURN(
+          auto slice, BufferAllocation::Slice::FromProto(
+                          shaped_slice_proto.slice(), buffer_allocations));
       ABSL_ASSIGN_OR_RETURN(auto shape,
-                       Shape::FromProto(shaped_slice_proto.shape()));
+                            Shape::FromProto(shaped_slice_proto.shape()));
       slices_and_shapes.push_back({slice, shape});
     }
     return absl::OkStatus();
@@ -675,8 +677,8 @@ absl::Status HostExecuteDoneThunk::Initialize(const InitializeParams& params) {
 absl::Status HostExecuteDoneThunk::ExecuteOnStream(
     const ExecuteParams& params) {
   ABSL_ASSIGN_OR_RETURN(auto event, async_events_->ExtractEvent(
-                                   params.host_to_device_stream->parent(),
-                                   RunId(params.execution_id)));
+                                        params.host_to_device_stream->parent(),
+                                        RunId(params.execution_id)));
 
   tsl::BlockUntilReady(event);
   if (event.IsError()) {

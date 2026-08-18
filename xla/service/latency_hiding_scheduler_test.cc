@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/latency_hiding_scheduler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -27,8 +30,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -223,8 +224,8 @@ absl::StatusOr<bool> RunScheduler(
       /*convert_collective_permute=*/HloPredicateTrue};
   bool value = false;
   if (!skip_async_collective_creator) {
-    ABSL_ASSIGN_OR_RETURN(value,
-                     AsyncCollectiveCreator(std::move(config)).Run(module));
+    ABSL_ASSIGN_OR_RETURN(
+        value, AsyncCollectiveCreator(std::move(config)).Run(module));
   }
   if (!legalizer_config) {
     legalizer_config =
@@ -258,8 +259,8 @@ absl::StatusOr<bool> RunScheduler(
   auto scheduler_core =
       std::make_unique<DefaultSchedulerCore>(scheduling_context, sched_config);
   ABSL_ASSIGN_OR_RETURN(value, LatencyHidingScheduler(scheduling_context,
-                                                 std::move(scheduler_core))
-                              .Run(module));
+                                                      std::move(scheduler_core))
+                                   .Run(module));
 
   return value;
 }
@@ -300,11 +301,11 @@ class LatencyHidingSchedulerTest : public HloHardwareIndependentTestBase {
         /*convert_all_gather=*/HloPredicateTrue,
         /*convert_collective_broadcast=*/HloPredicateTrue,
         /*convert_collective_permute=*/HloPredicateTrue};
-    ABSL_ASSIGN_OR_RETURN(bool value,
-                     AsyncCollectiveCreator(std::move(config)).Run(module));
+    ABSL_ASSIGN_OR_RETURN(
+        bool value, AsyncCollectiveCreator(std::move(config)).Run(module));
     ABSL_ASSIGN_OR_RETURN(value, LegalizeSchedulingAnnotations(
-                                LegalizeSchedulingAnnotations::Config())
-                                .Run(module));
+                                     LegalizeSchedulingAnnotations::Config())
+                                     .Run(module));
 
     if (!async_tracker) {
       async_tracker = std::make_unique<AsyncTracker>(sched_config);

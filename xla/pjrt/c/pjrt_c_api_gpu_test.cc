@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/pjrt/c/pjrt_c_api_gpu.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,8 +31,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/client/client_library.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
@@ -73,7 +75,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/mem.h"
 
 namespace pjrt {
 namespace {

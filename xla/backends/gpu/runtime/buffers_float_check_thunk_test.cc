@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/buffers_float_check_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <climits>
 #include <cstddef>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -766,9 +767,9 @@ TEST_F(BuffersDebugFloatCheckThunkTest,
 
   auto setup_device = [this](int device_ordinal) -> absl::StatusOr<TestDevice> {
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
-                     platform_->ExecutorForDevice(device_ordinal));
+                          platform_->ExecutorForDevice(device_ordinal));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                     executor->CreateStream());
+                          executor->CreateStream());
     auto allocator =
         std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
             executor);

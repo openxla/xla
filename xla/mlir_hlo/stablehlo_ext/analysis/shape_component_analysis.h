@@ -71,10 +71,10 @@ class ShapeComponentAnalysis {
     ShapeOrValueInfo source;
     size_t index;
 
-    bool operator==(const Symbol &rhs) const {
+    bool operator==(const Symbol& rhs) const {
       return source == rhs.source && index == rhs.index;
     }
-    bool operator!=(const Symbol &rhs) const { return !(*this == rhs); }
+    bool operator!=(const Symbol& rhs) const { return !(*this == rhs); }
   };
 
   // Represents the analysis result for a one component of a shape (e.g., the
@@ -96,12 +96,12 @@ class ShapeComponentAnalysis {
     // If this is a reference to a singular symbol, return it.
     std::optional<Symbol> singleton() const;
 
-    bool operator==(const SymbolicExpr &rhs) const {
+    bool operator==(const SymbolicExpr& rhs) const {
       return expr == rhs.expr && symbols == rhs.symbols;
     }
-    bool operator!=(const SymbolicExpr &rhs) const { return !(*this == rhs); }
+    bool operator!=(const SymbolicExpr& rhs) const { return !(*this == rhs); }
 
-    void dump(llvm::raw_ostream &os = llvm::outs()) const;
+    void dump(llvm::raw_ostream& os = llvm::outs()) const;
   };
 
   using SymbolicExprsMap = DenseMap<ShapeOrValueInfo, std::vector<SymbolicExpr>,

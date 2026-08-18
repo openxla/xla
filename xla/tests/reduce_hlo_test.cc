@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"

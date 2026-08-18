@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/codegen/ir_emission_utils.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

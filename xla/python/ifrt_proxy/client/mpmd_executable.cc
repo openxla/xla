@@ -29,6 +29,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/array.h"
@@ -48,7 +49,6 @@
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/status_to_from_proto.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {

@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_aot_compilation_result.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -163,7 +164,7 @@ class GpuAotCompilationResultTest : public ::testing::Test {
     params.buffer_allocations_debug_summary = "dummy_summary";
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<GpuExecutable> executable,
-                     GpuExecutable::Create(std::move(params)));
+                          GpuExecutable::Create(std::move(params)));
     return executable->ToProto();
   }
 

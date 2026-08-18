@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/future.h"
 #include "xla/pjrt/c/pjrt_c_api_device_event.h"
 #include "xla/pjrt/common_pjrt_client.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/util/maybe_owning.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -459,9 +459,10 @@ absl::Status CommonPjRtBuffer::AcquireScopedRawBuffer(
     definition_events.push_back(ev);
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto device_event, std::move(scoped_acquire)(
-                                          device_buffer.buffer()->raw_buffer(),
-                                          std::move(definition_events)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto device_event,
+      std::move(scoped_acquire)(device_buffer.buffer()->raw_buffer(),
+                                std::move(definition_events)));
   device_buffer.ConvertUsageHold(std::move(device_event));
   return absl::OkStatus();
 }
@@ -481,8 +482,8 @@ CommonPjRtBuffer::GetRawBufferForUsage(const char* caller_name) {
         auto* client =
             absl::down_cast<CommonPjRtClient*>(memory_space_->client());
         ABSL_ASSIGN_OR_RETURN(std::tie(usage_done_promise, usage_event),
-                         client->CreateLinkedEventPromise(
-                             memory_space_, "GetRawBufferForUsage"));
+                              client->CreateLinkedEventPromise(
+                                  memory_space_, "GetRawBufferForUsage"));
         return usage_event;
       },
       caller_name));

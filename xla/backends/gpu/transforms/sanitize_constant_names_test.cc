@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/sanitize_constant_names.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
@@ -36,7 +37,7 @@ namespace m = ::xla::match;
 using SanitizeConstantNamesTest = HloHardwareIndependentTestBase;
 
 TEST_F(SanitizeConstantNamesTest, InstructionNameWithHyphenSanitized) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule HyphenInInstructionName
       ENTRY kernelEntry {
         ROOT equal-to = s32[2]{0} constant({42, 73})
@@ -46,12 +47,12 @@ TEST_F(SanitizeConstantNamesTest, InstructionNameWithHyphenSanitized) {
                           ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
-  HloInstruction *root = module->entry_computation()->root_instruction();
+  HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->name(), "equal_to");
 }
 
 TEST_F(SanitizeConstantNamesTest, InstructionNameWithDotSanitized) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule HyphenInInstructionName
       ENTRY kernelEntry {
         ROOT equal.to = s32[2]{0} constant({42, 73})
@@ -61,12 +62,12 @@ TEST_F(SanitizeConstantNamesTest, InstructionNameWithDotSanitized) {
                           ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
-  HloInstruction *root = module->entry_computation()->root_instruction();
+  HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->name(), "equal_to");
 }
 
 TEST_F(SanitizeConstantNamesTest, NewInstructionNameRegisteredWithModule) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule HyphenInInstructionName
       ENTRY kernelEntry {
         ROOT equal.to = s32[2]{0} constant({42, 73})
@@ -76,7 +77,7 @@ TEST_F(SanitizeConstantNamesTest, NewInstructionNameRegisteredWithModule) {
                           ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(SanitizeConstantNames().Run(module.get()).value());
-  HloInstruction *root = module->entry_computation()->root_instruction();
+  HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->name(), "equal_to");
 
   auto constant_instr =
@@ -89,7 +90,7 @@ TEST_F(SanitizeConstantNamesTest, NewInstructionNameRegisteredWithModule) {
 }
 
 TEST_F(SanitizeConstantNamesTest, BufferSanitizedNameCollisionResolved) {
-  const char *const kHloString = R"(
+  const char* const kHloString = R"(
     HloModule BufferSanitizedName
       ENTRY kernelEntry {
       equal.to = s32[2]{0} constant({42, 73})

@@ -25,10 +25,10 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tensorflow::profiler::python {
 

@@ -20,9 +20,9 @@ limitations under the License.
 
 #include <string>
 
+#include "tsl/platform/stringpiece.h"
 #include "xla/tsl/lib/io/table_builder.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 class RandomAccessFile;
@@ -93,8 +93,8 @@ static const size_t kBlockTrailerSize = 5;
 
 struct BlockContents {
   absl::string_view data;  // Actual contents of data
-  bool cacheable;       // True iff data can be cached
-  bool heap_allocated;  // True iff caller should delete[] data.data()
+  bool cacheable;          // True iff data can be cached
+  bool heap_allocated;     // True iff caller should delete[] data.data()
 };
 
 // Read the block identified by "handle" from "file".  On failure

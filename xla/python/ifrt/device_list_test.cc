@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/python/ifrt/device_list.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -23,10 +26,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device.pb.h"
 #include "xla/python/ifrt/device_test_util.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace ifrt {

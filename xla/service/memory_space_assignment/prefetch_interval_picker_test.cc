@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/prefetch_interval_picker.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -31,7 +33,6 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/testing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace memory_space_assignment {

@@ -29,6 +29,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
@@ -37,7 +38,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/array2d.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/tuple_points_to_analysis.h"
@@ -55,7 +56,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 

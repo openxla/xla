@@ -89,7 +89,7 @@ absl::Status ApplyConfigAndUpdateWorkspaceInOutputTuple(
   new_call->SetAndSanitizeName(instr.name());
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   CudnnConvBackendConfig* cudnn_conv_config =
       gpu_backend_config.mutable_cudnn_conv_backend_config();
   *cudnn_conv_config->mutable_algorithm() = config;
@@ -276,9 +276,9 @@ GetCudnnFusionConfigs(const HloInstruction& instr,
         "compilation is disabled.");
   }
   ABSL_ASSIGN_OR_RETURN(int plan_count,
-                   CuDnnFusionCompiler::GetAvailablePlanCount(
-                       stream_executor, target_config.device_description,
-                       *DynCast<HloFusionInstruction>(&instr)));
+                        CuDnnFusionCompiler::GetAvailablePlanCount(
+                            stream_executor, target_config.device_description,
+                            *DynCast<HloFusionInstruction>(&instr)));
 
   VLOG(2) << "Found " << plan_count << " plans for cudnn fusion.";
   configs.reserve(plan_count);
@@ -299,8 +299,9 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
   ABSL_ASSIGN_OR_RETURN(GpuConvConfig gpu_conv_config, GetGpuConvConfig(instr));
   se::dnn::ConvolutionKind conv_kind =
       CudnnConvKindToProto(gpu_conv_config.kind);
-  ABSL_ASSIGN_OR_RETURN(se::dnn::DataType input_type,
-                   GetDNNDataTypeFromPrimitiveType(gpu_conv_config.input_type));
+  ABSL_ASSIGN_OR_RETURN(
+      se::dnn::DataType input_type,
+      GetDNNDataTypeFromPrimitiveType(gpu_conv_config.input_type));
   ABSL_ASSIGN_OR_RETURN(
       se::dnn::DataType output_type,
       GetDNNDataTypeFromPrimitiveType(gpu_conv_config.output_type));
@@ -308,8 +309,9 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
   auto allocator =
       std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
           stream_executor);
-  ABSL_ASSIGN_OR_RETURN(se::Stream * stream,
-                   allocator->GetStream(stream_executor->device_ordinal()));
+  ABSL_ASSIGN_OR_RETURN(
+      se::Stream * stream,
+      allocator->GetStream(stream_executor->device_ordinal()));
   bool allow_tf32 = absl::c_all_of(
       instr->precision_config().operand_precision(),
       [](int precision) { return precision <= PrecisionConfig::HIGH; });
@@ -345,7 +347,7 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
 absl::Status ApplyConfigToCudnnFusion(HloInstruction& instr,
                                       const CudnnBackendConfig& config) {
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   FusionBackendConfig* backend_config =
       gpu_config.mutable_fusion_backend_config();
   backend_config->set_kind(kCuDnnFusionKind);
@@ -360,7 +362,7 @@ absl::Status ApplyConfigToCudnnCustomCall(HloInstruction& instr,
     return ApplyConfigAndUpdateWorkspaceInOutputTuple(instr, config);
   }
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   CudnnConvBackendConfig* cudnn_conv_config =
       gpu_config.mutable_cudnn_conv_backend_config();
   *cudnn_conv_config->mutable_algorithm() = config;
@@ -398,9 +400,10 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CudnnBackend::GetDefaultConfig(
   }
 
   if (IsSupportedCudnnFusion(instr, target_config(), debug_options())) {
-    ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<BackendConfig>> configs,
-                     GetCudnnFusionConfigs(instr, stream_executor(),
-                                           target_config(), debug_options()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<BackendConfig>> configs,
+        GetCudnnFusionConfigs(instr, stream_executor(), target_config(),
+                              debug_options()));
     if (!configs.empty()) {
       return std::move(configs[0]);
     }

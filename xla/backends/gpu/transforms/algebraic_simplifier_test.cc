@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"

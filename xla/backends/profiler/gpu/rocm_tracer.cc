@@ -47,11 +47,11 @@ limitations under the License.
 #include "rocm/include/rocprofiler-sdk/internal_threading.h"
 #include "rocm/include/rocprofiler-sdk/registration.h"
 #include "rocm/include/rocprofiler-sdk/rocprofiler.h"
+#include "tsl/platform/abi.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "tsl/platform/abi.h"
 
 namespace xla {
 namespace profiler {

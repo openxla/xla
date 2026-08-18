@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"

@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/python/ifrt_proxy/integration_tests/scoped_pjrt_cpu_via_proxy.h"

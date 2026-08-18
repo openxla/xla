@@ -34,6 +34,7 @@ limitations under the License.
 #include "riegeli/bytes/fd_writer.h"
 #include "riegeli/records/record_reader.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/tools/comparison/comparison_result.pb.h"
 #include "xla/hlo/tools/comparison/original_tensor_summary_calculator.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/hlo/tools/comparison/original_tensor_summary_utils.h"
 #include "xla/service/computation_placer.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 
@@ -174,8 +174,8 @@ absl::Status XlaJobRecoverer::ProcessDeviceTensorSummary(
     const AbsoluteScopedTensorKey& optimized_tensor_position,
     DeviceTensorSummary shard_summary) {
   ABSL_ASSIGN_OR_RETURN(LogicalID logical_id,
-                   data_->device_assignment->LogicalIdForDevice(
-                       shard_summary.logical_device_id));
+                        data_->device_assignment->LogicalIdForDevice(
+                            shard_summary.logical_device_id));
   CHECK_LT(logical_id.replica_id, data_->calculators.size());
   OriginalTensorSummaryCalculator& calculator =
       *data_->calculators[logical_id.replica_id];
@@ -198,8 +198,9 @@ XlaJobRecoverer::Finish() {
       return writer.raw_summary_writer->status();
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto sequencer, OriginalTensorSummarySequencer::Create(
-                                         data_->original_module));
+    ABSL_ASSIGN_OR_RETURN(
+        auto sequencer,
+        OriginalTensorSummarySequencer::Create(data_->original_module));
     std::string variant_name = ToString(data_->comparison_variant);
     const std::string sequenced_path =
         absl::StrCat(data_->sequenced_file_base_path, ".", variant_name,
@@ -212,7 +213,7 @@ XlaJobRecoverer::Finish() {
         absl::StrCat(data_->temp_file_base_path, ".", variant_name,
                      ".propagated_replica_", i, ".riegeli");
     ABSL_ASSIGN_OR_RETURN(auto propagated_writer,
-                     CreateRecordWriter(propagated_path));
+                          CreateRecordWriter(propagated_path));
     OriginalTensorSummaryPropagator propagator(
         data_->original_module,
         [writer = propagated_writer.get()](
@@ -235,10 +236,10 @@ XlaJobRecoverer::Finish() {
     RecoveredTensorSummaryProto summary_proto;
     while (sequenced_reader.ReadRecord(summary_proto)) {
       ABSL_ASSIGN_OR_RETURN(auto summary,
-                       RecoveredTensorSummaryFromProto(summary_proto));
+                            RecoveredTensorSummaryFromProto(summary_proto));
       ABSL_RETURN_IF_ERROR(propagator.Process(summary.original_tensor_key,
-                                         summary.pending_transformation,
-                                         summary.original_tensor_summary));
+                                              summary.pending_transformation,
+                                              summary.original_tensor_summary));
     }
     ABSL_RETURN_IF_ERROR(propagator.Finish());
     metrics.push_back(propagator.GetProcessingMetrics());
@@ -259,10 +260,10 @@ XlaJobRecoverer::Finish() {
     OriginalTensorSummaryCallback callback = data_->callback_getter(i);
     while (propagated_reader.ReadRecord(summary_proto)) {
       ABSL_ASSIGN_OR_RETURN(auto summary,
-                       RecoveredTensorSummaryFromProto(summary_proto));
+                            RecoveredTensorSummaryFromProto(summary_proto));
       ABSL_RETURN_IF_ERROR(callback(summary.original_tensor_key,
-                               summary.pending_transformation,
-                               summary.original_tensor_summary));
+                                    summary.pending_transformation,
+                                    summary.original_tensor_summary));
     }
     if (!propagated_reader.Close()) {
       return propagated_reader.status();

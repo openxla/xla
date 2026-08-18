@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/while_loop.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 
 namespace xla::gpu {

@@ -25,13 +25,13 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "tsl/platform/notification.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/platform/cloud/file_block_cache.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/notification.h"
-#include "tsl/platform/stringpiece.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 

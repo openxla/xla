@@ -178,28 +178,27 @@ struct TargetIntrinsics GetIntrinsic(TargetIntrinsicID intrin) {
       };
     }
     case TargetIntrinsicID::kBarrierId: {
-      return {[](llvm::IRBuilderBase* b_) -> llvm::CallInst* {
-                // We need to use the callback mechanism here, because the
-                // barrier intrinsics expects a constant 0 as operand, whereas
-                // for AMD no operand is expected. We don't want to distinguish
-                // at the call site.
-                llvm::Module* module = b_->GetInsertBlock()->getModule();
-                llvm::Function* intrinsic =
-                    llvm::Intrinsic::getOrInsertDeclaration(
-                        module,
-                        llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all, {});
-                return b_->CreateCall(intrinsic, {b_->getInt32(0)});
-              },
-              llvm::Intrinsic::amdgcn_s_barrier,
-              [](llvm::IRBuilderBase* b_) -> llvm::CallInst* {
-                // OpenCL barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
-                // matches the MLIR emitter pipeline.
-                return EmitDeviceFunctionCall(
-                    "_Z7barrierj", {b_->getInt32(3)}, {U32}, std::nullopt,
-                    llvm::AttrBuilder(b_->getContext())
-                        .addAttribute(llvm::Attribute::Convergent),
-                    b_);
-              }};
+      return {
+          [](llvm::IRBuilderBase* b_) -> llvm::CallInst* {
+            // We need to use the callback mechanism here, because the
+            // barrier intrinsics expects a constant 0 as operand, whereas
+            // for AMD no operand is expected. We don't want to distinguish
+            // at the call site.
+            llvm::Module* module = b_->GetInsertBlock()->getModule();
+            llvm::Function* intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+                module, llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all, {});
+            return b_->CreateCall(intrinsic, {b_->getInt32(0)});
+          },
+          llvm::Intrinsic::amdgcn_s_barrier,
+          [](llvm::IRBuilderBase* b_) -> llvm::CallInst* {
+            // OpenCL barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+            // matches the MLIR emitter pipeline.
+            return EmitDeviceFunctionCall(
+                "_Z7barrierj", {b_->getInt32(3)}, {U32}, std::nullopt,
+                llvm::AttrBuilder(b_->getContext())
+                    .addAttribute(llvm::Attribute::Convergent),
+                b_);
+          }};
     }
     case TargetIntrinsicID::kBlockDimx: {
       return {llvm::Intrinsic::nvvm_read_ptx_sreg_ntid_x,

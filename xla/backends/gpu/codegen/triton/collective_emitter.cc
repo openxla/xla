@@ -57,6 +57,10 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Types.h"
+#include "triton/Dialect/TritonGPU/IR/Attributes.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/lowering_util.h"
 #include "xla/backends/gpu/runtime/all_gather.h"
@@ -87,10 +91,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/Triton/IR/Types.h"
-#include "triton/Dialect/TritonGPU/IR/Attributes.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 namespace xla::gpu {
 namespace {
@@ -225,19 +225,19 @@ absl::StatusOr<InfoStruct> GetCollectiveInfo(
       const HloAllReduceInstruction* all_reduce =
           Cast<HloAllReduceInstruction>(instr);
       ABSL_ASSIGN_OR_RETURN(AllReduceInfo all_reduce_info,
-                       BuildAllReduceInfo(
-                           /*is_collective_kernel_enabled=*/true,
-                           /*is_multimem_enabled=*/false, gpu_topology,
-                           all_reduce, device_assignment));
+                            BuildAllReduceInfo(
+                                /*is_collective_kernel_enabled=*/true,
+                                /*is_multimem_enabled=*/false, gpu_topology,
+                                all_reduce, device_assignment));
       return all_reduce_info;
     }
     case HloOpcode::kAllGather: {
       const HloAllGatherInstruction* all_gather =
           Cast<HloAllGatherInstruction>(instr);
       ABSL_ASSIGN_OR_RETURN(AllGatherInfo all_gather_info,
-                       BuildAllGatherInfo(
-                           /*is_collective_kernel_enabled=*/true, gpu_topology,
-                           all_gather, device_assignment));
+                            BuildAllGatherInfo(
+                                /*is_collective_kernel_enabled=*/true,
+                                gpu_topology, all_gather, device_assignment));
       return all_gather_info;
     }
     default:
@@ -438,8 +438,9 @@ class AllReduceEmitter {
         ttir::PointerType::get(builder_.getI64Type(), kGlobalAddressSpace);
     ptr_to_elem_type_ =
         ttir::PointerType::get(elem_storage_type_, kGlobalAddressSpace);
-    ABSL_ASSIGN_OR_RETURN(layout_, xtile::GetPermutationMinorToMajor(
-                                  ctx_.input_extract.getSource().getType()));
+    ABSL_ASSIGN_OR_RETURN(layout_,
+                          xtile::GetPermutationMinorToMajor(
+                              ctx_.input_extract.getSource().getType()));
 
     const llvm::ArrayRef<int64_t>& input_tile_shape_dims =
         ctx_.input_tile.getType().getShape();
@@ -1029,7 +1030,7 @@ absl::StatusOr<BlockLevelFusionConfig> GetCollectiveBlockLevelFusionConfig(
     const DeviceAssignment* device_assignment) {
   const HloInstruction* instr = fusion_instr->fused_expression_root();
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr->backend_config<GpuBackendConfig>());
+                        instr->backend_config<GpuBackendConfig>());
   if (!IsTritonCollectiveKernel(
           gpu_config.collective_backend_config().kernel_strategy())) {
     return absl::InvalidArgumentError(absl::StrFormat(
@@ -1038,10 +1039,11 @@ absl::StatusOr<BlockLevelFusionConfig> GetCollectiveBlockLevelFusionConfig(
         "Triton codegen. %s",
         instr->ToString()));
   }
-  ABSL_ASSIGN_OR_RETURN(InfoStruct collective_info,
-                   GetCollectiveInfo(instr, gpu_topology, device_assignment));
+  ABSL_ASSIGN_OR_RETURN(
+      InfoStruct collective_info,
+      GetCollectiveInfo(instr, gpu_topology, device_assignment));
   ABSL_ASSIGN_OR_RETURN(const LaunchDimensions launch_dims,
-                   GetLaunchDimensions(collective_info, gpu_topology));
+                        GetLaunchDimensions(collective_info, gpu_topology));
   const Shape& output_shape = instr->shape();
   const se::DeviceDescription& device_info =
       gpu_topology.gpu_target_config().device_description;
@@ -1066,10 +1068,10 @@ absl::Status TrySetGpuBackendConfigForCollective(
     const GpuTopology& gpu_topology, HloFusionInstruction* fusion_instr,
     const DeviceAssignment* device_assignment) {
   ABSL_ASSIGN_OR_RETURN(BlockLevelFusionConfig block_config,
-                   GetCollectiveBlockLevelFusionConfig(
-                       gpu_topology, fusion_instr, device_assignment));
+                        GetCollectiveBlockLevelFusionConfig(
+                            gpu_topology, fusion_instr, device_assignment));
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                   fusion_instr->backend_config<GpuBackendConfig>());
+                        fusion_instr->backend_config<GpuBackendConfig>());
   gpu_backend_config.mutable_fusion_backend_config()->set_kind(
       kTritonCollectiveFusionKind);
   *gpu_backend_config.mutable_fusion_backend_config()

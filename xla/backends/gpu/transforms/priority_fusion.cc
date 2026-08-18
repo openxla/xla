@@ -189,7 +189,8 @@ class PriorityFusionQueue {
       instructions.push_back(instruction);
     }
 
-    ABSL_RETURN_IF_ERROR(queue->ComputeAndSetPriorities(std::move(instructions)));
+    ABSL_RETURN_IF_ERROR(
+        queue->ComputeAndSetPriorities(std::move(instructions)));
 
     return queue;
   }
@@ -232,7 +233,7 @@ class PriorityFusionQueue {
   absl::Status ComputeAndSetPriorities(
       const std::vector<HloInstruction*>& instructions) {
     ABSL_ASSIGN_OR_RETURN(std::vector<Priority> priorities,
-                     ComputePriorities(instructions));
+                          ComputePriorities(instructions));
 
     for (auto [instruction, priority] : llvm::zip(instructions, priorities)) {
       auto key = std::make_pair(priority, instruction->unique_id());
@@ -613,9 +614,9 @@ class PriorityFusionQueue {
       if (CanFuseTritonMultiOutputWithSingleUser(producer,
                                                  possible_consumers)) {
         ABSL_ASSIGN_OR_RETURN(CombinedGpuPerformanceModel::RunTimes run_times,
-                         combined_gpu_performance_model_.EstimateRunTimes(
-                             producer, cost_analysis_.get(),
-                             /*fused_consumers=*/possible_consumers));
+                              combined_gpu_performance_model_.EstimateRunTimes(
+                                  producer, cost_analysis_.get(),
+                                  /*fused_consumers=*/possible_consumers));
         absl::MutexLock lock(preferred_consumer_mutex_);
         preferred_consumer_[producer] = possible_consumers[0];
         return run_times.time_unfused - run_times.time_fused;
@@ -648,8 +649,8 @@ class PriorityFusionQueue {
     // Note that `gpu_performance_model_cache_` may contain a runtime estimate
     // from the Triton cost model.
     ABSL_ASSIGN_OR_RETURN(CombinedGpuPerformanceModel::RunTimes run_times,
-                     combined_gpu_performance_model_.EstimateRunTimes(
-                         producer, cost_analysis_.get(), fused_consumers));
+                          combined_gpu_performance_model_.EstimateRunTimes(
+                              producer, cost_analysis_.get(), fused_consumers));
     Priority current_priority;
     if (is_incremental_update) {
       // subtract the runtimes of removed consumers

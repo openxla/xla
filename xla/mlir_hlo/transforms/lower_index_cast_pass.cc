@@ -43,7 +43,7 @@ template <typename T>
 struct IndexCastConverter : public OpRewritePattern<T> {
  public:
   using OpRewritePattern<T>::OpRewritePattern;
-  LogicalResult matchAndRewrite(T op, PatternRewriter &rewriter) const final {
+  LogicalResult matchAndRewrite(T op, PatternRewriter& rewriter) const final {
     auto resultTy = mlir::dyn_cast<RankedTensorType>(op.getType());
     if (!resultTy) return failure();
 

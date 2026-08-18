@@ -630,7 +630,8 @@ absl::StatusOr<int64_t> ExtractBlockK(const HloDotInstruction* dot) {
     return absl::FailedPreconditionError(
         "Dot instruction must have a backend config with tiling sizes.");
   }
-  ABSL_ASSIGN_OR_RETURN(auto tile_config, dot->backend_config<xla::xtile::Tile>());
+  ABSL_ASSIGN_OR_RETURN(auto tile_config,
+                        dot->backend_config<xla::xtile::Tile>());
   TF_RET_CHECK(tile_config.sizes_size() > 0)
       << "Tile backend config must have sizes.";
   return tile_config.sizes(0);
@@ -675,8 +676,8 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
 
   // Calculate compute roofline with tile and wave quantization.
   ABSL_ASSIGN_OR_RETURN(detail::ComputeAndFlops compute_and_flops,
-                   detail::CalculateComputeTimeWithTileAndWaveQuantization(
-                       dot_info, dot_tile, device_info));
+                        detail::CalculateComputeTimeWithTileAndWaveQuantization(
+                            dot_info, dot_tile, device_info));
   estimates.compute_time = compute_and_flops.compute_time;
   estimates.flops = compute_and_flops.flops_with_wave_quant;
 
@@ -700,10 +701,11 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
                                                  num_stages);
 
   // Calculate L2 time.
-  ABSL_ASSIGN_OR_RETURN(absl::Duration l2_time,
-                   detail::CalculateL2Time(dot_info.k, dot_tile.k, device_info,
-                                           estimates.l2_bytes_read,
-                                           block_params.is_tma_allowed));
+  ABSL_ASSIGN_OR_RETURN(
+      absl::Duration l2_time,
+      detail::CalculateL2Time(dot_info.k, dot_tile.k, device_info,
+                              estimates.l2_bytes_read,
+                              block_params.is_tma_allowed));
 
   TF_RET_CHECK(block_k_val > 0)
       << "block_k_val must be strictly positive, got " << block_k_val;

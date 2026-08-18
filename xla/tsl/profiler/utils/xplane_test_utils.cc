@@ -24,11 +24,11 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

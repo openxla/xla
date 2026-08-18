@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/backends/autotuner/autotune_cache_store.h"
 #include "xla/backends/autotuner/autotune_fingerprint.h"
@@ -37,8 +39,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_module_config.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -246,7 +246,7 @@ absl::StatusOr<std::string> TieredCache::Serialize(
 
   if (instructions_to_serialize.empty()) {
     ABSL_ASSIGN_OR_RETURN(std::vector<autotuner::AutotuneEntry> all,
-                     primary_->ReadAll());
+                          primary_->ReadAll());
     for (autotuner::AutotuneEntry& entry : all) {
       *cache.add_entries() = std::move(entry);
     }

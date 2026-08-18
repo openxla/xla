@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/buffer_comparator_test.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -22,11 +25,10 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "Eigen/Core"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
-#include "Eigen/Core"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace gpu {

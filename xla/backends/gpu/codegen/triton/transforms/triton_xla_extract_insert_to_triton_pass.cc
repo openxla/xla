@@ -54,6 +54,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/lowering_util.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
@@ -61,7 +62,6 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
-#include "triton/Dialect/Triton/IR/Types.h"
 
 namespace mlir::triton::xla {
 

@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -217,7 +217,7 @@ CpuTopologyDescription::FromProto(
         "Any.");
   }
   ABSL_ASSIGN_OR_RETURN(auto cpu_topology,
-                   CpuTopology::FromProto(cpu_topology_proto));
+                        CpuTopology::FromProto(cpu_topology_proto));
   return std::make_unique<CpuTopologyDescription>(
       proto.platform_id(), proto.platform_name(), proto.platform_version(),
       *cpu_topology);

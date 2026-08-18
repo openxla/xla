@@ -130,10 +130,10 @@ using mlir::memref::DeallocOp;
 
 /// Walks over all immediate return-like terminators in the given region.
 static LogicalResult walkReturnOperations(
-    Region *region,
+    Region* region,
     llvm::function_ref<LogicalResult(RegionBranchTerminatorOpInterface)> func) {
-  for (Block &block : *region) {
-    Operation *terminator = block.getTerminator();
+  for (Block& block : *region) {
+    Operation* terminator = block.getTerminator();
     // Skip non region-return-like terminators.
     if (auto regionTerminator =
             dyn_cast<RegionBranchTerminatorOpInterface>(terminator)) {
@@ -148,8 +148,8 @@ static LogicalResult walkReturnOperations(
 /// Checks if all operations that have at least one attached region implement
 /// the RegionBranchOpInterface. This is not required in edge cases, where we
 /// have a single attached region and the parent operation has no results.
-static bool validateSupportedControlFlow(Operation *op) {
-  WalkResult result = op->walk([&](Operation *operation) {
+static bool validateSupportedControlFlow(Operation* op) {
+  WalkResult result = op->walk([&](Operation* operation) {
     // Only check ops that are inside a function.
     if (!operation->getParentOfType<FuncOp>()) {
       return WalkResult::advance();
@@ -183,11 +183,11 @@ static bool validateSupportedControlFlow(Operation *op) {
 /// explicit control flow.
 class Backedges {
  public:
-  using BlockSetT = mlir::SmallPtrSet<Block *, 16>;
-  using BackedgeSetT = llvm::DenseSet<std::pair<Block *, Block *>>;
+  using BlockSetT = mlir::SmallPtrSet<Block*, 16>;
+  using BackedgeSetT = llvm::DenseSet<std::pair<Block*, Block*>>;
 
   /// Constructs a new backedges analysis using the op provided.
-  explicit Backedges(Operation *op) { recurse(op); }
+  explicit Backedges(Operation* op) { recurse(op); }
 
   /// Returns the number of backedges formed by explicit control flow.
   size_t size() const { return edgeSet.size(); }
@@ -202,7 +202,7 @@ class Backedges {
   /// Enters the current block and inserts a backedge into the `edgeSet` if we
   /// have already visited the current block. The inserted edge links the given
   /// `predecessor` with the `current` block.
-  bool enter(Block &current, Block *predecessor) {
+  bool enter(Block& current, Block* predecessor) {
     bool inserted = visited.insert(&current).second;
     if (!inserted) {
       edgeSet.insert(std::make_pair(predecessor, &current));
@@ -211,22 +211,22 @@ class Backedges {
   }
 
   /// Leaves the current block.
-  void exit(Block &current) { visited.erase(&current); }
+  void exit(Block& current) { visited.erase(&current); }
 
   /// Recurses into the given operation while taking all attached regions into
   /// account.
-  void recurse(Operation *op) {
-    Block *current = op->getBlock();
+  void recurse(Operation* op) {
+    Block* current = op->getBlock();
     // If the current op implements the `BranchOpInterface`, there can be
     // cycles in the scope of all successor blocks.
     if (isa<BranchOpInterface>(op)) {
-      for (Block *succ : current->getSuccessors()) {
+      for (Block* succ : current->getSuccessors()) {
         recurse(*succ, current);
       }
     }
     // Recurse into all distinct regions and check for explicit control-flow
     // loops.
-    for (Region &region : op->getRegions()) {
+    for (Region& region : op->getRegions()) {
       if (!region.empty()) {
         recurse(region.front(), current);
       }
@@ -235,7 +235,7 @@ class Backedges {
 
   /// Recurses into explicit control-flow structures that are given by
   /// the successor relation defined on the block level.
-  void recurse(Block &block, Block *predecessor) {
+  void recurse(Block& block, Block* predecessor) {
     // Try to enter the current block. If this is not possible, we are
     // currently processing this block and can safely return here.
     if (!enter(block, predecessor)) {
@@ -243,7 +243,7 @@ class Backedges {
     }
 
     // Recurse into all operations and successor blocks.
-    for (Operation &op : block.getOperations()) {
+    for (Operation& op : block.getOperations()) {
       recurse(&op);
     }
 
@@ -270,7 +270,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   using AliasAllocationMapT =
       llvm::DenseMap<Value, mlir::bufferization::AllocationOpInterface>;
 
-  explicit BufferDeallocation(Operation *op)
+  explicit BufferDeallocation(Operation* op)
       : BufferPlacementTransformationBase(op),
         dominators(op),
         postDominators(op) {}
@@ -281,7 +281,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   /// AllocationOpInterface mapping in order to get compatible
   /// AllocationOpInterface implementations for aliases.
   LogicalResult prepare() {
-    for (const BufferPlacementAllocs::AllocEntry &entry : allocs) {
+    for (const BufferPlacementAllocs::AllocEntry& entry : allocs) {
       // Get the defining allocation operation.
       Value alloc = std::get<0>(entry);
       auto allocationInterface =
@@ -327,14 +327,14 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
     // operation since their operands cannot be safely deallocated in a post
     // dominator.
     SetVector<Value> valuesToFree;
-    llvm::SmallDenseSet<std::tuple<Value, Block *>> visitedValues;
-    SmallVector<std::tuple<Value, Block *>, 8> toProcess;
+    llvm::SmallDenseSet<std::tuple<Value, Block*>> visitedValues;
+    SmallVector<std::tuple<Value, Block*>, 8> toProcess;
 
     // Check dominance relation for proper dominance properties. If the given
     // value node does not dominate an alias, we will have to create a clone in
     // order to free all buffers that can potentially leak into a post
     // dominator.
-    auto findUnsafeValues = [&](Value source, Block *definingBlock) {
+    auto findUnsafeValues = [&](Value source, Block* definingBlock) {
       auto it = aliases.find(source);
       if (it == aliases.end()) {
         return;
@@ -343,7 +343,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
         if (valuesToFree.count(value) > 0) {
           continue;
         }
-        Block *parentBlock = value.getParentBlock();
+        Block* parentBlock = value.getParentBlock();
         // Check whether we have to free this particular block argument or
         // generic value. We have to free the current alias if it is either
         // defined in a non-dominated block or it is defined in the same block
@@ -360,7 +360,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
     };
 
     // Detect possibly unsafe aliases starting from all allocations.
-    for (BufferPlacementAllocs::AllocEntry &entry : allocs) {
+    for (BufferPlacementAllocs::AllocEntry& entry : allocs) {
       Value allocValue = std::get<0>(entry);
       findUnsafeValues(allocValue, allocValue.getDefiningOp()->getBlock());
     }
@@ -397,11 +397,11 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
     // Allocate a buffer for the current block argument in the block of
     // the associated value (which will be a predecessor block by
     // definition).
-    Block *block = blockArg.getOwner();
+    Block* block = blockArg.getOwner();
     for (auto it = block->pred_begin(), e = block->pred_end(); it != e; ++it) {
       // Get the terminator and the value that will be passed to our
       // argument.
-      Operation *terminator = (*it)->getTerminator();
+      Operation* terminator = (*it)->getTerminator();
       auto branchInterface = cast<mlir::BranchOpInterface>(terminator);
       SuccessorOperands operands =
           branchInterface.getSuccessorOperands(it.getSuccessorIndex());
@@ -424,8 +424,8 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
     // the RegionBranchOpInterface. This can be the case if the current block
     // argument belongs to the first block in a region and the parent operation
     // implements the RegionBranchOpInterface.
-    Region *argRegion = block->getParent();
-    Operation *parentOp = argRegion->getParentOp();
+    Region* argRegion = block->getParent();
+    Operation* parentOp = argRegion->getParentOp();
     RegionBranchOpInterface regionInterface;
     if (&argRegion->front() != block ||
         !(regionInterface = dyn_cast<RegionBranchOpInterface>(parentOp))) {
@@ -434,7 +434,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
 
     if (failed(introduceClonesForRegionSuccessors(
             regionInterface, argRegion->getParentOp()->getRegions(), blockArg,
-            [&](RegionSuccessor &successorRegion) {
+            [&](RegionSuccessor& successorRegion) {
               // Find a predecessor of our argRegion.
               return successorRegion.getSuccessor() == argRegion;
             }))) {
@@ -447,8 +447,8 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
     SmallVector<RegionSuccessor, 2> successorRegions;
     regionInterface.getSuccessorRegions(/*point=*/RegionBranchPoint::parent(),
                                         successorRegions);
-    auto *it =
-        llvm::find_if(successorRegions, [&](RegionSuccessor &successorRegion) {
+    auto* it =
+        llvm::find_if(successorRegions, [&](RegionSuccessor& successorRegion) {
           return successorRegion.getSuccessor() == argRegion;
         });
     if (it == successorRegions.end()) {
@@ -479,10 +479,10 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   /// terminators and copies the source values into the newly allocated buffers.
   LogicalResult introduceValueCopyForRegionResult(Value value) {
     // Get the actual result index in the scope of the parent terminator.
-    Operation *operation = value.getDefiningOp();
+    Operation* operation = value.getDefiningOp();
     auto regionInterface = cast<RegionBranchOpInterface>(operation);
     // Filter successors that return to the parent operation.
-    auto regionPredicate = [&](RegionSuccessor &successorRegion) {
+    auto regionPredicate = [&](RegionSuccessor& successorRegion) {
       // If the RegionSuccessor has no associated successor, it will return to
       // its parent operation.
       return !successorRegion.getSuccessor();
@@ -503,14 +503,14 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   LogicalResult introduceClonesForRegionSuccessors(
       RegionBranchOpInterface regionInterface,
       mlir::MutableArrayRef<Region> regions, Value argValue,
-      const TPredicate &regionPredicate) {
-    for (Region &region : regions) {
+      const TPredicate& regionPredicate) {
+    for (Region& region : regions) {
       // Query the regionInterface to get all successor regions of the current
       // one.
       SmallVector<RegionSuccessor, 2> successorRegions;
       regionInterface.getSuccessorRegions(region, successorRegions);
       // Try to find a matching region successor.
-      RegionSuccessor *regionSuccessor =
+      RegionSuccessor* regionSuccessor =
           llvm::find_if(successorRegions, regionPredicate);
       if (regionSuccessor == successorRegions.end()) {
         continue;
@@ -554,7 +554,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   /// its content into the newly allocated buffer. The terminator operation is
   /// used to insert the clone operation at the right place.
   FailureOr<Value> introduceCloneBuffers(Value sourceValue,
-                                         Operation *terminator) {
+                                         Operation* terminator) {
     // Avoid multiple clones of the same source value. This can happen in the
     // presence of loops when a branch acts as a backedge while also having
     // another successor that returns to its parent operation. Note: that
@@ -584,23 +584,23 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
     // These deallocations will be linked to their associated allocation nodes
     // since they don't have any aliases that can (potentially) increase their
     // liveness.
-    for (const BufferPlacementAllocs::AllocEntry &entry : allocs) {
+    for (const BufferPlacementAllocs::AllocEntry& entry : allocs) {
       Value alloc = std::get<0>(entry);
       auto aliasesSet = aliases.resolve(alloc);
       assert(!aliasesSet.empty() && "must contain at least one alias");
 
       // Determine the actual block to place the dealloc and get liveness
       // information.
-      Block *placementBlock = mlir::bufferization::findCommonDominator(
+      Block* placementBlock = mlir::bufferization::findCommonDominator(
           alloc, aliasesSet, postDominators);
-      const LivenessBlockInfo *livenessInfo =
+      const LivenessBlockInfo* livenessInfo =
           liveness.getLiveness(placementBlock);
 
       // We have to ensure that the dealloc will be after the last use of all
       // aliases of the given value. We first assume that there are no uses in
       // the placementBlock and that we can safely place the dealloc at the
       // beginning.
-      Operation *endOperation = &placementBlock->front();
+      Operation* endOperation = &placementBlock->front();
 
       // Iterate over all aliases and ensure that the endOperation will point
       // to the last operation of all potential aliases in the placementBlock.
@@ -608,14 +608,14 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
         // Ensure that the start operation is at least the defining operation of
         // the current alias to avoid invalid placement of deallocs for aliases
         // without any uses.
-        Operation *beforeOp = endOperation;
+        Operation* beforeOp = endOperation;
         if (alias.getDefiningOp() &&
             !(beforeOp = placementBlock->findAncestorOpInBlock(
                   *alias.getDefiningOp()))) {
           continue;
         }
 
-        Operation *aliasEndOperation =
+        Operation* aliasEndOperation =
             livenessInfo->getEndOperation(alias, beforeOp);
         // Check whether the aliasEndOperation lies in the desired block and
         // whether it is behind the current endOperation. If yes, this will be
@@ -629,13 +629,13 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
       // the dealloc taking all potential aliases into account.
 
       // If there is an existing dealloc, move it to the right place.
-      Operation *deallocOperation = std::get<1>(entry);
+      Operation* deallocOperation = std::get<1>(entry);
       if (deallocOperation) {
         deallocOperation->moveAfter(endOperation);
       } else {
         // If the Dealloc position is at the terminator operation of the
         // block, then the value should escape from a deallocation.
-        Operation *nextOp = endOperation->getNextNode();
+        Operation* nextOp = endOperation->getNextNode();
         if (!nextOp) {
           continue;
         }
@@ -652,7 +652,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   /// value. If there is no registered AllocationOpInterface implementation for
   /// the given value (e.g. in the case of a function parameter), this method
   /// builds a memref::DeallocOp.
-  LogicalResult buildDealloc(Operation *op, Value alloc) {
+  LogicalResult buildDealloc(Operation* op, Value alloc) {
     OpBuilder builder(op);
     auto it = aliasToAllocations.find(alloc);
     if (it != aliasToAllocations.end()) {
@@ -675,7 +675,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   /// there is no registered AllocationOpInterface implementation for the given
   /// value (e.g. in the case of a function parameter), this method builds a
   /// bufferization::CloneOp.
-  FailureOr<Value> buildClone(Operation *op, Value alloc) {
+  FailureOr<Value> buildClone(Operation* op, Value alloc) {
     OpBuilder builder(op);
     auto it = aliasToAllocations.find(alloc);
     if (it != aliasToAllocations.end()) {
@@ -709,7 +709,7 @@ class BufferDeallocation : public BufferPlacementTransformationBase {
   AliasAllocationMapT aliasToAllocations;
 };
 
-LogicalResult deallocateBuffers(Operation *op) {
+LogicalResult deallocateBuffers(Operation* op) {
   if (isa<ModuleOp>(op)) {
     WalkResult result = op->walk([&](FuncOp funcOp) {
       if (failed(deallocateBuffers(funcOp))) {
@@ -758,7 +758,7 @@ LogicalResult deallocateBuffers(Operation *op) {
 /// necessary. It uses the algorithm described at the top of the file.
 struct BufferDeallocationPass
     : public impl::BufferDeallocationBase<BufferDeallocationPass> {
-  void getDependentDialects(DialectRegistry &registry) const override {
+  void getDependentDialects(DialectRegistry& registry) const override {
     registry.insert<mlir::bufferization::BufferizationDialect>();
     registry.insert<mlir::memref::MemRefDialect>();
   }

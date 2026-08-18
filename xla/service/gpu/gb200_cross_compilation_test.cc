@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -61,23 +62,23 @@ class Gb200CrossCompilationTest : public HloTestBase {
     )hlo";
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_string));
+                          ParseAndReturnVerifiedModule(hlo_string));
 
     ABSL_ASSIGN_OR_RETURN(std::string name,
-                     PlatformUtil::CanonicalPlatformName("gpu"));
+                          PlatformUtil::CanonicalPlatformName("gpu"));
     name = absl::AsciiStrToUpper(name);
     ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                     se::PlatformManager::PlatformWithName(name));
+                          se::PlatformManager::PlatformWithName(name));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                     Compiler::GetForPlatform(platform->id()));
+                          Compiler::GetForPlatform(platform->id()));
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_exec,
-                     platform->ExecutorForDevice(0));
+                          platform->ExecutorForDevice(0));
 
     // Create a different gpu_topology.
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto target_proto,
-                     GetGpuTargetConfig(gpu_model));
+                          GetGpuTargetConfig(gpu_model));
     ABSL_ASSIGN_OR_RETURN(Compiler::GpuTargetConfig gpu_target_config,
-                     Compiler::GpuTargetConfig::FromProto(target_proto));
+                          Compiler::GpuTargetConfig::FromProto(target_proto));
 
     // Set options to cross compilation but attach the local executor for
     // auto-tuning.

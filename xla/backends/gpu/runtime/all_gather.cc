@@ -143,7 +143,7 @@ absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(
         "support.");
   }
   ABSL_ASSIGN_OR_RETURN(const CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(all_gather));
+                        GetCollectiveOpGroupMode(all_gather));
   const bool is_local = IsAllReplicasLocal(
       gpu_topology.num_devices_per_process(), all_gather->replica_groups(),
       group_mode, device_assignment);

@@ -27,10 +27,10 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
-#include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
+#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
+#include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 
 namespace mlir::triton::xla {
 

@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -120,8 +121,9 @@ absl::StatusOr<Tile> CreateTile(absl::Span<const int64_t> sizes,
 absl::StatusOr<Tile> RunPropagation(const HloInstruction& reshape,
                                     const Tile& input_tile,
                                     TilingSpace& tiling_space) {
-  ABSL_ASSIGN_OR_RETURN(Tiles output_tiles,
-                   PropagateTileToOutput(tiling_space, reshape, input_tile, 0));
+  ABSL_ASSIGN_OR_RETURN(
+      Tiles output_tiles,
+      PropagateTileToOutput(tiling_space, reshape, input_tile, 0));
   TF_RET_CHECK(output_tiles.size() == 1)
       << "Expected exactly one output tile, got " << output_tiles.size();
 

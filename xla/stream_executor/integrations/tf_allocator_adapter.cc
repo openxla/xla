@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/numbers.h"
 #include "xla/layout.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/numbers.h"
 
 namespace stream_executor {
 
@@ -188,8 +188,8 @@ absl::StatusOr<ScopedDeviceAddress<uint8_t>> MultiDeviceAdapter::Allocate(
         device_ordinal, " and memory space ", memory_space));
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto result,
-                   it->second[device_ordinal]->Allocate(
+  ABSL_ASSIGN_OR_RETURN(
+      auto result, it->second[device_ordinal]->Allocate(
                        device_ordinal, size, retry_on_failure, memory_space));
 
   absl::MutexLock lock(mu_);
@@ -224,7 +224,8 @@ absl::Status MultiDeviceAdapter::Deallocate(int device_ordinal,
       // this case we are falling back to the first allocator to deallocate
       // the memory.
       // See b/325527293 for more details.
-      ABSL_ASSIGN_OR_RETURN(auto allocator, GetDefaultAllocator(device_ordinal));
+      ABSL_ASSIGN_OR_RETURN(auto allocator,
+                            GetDefaultAllocator(device_ordinal));
       return allocator->Deallocate(device_ordinal, mem);
     }
     memory_space = it->second;

@@ -224,8 +224,9 @@ absl::Status HloOriginalValueReconstructor::ProcessShardTensor(
             continue;
           }
           HloEvaluator evaluator;
-          ABSL_ASSIGN_OR_RETURN(current_shard_data,
-                           evaluator.Evaluate(*module, {&current_shard_data}));
+          ABSL_ASSIGN_OR_RETURN(
+              current_shard_data,
+              evaluator.Evaluate(*module, {&current_shard_data}));
         }
 
         if (!mark_partitioned_shard_reported(logical_shard_id)) {
@@ -269,8 +270,8 @@ absl::Status HloOriginalValueReconstructor::ProcessShardTensor(
       }
 
       ABSL_RETURN_IF_ERROR(ProcessCompletedShards(optimized_tensor_position,
-                                             original_tensor_key, original_info,
-                                             shards));
+                                                  original_tensor_key,
+                                                  original_info, shards));
       completed_tensor_keys_.insert(original_tensor_key);
     }
   }
@@ -311,7 +312,7 @@ absl::Status HloOriginalValueReconstructor::ProcessCompletedShards(
   if (sharding_it != analysis_->optimized_tensor_sharding().end()) {
     CHECK(!shards.empty());
     ABSL_ASSIGN_OR_RETURN(ManualShardingInfo manual_info,
-                     FactorManualSharding(shards, sharding_it->second));
+                          FactorManualSharding(shards, sharding_it->second));
 
     // Path 1: partitioned = false
     if (!attrs_with_partitioned_false.empty() || debug_attributes.empty()) {
@@ -376,8 +377,8 @@ absl::Status HloOriginalValueReconstructor::ProcessCompletedShards(
           } else {
             for (auto& shard : current_shards) {
               HloEvaluator evaluator;
-              ABSL_ASSIGN_OR_RETURN(*shard.data,
-                               evaluator.Evaluate(*module, {shard.data.get()}));
+              ABSL_ASSIGN_OR_RETURN(
+                  *shard.data, evaluator.Evaluate(*module, {shard.data.get()}));
             }
           }
         }
@@ -411,7 +412,7 @@ absl::Status HloOriginalValueReconstructor::ProcessCompletedShards(
       }
       HloEvaluator evaluator;
       ABSL_ASSIGN_OR_RETURN(recovered_literal,
-                       evaluator.Evaluate(*module, {&recovered_literal}));
+                            evaluator.Evaluate(*module, {&recovered_literal}));
     }
 
     if (!attrs_with_partitioned_false.empty() || debug_attributes.empty()) {

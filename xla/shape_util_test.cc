@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"

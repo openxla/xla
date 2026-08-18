@@ -413,7 +413,7 @@ AutotunerPass::GetGpuAutotunerBackends(
 
   auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
   ABSL_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
-                   registry.FindObject<GetCodegenBackends>(platform_id));
+                        registry.FindObject<GetCodegenBackends>(platform_id));
   std::vector<std::unique_ptr<CodegenBackend>> backends = get_codegen_backends(
       stream_exec, device_allocator, &debug_options, compiler, target_config,
       alias_info, mlir_context, shape_size_fn, autotune_backends);
@@ -432,7 +432,7 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     se::DeviceAddressAllocator* allocator,
     MultiProcessKeyValueStore key_value_store) {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                   get_backends_fn());
+                        get_backends_fn());
 
   InstructionFilterFn should_autotune =
       GetShouldAutotuneInstructionFn(debug_options, gpu_version);
@@ -451,24 +451,23 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
 
   std::unique_ptr<Autotuner> autotuner = nullptr;
   if (!is_deviceless) {
-      // TODO(intel-tf): Enable buffer checking for SYCL once
-      // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
-      // SYCL platform.
-      bool is_buffer_check_supported = stream_executor->GetPlatform()->id() !=
-                                       stream_executor::sycl::kSyclPlatformId;
-      std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
-          stream_executor,
-          GetProfileOptions(debug_options, is_buffer_check_supported),
-          allocator);
-      Autotuner::Options autotuner_options =
-          GetAutotunerOptions(debug_options, is_buffer_check_supported);
+    // TODO(intel-tf): Enable buffer checking for SYCL once
+    // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
+    // SYCL platform.
+    bool is_buffer_check_supported = stream_executor->GetPlatform()->id() !=
+                                     stream_executor::sycl::kSyclPlatformId;
+    std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
+        stream_executor,
+        GetProfileOptions(debug_options, is_buffer_check_supported), allocator);
+    Autotuner::Options autotuner_options =
+        GetAutotunerOptions(debug_options, is_buffer_check_supported);
 
-      std::vector<std::unique_ptr<Profiler>> profilers;
-      profilers.push_back(std::move(profiler));
+    std::vector<std::unique_ptr<Profiler>> profilers;
+    profilers.push_back(std::move(profiler));
 
-      ABSL_ASSIGN_OR_RETURN(autotuner,
-                       Autotuner::Create(*orchestrator, std::move(profilers),
-                                         autotuner_options, thread_pool));
+    ABSL_ASSIGN_OR_RETURN(autotuner,
+                          Autotuner::Create(*orchestrator, std::move(profilers),
+                                            autotuner_options, thread_pool));
   }
 
   VLOG(1) << "ConfigAssigner options: " << assigner_options.ToString();
@@ -492,10 +491,11 @@ absl::StatusOr<bool> AutotunerPass::RunImpl(
   bool shard_autotuning =
       enable_sharding_ && key_value_store_.process_count > 1;
   if (shard_autotuning) {
-    ABSL_RETURN_IF_ERROR(config_assigner_->AssignConfigs(module, should_autotune_,
-                                                    key_value_store_));
+    ABSL_RETURN_IF_ERROR(config_assigner_->AssignConfigs(
+        module, should_autotune_, key_value_store_));
   } else {
-    ABSL_RETURN_IF_ERROR(config_assigner_->AssignConfigs(module, should_autotune_));
+    ABSL_RETURN_IF_ERROR(
+        config_assigner_->AssignConfigs(module, should_autotune_));
   }
   VLOG(1) << "Autotuner cache stats: hits="
           << config_assigner_->GetCacheStats().hits

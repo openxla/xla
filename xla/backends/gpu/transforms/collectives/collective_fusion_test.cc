@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -80,11 +81,11 @@ class AnnotateAndFusePipeline : public HloModulePass {
     CollectiveKernelStrategyAnnotator annotator(gpu_topology_,
                                                 /*is_multimem_enabled=*/false);
     ABSL_ASSIGN_OR_RETURN(bool changed_annotator,
-                     annotator.Run(module, execution_threads));
+                          annotator.Run(module, execution_threads));
     changed |= changed_annotator;
     CollectiveFusion fusion(gpu_topology_);
     ABSL_ASSIGN_OR_RETURN(bool changed_fusion,
-                     fusion.Run(module, execution_threads));
+                          fusion.Run(module, execution_threads));
     changed |= changed_fusion;
     return changed;
   }

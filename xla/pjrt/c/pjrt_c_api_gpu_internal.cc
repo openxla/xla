@@ -305,8 +305,8 @@ absl::StatusOr<TargetConfigAndDevices> GetTargetConfigFromOptions(
     return {{*target_config_proto, *host_target_machine_options, {}}};
   }
   ABSL_ASSIGN_OR_RETURN(xla::LocalClient * xla_client,
-                   xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
-                                        /*allowed_devices=*/std::nullopt));
+                        xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
+                                             /*allowed_devices=*/std::nullopt));
   stream_executor::StreamExecutor* executor =
       xla_client->backend().default_stream_executor();
   std::vector<int> device_ids;

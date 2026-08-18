@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/allocation.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::memory_space_assignment {
 namespace {

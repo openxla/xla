@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/cudnn_support_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"

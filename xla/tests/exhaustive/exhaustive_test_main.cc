@@ -18,14 +18,15 @@ limitations under the License.
 // the --benchmark_filter flag which specifies which benchmarks to run,
 // we will either run benchmarks or run the gtest tests in the program.
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
-#include "xla/tests/exhaustive/exhaustive_op_test_base.h"
-#include "xla/tsl/util/command_line_flags.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
+#include "xla/tests/exhaustive/exhaustive_op_test_base.h"
+#include "xla/tsl/util/command_line_flags.h"
 
 GTEST_API_ int main(int argc, char** argv) {
   std::vector<tsl::Flag> flag_list;

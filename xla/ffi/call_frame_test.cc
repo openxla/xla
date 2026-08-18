@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/ffi/call_frame.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"

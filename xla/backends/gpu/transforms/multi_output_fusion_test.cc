@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/multi_output_fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"

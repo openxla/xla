@@ -47,7 +47,7 @@ class AndroidArmV7ACpuUtilsHelper : public ICpuUtilsHelper {
   void InitializeInternal();
 
   // syscall __NR_perf_event_open with arguments
-  int OpenPerfEvent(perf_event_attr *const hw_event, const pid_t pid,
+  int OpenPerfEvent(perf_event_attr* const hw_event, const pid_t pid,
                     const int cpu, const int group_fd,
                     const unsigned long flags);
 
@@ -56,8 +56,8 @@ class AndroidArmV7ACpuUtilsHelper : public ICpuUtilsHelper {
   bool is_initialized_{false};
   int fd_{INVALID_FD};
 
-  AndroidArmV7ACpuUtilsHelper(const AndroidArmV7ACpuUtilsHelper &) = delete;
-  void operator=(const AndroidArmV7ACpuUtilsHelper &) = delete;
+  AndroidArmV7ACpuUtilsHelper(const AndroidArmV7ACpuUtilsHelper&) = delete;
+  void operator=(const AndroidArmV7ACpuUtilsHelper&) = delete;
 };
 
 }  // namespace profile_utils

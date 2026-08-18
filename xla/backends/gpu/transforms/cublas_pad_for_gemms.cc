@@ -196,11 +196,12 @@ absl::StatusOr<bool> CublasPadForGemms::RunImpl(
   bool changed = false;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(std::vector<HloDotInstruction*> dots,
-                     GetRelevantDots(gpu_compute_capability_, comp, datatype_));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<HloDotInstruction*> dots,
+        GetRelevantDots(gpu_compute_capability_, comp, datatype_));
     for (HloDotInstruction* dot : dots) {
       ABSL_ASSIGN_OR_RETURN(bool result,
-                       PadForGemm(dot, datatype_, pad_to_multiple_of_));
+                            PadForGemm(dot, datatype_, pad_to_multiple_of_));
       changed |= result;
     }
   }

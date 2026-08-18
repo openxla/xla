@@ -1260,9 +1260,9 @@ absl::Status MsaAlgorithm::OptimizeMemoryBoundLoop(int loop_start_idx,
   const int iteration_end_idx = iteration_start_idx + loop_size;
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MemoryBoundLoopOptimizer> optimizer,
-                   MemoryBoundLoopOptimizer::Create(
-                       iteration_start_idx, iteration_end_idx, hlo_live_range_,
-                       alias_analysis_, options_));
+                        MemoryBoundLoopOptimizer::Create(
+                            iteration_start_idx, iteration_end_idx,
+                            hlo_live_range_, alias_analysis_, options_));
   optimizer->Optimize();
 
   // Check if this unrolled loop is in a while loop.
@@ -2238,7 +2238,7 @@ MsaAlgorithm::GetAltMemoryColoredIntervalsForBuffer(
   std::vector<TimeInterval> default_mem_intervals;
   std::vector<TimeInterval> alternate_mem_intervals;
   ABSL_ASSIGN_OR_RETURN(std::vector<TimeInterval> contiguous_live_ranges,
-                   GetContiguousLiveRangesForBuffer(buffer));
+                        GetContiguousLiveRangesForBuffer(buffer));
 
   auto disallow_async_conversion_if_conversion_candidate =
       [&](const HloInstruction* inst) {
@@ -4166,8 +4166,8 @@ absl::Status MsaAlgorithm::PinScalarBuffersInAlternateMemory(
       sorted_scalar_buffers,
       [](const HloBuffer* a, const HloBuffer* b) { return a->id() < b->id(); });
   for (const HloBuffer* buffer : sorted_scalar_buffers) {
-    ABSL_RETURN_IF_ERROR(PinScalarBufferInAlternateMemory(buffer, program_end_time,
-                                                     instruction_schedule));
+    ABSL_RETURN_IF_ERROR(PinScalarBufferInAlternateMemory(
+        buffer, program_end_time, instruction_schedule));
   }
   return absl::OkStatus();
 }
@@ -4679,8 +4679,9 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
 
         VLOG(3) << "Running post allocation transformation on: \n"
                 << instr->ToString();
-        ABSL_ASSIGN_OR_RETURN(PostAllocationTransformationUpdate changes,
-                         options_.post_allocation_transformation_fn(instr));
+        ABSL_ASSIGN_OR_RETURN(
+            PostAllocationTransformationUpdate changes,
+            options_.post_allocation_transformation_fn(instr));
         if (!changes.to_be_removed.empty()) {
           VLOG(3) << "Post allocation transformation info: \n"
                   << changes.ToString();
@@ -9146,9 +9147,10 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
   }
 
   // Propagate the memory space to the cloned fusion computations.
-  ABSL_ASSIGN_OR_RETURN(auto dataflow_analysis,
-                   HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
-                                            /*bitcast_defines_value=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      auto dataflow_analysis,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
+                               /*bitcast_defines_value=*/true));
   MemorySpacePropagation memory_space_propagation(std::move(dataflow_analysis));
   for (HloInstruction* inst : cloned_insts_order) {
     HloInstruction* cloned = cloned_insts[inst];

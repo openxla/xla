@@ -285,7 +285,7 @@ absl::StatusOr<bool> AsyncCollectiveCreator::ReplaceCollectives(
   };
   for (HloInstruction* instruction : supported_collectives) {
     ABSL_ASSIGN_OR_RETURN(auto maybe_async_pair,
-                     handle_legacy_async_conversion(instruction));
+                          handle_legacy_async_conversion(instruction));
     ReplacedAsync async_pair;
     if (maybe_async_pair.has_value()) {
       async_pair = *maybe_async_pair;
@@ -356,8 +356,9 @@ absl::StatusOr<bool> AsyncCollectiveCreator::RunImpl(
     if (supported_collectives.empty()) {
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(bool comp_changed,
-                     ReplaceCollectives(computation, supported_collectives));
+    ABSL_ASSIGN_OR_RETURN(
+        bool comp_changed,
+        ReplaceCollectives(computation, supported_collectives));
     collectives_replaced += supported_collectives.size();
     changed |= comp_changed;
   }

@@ -261,7 +261,8 @@ absl::Status GpuLayoutAssignment::AddBackendConstraintsToDnnConvCustomCall(
   // Set layouts of the instructions' shapes.
   ABSL_RETURN_IF_ERROR(SetOperandLayout(lhs_shape, instr, 0));
   ABSL_RETURN_IF_ERROR(SetOperandLayout(rhs_shape, instr, 1));
-  ABSL_RETURN_IF_ERROR(SetBufferLayout(result_shape.layout(), *call_result_buf));
+  ABSL_RETURN_IF_ERROR(
+      SetBufferLayout(result_shape.layout(), *call_result_buf));
   // For fused convolutions, instr->operand(2), if exists, is the bias buffer.
   // There is no need to assign layout to it, as it has only one dimension.
   // instr->operand(3), if exists, is the side input buffer.
@@ -448,11 +449,11 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
   };
   const DotDimensionNumbers& dot_dims = instruction->dot_dimension_numbers();
   ABSL_ASSIGN_OR_RETURN(const Side lhs,
-                   make_side(0, dot_dims.lhs_batch_dimensions(),
-                             dot_dims.lhs_contracting_dimensions()));
+                        make_side(0, dot_dims.lhs_batch_dimensions(),
+                                  dot_dims.lhs_contracting_dimensions()));
   ABSL_ASSIGN_OR_RETURN(const Side rhs,
-                   make_side(1, dot_dims.rhs_batch_dimensions(),
-                             dot_dims.rhs_contracting_dimensions()));
+                        make_side(1, dot_dims.rhs_batch_dimensions(),
+                                  dot_dims.rhs_contracting_dimensions()));
 
   const PrimitiveType& output_type = instruction->shape().element_type();
 
@@ -559,7 +560,8 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
           LayoutUtil::MakeLayoutFromMajorToMinor(instruction->dimensions());
 
       if (DotCanSupportShapeWithLayout(operand, shape)) {
-        ABSL_RETURN_IF_ERROR(SetOperandLayout(shape, instruction, /*operand_no=*/0));
+        ABSL_RETURN_IF_ERROR(
+            SetOperandLayout(shape, instruction, /*operand_no=*/0));
       }
     } else if (HloPredicateIsOp<HloOpcode::kFft>(instruction)) {
       // cuFFT requires a dim0 major layout.
@@ -633,10 +635,10 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
 
       if (ranks_differ) {
         ABSL_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction,
-                                         /*operand_no=*/0,
-                                         /*mandatory=*/true));
+                                              /*operand_no=*/0,
+                                              /*mandatory=*/true));
         ABSL_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction,
-                                             /*mandatory=*/true));
+                                                  /*mandatory=*/true));
       }
     } else if (HloPredicateIsOp<HloOpcode::kTriangularSolve>(instruction)) {
       // TODO(phawkins): Ideally we would relax this constraint. What we
@@ -719,8 +721,9 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       *new_shape.mutable_tuple_shapes(1) =
           called_computation->ComputeProgramShape().result();
       ABSL_RETURN_IF_ERROR(SetInstructionLayout(new_shape, instruction,
-                                           /*mandatory=*/true, /*dfs=*/true,
-                                           /*allow_alias=*/true));
+                                                /*mandatory=*/true,
+                                                /*dfs=*/true,
+                                                /*allow_alias=*/true));
     } else if (instruction->opcode() == HloOpcode::kAsyncDone) {
       HloComputation* called_computation =
           instruction->async_wrapped_computation();
@@ -733,8 +736,9 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       Shape new_shape = called_computation->root_instruction()->shape();
 
       ABSL_RETURN_IF_ERROR(SetInstructionLayout(new_shape, instruction,
-                                           /*mandatory=*/true, /*dfs=*/true,
-                                           /*allow_alias=*/true));
+                                                /*mandatory=*/true,
+                                                /*dfs=*/true,
+                                                /*allow_alias=*/true));
     }
   }
   return absl::OkStatus();

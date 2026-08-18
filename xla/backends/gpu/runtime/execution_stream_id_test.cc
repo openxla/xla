@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/str_cat.h"
 
 namespace xla::gpu {

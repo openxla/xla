@@ -1261,7 +1261,8 @@ absl::StatusOr<DotOpWorkGroupDim> EmitBatchDotOperation(
     llvm::IRBuilderBase* b, const HloModuleConfig& hlo_module_config,
     const TargetMachineFeatures& target_machine_features,
     bool allow_runtime_calls, bool allow_parallelism) {
-  ABSL_RETURN_IF_ERROR(ValidateDotDimensionNumbers(dot.dot_dimension_numbers()));
+  ABSL_RETURN_IF_ERROR(
+      ValidateDotDimensionNumbers(dot.dot_dimension_numbers()));
 
   // first check if the batch can be rendered directly by the runtime
   // otherwise lower it to a sequence of non-batch dot operations

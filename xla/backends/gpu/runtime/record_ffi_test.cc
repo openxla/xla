@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/record_ffi.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -65,8 +66,8 @@ absl::StatusOr<KernelBinary> GetKernelSpec() {
   static const absl::NoDestructor<absl::StatusOr<std::vector<uint8_t>>> kFatbin(
       []() -> absl::StatusOr<std::vector<uint8_t>> {
         ABSL_ASSIGN_OR_RETURN(auto fatbin,
-                         stream_executor::gpu::GetGpuTestKernelsFatbin(
-                             stream_executor::GpuPlatformName()));
+                              stream_executor::gpu::GetGpuTestKernelsFatbin(
+                                  stream_executor::GpuPlatformName()));
         return fatbin;
       }());
   ABSL_RETURN_IF_ERROR(kFatbin->status());
@@ -87,7 +88,7 @@ absl::Status RecordFfiHandler(ffi::RecordContext record_ctx,
   const auto action = record_ctx.action();
   if (action == ffi::RecordAction::kCreate) {
     ABSL_ASSIGN_OR_RETURN(const XLA_FFI_Command* memcpy_d2d,
-                     record_ctx.CreateMemcpyD2D(scratch, in0, size));
+                          record_ctx.CreateMemcpyD2D(scratch, in0, size));
     ABSL_ASSIGN_OR_RETURN(KernelBinary binary, GetKernelSpec());
     ABSL_RETURN_IF_ERROR(
         record_ctx
@@ -103,7 +104,8 @@ absl::Status RecordFfiHandler(ffi::RecordContext record_ctx,
     auto cmds = record_ctx.commands();
     TF_RET_CHECK(cmds.size() == 2) << "Expected 2 commands recorded.";
 
-    ABSL_RETURN_IF_ERROR(record_ctx.UpdateMemcpyD2D(cmds[0], scratch, in0, size));
+    ABSL_RETURN_IF_ERROR(
+        record_ctx.UpdateMemcpyD2D(cmds[0], scratch, in0, size));
     ABSL_RETURN_IF_ERROR(record_ctx.UpdateLaunch(
         cmds[1], std::vector<ffi::KernelArg>{ffi::DevicePointer{scratch},
                                              ffi::DevicePointer{in1},

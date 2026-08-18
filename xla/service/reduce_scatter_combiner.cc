@@ -35,6 +35,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -48,8 +50,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -174,7 +174,8 @@ absl::Status CombineReduceScatters(
                                        replacement->shape()),
           replacement));
     }
-    ABSL_RETURN_IF_ERROR(computation.ReplaceInstruction(to_combine[i], replacement));
+    ABSL_RETURN_IF_ERROR(
+        computation.ReplaceInstruction(to_combine[i], replacement));
   }
   return absl::OkStatus();
 }
@@ -245,7 +246,8 @@ absl::StatusOr<bool> ReduceScatterCombiner::RunWithKeyCombiner(
               << computation->ToString();
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
+    ABSL_ASSIGN_OR_RETURN(auto domain_map,
+                          HloDomainMap::Create(computation, ""));
 
     auto key_fn = [&](const HloInstruction* instruction) {
       return combine_key(instruction, *domain_map, combine_by_dim_);
@@ -278,8 +280,8 @@ ReduceScatterCombiner::ReduceScatterCombiner(int64_t combine_threshold_in_bytes,
 absl::StatusOr<bool> ReduceScatterCombiner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_ASSIGN_OR_RETURN(bool changed,
-                   RunWithKeyCombiner(module, execution_threads, CombineKey));
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed, RunWithKeyCombiner(module, execution_threads, CombineKey));
   return changed;
 }
 

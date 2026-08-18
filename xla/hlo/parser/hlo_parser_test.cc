@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/parser/hlo_parser.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -3085,7 +3086,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnVerifiedModule(
       /*verifier_layout_sensitive=*/false,
       /*allow_mixed_precision_in_hlo_verifier=*/true,
       ShapeUtil::ByteSizeOfElements);
-  ABSL_RETURN_IF_ERROR(verified_module->ParseHloStringAndVerifyModule(hlo_text));
+  ABSL_RETURN_IF_ERROR(
+      verified_module->ParseHloStringAndVerifyModule(hlo_text));
   return verified_module;
 }
 

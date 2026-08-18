@@ -239,7 +239,8 @@ absl::StatusOr<bool> UserKillsBuffer(const HloInstruction* user,
         flows_into_some_branch = true;
         HloComputation* branch = user->branch_computation(b);
         HloInstruction* branch_param = branch->parameter_instruction(0);
-        ABSL_ASSIGN_OR_RETURN(bool branch_ok, AllUsersKillBuffer(branch_param, cfg));
+        ABSL_ASSIGN_OR_RETURN(bool branch_ok,
+                              AllUsersKillBuffer(branch_param, cfg));
         if (!branch_ok) {
           every_branch_kills = false;
           break;

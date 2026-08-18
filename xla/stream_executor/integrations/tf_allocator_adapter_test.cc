@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/node_hash_set.h"
 #include "absl/log/check.h"

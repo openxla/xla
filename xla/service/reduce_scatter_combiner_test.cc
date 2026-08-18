@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/reduce_scatter_combiner.h"
 
+#include <gmock/gmock.h>
+
 #include <cstddef>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -44,7 +45,8 @@ class ReduceScatterCombinerTest : public HloHardwareIndependentTestBase {
       int64_t byte_threshold = kMaxByteCount,
       int64_t count_threshold = kMaxCombineCount, bool combine_by_dim = true,
       bool combine_while_loops = true) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_module));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_module));
 
     VLOG(1) << "Before running ReduceScatterCombiner: "
             << ReduceScatterCount(module.get()) << " reduce-scatter ops";
@@ -63,7 +65,7 @@ class ReduceScatterCombinerTest : public HloHardwareIndependentTestBase {
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  size_t ReduceScatterCount(HloModule *module) {
+  size_t ReduceScatterCount(HloModule* module) {
     int64_t sum = 0;
     for (auto comp : module->computations()) {
       sum += absl::c_count_if(comp->instructions(),

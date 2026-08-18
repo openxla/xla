@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace {

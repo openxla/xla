@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/gpu_test_kernels_fatbin.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"

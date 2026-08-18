@@ -33,6 +33,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
@@ -43,11 +44,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "rocm/include/hip/amd_detail/amd_hip_bfloat16.h"
 #include "rocm/include/hip/amd_detail/hip_fp16_gcc.h"
 #include "rocm/include/miopen/miopen.h"
 #include "rocm/rocm_config.h"
+#include "tsl/platform/hash.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
@@ -67,7 +68,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/determinism.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/platform/hash.h"
 
 namespace {
 
@@ -2152,8 +2152,9 @@ absl::Status MIOpenSupport::DoRnnForwardImpl(
   std::unique_ptr<EventBasedTimer> timer;
 
   if (is_profiling) {
-    ABSL_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
-                                output_profile_result->warmup_run_executed()));
+    ABSL_ASSIGN_OR_RETURN(timer,
+                          stream->CreateEventBasedTimer(
+                              output_profile_result->warmup_run_executed()));
   }
 
   // make the forward call
@@ -2283,8 +2284,9 @@ absl::Status MIOpenSupport::DoRnnBackwardImpl(
   std::unique_ptr<EventBasedTimer> timer;
 
   if (is_profiling) {
-    ABSL_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
-                                output_profile_result->warmup_run_executed()));
+    ABSL_ASSIGN_OR_RETURN(timer,
+                          stream->CreateEventBasedTimer(
+                              output_profile_result->warmup_run_executed()));
   }
 
   // make the backward data call
@@ -2978,8 +2980,8 @@ absl::Status MIOpenSupport::GetConvolveRunners(
     return absl::InternalError("GetMIOpenConvolveAlgorithms failure");
 
   for (const auto& profile_result : profile_results) {
-    ABSL_ASSIGN_OR_RETURN(auto runner,
-                     ConvolveRunnerFromDesc(
+    ABSL_ASSIGN_OR_RETURN(
+        auto runner, ConvolveRunnerFromDesc(
                          stream, profile_result.algorithm(), kind, input_type,
                          output_type, input_descriptor, filter_descriptor,
                          output_descriptor, convolution_descriptor));
@@ -3017,11 +3019,12 @@ MIOpenSupport::ConvolveRunnerFromDesc(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto scoped_input_desc,
-                   scope(input_descriptor, ToMIOpenDataType(input_type)));
-  ABSL_ASSIGN_OR_RETURN(auto scoped_output_desc,
-                   scope(output_descriptor, ToMIOpenDataType(output_type)));
+                        scope(input_descriptor, ToMIOpenDataType(input_type)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto scoped_output_desc,
+      scope(output_descriptor, ToMIOpenDataType(output_type)));
   ABSL_ASSIGN_OR_RETURN(auto scoped_filter_desc,
-                   scope(filter_descriptor, ToMIOpenDataType(input_type)));
+                        scope(filter_descriptor, ToMIOpenDataType(input_type)));
   ABSL_ASSIGN_OR_RETURN(auto scoped_conv_desc, scope(convolution_descriptor));
 
   bool is_backprop = ((kind == dnn::ConvolutionKind::BACKWARD_DATA) ||
@@ -3124,11 +3127,11 @@ absl::Status MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ABSL_ASSIGN_OR_RETURN(auto input_nd,
-                   scope(input_descriptor, ToMIOpenDataType(input_type)));
-  ABSL_ASSIGN_OR_RETURN(auto output_nd,
-                   scope(output_descriptor, ToMIOpenDataType(output_type)));
+                        scope(input_descriptor, ToMIOpenDataType(input_type)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto output_nd, scope(output_descriptor, ToMIOpenDataType(output_type)));
   ABSL_ASSIGN_OR_RETURN(auto filter,
-                   scope(filter_descriptor, ToMIOpenDataType(input_type)));
+                        scope(filter_descriptor, ToMIOpenDataType(input_type)));
   ABSL_ASSIGN_OR_RETURN(auto conv, scope(convolution_descriptor));
 
   bool is_backprop = ((kind == dnn::ConvolutionKind::BACKWARD_DATA) ||
@@ -3264,11 +3267,11 @@ absl::Status MIOpenSupport::PopulateMIOpenFindDb(
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ABSL_ASSIGN_OR_RETURN(auto input_nd,
-                   scope(input_descriptor, ToMIOpenDataType(input_type)));
-  ABSL_ASSIGN_OR_RETURN(auto output_nd,
-                   scope(output_descriptor, ToMIOpenDataType(output_type)));
+                        scope(input_descriptor, ToMIOpenDataType(input_type)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto output_nd, scope(output_descriptor, ToMIOpenDataType(output_type)));
   ABSL_ASSIGN_OR_RETURN(auto filter,
-                   scope(filter_descriptor, ToMIOpenDataType(input_type)));
+                        scope(filter_descriptor, ToMIOpenDataType(input_type)));
   ABSL_ASSIGN_OR_RETURN(auto conv, scope(convolution_descriptor));
 
   bool is_backprop = ((kind == dnn::ConvolutionKind::BACKWARD_DATA) ||
@@ -3506,9 +3509,10 @@ absl::Status MIOpenSupport::DoBatchNormalizationForwardImpl(
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ABSL_ASSIGN_OR_RETURN(auto x_descriptor,
-                   scope(x_desc, ToMIOpenDataType(input_data_type)));
-  ABSL_ASSIGN_OR_RETURN(auto scale_offset_descriptor,
-                   scope(scale_offset_desc, ToMIOpenDataType(scale_data_type)));
+                        scope(x_desc, ToMIOpenDataType(input_data_type)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto scale_offset_descriptor,
+      scope(scale_offset_desc, ToMIOpenDataType(scale_data_type)));
   miopenBatchNormMode_t mode = miopenBNSpatial;
   float one = 1.0;
   float zero = 0.0;
@@ -3610,8 +3614,8 @@ absl::Status MIOpenSupport::DoBatchNormalizationBackwardImpl(
       auto x_descriptor,
       scope(x_desc, static_cast<miopenDataType_t>(miopen_input_type)));
   ABSL_ASSIGN_OR_RETURN(auto scale_offset_descriptor,
-                   scope(scale_offset_desc,
-                         static_cast<miopenDataType_t>(miopen_scale_type)));
+                        scope(scale_offset_desc, static_cast<miopenDataType_t>(
+                                                     miopen_scale_type)));
   miopenBatchNormMode_t mode = miopenBNSpatial;
   float one = 1.0;
   float zero = 0.0;
@@ -3905,8 +3909,8 @@ absl::Status MIOpenSupport::DoPoolForward(
         workspace =
             reinterpret_cast<uint8_t*>(pdesc->workspace.ptr()->opaque());
       } else {
-        ABSL_ASSIGN_OR_RETURN(auto allocated,
-                         workspace_allocator->AllocateBytes(workspace_size));
+        ABSL_ASSIGN_OR_RETURN(
+            auto allocated, workspace_allocator->AllocateBytes(workspace_size));
         workspace = reinterpret_cast<uint8_t*>(allocated.opaque());
       }
     }
@@ -4360,20 +4364,23 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
     ABSL_ASSIGN_OR_RETURN(
         auto output_nd_,
         scope(output_nd, ToMIOpenDataType(input_type, input_nd.layout())));
-    ABSL_ASSIGN_OR_RETURN(auto filter_, scope(filter, ToMIOpenDataType(input_type)));
+    ABSL_ASSIGN_OR_RETURN(auto filter_,
+                          scope(filter, ToMIOpenDataType(input_type)));
     ABSL_ASSIGN_OR_RETURN(auto bias_nd_,
-                     scope(bias_nd, ToMIOpenDataType(bias_type)));
+                          scope(bias_nd, ToMIOpenDataType(bias_type)));
     ABSL_ASSIGN_OR_RETURN(auto conv_, scope(conv));
 
-    ABSL_ASSIGN_OR_RETURN(auto activation_desc, ScopedActivationDescriptor::Create(
-                                               activation, leakyrelu_alpha));
+    ABSL_ASSIGN_OR_RETURN(
+        auto activation_desc,
+        ScopedActivationDescriptor::Create(activation, leakyrelu_alpha));
 
     auto miopen = miopen_->GetHandle(parent, stream);
 
-    ABSL_ASSIGN_OR_RETURN(auto fusion_plan,
-                     ScopedFusionPlanConvolutionBiasActivation::Create(
-                         miopen.handle(), input_nd_.handle(), filter_.handle(),
-                         conv_.handle(), bias_nd_.handle(), activation_desc));
+    ABSL_ASSIGN_OR_RETURN(
+        auto fusion_plan,
+        ScopedFusionPlanConvolutionBiasActivation::Create(
+            miopen.handle(), input_nd_.handle(), filter_.handle(),
+            conv_.handle(), bias_nd_.handle(), activation_desc));
 
     if (!fusion_plan.CompilationSucceeded()) {
       return absl::InternalError("No algorithms found");

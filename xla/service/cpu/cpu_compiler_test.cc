@@ -11,14 +11,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
@@ -26,9 +30,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

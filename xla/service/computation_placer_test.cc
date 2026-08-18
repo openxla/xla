@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "xla/service/device_assignment.h"
 
 namespace xla {

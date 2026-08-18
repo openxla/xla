@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/target_config/target_config.h"

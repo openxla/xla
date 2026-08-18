@@ -30,6 +30,9 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -42,9 +45,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -186,10 +186,11 @@ TryDecomposeReplicaGroups(const HloAllReduceInstruction& all_reduce,
 
   // Try to find a valid decomposition for each replica group.
   for (const ReplicaGroup& replica_group : replica_groups) {
-    ABSL_ASSIGN_OR_RETURN(std::optional<DecomposedReplicaGroups> decomposed_groups,
-                     TryDecomposeReplicaGroup(replica_group, device_assignment,
-                                              num_devices_per_host,
-                                              collective_op_group_mode));
+    ABSL_ASSIGN_OR_RETURN(
+        std::optional<DecomposedReplicaGroups> decomposed_groups,
+        TryDecomposeReplicaGroup(replica_group, device_assignment,
+                                 num_devices_per_host,
+                                 collective_op_group_mode));
 
     if (!decomposed_groups) return {std::nullopt};
 
@@ -279,8 +280,9 @@ static absl::StatusOr<bool> TryDecomposeAllReduce(
         element_type, {num_elements / scatter_group_size}));
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto reduce_scatter_shape,
-                   ShapeUtil::MakeValidatedMaybeTupleShape(scattered_shapes));
+  ABSL_ASSIGN_OR_RETURN(
+      auto reduce_scatter_shape,
+      ShapeUtil::MakeValidatedMaybeTupleShape(scattered_shapes));
 
   HloInstruction* reduce_scatter =
       computation.AddInstruction(HloInstruction::CreateReduceScatter(
@@ -301,7 +303,7 @@ static absl::StatusOr<bool> TryDecomposeAllReduce(
           all_reduce->use_global_device_ids()));
 
   ABSL_ASSIGN_OR_RETURN(auto all_gather_shape,
-                   ShapeUtil::MakeValidatedMaybeTupleShape(flat_shapes));
+                        ShapeUtil::MakeValidatedMaybeTupleShape(flat_shapes));
   HloInstruction* all_gather =
       computation.AddInstruction(HloInstruction::CreateAllGather(
           all_gather_shape, GetOutputs(*new_all_reduce),
@@ -364,8 +366,9 @@ absl::StatusOr<bool> AllReduceBlueConnect::RunImpl(
 
   bool changed = false;
   for (HloAllReduceInstruction* all_reduce : all_reduces) {
-    ABSL_ASSIGN_OR_RETURN(bool all_reduce_changed,
-                     TryDecomposeAllReduce(all_reduce, num_devices_per_host_));
+    ABSL_ASSIGN_OR_RETURN(
+        bool all_reduce_changed,
+        TryDecomposeAllReduce(all_reduce, num_devices_per_host_));
     changed |= all_reduce_changed;
   }
 

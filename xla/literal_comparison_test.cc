@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/literal_comparison.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

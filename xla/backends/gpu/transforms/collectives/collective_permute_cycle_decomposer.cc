@@ -206,7 +206,7 @@ absl::Status DecomposeCollectivePermuteCycle(
       GetCollectiveOpGroupMode(cp->channel_id().has_value(), std::nullopt));
 
   ABSL_ASSIGN_OR_RETURN(auto attrs, DecomposeFrontendAttributes(
-                                   cp->frontend_attributes(), cycle_type));
+                                        cp->frontend_attributes(), cycle_type));
 
   // Backward edge.
   HloInstruction* back_cp =
@@ -228,7 +228,7 @@ absl::Status DecomposeCollectivePermuteCycle(
   // If the collective is across replicas, then `partition` is replaced by
   // `replica = u32[] replica-id()`.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * partition_or_replica,
-                   CreatePartitionOrReplicaId(computation, mode, cp_name));
+                        CreatePartitionOrReplicaId(computation, mode, cp_name));
   int64_t bwd_recv_id = back_pairs.back().second;
   HloInstruction* constant = computation->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0(U32, bwd_recv_id)),

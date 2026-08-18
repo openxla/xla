@@ -18,7 +18,7 @@ limitations under the License.
 
 // TODO(ezhulenev): This header should be deleted and users should migrate to
 // one of the headers listed below.
-#include "xla/ffi/ffi_interop.h"  // IWYU pragma: keep
+#include "xla/ffi/ffi_interop.h"   // IWYU pragma: keep
 #include "xla/ffi/ffi_registry.h"  // IWYU pragma: keep
 
 #endif  // XLA_FFI_FFI_API_H_

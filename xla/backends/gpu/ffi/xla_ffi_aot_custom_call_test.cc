@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/executable_run_options.h"
 #include "xla/literal.h"

@@ -124,7 +124,7 @@ absl::StatusOr<AsyncExecution::ExecutionGuard> AsyncExecution::Start(
       "Start async execution for `%s`: stream=%p, async_stream=%p",
       start_thunk_info_.profile_annotation, stream, async_stream);
   ABSL_ASSIGN_OR_RETURN(ExecutionState * es,
-                   GetExecutionState(state, start_thunk_info_.thunk_id));
+                        GetExecutionState(state, start_thunk_info_.thunk_id));
 
   if (++es->counter > 1) {
     return Internal(
@@ -152,7 +152,7 @@ absl::Status AsyncExecution::Done(Thunk::ExecutionScopedState* state,
       << absl::StreamFormat("Done async execution for `%s`: stream=%p",
                             start_thunk_info_.profile_annotation, stream);
   ABSL_ASSIGN_OR_RETURN(ExecutionState * es,
-                   GetExecutionState(state, start_thunk_info_.thunk_id));
+                        GetExecutionState(state, start_thunk_info_.thunk_id));
 
   if (--es->counter < 0) {
     return Internal("Async execution for `%s` not started (counter=%d)",

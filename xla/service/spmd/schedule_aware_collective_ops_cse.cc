@@ -174,8 +174,9 @@ absl::StatusOr<bool> ScheduleAwareCollectiveOpsCSE::RunImpl(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   for (auto comp : module->computations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(auto comp_changed, RunOnComputation(comp, for_replicas_,
-                                                         distance_threshold_));
+    ABSL_ASSIGN_OR_RETURN(
+        auto comp_changed,
+        RunOnComputation(comp, for_replicas_, distance_threshold_));
     changed |= comp_changed;
   }
   return changed;

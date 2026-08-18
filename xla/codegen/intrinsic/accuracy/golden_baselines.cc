@@ -20,6 +20,7 @@ limitations under the License.
 //     //third_party/tensorflow/compiler/xla/codegen/intrinsic/accuracy:generate_golden_baselines
 
 #include "xla/codegen/intrinsic/accuracy/golden_baselines.h"
+
 #include <array>
 #include <limits>
 

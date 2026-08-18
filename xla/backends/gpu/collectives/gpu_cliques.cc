@@ -45,6 +45,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/hash.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -65,9 +68,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/hash.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -405,7 +405,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
 
     // Check if peer access is possible between all devices in the clique.
     ABSL_ASSIGN_OR_RETURN(bool peer_access_enabled,
-                     EnablePeerAccess(clique_key, ranks));
+                          EnablePeerAccess(clique_key, ranks));
 
     VLOG(3) << absl::StreamFormat(
         "[%s] [ranks=%s] Create GPU communicators: clique=%v; size(id)=%lld; "
@@ -669,7 +669,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       // The parent clique is not local, but this clique can be local. We need
       // to check if peer access is possible between all devices in this clique.
       ABSL_ASSIGN_OR_RETURN(peer_access_enabled,
-                       EnablePeerAccess(clique_key, ranks));
+                            EnablePeerAccess(clique_key, ranks));
     }
 
     VLOG(3) << absl::StreamFormat(

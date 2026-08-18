@@ -63,12 +63,13 @@ absl::StatusOr<KernelRunner> KernelRunner::Create(
   ABSL_RETURN_IF_ERROR(compiler.AddModule(std::move(thread_safe_module)));
 
   absl::string_view kernel_name = spec.name();
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<FunctionLibrary> library,
-                   std::move(compiler).Compile(
-                       {FunctionLibrary::Sym<XLA_CPU_Kernel>(kernel_name)}));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<FunctionLibrary> library,
+      std::move(compiler).Compile(
+          {FunctionLibrary::Sym<XLA_CPU_Kernel>(kernel_name)}));
 
   ABSL_ASSIGN_OR_RETURN(XLA_CPU_Kernel * kernel_fn,
-                   library->ResolveFunction<XLA_CPU_Kernel>(kernel_name));
+                        library->ResolveFunction<XLA_CPU_Kernel>(kernel_name));
 
   return KernelRunner(std::move(library), Kernel(1, kernel_fn),
                       spec.num_workgroups());
@@ -78,7 +79,8 @@ absl::StatusOr<KernelRunner> KernelRunner::Create(
     KernelDefinition<MlirKernelSource> kernel, JitCompiler compiler) {
   auto spec = kernel.spec();
   auto source = std::move(kernel).TakeSource();
-  ABSL_ASSIGN_OR_RETURN(LlvmKernelSource llvm_kernel_source, LowerToLlvm(source));
+  ABSL_ASSIGN_OR_RETURN(LlvmKernelSource llvm_kernel_source,
+                        LowerToLlvm(source));
 
   return Create(KernelDefinition(spec, std::move(llvm_kernel_source)),
                 std::move(compiler));

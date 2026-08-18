@@ -23,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -35,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "google/protobuf/any.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"

@@ -14,14 +14,15 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/status/statusor.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_finder.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor {
 namespace {

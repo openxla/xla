@@ -23,11 +23,11 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/stacktrace.h"
 #include "xla/tsl/lib/monitoring/counter.h"
 #include "xla/tsl/lib/monitoring/gauge.h"
 #include "xla/tsl/lib/monitoring/sampler.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 namespace {

@@ -15,10 +15,10 @@ limitations under the License.
 
 #include <string>
 
+#include "tsl/platform/path.h"
 #include "xla/pjrt/plugin/dynamic_registration.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 static constexpr char kMyPluginName[] = "myplugin";
 static constexpr char kMyPluginLibraryEnvName[] = "MYPLUGIN_DYNAMIC_PATH";

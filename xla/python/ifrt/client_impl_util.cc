@@ -231,7 +231,7 @@ LoadedExecutableExecuteBundle(
       return absl::FailedPreconditionError("Bundle is deleted or donated.");
     }
     ABSL_ASSIGN_OR_RETURN(std::vector<ValueRef> values,
-                     bundle->GetValues(ArrayCopySemantics::kReuseInput));
+                          bundle->GetValues(ArrayCopySemantics::kReuseInput));
     for (const ValueRef& value : values) {
       if (auto* array = dyn_cast<Array>(value.get())) {
         arg_arrays.push_back(tsl::FormRef(array));
@@ -244,8 +244,8 @@ LoadedExecutableExecuteBundle(
   }
 
   ABSL_ASSIGN_OR_RETURN(LoadedExecutable::ExecuteResult result,
-                   executable->Execute(absl::MakeSpan(arg_arrays), options,
-                                       /*devices=*/std::nullopt));
+                        executable->Execute(absl::MakeSpan(arg_arrays), options,
+                                            /*devices=*/std::nullopt));
 
   Client* client = executable->client();
 
@@ -273,16 +273,16 @@ LoadedExecutableExecuteBundle(
       }
 
       ABSL_ASSIGN_OR_RETURN(BundleRef bundle,
-                       client->Bundle(absl::MakeSpan(values),
-                                      ArrayCopySemantics::kDonateInput));
+                            client->Bundle(absl::MakeSpan(values),
+                                           ArrayCopySemantics::kDonateInput));
       output_bundles.push_back(std::move(bundle));
     }
   } else {
     std::vector<ValueRef> output_values =
         ToValues(absl::MakeSpan(result.outputs));
     ABSL_ASSIGN_OR_RETURN(BundleRef output_bundle,
-                     client->Bundle(absl::MakeSpan(output_values),
-                                    ArrayCopySemantics::kDonateInput));
+                          client->Bundle(absl::MakeSpan(output_values),
+                                         ArrayCopySemantics::kDonateInput));
     output_bundles.push_back(std::move(output_bundle));
   }
 

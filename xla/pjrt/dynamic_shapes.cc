@@ -22,12 +22,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/mem.h"
 
 namespace xla {
 

@@ -30,11 +30,11 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/nvtx3/nvToolsExt.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

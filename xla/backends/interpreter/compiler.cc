@@ -152,8 +152,8 @@ InterpreterCompiler::Compile(std::unique_ptr<HloModule> hlo_module,
                              const CompileOptions& options) {
   ABSL_ASSIGN_OR_RETURN(
       hlo_module, RunHloPasses(std::move(hlo_module), stream_exec[0], options));
-  ABSL_ASSIGN_OR_RETURN(auto executable,
-                   RunBackend(std::move(hlo_module), stream_exec[0], options));
+  ABSL_ASSIGN_OR_RETURN(auto executable, RunBackend(std::move(hlo_module),
+                                                    stream_exec[0], options));
   std::vector<std::unique_ptr<Executable>> ret;
   ret.push_back(std::move(executable));
   return std::move(ret);

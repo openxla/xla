@@ -16,12 +16,13 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/debugging/leak_check.h"
 #include "absl/log/check.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform_manager.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 
 namespace stream_executor::gpu {
 namespace {

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/support.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <iterator>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/gpu/codegen/triton/support_test_base.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/codegen/triton/triton_wrapper_result.h"
@@ -55,7 +57,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {

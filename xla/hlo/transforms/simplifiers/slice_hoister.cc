@@ -132,7 +132,7 @@ absl::StatusOr<bool> TryHoistingSlice(HloInstruction* instruction,
                              TryHoistSliceThroughTranspose};
   for (auto hoisting_function : hoisting_functions) {
     ABSL_ASSIGN_OR_RETURN(bool changed,
-                     hoisting_function(slice_instruction, computation));
+                          hoisting_function(slice_instruction, computation));
     if (changed) {
       return true;
     }
@@ -163,7 +163,7 @@ absl::StatusOr<bool> HoistSliceOperations(HloComputation* computation) {
         computation->MakeInstructionPostOrder();
     for (HloInstruction* instruction : instructions) {
       ABSL_ASSIGN_OR_RETURN(bool instruction_changed,
-                       TryHoistingSlice(instruction, computation));
+                            TryHoistingSlice(instruction, computation));
       if (instruction_changed) {
         changed_on_last_iteration = true;
         break;
@@ -182,7 +182,7 @@ absl::StatusOr<bool> SliceHoister::RunImpl(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     ABSL_ASSIGN_OR_RETURN(bool changed_computation,
-                     HoistSliceOperations(computation));
+                          HoistSliceOperations(computation));
     changed |= changed_computation;
   }
   return changed;

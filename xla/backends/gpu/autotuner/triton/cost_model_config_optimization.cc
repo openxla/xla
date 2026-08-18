@@ -76,16 +76,17 @@ absl::StatusOr<absl::Duration> EstimateRunTimeWithConfig(
     mlir::MLIRContext* mlir_context) {
   // Save the old backend config to restore later.
   ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile old_backend_config,
-                   context.dot->backend_config<xla::xtile::Tile>());
+                        context.dot->backend_config<xla::xtile::Tile>());
 
   // Set the contracting dimension tile size.
   xla::xtile::Tile tile_config;
   tile_config.add_sizes(config.block_k);
   ABSL_RETURN_IF_ERROR(context.dot->set_backend_config(tile_config));
 
-  ABSL_ASSIGN_OR_RETURN(BlockLevelParameters block_params,
-                   FindBlockLevelParameters(context.dot, config, mlir_context,
-                                            context.device_description));
+  ABSL_ASSIGN_OR_RETURN(
+      BlockLevelParameters block_params,
+      FindBlockLevelParameters(context.dot, config, mlir_context,
+                               context.device_description));
 
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(context.fusion);
 
@@ -403,10 +404,11 @@ absl::StatusOr<std::vector<TritonGemmConfig>> OptimizeConfigsWithCostModel(
     must_keep_original_configs = false;
   } else {
     VLOG(1) << "Cost Model: Using default set";
-    ABSL_ASSIGN_OR_RETURN(detail::OrderedEstimatesAndConfigs base_config_set,
-                     EstimateConfigs(context, optimized_configs, mlir_context,
-                                     use_experimental_tiling,
-                                     enable_same_shape_multi_output_fusion));
+    ABSL_ASSIGN_OR_RETURN(
+        detail::OrderedEstimatesAndConfigs base_config_set,
+        EstimateConfigs(context, optimized_configs, mlir_context,
+                        use_experimental_tiling,
+                        enable_same_shape_multi_output_fusion));
     current_set = std::move(base_config_set);
   }
 
@@ -415,7 +417,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>> OptimizeConfigsWithCostModel(
     VLOG(1) << "Cost Model: Mixing in top " << *options.mixin << " configs";
 
     ABSL_ASSIGN_OR_RETURN(const detail::OrderedEstimatesAndConfigs& all,
-                     get_estimated_all_configs());
+                          get_estimated_all_configs());
 
     detail::OrderedEstimatesAndConfigs top_non_present =
         detail::GetTopEstimatedConfigs(all, *options.mixin, &current_set,

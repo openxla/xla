@@ -546,7 +546,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
                                       const se::dnn::VersionInfo& dnn_version) {
   CHECK_EQ(conv->opcode(), HloOpcode::kConvolution);
   ABSL_ASSIGN_OR_RETURN(HloInstruction * conv_with_kind,
-                   AssignConvKind(conv, cc, dnn_version));
+                        AssignConvKind(conv, cc, dnn_version));
   if (conv_with_kind == nullptr || conv_with_kind == conv ||
       Cast<HloConvolutionInstruction>(conv_with_kind)->convolution_kind() ==
           CONVOLUTION_KIND_UNSET) {
@@ -555,7 +555,8 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
 
   VLOG(1) << "Replacing convolution " << conv->ToString() << " with "
           << conv_with_kind->ToString();
-  ABSL_RETURN_IF_ERROR(conv->parent()->ReplaceInstruction(conv, conv_with_kind));
+  ABSL_RETURN_IF_ERROR(
+      conv->parent()->ReplaceInstruction(conv, conv_with_kind));
   return true;
 }
 

@@ -16,8 +16,8 @@ limitations under the License.
 #include <cassert>
 #include <cstdint>
 
-#include "absl/base/casts.h"
 #include "Eigen/Core"
+#include "absl/base/casts.h"
 #include "third_party/gpus/cuda/include/cuda/atomic"
 #include "third_party/gpus/cuda/include/cuda_fp16.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"

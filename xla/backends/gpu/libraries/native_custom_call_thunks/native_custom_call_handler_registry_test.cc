@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registry.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"

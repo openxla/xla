@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -559,7 +559,7 @@ absl::Status HloCostAnalysis::HandleOutfeed(const HloInstruction* outfeed) {
 absl::Status HloCostAnalysis::HandleMap(const HloInstruction* map) {
   // Compute properties of the mapped function.
   ABSL_ASSIGN_OR_RETURN(const Properties sub_properties,
-                   ProcessSubcomputation(map->to_apply()));
+                        ProcessSubcomputation(map->to_apply()));
 
   // Compute the cost of all elements for this Map operation.
   const int64_t element_count = ShapeUtil::ElementsIn(map->shape());
@@ -575,7 +575,7 @@ absl::Status HloCostAnalysis::HandleReduce(const HloInstruction* reduce) {
   HloComputation* function = reduce->to_apply();
   // Compute the cost of the user function.
   ABSL_ASSIGN_OR_RETURN(const Properties sub_properties,
-                   ProcessSubcomputation(function));
+                        ProcessSubcomputation(function));
 
   // Compute the cost of all elements for this Reduce operation.
   // This counts the number of times the reduction function is applied, so it
@@ -599,7 +599,7 @@ absl::Status HloCostAnalysis::HandleScan(const HloInstruction* scan) {
   HloComputation* function = scan->to_apply();
   // Compute the cost of the user function.
   ABSL_ASSIGN_OR_RETURN(const Properties sub_properties,
-                   ProcessSubcomputation(function));
+                        ProcessSubcomputation(function));
 
   // Compute the cost of all elements for this Scan operation.
   auto input = scan->operand(1);
@@ -617,7 +617,8 @@ absl::Status HloCostAnalysis::HandleReduceWindow(
   const Window& window = reduce_window->window();
   auto function = reduce_window->to_apply();
   // Compute the properties of the reduction function.
-  ABSL_ASSIGN_OR_RETURN(Properties sub_properties, ProcessSubcomputation(function));
+  ABSL_ASSIGN_OR_RETURN(Properties sub_properties,
+                        ProcessSubcomputation(function));
 
   // Compute the cost of all elements for this ReduceWindow operation. For each
   // output element there are window_size - 1 reductions to perform.
@@ -699,9 +700,9 @@ absl::Status HloCostAnalysis::HandleSelectAndScatter(
   // Compute the properties of the select and scatter function.
   // Compute the properties of the reduction function.
   ABSL_ASSIGN_OR_RETURN(Properties select_properties,
-                   ProcessSubcomputation(instruction->select()));
+                        ProcessSubcomputation(instruction->select()));
   ABSL_ASSIGN_OR_RETURN(Properties scatter_properties,
-                   ProcessSubcomputation(instruction->scatter()));
+                        ProcessSubcomputation(instruction->scatter()));
 
   // Compute the cost of all elements for this operation. For each scatter
   // source element there are window_size - 1 select computations to perform and
@@ -1244,7 +1245,7 @@ absl::Status HloCostAnalysis::FusionProcessOutputBytesAccessed(
         ShapeIndex subshape_index(shape_index);
         subshape_index.push_back(i);
         ABSL_ASSIGN_OR_RETURN(float sub_bytes, propagate_output_size_to_parent(
-                                              subshape, subshape_index));
+                                                   subshape, subshape_index));
         bytes_accessed += sub_bytes;
       }
       return bytes_accessed;
@@ -1349,7 +1350,7 @@ absl::Status HloCostAnalysis::HandleFusion(const HloInstruction* fusion) {
 
 absl::Status HloCostAnalysis::HandleCall(const HloInstruction* call) {
   ABSL_ASSIGN_OR_RETURN(current_properties_,
-                   ProcessSubcomputation(call->to_apply()));
+                        ProcessSubcomputation(call->to_apply()));
   current_should_compute_bottleneck_time_ = false;
   return absl::OkStatus();
 }
@@ -1402,10 +1403,10 @@ absl::Status HloCostAnalysis::HandleWhile(const HloInstruction* xla_while) {
   // something that we can statically analyze, we cannot precisely compute the
   // cost of a while node. For now compute the cost of a single iteration.
   ABSL_ASSIGN_OR_RETURN(const Properties body_properties,
-                   ProcessSubcomputation(xla_while->while_body()));
+                        ProcessSubcomputation(xla_while->while_body()));
 
   ABSL_ASSIGN_OR_RETURN(const Properties condition_properties,
-                   ProcessSubcomputation(xla_while->while_condition()));
+                        ProcessSubcomputation(xla_while->while_condition()));
 
   current_properties_ = Properties();
   body_properties.ForEach([&](absl::string_view key, float val) {
@@ -1423,12 +1424,14 @@ absl::Status HloCostAnalysis::HandleConditional(
     const HloInstruction* conditional) {
   // Compute the cost of the branch computations and take the maximum from those
   // for each property.
-  ABSL_ASSIGN_OR_RETURN(const Properties branch0_computation_properties,
-                   ProcessSubcomputation(conditional->branch_computation(0)));
+  ABSL_ASSIGN_OR_RETURN(
+      const Properties branch0_computation_properties,
+      ProcessSubcomputation(conditional->branch_computation(0)));
   current_properties_ = branch0_computation_properties;
   for (int j = 1; j < conditional->branch_count(); ++j) {
-    ABSL_ASSIGN_OR_RETURN(const Properties branch_computation_properties,
-                     ProcessSubcomputation(conditional->branch_computation(j)));
+    ABSL_ASSIGN_OR_RETURN(
+        const Properties branch_computation_properties,
+        ProcessSubcomputation(conditional->branch_computation(j)));
     branch_computation_properties.ForEach(
         [&](absl::string_view key, float val) {
           auto& current_property = current_properties_[key];
@@ -1478,7 +1481,7 @@ absl::Status HloCostAnalysis::HandleScatter(const HloInstruction* hlo) {
   const int64_t element_count =
       ShapeUtil::ElementsIn(scatter->scatter_updates()[0]->shape());
   ABSL_ASSIGN_OR_RETURN(const Properties sub_properties,
-                   ProcessSubcomputation(scatter->to_apply()));
+                        ProcessSubcomputation(scatter->to_apply()));
   sub_properties.ForEach([&](absl::string_view key, float val) {
     if (KeyToCopyFromSubcomputation(key)) {
       current_properties_[key] = val * element_count;

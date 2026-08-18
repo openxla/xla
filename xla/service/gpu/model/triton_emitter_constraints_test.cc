@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -346,8 +347,8 @@ class VerifyTritonConstraintsTest : public HloHardwareIndependentTestBase {
         experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_));
     ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(tile_sizes));
     ABSL_ASSIGN_OR_RETURN(experimental::TiledHloComputation tiled_comp,
-                     experimental::TiledHloComputation::Tile(
-                         *fusion_adaptor, std::move(tiling_space)));
+                          experimental::TiledHloComputation::Tile(
+                              *fusion_adaptor, std::move(tiling_space)));
     tiled_comp.Simplify();
     tiled_comp.SortInstructionsPostOrder();
     Decision decision =

@@ -539,8 +539,8 @@ class OperandsMustBeTheSameLayoutAssignment : public LayoutAssignment {
         continue;
       }
       ABSL_RETURN_IF_ERROR(SetArrayOperandLayout(buffer_constraint.layout(),
-                                            instruction, operand_no,
-                                            /*mandatory=*/true));
+                                                 instruction, operand_no,
+                                                 /*mandatory=*/true));
     }
     return PropagateBufferConstraintToUses(buffer_constraint, constraints);
   }

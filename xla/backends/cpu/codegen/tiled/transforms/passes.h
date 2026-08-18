@@ -18,13 +18,13 @@ limitations under the License.
 
 #include <memory>
 
-#include "mlir/Dialect/Arith/IR/Arith.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Arith/IR/Arith.h"                  // IWYU pragma: keep
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"  // IWYU pragma: keep
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
-#include "mlir/Dialect/Math/IR/Math.h"  // IWYU pragma: keep
-#include "mlir/Dialect/SCF/IR/SCF.h"  // IWYU pragma: keep
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // IWYU pragma: keep
-#include "mlir/Dialect/Vector/IR/VectorOps.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Func/IR/FuncOps.h"                 // IWYU pragma: keep
+#include "mlir/Dialect/Math/IR/Math.h"                    // IWYU pragma: keep
+#include "mlir/Dialect/SCF/IR/SCF.h"                      // IWYU pragma: keep
+#include "mlir/Dialect/Tensor/IR/Tensor.h"                // IWYU pragma: keep
+#include "mlir/Dialect/Vector/IR/VectorOps.h"             // IWYU pragma: keep
 #include "mlir/Pass/Pass.h"
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"  // IWYU pragma: keep
 #include "xla/codegen/xtile/ir/xtile_dialect.h"  // IWYU pragma: keep

@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/compiler.h"
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 

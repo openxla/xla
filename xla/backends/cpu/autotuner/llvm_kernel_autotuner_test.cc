@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/llvm_kernel_autotuner.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/codegen/emitters/ir/xla_ops.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"

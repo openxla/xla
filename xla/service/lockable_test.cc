@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/lockable.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/synchronization/blocking_counter.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/test.h"

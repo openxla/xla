@@ -42,10 +42,11 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
+#include "re2/re2.h"
 #include "shardy/common/file_utils.h"
 #include "shardy/dialect/sdy/transforms/common/propagation_options.h"
 #include "shardy/dialect/sdy/transforms/propagation/passes.h"
-#include "re2/re2.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -75,7 +76,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace sdy {
@@ -139,7 +139,7 @@ absl::Status createFromProtoAndReplaceComputations(
   CHECK_OK(HloDCE().Run(module));
 
   ABSL_ASSIGN_OR_RETURN(StackFrames stack_frames,
-                   StackFrames::FromProto(proto.stack_frame_index()));
+                        StackFrames::FromProto(proto.stack_frame_index()));
   module->set_stack_frames(std::move(stack_frames));
   return absl::OkStatus();
 }
@@ -477,8 +477,9 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
   // If propagation is enabled, we don't need to erase the inlineable attribute
   // for manual computations, since StablehloExportPipeline can handle it.
   if (!runSdyShardingPropagation) {
-    ABSL_ASSIGN_OR_RETURN(bool changed,
-                     eraseInlineableAttrForShardyManualComputations(hloModule));
+    ABSL_ASSIGN_OR_RETURN(
+        bool changed,
+        eraseInlineableAttrForShardyManualComputations(hloModule));
     if (!useTupleArgs) {
       // Nothing more to do.
       return changed;
@@ -495,8 +496,9 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
   // HLO -> StableHLO
   auto mlirContext = std::make_unique<mlir::MLIRContext>();
   loadAllRequiredDialects(mlirContext.get());
-  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlirModule,
-                   xla::ConvertHloToStablehlo(*mlirContext.get(), hloModule));
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> mlirModule,
+      xla::ConvertHloToStablehlo(*mlirContext.get(), hloModule));
 
   // Store the entry computation layout, input-output alias config, and buffer
   // donors, which will be restored in the end, since MLIR does not preserve
@@ -532,8 +534,8 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
 
   // StableHlo -> HLO
   HloProto hloProto;
-  ABSL_RETURN_IF_ERROR(ConvertStablehloWithManyArgsToHloProto(*mlirModule, &hloProto,
-                                                         useTupleArgs));
+  ABSL_RETURN_IF_ERROR(ConvertStablehloWithManyArgsToHloProto(
+      *mlirModule, &hloProto, useTupleArgs));
   ABSL_RETURN_IF_ERROR(
       createFromProtoAndReplaceComputations(hloModule, hloProto.hlo_module()));
 
@@ -549,10 +551,11 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
       std::move(flattenedInputOutputAliasConfig));
   hloModule->set_buffer_donor_config(std::move(flattenedBufferDonorsConfig));
 
-  ABSL_RETURN_IF_ERROR(hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-      hloModule,
-      hloModule->config().allow_spmd_sharding_propagation_to_output(),
-      hloModule->config().allow_spmd_sharding_propagation_to_parameters()));
+  ABSL_RETURN_IF_ERROR(
+      hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
+          hloModule,
+          hloModule->config().allow_spmd_sharding_propagation_to_output(),
+          hloModule->config().allow_spmd_sharding_propagation_to_parameters()));
 
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.

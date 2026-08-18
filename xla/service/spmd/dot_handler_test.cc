@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -70,7 +71,7 @@ class DotHandlerTest
     config.set_debug_options(debug_options);
 
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
 
     ShardingFormatPicker format_picker(GetParam());
     ABSL_RETURN_IF_ERROR(format_picker.Run(module.get()).status());

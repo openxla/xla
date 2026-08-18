@@ -39,6 +39,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
@@ -52,9 +55,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_common.h"
 #include "xla/tsl/util/env_var.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -101,8 +101,9 @@ absl::StatusOr<bool> StreamIsCapturing(CUstream stream) {
   VLOG(2) << "Checking if stream " << stream << " is capturing";
 
   CUstreamCaptureStatus status;
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuStreamIsCapturing(stream, &status),
-                                 "Failed to check stream capturing status"));
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuStreamIsCapturing(stream, &status),
+                     "Failed to check stream capturing status"));
 
   return status == CU_STREAM_CAPTURE_STATUS_ACTIVE;
 }
@@ -217,7 +218,7 @@ CudaStream::CaptureHandle::BeginCapture(CudaStream* stream, CUgraph graph,
   }
   CudaStream* capture_stream = stream->capture_stream_->get();
   ABSL_ASSIGN_OR_RETURN(bool is_capturing,
-                   StreamIsCapturing(capture_stream->stream_handle_));
+                        StreamIsCapturing(capture_stream->stream_handle_));
   if (is_capturing) {
     return absl::FailedPreconditionError("Capture stream is already capturing");
   }
@@ -287,11 +288,12 @@ absl::StatusOr<std::unique_ptr<CudaStream>> CudaStream::Create(
     return executor->GetGpuStreamPriority(
         std::get<StreamPriority>(priority.value_or(StreamPriority::Default)));
   }();
-  ABSL_ASSIGN_OR_RETURN(auto stream_handle, CreateStream(executor, stream_priority));
+  ABSL_ASSIGN_OR_RETURN(auto stream_handle,
+                        CreateStream(executor, stream_priority));
 
   ABSL_ASSIGN_OR_RETURN(auto completed_event,
-                   CudaEvent::Create(executor,
-                                     /*allow_timing=*/false));
+                        CudaEvent::Create(executor,
+                                          /*allow_timing=*/false));
 
   return std::unique_ptr<CudaStream>(new CudaStream(
       executor, std::move(completed_event), priority, stream_handle, type));

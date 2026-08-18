@@ -56,7 +56,7 @@ absl::StatusOr<EstimateRunTimeData> MaybeGetGemmCostModelForGemmTritonFusion(
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   fusion->backend_config<GpuBackendConfig>());
+                        fusion->backend_config<GpuBackendConfig>());
   if (config.fusion_backend_config().kind() != kTritonNestedGemmFusionKind) {
     return absl::FailedPreconditionError("Not a Triton GeMM fusion.");
   }
@@ -105,7 +105,7 @@ absl::Status RecordGemmCostModelEstimateIfApplicable(
   VLOG(1) << "Adding GeMM fusion cost model estimate: " << cost.DebugString();
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   *gpu_config.add_reification_cost() = cost;
   return instruction.set_backend_config(gpu_config);
 }
@@ -121,7 +121,7 @@ absl::StatusOr<EstimateRunTimeData> MaybeGetIndexingCostModelForFusion(
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   fusion->backend_config<GpuBackendConfig>());
+                        fusion->backend_config<GpuBackendConfig>());
 
   if (config.fusion_backend_config().has_block_level_fusion_config()) {
     const BlockLevelParameters block_params =
@@ -148,7 +148,7 @@ absl::Status RecordIndexingPerformanceModelEstimateIfApplicable(
           << cost.DebugString();
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   *gpu_config.add_reification_cost() = cost;
   return instruction.set_backend_config(gpu_config);
 }

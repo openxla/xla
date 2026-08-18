@@ -17,8 +17,8 @@ limitations under the License.
 #define XLA_TSL_PLATFORM_CLOUD_GCS_THROTTLE_H_
 
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/env.h"
 #include "tsl/platform/thread_annotations.h"
+#include "xla/tsl/platform/env.h"
 
 namespace tsl {
 

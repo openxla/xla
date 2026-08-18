@@ -568,7 +568,7 @@ absl::StatusOr<HlosAndRequirements> FuseDotOperand(
 ) {
   // Direct dot inputs have well defined dimension orders.
   ABSL_ASSIGN_OR_RETURN(const FusionContext context,
-                   FusionContext::FromDotOperand(dot, operand_index));
+                        FusionContext::FromDotOperand(dot, operand_index));
   HloInstruction& operand = *dot.mutable_operand(operand_index);
   return FuseTowardOperands(operand, context.dim_orders().at(&operand),
                             TritonFusionAnalysis::kMaxParameterPerDotOperand,
@@ -918,8 +918,9 @@ absl::StatusOr<HloInstruction*> FusionSearchSpace::HoistBitcast(
       if (!ShapeUtil::IsEffectiveScalar(constant->shape())) {
         return instr;
       }
-      ABSL_ASSIGN_OR_RETURN(Literal new_literal, constant->literal().Reshape(
-                                                instr->shape().dimensions()));
+      ABSL_ASSIGN_OR_RETURN(
+          Literal new_literal,
+          constant->literal().Reshape(instr->shape().dimensions()));
       new_instr = instr->parent()->AddInstruction(
           HloInstruction::CreateConstant(std::move(new_literal)));
       break;
@@ -980,7 +981,8 @@ absl::StatusOr<HloInstruction*> FusionSearchSpace::HoistBitcast(
   }
 
   ABSL_RETURN_IF_ERROR(instr->ReplaceAllUsesWith(new_instr));
-  ABSL_RETURN_IF_ERROR(instr->parent()->RemoveInstructionAndUnusedOperands(instr));
+  ABSL_RETURN_IF_ERROR(
+      instr->parent()->RemoveInstructionAndUnusedOperands(instr));
   return new_instr;
 }
 
@@ -996,7 +998,8 @@ absl::StatusOr<HloInstruction*> FusionSearchSpace::SinkBitcast(
   if (instr->IsRoot()) {
     instr->parent()->set_root_instruction(operand,
                                           /*accept_different_shape=*/true);
-    ABSL_RETURN_IF_ERROR(instr->parent()->RemoveInstructionAndUnusedOperands(instr));
+    ABSL_RETURN_IF_ERROR(
+        instr->parent()->RemoveInstructionAndUnusedOperands(instr));
     return nullptr;
   }
   // We only build fusions where epilogues have single users. This could be
@@ -1092,7 +1095,8 @@ absl::StatusOr<HloInstruction*> FusionSearchSpace::SinkBitcast(
     original_to_fused_[original_op] = new_instr;
   }
   ABSL_RETURN_IF_ERROR(user->ReplaceAllUsesWith(new_bitcast));
-  ABSL_RETURN_IF_ERROR(instr->parent()->RemoveInstructionAndUnusedOperands(user));
+  ABSL_RETURN_IF_ERROR(
+      instr->parent()->RemoveInstructionAndUnusedOperands(user));
   if (new_bitcast->IsRoot()) {
     new_bitcast->parent()->set_root_instruction(
         new_instr, /*accept_different_shape=*/true);
@@ -1122,7 +1126,7 @@ absl::Status RemoveEdgeBitcasts(HloInstruction* fusion,
       for (HloInstruction* user : users) {
         if (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(user)) {
           ABSL_ASSIGN_OR_RETURN(HloInstruction * hoisted,
-                           search_space.HoistBitcast(user));
+                                search_space.HoistBitcast(user));
           if (hoisted != user) {
             param_changed = true;
             break;  // Re-evaluate users of this parameter
@@ -1136,7 +1140,8 @@ absl::Status RemoveEdgeBitcasts(HloInstruction* fusion,
   while (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(
       computation->root_instruction())) {
     HloInstruction* root = computation->root_instruction();
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * sunk, search_space.SinkBitcast(root));
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * sunk,
+                          search_space.SinkBitcast(root));
     if (sunk == root) {
       break;
     }
@@ -1416,9 +1421,10 @@ FusionSearchSpace::GetOrCreateOriginalInstruction(
   // corresponding original instruction. Find their parent and add the bitcast
   // to the original module.
   if (fusion_operand->opcode() == HloOpcode::kBitcast) {
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * original_operand,
-                     GetOrCreateOriginalInstruction(
-                         fusion_operand->mutable_operand(0), fusion_param));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * original_operand,
+        GetOrCreateOriginalInstruction(fusion_operand->mutable_operand(0),
+                                       fusion_param));
     HloInstruction* bitcast = original_operand->parent()->AddInstruction(
         HloInstruction::CreateBitcast(fusion_param->shape(), original_operand));
     fused_to_original_[fusion_operand] = bitcast;
@@ -1506,8 +1512,8 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
     HloInstruction* fusion_param =
         fusion_computation->parameter_instruction(index);
     ABSL_ASSIGN_OR_RETURN(HloInstruction * original_instruction,
-                     fusion_search_space.GetOrCreateOriginalInstruction(
-                         operand, fusion_param));
+                          fusion_search_space.GetOrCreateOriginalInstruction(
+                              operand, fusion_param));
     fusion_inputs.push_back(original_instruction);
   }
 
@@ -1553,12 +1559,12 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
   std::vector<HlosAndRequirements> hlos_and_reqs;
   hlos_and_reqs.reserve(dot.operand_count());
   ABSL_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
-                   FuseDotOperand(dot, /*operand_index=*/0, gpu_version,
-                                  builder, fusion_inputs));
+                        FuseDotOperand(dot, /*operand_index=*/0, gpu_version,
+                                       builder, fusion_inputs));
   hlos_and_reqs.push_back(lhs_hlos_and_reqs);
   ABSL_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
-                   FuseDotOperand(dot, /*operand_index=*/1, gpu_version,
-                                  builder, fusion_inputs));
+                        FuseDotOperand(dot, /*operand_index=*/1, gpu_version,
+                                       builder, fusion_inputs));
   hlos_and_reqs.push_back(rhs_hlos_and_reqs);
   HloInstruction& fused_dot = FuseDot(dot, hlos_and_reqs, builder);
   // For now the RHS doesn't support splits, so it also doesn't impose any
@@ -1642,8 +1648,8 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             .debug_options()
             .xla_gpu_gemm_rewrite_size_threshold();
     ABSL_ASSIGN_OR_RETURN(bool is_matmul_tiny,
-                     IsMatrixMultiplicationTooSmallForRewriting(
-                         *dot, gemm_rewrite_size_threshold));
+                          IsMatrixMultiplicationTooSmallForRewriting(
+                              *dot, gemm_rewrite_size_threshold));
     if (is_matmul_tiny && IsDotSupportedByClassicalEmitters(*dot)) {
       return absl::OkStatus();
     }
@@ -1676,7 +1682,7 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     dot_fusion->GetModule()->SetAndUniquifyInstrName(dot_fusion, fusion_name);
 
     ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                     dot_fusion->backend_config<GpuBackendConfig>());
+                          dot_fusion->backend_config<GpuBackendConfig>());
     FusionBackendConfig& backend_config =
         *gpu_config.mutable_fusion_backend_config();
     backend_config.set_kind(kTritonGemmFusionKind);
@@ -1711,20 +1717,20 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     std::vector<HlosAndRequirements> hlos_and_reqs;
     hlos_and_reqs.reserve(scaled_dot->operand_count());
     ABSL_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
-                     FuseDotOperand(*scaled_dot, /*operand_index=*/0,
-                                    gpu_version_, builder, fusion_inputs));
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/0,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(lhs_hlos_and_reqs);
     ABSL_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
-                     FuseDotOperand(*scaled_dot, /*operand_index=*/1,
-                                    gpu_version_, builder, fusion_inputs));
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/1,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(rhs_hlos_and_reqs);
     ABSL_ASSIGN_OR_RETURN(HlosAndRequirements lhs_scale_hlos_and_reqs,
-                     FuseDotOperand(*scaled_dot, /*operand_index=*/2,
-                                    gpu_version_, builder, fusion_inputs));
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/2,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(lhs_scale_hlos_and_reqs);
     ABSL_ASSIGN_OR_RETURN(HlosAndRequirements rhs_scale_hlos_and_reqs,
-                     FuseDotOperand(*scaled_dot, /*operand_index=*/3,
-                                    gpu_version_, builder, fusion_inputs));
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/3,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(rhs_scale_hlos_and_reqs);
 
     HloInstruction& fused_dot = FuseDot(*scaled_dot, hlos_and_reqs, builder);
@@ -1743,7 +1749,7 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             HloInstruction::FusionKind::kCustom, fusion_inputs, computation));
 
     ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                     fusion->backend_config<GpuBackendConfig>());
+                          fusion->backend_config<GpuBackendConfig>());
     FusionBackendConfig& backend_config =
         *gpu_config.mutable_fusion_backend_config();
     backend_config.set_kind(kTritonGemmFusionKind);
@@ -1770,13 +1776,14 @@ absl::StatusOr<bool> RunOnComputation(
 absl::StatusOr<bool> GemmFusion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_RETURN_IF_ERROR(EnsureTritonSupportsComputeCapability(compute_capability_));
+  ABSL_RETURN_IF_ERROR(
+      EnsureTritonSupportsComputeCapability(compute_capability_));
 
   bool changed = false;
   for (HloComputation* computation :
        GetFusibleComputations(*module, execution_threads)) {
     ABSL_ASSIGN_OR_RETURN(bool result,
-                     RunOnComputation(computation, compute_capability_));
+                          RunOnComputation(computation, compute_capability_));
     changed |= result;
   }
   return changed;

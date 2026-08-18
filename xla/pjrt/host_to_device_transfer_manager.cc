@@ -39,6 +39,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/common_pjrt_client.h"
@@ -51,10 +55,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
 
 namespace xla {
 
@@ -179,8 +179,9 @@ class CommonAsyncHostToDeviceTransferManager
                 absl::StrCat("AsyncHostToDeviceTransferManager Op:",
                              debug_info.value_or(""))));
       } else {
-        ABSL_ASSIGN_OR_RETURN(std::tie(definition_event_promise, definition_event),
-                         client->CreateLinkedEventPromise(memory_space, ""));
+        ABSL_ASSIGN_OR_RETURN(
+            std::tie(definition_event_promise, definition_event),
+            client->CreateLinkedEventPromise(memory_space, ""));
       }
       definition_events.push_back(std::move(definition_event_promise));
 
@@ -404,9 +405,10 @@ class CommonAsyncHostToDeviceTransferManager
       --remaining_buffer_count_;
     };
 
-    ABSL_ASSIGN_OR_RETURN(auto h2d_transfer_event,
-                     undispatched_buffer_ref->CopyRawHostToDeviceAndReturnEvent(
-                         data, offset, transfer_size));
+    ABSL_ASSIGN_OR_RETURN(
+        auto h2d_transfer_event,
+        undispatched_buffer_ref->CopyRawHostToDeviceAndReturnEvent(
+            data, offset, transfer_size));
     if (client_->event_tracking_enabled()) {
       // Acquire when logging, for the sake of definition_events_.
       absl::MutexLock l(mu_);

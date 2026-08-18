@@ -332,9 +332,9 @@ auto KernelApiIrBuilder::EmitKernelPrototype(
     absl::string_view generating_emitter_name, absl::string_view suffix)
     -> absl::StatusOr<KernelPrototype> {
   ABSL_ASSIGN_OR_RETURN(std::vector<KernelParameter> arguments,
-                   GetKernelArgumentsParameters(instr, buffer_assignment));
+                        GetKernelArgumentsParameters(instr, buffer_assignment));
   ABSL_ASSIGN_OR_RETURN(std::vector<KernelParameter> results,
-                   GetKernelResultsParameters(instr, buffer_assignment));
+                        GetKernelResultsParameters(instr, buffer_assignment));
 
   ABSL_ASSIGN_OR_RETURN(std::string name, GetKernelName(instr, suffix));
 

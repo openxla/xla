@@ -14,27 +14,28 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/tsl/profiler/rpc/client/remote_profiler_session_manager.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/profiler/rpc/client/profiler_client_test_util.h"
 #include "xla/tsl/profiler/rpc/profiler_server.h"
 #include "xla/tsl/profiler/utils/file_system_utils.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
 
 namespace tsl {
 namespace profiler {

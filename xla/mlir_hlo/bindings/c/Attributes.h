@@ -25,13 +25,13 @@ extern "C" {
 // The first three pairs of arguments are interpreted as arrays.
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloScatterDimensionNumbersGet(
     MlirContext ctx,                                                  //
-    intptr_t nUpdateWindowDims, const int64_t *updateWindowDims,      //
-    intptr_t nInsertedWindowDims, const int64_t *insertedWindowDims,  //
-    intptr_t nInputBatchingDims, const int64_t *inputBatchingDims,    //
+    intptr_t nUpdateWindowDims, const int64_t* updateWindowDims,      //
+    intptr_t nInsertedWindowDims, const int64_t* insertedWindowDims,  //
+    intptr_t nInputBatchingDims, const int64_t* inputBatchingDims,    //
     intptr_t nScatterIndicesBatchingDims,                             //
-    const int64_t *scatterIndicesBatchingDims,                        //
+    const int64_t* scatterIndicesBatchingDims,                        //
     intptr_t nScatteredDimsToOperandDims,                             //
-    const int64_t *scatteredDimsToOperandDims,                        //
+    const int64_t* scatteredDimsToOperandDims,                        //
     int64_t indexVectorDim);
 
 // Returns true if the given attribute is a ScatterDimenionNumbers attribute.
@@ -73,12 +73,12 @@ mlirMhloDimensionNumbersGetIndexVectorDim(MlirAttribute attr);
 // first three pairs of arguments are interpreted as arrays.
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloGatherDimensionNumbersGet(
     MlirContext ctx,                                                    //
-    intptr_t nOffsetDims, const int64_t *offsetDims,                    //
-    intptr_t nCollapsedSliceDims, const int64_t *collapsedSliceDims,    //
-    intptr_t nOperandBatchingDims, const int64_t *operandBatchingDims,  //
+    intptr_t nOffsetDims, const int64_t* offsetDims,                    //
+    intptr_t nCollapsedSliceDims, const int64_t* collapsedSliceDims,    //
+    intptr_t nOperandBatchingDims, const int64_t* operandBatchingDims,  //
     intptr_t nStartIndicesBatchingDims,
-    const int64_t *startIndicesBatchingDims,                //
-    intptr_t nStartIndexMap, const int64_t *startIndexMap,  //
+    const int64_t* startIndicesBatchingDims,                //
+    intptr_t nStartIndexMap, const int64_t* startIndexMap,  //
     int64_t indexVectorDim);
 
 // Returns true if the given attribute is a GatherDimensionNumbers attribute.
@@ -119,12 +119,12 @@ mlirMhloGatherDimensionNumbersGetIndexVectorDim(MlirAttribute attr);
 // element of the array.
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloDotDimensionNumbersGet(
     MlirContext ctx,                                                        //
-    intptr_t nLhsBatchingDimensions, const int64_t *lhsBatchingDimensions,  //
-    intptr_t nRhsBatchingDimensions, const int64_t *rhsBatchingDimensions,  //
+    intptr_t nLhsBatchingDimensions, const int64_t* lhsBatchingDimensions,  //
+    intptr_t nRhsBatchingDimensions, const int64_t* rhsBatchingDimensions,  //
     intptr_t nLhsContractingDimensions,                                     //
-    const int64_t *lhsContractingDimensions,                                //
+    const int64_t* lhsContractingDimensions,                                //
     intptr_t nRhsContractingDimensions,                                     //
-    const int64_t *rhsContractingDimensions);
+    const int64_t* rhsContractingDimensions);
 
 // Returns true of the given attribute is a DotDimensionNumbers attribute.
 MLIR_CAPI_EXPORTED bool mlirMhloAttributeIsADotDimensionNumbers(
@@ -157,11 +157,11 @@ mlirMhloDotDimensionNumbersGetRhsContractingDimensionsElem(MlirAttribute attr,
 // arrays.
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloConvDimensionNumbersGet(
     MlirContext ctx, int64_t inputBatchDimension, int64_t inputFeatureDimension,
-    intptr_t nInputSpatialDimensions, const int64_t *inputSpatialDimensions,
+    intptr_t nInputSpatialDimensions, const int64_t* inputSpatialDimensions,
     int64_t kernelInputFeatureDimension, int64_t kernelOutputFeatureDimension,
-    intptr_t nKernelSpatialDimensions, const int64_t *kernelSpatialDimensions,
+    intptr_t nKernelSpatialDimensions, const int64_t* kernelSpatialDimensions,
     int64_t outputBatchDimension, int64_t outputFeatureDimension,
-    intptr_t nOutputSpatialDimensions, const int64_t *outputSpatialDimensions);
+    intptr_t nOutputSpatialDimensions, const int64_t* outputSpatialDimensions);
 
 // Returns true of the given attribute is a ConvDimensionNumbers attribute.
 MLIR_CAPI_EXPORTED bool mlirMhloAttributeIsAConvDimensionNumbers(
@@ -202,8 +202,8 @@ mlirMhloConvDimensionNumbersGetOutputSpatialDimensionsElem(MlirAttribute attr,
 // arrays.
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloOutputOperandAliasGet(
     MlirContext ctx, intptr_t nOutputTupleIndices,
-    const int64_t *outputTupleIndices, int64_t operandIndex,
-    intptr_t nOperandTupleIndices, const int64_t *operandTupleIndices);
+    const int64_t* outputTupleIndices, int64_t operandIndex,
+    intptr_t nOperandTupleIndices, const int64_t* operandTupleIndices);
 
 // Returns true of the given attribute is a OutputOperandAlias attribute.
 MLIR_CAPI_EXPORTED bool mlirMhloAttributeIsAOutputOperandAlias(
@@ -398,7 +398,7 @@ MLIR_CAPI_EXPORTED int64_t mlirMhloChannelHandleGetType(MlirAttribute attr);
 // Creates a new TypeExtensions attribute with the given 'bounds' which
 // is interpreted as an array.
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloTypeExtensionsGet(
-    MlirContext ctx, intptr_t nBounds, const int64_t *bounds);
+    MlirContext ctx, intptr_t nBounds, const int64_t* bounds);
 
 // Returns true if the given attribute is a TypeExtensions attribute.
 MLIR_CAPI_EXPORTED bool mlirMhloAttributeIsTypeExtensions(MlirAttribute attr);

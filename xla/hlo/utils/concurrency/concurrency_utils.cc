@@ -21,10 +21,10 @@ limitations under the License.
 
 #include "absl/base/no_destructor.h"
 #include "absl/strings/numbers.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla::concurrency {
 

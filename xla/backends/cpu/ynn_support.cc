@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <tuple>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
@@ -42,6 +41,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 
@@ -399,11 +399,12 @@ absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo) {
   }
 
   // Check shapes.
-  ABSL_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
-                                                   rhs_shape, out_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      DotShape dot_shape,
+      GetDotShape(dot_dimensions, lhs_shape, rhs_shape, out_shape));
 
   ABSL_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
-                   GetDotCanonicalDims(dot_dimensions, dot_shape));
+                        GetDotCanonicalDims(dot_dimensions, dot_shape));
 
   if (dot_canonical_dims.m == 1 || dot_canonical_dims.n == 1) {
     // TODO(b/430079105): YNNPACK does not handle vectors in dots. We could

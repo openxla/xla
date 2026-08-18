@@ -141,9 +141,10 @@ absl::StatusOr<ThunkProto> CollectiveBroadcastThunk::ToProto() const {
 absl::Status CollectiveBroadcastThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.operand_element_type));
   CollectiveBroadcastMetadata* cb_metadata = nullptr;
   {
     absl::MutexLock lock(mutex_);
@@ -161,9 +162,10 @@ absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
   if (has_dynamic_root && cb_metadata) {
     DeviceBufferPair& roots_device_buffer = buffers.back();
     CHECK(cb_metadata->bcast_roots != nullptr);
-    ABSL_RETURN_IF_ERROR(stream.Memcpy(cb_metadata->bcast_roots->address().opaque(),
-                                  roots_device_buffer.source_buffer,
-                                  roots_device_buffer.source_buffer.size()));
+    ABSL_RETURN_IF_ERROR(
+        stream.Memcpy(cb_metadata->bcast_roots->address().opaque(),
+                      roots_device_buffer.source_buffer,
+                      roots_device_buffer.source_buffer.size()));
     // Wait for the copies to complete.
     if (absl::Status blocked = stream.BlockHostUntilDone(); !blocked.ok()) {
       return absl::InternalError(

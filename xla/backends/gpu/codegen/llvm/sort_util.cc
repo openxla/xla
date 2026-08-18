@@ -188,12 +188,13 @@ absl::Status EmitCompareLoopBody(
           values_to_compare_types.reserve(num_values * 2);
           for (int i = 0; i < num_values; ++i) {
             ABSL_ASSIGN_OR_RETURN(llvm::Value * address,
-                             element_address(i, compare_keys_index));
+                                  element_address(i, compare_keys_index));
             values_to_compare.push_back(address);
             values_to_compare_types.push_back(
                 element_address_pointee_type(i, compare_keys_index));
 
-            ABSL_ASSIGN_OR_RETURN(address, element_address(i, current_keys_index));
+            ABSL_ASSIGN_OR_RETURN(address,
+                                  element_address(i, current_keys_index));
             values_to_compare.push_back(address);
             values_to_compare_types.push_back(
                 element_address_pointee_type(i, current_keys_index));
@@ -269,8 +270,8 @@ absl::Status EmitTiledCompareLoop(
   thread_id = b->CreateIntCast(thread_id, tiled_keys_index.GetType(),
                                /*isSigned=*/true, "thread.id.x");
 
-  auto copy_loop_body = [&](std::function<absl::Status(
-                                llvm::Value * cache_index, llvm::Value * index)>
+  auto copy_loop_body = [&](std::function<absl::Status(llvm::Value* cache_index,
+                                                       llvm::Value* index)>
                                 read_or_write) -> absl::Status {
     auto unroll = tiled_keys_index.GetConstantWithIndexType(unroll_factor);
     auto base_keys_index =
@@ -305,15 +306,15 @@ absl::Status EmitTiledCompareLoop(
   std::vector<llvm::Value*> keys_multi_index = tiled_keys_index.multidim();
   for (int64_t i = 0; i < params.size(); ++i) {
     ABSL_RETURN_IF_ERROR(copy_loop_body([&](llvm::Value* cache_index,
-                                       llvm::Value* index) {
+                                            llvm::Value* index) {
       keys_multi_index[dimension_to_sort] = index;
       IrArray::Index keys_index(keys_multi_index, params[i].GetShape(),
                                 tiled_keys_index.GetType());
       llvm::Value* value;
       if (emit_iota_operands &&
           HloPredicateIsOp<HloOpcode::kIota>(sort->operand(i))) {
-        ABSL_ASSIGN_OR_RETURN(value,
-                         EmitIota(sort->operand(i), keys_index, module, b));
+        ABSL_ASSIGN_OR_RETURN(
+            value, EmitIota(sort->operand(i), keys_index, module, b));
       } else {
         value = params[i].EmitReadArrayElement(keys_index, b);
       }
@@ -406,21 +407,21 @@ absl::Status EmitTiledCompareLoop(
 
   // Copy the operand tiles back from shared memory to the operand buffers.
   for (int64_t i = 0; i < params.size(); ++i) {
-    ABSL_RETURN_IF_ERROR(copy_loop_body([&](llvm::Value* cache_index,
-                                       llvm::Value* index) {
-      keys_multi_index[dimension_to_sort] = index;
-      IrArray::Index keys_index(keys_multi_index, params[i].GetShape(),
-                                tiled_keys_index.GetType());
-      auto gep = b->CreateGEP(
-          param_shmem_buffers[i]->getValueType(), param_shmem_buffers[i],
-          {tiled_keys_index.GetConstantWithIndexType(0), cache_index});
-      auto gep_type = llvm::GetElementPtrInst::getIndexedType(
-          param_shmem_buffers[i]->getValueType(),
-          {tiled_keys_index.GetConstantWithIndexType(0), cache_index});
-      auto value = b->CreateLoad(gep_type, gep);
-      params[i].EmitWriteArrayElement(keys_index, value, b);
-      return absl::OkStatus();
-    }));
+    ABSL_RETURN_IF_ERROR(
+        copy_loop_body([&](llvm::Value* cache_index, llvm::Value* index) {
+          keys_multi_index[dimension_to_sort] = index;
+          IrArray::Index keys_index(keys_multi_index, params[i].GetShape(),
+                                    tiled_keys_index.GetType());
+          auto gep = b->CreateGEP(
+              param_shmem_buffers[i]->getValueType(), param_shmem_buffers[i],
+              {tiled_keys_index.GetConstantWithIndexType(0), cache_index});
+          auto gep_type = llvm::GetElementPtrInst::getIndexedType(
+              param_shmem_buffers[i]->getValueType(),
+              {tiled_keys_index.GetConstantWithIndexType(0), cache_index});
+          auto value = b->CreateLoad(gep_type, gep);
+          params[i].EmitWriteArrayElement(keys_index, value, b);
+          return absl::OkStatus();
+        }));
   }
   // We should normally synchronize here to make sure all writes have happened.
   // However the very next thing each thread does is reading `unroll_factor`

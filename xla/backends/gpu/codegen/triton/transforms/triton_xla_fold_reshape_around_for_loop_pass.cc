@@ -25,8 +25,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/WalkPatternRewriteDriver.h"
-#include "xla/backends/gpu/codegen/triton/transforms/passes.h"  // IWYU pragma: keep
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/backends/gpu/codegen/triton/transforms/passes.h"  // IWYU pragma: keep
 
 namespace mlir::triton::xla {
 

@@ -522,7 +522,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (!comparison_type_str.empty()) {
         // If a comparison type is specified, it *must* be valid.
         ABSL_ASSIGN_OR_RETURN(auto comparison_type,
-                         StringToComparisonType(comparison_type_str));
+                              StringToComparisonType(comparison_type_str));
         instruction = CreateCompare(shape, operands(0), operands(1),
                                     *comparison_direction, comparison_type);
       } else {
@@ -710,7 +710,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       // the HloModuleProto.
       TF_RET_CHECK(!proto.fusion_kind().empty());
       ABSL_ASSIGN_OR_RETURN(FusionKind fusion_kind,
-                       StringToFusionKind(proto.fusion_kind()));
+                            StringToFusionKind(proto.fusion_kind()));
 
       // Find the fused computation and set its fusion instruction.
       TF_RET_CHECK(proto.called_computation_ids_size() == 1)
@@ -765,7 +765,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
     } break;
     case HloOpcode::kOutfeed: {
       ABSL_ASSIGN_OR_RETURN(Shape outfeed_shape,
-                       Shape::FromProto(proto.outfeed_shape()));
+                            Shape::FromProto(proto.outfeed_shape()));
       ABSL_RETURN_IF_ERROR(
           ShapeUtil::ValidateShapeWithOptionalLayout(outfeed_shape));
       instruction = CreateOutfeed(outfeed_shape, operands(0), operands(1),
@@ -1262,13 +1262,15 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       std::shared_ptr<const HloSharding> entry_hlo_sharding;
       std::shared_ptr<const HloSharding> exit_hlo_sharding;
       if (proto.has_domain_entry_sharding()) {
-        ABSL_ASSIGN_OR_RETURN(HloSharding sharding,
-                         HloSharding::FromProto(proto.domain_entry_sharding()));
+        ABSL_ASSIGN_OR_RETURN(
+            HloSharding sharding,
+            HloSharding::FromProto(proto.domain_entry_sharding()));
         entry_hlo_sharding = std::make_shared<const HloSharding>(sharding);
       }
       if (proto.has_domain_exit_sharding()) {
-        ABSL_ASSIGN_OR_RETURN(HloSharding sharding,
-                         HloSharding::FromProto(proto.domain_exit_sharding()));
+        ABSL_ASSIGN_OR_RETURN(
+            HloSharding sharding,
+            HloSharding::FromProto(proto.domain_exit_sharding()));
         exit_hlo_sharding = std::make_shared<const HloSharding>(sharding);
       }
       instruction = std::make_unique<HloDomainInstruction>(
@@ -1421,7 +1423,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         << " (local id: " << local_predecessor_id << ") in computation "
         << proto.name();
     ABSL_RETURN_IF_ERROR(instruction_map.at(local_predecessor_id)
-                        ->AddControlDependencyTo(instruction.get()));
+                             ->AddControlDependencyTo(instruction.get()));
   }
 
   TF_RET_CHECK(!proto.name().empty());
@@ -1454,7 +1456,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   if (proto.has_sharding()) {
     ABSL_ASSIGN_OR_RETURN(HloSharding sharding,
-                     HloSharding::FromProto(proto.sharding()));
+                          HloSharding::FromProto(proto.sharding()));
     // To allow for existing Hlo protos to not fail verification, apply tuple
     // sharding normalization.
     sharding = sharding.NormalizeTupleSharding(instruction->shape());
@@ -5276,7 +5278,8 @@ absl::Status HloInstruction::Accept(
     bool ignore_control_predecessors, bool cross_computation) {
   VLOG(3) << "HloInstruction::Accept(%" << name() << ")";
   ABSL_RETURN_IF_ERROR(PostOrderDFS(this, visitor, std::nullopt,
-                               ignore_control_predecessors, cross_computation));
+                                    ignore_control_predecessors,
+                                    cross_computation));
   if (call_finish_visit) {
     ABSL_RETURN_IF_ERROR(visitor->FinishVisit(this));
   }
@@ -5299,8 +5302,8 @@ absl::Status HloInstruction::AcceptWithOperandOrder(
     return operand_order(a.second, b.second);
   };
   ABSL_RETURN_IF_ERROR(PostOrderDFS(this, visitor, func,
-                               /*ignore_control_predecessors=*/false,
-                               /*cross_computation=*/false));
+                                    /*ignore_control_predecessors=*/false,
+                                    /*cross_computation=*/false));
   if (call_finish_visit) {
     VLOG(3) << "HloInstruction::AcceptWithOperandOrder BEFORE FINISH VISIT";
     ABSL_RETURN_IF_ERROR(visitor->FinishVisit(this));

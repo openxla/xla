@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -99,10 +100,10 @@ absl::StatusOr<std::vector<ArrayRef>> ReshardArrays(
     case ReshardMethod::kBundle: {
       std::vector<ValueRef> src_values = ToValues(src_arrays);
       ABSL_ASSIGN_OR_RETURN(BundleRef bundle,
-                       client->Bundle(absl::MakeSpan(src_values),
-                                      ArrayCopySemantics::kReuseInput));
+                            client->Bundle(absl::MakeSpan(src_values),
+                                           ArrayCopySemantics::kReuseInput));
       ABSL_ASSIGN_OR_RETURN(BundleRef resharded_bundle,
-                       bundle->ReshardArrays(array_specs, semantics));
+                            bundle->ReshardArrays(array_specs, semantics));
       ABSL_ASSIGN_OR_RETURN(
           std::vector<ValueRef> retrieved_values,
           resharded_bundle->GetValues(ArrayCopySemantics::kReuseInput));
@@ -115,12 +116,14 @@ absl::StatusOr<ArrayRef> MakeArrayFromLiteral(
     Client* absl_nonnull client, const xla::LiteralBase& literal,
     const ShardingRef& sharding,
     std::shared_ptr<const xla::PjRtLayout> layout = nullptr) {
-  ABSL_ASSIGN_OR_RETURN(const DType dtype, ToDType(literal.shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(const DType dtype,
+                        ToDType(literal.shape().element_type()));
   const Shape shape(literal.shape().dimensions());
 
-  ABSL_ASSIGN_OR_RETURN(const std::vector<IndexDomain> index_domains,
-                   sharding->IndexDomains(
-                       shape, SingleDeviceShardSemantics::kAddressableShards));
+  ABSL_ASSIGN_OR_RETURN(
+      const std::vector<IndexDomain> index_domains,
+      sharding->IndexDomains(shape,
+                             SingleDeviceShardSemantics::kAddressableShards));
 
   Client::MakeArraysFromHostBufferShardsSpec spec = {
       /*buffers=*/{},
@@ -162,7 +165,7 @@ absl::StatusOr<ArrayRef> MakeArrayFromLiteral(
 
 absl::StatusOr<xla::Literal> CopyArrayToLiteral(ArrayRef array) {
   ABSL_ASSIGN_OR_RETURN(const xla::PrimitiveType element_type,
-                   ToPrimitiveType(array->dtype()));
+                        ToPrimitiveType(array->dtype()));
   const auto xla_shape =
       xla::ShapeUtil::MakeShape(element_type, array->shape().dims());
 
@@ -171,9 +174,9 @@ absl::StatusOr<xla::Literal> CopyArrayToLiteral(ArrayRef array) {
       array->sharding().IndexDomains(
           array->shape(), SingleDeviceShardSemantics::kAddressableShards));
   ABSL_ASSIGN_OR_RETURN(std::vector<ArrayRef> shards,
-                   array->DisassembleIntoSingleDeviceArrays(
-                       ArrayCopySemantics::kReuseInput,
-                       SingleDeviceShardSemantics::kAddressableShards));
+                        array->DisassembleIntoSingleDeviceArrays(
+                            ArrayCopySemantics::kReuseInput,
+                            SingleDeviceShardSemantics::kAddressableShards));
 
   ABSL_ASSIGN_OR_RETURN(xla::Literal literal, xla::Literal::Make(xla_shape));
   absl::flat_hash_set<IndexDomain> seen;
@@ -183,8 +186,8 @@ absl::StatusOr<xla::Literal> CopyArrayToLiteral(ArrayRef array) {
     const Shape& shard_shape = index_domains[i].shape();
 
     ABSL_ASSIGN_OR_RETURN(xla::Literal slice,
-                     xla::Literal::Make(xla::ShapeUtil::MakeShape(
-                         element_type, shard_shape.dims())));
+                          xla::Literal::Make(xla::ShapeUtil::MakeShape(
+                              element_type, shard_shape.dims())));
     tsl::Future<> future = shards[i]->CopyToHostBuffer(
         slice.untyped_data(), std::nullopt, ArrayCopySemantics::kAlwaysCopy);
     ABSL_RETURN_IF_ERROR(future.Await());

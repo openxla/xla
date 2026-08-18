@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_host_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
+#include "tsl/platform/numa.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/numa.h"
 
 namespace stream_executor::gpu {
 namespace {

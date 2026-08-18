@@ -630,7 +630,8 @@ absl::StatusOr<bool> OneDnnOpsRewriter::RunImpl(
   XLA_VLOG_LINES(
       3, "OneDnnOpsRewriter::RunImpl(), before:\n" + module->ToString());
   OneDnnOpsRewriterVisitor visitor;
-  ABSL_ASSIGN_OR_RETURN(auto result, visitor.RunOnModule(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(auto result,
+                        visitor.RunOnModule(module, execution_threads));
   XLA_VLOG_LINES(3,
                  "OneDnnOpsRewriter::RunImpl(), after:\n" + module->ToString());
   return result;

@@ -398,8 +398,8 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> CreateTiledKernelDefinition(
   WorkDimensions work_dimensions;
   work_dimensions.num_work_groups.x = num_work_groups;
   ABSL_ASSIGN_OR_RETURN(KernelSpec kernel_spec,
-                   emitters::GetKernelSpec(name, fusion, buffer_assignment,
-                                           work_dimensions));
+                        emitters::GetKernelSpec(name, fusion, buffer_assignment,
+                                                work_dimensions));
   return KernelDefinition<MlirKernelSource>(
       std::move(kernel_spec), MlirKernelSource(std::move(module)));
 }
@@ -412,7 +412,7 @@ absl::StatusOr<ge::TiledHloComputation> GetTiledHloComputation(
   std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
       HloFusionAdaptor::ForInstruction(&fusion);
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<ge::TilingSpace> tiling_space,
-                   ge::TilingSpace::Create(*fusion_adaptor, &context));
+                        ge::TilingSpace::Create(*fusion_adaptor, &context));
   using ValidTilings = std::vector<SmallVector<int64_t, 4>>;
   ValidTilings candidates;
 
@@ -423,9 +423,9 @@ absl::StatusOr<ge::TiledHloComputation> GetTiledHloComputation(
           .xla_gpu_experimental_enable_same_shape_multi_output_fusion();
   if (block_level_parameters.has_value()) {
     ABSL_ASSIGN_OR_RETURN(llvm::SmallVector<int64_t> tile_sizes,
-                     xtile::GetTilingSpaceConcreteSizes(
-                         *tiling_space, *block_level_parameters,
-                         enable_same_shape_multi_output_fusion));
+                          xtile::GetTilingSpaceConcreteSizes(
+                              *tiling_space, *block_level_parameters,
+                              enable_same_shape_multi_output_fusion));
     candidates.push_back(
         SmallVector<int64_t, 4>(tile_sizes.begin(), tile_sizes.end()));
   } else {
@@ -482,7 +482,7 @@ absl::StatusOr<ge::TiledHloComputation> GetTiledHloComputation(
             << absl::StrJoin(candidate.padded_tile_sizes, ", ")
             << "} cost: " << candidate.cost;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<ge::TilingSpace> winning_tiling_space,
-                     ge::TilingSpace::Create(*fusion_adaptor, &context));
+                          ge::TilingSpace::Create(*fusion_adaptor, &context));
     if (const absl::Status status =
             winning_tiling_space->AssignTileSizes(candidate.padded_tile_sizes);
         !status.ok()) {

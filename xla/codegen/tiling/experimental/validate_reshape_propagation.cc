@@ -36,6 +36,7 @@ limitations under the License.
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/init_main.h"
 #include "xla/codegen/tiling/experimental/test_utils.h"
 #include "xla/codegen/tiling/experimental/tile.h"
 #include "xla/codegen/tiling/experimental/tile_propagation.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::gpu::experimental {
 namespace {

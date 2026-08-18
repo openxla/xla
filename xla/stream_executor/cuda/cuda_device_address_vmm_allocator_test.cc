@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/service/computation_placer.h"

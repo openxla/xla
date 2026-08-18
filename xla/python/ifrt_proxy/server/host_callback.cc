@@ -109,7 +109,8 @@ RemoteLoadedHostCallback::CreateFromSerialized(
          arg_protos) {
       xla::HostCallbackArgInfo& arg = args.emplace_back();
       arg.channel_id = static_cast<uint16_t>(arg_proto.channel_id());
-      ABSL_ASSIGN_OR_RETURN(arg.shape, xla::Shape::FromProto(arg_proto.shape()));
+      ABSL_ASSIGN_OR_RETURN(arg.shape,
+                            xla::Shape::FromProto(arg_proto.shape()));
     }
     return args;
   };

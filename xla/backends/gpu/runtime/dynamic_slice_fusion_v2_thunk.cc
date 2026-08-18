@@ -90,8 +90,8 @@ static absl::StatusOr<int64_t> ComputeSliceOffset(
   int64_t byte_offset = 0;
   for (const auto& offset : offsets) {
     int64_t dim = offset.dimension_number;
-    ABSL_ASSIGN_OR_RETURN(int64_t idx,
-                     DynamicSliceFusion::Evaluate(offset.expr, parameters));
+    ABSL_ASSIGN_OR_RETURN(
+        int64_t idx, DynamicSliceFusion::Evaluate(offset.expr, parameters));
     byte_offset += idx * (*byte_strides)[dim];
   }
   return byte_offset;
@@ -309,7 +309,7 @@ static absl::Status VerifySliceOffset(
   int64_t buffer_size = ShapeUtil::ByteSizeOf(src_shape);
   int64_t slice_size = ShapeUtil::ByteSizeOf(dst_shape);
   ABSL_ASSIGN_OR_RETURN(int64_t offset_from_exprs,
-                   ComputeSliceOffset(src_shape, *offsets, parameters));
+                        ComputeSliceOffset(src_shape, *offsets, parameters));
   int64_t actual_offset =
       ClampSliceOffset(offset_from_exprs, buffer_size, slice_size);
   int64_t annotated_offset = ClampSliceOffset(
@@ -361,7 +361,7 @@ absl::Status DynamicSliceFusionV2Thunk::ExecuteOnStream(
 
   if (verify_offsets_) {
     ABSL_RETURN_IF_ERROR(VerifyOffsets(params, loop_nest, parameters_, results_,
-                                  parameter_buffers_));
+                                       parameter_buffers_));
   }
 
   std::vector<se::DeviceAddressBase> buffers =
@@ -629,7 +629,8 @@ static absl::StatusOr<Offset::Expr> OffsetExprFromProto(
   std::vector<Offset::Expr> args;
   args.reserve(proto.operands().size());
   for (const OffsetExprProto& operand_proto : proto.operands()) {
-    ABSL_ASSIGN_OR_RETURN(Offset::Expr operand, OffsetExprFromProto(operand_proto));
+    ABSL_ASSIGN_OR_RETURN(Offset::Expr operand,
+                          OffsetExprFromProto(operand_proto));
     args.push_back(std::move(operand));
   }
 
@@ -651,8 +652,9 @@ static absl::StatusOr<Offset::Expr> OffsetExprFromProto(
       return Offset::Multiply(std::move(args[0]), std::move(args[1]));
     case OffsetExprProto::COMPARE: {
       ABSL_RETURN_IF_ERROR(VerifyOperandCount(proto, 2));
-      ABSL_ASSIGN_OR_RETURN(ComparisonDirection direction,
-                       CompareDirectionFromProto(proto.compare_direction()));
+      ABSL_ASSIGN_OR_RETURN(
+          ComparisonDirection direction,
+          CompareDirectionFromProto(proto.compare_direction()));
       return Offset::Compare(direction, std::move(args[0]), std::move(args[1]));
     }
     case OffsetExprProto::SELECT:
@@ -736,7 +738,7 @@ absl::StatusOr<ThunkProto> DynamicSliceFusionV2Thunk::ToProto() const {
 
   for (const auto& thunk : executor_.thunks()) {
     ABSL_ASSIGN_OR_RETURN(*dsf->mutable_embedded_thunks()->add_thunks(),
-                     thunk->ToProto());
+                          thunk->ToProto());
   }
 
   dsf->set_verify_offsets(verify_offsets_);
@@ -757,7 +759,7 @@ DynamicSliceFusionV2Thunk::FromProto(
       config = p.slice_config();
     }
     ABSL_ASSIGN_OR_RETURN(Shape parameter_shape,
-                     Shape::FromProto(p.parameter_shape()));
+                          Shape::FromProto(p.parameter_shape()));
     ABSL_ASSIGN_OR_RETURN(Shape slice_shape, Shape::FromProto(p.slice_shape()));
     std::optional<std::vector<Offset>> slice_offsets;
     if (!p.slice_offsets().empty()) {
@@ -783,8 +785,10 @@ DynamicSliceFusionV2Thunk::FromProto(
     if (r.has_update_config()) {
       update_config = r.update_config();
     }
-    ABSL_ASSIGN_OR_RETURN(Shape result_shape, Shape::FromProto(r.result_shape()));
-    ABSL_ASSIGN_OR_RETURN(Shape update_shape, Shape::FromProto(r.update_shape()));
+    ABSL_ASSIGN_OR_RETURN(Shape result_shape,
+                          Shape::FromProto(r.result_shape()));
+    ABSL_ASSIGN_OR_RETURN(Shape update_shape,
+                          Shape::FromProto(r.update_shape()));
     std::optional<std::vector<Offset>> update_offsets;
     if (!r.update_offsets().empty()) {
       update_offsets.emplace();
@@ -808,7 +812,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   parameter_buffers.reserve(proto.parameter_buffers().size());
   for (const auto& buf_proto : proto.parameter_buffers()) {
     ABSL_ASSIGN_OR_RETURN(auto slice, BufferAllocation::Slice::FromProto(
-                                     buf_proto, buffer_allocations));
+                                          buf_proto, buffer_allocations));
     parameter_buffers.push_back(slice);
   }
 
@@ -816,7 +820,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   result_buffers.reserve(proto.result_buffers().size());
   for (const auto& buf_proto : proto.result_buffers()) {
     ABSL_ASSIGN_OR_RETURN(auto slice, BufferAllocation::Slice::FromProto(
-                                     buf_proto, buffer_allocations));
+                                          buf_proto, buffer_allocations));
     result_buffers.push_back(slice);
   }
 
@@ -830,7 +834,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   embedded_thunks.reserve(proto.embedded_thunks().thunks().size());
   for (const auto& thunk_proto : proto.embedded_thunks().thunks()) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
-                     deserializer(thunk_proto, embedded_allocations));
+                          deserializer(thunk_proto, embedded_allocations));
     embedded_thunks.push_back(std::move(thunk));
   }
 

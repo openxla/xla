@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"

@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/riegeli_dump_writer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_module_config.h"
@@ -30,7 +32,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {

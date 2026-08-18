@@ -21,10 +21,10 @@ limitations under the License.
 
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/unbounded_work_queue.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/unbounded_work_queue.h"
 
 namespace xla {
 

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -174,9 +174,10 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
                                            Communicator& comm) {
   int device_ordinal = stream.parent()->device_ordinal();
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
   if (use_symmetric_memory() && clique_key.is_local()) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "AllGather: using one-sided mode (Put+Signal)";
@@ -273,8 +274,8 @@ static absl::Status RunOneSidedAllGather(
         << "OneSidedAllGather: WaitSignal from peer " << peer_rank
         << " (recv buffer ready)";
     ABSL_RETURN_IF_ERROR(comm.WaitSignal(peer_rank, /*op_cnt=*/1, signal_desc,
-                                    GpuCollectives::On(stream))
-                        .Await());
+                                         GpuCollectives::On(stream))
+                             .Await());
   }
 
   // Step 3: Put our source chunk into each peer's destination buffer.
@@ -308,9 +309,9 @@ static absl::Status RunOneSidedAllGather(
             << "OneSidedAllGather: Put " << chunk_size << " bytes to peer "
             << peer_rank << " at offset " << offset;
 
-        ABSL_RETURN_IF_ERROR(gpu_comm->LaunchPut(buf.source_buffer, sym_mem, offset,
-                                            chunk_size, peer_rank,
-                                            GpuCollectives::On(stream)));
+        ABSL_RETURN_IF_ERROR(gpu_comm->LaunchPut(buf.source_buffer, sym_mem,
+                                                 offset, chunk_size, peer_rank,
+                                                 GpuCollectives::On(stream)));
       }
     }
     return absl::OkStatus();
@@ -325,7 +326,8 @@ static absl::Status RunOneSidedAllGather(
     auto dest = buf.destination_buffer;
     auto local_dest = se::DeviceAddressBase(
         static_cast<char*>(dest.opaque()) + local_offset, chunk_size);
-    ABSL_RETURN_IF_ERROR(stream.Memcpy(&local_dest, buf.source_buffer, chunk_size));
+    ABSL_RETURN_IF_ERROR(
+        stream.Memcpy(&local_dest, buf.source_buffer, chunk_size));
   }
 
   // Step 4: Wait for all peers' PutSignals indicating data has been written
@@ -339,9 +341,10 @@ static absl::Status RunOneSidedAllGather(
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "OneSidedAllGather: WaitSignal from peer " << peer_rank
         << " op_cnt=" << device_buffers.size() << " (data written)";
-    ABSL_RETURN_IF_ERROR(comm.WaitSignal(peer_rank, /*op_cnt=*/device_buffers.size(),
-                                    signal_desc, GpuCollectives::On(stream))
-                        .Await());
+    ABSL_RETURN_IF_ERROR(
+        comm.WaitSignal(peer_rank, /*op_cnt=*/device_buffers.size(),
+                        signal_desc, GpuCollectives::On(stream))
+            .Await());
   }
 
   return absl::OkStatus();

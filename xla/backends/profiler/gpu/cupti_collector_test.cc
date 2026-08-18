@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -22,17 +25,15 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

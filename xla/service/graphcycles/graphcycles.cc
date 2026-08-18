@@ -44,8 +44,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "xla/service/graphcycles/ordered_set.h"
 #include "tsl/platform/logging.h"
+#include "xla/service/graphcycles/ordered_set.h"
 
 namespace xla {
 
@@ -55,7 +55,7 @@ using NodeSet = absl::flat_hash_set<int32_t>;
 using OrderedNodeSet = OrderedSet<int32_t>;
 
 struct Node {
-  int32_t rank;        // rank number assigned by Pearce-Kelly algorithm
+  int32_t rank;  // rank number assigned by Pearce-Kelly algorithm
   // Note (ecg@): the padding between these two fields bothered me, so I tried
   // the following alternatives:
   // - Separate bitmap to track visited[].
@@ -63,7 +63,7 @@ struct Node {
   // - Tagged top or bottom bit of "rank" to keep track of "visited".
   // However, keeping the bool here (despite the padding) achieves the best
   // performance for the IsReachableNonConst microbenchmark.
-  bool visited;        // Temporary marker used by depth-first-search
+  bool visited;  // Temporary marker used by depth-first-search
 };
 
 struct NodeIO {
@@ -93,9 +93,7 @@ struct GraphCycles::Rep {
 GraphCycles::GraphCycles() : rep_(new Rep) {}
 
 // Define the destructor here because Rep is also defined in this file.
-GraphCycles::~GraphCycles() {
-  delete rep_;
-}
+GraphCycles::~GraphCycles() { delete rep_; }
 
 bool GraphCycles::CheckInvariants() const {
   Rep* r = rep_;

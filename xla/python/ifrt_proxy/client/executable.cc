@@ -42,6 +42,10 @@ limitations under the License.
 #include "third_party/gloop/strings/cord_bytestream.h"
 #endif
 #include "absl/status/status_macros.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/pjrt/host_callback.h"
@@ -79,10 +83,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -196,7 +196,7 @@ absl::StatusOr<uint64_t> PrepareAndExecuteLoadedHostCallback(
   ClientHostBufferStore* host_buffer_store =
       rpc_helper->host_buffer_store().get();
   ABSL_ASSIGN_OR_RETURN(absl::Cord operands,
-                   host_buffer_store->Lookup(operand_handle).Await());
+                        host_buffer_store->Lookup(operand_handle).Await());
   absl::Cleanup cleanup = [&]() {
     host_buffer_store->Delete(operand_handle).OnReady([](absl::Status status) {
       if (!status.ok()) {
@@ -210,7 +210,8 @@ absl::StatusOr<uint64_t> PrepareAndExecuteLoadedHostCallback(
       ExecuteLoadedHostCallback(loaded_host_callback, std::move(operands)));
 
   const uint64_t result_handle = rpc_helper->NextHandle();
-  ABSL_RETURN_IF_ERROR(host_buffer_store->Store(result_handle, results).Await());
+  ABSL_RETURN_IF_ERROR(
+      host_buffer_store->Store(result_handle, results).Await());
   return result_handle;
 }
 
@@ -323,8 +324,9 @@ class LoadedExecutable::OutputSpecCache {
     for (const auto& output : outputs) {
       ABSL_ASSIGN_OR_RETURN(auto dtype, DType::FromProto(output.dtype()));
       ABSL_ASSIGN_OR_RETURN(auto shape, Shape::FromProto(output.shape()));
-      ABSL_ASSIGN_OR_RETURN(auto sharding, Sharding::FromProto(parent_->client(),
-                                                          output.sharding()));
+      ABSL_ASSIGN_OR_RETURN(
+          auto sharding,
+          Sharding::FromProto(parent_->client(), output.sharding()));
       data.push_back(ArraySpec{/*dtype=*/dtype, /*shape=*/std::move(shape),
                                /*sharding=*/std::move(sharding)});
     }
@@ -417,7 +419,7 @@ LoadedExecutable::LoadedExecutable(
       layouts.reserve(list.layouts_size());
       for (const auto& layout_proto : list.layouts()) {
         ABSL_ASSIGN_OR_RETURN(xla::Layout layout,
-                         xla::Layout::FromProto(layout_proto));
+                              xla::Layout::FromProto(layout_proto));
         layouts.push_back(std::make_shared<xla::PjRtLayout>(std::move(layout)));
       }
       return layouts;
@@ -725,24 +727,24 @@ LoadedExecutable::Execute(absl::Span<xla::ifrt::ArrayRef> args,
     }
     if (options.non_donatable_input_indices.contains(i)) {
       ABSL_ASSIGN_OR_RETURN(ArrayHandle handle,
-                       array->GetHandle(ArrayCopySemantics::kAlwaysCopy));
+                            array->GetHandle(ArrayCopySemantics::kAlwaysCopy));
       req->add_args_handles(handle.handle);
     } else if (!info->donatable_input_indices_set.has_value()) {
       ABSL_ASSIGN_OR_RETURN(ArrayHandle handle,
-                       array->GetHandleUnknownIfBeingDonated());
+                            array->GetHandleUnknownIfBeingDonated());
       req->add_args_handles(handle.handle);
     } else if (info->donatable_input_indices_set->contains(i)) {
       ABSL_ASSIGN_OR_RETURN(ArrayHandle handle,
-                       array->GetHandle(ArrayCopySemantics::kDonateInput));
+                            array->GetHandle(ArrayCopySemantics::kDonateInput));
       req->add_args_handles(handle.handle);
     } else {
       ABSL_ASSIGN_OR_RETURN(ArrayHandle handle,
-                       array->GetHandle(ArrayCopySemantics::kAlwaysCopy));
+                            array->GetHandle(ArrayCopySemantics::kAlwaysCopy));
       req->add_args_handles(handle.handle);
     }
   }
   ABSL_RETURN_IF_ERROR(options.ToProto(*req->mutable_execute_options(),
-                                  rpc_helper_->ifrt_serdes_version()));
+                                       rpc_helper_->ifrt_serdes_version()));
   if (devices.has_value()) {
     for (const auto* device : (*devices)->devices()) {
       req->add_device_ids(device->Id().value());

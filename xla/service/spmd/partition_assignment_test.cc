@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/spmd/partition_assignment.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/tsl/platform/statusor.h"

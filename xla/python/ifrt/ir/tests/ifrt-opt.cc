@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "shardy/dialect/mpmd/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
+#include "tsl/platform/init_main.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/dtype.h"
@@ -48,7 +50,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace ifrt {

@@ -61,7 +61,7 @@ absl::StatusOr<HloInstruction*> MakeUnaryHlo(HloOpcode opcode,
                                              const OpMetadata* metadata) {
   HloComputation* computation = operand->parent();
   ABSL_ASSIGN_OR_RETURN(Shape unary_op_shape,
-                   ShapeInference::InferUnaryOpShape(opcode, operand));
+                        ShapeInference::InferUnaryOpShape(opcode, operand));
   return computation->AddInstruction(
       HloInstruction::CreateUnary(unary_op_shape, opcode, operand), metadata);
 }
@@ -77,7 +77,7 @@ absl::StatusOr<HloInstruction*> MakeBinaryHlo(
   HloComputation* computation = lhs->parent();
   CHECK_EQ(computation, rhs->parent());
   ABSL_ASSIGN_OR_RETURN(Shape binary_op_shape,
-                   ShapeInference::InferBinaryOpShape(opcode, lhs, rhs));
+                        ShapeInference::InferBinaryOpShape(opcode, lhs, rhs));
   return computation->AddInstruction(
       HloInstruction::CreateBinary(binary_op_shape, opcode, lhs, rhs), metadata,
       frontend_attributes);
@@ -88,8 +88,9 @@ absl::StatusOr<HloInstruction*> MakeCompareHlo(
     const OpMetadata* metadata, const FrontendAttributes* frontend_attributes) {
   HloComputation* computation = lhs->parent();
   CHECK_EQ(computation, rhs->parent());
-  ABSL_ASSIGN_OR_RETURN(Shape binary_op_shape, ShapeInference::InferBinaryOpShape(
-                                              HloOpcode::kCompare, lhs, rhs));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape binary_op_shape,
+      ShapeInference::InferBinaryOpShape(HloOpcode::kCompare, lhs, rhs));
   return computation->AddInstruction(
       HloInstruction::CreateCompare(binary_op_shape, lhs, rhs, direction),
       metadata, frontend_attributes);
@@ -118,8 +119,8 @@ absl::StatusOr<HloInstruction*> MakeSliceHlo(
     const OpMetadata* metadata, const FrontendAttributes* frontend_attributes) {
   HloComputation* computation = operand->parent();
   ABSL_ASSIGN_OR_RETURN(Shape slice_shape, ShapeInference::InferSliceShape(
-                                          operand->shape(), start_indices,
-                                          limit_indices, strides));
+                                               operand->shape(), start_indices,
+                                               limit_indices, strides));
   return computation->AddInstruction(
       HloInstruction::CreateSlice(slice_shape, operand, start_indices,
                                   limit_indices, strides),
@@ -150,8 +151,9 @@ absl::StatusOr<HloInstruction*> MakeConvolveHlo(
 
 absl::StatusOr<HloInstruction*> MakeTransposeHlo(
     HloInstruction* operand, absl::Span<const int64_t> dimensions) {
-  ABSL_ASSIGN_OR_RETURN(Shape transpose_shape, ShapeInference::InferTransposeShape(
-                                              operand->shape(), dimensions));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape transpose_shape,
+      ShapeInference::InferTransposeShape(operand->shape(), dimensions));
   return operand->AddInstruction(
       HloInstruction::CreateTranspose(transpose_shape, operand, dimensions));
 }
@@ -295,8 +297,9 @@ absl::StatusOr<HloInstruction*> MakeGetTupleElementHlo(
     HloInstruction* operand, int64_t index, const OpMetadata* metadata) {
   HloComputation* computation = operand->parent();
 
-  ABSL_ASSIGN_OR_RETURN(Shape gte_shape, ShapeInference::InferGetTupleElementShape(
-                                        operand->shape(), index));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape gte_shape,
+      ShapeInference::InferGetTupleElementShape(operand->shape(), index));
   return computation->AddInstruction(
       HloInstruction::CreateGetTupleElement(gte_shape, operand, index),
       metadata);
@@ -317,7 +320,7 @@ absl::StatusOr<HloInstruction*> MakeConcatHlo(
                     [](HloInstruction* instr) { return &instr->shape(); });
 
   ABSL_ASSIGN_OR_RETURN(Shape concat_shape, ShapeInference::InferConcatOpShape(
-                                           operand_shapes, dimension));
+                                                operand_shapes, dimension));
   return computation->AddInstruction(
       HloInstruction::CreateConcatenate(concat_shape, operands, dimension),
       metadata, frontend_attributes);
@@ -379,9 +382,10 @@ absl::StatusOr<HloInstruction*> MakeDotHlo(
     const OpMetadata* metadata) {
   HloComputation* computation = lhs->parent();
   CHECK_EQ(computation, rhs->parent());
-  ABSL_ASSIGN_OR_RETURN(Shape dot_shape, ShapeInference::InferDotOpShape(
-                                        lhs->shape(), rhs->shape(), dim_numbers,
-                                        preferred_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape dot_shape,
+      ShapeInference::InferDotOpShape(lhs->shape(), rhs->shape(), dim_numbers,
+                                      preferred_element_type));
   return computation->AddInstruction(
       HloInstruction::CreateDot(dot_shape, lhs, rhs, dim_numbers,
                                 precision_config),
@@ -397,9 +401,9 @@ absl::StatusOr<HloInstruction*> MakeRaggedDotHlo(
   CHECK_EQ(computation, rhs->parent());
   CHECK_EQ(computation, group_sizes->parent());
   ABSL_ASSIGN_OR_RETURN(Shape ragged_dot_shape,
-                   ShapeInference::InferRaggedDotOpShape(
-                       lhs->shape(), rhs->shape(), group_sizes->shape(),
-                       dim_numbers, preferred_element_type));
+                        ShapeInference::InferRaggedDotOpShape(
+                            lhs->shape(), rhs->shape(), group_sizes->shape(),
+                            dim_numbers, preferred_element_type));
   return computation->AddInstruction(HloInstruction::CreateRaggedDot(
       ragged_dot_shape, lhs, rhs, group_sizes, dim_numbers, precision_config));
 }
@@ -413,9 +417,10 @@ absl::StatusOr<HloInstruction*> MakeScaledDotHlo(
   CHECK_EQ(computation, lhs_scale->parent());
   CHECK_EQ(computation, rhs->parent());
   CHECK_EQ(computation, rhs_scale->parent());
-  ABSL_ASSIGN_OR_RETURN(Shape dot_shape, ShapeInference::InferDotOpShape(
-                                        lhs->shape(), rhs->shape(), dim_numbers,
-                                        preferred_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape dot_shape,
+      ShapeInference::InferDotOpShape(lhs->shape(), rhs->shape(), dim_numbers,
+                                      preferred_element_type));
   return computation->AddInstruction(
       HloInstruction::CreateScaledDot(dot_shape, lhs, rhs, lhs_scale, rhs_scale,
                                       dim_numbers, precision_config));
@@ -492,9 +497,9 @@ absl::StatusOr<HloInstruction*> MakeReduceWindowHlo(
     HloInstruction* operand, HloInstruction* init_value, const Window& window,
     HloComputation* reduce_computation, const OpMetadata* metadata) {
   ABSL_ASSIGN_OR_RETURN(Shape inferred_shape,
-                   ShapeInference::InferReduceWindowShape(
-                       operand->shape(), init_value->shape(), window,
-                       reduce_computation->ComputeProgramShape()));
+                        ShapeInference::InferReduceWindowShape(
+                            operand->shape(), init_value->shape(), window,
+                            reduce_computation->ComputeProgramShape()));
   return operand->parent()->AddInstruction(
       HloInstruction::CreateReduceWindow(inferred_shape, operand, init_value,
                                          window, reduce_computation),
@@ -508,9 +513,9 @@ absl::StatusOr<HloInstruction*> MakeReduceWindowHlo(
       binary_opcode, operand->shape().element_type(), operand,
       operand->GetModule());
   ABSL_ASSIGN_OR_RETURN(Shape inferred_shape,
-                   ShapeInference::InferReduceWindowShape(
-                       operand->shape(), init_value->shape(), window,
-                       reduce_computation->ComputeProgramShape()));
+                        ShapeInference::InferReduceWindowShape(
+                            operand->shape(), init_value->shape(), window,
+                            reduce_computation->ComputeProgramShape()));
   return operand->parent()->AddInstruction(
       HloInstruction::CreateReduceWindow(inferred_shape, operand, init_value,
                                          window, reduce_computation),
@@ -565,8 +570,9 @@ absl::StatusOr<HloInstruction*> MakeReduceHlo(
         operand->shape()));
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto output_shape,
-                   ShapeUtil::MakeValidatedMaybeTupleShape(expected_shapes));
+  ABSL_ASSIGN_OR_RETURN(
+      auto output_shape,
+      ShapeUtil::MakeValidatedMaybeTupleShape(expected_shapes));
   return operands[0]->parent()->AddInstruction(
       HloInstruction::CreateReduce(output_shape, operands, init_values,
                                    dimensions, reduce_computation),
@@ -578,7 +584,7 @@ absl::StatusOr<HloInstruction*> MakeReverseHlo(
     const OpMetadata* metadata) {
   HloComputation* computation = operand->parent();
   ABSL_ASSIGN_OR_RETURN(Shape reverse_shape, ShapeInference::InferReverseShape(
-                                            operand->shape(), dimensions));
+                                                 operand->shape(), dimensions));
   return computation->AddInstruction(
       HloInstruction::CreateReverse(reverse_shape, operand, dimensions),
       metadata);
@@ -609,8 +615,8 @@ absl::StatusOr<HloInstruction*> MakeSelectHlo(
   TF_RET_CHECK(!op_shape.IsTuple());
   HloOpcode select_op_code = HloOpcode::kSelect;
   ABSL_ASSIGN_OR_RETURN(Shape select_shape,
-                   ShapeInference::InferTernaryOpShape(select_op_code, pred,
-                                                       on_true, on_false));
+                        ShapeInference::InferTernaryOpShape(
+                            select_op_code, pred, on_true, on_false));
   HloInstruction* select = computation->AddInstruction(
       HloInstruction::CreateTernary(select_shape, select_op_code, pred, on_true,
                                     on_false),
@@ -635,7 +641,7 @@ absl::StatusOr<HloComputation*> XlaComputationToHloComputation(
   ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, src_comp.GetProgramShape());
   HloModuleConfig config(program_shape);
   ABSL_ASSIGN_OR_RETURN(auto new_module,
-                   HloModule::CreateFromProto(src_comp.proto(), config));
+                        HloModule::CreateFromProto(src_comp.proto(), config));
   HloCloneContext context(dest_module);
   return dest_module->DeepCloneComputation(new_module->entry_computation(),
                                            &context);
@@ -656,7 +662,7 @@ absl::StatusOr<HloInstruction*> MakeSortHlo(
   }
   XlaComputation comparator = CreateScalarLtComputation(operand_types, &b);
   ABSL_ASSIGN_OR_RETURN(HloComputation * compare_computation,
-                   XlaComputationToHloComputation(comparator, module));
+                        XlaComputationToHloComputation(comparator, module));
   return builder->AddInstruction(HloInstruction::CreateSort(
       sort_shape, dimension_to_sort, operands, compare_computation, is_stable));
 }

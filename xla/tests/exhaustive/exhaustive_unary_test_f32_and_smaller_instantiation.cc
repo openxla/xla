@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <utility>  // IWYU pragma: keep, exhaustive_unary_test_f32_and_smaller_instantiation.inc
 
+#include "tsl/platform/test.h"  // IWYU pragma: keep, exhaustive_unary_test_f32_and_smaller_instantiation.inc
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"  // IWYU pragma: keep, exhaustive_unary_test_f32_and_smaller_instantiation.inc
 #include "xla/tests/exhaustive/exhaustive_unary_test_definitions.h"  // IWYU pragma: keep, exhaustive_unary_test_f32_and_smaller_instantiation.inc
-#include "tsl/platform/test.h"  // IWYU pragma: keep, exhaustive_unary_test_f32_and_smaller_instantiation.inc
 
 namespace xla {
 namespace exhaustive_op_test {

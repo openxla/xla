@@ -84,7 +84,7 @@ CpuAotCompilationResult::Create(
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
       hlo_module, &buffer_assignment->Allocations());
   ABSL_ASSIGN_OR_RETURN(ThunkSequenceProto thunk_proto,
-                   thunk_sequence_serdes.ToProto(thunks));
+                        thunk_sequence_serdes.ToProto(thunks));
 
   std::vector<cpu::BufferAllocationInfo> buffer_allocation_infos;
   std::optional<size_t> temp_allocation_index;
@@ -148,8 +148,9 @@ CpuAotCompilationResult::CpuAotCompilationResult(
 
 absl::StatusOr<std::unique_ptr<Executable>>
 CpuAotCompilationResult::LoadExecutable() && {
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   HloModule::CreateFromProtoWithConfig(proto_.hlo_module()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> module,
+      HloModule::CreateFromProtoWithConfig(proto_.hlo_module()));
 
   VLOG(2) << "Load XLA:CPU executable for module: " << module->name();
 
@@ -162,9 +163,9 @@ CpuAotCompilationResult::LoadExecutable() && {
   // Recreate BufferAssignment from proto.
   AliasInfo alias_info;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> buffer_assignment,
-                   BufferAssignment::FromProto(
-                       proto_.buffer_assignment(), module.get(),
-                       buffer_size_bytes_function_getter, &alias_info));
+                        BufferAssignment::FromProto(
+                            proto_.buffer_assignment(), module.get(),
+                            buffer_size_bytes_function_getter, &alias_info));
 
   std::unique_ptr<CpuExecutable> cpu_executable;
 
@@ -174,14 +175,15 @@ CpuAotCompilationResult::LoadExecutable() && {
 
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
       module.get(), &buffer_assignment->Allocations());
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<ThunkSequence> thunks,
-                   thunk_sequence_serdes.FromProto(proto_.thunk_sequence()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<ThunkSequence> thunks,
+      thunk_sequence_serdes.FromProto(proto_.thunk_sequence()));
 
   VLOG(3) << "Loaded " << thunks->size() << " thunks.";
 
   // Create constant allocations from the buffer assignment.
   ABSL_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
-                   CreateConstantAllocations(*buffer_assignment));
+                        CreateConstantAllocations(*buffer_assignment));
 
   ABSL_ASSIGN_OR_RETURN(
       TargetMachineOptions target_machine_options,

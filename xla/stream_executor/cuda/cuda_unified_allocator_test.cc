@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_unified_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/device_address.h"

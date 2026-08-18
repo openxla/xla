@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/elemental_ir_emitter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,11 +24,11 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/types.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

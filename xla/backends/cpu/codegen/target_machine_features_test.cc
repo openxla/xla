@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_test_base.h"
 

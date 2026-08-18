@@ -370,10 +370,10 @@ absl::StatusOr<HloInstruction*> ScanExpander::ExpandInstruction(
   Shape loop_state_shape = ShapeUtil::MakeTupleShape(loop_state_shapes);
 
   ABSL_ASSIGN_OR_RETURN(HloComputation * condition_computation,
-                   BuildConditionComputation(scan, loop_state_shape));
+                        BuildConditionComputation(scan, loop_state_shape));
 
   ABSL_ASSIGN_OR_RETURN(HloComputation * body_computation,
-                   BuildBodyComputation(scan, loop_state_shape));
+                        BuildBodyComputation(scan, loop_state_shape));
 
   // 3. Build Init Loop State
   std::vector<HloInstruction*> init_values;

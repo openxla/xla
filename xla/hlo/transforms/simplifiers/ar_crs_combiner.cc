@@ -655,7 +655,7 @@ absl::StatusOr<bool> ArCrsCombiner::RunImpl(
 
   if (module->config().replica_count() > 1 && spmd_partition_) {
     ABSL_ASSIGN_OR_RETURN(auto replaced, ReplaceReplicatedAllReduce(
-                                        module, num_spatial_partitions_));
+                                             module, num_spatial_partitions_));
     changed |= replaced;
   }
 

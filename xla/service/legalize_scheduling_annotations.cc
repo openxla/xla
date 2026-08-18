@@ -110,7 +110,7 @@ absl::Status AttachAnnotation(
     bool dry_run = false) {
   for (HloInstruction* instr : instructions) {
     ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> instr_annotation,
-                     GetSchedulingAnnotation(instr));
+                          GetSchedulingAnnotation(instr));
     if (instr_annotation) {
       return absl::InternalError("Trying to propagate scheduling annotation " +
                                  annotation.ToString() + " to " +
@@ -239,7 +239,7 @@ absl::StatusOr<bool> HaulAnnotationToFusionInstruction(
     std::optional<Annotation> seen_annotation;
     for (HloInstruction* instr : computation->instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                       GetSchedulingAnnotation(instr));
+                            GetSchedulingAnnotation(instr));
       if (!annotation) {
         continue;
       }
@@ -259,8 +259,8 @@ absl::StatusOr<bool> HaulAnnotationToFusionInstruction(
     if (!seen_annotation) {
       continue;
     }
-    ABSL_RETURN_IF_ERROR(SetSchedulingAnnotation(computation->FusionInstruction(),
-                                            seen_annotation->ToString()));
+    ABSL_RETURN_IF_ERROR(SetSchedulingAnnotation(
+        computation->FusionInstruction(), seen_annotation->ToString()));
   }
   return changed;
 }
@@ -270,7 +270,7 @@ absl::StatusOr<bool> RemoveLoopIterationAnnotation(HloModule* module) {
   for (HloComputation* computation : module->MakeNonfusionComputations()) {
     for (HloInstruction* instr : computation->instructions()) {
       ABSL_ASSIGN_OR_RETURN(bool removed,
-                       RemoveSchedulingAnnotationIterationId(instr));
+                            RemoveSchedulingAnnotationIterationId(instr));
       changed |= removed;
     }
   }
@@ -701,7 +701,7 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::RunImpl(
          module->MakeNonfusionComputations(execution_threads)) {
       for (HloInstruction* instr : computation->instructions()) {
         ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                         GetSchedulingAnnotation(instr));
+                              GetSchedulingAnnotation(instr));
         if (!annotation) {
           continue;
         }
@@ -742,7 +742,7 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::RunImpl(
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instr : computation->instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                       GetSchedulingAnnotation(instr));
+                            GetSchedulingAnnotation(instr));
       if (!annotation) {
         continue;
       }
@@ -820,14 +820,14 @@ absl::StatusOr<bool> CheckNoDataDependencyInSchedulingAnnotations::RunImpl(
     for (HloInstruction* instr : computation->instructions()) {
       if (HasSchedulingAnnotation(instr)) {
         ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                         GetSchedulingAnnotation(instr));
+                              GetSchedulingAnnotation(instr));
         if (!annotation) {
           continue;
         }
         for (HloInstruction* operand : instr->operands()) {
           if (HasSchedulingAnnotation(operand)) {
             ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> operand_annotation,
-                             GetSchedulingAnnotation(operand));
+                                  GetSchedulingAnnotation(operand));
             if (!operand_annotation) {
               continue;
             }

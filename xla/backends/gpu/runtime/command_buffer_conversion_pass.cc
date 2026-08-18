@@ -38,6 +38,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
+#include "tsl/profiler/lib/profiler_lock.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
@@ -58,9 +61,6 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/platform.h"
-#include "tsl/profiler/lib/profiler_lock.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -642,9 +642,10 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
       GetCommandBufferConfig(debug_options, device_info, hlo_module);
   VLOG(1) << "Module " << module_name_
           << " CommandBufferConfig: " << config.ToString();
-  ABSL_ASSIGN_OR_RETURN(CommandExecutor::SynchronizationMode synchronization_mode,
-                   GetSynchronizationMode(
-                       debug_options.xla_gpu_command_buffer_scheduling_mode()));
+  ABSL_ASSIGN_OR_RETURN(
+      CommandExecutor::SynchronizationMode synchronization_mode,
+      GetSynchronizationMode(
+          debug_options.xla_gpu_command_buffer_scheduling_mode()));
 
   bool changed = false;
 
@@ -688,9 +689,10 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
       // If a `WhileThunk` itself is not eligible for conversion into a
       // command buffer, we attempt to convert thunks within its body
       auto while_thunk = static_cast<WhileThunk*>(thunk.get());
-      ABSL_ASSIGN_OR_RETURN(bool changed_in_body,
-                       Run(&while_thunk->body_executor().thunks(),
-                           debug_options, hlo_module, device_info, allocator));
+      ABSL_ASSIGN_OR_RETURN(
+          bool changed_in_body,
+          Run(&while_thunk->body_executor().thunks(), debug_options, hlo_module,
+              device_info, allocator));
       changed |= changed_in_body;
     } else if (thunk->kind() == Thunk::kConditional) {
       // If a `ConditionalThunk` itself is not eligible for conversion into a
@@ -698,8 +700,8 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
       auto conditional_thunk = static_cast<ConditionalThunk*>(thunk.get());
       for (auto& branch_executor : conditional_thunk->branch_executors()) {
         ABSL_ASSIGN_OR_RETURN(bool changed_in_branch,
-                         Run(&branch_executor.thunks(), debug_options,
-                             hlo_module, device_info, allocator));
+                              Run(&branch_executor.thunks(), debug_options,
+                                  hlo_module, device_info, allocator));
         changed |= changed_in_branch;
       }
     }

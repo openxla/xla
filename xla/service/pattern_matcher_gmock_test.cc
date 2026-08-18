@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <type_traits>
 
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout.h"
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

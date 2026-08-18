@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/host/host_stream_factory.h"
 
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/synchronization/notification.h"
 #include "xla/stream_executor/host/host_stream.h"
 #include "xla/stream_executor/platform.h"

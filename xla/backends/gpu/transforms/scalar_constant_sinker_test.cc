@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/scalar_constant_sinker.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/tsl/platform/statusor.h"

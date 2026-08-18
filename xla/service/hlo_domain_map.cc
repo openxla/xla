@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,8 +38,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/map_util.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -112,7 +112,7 @@ absl::Status HloDomainMap::Populate(HloComputation* computation) {
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<DomainMetadata::Domain> domain,
-                     CreateDomain(instruction, instructions_post_order));
+                          CreateDomain(instruction, instructions_post_order));
     ABSL_RETURN_IF_ERROR(InsertDomain(std::move(domain)));
   }
   ABSL_RETURN_IF_ERROR(PopulateDomainMetadataMap());

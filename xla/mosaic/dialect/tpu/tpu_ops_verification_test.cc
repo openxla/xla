@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1103,8 +1104,8 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 
   ASSERT_THAT(
       VerifyOp(dma),
-      StatusIs(_, HasSubstr(
-                      "Offsets shape must be 1D or (1, N), got (1, 64, 32)")));
+      StatusIs(
+          _, HasSubstr("Offsets shape must be 1D or (1, N), got (1, 64, 32)")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -1135,9 +1136,8 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 
   ASSERT_THAT(
       VerifyOp(dma),
-      StatusIs(_,
-               HasSubstr("Source (gather operand) sample rank must match "
-                         "offsets rank, got 1 vs 2")));
+      StatusIs(_, HasSubstr("Source (gather operand) sample rank must match "
+                            "offsets rank, got 1 vs 2")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -1152,10 +1152,9 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 
   ASSERT_THAT(
       VerifyOp(dma),
-      StatusIs(_,
-               HasSubstr(
-                   "Offsets shape (64) must match the majormost dimensions "
-                   "of the target (gather result) shape (512, 128)")));
+      StatusIs(
+          _, HasSubstr("Offsets shape (64) must match the majormost dimensions "
+                       "of the target (gather result) shape (512, 128)")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -1209,10 +1208,9 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 
   ASSERT_THAT(
       VerifyOp(dma),
-      StatusIs(_,
-               HasSubstr(
-                   "Offsets shape (64) must match the majormost dimensions "
-                   "of the source (scatter updates) shape (512, 128)")));
+      StatusIs(
+          _, HasSubstr("Offsets shape (64) must match the majormost dimensions "
+                       "of the source (scatter updates) shape (512, 128)")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,

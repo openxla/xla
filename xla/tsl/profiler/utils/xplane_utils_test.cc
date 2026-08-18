@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,12 +24,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/buffer_debug_log.pb.h"
 #include "xla/backends/gpu/runtime/buffer_debug_log_entry_metadata_store.h"
@@ -78,7 +79,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 
@@ -154,9 +154,11 @@ absl::Status BackupBuffers(size_t num_buffers, se::Stream* stream,
     return absl::InternalError("Mismatch in backup buffer count");
   }
   for (size_t i = 0; i < num_buffers; ++i) {
-    ABSL_ASSIGN_OR_RETURN(auto active_buf, remaining_args.get<ffi::BufferR1<U8>>(i));
-    ABSL_ASSIGN_OR_RETURN(auto backup_buf,
-                     remaining_args.get<ffi::BufferR1<U8>>(num_buffers + i));
+    ABSL_ASSIGN_OR_RETURN(auto active_buf,
+                          remaining_args.get<ffi::BufferR1<U8>>(i));
+    ABSL_ASSIGN_OR_RETURN(
+        auto backup_buf,
+        remaining_args.get<ffi::BufferR1<U8>>(num_buffers + i));
 
     ABSL_RETURN_IF_ERROR(
         xla::ffi::Verify("backup", backup_buf,
@@ -238,13 +240,15 @@ absl::Status DumpHloSnapshot(
                   const_cast<void*>(backup_buf.untyped_data()),
                   backup_buf.size_bytes());
               ABSL_RETURN_IF_ERROR(stream->Memcpy(literal.untyped_data(index),
-                                             backup_ptr, any_buf.size_bytes()));
+                                                  backup_ptr,
+                                                  any_buf.size_bytes()));
             } else {
               se::DeviceMemoryBase active_ptr(
                   const_cast<void*>(any_buf.untyped_data()),
                   any_buf.size_bytes());
               ABSL_RETURN_IF_ERROR(stream->Memcpy(literal.untyped_data(index),
-                                             active_ptr, any_buf.size_bytes()));
+                                                  active_ptr,
+                                                  any_buf.size_bytes()));
             }
           }
           return absl::OkStatus();
@@ -304,7 +308,7 @@ absl::Status FloatCheckCrashDump(
   auto buffer_debug_log = se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>::
       FromDeviceAddressUnchecked(log_buffer.device_memory());
   ABSL_ASSIGN_OR_RETURN(std::vector<BufferDebugFloatCheckEntry> entries,
-                   buffer_debug_log.ReadFromDevice(*stream));
+                        buffer_debug_log.ReadFromDevice(*stream));
   ABSL_RETURN_IF_ERROR(buffer_debug_log.Clear(*stream));
 
   if (HasAnomaly(entries, instr->GetModule()->config().debug_options())) {
@@ -429,11 +433,11 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithSyncDumpThunk(
   const size_t temp_buffer_size_bytes =
       CalculateTempBufferSize(*thunk) * sizeof(xla::gpu::FloatCheckResult);
   ABSL_ASSIGN_OR_RETURN(BufferAllocation * tmp_alloc,
-                   allocator.NewEmptyAllocation(temp_buffer_size_bytes));
+                        allocator.NewEmptyAllocation(temp_buffer_size_bytes));
   BufferAllocation::Slice tmp_slice(tmp_alloc, 0, tmp_alloc->size());
 
   ABSL_ASSIGN_OR_RETURN(std::vector<NullableShapedSlice> operands,
-                   GetInstructionOperands(*thunk));
+                        GetInstructionOperands(*thunk));
 
   std::vector<BufferAllocation::Slice> operand_slices;
   operand_slices.reserve(operands.size());
@@ -555,7 +559,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithFloatCheckThunk(
   const size_t temp_buffer_size_bytes =
       CalculateTempBufferSize(*thunk) * sizeof(xla::gpu::FloatCheckResult);
   ABSL_ASSIGN_OR_RETURN(BufferAllocation * tmp_alloc,
-                   allocator.NewEmptyAllocation(temp_buffer_size_bytes));
+                        allocator.NewEmptyAllocation(temp_buffer_size_bytes));
   BufferAllocation::Slice tmp_slice(tmp_alloc, 0, tmp_alloc->size());
 
   VLOG(1) << "Wrapping thunk " << thunk->thunk_info().thunk_id
@@ -694,7 +698,7 @@ absl::Status BufferDebugFloatCheck(
   auto buffer_debug_log = se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>::
       FromDeviceAddressUnchecked(log_buffer.device_memory());
   ABSL_ASSIGN_OR_RETURN(std::vector<BufferDebugFloatCheckEntry> entries,
-                   buffer_debug_log.ReadFromDevice(*stream));
+                        buffer_debug_log.ReadFromDevice(*stream));
 
   std::vector<BufferDebugLogEntryId> entry_ids;
   entry_ids.reserve(entries.size());
@@ -823,7 +827,7 @@ CreateOutputBuffersCheckThunk(
       TempBufferSizeFromMaxBufferSize(max_buffer_size_bytes);
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation * tmp_alloc,
-                   allocator.NewEmptyAllocation(temp_buffer_size_bytes));
+                        allocator.NewEmptyAllocation(temp_buffer_size_bytes));
   BufferAllocation::Slice tmp_slice(tmp_alloc, 0, tmp_alloc->size());
 
   Thunk::ThunkInfo checked_thunk_info;
@@ -886,11 +890,11 @@ absl::Status RunFloatCheckPassInternal(
   std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store =
       std::make_shared<BufferDebugLogEntryMetadataStore>();
   ABSL_ASSIGN_OR_RETURN(BufferAllocation * log_alloc,
-                   allocator.NewEmptyAllocation(kLogSizeBytes));
+                        allocator.NewEmptyAllocation(kLogSizeBytes));
   BufferAllocation::Slice log_slice(log_alloc, 0, log_alloc->size());
 
   ABSL_ASSIGN_OR_RETURN(auto buffer_debug_init_thunk,
-                   CreateDebugInitThunk(log_slice, hlo_module));
+                        CreateDebugInitThunk(log_slice, hlo_module));
 
   ThunkFilter thunk_filter = CreateThunkFilter(debug_options);
 

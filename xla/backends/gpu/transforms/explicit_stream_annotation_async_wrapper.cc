@@ -104,7 +104,7 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   done->set_frontend_attributes(original_attributes);
   done->mutable_operand(0)->set_frontend_attributes(original_attributes);
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   done->backend_config<GpuBackendConfig>());
+                        done->backend_config<GpuBackendConfig>());
   // Set earliest schedule of done op to be false so it can be scheduled
   // far apart from start.
   gpu_config.set_force_earliest_schedule(false);

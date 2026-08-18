@@ -28,6 +28,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -41,8 +43,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -216,7 +216,8 @@ absl::Status CanonicalizeConditionalInstruction(HloInstruction* conditional) {
       }
       HloInstruction* original = branch->AddInstruction(
           HloInstruction::CreateGetTupleElement(parameter, 0));
-      ABSL_RETURN_IF_ERROR(parameter->ReplaceAllUsesWithDifferentShape(original));
+      ABSL_RETURN_IF_ERROR(
+          parameter->ReplaceAllUsesWithDifferentShape(original));
     }
 
     // Tuplify the branch tuple if needed.
@@ -279,7 +280,8 @@ absl::Status CanonicalizeWhileInstruction(HloInstruction* loop) {
     }
     HloInstruction* original = body->AddInstruction(
         HloInstruction::CreateGetTupleElement(body_parameter, 0));
-    ABSL_RETURN_IF_ERROR(body_parameter->ReplaceAllUsesWithDifferentShape(original));
+    ABSL_RETURN_IF_ERROR(
+        body_parameter->ReplaceAllUsesWithDifferentShape(original));
   }
 
   // Tuplify the body root if needed.
@@ -301,7 +303,8 @@ absl::Status CanonicalizeWhileInstruction(HloInstruction* loop) {
     }
     HloInstruction* original = cond->AddInstruction(
         HloInstruction::CreateGetTupleElement(cond_parameter, 0));
-    ABSL_RETURN_IF_ERROR(cond_parameter->ReplaceAllUsesWithDifferentShape(original));
+    ABSL_RETURN_IF_ERROR(
+        cond_parameter->ReplaceAllUsesWithDifferentShape(original));
   }
 
   // Tuplify the while instruction if needed.
@@ -426,8 +429,9 @@ absl::Status InfeedTokenPropagation::PropagateTokenThroughWhileBody() {
 
   // Insert the input token into the while tuple.
   HloInstruction* while_tuple = dangling_instruction_->mutable_operand(0);
-  ABSL_ASSIGN_OR_RETURN(input_token_, InsertTokenIntoTuple(
-                                     while_tuple, /*add_token_operand=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      input_token_,
+      InsertTokenIntoTuple(while_tuple, /*add_token_operand=*/true));
   // Retrieve the actual token added to the tuple.
   input_token_ = input_token_->mutable_operand(0)->mutable_operand(
       input_token_->tuple_index());
@@ -619,7 +623,8 @@ absl::StatusOr<bool> InfeedTokenPropagation::RunImpl(
       ABSL_RETURN_IF_ERROR(PropagateToken(ordering));
     }
 
-    ABSL_RETURN_IF_ERROR(TupleSimplifier().Run(module, execution_threads).status());
+    ABSL_RETURN_IF_ERROR(
+        TupleSimplifier().Run(module, execution_threads).status());
     ABSL_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
   }
 

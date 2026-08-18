@@ -216,7 +216,7 @@ absl::StatusOr<bool> TransposeFolding::RunImpl(
         }
 
         ABSL_ASSIGN_OR_RETURN(bool can_fold_operand,
-                         dot_can_fold_transpose_operand_(*instruction, i));
+                              dot_can_fold_transpose_operand_(*instruction, i));
 
         if (can_fold_operand) {
           operand_indices.push_back(i);

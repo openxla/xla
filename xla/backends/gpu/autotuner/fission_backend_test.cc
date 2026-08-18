@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/fission_backend.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"

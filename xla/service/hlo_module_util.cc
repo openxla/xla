@@ -49,7 +49,8 @@ namespace xla {
 namespace {
 absl::Status ValidateResultShape(const Shape& client_shape,
                                  const Shape& result_shape) {
-  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(client_shape));
+  ABSL_RETURN_IF_ERROR(
+      ShapeUtil::ValidateShapeWithOptionalLayout(client_shape));
   if (!ShapeUtil::Compatible(client_shape, result_shape)) {
     return InvalidArgument(
         "Shape used to set computation result layout %s is not compatible "
@@ -104,7 +105,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromBinaryProtoFile(
       tsl::ReadBinaryProto(tsl::Env::Default(), std::string(filename), &proto));
   if (remap_instruction_ids) {
     ABSL_ASSIGN_OR_RETURN(HloModuleProto sanitized_proto,
-                     HloModule::RemapInstructionIds(proto.hlo_module()));
+                          HloModule::RemapInstructionIds(proto.hlo_module()));
     return CreateModuleFromProto(sanitized_proto, debug_options);
   }
   return CreateModuleFromProto(proto.hlo_module(), debug_options);
@@ -114,8 +115,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromHloTextFile(
     absl::string_view filename, const DebugOptions& debug_options,
     const HloParserOptions& options) {
   std::string hlo_string;
-  ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
-                                        std::string(filename), &hlo_string));
+  ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(
+      tsl::Env::Default(), std::string(filename), &hlo_string));
   HloModuleConfig config;
   config.set_debug_options(debug_options);
   return ParseAndReturnUnverifiedModule(hlo_string, config, options);
@@ -132,8 +133,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromTextProtoFile(
 absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromModuleBinaryProtofile(
     absl::string_view filename, const DebugOptions& debug_options) {
   HloModuleProto module_proto;
-  ABSL_RETURN_IF_ERROR(tsl::ReadBinaryProto(tsl::Env::Default(),
-                                       std::string(filename), &module_proto));
+  ABSL_RETURN_IF_ERROR(tsl::ReadBinaryProto(
+      tsl::Env::Default(), std::string(filename), &module_proto));
 
   ABSL_ASSIGN_OR_RETURN(
       HloModuleConfig module_config,
@@ -147,8 +148,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromModuleBinaryProtofile(
 absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromModuleTextProtoFile(
     absl::string_view hlo_file, const DebugOptions& debug_options) {
   HloModuleProto module_proto;
-  ABSL_RETURN_IF_ERROR(tsl::ReadTextProto(tsl::Env::Default(), std::string(hlo_file),
-                                     &module_proto));
+  ABSL_RETURN_IF_ERROR(tsl::ReadTextProto(
+      tsl::Env::Default(), std::string(hlo_file), &module_proto));
 
   ABSL_ASSIGN_OR_RETURN(
       HloModuleConfig module_config,
@@ -241,8 +242,8 @@ absl::StatusOr<std::unique_ptr<HloModuleConfig>> CreateModuleConfig(
     config->set_debug_options(execution_options->debug_options());
     if (execution_options->has_device_assignment()) {
       ABSL_ASSIGN_OR_RETURN(auto device_assignment,
-                       DeviceAssignment::Deserialize(
-                           execution_options->device_assignment()));
+                            DeviceAssignment::Deserialize(
+                                execution_options->device_assignment()));
       config->set_static_device_assignment(*device_assignment);
     }
     config->set_alias_passthrough_params(

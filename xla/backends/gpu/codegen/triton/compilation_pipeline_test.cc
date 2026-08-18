@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/Pass.h"

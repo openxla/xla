@@ -19,12 +19,12 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

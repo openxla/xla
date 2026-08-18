@@ -20,9 +20,9 @@ limitations under the License.
 #include <memory>
 
 #include "absl/status/status.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/profiler/backends/gpu/ondevice_event_collector.h"
 #include "xla/tsl/profiler/backends/gpu/ondevice_trace_event.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

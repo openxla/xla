@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/buffer_debug_xor_checksum_kernel.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -102,20 +103,20 @@ class ChecksumKernelTest : public ::testing::Test {
 
     // Setup device buffers
     ABSL_ASSIGN_OR_RETURN(se::DeviceAddress<uint8_t> device_input,
-                     CheckNotNull(executor_->AllocateArray<uint8_t>(
-                                      input.size() * sizeof(input[0])),
-                                  "input"));
+                          CheckNotNull(executor_->AllocateArray<uint8_t>(
+                                           input.size() * sizeof(input[0])),
+                                       "input"));
     auto cleanup_input =
         absl::MakeCleanup([&]() { executor_->Deallocate(&device_input); });
 
     // Call kernel
     ABSL_RETURN_IF_ERROR(stream_->Memcpy(&device_input, input.data(),
-                                    input.size() * sizeof(input[0])));
+                                         input.size() * sizeof(input[0])));
     ABSL_RETURN_IF_ERROR(kernel.Launch(dim, stream_executor::BlockDim(1, 1, 1),
-                                  stream_.get(), entry_id, device_input,
-                                  device_input.ElementCount(),
-                                  buffer_debug_log.GetDeviceHeader(),
-                                  buffer_debug_log.GetDeviceEntries()));
+                                       stream_.get(), entry_id, device_input,
+                                       device_input.ElementCount(),
+                                       buffer_debug_log.GetDeviceHeader(),
+                                       buffer_debug_log.GetDeviceEntries()));
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
 
     // The result gets stored in `buffer_debug_log`.

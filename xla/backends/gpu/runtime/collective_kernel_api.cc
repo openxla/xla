@@ -103,8 +103,9 @@ absl::Status LaunchMultiGpuBarrier(
     signal_buffers[peer] = barrier_addresses[peer].opaque();
   }
 
-  ABSL_ASSIGN_OR_RETURN(MultiGpuBarrierKernel::KernelType * kernel,
-                   GetCachedKernel<MultiGpuBarrierKernel>(stream->parent()));
+  ABSL_ASSIGN_OR_RETURN(
+      MultiGpuBarrierKernel::KernelType * kernel,
+      GetCachedKernel<MultiGpuBarrierKernel>(stream->parent()));
 
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);
@@ -170,7 +171,7 @@ absl::StatusOr<std::vector<void*>> CollectParamToPeers(
 
   for (auto peer = RankId(0); peer < RankId(clique_key.num_devices()); ++peer) {
     ABSL_ASSIGN_OR_RETURN(const DeviceParameters& peer_parameters,
-                     device_parameters->at<DeviceParameters>(peer));
+                          device_parameters->at<DeviceParameters>(peer));
     peer_to_parameters[peer.value()] = std::move(peer_parameters);
   }
 

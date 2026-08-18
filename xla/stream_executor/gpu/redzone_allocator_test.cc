@@ -15,13 +15,16 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
@@ -29,8 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor {
 namespace gpu {

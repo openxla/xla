@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "google/protobuf/text_format.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/AMDGPUToROCDL/AMDGPUToROCDL.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
@@ -41,8 +42,8 @@ limitations under the License.
 #include "mlir/Dialect/AMDGPU/Utils/Chipset.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"   // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"   // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"  // IWYU pragma: keep
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -52,14 +53,13 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/transforms/lower_to_llvm_common.h"
 #include "xla/codegen/emitters/transforms/lowering_utils.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace emitters {

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_module.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "google/protobuf/message_lite.h"
+#include "tsl/platform/casts.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -60,7 +62,6 @@ limitations under the License.
 #include "xla/tuple_tree.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 

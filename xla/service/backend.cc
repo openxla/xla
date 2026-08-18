@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/platform_util.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/cpu_info.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -184,14 +184,15 @@ CreateGpuAllocators(const se::Platform* platform,
 /* static */ absl::StatusOr<std::unique_ptr<Backend>> Backend::CreateBackend(
     const BackendOptions& options) {
   se::Platform* platform = options.platform();
-  ABSL_ASSIGN_OR_RETURN(auto compiler, Compiler::GetForPlatform(platform->id()));
+  ABSL_ASSIGN_OR_RETURN(auto compiler,
+                        Compiler::GetForPlatform(platform->id()));
   ABSL_ASSIGN_OR_RETURN(
       auto stream_executors,
       PlatformUtil::GetStreamExecutors(platform, options.allowed_devices()));
   ABSL_ASSIGN_OR_RETURN(auto transfer_manager,
-                   TransferManager::GetForPlatform(platform));
+                        TransferManager::GetForPlatform(platform));
   ABSL_ASSIGN_OR_RETURN(auto computation_placer,
-                   ComputationPlacer::GetForPlatform(platform->id()));
+                        ComputationPlacer::GetForPlatform(platform->id()));
   std::unique_ptr<Backend> backend(new Backend(
       platform, std::move(compiler), stream_executors, transfer_manager,
       computation_placer, options.intra_op_parallelism_threads()));
@@ -200,7 +201,8 @@ CreateGpuAllocators(const se::Platform* platform,
 
 /* static */ absl::StatusOr<std::unique_ptr<Backend>>
 Backend::CreateDefaultBackend() {
-  ABSL_ASSIGN_OR_RETURN(se::Platform * platform, PlatformUtil::GetDefaultPlatform());
+  ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
+                        PlatformUtil::GetDefaultPlatform());
   BackendOptions backend_options;
   backend_options.set_platform(platform);
   return CreateBackend(backend_options);
@@ -232,7 +234,7 @@ absl::StatusOr<std::vector<StreamPool::Ptr>> Backend::BorrowStreams(
   std::vector<StreamPool::Ptr> ptrs;
   for (int i = 0; i < num_streams; i++) {
     ABSL_ASSIGN_OR_RETURN(StreamPool::Ptr ptr,
-                     stream_pools_.at(executor)->BorrowStream(priority));
+                          stream_pools_.at(executor)->BorrowStream(priority));
     ptrs.push_back(std::move(ptr));
   }
   return ptrs;
@@ -314,9 +316,9 @@ absl::StatusOr<bool> Backend::devices_equivalent(int device_ordinal_a,
   // an executable for one GPU and want to know if it will run (well) on
   // another.
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor_a,
-                   stream_executor(device_ordinal_a));
+                        stream_executor(device_ordinal_a));
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor_b,
-                   stream_executor(device_ordinal_b));
+                        stream_executor(device_ordinal_b));
   return (executor_a->GetDeviceDescription().name() ==
           executor_b->GetDeviceDescription().name());
 }

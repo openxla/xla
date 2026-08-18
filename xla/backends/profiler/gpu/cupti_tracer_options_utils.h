@@ -17,9 +17,9 @@ limitations under the License.
 #define XLA_BACKENDS_PROFILER_GPU_CUPTI_TRACER_OPTIONS_UTILS_H_
 
 #include "absl/status/status.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
 
 namespace xla {
 namespace profiler {

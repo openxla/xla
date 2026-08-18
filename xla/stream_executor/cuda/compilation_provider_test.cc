@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -89,9 +90,9 @@ absl::StatusOr<std::unique_ptr<CompilationProvider>>
 CompilationProviderTest::CreateCompilationProvider(absl::string_view name) {
   if (name == kSubprocessCompilationProviderName) {
     ABSL_ASSIGN_OR_RETURN(auto ptxas,
-                     FindCudaExecutable("ptxas", "/does/not/exist"));
+                          FindCudaExecutable("ptxas", "/does/not/exist"));
     ABSL_ASSIGN_OR_RETURN(auto nvlink,
-                     FindCudaExecutable("nvlink", "/does/not/exist"));
+                          FindCudaExecutable("nvlink", "/does/not/exist"));
     return std::make_unique<SubprocessCompilationProvider>(ptxas, nvlink);
   }
 
@@ -105,9 +106,9 @@ CompilationProviderTest::CreateCompilationProvider(absl::string_view name) {
 
   if (name == kDriverCompilationProviderName) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::Platform * platform,
-                     PlatformManager::PlatformWithId(kCudaPlatformId));
+                          PlatformManager::PlatformWithId(kCudaPlatformId));
     ABSL_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * executor,
-                     platform->ExecutorForDevice(0));
+                          platform->ExecutorForDevice(0));
     return std::make_unique<DriverCompilationProvider>(executor);
   }
 

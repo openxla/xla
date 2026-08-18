@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include <optional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/codegen/intrinsic/type.h"
 #include "xla/tsl/lib/core/status_test_util.h"

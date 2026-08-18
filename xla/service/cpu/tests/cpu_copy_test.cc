@@ -12,12 +12,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/tests/hlo_pjrt_test_base.h"

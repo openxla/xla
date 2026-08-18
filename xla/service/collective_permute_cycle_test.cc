@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/collective_permute_cycle.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "xla/service/source_target_pairs.h"
 
 namespace xla {

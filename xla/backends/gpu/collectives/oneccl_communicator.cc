@@ -17,10 +17,10 @@ limitations under the License.
 
 #include <memory>
 
-#include "oneapi/ccl.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
+#include "oneapi/ccl.h"
 #include "xla/backends/gpu/collectives/oneccl_errors.h"
 #include "xla/backends/gpu/collectives/single_threaded_executor.h"
 #include "xla/future.h"

@@ -122,8 +122,8 @@ IfrtIrLoadedExecutableTestBase::SerDeRoundTrip(
               mlir::sdy::SdyDialectVersion::getCurrentVersion().toString())));
 
   // Deserialize the versioned IFRT IR program.
-  ABSL_ASSIGN_OR_RETURN(program,
-                   Deserialize<IfrtIRProgram>(serialized, /*options=*/nullptr));
+  ABSL_ASSIGN_OR_RETURN(
+      program, Deserialize<IfrtIRProgram>(serialized, /*options=*/nullptr));
   return program;
 }
 

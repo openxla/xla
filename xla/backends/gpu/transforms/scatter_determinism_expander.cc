@@ -395,7 +395,7 @@ static absl::StatusOr<HloInstruction*> CreateScanWithIndices(
     std::vector<HloInstruction*> map_operands = {current_updates,
                                                  concatenated_updates};
     ABSL_ASSIGN_OR_RETURN(HloInstruction * reduced_updates,
-                     MakeMapHlo(map_operands, to_apply));
+                          MakeMapHlo(map_operands, to_apply));
     current_updates = parent->AddInstruction(HloInstruction::CreateTernary(
         updates_shape, HloOpcode::kSelect, indices_mask, reduced_updates,
         current_updates));
@@ -703,8 +703,8 @@ absl::StatusOr<HloInstruction*> ScatterDeterminismExpander::ExpandInstruction(
   // dimension must be same as the while loop trip count.
   HloInstruction* original_scatter_indices = scatter_indices;
   ABSL_ASSIGN_OR_RETURN(scatter_indices,
-                   CanonicalizeScatterIndices(scatter_indices,
-                                              dim_numbers.index_vector_dim()));
+                        CanonicalizeScatterIndices(
+                            scatter_indices, dim_numbers.index_vector_dim()));
   CHECK_EQ(scatter_indices_count, scatter_indices->shape().dimensions(0));
   // We compromise for maintainability and make the scatter_indices always 2D,
   // so that the implementation could be easier, as we do not need to maintain

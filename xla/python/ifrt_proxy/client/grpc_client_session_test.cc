@@ -14,6 +14,9 @@
 
 #include "xla/python/ifrt_proxy/client/grpc_client_session.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -23,8 +26,6 @@
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -45,6 +46,10 @@
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/status.h"
 #include "grpcpp/support/sync_stream.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt_proxy/common/grpc_credentials.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.grpc.pb.h"
@@ -52,10 +57,6 @@
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/test_utils.h"
 #include "xla/python/ifrt_proxy/common/versions.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {

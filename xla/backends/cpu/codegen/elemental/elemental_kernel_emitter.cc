@@ -225,8 +225,8 @@ ElementalKernelEmitter::EmitKernelDefinition() {
       elemental_ir_emitter.MakeElementGenerator(instr_, operand_to_generator);
 
   ABSL_ASSIGN_OR_RETURN(NumWorkGroups num_workgroups,
-                   EmitElementalLoops(ir_builder, instr_, kernel_prototype,
-                                      element_generator));
+                        EmitElementalLoops(ir_builder, instr_, kernel_prototype,
+                                           element_generator));
 
   LlvmKernelSource source(std::move(ctx), std::move(llvm_module));
 
@@ -290,7 +290,7 @@ absl::StatusOr<NumWorkGroups> ElementalKernelEmitter::EmitElementalLoops(
 
   // Emit a whole loop for the instruction.
   ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(element_generator, result, &b)
-                      .EmitLoop(llvm_ir::IrName(instr)));
+                           .EmitLoop(llvm_ir::IrName(instr)));
   return NumWorkGroups();
 }
 

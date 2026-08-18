@@ -14,12 +14,13 @@
 
 #include "xla/python/ifrt_proxy/client/array.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -27,6 +28,7 @@
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
@@ -54,7 +56,6 @@
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::_;
 using ::testing::ElementsAre;

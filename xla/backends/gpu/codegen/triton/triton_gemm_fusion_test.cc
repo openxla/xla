@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
+#include "tsl/platform/path.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
@@ -63,7 +65,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {
@@ -110,11 +111,12 @@ class TritonTest : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {
   absl::StatusOr<ModuleAndNestedFusionMetadata>
   GetModuleAndNestedFusionMetadata(absl::string_view hlo_text) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     ABSL_RETURN_IF_ERROR(HoistFusedBitcasts().Run(module.get()).status());
-    ABSL_ASSIGN_OR_RETURN(bool converted, ConvertTritonGemmConfig(
-                                         device_description(), &mlir_context_)
-                                         .Run(module.get()));
+    ABSL_ASSIGN_OR_RETURN(
+        bool converted,
+        ConvertTritonGemmConfig(device_description(), &mlir_context_)
+            .Run(module.get()));
     if (!converted) {
       return absl::InternalError("Failed to convert the GEMM fusion.");
     }

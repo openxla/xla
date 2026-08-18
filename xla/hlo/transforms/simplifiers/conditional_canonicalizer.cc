@@ -97,7 +97,8 @@ absl::StatusOr<bool> CanonicalizeNonTupleConditional(
     if (!operand->shape().IsTuple()) {
       auto tuple =
           parent->AddInstruction(HloInstruction::CreateTuple({operand}));
-      ABSL_RETURN_IF_ERROR(conditional->ReplaceOperandWithDifferentShape(i, tuple));
+      ABSL_RETURN_IF_ERROR(
+          conditional->ReplaceOperandWithDifferentShape(i, tuple));
       changed = true;
     }
   }

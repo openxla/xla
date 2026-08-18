@@ -53,7 +53,7 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> CpuPjRtCompiler::Compile(
     CompileOptions options, const XlaComputation& computation,
     const PjRtTopologyDescription& topology, PjRtClient* client) {
   ABSL_ASSIGN_OR_RETURN(const CpuTopologyDescription* cpu_topology,
-                   GetCpuTopology(topology));
+                        GetCpuTopology(topology));
 
   ABSL_ASSIGN_OR_RETURN(
       auto executable,
@@ -65,11 +65,11 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> CpuPjRtCompiler::Compile(
     CompileOptions options, MaybeOwningMlirModule module,
     const PjRtTopologyDescription& topology, PjRtClient* client) {
   ABSL_ASSIGN_OR_RETURN(const CpuTopologyDescription* cpu_topology,
-                   GetCpuTopology(topology));
+                        GetCpuTopology(topology));
 
-  ABSL_ASSIGN_OR_RETURN(auto executable,
-                   CompileCpuExecutable(std::move(module), std::move(options),
-                                        *cpu_topology));
+  ABSL_ASSIGN_OR_RETURN(
+      auto executable, CompileCpuExecutable(std::move(module),
+                                            std::move(options), *cpu_topology));
   return std::unique_ptr<PjRtExecutable>(std::move(executable));
 }
 

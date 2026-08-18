@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/autotuning/autotuner_pass.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/log/check.h"
 #include "absl/log/globals.h"

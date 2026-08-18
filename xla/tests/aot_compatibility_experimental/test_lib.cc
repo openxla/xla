@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/tests/aot_interception_pjrt_client.h"
 #include "xla/tests/hlo_test_base.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace aot_compatibility_experimental {
@@ -86,7 +86,7 @@ absl::StatusOr<std::vector<int32_t>> GetExecutableVersions(
 absl::StatusOr<std::vector<AotTestParam>>
 GetAotTestParamsForBackwardsCompatibility(absl::string_view target_name) {
   ABSL_ASSIGN_OR_RETURN(std::vector<int32_t> versions,
-                   GetExecutableVersions(target_name));
+                        GetExecutableVersions(target_name));
 
   if (std::getenv("XLA_AOT_TEST_ALL_VERSIONS") == nullptr &&
       versions.size() > 2) {
@@ -109,7 +109,7 @@ GetAotTestParamsForBackwardsCompatibility(absl::string_view target_name) {
 absl::StatusOr<std::vector<AotTestParam>>
 GetAotTestParamsForGoldenFileVerification(absl::string_view target_name) {
   ABSL_ASSIGN_OR_RETURN(std::vector<int32_t> versions,
-                   GetExecutableVersions(target_name));
+                        GetExecutableVersions(target_name));
   if (versions.empty()) {
     return absl::NotFoundError(
         absl::StrCat("No artifacts found for target: ", target_name));

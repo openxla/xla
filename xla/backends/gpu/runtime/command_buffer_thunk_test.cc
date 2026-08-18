@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -25,14 +28,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/profiler_lock.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
@@ -76,7 +78,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/profiler_lock.h"
 
 namespace xla::gpu {
 using ::testing::HasSubstr;

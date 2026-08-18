@@ -16,9 +16,10 @@ limitations under the License.
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #include "xla/hlo/transforms/collectives/all_gather_remove_degenerate_dims.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
 namespace xla {

@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/service/gpu/model/matmul_ptable_stats_collection.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
@@ -32,7 +34,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {

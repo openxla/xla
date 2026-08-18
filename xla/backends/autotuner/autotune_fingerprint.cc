@@ -20,10 +20,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 

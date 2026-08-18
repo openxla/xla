@@ -14,19 +14,22 @@
 
 #include "xla/python/ifrt_proxy/client/executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/profiling/test_util/mock_device_time_measurement.h"
@@ -58,8 +61,6 @@
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::_;
 using ::testing::ElementsAre;

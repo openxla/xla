@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/autotuner/config_runner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"

@@ -30,12 +30,12 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "tsl/platform/context.h"
 #include "xla/tsl/concurrency/concurrent_vector.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
-#include "tsl/platform/context.h"
 
 namespace tsl {
 namespace internal {

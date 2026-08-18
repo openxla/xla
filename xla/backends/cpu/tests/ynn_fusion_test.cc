@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -21,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"

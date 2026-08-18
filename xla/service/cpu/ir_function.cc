@@ -52,8 +52,7 @@ IrFunction::IrFunction(const std::string& function_name,
 }
 
 IrFunction::IrFunction(llvm::IRBuilderBase* b, llvm::Module* llvm_module,
-                       llvm::Function* function,
-                       llvm::BasicBlock* return_block)
+                       llvm::Function* function, llvm::BasicBlock* return_block)
     : b_(b),
       llvm_module_(llvm_module),
       caller_insert_point_guard_(*b),

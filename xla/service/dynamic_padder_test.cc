@@ -20,7 +20,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"

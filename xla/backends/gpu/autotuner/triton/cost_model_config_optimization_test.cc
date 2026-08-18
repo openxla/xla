@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton/cost_model_config_optimization.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <set>
@@ -22,13 +25,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_matchers.h"
 #include "absl/time/time.h"
-#include "mlir/IR/MLIRContext.h"
 #include "google/protobuf/map.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

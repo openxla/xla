@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 
-#include <optional>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <optional>
+
 #include "absl/base/casts.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"

@@ -19,10 +19,10 @@ limitations under the License.
 #include <memory>
 
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/platform/cloud/auth_provider.h"
 #include "xla/tsl/platform/cloud/compute_engine_metadata_client.h"
 #include "xla/tsl/platform/cloud/oauth_client.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 

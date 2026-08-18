@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status_macros.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 #include "riegeli/bytes/string_reader.h"
+#include "tsl/platform/casts.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -54,7 +56,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace {
@@ -79,7 +80,7 @@ constexpr absl::string_view mlir_str = R"mlir(
 absl::StatusOr<xla::XlaComputation> GetXlaComputation(
     absl::string_view program) {
   ABSL_ASSIGN_OR_RETURN(auto hlo_module,
-                   xla::ParseAndReturnUnverifiedModule(program, {}));
+                        xla::ParseAndReturnUnverifiedModule(program, {}));
 
   return XlaComputation(hlo_module->ToProto());
 }

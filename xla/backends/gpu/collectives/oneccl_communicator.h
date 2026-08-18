@@ -20,12 +20,12 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "oneapi/ccl.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "oneapi/ccl.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"

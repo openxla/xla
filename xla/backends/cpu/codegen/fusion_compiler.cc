@@ -103,6 +103,8 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/transforms/Passes.h"
 #include "stablehlo/transforms/optimization/Passes.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
@@ -126,8 +128,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 namespace {
@@ -633,7 +633,7 @@ absl::StatusOr<LlvmKernelSource> FusionCompiler::Compile(
     MlirKernelSource mlir_kernel_source) {
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> llvm_module,
-                   Compile(*llvm_context, mlir_kernel_source.module()));
+                        Compile(*llvm_context, mlir_kernel_source.module()));
   return LlvmKernelSource(std::move(llvm_context), std::move(llvm_module));
 }
 

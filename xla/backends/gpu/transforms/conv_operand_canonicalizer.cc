@@ -146,7 +146,7 @@ absl::StatusOr<bool> ConvOperandCanonicalizer::RunImpl(
       for (int64_t i = 0; i < instr->operand_count(); ++i) {
         HloInstruction* operand = instr->mutable_operand(i);
         ABSL_ASSIGN_OR_RETURN(HloInstruction * new_operand,
-                         CanonicalizeOperandToS8Convert(comp, operand));
+                              CanonicalizeOperandToS8Convert(comp, operand));
         if (new_operand != operand) {
           ABSL_RETURN_IF_ERROR(instr->ReplaceOperandWith(i, new_operand));
           changed = true;

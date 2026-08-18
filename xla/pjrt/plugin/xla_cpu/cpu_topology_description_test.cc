@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology_description.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_common.h"

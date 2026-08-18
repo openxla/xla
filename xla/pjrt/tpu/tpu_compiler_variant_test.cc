@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/pjrt/tpu/tpu_compiler_variant.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "xla/pjrt/pjrt_compiler_variant.h"
 

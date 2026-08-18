@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"

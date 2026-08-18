@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/call_outliner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -46,7 +47,7 @@ class CallOutlinerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<HloModule>> ParseInlineAndOutline(
       absl::string_view hlo_string) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_string));
+                          ParseAndReturnVerifiedModule(hlo_string));
     CallInliner call_inliner;
     CallMarker call_marker(call_inliner);
     ABSL_ASSIGN_OR_RETURN(bool marked, call_marker.Run(module.get()));
@@ -65,7 +66,7 @@ class CallOutlinerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<HloModule>> OutlineModule(
       absl::string_view hlo_string) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_string));
+                          ParseAndReturnVerifiedModule(hlo_string));
     CallOutliner call_outliner;
     ABSL_ASSIGN_OR_RETURN(bool outlined, call_outliner.Run(module.get()));
     EXPECT_TRUE(outlined);

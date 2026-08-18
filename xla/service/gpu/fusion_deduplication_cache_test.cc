@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/fusion_deduplication_cache.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

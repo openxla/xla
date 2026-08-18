@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "rocm/include/hip/driver_types.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "tsl/platform/casts.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -55,7 +55,7 @@ absl::StatusOr<hipGraph_t> CreateGraph() {
   VLOG(2) << "Create new HIP graph";
   hipGraph_t graph;
   ABSL_RETURN_IF_ERROR(ToStatus(hipGraphCreate(&graph, /*flags=*/0),
-                           "Failed to create HIP graph"));
+                                "Failed to create HIP graph"));
   VLOG(2) << "Created HIP graph " << graph;
   return graph;
 }
@@ -402,8 +402,9 @@ absl::Status RocmCommandBuffer::Trace(
   // Always stop capturing the stream before checking `traced` result.
   VLOG(5) << "End stream " << stream << " capture";
   hipGraph_t captured_graph;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipStreamEndCapture(stream_handle, &captured_graph),
-                           "Failed to end stream capture"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipStreamEndCapture(stream_handle, &captured_graph),
+               "Failed to end stream capture"));
   ABSL_RETURN_IF_ERROR(
       ToStatus(hipGraphDestroy(std::exchange(graph_, captured_graph)),
                "Failed to destroy HIP graph"));
@@ -423,7 +424,8 @@ absl::Status RocmCommandBuffer::Trace(
 
   if (num_root_nodes == 0) {
     VLOG(5) << "Traced HIP graph is empty; adding an empty node";
-    ABSL_ASSIGN_OR_RETURN(auto* empty, CreateEmptyCmd({}, StreamPriority::Default));
+    ABSL_ASSIGN_OR_RETURN(auto* empty,
+                          CreateEmptyCmd({}, StreamPriority::Default));
     (void)empty;
   }
 
@@ -457,10 +459,11 @@ absl::Status RocmCommandBuffer::PrepareFinalization() {
   // graphs. Insert an empty node so the graph is non-empty, analogous to
   // CUDA's NoOp kernel insertion for the same case.
   hipGraphNode_t node_handle = nullptr;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipGraphAddEmptyNode(&node_handle, graph_,
-                                                /*pDependencies=*/nullptr,
-                                                /*numDependencies=*/0),
-                           "Failed to add empty node in PrepareFinalization"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipGraphAddEmptyNode(&node_handle, graph_,
+                                    /*pDependencies=*/nullptr,
+                                    /*numDependencies=*/0),
+               "Failed to add empty node in PrepareFinalization"));
   return absl::OkStatus();
 }
 

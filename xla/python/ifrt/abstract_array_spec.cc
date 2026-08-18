@@ -141,7 +141,7 @@ absl::StatusOr<AbstractArraySpec> AbstractArraySpec::FromProto(
   ABSL_ASSIGN_OR_RETURN(DType dtype, DType::FromProto(proto.dtype()));
   ABSL_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(proto.shape()));
   ABSL_ASSIGN_OR_RETURN(ShardingSpecRef sharding_spec,
-                   ShardingSpec::FromProto(proto.sharding_spec()));
+                        ShardingSpec::FromProto(proto.sharding_spec()));
   MemoryKind memory_kind;
   if (!proto.memory_kind().empty()) {
     memory_kind = MemoryKind(proto.memory_kind());
@@ -168,7 +168,7 @@ absl::Status AbstractArraySpec::ToProto(AbstractArraySpecProto& proto,
   dtype().ToProto(*proto.mutable_dtype(), version);
   shape().ToProto(*proto.mutable_shape(), version);
   ABSL_ASSIGN_OR_RETURN(*proto.mutable_sharding_spec(),
-                   sharding_spec()->ToProto(version));
+                        sharding_spec()->ToProto(version));
   if (memory_kind().memory_kind().has_value()) {
     // NOLINTNEXTLINE(*-readability-redundant-string-conversions)
     proto.set_memory_kind(std::string(*memory_kind().memory_kind()));

@@ -21,10 +21,10 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/init_main.h"
 #include "xla/debug_options_flags.h"
 #include "xla/tools/compute_xspace_stats.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 namespace {
 

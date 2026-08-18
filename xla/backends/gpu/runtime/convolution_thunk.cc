@@ -56,7 +56,7 @@ absl::StatusOr<std::unique_ptr<ConvolutionThunk>> ConvolutionThunk::Create(
     std::vector<ShapedSlice> result_slices,
     BufferAllocation::Slice scratch_slice) {
   ABSL_ASSIGN_OR_RETURN(GpuConvConfig config,
-                   GetGpuConvConfig(descriptor, /*inst_as_string=*/""));
+                        GetGpuConvConfig(descriptor, /*inst_as_string=*/""));
 
   // Can't use std::make_unique because the constructor is private.
   return absl::WrapUnique(new ConvolutionThunk(
@@ -117,8 +117,8 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   auto opts = GetOrCreate(config_, params.stream);
   ABSL_RETURN_IF_ERROR(RunGpuConv(config_, absl::MakeSpan(operand_se_buffers),
-                             absl::MakeSpan(result_se_buffers), scratch,
-                             params.stream, opts));
+                                  absl::MakeSpan(result_se_buffers), scratch,
+                                  params.stream, opts));
 
   // Note: Convolution has a tuple buffer as an output, but we don't need to
   // populate it as no one should be reading from the tuple directly.
@@ -147,25 +147,27 @@ absl::StatusOr<std::unique_ptr<ConvolutionThunk>> ConvolutionThunk::FromProto(
     ThunkInfo thunk_info, const ConvolutionThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(GpuConvDescriptor descriptor,
-                   GpuConvDescriptor::FromProto(proto.conv_descriptor()));
+                        GpuConvDescriptor::FromProto(proto.conv_descriptor()));
 
   std::vector<ShapedSlice> operand_slices;
   operand_slices.reserve(proto.operand_buffers_size());
   for (const ShapedSliceProto& slice_proto : proto.operand_buffers()) {
-    ABSL_ASSIGN_OR_RETURN(operand_slices.emplace_back(),
-                     ShapedSlice::FromProto(slice_proto, buffer_allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        operand_slices.emplace_back(),
+        ShapedSlice::FromProto(slice_proto, buffer_allocations));
   }
 
   std::vector<ShapedSlice> result_slices;
   result_slices.reserve(proto.result_buffers_size());
   for (const ShapedSliceProto& slice_proto : proto.result_buffers()) {
-    ABSL_ASSIGN_OR_RETURN(result_slices.emplace_back(),
-                     ShapedSlice::FromProto(slice_proto, buffer_allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        result_slices.emplace_back(),
+        ShapedSlice::FromProto(slice_proto, buffer_allocations));
   }
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch_slice,
-                   BufferAllocation::Slice::FromProto(proto.scratch_buffer(),
-                                                      buffer_allocations));
+                        BufferAllocation::Slice::FromProto(
+                            proto.scratch_buffer(), buffer_allocations));
 
   return Create(std::move(thunk_info), std::move(descriptor),
                 std::move(operand_slices), std::move(result_slices),
@@ -186,7 +188,7 @@ absl::StatusOr<ThunkProto> ConvolutionThunk::ToProto() const {
     ABSL_ASSIGN_OR_RETURN(*conv_proto->add_result_buffers(), slice.ToProto());
   }
   ABSL_ASSIGN_OR_RETURN(*conv_proto->mutable_scratch_buffer(),
-                   scratch_buffer_.ToProto());
+                        scratch_buffer_.ToProto());
 
   return proto;
 }

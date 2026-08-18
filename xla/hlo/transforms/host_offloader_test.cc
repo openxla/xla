@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/host_offloader.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -62,7 +63,8 @@ class HostOffloaderTest : public HloHardwareIndependentTestBase {
     }
     bool changed = false;
     HostOffloadLegalize host_offload_legalize;
-    ABSL_ASSIGN_OR_RETURN(bool legal_changed, host_offload_legalize.Run(module));
+    ABSL_ASSIGN_OR_RETURN(bool legal_changed,
+                          host_offload_legalize.Run(module));
     changed |= legal_changed;
     HostOffloader host_offloader(&alias_info_);
     ABSL_ASSIGN_OR_RETURN(bool offload_changed, host_offloader.Run(module));

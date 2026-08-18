@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/service/value_range.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -30,7 +32,6 @@ limitations under the License.
 #include "xla/service/constant_value.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

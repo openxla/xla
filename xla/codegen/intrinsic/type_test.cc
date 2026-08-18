@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/codegen/intrinsic/type.h"
 
 #include <gtest/gtest.h>
+
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"

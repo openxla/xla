@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/codegen/xtile/codegen/dot_algorithms.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"

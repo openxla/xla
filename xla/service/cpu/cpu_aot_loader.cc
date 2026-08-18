@@ -126,7 +126,8 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuAotLoader::LoadExecutable(
 
 absl::StatusOr<std::unique_ptr<Executable>> CpuAotLoader::LoadExecutable(
     const xla::cpu::CompilationResultProto& aot_result_proto) {
-  ABSL_ASSIGN_OR_RETURN(auto aot_result, LoadAotCompilationResult(aot_result_proto));
+  ABSL_ASSIGN_OR_RETURN(auto aot_result,
+                        LoadAotCompilationResult(aot_result_proto));
   return LoadExecutable(std::move(*aot_result));
 }
 
@@ -156,8 +157,8 @@ CpuAotLoader::LoadAotCompilationResult(
       HloModule::CreateFromProtoWithConfig(aot_result_proto.hlo_module()));
 
   ABSL_ASSIGN_OR_RETURN(TargetMachineOptions target_machine_options,
-                   TargetMachineOptions::FromProto(
-                       aot_result_proto.target_machine_options()));
+                        TargetMachineOptions::FromProto(
+                            aot_result_proto.target_machine_options()));
   llvm::Triple host_triple(llvm::sys::getDefaultTargetTriple());
   llvm::Triple expected_triple(target_machine_options.triple());
   if (host_triple.getArchName() != expected_triple.getArchName()) {
@@ -219,17 +220,18 @@ CpuAotLoader::LoadAotCompilationResult(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto compiled_symbols,
-                   GetCompiledSymbolsFromProto(compiled_symbols_proto));
+                        GetCompiledSymbolsFromProto(compiled_symbols_proto));
 
   std::vector<ObjFileProto> obj_files;
   for (const auto& obj_file : aot_result_proto.object_files()) {
     obj_files.push_back(obj_file);
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto function_library,
-                   LoadFunctionLibrary(compiled_symbols, obj_files,
-                                       hlo_module.get(), target_machine_options,
-                                       aot_result_proto.data_layout()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto function_library,
+      LoadFunctionLibrary(compiled_symbols, obj_files, hlo_module.get(),
+                          target_machine_options,
+                          aot_result_proto.data_layout()));
 
   return CpuAotCompilationResult::FromProto(aot_result_proto,
                                             std::move(function_library));

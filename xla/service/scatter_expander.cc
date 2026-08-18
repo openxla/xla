@@ -58,8 +58,9 @@ static absl::StatusOr<HloInstruction*> CheckIndexValidity(
   // Check if the index has any negative values.
   HloInstruction* zero_index = BroadcastZeros(
       computation, index->shape().element_type(), index->shape().dimensions());
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * negative_index_check,
-                   MakeCompareHlo(ComparisonDirection::kLe, zero_index, index));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * negative_index_check,
+      MakeCompareHlo(ComparisonDirection::kLe, zero_index, index));
 
   // Check if the index is OOB w.r.t. the operand dimensions and window sizes.
   std::vector<int64_t> max_valid_index(operand_dims.size());
@@ -71,8 +72,8 @@ static absl::StatusOr<HloInstruction*> CheckIndexValidity(
       MakeR1ConstantHlo<int64_t>(computation, index->shape().element_type(),
                                  max_valid_index));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * oob_index_check,
-                   MakeCompareHlo(ComparisonDirection::kGe,
-                                  max_valid_index_constant, index));
+                        MakeCompareHlo(ComparisonDirection::kGe,
+                                       max_valid_index_constant, index));
 
   // Combine the results of the two checks above.
   ABSL_ASSIGN_OR_RETURN(
@@ -144,7 +145,8 @@ absl::StatusOr<std::vector<HloInstruction*>> ScatterExpander::ScatterLoopBody(
         HloInstruction * index_vector_2d,
         MakeDynamicSliceHlo(scatter_indices, index_into_scatter_indices,
                             {1, index_vector_size}));
-    ABSL_ASSIGN_OR_RETURN(index_vector, ElideDegenerateDims(index_vector_2d, {0}));
+    ABSL_ASSIGN_OR_RETURN(index_vector,
+                          ElideDegenerateDims(index_vector_2d, {0}));
   }
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * scatter_slice_start,
@@ -185,7 +187,7 @@ absl::StatusOr<std::vector<HloInstruction*>> ScatterExpander::ScatterLoopBody(
         HloInstruction * update_slice,
         MakeDynamicSliceHlo(update, index_into_updates, update_slice_bounds));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * update_slice_for_scatter,
-                     ElideDegenerateDims(update_slice, {0}));
+                          ElideDegenerateDims(update_slice, {0}));
     ABSL_ASSIGN_OR_RETURN(
         HloInstruction * update_slice_with_dims_inserted,
         InsertDegenerateDims(update_slice_for_scatter, degenerated_dims));
@@ -203,8 +205,8 @@ absl::StatusOr<std::vector<HloInstruction*>> ScatterExpander::ScatterLoopBody(
     HloInstruction* operand = operands[i];
     const Shape& update_slice_shape = update_slice_with_dims_inserted->shape();
     ABSL_ASSIGN_OR_RETURN(HloInstruction * operand_slice_to_update,
-                     MakeDynamicSliceHlo(operand, scatter_slice_start,
-                                         update_slice_shape.dimensions()));
+                          MakeDynamicSliceHlo(operand, scatter_slice_start,
+                                              update_slice_shape.dimensions()));
     operand_slices_to_update[i] = operand_slice_to_update;
     if (i == 0) {
       actual_update_slice_dims = update_slice_shape.dimensions();
@@ -229,17 +231,18 @@ absl::StatusOr<std::vector<HloInstruction*>> ScatterExpander::ScatterLoopBody(
     // NOTE: For scatters with N outputs, we currently have duplicate the Map
     // computation N times because we don't support multioutput Map yet.
     ABSL_ASSIGN_OR_RETURN(HloComputation * to_apply,
-                     CallAndGetOutput(scatter->to_apply(), i));
+                          CallAndGetOutput(scatter->to_apply(), i));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * updated_operand_slice,
-                     MakeMapHlo(map_operands, to_apply));
+                          MakeMapHlo(map_operands, to_apply));
     // Select the updated operand only if the index is valid. If not, select the
     // original value.
     ABSL_ASSIGN_OR_RETURN(HloInstruction * updates_to_apply,
-                     MakeSelectHlo(is_index_valid, updated_operand_slice,
-                                   operand_slices_to_update[i]));
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * updated_operand,
-                     MakeDynamicUpdateSliceHlo(operands[i], updates_to_apply,
-                                               scatter_slice_start));
+                          MakeSelectHlo(is_index_valid, updated_operand_slice,
+                                        operand_slices_to_update[i]));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * updated_operand,
+        MakeDynamicUpdateSliceHlo(operands[i], updates_to_apply,
+                                  scatter_slice_start));
     updated_loop_state.push_back(updated_operand);
   }
   updated_loop_state.push_back(scatter_indices);
@@ -297,8 +300,8 @@ absl::StatusOr<HloInstruction*> ScatterExpander::ExpandInstruction(
   // Canonicalize the scatter_indices, after which the size of its most-major
   // dimension must be same as the while loop trip count.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * canonical_scatter_indices,
-                   CanonicalizeScatterIndices(scatter_indices,
-                                              dim_numbers.index_vector_dim()));
+                        CanonicalizeScatterIndices(
+                            scatter_indices, dim_numbers.index_vector_dim()));
   CHECK_EQ(scatter_loop_trip_count,
            canonical_scatter_indices->shape().dimensions(0));
 
@@ -334,7 +337,7 @@ absl::StatusOr<HloInstruction*> ScatterExpander::ExpandInstruction(
           },
           scatter->metadata());
   ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> scatter_loop_result,
-                   scatter_loop_result_status);
+                        scatter_loop_result_status);
   auto results =
       absl::MakeSpan(scatter_loop_result).first(scatter_operands.size());
   return MaybeMakeTuple(results);

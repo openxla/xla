@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -41,6 +40,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"

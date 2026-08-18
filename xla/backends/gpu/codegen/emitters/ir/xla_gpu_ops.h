@@ -19,15 +19,15 @@ limitations under the License.
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/Bytecode/BytecodeOpInterface.h"  // IWYU pragma: keep
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
-#include "mlir/IR/Attributes.h"  // IWYU pragma: keep
-#include "mlir/IR/BuiltinTypes.h"  // IWYU pragma: keep
-#include "mlir/IR/Dialect.h"  // IWYU pragma: keep
-#include "mlir/IR/MLIRContext.h"  // IWYU pragma: keep
-#include "mlir/IR/OpDefinition.h"  // IWYU pragma: keep
-#include "mlir/IR/OpImplementation.h"  // IWYU pragma: keep
-#include "mlir/Interfaces/CallInterfaces.h"  // IWYU pragma: keep
+#include "mlir/Bytecode/BytecodeOpInterface.h"     // IWYU pragma: keep
+#include "mlir/Dialect/Func/IR/FuncOps.h"          // IWYU pragma: keep
+#include "mlir/IR/Attributes.h"                    // IWYU pragma: keep
+#include "mlir/IR/BuiltinTypes.h"                  // IWYU pragma: keep
+#include "mlir/IR/Dialect.h"                       // IWYU pragma: keep
+#include "mlir/IR/MLIRContext.h"                   // IWYU pragma: keep
+#include "mlir/IR/OpDefinition.h"                  // IWYU pragma: keep
+#include "mlir/IR/OpImplementation.h"              // IWYU pragma: keep
+#include "mlir/Interfaces/CallInterfaces.h"        // IWYU pragma: keep
 #include "mlir/Interfaces/InferTypeOpInterface.h"  // IWYU pragma: keep
 #include "mlir/Interfaces/SideEffectInterfaces.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_dialect.h.inc"

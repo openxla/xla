@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instruction.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -26,12 +29,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -58,7 +60,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

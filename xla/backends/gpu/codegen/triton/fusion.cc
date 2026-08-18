@@ -94,18 +94,19 @@ absl::StatusOr<EmitArgs> EmitCollectiveFusion(
                                                 use_global_device_ids);
   const HloFusionInstruction* fusion_instr = &fusion;
   std::vector<CollectiveThunk::Buffer> buffers;
-  ABSL_ASSIGN_OR_RETURN(buffers, GetCollectiveBuffers(
-                                ir_emitter_context.buffer_assignment(),
-                                fusion_instr, Thunk::Kind::kCollectiveKernel,
-                                /*has_dynamic_root=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      buffers,
+      GetCollectiveBuffers(ir_emitter_context.buffer_assignment(), fusion_instr,
+                           Thunk::Kind::kCollectiveKernel,
+                           /*has_dynamic_root=*/false));
 
   TritonFusion::EmitThunk make_thunk =
       [info = std::move(info), buffers = std::move(buffers), config,
        fusion_instr](TritonFusion::EmitResult result) mutable
       -> absl::StatusOr<ThunkSequence> {
     ABSL_ASSIGN_OR_RETURN(CollectiveKernelSpec kernel_spec,
-                     CreateCollectiveKernelSpec(
-                         fusion_instr, result.entry.launch_dimensions));
+                          CreateCollectiveKernelSpec(
+                              fusion_instr, result.entry.launch_dimensions));
     auto cubin = result.entry.binary.empty()
                      ? std::nullopt
                      : std::make_optional(std::move(result.entry.binary));
@@ -116,7 +117,7 @@ absl::StatusOr<EmitArgs> EmitCollectiveFusion(
         std::move(cubin), result.entry.use_pdl);
   };
   ABSL_ASSIGN_OR_RETURN(std::vector<Shape> unmanaged_arguments,
-                   GetCollectiveUnmanagedKernelArguments(fusion_instr));
+                        GetCollectiveUnmanagedKernelArguments(fusion_instr));
   return EmitArgs{std::move(make_thunk), std::move(unmanaged_arguments)};
 }
 }  // namespace
@@ -185,8 +186,8 @@ AsyncThunkSequence TritonFusion::Emit(
   EmitArgs emit_args;
   if (analysis_.fusion_backend_config().kind() == kTritonCollectiveFusionKind) {
     ABSL_ASSIGN_OR_RETURN(emit_args,
-                     EmitCollectiveFusion(std::move(thunk_info), analysis_,
-                                          ir_emitter_context, fusion));
+                          EmitCollectiveFusion(std::move(thunk_info), analysis_,
+                                               ir_emitter_context, fusion));
   } else {
     EmitThunk make_thunk =
         [thunk_info = std::move(thunk_info)](
@@ -258,7 +259,7 @@ xla::Future<TritonFusion::EmitResult> TritonFusion::Emit(
                                   .thread_safe_module();
 
           ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                           fusion->backend_config<GpuBackendConfig>());
+                                fusion->backend_config<GpuBackendConfig>());
           absl::string_view fusion_kind =
               gpu_backend_config.fusion_backend_config().kind();
 

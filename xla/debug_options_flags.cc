@@ -48,6 +48,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/cpu_info.h"  // NOLINT
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/parse_flags_from_env.h"
@@ -58,7 +59,6 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"  // NOLINT
 
 namespace xla {
 
@@ -151,7 +151,8 @@ void AbslStringify(Sink& sink, DebugOptions::CollectivePipeliningMode mode) {
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -165,7 +166,8 @@ template <typename T>
 static std::function<bool(const std::string&)> SetterForRepeatedEnum(
     absl::string_view flag_name, absl::string_view enum_prefix,
     std::function<bool(absl::string_view, T*)> enum_parser,
-    std::function<google::protobuf::RepeatedField<int>*()> mutable_array_getter) {
+    std::function<google::protobuf::RepeatedField<int>*()>
+        mutable_array_getter) {
   return [flag_name, enum_prefix, enum_parser,
           mutable_array_getter](absl::string_view input) {
     auto* mutable_array = mutable_array_getter();

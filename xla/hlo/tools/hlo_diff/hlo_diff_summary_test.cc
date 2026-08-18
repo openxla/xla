@@ -14,10 +14,11 @@
 
 #include "xla/hlo/tools/hlo_diff/hlo_diff_summary.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"

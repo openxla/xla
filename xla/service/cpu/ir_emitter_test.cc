@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/cpu/ir_emitter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -40,6 +41,11 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
@@ -68,11 +74,6 @@ limitations under the License.
 #include "xla/service/logical_buffer.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla::cpu {
 namespace {
@@ -285,7 +286,8 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
                              std::make_unique<BFScheduler>(
                                  &alias_info, buffer_size_bytes_function));
 
-  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule, ScheduleModule(&module, *scheduler));
+  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
+                        ScheduleModule(&module, *scheduler));
   ABSL_RETURN_IF_ERROR(module.set_schedule(schedule));
 
   auto memory_alignment = [](LogicalBuffer::Color) { return MinAlign(); };

@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -27,7 +28,6 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/shape.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

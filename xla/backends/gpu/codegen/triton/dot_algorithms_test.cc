@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -29,8 +32,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -104,7 +105,7 @@ class AlgorithmTest : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {
       absl::string_view hlo_text, absl::string_view triton_fusion_name,
       absl::string_view filecheck_pattern) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     return CreateTritonIrAndFileCheckForDot(module.get(), triton_fusion_name,
                                             filecheck_pattern);
   }
@@ -1879,7 +1880,7 @@ class PrecisionTests
     }
     config.set_debug_options(debug_options);
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     GetOptimizedModule(hlo_text, config));
+                          GetOptimizedModule(hlo_text, config));
     if (backend == Backend::kTriton) {
       ABSL_RETURN_IF_ERROR(CheckGemmPattern(
           *module, "CHECK: {{__triton_gemm|__triton_nested_gemm_fusion}}"));

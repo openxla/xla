@@ -43,6 +43,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "third_party/nccl/nccl.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
@@ -68,8 +70,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -159,7 +159,7 @@ class NcclIdStore {
     if (root_processes.contains(process_id_)) {
       absl::Time set_clique_id_start = absl::Now();
       ABSL_ASSIGN_OR_RETURN(CliqueId clique_id,
-                       nccl_collectives.CreateUniqueCliqueId());
+                            nccl_collectives.CreateUniqueCliqueId());
       ABSL_RETURN_IF_ERROR(
           kv_store_->Set(kv_key(process_id_), clique_id.ToString()));
       absl::Time set_clique_id_done = absl::Now();
@@ -175,7 +175,7 @@ class NcclIdStore {
     CliqueIds clique_ids;
     for (ProcessId root : root_processes) {
       ABSL_ASSIGN_OR_RETURN(std::string id_str,
-                       kv_store_->Get(kv_key(root), absl::Minutes(10)));
+                            kv_store_->Get(kv_key(root), absl::Minutes(10)));
       clique_ids.Add(CliqueId(id_str));
     }
     absl::Time get_clique_ids_done = absl::Now();
@@ -424,11 +424,11 @@ NcclCollectives::CreateCommunicatorsWithCancel(
     std::vector<ncclUniqueId> nccl_unique_ids;
     for (const CliqueId& clique_id : clique_ids->data()) {
       ABSL_ASSIGN_OR_RETURN(nccl_unique_ids.emplace_back(),
-                       AsNcclUniqueId(clique_id));
+                            AsNcclUniqueId(clique_id));
     }
 
     ABSL_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
-                     AsNcclConfig(gpu_config, stream_executors[i]));
+                          AsNcclConfig(gpu_config, stream_executors[i]));
 
     ncclComm_t comm;
     if (nccl_unique_ids.size() > 1) {
@@ -471,11 +471,12 @@ NcclCollectives::CreateCommunicatorsWithCancel(
     });
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto comms, JoinFutures(absl::MakeSpan(futures)).Await());
+  ABSL_ASSIGN_OR_RETURN(auto comms,
+                        JoinFutures(absl::MakeSpan(futures)).Await());
 
   if (auto* gxl = gxl_collectives()) {
     ABSL_RETURN_IF_ERROR(gxl->MaybeAttachGxlCommunicators(absl::MakeSpan(comms),
-                                                     ranks, clique_key));
+                                                          ranks, clique_key));
   }
 
   return comms;
@@ -528,7 +529,7 @@ NcclCollectives::SplitCommunicatorsWithCancel(
         key);
 
     ABSL_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
-                     AsNcclConfig(gpu_config, stream_executors[i]));
+                          AsNcclConfig(gpu_config, stream_executors[i]));
 
     ncclComm_t split_comm;
     XLA_NCCL_RETURN_IF_ERROR(ncclCommSplit(parent_comm, color, key.value(),
@@ -565,7 +566,7 @@ NcclCollectives::SplitCommunicatorsWithCancel(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto split_comms,
-                   JoinFutures(absl::MakeSpan(futures)).Await());
+                        JoinFutures(absl::MakeSpan(futures)).Await());
 
   if (auto* gxl = gxl_collectives()) {
     ABSL_RETURN_IF_ERROR(gxl->MaybeAttachSplitGxlCommunicators(
@@ -574,7 +575,6 @@ NcclCollectives::SplitCommunicatorsWithCancel(
 
   return split_comms;
 }
-
 
 absl::StatusOr<GpuCollectives::CliqueIdCallback>
 NcclCollectives::InitializeTopology(const Topology& topology) {

@@ -33,6 +33,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -58,8 +60,6 @@ limitations under the License.
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/path.h"
 
 namespace xla::cpu {
 
@@ -135,9 +135,9 @@ absl::Status RunHloBenchmark(benchmark::State& state,
                              StrToStrMapping replacements,
                              const HloBenchmarkOptions& benchmark_options) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   ParseAndReturnUnverifiedModule(
-                       absl::StrReplaceAll(hlo_module, replacements),
-                       HloModuleConfig() /* unused */));
+                        ParseAndReturnUnverifiedModule(
+                            absl::StrReplaceAll(hlo_module, replacements),
+                            HloModuleConfig() /* unused */));
   return RunHloBenchmark(state, std::move(module), args, benchmark_options);
 }
 
@@ -161,10 +161,10 @@ absl::Status RunHloBenchmarkImpl(benchmark::State* absl_nullable state,
                                  const HloBenchmarkOptions& benchmark_options) {
   xla::CpuClientOptions client_options;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
-                   xla::GetXlaPjrtCpuClient(client_options));
+                        xla::GetXlaPjrtCpuClient(client_options));
   PjRtDevice* device = client->devices().front();
   ABSL_ASSIGN_OR_RETURN(PjRtMemorySpace * memory_space,
-                   device->default_memory_space());
+                        device->default_memory_space());
 
   XlaComputation computation(module->ToProto());
 
@@ -179,11 +179,11 @@ absl::Status RunHloBenchmarkImpl(benchmark::State* absl_nullable state,
   if (benchmark_options.aot_options) {
     auto* cpu_client = absl::down_cast<PjRtCpuClient*>(client.get());
     ABSL_ASSIGN_OR_RETURN(executable, cpu_client->CompileAheadOfTimeAndLoad(
-                                     computation, compile_options,
-                                     *benchmark_options.aot_options));
+                                          computation, compile_options,
+                                          *benchmark_options.aot_options));
   } else {
     ABSL_ASSIGN_OR_RETURN(executable,
-                     client->CompileAndLoad(computation, compile_options));
+                          client->CompileAndLoad(computation, compile_options));
   }
 
   CHECK_GE(benchmark_options.num_executions, 1);
@@ -201,12 +201,12 @@ absl::Status RunHloBenchmarkImpl(benchmark::State* absl_nullable state,
   // fake arguments based on the number of inputs to the hlo module.
   if (args.empty()) {
     ABSL_ASSIGN_OR_RETURN(std::vector<Literal> fake_args,
-                     MakeFakeArguments(module.get()));
+                          MakeFakeArguments(module.get()));
     for (auto& args_buffers : execution_args_buffers) {
       args_buffers.reserve(fake_args.size());
       for (const Literal& arg : fake_args) {
         ABSL_ASSIGN_OR_RETURN(args_buffers.emplace_back(),
-                         client->BufferFromHostLiteral(arg, memory_space));
+                              client->BufferFromHostLiteral(arg, memory_space));
         ABSL_RETURN_IF_ERROR(args_buffers.back()->GetReadyFuture().Await());
       }
     }
@@ -221,8 +221,9 @@ absl::Status RunHloBenchmarkImpl(benchmark::State* absl_nullable state,
     for (auto& args_buffers : execution_args_buffers) {
       args_buffers.reserve(args.size());
       for (const Literal* arg : args) {
-        ABSL_ASSIGN_OR_RETURN(args_buffers.emplace_back(),
-                         client->BufferFromHostLiteral(*arg, memory_space));
+        ABSL_ASSIGN_OR_RETURN(
+            args_buffers.emplace_back(),
+            client->BufferFromHostLiteral(*arg, memory_space));
         ABSL_RETURN_IF_ERROR(args_buffers.back()->GetReadyFuture().Await());
       }
     }
@@ -287,8 +288,9 @@ absl::Status RunHloBenchmarkImpl(benchmark::State* absl_nullable state,
       std::vector<std::unique_ptr<PjRtBuffer>>& args_buffers =
           execution_args_buffers[i];
       std::vector<PjRtBuffer*>& args_ptrs = execution_args_ptrs[i];
-      ABSL_RETURN_IF_ERROR(alias_helper.SwapOutputAliasedBuffersToArgumentBuffers(
-          execution_results[i], args_buffers, args_ptrs));
+      ABSL_RETURN_IF_ERROR(
+          alias_helper.SwapOutputAliasedBuffersToArgumentBuffers(
+              execution_results[i], args_buffers, args_ptrs));
     }
 
     return absl::OkStatus();
@@ -328,9 +330,9 @@ absl::Status CompileHloBenchmark(benchmark::State& state,
                                  StrToStrMapping replacements,
                                  const HloBenchmarkOptions& benchmark_options) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   ParseAndReturnUnverifiedModule(
-                       absl::StrReplaceAll(hlo_module, replacements),
-                       HloModuleConfig() /* unused */));
+                        ParseAndReturnUnverifiedModule(
+                            absl::StrReplaceAll(hlo_module, replacements),
+                            HloModuleConfig() /* unused */));
 
   return CompileHloBenchmark(state, std::move(module), benchmark_options);
 }
@@ -340,7 +342,7 @@ absl::Status CompileHloBenchmark(benchmark::State& state,
                                  const HloBenchmarkOptions& benchmark_options) {
   xla::CpuClientOptions client_options;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
-                   xla::GetXlaPjrtCpuClient(client_options));
+                        xla::GetXlaPjrtCpuClient(client_options));
 
   XlaComputation computation(module->ToProto());
 
@@ -352,7 +354,7 @@ absl::Status CompileHloBenchmark(benchmark::State& state,
 
   for (auto _ : state) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtLoadedExecutable> executable,
-                     client->CompileAndLoad(computation, compile_options));
+                          client->CompileAndLoad(computation, compile_options));
     tsl::testing::DoNotOptimize(executable);
   }
 
@@ -369,10 +371,11 @@ LoadFromHloSnapshotOrHloModuleProto(absl::string_view hlo_data,
       std::make_unique<RunHloModuleIterationLiterals>();
   if (extension == "pb" || extension == "pbtxt") {
     ABSL_ASSIGN_OR_RETURN(iteration_literals_proto,
-                     LoadInputFromData(hlo_data, extension));
+                          LoadInputFromData(hlo_data, extension));
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto hlo_module, LoadModuleFromData(hlo_data, extension));
+  ABSL_ASSIGN_OR_RETURN(auto hlo_module,
+                        LoadModuleFromData(hlo_data, extension));
 
   return std::make_pair(std::move(hlo_module),
                         std::move(iteration_literals_proto));
@@ -414,7 +417,7 @@ absl::StatusOr<std::pair<std::unique_ptr<HloModule>,
 LoadHloModuleAndMaybeIterationLiterals(absl::string_view hlo_path) {
   std::string hlo_data;
   ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
-                                        std::string(hlo_path), &hlo_data));
+                                             std::string(hlo_path), &hlo_data));
 
   HloUnoptimizedSnapshot unoptimized_snapshot;
   if (unoptimized_snapshot.ParseFromString(hlo_data)) {

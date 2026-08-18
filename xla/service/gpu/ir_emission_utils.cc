@@ -43,6 +43,8 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -63,8 +65,6 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -96,7 +96,7 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
   int num_matrix_operands = 0;
   for (int operand : {0, 1}) {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims dims,
-                     DotOperandDims::FromDotOperand(&dot, operand));
+                          DotOperandDims::FromDotOperand(&dot, operand));
     // cuBLAS only supports single contracting dimension.
     if (dims.Rank(DotOperandDims::kContracting) != 1) {
       return false;
@@ -162,7 +162,6 @@ bool IsCustomCallToMosaicGpu(const HloInstruction& hlo) {
          (hlo.custom_call_target() == "mosaic_gpu" ||
           hlo.custom_call_target() == "mosaic_gpu_v2");
 }
-
 
 bool IsMosaicWithMultimem(const HloInstruction& hlo) {
   return IsCustomCallToMosaicGpu(hlo) &&

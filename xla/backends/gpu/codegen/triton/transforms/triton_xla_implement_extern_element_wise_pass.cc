@@ -127,4 +127,3 @@ class TritonXLAImplementExternElementWisePass
 }  // namespace
 
 }  // namespace mlir::triton::xla
-

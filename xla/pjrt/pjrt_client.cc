@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -181,7 +181,7 @@ CopyToDeviceStream::~CopyToDeviceStream() = default;
 absl::StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
 PjRtLoadedExecutable::GetCostAnalysis() const {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloCostAnalysis> hlo_cost_analysis,
-                   client()->GetHloCostAnalysis());
+                        client()->GetHloCostAnalysis());
   return PjRtExecutableUtil::RunHloCostAnalysis(*GetExecutable(),
                                                 hlo_cost_analysis.get());
 }
@@ -196,7 +196,8 @@ absl::StatusOr<Shape> PjRtBuffer::HostShape() {
     absl::Span<const int64_t> literal_dims;
     std::optional<std::vector<int64_t>> logical_dims_storage;
     if (has_dynamic_dimensions()) {
-      ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> logical_dims, logical_dimensions());
+      ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> logical_dims,
+                            logical_dimensions());
       logical_dims_storage.emplace(std::move(logical_dims));
       literal_dims = *logical_dims_storage;
     } else {

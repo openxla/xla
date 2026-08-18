@@ -25,9 +25,9 @@ limitations under the License.
 namespace mlir {
 namespace hlo {
 
-DenseIntElementsAttr getPaddingAttr(MLIRContext *context,
+DenseIntElementsAttr getPaddingAttr(MLIRContext* context,
                                     ArrayRef<int64_t> value);
-DenseIntElementsAttr getPaddingAttr(Builder *builder, ArrayRef<int64_t> value);
+DenseIntElementsAttr getPaddingAttr(Builder* builder, ArrayRef<int64_t> value);
 
 }  // namespace hlo
 }  // namespace mlir

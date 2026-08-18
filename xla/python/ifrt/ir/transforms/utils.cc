@@ -50,6 +50,7 @@ limitations under the License.
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/mlir/utils/type_util.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -76,7 +77,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace ifrt {
@@ -376,8 +376,8 @@ absl::StatusOr<std::optional<xla::CompileOptions>> GetModuleCompileOverrides(
         absl::flat_hash_map<std::string, std::unique_ptr<CompileOptions>>>
         compile_options_overrides) {
   ABSL_ASSIGN_OR_RETURN(XlaCompileOptions * xla_compile_options,
-                   GetModuleXlaCompileOverrides(compile_options_key,
-                                                compile_options_overrides));
+                        GetModuleXlaCompileOverrides(
+                            compile_options_key, compile_options_overrides));
   if (xla_compile_options == nullptr) {
     return std::nullopt;
   }
@@ -397,7 +397,7 @@ absl::StatusOr<ShardingRef> ShardingFromIfrtArrayType(
       array_devices.push_back(devices[logical_id]);
     }
     ABSL_ASSIGN_OR_RETURN(array_device_list,
-                     client->MakeDeviceList(std::move(array_devices)));
+                          client->MakeDeviceList(std::move(array_devices)));
   }
 
   IfrtShardingParamAttr sharding_attr = GetShardingParamAttr(array_type);
@@ -414,8 +414,8 @@ absl::StatusOr<ArraySpec> ArraySpecFromMlirType(
     mlir::Type array_type, Client* client, const DeviceListRef& device_list) {
   IfrtArrayType ifrt_array_type = GetArrayType(array_type);
 
-  ABSL_ASSIGN_OR_RETURN(DType dtype,
-                   ToIfrtDType(ifrt_array_type.getShape().getElementType()));
+  ABSL_ASSIGN_OR_RETURN(
+      DType dtype, ToIfrtDType(ifrt_array_type.getShape().getElementType()));
 
   ABSL_ASSIGN_OR_RETURN(
       ShardingRef sharding,

@@ -15,16 +15,18 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/cost_analysis.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {
@@ -71,7 +72,7 @@ class MemorySpaceAssignmentCostAnalysisTest
             CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper_),
             /*enable_cache=*/false));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                     HloAliasAnalysis::Run(module, &alias_info_));
+                          HloAliasAnalysis::Run(module, &alias_info_));
     ABSL_ASSIGN_OR_RETURN(
         cost_analysis_,
         CostAnalysis::Create(*op_cost_manager_, options_, &alias_info_, *module,

@@ -46,6 +46,9 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -86,9 +89,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace pjrt {
 
@@ -123,7 +123,7 @@ static absl::Status PopulateExecutableCostAnalysis(
   using PropertiesMapType =
       absl::flat_hash_map<std::string, xla::PjRtValueType>;
   ABSL_ASSIGN_OR_RETURN(const PropertiesMapType properties,
-                   executable->get()->GetCostAnalysis());
+                        executable->get()->GetCostAnalysis());
   // If no output, return empty result
   if (properties.empty()) {
     return absl::OkStatus();
@@ -204,7 +204,7 @@ static absl::Status EnsureExecutableParameterShardingsPopulated(
 static absl::Status PopulateExecutableOutputElementTypes(
     PJRT_Executable* executable) {
   ABSL_ASSIGN_OR_RETURN(auto output_types,
-                   executable->get()->GetOutputElementTypes());
+                        executable->get()->GetOutputElementTypes());
   if (output_types.empty()) {
     return xla::InvalidArgument(
         "Can't get output element types, the list is empty for executable "
@@ -229,7 +229,8 @@ static absl::Status PopulateExecutableOutputElementTypes(
 
 static absl::Status PopulateExecutableOutputDimensions(
     PJRT_Executable* executable) {
-  ABSL_ASSIGN_OR_RETURN(auto output_dims, executable->get()->GetOutputDimensions());
+  ABSL_ASSIGN_OR_RETURN(auto output_dims,
+                        executable->get()->GetOutputDimensions());
   if (output_dims.empty()) {
     return xla::InvalidArgument(
         "Can't get output dimensions, the list is empty for executable %s.",
@@ -399,8 +400,9 @@ static absl::Status PopulateExecutableParameterMemoryKinds(
 
 static absl::Status PopulateExecutableOutputMemoryKinds(
     PJRT_Executable* executable) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::vector<absl::string_view>> output_memories,
-                   executable->get()->GetOutputMemoryKinds());
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::vector<absl::string_view>> output_memories,
+      executable->get()->GetOutputMemoryKinds());
   if (output_memories.empty()) {
     return xla::InvalidArgument(
         "Can't get output memory kinds, the list is empty for executable %s.",
@@ -1121,7 +1123,7 @@ absl::StatusOr<ProgramVariant> ParsePjrtProgram(const PJRT_Program* program) {
   if (format_str == pjrt::kMlirFormat) {
     auto context = std::make_unique<mlir::MLIRContext>();
     ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                     xla::ParseMlirModuleString(module_str, *context));
+                          xla::ParseMlirModuleString(module_str, *context));
     return ProgramVariant(
         xla::MaybeOwningMlirModule(std::move(context), std::move(module)));
   }
@@ -1952,8 +1954,9 @@ static absl::Status VerifyOptimizedProgramArgs(
 
 static absl::StatusOr<std::shared_ptr<xla::HloModule>>
 GetOptimizedProgramModule(const PJRT_Executable_OptimizedProgram_Args* args) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
-                   args->executable->get()->GetHloModules());
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
+      args->executable->get()->GetHloModules());
   if (hlo_modules.empty()) {
     return xla::InvalidArgument(
         "Can't get the optimized program for executable "

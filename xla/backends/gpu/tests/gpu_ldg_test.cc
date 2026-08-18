@@ -17,10 +17,11 @@ limitations under the License.
 // __ldg builtin) for reads of buffers that don't change during a kernel's
 // execution.
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"

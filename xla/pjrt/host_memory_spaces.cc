@@ -19,8 +19,8 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
-#include "xla/pjrt/pjrt_client.h"
 #include "tsl/platform/fingerprint.h"
+#include "xla/pjrt/pjrt_client.h"
 
 namespace xla {
 

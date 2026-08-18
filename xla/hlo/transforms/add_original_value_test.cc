@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/add_original_value.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

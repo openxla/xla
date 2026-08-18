@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/dump.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <sys/types.h>
 
 #include <cstdint>
@@ -23,14 +25,15 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -50,9 +53,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
 
 namespace xla {
 namespace {

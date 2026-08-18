@@ -58,9 +58,10 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
       << "CodegenOrchestrator is required to create an Autotuner.";
   config_runners.reserve(profilers.size());
   for (auto& profiler : profilers) {
-    ABSL_ASSIGN_OR_RETURN(config_runners.emplace_back(),
-                     ConfigRunner::Create(std::move(profiler),
-                                          options.correctness_check_options));
+    ABSL_ASSIGN_OR_RETURN(
+        config_runners.emplace_back(),
+        ConfigRunner::Create(std::move(profiler),
+                             options.correctness_check_options));
   }
 
   CodegenOrchestrator* orchestrator_ptr = orchestrator.get();
@@ -78,9 +79,10 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
       << "At least one profiler is required to create an Autotuner.";
   config_runners.reserve(profilers.size());
   for (auto& profiler : profilers) {
-    ABSL_ASSIGN_OR_RETURN(config_runners.emplace_back(),
-                     ConfigRunner::Create(std::move(profiler),
-                                          options.correctness_check_options));
+    ABSL_ASSIGN_OR_RETURN(
+        config_runners.emplace_back(),
+        ConfigRunner::Create(std::move(profiler),
+                             options.correctness_check_options));
   }
 
   return absl::WrapUnique(new Autotuner(nullptr, orchestrator,
@@ -152,8 +154,9 @@ tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
 
 tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
     const HloInstruction* absl_nonnull instr, int runner_index) const {
-  ABSL_ASSIGN_OR_RETURN(std::vector<CodegenOrchestrator::Config> supported_configs,
-                   orchestrator_->GetSupportedConfigs(*instr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<CodegenOrchestrator::Config> supported_configs,
+      orchestrator_->GetSupportedConfigs(*instr));
   if (supported_configs.empty()) {
     return absl::NotFoundError(absl::StrCat(
         "No supported configs found for HLO: ", instr->ToString()));
@@ -265,8 +268,8 @@ absl::Status Autotuner::DumpTuningLogs() {
         "Failed to convert AutotuningLogs to textproto.");
   }
 
-  ABSL_RETURN_IF_ERROR(tsl::AppendStringToFile(tsl::Env::Default(),
-                                          options_.dump_logs_to, textproto));
+  ABSL_RETURN_IF_ERROR(tsl::AppendStringToFile(
+      tsl::Env::Default(), options_.dump_logs_to, textproto));
   VLOG(1) << "Autotune logs appended to file: " << options_.dump_logs_to;
   return absl::OkStatus();
 }

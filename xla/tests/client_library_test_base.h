@@ -22,11 +22,12 @@ limitations under the License.
 // This macro helps to ensure that migration test base classes are not used in
 // conjunction with ClientLibraryTestBase.
 // TODO: b/408276009 - Remove these macros once all tests have been migrated.
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "xla/array.h"

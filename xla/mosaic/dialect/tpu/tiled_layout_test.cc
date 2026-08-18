@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LLVM.h"
@@ -57,8 +58,7 @@ TEST(TiledLayoutTest, NumTrailingDimsWithContiguousTilesTest) {
   // Check contiguity for a layout with non-decreasing strides.
   // (note that the minor dimension has a single tile)
   tiled_layout = TiledLayoutAttr::get(&ctx, tiles, {1, 4});
-  EXPECT_EQ(tiled_layout.getNumTrailingDimsWithContiguousTiles({3, 2}),
-            2);
+  EXPECT_EQ(tiled_layout.getNumTrailingDimsWithContiguousTiles({3, 2}), 2);
 
   // Check some completely non-contiguous layouts.
   tiled_layout = TiledLayoutAttr::get(&ctx, {}, {10, 2});

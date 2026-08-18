@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/tools/multihost_hlo_runner/functional_hlo_runner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -23,9 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -42,6 +42,9 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -66,6 +69,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
 #include "xla/tools/multihost_hlo_runner/hlo_input_output_format.h"
 #include "xla/tools/multihost_hlo_runner/profiler_interface.h"
@@ -81,9 +85,6 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -656,7 +657,7 @@ TEST_F(FunctionalHloRunnerTest, WhileKnownTripCountGetsCapped) {
 namespace {
 absl::StatusOr<std::string> GetExpectedBackendFingerprint() {
   ABSL_ASSIGN_OR_RETURN(std::string platform_name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
   if (platform_name == "rocm") {
     return "3128633344";
   }
@@ -732,7 +733,8 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
           /*use_gpu_count_workaround=*/false)
           .status());
   if (node_id == 0) {
-    ABSL_ASSIGN_OR_RETURN(std::string backend_fp, GetExpectedBackendFingerprint());
+    ABSL_ASSIGN_OR_RETURN(std::string backend_fp,
+                          GetExpectedBackendFingerprint());
     ABSL_ASSIGN_OR_RETURN(
         std::string results0,
         env.kv_store->Get(

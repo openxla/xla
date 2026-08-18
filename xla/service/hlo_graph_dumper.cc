@@ -46,6 +46,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "sqlite3.h"
+#include "tsl/platform/base64.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -73,9 +76,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/util.h"
-#include "tsl/platform/base64.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/thread_annotations.h"
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -2070,7 +2070,7 @@ static absl::Status CreateSqliteDb(
       "INTEGER, to_highlight TEXT);";
 
   ABSL_RETURN_IF_ERROR(RunSql(db.get(), create_metadata_table,
-                         "Failed to create metadata table"));
+                              "Failed to create metadata table"));
   ABSL_RETURN_IF_ERROR(
       RunSql(db.get(), create_graphs_table, "Failed to create graphs table"));
   ABSL_RETURN_IF_ERROR(
@@ -2103,7 +2103,7 @@ static absl::Status CreateSqliteDb(
 
   for (int i = 0; i < visualizer_progress.dot_graphs.size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(std::string compressed,
-                     Compress(visualizer_progress.dot_graphs[i]));
+                          Compress(visualizer_progress.dot_graphs[i]));
     sqlite3_bind_int(graph_stmt.get(), 1, i);
     sqlite3_bind_blob(graph_stmt.get(), 2, compressed.data(), compressed.size(),
                       SQLITE_TRANSIENT);
@@ -2156,14 +2156,15 @@ absl::StatusOr<std::string> WrapFusionExplorer(
   auto cleanup = absl::MakeCleanup(
       [&db_path] { tsl::Env::Default()->DeleteFile(db_path).IgnoreError(); });
 
-  ABSL_RETURN_IF_ERROR(CreateSqliteDb(visualizer_progress, graph_title, db_path));
+  ABSL_RETURN_IF_ERROR(
+      CreateSqliteDb(visualizer_progress, graph_title, db_path));
 
   std::string zip_data = "#!/usr/bin/env python3\n";
 
   {
     auto file = std::make_unique<WritableStringFile>(&zip_data);
     ABSL_ASSIGN_OR_RETURN(tsl::io::ZipWriter zip_writer,
-                     tsl::io::ZipWriter::Create(std::move(file)));
+                          tsl::io::ZipWriter::Create(std::move(file)));
 
     ABSL_RETURN_IF_ERROR(zip_writer.AddFile("__main__.py", kPythonServerCode));
     ABSL_RETURN_IF_ERROR(zip_writer.AddFile("viewer.html", kViewerHtmlCode));
@@ -2215,7 +2216,7 @@ absl::StatusOr<std::string> WrapDotInHtml(absl::string_view dot,
                                        EscapeJSONString(""));
   ABSL_ASSIGN_OR_RETURN(std::string compressed_dot_graph, Compress(dot_graph));
   ABSL_ASSIGN_OR_RETURN(std::string encoded_dot_graph,
-                   EncodeBase64(compressed_dot_graph));
+                        EncodeBase64(compressed_dot_graph));
   return absl::StrReplaceAll(kSimpleViewerHtmlCode,
                              {
                                  {"$TITLE", title},

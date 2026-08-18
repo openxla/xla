@@ -28,6 +28,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/collectives/in_process_collectives.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
@@ -41,8 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 
@@ -163,8 +163,9 @@ Thunk::CustomCallExecuteParams::CustomCallExecuteParams(
 
 absl::StatusOr<Thunk::YnnParams> Thunk::YnnParams::Create(
     const ExecutableRunOptions* run_options) {
-  ABSL_ASSIGN_OR_RETURN(YnnThreadpool threadpool,
-                   CreateYnnThreadpool(run_options->intra_op_thread_pool()));
+  ABSL_ASSIGN_OR_RETURN(
+      YnnThreadpool threadpool,
+      CreateYnnThreadpool(run_options->intra_op_thread_pool()));
   return YnnParams(std::move(threadpool));
 }
 

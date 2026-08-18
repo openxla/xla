@@ -16,10 +16,11 @@ limitations under the License.
 #include "xla/service/fuzzy_matcher.h"
 
 #include <gtest/gtest.h>
-#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/pattern_matcher.h"
+
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/pattern_matcher.h"
 
 namespace xla {
 namespace {

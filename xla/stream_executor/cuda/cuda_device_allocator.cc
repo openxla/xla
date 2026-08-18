@@ -223,7 +223,7 @@ AllocateDeviceMemory(StreamExecutor* executor,
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, effective_alignment);
 
   ABSL_ASSIGN_OR_RETURN(CUmemGenericAllocationHandle handle,
-                   CreatePhysicalAllocation(properties, padded_size));
+                        CreatePhysicalAllocation(properties, padded_size));
 
   absl::Cleanup release_handle = [&] {
     absl::Status status = cuda::ToStatus(cuMemRelease(handle));
@@ -249,7 +249,8 @@ AllocateDeviceMemory(StreamExecutor* executor,
           << "Failed to free VMM address during cleanup: " << status;
     }
   };
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
 
   // Grant read/write access — to all peers if peer access is enabled,
   // otherwise only to the owning device.
@@ -386,7 +387,7 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> CudaDeviceAllocator::Allocate(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto result,
-                   AllocateDeviceMemory(executor_, options_, size));
+                        AllocateDeviceMemory(executor_, options_, size));
   auto [ptr, padded_size, handle] = result;
 
   return std::make_unique<CudaDeviceMemoryAllocation>(executor_, ptr, size,

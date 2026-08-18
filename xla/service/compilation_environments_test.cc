@@ -15,23 +15,24 @@ limitations under the License.
 
 #include "xla/service/compilation_environments.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <utility>
 
-#include "google/protobuf/descriptor.pb.h"
-#include <gmock/gmock.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "google/protobuf/descriptor.h"
+#include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/dynamic_message.h"
 #include "google/protobuf/message_lite.h"
+#include "tsl/platform/casts.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/test_compilation_environment.pb.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 
@@ -92,7 +93,8 @@ std::unique_ptr<google::protobuf::Message> ProcessCustomDescInFallbackTest(
   if (msg_dynamic) {
     const google::protobuf::Reflection* refl = msg_dynamic->GetReflection();
     const google::protobuf::Descriptor* d = msg_dynamic->GetDescriptor();
-    const google::protobuf::FieldDescriptor* f = d->FindFieldByName("some_flag");
+    const google::protobuf::FieldDescriptor* f =
+        d->FindFieldByName("some_flag");
     // Check if the incoming dynamic message has the flag set to
     // kTestSpecificValue
     if (refl && f && refl->HasField(*msg_dynamic, f) &&

@@ -36,6 +36,7 @@
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_registry.h"
 #include "xla/python/ifrt/user_context_status_util.h"
@@ -48,7 +49,6 @@
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_to_from_proto.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 
+#include <gmock/gmock.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -24,7 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -73,9 +74,9 @@ using Offset = DynamicSliceFusion::Offset;
 
 static absl::StatusOr<se::StreamExecutor*> CreateExecutor() {
   ABSL_ASSIGN_OR_RETURN(std::string platform_name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(platform_name));
+                        se::PlatformManager::PlatformWithName(platform_name));
   return platform->ExecutorForDevice(0);
 }
 

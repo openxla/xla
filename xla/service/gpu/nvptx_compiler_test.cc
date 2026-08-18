@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/nvptx_compiler.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -75,9 +76,10 @@ class NVPTXCompilerTest : public HloPjRtGpuTestBase {
     NVPTXCompiler compiler;
     std::unique_ptr<GpuAliasInfo> alias_info =
         compiler.GetAliasInfo(gpu_device_info);
-    ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, pointer_size, gpu_device_info,
-                                      &mlir_context_, alias_info.get())
-                        .status());
+    ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, pointer_size,
+                                           gpu_device_info, &mlir_context_,
+                                           alias_info.get())
+                             .status());
 
     auto buffer_size_bytes_function =
         [](const BufferValue& buffer_value) -> int64_t {

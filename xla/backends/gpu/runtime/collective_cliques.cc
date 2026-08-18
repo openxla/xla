@@ -31,6 +31,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/time/time.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -56,8 +58,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -196,7 +196,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
             "clique id callback must be passed via execution params");
       }
       ABSL_ASSIGN_OR_RETURN(CliqueId clique_id,
-                       params.collectives->CreateUniqueCliqueId());
+                            params.collectives->CreateUniqueCliqueId());
       return CliqueIds(clique_id);
     };
 
@@ -229,8 +229,9 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
                   [](const CollectiveCliqueRequests::CliqueRequest& r) {
                     return r.use_cross_device_barrier_requested;
                   })) {
-    ABSL_ASSIGN_OR_RETURN(collective_alloc, params.executor->CreateMemoryAllocator(
-                                           se::MemorySpace::kCollective));
+    ABSL_ASSIGN_OR_RETURN(
+        collective_alloc,
+        params.executor->CreateMemoryAllocator(se::MemorySpace::kCollective));
   }
 
   // After we acquired all GPU cliques, check if they already have required
@@ -278,7 +279,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
         }
       }
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<GpuDeviceCommunicator> dev_comm,
-                       comm->CreateDeviceComm(reqs));
+                            comm->CreateDeviceComm(reqs));
       GpuDeviceCommunicator* dev_comm_ptr = dev_comm.get();
       ABSL_RETURN_IF_ERROR(
           (*clique)->AddDeviceComm(*rank, reqs, std::move(dev_comm)));
@@ -309,21 +310,23 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
         se::DeviceAddressBase signal_addr = signal->address();
 
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                         params.executor->CreateStream());
+                              params.executor->CreateStream());
         ABSL_RETURN_IF_ERROR(
             stream->MemZero(&signal_value_addr, signal_value_addr.size()));
         ABSL_RETURN_IF_ERROR(stream->MemZero(&signal_addr, signal_addr.size()));
         ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symmetric_memory,
-                         comm->CreateSymmetricMemory(signal_addr));
+                              comm->CreateSymmetricMemory(signal_addr));
 
-        ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
-                         (*clique)->Tie(std::move(signal_value)));
+        ABSL_ASSIGN_OR_RETURN(
+            tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
+            (*clique)->Tie(std::move(signal_value)));
         ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<se::MemoryAllocation> tied_signal,
-                         (*clique)->Tie(std::move(signal)));
-        ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symmetric_memory,
-                         (*clique)->Tie(std::move(symmetric_memory)));
+                              (*clique)->Tie(std::move(signal)));
+        ABSL_ASSIGN_OR_RETURN(
+            tsl::TiedRef<SymmetricMemory> tied_symmetric_memory,
+            (*clique)->Tie(std::move(symmetric_memory)));
 
         comm->InitializeCrossDeviceBarrier(std::move(tied_signal_value),
                                            std::move(tied_signal),

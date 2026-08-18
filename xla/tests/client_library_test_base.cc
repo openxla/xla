@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/tests/client_library_test_base.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <iterator>
@@ -26,7 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -217,7 +218,8 @@ ClientLibraryTestBase::ComputeAndCompareLiteralWithAllOutputLayouts(
                              const std::string& error_message)>&
         verify_output) {
   // Try with no layout requirement.
-  ABSL_ASSIGN_OR_RETURN(auto actual, ExecuteAndTransfer(computation, arguments));
+  ABSL_ASSIGN_OR_RETURN(auto actual,
+                        ExecuteAndTransfer(computation, arguments));
   verify_output(actual, "");
 
   // Try with all output layouts.
@@ -228,7 +230,7 @@ ClientLibraryTestBase::ComputeAndCompareLiteralWithAllOutputLayouts(
         expected.shape().element_type(), expected.shape().dimensions(),
         minor_to_major);
     ABSL_ASSIGN_OR_RETURN(auto actual,
-                     ExecuteAndTransfer(computation, arguments, &layout));
+                          ExecuteAndTransfer(computation, arguments, &layout));
     verify_output(actual,
                   absl::StrCat("Test with output layout: ",
                                ShapeUtil::HumanStringWithLayout(layout)));
@@ -252,7 +254,7 @@ absl::Status ClientLibraryTestBase::ComputeAndCompareLiteralWithAllInputLayouts(
     if (index < arguments.size()) {
       // Try out all layouts for the operand.
       ABSL_ASSIGN_OR_RETURN(auto literal,
-                       client_->Transfer(*arguments[index], nullptr));
+                            client_->Transfer(*arguments[index], nullptr));
       // Skip tuples because they don't have a rank.
       if (literal.shape().IsTuple()) {
         layout_strings.push_back(
@@ -272,7 +274,7 @@ absl::Status ClientLibraryTestBase::ComputeAndCompareLiteralWithAllInputLayouts(
         layout_strings.push_back(
             ShapeUtil::HumanStringWithLayout(literal_relayout.shape()));
         ABSL_ASSIGN_OR_RETURN(auto data,
-                         client_->TransferToServer(literal_relayout));
+                              client_->TransferToServer(literal_relayout));
         arguments_with_layout.push_back(data.get());
         ABSL_RETURN_IF_ERROR(choose(index + 1));
         arguments_with_layout.pop_back();
@@ -368,8 +370,9 @@ absl::Status ClientLibraryTestBase::ComputeAndCompareLiteralWithStatus(
     absl::Span<GlobalData* const> arguments_passed_in,
     std::optional<ErrorSpec> error, const Shape* shape_with_layout) {
   std::vector<std::unique_ptr<GlobalData>> owning_arguments;
-  ABSL_ASSIGN_OR_RETURN(std::vector<GlobalData*> arguments,
-                   PrepareArguments(arguments_passed_in, owning_arguments));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<GlobalData*> arguments,
+      PrepareArguments(arguments_passed_in, owning_arguments));
 
   ABSL_ASSIGN_OR_RETURN(auto computation, builder->Build());
   if (error == std::nullopt) {
@@ -407,7 +410,7 @@ absl::Status ClientLibraryTestBase::ComputeAndCompareLiteralWithStatus(
         computation, *expected_ptr, arguments, expect, shape_with_layout);
   }
   ABSL_ASSIGN_OR_RETURN(auto actual, ExecuteAndTransfer(computation, arguments,
-                                                   shape_with_layout));
+                                                        shape_with_layout));
   if (error) {
     EXPECT_TRUE(LiteralTestUtil::Near(*expected_ptr, actual, *error));
   } else {
@@ -504,10 +507,11 @@ ClientLibraryTestBase::ComputeValueAndReference(
   ABSL_ASSIGN_OR_RETURN(auto computation, builder->Build());
 
   ABSL_ASSIGN_OR_RETURN(auto result,
-                   ExecuteAndTransfer(computation, argument_data_ptr));
+                        ExecuteAndTransfer(computation, argument_data_ptr));
 
-  ABSL_ASSIGN_OR_RETURN(auto reference, ExecuteAndTransferReference(
-                                       computation, ref_argument_data_ptr));
+  ABSL_ASSIGN_OR_RETURN(
+      auto reference,
+      ExecuteAndTransferReference(computation, ref_argument_data_ptr));
 
   return std::make_pair(std::move(reference), std::move(result));
 }
@@ -594,8 +598,8 @@ ClientLibraryTestBase::CreateParameterAndTransferLiteral(
     const DeviceHandle* device_handle, XlaBuilder* builder,
     XlaOp* data_handle) {
   Literal param_literal = MaybeConvertLiteralToTestType(literal);
-  ABSL_ASSIGN_OR_RETURN(auto data,
-                   client_->TransferToServer(param_literal, device_handle));
+  ABSL_ASSIGN_OR_RETURN(
+      auto data, client_->TransferToServer(param_literal, device_handle));
   *data_handle =
       Parameter(builder, parameter_number, param_literal.shape(), name);
   return data;

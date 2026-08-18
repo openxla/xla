@@ -96,7 +96,7 @@ absl::Status NormalizeBackendConfig(gpu::GpuExecutableProto& executable) {
     for (HloInstructionProto& instruction :
          *computation.mutable_instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::string backend_config_str,
-                       GetBackendConfigString(instruction, module));
+                            GetBackendConfigString(instruction, module));
 
       absl::StatusOr<std::string> normalized_or = SortJson(backend_config_str);
       if (normalized_or.ok()) {

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"

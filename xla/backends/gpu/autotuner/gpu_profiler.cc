@@ -134,8 +134,8 @@ static absl::Status InitializeInputBuffer(GpuInputBuffers& gpu_buffers,
   }
 
   se::DeviceAddressBase buffer = rz_buffers.input_buffers()[buffer_index];
-  ABSL_RETURN_IF_ERROR(stream->Memcpy(const_cast<se::DeviceAddressBase*>(&buffer),
-                                 values, size_bytes));
+  ABSL_RETURN_IF_ERROR(stream->Memcpy(
+      const_cast<se::DeviceAddressBase*>(&buffer), values, size_bytes));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
   return absl::OkStatus();
@@ -156,7 +156,7 @@ static absl::Status InitializeBuffersIfRequiredByOpcode(
       instr->custom_call_target() == "__cublas$lt$groupedMatmul") {
     // Get the backend config to extract ragged dimension information
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     instr->backend_config<GpuBackendConfig>());
+                          instr->backend_config<GpuBackendConfig>());
     const GroupedGemmBackendConfig& grouped_config =
         gpu_config.grouped_gemm_backend_config();
     const RaggedDotDimensionNumbers& ragged_dims =
@@ -306,12 +306,12 @@ absl::StatusOr<ProfileResult> GpuProfiler::Profile(
         CreateExecutionInputsFromBuffers(rz_buffers.input_buffers(),
                                          rz_buffers.input_shapes());
     ABSL_RETURN_IF_ERROR(Execute(executable, std::move(execution_inputs),
-                            /*profile=*/nullptr, warmup_alloc)
-                        .status());
+                                 /*profile=*/nullptr, warmup_alloc)
+                             .status());
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
     if (warmup_rz.has_value()) {
       ABSL_ASSIGN_OR_RETURN(se::RedzoneAllocator::RedzoneCheckStatus rz_check,
-                       warmup_rz->CheckRedzones());
+                            warmup_rz->CheckRedzones());
       if (!rz_check.ok()) {
         std::string redzone_failure_msg = rz_check.RedzoneFailureMsg();
         VLOG(1) << "Autotuning candidate discarded: out-of-bounds write "
@@ -366,8 +366,9 @@ absl::Status GpuProfiler::CheckInputBuffers(InputBuffers& buffers) {
   const GpuInputBuffers& gpu_buffers =
       absl::down_cast<const GpuInputBuffers&>(buffers);
   const RedzoneBuffers& rz_buffers = gpu_buffers.redzone_buffers;
-  ABSL_ASSIGN_OR_RETURN(se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
-                   rz_buffers.RedzoneAllocator().CheckRedzones());
+  ABSL_ASSIGN_OR_RETURN(
+      se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
+      rz_buffers.RedzoneAllocator().CheckRedzones());
   if (rz_check_status.ok()) {
     return absl::OkStatus();
   }
@@ -385,9 +386,10 @@ absl::Status GpuProfiler::CheckOutputBuffer(ScopedShapedBuffer& output,
         BufferComparator comparator(subshape, rtol,
                                     /*verbose=*/false);
 
-        ABSL_ASSIGN_OR_RETURN(bool outputs_match,
-                         comparator.CompareEqual(stream_, output.buffer(index),
-                                                 reference.buffer(index)));
+        ABSL_ASSIGN_OR_RETURN(
+            bool outputs_match,
+            comparator.CompareEqual(stream_, output.buffer(index),
+                                    reference.buffer(index)));
         if (outputs_match) {
           return absl::OkStatus();
         }

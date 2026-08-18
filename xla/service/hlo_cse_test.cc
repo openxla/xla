@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/hlo_cse.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"

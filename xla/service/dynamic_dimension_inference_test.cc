@@ -59,9 +59,9 @@ class DynamicDimensionInferenceTest : public HloHardwareIndependentTestBase {
       const DynamicDimensionInference::AssertionGenerator& assertion_generator =
           nullptr) {
     ABSL_ASSIGN_OR_RETURN(DynamicDimensionInference inference,
-                     DynamicDimensionInference::Run(
-                         module_.get(), op_supports_dynamism_handler, handler,
-                         shape_check_mode, assertion_generator));
+                          DynamicDimensionInference::Run(
+                              module_.get(), op_supports_dynamism_handler,
+                              handler, shape_check_mode, assertion_generator));
 
     inference_ = std::make_unique<DynamicDimensionInference>(inference);
     return absl::OkStatus();

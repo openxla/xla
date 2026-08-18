@@ -16,12 +16,13 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_computation_deduplicator.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -611,8 +612,8 @@ TEST_F(HloComputationDeduplicatorTest, LargeSubComputationTest) {
     module->AddComputationAndUnifyNamesAndIds(builder.Build(), false);
   }
   HloComputation::Builder main("main_func");
-  std::vector<HloInstruction *> insns;
-  std::vector<HloInstruction *> consts;
+  std::vector<HloInstruction*> insns;
+  std::vector<HloInstruction*> consts;
   for (int region = 0; region < total_regions; region++) {
     insns.push_back(main.AddInstruction(
         HloInstruction::CreateParameter(region, ShapeUtil::MakeShape(S32, {10}),
@@ -631,7 +632,7 @@ TEST_F(HloComputationDeduplicatorTest, LargeSubComputationTest) {
   HloComputationDeduplicator dedup;
   TF_ASSERT_OK_AND_ASSIGN(bool changed, dedup.Run(module.get()));
   EXPECT_FALSE(changed);
-  std::vector<HloComputation *> computations = module->MakeComputationSorted();
+  std::vector<HloComputation*> computations = module->MakeComputationSorted();
   EXPECT_EQ(computations.size(), (total_regions + 1));
 }
 

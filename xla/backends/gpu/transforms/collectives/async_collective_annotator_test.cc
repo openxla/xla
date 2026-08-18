@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -29,6 +30,7 @@ limitations under the License.
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/statusor.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -37,7 +39,6 @@ limitations under the License.
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/test_target_triple_helper.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

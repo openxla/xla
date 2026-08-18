@@ -15,14 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/comparators.h"
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <limits>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/repeated_ptr_field.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

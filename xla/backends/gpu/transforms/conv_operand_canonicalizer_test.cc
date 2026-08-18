@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/conv_operand_canonicalizer.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

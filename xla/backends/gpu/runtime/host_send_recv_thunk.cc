@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/host_async_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -124,7 +124,8 @@ absl::StatusOr<ThunkProto> HostSendThunk::ToProto() const {
   *proto.mutable_thunk_info() = thunk_info().ToProto();
   HostSendThunkProto& host_send_thunk_proto = *proto.mutable_host_send_thunk();
   *host_send_thunk_proto.mutable_shape() = shape_.ToProto();
-  ABSL_ASSIGN_OR_RETURN(*host_send_thunk_proto.mutable_buffer(), buffer_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*host_send_thunk_proto.mutable_buffer(),
+                        buffer_.ToProto());
   host_send_thunk_proto.set_channel_id(channel_id_);
   host_send_thunk_proto.mutable_frontend_attrs()->insert(
       frontend_attrs_.begin(), frontend_attrs_.end());
@@ -168,8 +169,8 @@ absl::Status HostSendThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Send buffer: channel_id=" << channel_id_
           << "; shape=" << shape_.ToString();
 
-  ABSL_ASSIGN_OR_RETURN(bool skip,
-                   ShouldSkip("sending buffer", params, device_constraint_));
+  ABSL_ASSIGN_OR_RETURN(
+      bool skip, ShouldSkip("sending buffer", params, device_constraint_));
   if (skip) {
     return absl::OkStatus();
   }
@@ -263,8 +264,8 @@ absl::StatusOr<std::unique_ptr<HostSendDoneThunk>> HostSendDoneThunk::FromProto(
 absl::Status HostSendDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Wait for send completion: channel_id=" << channel_id_;
 
-  ABSL_ASSIGN_OR_RETURN(bool skip, ShouldSkip("waiting for send completion", params,
-                                         device_constraint_));
+  ABSL_ASSIGN_OR_RETURN(bool skip, ShouldSkip("waiting for send completion",
+                                              params, device_constraint_));
   if (skip) {
     return absl::OkStatus();
   }
@@ -273,7 +274,8 @@ absl::Status HostSendDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
       [&] { return TraceMeEncode("SendDone", {{"channel_id", channel_id_}}); });
 
   se::StreamExecutor* executor = params.stream->parent();
-  ABSL_ASSIGN_OR_RETURN(auto done_event, events_->Extract(executor, channel_id_));
+  ABSL_ASSIGN_OR_RETURN(auto done_event,
+                        events_->Extract(executor, channel_id_));
 
   // Wait until send handler will record an event on the stream.
   BlockUntilReady(done_event.GetAsyncValue());
@@ -318,7 +320,8 @@ absl::StatusOr<ThunkProto> HostRecvThunk::ToProto() const {
   *proto.mutable_thunk_info() = thunk_info().ToProto();
   HostRecvThunkProto& host_recv_thunk_proto = *proto.mutable_host_recv_thunk();
   *host_recv_thunk_proto.mutable_shape() = shape_.ToProto();
-  ABSL_ASSIGN_OR_RETURN(*host_recv_thunk_proto.mutable_buffer(), buffer_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*host_recv_thunk_proto.mutable_buffer(),
+                        buffer_.ToProto());
   host_recv_thunk_proto.set_channel_id(channel_id_);
   host_recv_thunk_proto.mutable_frontend_attrs()->insert(
       frontend_attrs_.begin(), frontend_attrs_.end());
@@ -362,8 +365,8 @@ absl::Status HostRecvThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Recv buffer: channel_id=" << channel_id_
           << "; shape=" << shape_.ToString();
 
-  ABSL_ASSIGN_OR_RETURN(bool skip,
-                   ShouldSkip("receiving buffer", params, device_constraint_));
+  ABSL_ASSIGN_OR_RETURN(
+      bool skip, ShouldSkip("receiving buffer", params, device_constraint_));
   if (skip) {
     return absl::OkStatus();
   }
@@ -457,8 +460,8 @@ absl::StatusOr<std::unique_ptr<HostRecvDoneThunk>> HostRecvDoneThunk::FromProto(
 absl::Status HostRecvDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Wait for recv completion: channel_id=" << channel_id_;
 
-  ABSL_ASSIGN_OR_RETURN(bool skip, ShouldSkip("waiting for recv completion", params,
-                                         device_constraint_));
+  ABSL_ASSIGN_OR_RETURN(bool skip, ShouldSkip("waiting for recv completion",
+                                              params, device_constraint_));
   if (skip) {
     return absl::OkStatus();
   }
@@ -467,7 +470,8 @@ absl::Status HostRecvDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
       [&] { return TraceMeEncode("RecvDone", {{"channel_id", channel_id_}}); });
 
   se::StreamExecutor* executor = params.stream->parent();
-  ABSL_ASSIGN_OR_RETURN(auto done_event, events_->Extract(executor, channel_id_));
+  ABSL_ASSIGN_OR_RETURN(auto done_event,
+                        events_->Extract(executor, channel_id_));
 
   // Wait until send handler will record an event on the stream.
   BlockUntilReady(done_event.GetAsyncValue());

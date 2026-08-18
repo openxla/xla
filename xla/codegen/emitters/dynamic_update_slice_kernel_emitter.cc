@@ -113,8 +113,9 @@ DynamicUpdateSliceKernelEmitter::EmitKernelDefinition() {
 
   emitters::PartitionedComputations computations(
       fusion_.fused_instructions_computation(), &mlir_context_, GetEpilogues());
-  ABSL_ASSIGN_OR_RETURN(auto call_targets, emitters::EmitPartitionedComputations(
-                                          *module, computations));
+  ABSL_ASSIGN_OR_RETURN(
+      auto call_targets,
+      emitters::EmitPartitionedComputations(*module, computations));
 
   ABSL_RETURN_IF_ERROR(
       EmitEntryFunction(computations, call_targets, entry_func, fusion_));

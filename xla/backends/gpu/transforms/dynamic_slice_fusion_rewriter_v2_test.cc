@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter_v2.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/match.h"

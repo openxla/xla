@@ -675,8 +675,10 @@ TEST_F(ClientServerTest, WaitAtBarrier_Succeed) {
     auto client = GetClient(node_id);
     ABSL_RETURN_IF_ERROR(client->Connect());
 
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());
     return absl::OkStatus();
@@ -750,7 +752,8 @@ TEST_F(ClientServerTest, WaitAtBarrier_TimeoutWithDifferentBarrierId) {
     } else if (node_id == 1) {
       barrier_id = "barrier_1";
     }
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier(barrier_id, kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier(barrier_id, kBarrierTimeout, {}));
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());
     return absl::OkStatus();
@@ -778,10 +781,14 @@ TEST_F(ClientServerTest, WaitAtBarrier_ReuseSameId_Succeeds) {
     auto client = GetClient(node_id);
     ABSL_RETURN_IF_ERROR(client->Connect());
 
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());
     return absl::OkStatus();
@@ -934,7 +941,7 @@ TEST_F(ClientServerTest, WaitAtBarrierSubset_Succeeds) {
 
     if (node_id != 2) {
       ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout,
-                                            {GetTask(0), GetTask(1)}));
+                                                 {GetTask(0), GetTask(1)}));
     }
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());

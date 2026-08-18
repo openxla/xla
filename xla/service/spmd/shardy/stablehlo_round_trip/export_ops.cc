@@ -126,7 +126,7 @@ void rewriteCollectiveOp(mlir::Operation* op, mlir::Value input,
   mlir::Operation* newOp;
   if (keepHloShardingConstraints) {
     auto customCallOp = rewriter.replaceOpWithNewOp<stablehlo::CustomCallOp>(
-      op, op->getResultTypes(), input);
+        op, op->getResultTypes(), input);
     customCallOp.setCallTargetName(kShardingCustomCallTargetName);
     newOp = customCallOp;
   } else {
@@ -240,8 +240,7 @@ class ExportOpsPass
 
 }  // namespace
 
-std::unique_ptr<Pass> createExportOpsPass(
-    bool keepHloShardingConstraints) {
+std::unique_ptr<Pass> createExportOpsPass(bool keepHloShardingConstraints) {
   return std::make_unique<ExportOpsPass>(keepHloShardingConstraints);
 }
 

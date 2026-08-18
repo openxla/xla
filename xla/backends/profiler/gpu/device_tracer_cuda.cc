@@ -27,6 +27,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_tracer_options_utils.h"
@@ -35,10 +39,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/profiler/lib/profiler_factory.h"
-#include "tsl/profiler/lib/profiler_interface.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

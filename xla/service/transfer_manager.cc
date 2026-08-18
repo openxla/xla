@@ -31,6 +31,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/notification.h"
+#include "tsl/platform/statusor.h"
 #include "xla/literal.h"
 #include "xla/service/compiler.h"
 #include "xla/service/maybe_owning_device_address.h"
@@ -42,10 +46,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/notification.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -63,8 +63,8 @@ absl::StatusOr<Literal> TransferManager::TransferLiteralFromDevice(
     se::Stream* stream, const ShapedBuffer& device_buffer,
     const TransferMetadata* transfer_metadata) {
   Literal literal(device_buffer.on_host_shape());
-  ABSL_RETURN_IF_ERROR(TransferLiteralFromDevice(stream, device_buffer, &literal,
-                                            transfer_metadata));
+  ABSL_RETURN_IF_ERROR(TransferLiteralFromDevice(stream, device_buffer,
+                                                 &literal, transfer_metadata));
   return std::move(literal);
 }
 
@@ -113,8 +113,8 @@ absl::StatusOr<Literal> TransferManager::TransferArrayFromDevice(
   Literal literal(shape);
   ShapedBuffer shaped_buffer(shape, stream->parent()->device_ordinal());
   shaped_buffer.set_buffer(source, /*index=*/{});
-  ABSL_RETURN_IF_ERROR(TransferLiteralFromDevice(stream, shaped_buffer, &literal,
-                                            transfer_metadata));
+  ABSL_RETURN_IF_ERROR(TransferLiteralFromDevice(stream, shaped_buffer,
+                                                 &literal, transfer_metadata));
   return std::move(literal);
 }
 
@@ -152,8 +152,9 @@ absl::Status TransferManager::ReadDynamicShapes(
   Shape original_device_shape = *device_shape;
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
-  ABSL_ASSIGN_OR_RETURN(auto compiler, Compiler::GetForPlatform(
-                                      stream->parent()->GetPlatform()->id()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto compiler,
+      Compiler::GetForPlatform(stream->parent()->GetPlatform()->id()));
   ABSL_RETURN_IF_ERROR(device_buffer->buffers().ForEachElementWithStatus(
       [&](const ShapeIndex& index,
           const se::DeviceAddressBase& buffer) -> absl::Status {
@@ -334,8 +335,8 @@ absl::StatusOr<ScopedShapedBuffer> TransferManager::AllocateScopedShapedBuffer(
     se::DeviceAddressBase& memory_base = pair.second;
     const Shape& subshape =
         ShapeUtil::GetSubshape(shaped_buffer.on_device_shape(), index);
-    ABSL_ASSIGN_OR_RETURN(auto memory,
-                     allocator->Allocate(shaped_buffer.device_ordinal(),
+    ABSL_ASSIGN_OR_RETURN(
+        auto memory, allocator->Allocate(shaped_buffer.device_ordinal(),
                                          GetByteSizeRequirement(subshape),
                                          /*retry_on_failure=*/true,
                                          LayoutUtil::MemorySpace(subshape)));

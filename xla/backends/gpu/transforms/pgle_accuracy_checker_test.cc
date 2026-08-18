@@ -15,16 +15,19 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/pgle_accuracy_checker.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
@@ -32,8 +35,6 @@ limitations under the License.
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla::gpu {
 namespace {

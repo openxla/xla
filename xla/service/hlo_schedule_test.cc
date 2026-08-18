@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_schedule.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "xla/hlo/analysis/alias_info.h"

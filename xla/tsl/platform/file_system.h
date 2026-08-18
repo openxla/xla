@@ -31,9 +31,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cord.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_statistics.h"
-#include "tsl/platform/cord.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef DeleteFile
@@ -370,8 +370,6 @@ class FileSystem {
   /// empty.
   void ParseURI(absl::string_view remaining, absl::string_view* scheme,
                 absl::string_view* host, absl::string_view* path) const;
-
-
 
   /// \brief Set File System Configuration Options
   virtual absl::Status SetOption(const std::string& key,

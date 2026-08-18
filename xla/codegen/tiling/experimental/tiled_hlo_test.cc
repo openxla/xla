@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -174,7 +175,7 @@ class TileAnalysisTestBase : public HloHardwareIndependentTestBase {
     HloInstruction* root = ParseAndGetRoot(hlo_string);
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
     ABSL_ASSIGN_OR_RETURN(auto tiling_space,
-                     TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+                          TilingSpace::Create(*fusion_adaptor, &mlir_context_));
     ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(tile_sizes));
     ABSL_ASSIGN_OR_RETURN(
         TiledHloComputation tiled_computation,

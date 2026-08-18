@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/ffi/ffi.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <complex>
 #include <cstddef>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"

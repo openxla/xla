@@ -73,8 +73,9 @@ absl::StatusOr<std::unique_ptr<HloProgram>> XlaComputationToHloProgram(
       xla::HloModule::CreateFromProto(hlo_module_proto, hlo_module_config));
 
   auto mlir_context = std::make_unique<mlir::MLIRContext>();
-  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
-                   xla::ConvertHloToStablehlo(*mlir_context, hlo_module.get()));
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+      xla::ConvertHloToStablehlo(*mlir_context, hlo_module.get()));
   auto program = std::make_unique<HloProgram>(std::move(mlir_context),
                                               std::move(mlir_module));
 

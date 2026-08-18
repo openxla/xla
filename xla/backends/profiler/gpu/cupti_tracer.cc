@@ -49,6 +49,9 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cuda_version_variants.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
@@ -64,9 +67,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/per_thread.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/platform/thread_annotations.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -1868,11 +1868,11 @@ absl::Status CuptiTracer::HandleDriverApiCallback(
   }
 
   if (cbdata->callbackSite == CUPTI_API_ENTER) {
-    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiEnter(device_id, domain,
-                                                             cbid, cbdata));
+    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiEnter(
+        device_id, domain, cbid, cbdata));
   } else if (cbdata->callbackSite == CUPTI_API_EXIT) {
-    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiExit(device_id, domain,
-                                                            cbid, cbdata));
+    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiExit(
+        device_id, domain, cbid, cbdata));
   }
   return absl::OkStatus();
 }

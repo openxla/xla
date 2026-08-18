@@ -196,7 +196,8 @@ HloShardingSpec::Disassemble(const Shape& shape) const {
     return result;
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<IndexDomain> index_domains, IndexDomains(shape));
+  ABSL_ASSIGN_OR_RETURN(std::vector<IndexDomain> index_domains,
+                        IndexDomains(shape));
   CHECK_EQ(index_domains.size(), num_shards_);
   std::vector<std::pair<Shape, ShardingSpecRef>> result;
   result.reserve(num_shards_);

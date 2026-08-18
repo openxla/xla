@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/reduce_scatter_creator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -58,7 +59,7 @@ class GpuReduceScatterCreatorTest : public HloHardwareIndependentTestBase {
         /*replica_count=*/num_replicas, /*num_partitions=*/num_partitions);
     config.set_use_spmd_partitioning(use_spmd_partitioning);
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
     auto changed = ReduceScatterCreator().Run(module.get());
     if (!changed.ok()) {
       return changed.status();

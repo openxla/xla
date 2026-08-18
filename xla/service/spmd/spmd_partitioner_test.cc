@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/spmd/spmd_partitioner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -144,7 +145,7 @@ class SpmdPartitioningTest
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
 
     ShardingFormatPicker format_picker(sharding_type);
     ABSL_ASSIGN_OR_RETURN(bool changed, format_picker.Run(module.get()));
@@ -18599,7 +18600,7 @@ class SpmdPartitioningV3Test : public HloHardwareIndependentTestBase {
     config.set_use_shardy_partitioner(true);
     config.mutable_debug_options().set_xla_enable_hlo_sharding_v3(true);
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
 
     HloPassPipeline pass("spmd-partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,

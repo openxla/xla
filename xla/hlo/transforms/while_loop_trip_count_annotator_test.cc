@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"

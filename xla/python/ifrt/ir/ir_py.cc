@@ -26,7 +26,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "xla/pjrt/status_casters.h"
@@ -67,7 +67,7 @@ absl::StatusOr<nb::bytes> SerializeVersionedProgram(
     absl::string_view atom_program_sdy_version, bool version_in_place) {
   mlir::MLIRContext context;
   ABSL_ASSIGN_OR_RETURN(auto module,
-                   support::ParseMlirModuleString(module_str, context));
+                        support::ParseMlirModuleString(module_str, context));
   auto program = std::make_unique<IfrtIRProgram>(module.release());
   ABSL_ASSIGN_OR_RETURN(
       auto serialized,

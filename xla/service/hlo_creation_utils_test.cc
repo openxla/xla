@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/hlo_creation_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"

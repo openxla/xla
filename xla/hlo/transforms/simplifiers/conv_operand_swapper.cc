@@ -173,8 +173,8 @@ absl::StatusOr<bool> ConvOperandSwapper::RunImpl(
     for (HloInstruction* hlo : comp->MakeInstructionPostOrder()) {
       if (auto* convolution = DynCast<HloConvolutionInstruction>(hlo)) {
         ABSL_ASSIGN_OR_RETURN(bool convolution_changed,
-                         SwapConvolutionOperandsIfBeneficial(
-                             convolution, conv_is_lowerable_callback_));
+                              SwapConvolutionOperandsIfBeneficial(
+                                  convolution, conv_is_lowerable_callback_));
         changed |= convolution_changed;
       }
     }

@@ -17,6 +17,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/check.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
-#include "google/protobuf/text_format.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h"
@@ -78,7 +78,8 @@ struct EmittersOptOptions
       return xla::gpu::TestGpuDeviceInfo::RTXA6000DeviceInfo();
     }
     stream_executor::GpuDeviceInfoProto device_info;
-    CHECK(google::protobuf::TextFormat::ParseFromString(gpu_device_info, &device_info));
+    CHECK(google::protobuf::TextFormat::ParseFromString(gpu_device_info,
+                                                        &device_info));
     auto device_description =
         stream_executor::DeviceDescription::FromProto(device_info);
     CHECK_OK(device_description.status());

@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -20,7 +22,6 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/random/random.h"

@@ -41,6 +41,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/tuple_points_to_analysis.h"
@@ -71,8 +73,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -777,7 +777,7 @@ absl::Status UpdateInstructionSchedulingAnnotation(
     HloInstruction* cloned_instr, int64_t& scheduling_id,
     absl::flat_hash_map<int64_t, int64_t>& annotation_map) {
   ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> annotation_idx,
-                   GetSchedulingAnnotationGroupId(cloned_instr));
+                        GetSchedulingAnnotationGroupId(cloned_instr));
   if (annotation_idx) {
     if (!annotation_map.contains(*annotation_idx)) {
       annotation_map[*annotation_idx] = scheduling_id++;
@@ -814,7 +814,8 @@ absl::StatusOr<HloInstruction*> CloneBackwardChain(
     auto new_operands = MapNewOperands(chain_op->operands(), clone_map);
     HloInstruction* cloned = target_computation.AddInstruction(
         chain_op->CloneWithNewOperands(chain_op->shape(), new_operands));
-    ABSL_RETURN_IF_ERROR(UpdateControlDependencies(chain_op, cloned, clone_map));
+    ABSL_RETURN_IF_ERROR(
+        UpdateControlDependencies(chain_op, cloned, clone_map));
     UpdateInstructionChannelId(cloned, next_channel_id,
                                update_collective_channel_id);
     if (next_scheduling_id != -1) {
@@ -1960,7 +1961,7 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
   // Duplicate the loop body into the loop parent computation, so that the first
   // iteration happens there.
   ABSL_ASSIGN_OR_RETURN(int64_t next_scheduling_id,
-                   NextSchedulingGroupId(*while_loop->GetModule()));
+                        NextSchedulingGroupId(*while_loop->GetModule()));
   absl::flat_hash_map<int64_t, int64_t> annotation_map;
   for (auto* instr : while_body->MakeInstructionPostOrder()) {
     if (instr == loop_parameter) {
@@ -2074,12 +2075,13 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
   HloInstruction* new_init = loop_computation->AddInstruction(
       HloInstruction::CreateTuple(new_init_operands));
   while_body_to_peeled[while_body->root_instruction()] = new_init;
-  ABSL_RETURN_IF_ERROR(UpdateControlDependencies(while_body->root_instruction(),
-                                            new_init, while_body_to_peeled));
+  ABSL_RETURN_IF_ERROR(UpdateControlDependencies(
+      while_body->root_instruction(), new_init, while_body_to_peeled));
   HloInstruction* new_while_loop =
       loop_computation->AddInstruction(HloInstruction::CreateWhile(
           loop_state_shape, new_while_condition, new_while_body, new_init));
-  ABSL_RETURN_IF_ERROR(while_loop->ReplaceAllUsesWithDifferentShape(new_while_loop));
+  ABSL_RETURN_IF_ERROR(
+      while_loop->ReplaceAllUsesWithDifferentShape(new_while_loop));
   ABSL_RETURN_IF_ERROR(
       loop_computation->RemoveInstructionAndUnusedOperands(while_loop));
   ABSL_RETURN_IF_ERROR(new_while_loop->GetModule()->RemoveUnusedComputations());
@@ -2087,12 +2089,13 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
   // all-reduces in the new cloned loop as they aren't the same of the old.
   // Loop analysis should result exactly the same, because the loop is the same
   // except some new scalar unused parameters added at the end.
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> new_dataflow_analysis,
-                   HloDataflowAnalysis::Run(*(new_while_loop->GetModule()),
-                                            /*ssa_form=*/true,
-                                            /*bitcast_defines_value=*/false,
-                                            /*execution_threads=*/{},
-                                            /*propagate_through_calls=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloDataflowAnalysis> new_dataflow_analysis,
+      HloDataflowAnalysis::Run(*(new_while_loop->GetModule()),
+                               /*ssa_form=*/true,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false));
   WhileLoopAnalysis new_loop_analysis(
       new_while_loop, loop_analysis.GetMaxPipeliningPerLoop(),
       pipeline_use_tree, process_different_sized_ops,
@@ -3207,7 +3210,7 @@ static absl::StatusOr<HloInstruction*> TransformLoopBackward(
   // pipelined. Clone chains of pipelined data in the parent computation in the
   // process (they will endup being executed before the loop).
   ABSL_ASSIGN_OR_RETURN(int64_t next_scheduling_id,
-                   NextSchedulingGroupId(*while_loop->GetModule()));
+                        NextSchedulingGroupId(*while_loop->GetModule()));
   absl::flat_hash_map<int64_t, int64_t> annotation_map;
   for (int i = 0; i < loop_analysis.GetMoveInfos().size(); ++i) {
     const int64_t idx = i + loop_parameter->shape().tuple_shapes().size();
@@ -3226,11 +3229,11 @@ static absl::StatusOr<HloInstruction*> TransformLoopBackward(
 
     if (post_processing_fn) {
       ABSL_RETURN_IF_ERROR(post_processing_fn(new_init_operands[idx],
-                                         /*new_while_instr=*/nullptr));
+                                              /*new_while_instr=*/nullptr));
     }
     if (postprocess_peeled) {
       ABSL_RETURN_IF_ERROR(postprocess_peeled(new_init_operands[idx],
-                                         /*new_while_instr=*/nullptr));
+                                              /*new_while_instr=*/nullptr));
     }
   }
   ConstantValue next_loop_iteration =
@@ -3314,8 +3317,8 @@ static absl::StatusOr<HloInstruction*> TransformLoopBackward(
               while_loop->GetModule()->AddEmbeddedComputation(
                   instr->while_body()->CloneWithReplacements(nullptr)));
         }
-        ABSL_RETURN_IF_ERROR(UpdateControlDependencies(instr, cloned_instr,
-                                                  while_body_replacement_map));
+        ABSL_RETURN_IF_ERROR(UpdateControlDependencies(
+            instr, cloned_instr, while_body_replacement_map));
         UpdateInstructionChannelId(cloned_instr, next_channel_id,
                                    update_collective_channel_id);
       }
@@ -3362,8 +3365,8 @@ static absl::StatusOr<HloInstruction*> TransformLoopBackward(
       while_loop->GetModule()->AddEmbeddedComputation(
           body_builder.Build(new_loop_root));
   ABSL_RETURN_IF_ERROR(UpdateControlDependencies(while_body->root_instruction(),
-                                            new_loop_root,
-                                            while_body_replacement_map));
+                                                 new_loop_root,
+                                                 while_body_replacement_map));
   auto cond_builder =
       HloComputation::Builder(while_loop->while_condition()->name());
   HloInstruction* new_cond_param =
@@ -3400,8 +3403,8 @@ static absl::StatusOr<HloInstruction*> TransformLoopBackward(
           cond_builder.Build(comparison));
   HloInstruction* new_loop_init = while_loop->parent()->AddInstruction(
       HloInstruction::CreateTuple(new_init_operands));
-  ABSL_RETURN_IF_ERROR(UpdateControlDependencies(while_body->root_instruction(),
-                                            new_loop_init, chain_clone_map));
+  ABSL_RETURN_IF_ERROR(UpdateControlDependencies(
+      while_body->root_instruction(), new_loop_init, chain_clone_map));
   // Create the new loop.
   HloInstruction* new_while_loop =
       while_loop->parent()->AddInstruction(HloInstruction::CreateWhile(
@@ -3445,7 +3448,7 @@ static absl::StatusOr<HloInstruction*> TransformLoopBackward(
     }
 
     ABSL_RETURN_IF_ERROR(UpdateControlDependencies(instr, cloned_instr,
-                                              while_body_replacement_map));
+                                                   while_body_replacement_map));
     UpdateInstructionChannelId(cloned_instr, next_channel_id,
                                update_collective_channel_id);
     ABSL_RETURN_IF_ERROR(UpdateInstructionSchedulingAnnotation(
@@ -3480,11 +3483,12 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<TuplePointsToAnalysis> tuple_points_to_analysis,
       TuplePointsToAnalysis::Run(module));
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
-                   HloDataflowAnalysis::Run(*module, /*ssa_form=*/true,
-                                            /*bitcast_defines_value=*/false,
-                                            /*execution_threads=*/{},
-                                            /*propagate_through_calls=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
+      HloDataflowAnalysis::Run(*module, /*ssa_form=*/true,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false));
 
   std::vector<std::pair<HloInstruction*, std::unique_ptr<WhileLoopAnalysis>>>
       loop_analyses;
@@ -3599,8 +3603,9 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
       }
     }
     for (auto* instruction : to_remove) {
-      ABSL_RETURN_IF_ERROR(instruction->parent()->RemoveInstructionAndUnusedOperands(
-          instruction));
+      ABSL_RETURN_IF_ERROR(
+          instruction->parent()->RemoveInstructionAndUnusedOperands(
+              instruction));
     }
   }
   VLOG(1) << "Transformed loops: " << transformed_loops

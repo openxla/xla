@@ -63,6 +63,8 @@ limitations under the License.
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/lowering_utils.h"
@@ -86,8 +88,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace emitters {
@@ -174,7 +174,7 @@ absl::StatusOr<Value> GetSingleOperandValue(
     const OperandProvider& operand_provider, const HloInstruction* instr,
     int operand_index, ValueRange indices) {
   ABSL_ASSIGN_OR_RETURN(auto operand,
-                   operand_provider(instr, operand_index, indices));
+                        operand_provider(instr, operand_index, indices));
   TF_RET_CHECK(operand.size() == 1) << "Expected operand to be a single value.";
   return operand.front();
 }
@@ -190,8 +190,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitReduce(
 
   SmallVector<Value, 1> init_values;
   for (int i = instr->operand_count() / 2; i < instr->operand_count(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(init_values.emplace_back(),
-                     GetSingleOperandValue(operand_provider, instr, i, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        init_values.emplace_back(),
+        GetSingleOperandValue(operand_provider, instr, i, {}));
   }
 
   auto body =
@@ -279,7 +280,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConcat(
       operand_indices[concat_dim] = arith::SubIOp::create(
           b, indices[concat_dim], ConstantIndexOp::create(b, offsets[begin]));
       ABSL_ASSIGN_OR_RETURN(auto operand,
-                       operand_provider(instr, begin, operand_indices));
+                            operand_provider(instr, begin, operand_indices));
       return operand;
     }
 
@@ -330,8 +331,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicSlice(
 
   const auto& input_shape = instr->operand(0)->shape();
   for (int i = 0; i < input_shape.dimensions().size(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(auto offset,
-                     GetSingleOperandValue(operand_provider, instr, i + 1, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto offset, GetSingleOperandValue(operand_provider, instr, i + 1, {}));
     offset =
         ClampIndex(offset,
                    primitive_util::IsUnsignedIntegralType(
@@ -356,8 +357,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicUpdateSlice(
   const auto& updates_shape = instr->operand(1)->shape();
   for (int i = 0; i < instr->shape().dimensions().size(); ++i) {
     int64_t update_size = updates_shape.dimensions(i);
-    ABSL_ASSIGN_OR_RETURN(auto start_index,
-                     GetSingleOperandValue(operand_provider, instr, i + 2, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto start_index,
+        GetSingleOperandValue(operand_provider, instr, i + 2, {}));
     start_index = ClampIndex(start_index,
                              primitive_util::IsUnsignedIntegralType(
                                  instr->operand(i + 2)->shape().element_type()),
@@ -385,8 +387,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicUpdateSlice(
   YieldOp::create(b, updated_value);
 
   b.setInsertionPointToStart(if_op.getBody(1));
-  ABSL_ASSIGN_OR_RETURN(auto original_value,
-                   GetSingleOperandValue(operand_provider, instr, 0, indices));
+  ABSL_ASSIGN_OR_RETURN(
+      auto original_value,
+      GetSingleOperandValue(operand_provider, instr, 0, indices));
   YieldOp::create(b, original_value);
 
   b.setInsertionPointAfter(if_op);
@@ -418,11 +421,12 @@ absl::StatusOr<SmallVector<Value, 1>> EmitGather(
     int64_t slice_size = gather->gather_slice_sizes()[operand_dim];
     int64_t input_size = gather->operand(0)->shape().dimensions()[operand_dim];
     // Read and clamp index.
-    ABSL_ASSIGN_OR_RETURN(auto input_index,
-                     operand_provider(instr, 1,
-                                      indices_shape.dimensions().size() == 1
-                                          ? ValueRange{row}
-                                          : ValueRange{row, i_val}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto input_index,
+        operand_provider(instr, 1,
+                         indices_shape.dimensions().size() == 1
+                             ? ValueRange{row}
+                             : ValueRange{row, i_val}));
     TF_RET_CHECK(input_index.size() == 1)
         << "Expected operand to be a single value.";
     operand_indices[operand_dim] =
@@ -469,16 +473,17 @@ absl::StatusOr<SmallVector<Value, 1>> EmitPad(
   auto if_op = IfOp::create(b, mlir::TypeRange{result_element_type},
                             is_in_bounds, true, true);
   b.setInsertionPointToStart(if_op.getBody(0));
-  ABSL_ASSIGN_OR_RETURN(auto input_value,
-                   GetSingleOperandValue(
-                       operand_provider, instr, 0,
-                       GetInputIndices(indexing, indices,
-                                       b)[0 /* indexing for operand 0 */]));
+  ABSL_ASSIGN_OR_RETURN(
+      auto input_value,
+      GetSingleOperandValue(
+          operand_provider, instr, 0,
+          GetInputIndices(indexing, indices,
+                          b)[0 /* indexing for operand 0 */]));
   YieldOp::create(b, input_value);
 
   b.setInsertionPointToStart(if_op.getBody(1));
   ABSL_ASSIGN_OR_RETURN(auto padding_value,
-                   GetSingleOperandValue(operand_provider, instr, 1, {}));
+                        GetSingleOperandValue(operand_provider, instr, 1, {}));
   YieldOp::create(b, padding_value);
 
   b.setInsertionPointAfter(if_op);
@@ -569,12 +574,14 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDotLoop(
         ApplyIndexing(rhs_indexing_map, dim_values,
                       symbol_values.take_front(rhs_symbol_count), b);
 
-    ABSL_ASSIGN_OR_RETURN(Value lhs_value,
-                     GetSingleOperandValue(operand_provider, instr,
-                                           /*operand_index=*/0, lhs_indices));
-    ABSL_ASSIGN_OR_RETURN(Value rhs_value,
-                     GetSingleOperandValue(operand_provider, instr,
-                                           /*operand_index=*/1, rhs_indices));
+    ABSL_ASSIGN_OR_RETURN(
+        Value lhs_value,
+        GetSingleOperandValue(operand_provider, instr,
+                              /*operand_index=*/0, lhs_indices));
+    ABSL_ASSIGN_OR_RETURN(
+        Value rhs_value,
+        GetSingleOperandValue(operand_provider, instr,
+                              /*operand_index=*/1, rhs_indices));
     Value accum = iter_args[0];
 
     if (algorithm_util::IsBf16ToF32AlgorithmRequested(instr)) {
@@ -591,8 +598,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDotLoop(
   };
 
   ABSL_ASSIGN_OR_RETURN(ValueRange results,
-                   EmitLoopNestWithStatus(b, indices, {accum_init_value},
-                                          lhs_indexing_map, body));
+                        EmitLoopNestWithStatus(b, indices, {accum_init_value},
+                                               lhs_indexing_map, body));
   TF_RET_CHECK(results.size() == 1);
   if (result_element_type.isBF16()) {
     return {{arith::TruncFOp::create(b, b.getBF16Type(), results.front())}};
@@ -754,7 +761,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitTuple(
     } else {
       operand_indices = indices;
     }
-    ABSL_ASSIGN_OR_RETURN(auto values, operand_provider(instr, i, operand_indices));
+    ABSL_ASSIGN_OR_RETURN(auto values,
+                          operand_provider(instr, i, operand_indices));
     operands.append(values);
   }
   return operands;
@@ -766,7 +774,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConstant(
   mlir::Type result_element_type =
       PrimitiveTypeToMlirType(instr->shape().element_type(), builder);
   ABSL_ASSIGN_OR_RETURN(auto value_attr, CreateDenseElementsAttrFromLiteral(
-                                        instr->literal(), builder));
+                                             instr->literal(), builder));
   // Convert the constant element type if needed.
   if (primitive_util::IsUnsignedIntegralType(instr->shape().element_type())) {
     value_attr = value_attr.mapValues(result_element_type,
@@ -813,17 +821,18 @@ absl::StatusOr<SmallVector<Value, 2>> GetOperands(
     for (int64_t operand_number = 0; operand_number < instr->operand_count();
          ++operand_number) {
       ABSL_ASSIGN_OR_RETURN(operands.emplace_back(),
-                       GetSingleOperandValue(operand_provider, instr,
-                                             operand_number, indices));
+                            GetSingleOperandValue(operand_provider, instr,
+                                                  operand_number, indices));
     }
   } else {
     auto input_indices = GetInputIndices(
         ComputeOutputToInputIndexing(instr, 0, mlir_context), indices, builder);
     for (auto&& [operand_number, operand_indices] :
          llvm::enumerate(input_indices)) {
-      ABSL_ASSIGN_OR_RETURN(operands.emplace_back(),
-                       GetSingleOperandValue(operand_provider, instr,
-                                             operand_number, operand_indices));
+      ABSL_ASSIGN_OR_RETURN(
+          operands.emplace_back(),
+          GetSingleOperandValue(operand_provider, instr, operand_number,
+                                operand_indices));
     }
   }
   CHECK_NE(operands.size(), 0);
@@ -996,8 +1005,9 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
     arg_types.push_back(operand_element_type);
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto operands, GetOperands(instr, indices, operand_provider,
-                                              builder, mlir_context));
+  ABSL_ASSIGN_OR_RETURN(
+      auto operands,
+      GetOperands(instr, indices, operand_provider, builder, mlir_context));
 
   llvm::SmallVector<mlir::NamedAttribute> attributes;
   switch (instr->opcode()) {
@@ -1369,7 +1379,8 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::Convert() {
     auto root_indices =
         ApplyIndexing(indexing, /*dims=*/indices_.take_front(num_dims),
                       /*symbols=*/indices_.drop_front(num_dims), builder_);
-    ABSL_ASSIGN_OR_RETURN(auto root_results, EmitInstruction(root, root_indices));
+    ABSL_ASSIGN_OR_RETURN(auto root_results,
+                          EmitInstruction(root, root_indices));
     results.append(root_results.begin(), root_results.end());
   }
   return results;
@@ -1396,9 +1407,9 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::EmitInstruction(
     return EmitElementwiseInstruction(instr, indices);
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto entry,
-                   HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
-                             call_target_provider_, builder_, mlir_context_));
+  ABSL_ASSIGN_OR_RETURN(
+      auto entry, HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
+                            call_target_provider_, builder_, mlir_context_));
   CHECK(!absl::c_linear_search(entry, nullptr))
       << "Failed to lower " << instr->name();
   return CacheInstruction(instr, indices, std::move(entry));
@@ -1433,9 +1444,9 @@ SubgraphConverter::EmitElementwiseInstruction(const HloInstruction* root,
   }
 
   for (auto* instr : llvm::reverse(pre_order)) {
-    ABSL_ASSIGN_OR_RETURN(auto entry,
-                     HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
-                               call_target_provider_, builder_, mlir_context_));
+    ABSL_ASSIGN_OR_RETURN(
+        auto entry, HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
+                              call_target_provider_, builder_, mlir_context_));
     CacheInstruction(instr, indices, std::move(entry));
   }
   return cached_instructions_[{root, IndicesToPtrs(indices)}];

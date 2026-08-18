@@ -67,11 +67,11 @@ namespace xla {
 absl::StatusOr<se::StreamExecutor*> CompiledOptProvider::GetExecutor() {
   DebugOptions debug_opts = GetDebugOptionsFromFlags();
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   PlatformUtil::GetPlatform(GetPlatformName()));
+                        PlatformUtil::GetPlatform(GetPlatformName()));
   if (debug_opts.xla_gpu_target_config_filename().empty()) {
     ABSL_ASSIGN_OR_RETURN(std::vector<se::StreamExecutor*> stream_executors,
-                     PlatformUtil::GetStreamExecutors(
-                         platform, /*allowed_devices=*/std::nullopt));
+                          PlatformUtil::GetStreamExecutors(
+                              platform, /*allowed_devices=*/std::nullopt));
     return stream_executors[0];
   }
   return nullptr;
@@ -81,13 +81,13 @@ absl::StatusOr<std::optional<std::string>> CompiledOptProvider::GenerateStage(
     std::unique_ptr<HloModule> module, absl::string_view stage) {
   if (stage == "hlo") {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                     GetOptimizedHlo(std::move(module)));
+                          GetOptimizedHlo(std::move(module)));
     return optimized_module->ToString();
   } else if (stage == "html") {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                     GetOptimizedHlo(std::move(module)));
+                          GetOptimizedHlo(std::move(module)));
     ABSL_ASSIGN_OR_RETURN(std::string cmps,
-                     RenderAllComputationsToHtml(*optimized_module));
+                          RenderAllComputationsToHtml(*optimized_module));
     return cmps;
   } else if (stage == "hlo-backend") {
     ABSL_ASSIGN_OR_RETURN(auto executable, GetExecutable(std::move(module)));
@@ -99,10 +99,10 @@ absl::StatusOr<std::optional<std::string>> CompiledOptProvider::GenerateStage(
 
 absl::StatusOr<std::unique_ptr<Compiler>> CompiledOptProvider::GetCompiler() {
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   PlatformUtil::GetPlatform(GetPlatformName()));
+                        PlatformUtil::GetPlatform(GetPlatformName()));
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                   Compiler::GetForPlatform(platform->id()));
+                        Compiler::GetForPlatform(platform->id()));
   return compiler;
 }
 
@@ -133,7 +133,7 @@ absl::StatusOr<std::unique_ptr<Executable>> CompiledOptProvider::GetExecutable(
     std::unique_ptr<HloModule> input_module) {
   Compiler::CompileOptions opts;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                   GetOptimizedHlo(std::move(input_module)));
+                        GetOptimizedHlo(std::move(input_module)));
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor, GetExecutor());
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler, GetCompiler());
   ABSL_ASSIGN_OR_RETURN(

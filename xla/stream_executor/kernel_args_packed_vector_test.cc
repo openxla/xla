@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_args_packed_vector.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/types/span.h"
 

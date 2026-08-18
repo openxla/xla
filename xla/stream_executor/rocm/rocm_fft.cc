@@ -47,7 +47,7 @@ namespace {
 #define STREAM_EXECUTOR_ROCFFT_WRAP(__name)                             \
   struct WrapperShim__##__name {                                        \
     template <typename... Args>                                         \
-    hipfftResult operator()(StreamExecutor *parent, Args... args) {     \
+    hipfftResult operator()(StreamExecutor* parent, Args... args) {     \
       std::unique_ptr<ActivateContext> activation = parent->Activate(); \
       return ::__name(args...);                                         \
     }                                                                   \
@@ -107,7 +107,7 @@ hipfftType ROCMFftType(fft::Type type) {
 }
 
 // Associates the given stream with the given rocFFT plan.
-bool SetStream(StreamExecutor *parent, hipfftHandle plan, Stream *stream) {
+bool SetStream(StreamExecutor* parent, hipfftHandle plan, Stream* stream) {
   auto ret = wrap::hipfftSetStream(
       parent, plan,
       static_cast<hipStream_t>(stream->platform_specific_handle().stream));
@@ -121,10 +121,10 @@ bool SetStream(StreamExecutor *parent, hipfftHandle plan, Stream *stream) {
 }  // namespace
 
 absl::Status ROCMFftPlan::Initialize(
-    StreamExecutor *parent, Stream *stream, int rank, uint64_t *elem_count,
-    uint64_t *input_embed, uint64_t input_stride, uint64_t input_distance,
-    uint64_t *output_embed, uint64_t output_stride, uint64_t output_distance,
-    fft::Type type, int batch_count, ScratchAllocator *scratch_allocator) {
+    StreamExecutor* parent, Stream* stream, int rank, uint64_t* elem_count,
+    uint64_t* input_embed, uint64_t input_stride, uint64_t input_distance,
+    uint64_t* output_embed, uint64_t output_stride, uint64_t output_distance,
+    fft::Type type, int batch_count, ScratchAllocator* scratch_allocator) {
   if (IsInitialized()) {
     LOG(FATAL) << "Try to repeatedly initialize.";
   }
@@ -282,10 +282,10 @@ absl::Status ROCMFftPlan::Initialize(
   return absl::OkStatus();
 }
 
-absl::Status ROCMFftPlan::Initialize(StreamExecutor *parent, Stream *stream,
-                                     int rank, uint64_t *elem_count,
+absl::Status ROCMFftPlan::Initialize(StreamExecutor* parent, Stream* stream,
+                                     int rank, uint64_t* elem_count,
                                      fft::Type type,
-                                     ScratchAllocator *scratch_allocator) {
+                                     ScratchAllocator* scratch_allocator) {
   return Initialize(parent_, stream, rank, elem_count,
                     /*input_embed=*/nullptr, /*input_stride=*/0,
                     /*input_distance=*/0,
@@ -294,7 +294,7 @@ absl::Status ROCMFftPlan::Initialize(StreamExecutor *parent, Stream *stream,
 }
 
 absl::Status ROCMFftPlan::UpdateScratchAllocator(
-    Stream *stream, ScratchAllocator *scratch_allocator) {
+    Stream* stream, ScratchAllocator* scratch_allocator) {
   scratch_allocator_ = scratch_allocator;
   if (scratch_size_bytes_ != 0) {
     auto allocated = scratch_allocator->AllocateBytes(scratch_size_bytes_);
@@ -336,10 +336,10 @@ int ROCMFftPlan::GetFftDirection() const {
 }
 
 std::unique_ptr<fft::Plan> ROCMFft::CreateBatchedPlanWithScratchAllocator(
-    Stream *stream, int rank, uint64_t *elem_count, uint64_t *input_embed,
-    uint64_t input_stride, uint64_t input_distance, uint64_t *output_embed,
+    Stream* stream, int rank, uint64_t* elem_count, uint64_t* input_embed,
+    uint64_t input_stride, uint64_t input_distance, uint64_t* output_embed,
     uint64_t output_stride, uint64_t output_distance, fft::Type type,
-    bool in_place_fft, int batch_count, ScratchAllocator *scratch_allocator) {
+    bool in_place_fft, int batch_count, ScratchAllocator* scratch_allocator) {
   std::unique_ptr<ROCMFftPlan> fft_plan_ptr{new ROCMFftPlan()};
   absl::Status status = fft_plan_ptr->Initialize(
       parent_, stream, rank, elem_count, input_embed, input_stride,
@@ -354,8 +354,8 @@ std::unique_ptr<fft::Plan> ROCMFft::CreateBatchedPlanWithScratchAllocator(
 }
 
 void ROCMFft::UpdatePlanWithScratchAllocator(
-    Stream *stream, fft::Plan *plan, ScratchAllocator *scratch_allocator) {
-  ROCMFftPlan *rocm_fft_plan = dynamic_cast<ROCMFftPlan *>(plan);
+    Stream* stream, fft::Plan* plan, ScratchAllocator* scratch_allocator) {
+  ROCMFftPlan* rocm_fft_plan = dynamic_cast<ROCMFftPlan*>(plan);
   absl::Status status =
       rocm_fft_plan->UpdateScratchAllocator(stream, scratch_allocator);
   if (!status.ok()) {
@@ -368,7 +368,7 @@ template <typename FuncT, typename InputT, typename OutputT>
 bool ROCMFft::DoFftInternal(Stream* stream, fft::Plan* plan, FuncT hipfftExec,
                             const DeviceAddress<InputT>& input,
                             DeviceAddress<OutputT>* output) {
-  ROCMFftPlan *rocm_fft_plan = dynamic_cast<ROCMFftPlan *>(plan);
+  ROCMFftPlan* rocm_fft_plan = dynamic_cast<ROCMFftPlan*>(plan);
   if (rocm_fft_plan == nullptr) {
     LOG(ERROR) << "the passed-in plan is not a ROCMFftPlan object.";
     return false;
@@ -389,7 +389,7 @@ bool ROCMFft::DoFftInternal(Stream* stream, fft::Plan* plan, FuncT hipfftExec,
   // Hence for all those transforms, copy the input buffer
   DeviceAddress<InputT> input_maybe_copy = input;
   if (input.opaque() != output->opaque() && (input.size() > 0)) {
-    auto *allocator = rocm_fft_plan->GetScratchAllocator();
+    auto* allocator = rocm_fft_plan->GetScratchAllocator();
     if (allocator) {
       auto allocated = allocator->AllocateBytes(input.size());
       if (allocated.ok()) {
@@ -402,7 +402,7 @@ bool ROCMFft::DoFftInternal(Stream* stream, fft::Plan* plan, FuncT hipfftExec,
     }
   }
 
-  InputT *ip = const_cast<InputT *>(GpuMemory(input_maybe_copy));
+  InputT* ip = const_cast<InputT*>(GpuMemory(input_maybe_copy));
   auto ret = hipfftExec(parent_, rocm_fft_plan->GetPlan(), ROCMComplex(ip),
                         ROCMComplex(GpuMemoryMutable(output)));
 
@@ -419,7 +419,7 @@ bool ROCMFft::DoFftWithDirectionInternal(Stream* stream, fft::Plan* plan,
                                          FuncT hipfftExec,
                                          const DeviceAddress<InputT>& input,
                                          DeviceAddress<OutputT>* output) {
-  ROCMFftPlan *rocm_fft_plan = dynamic_cast<ROCMFftPlan *>(plan);
+  ROCMFftPlan* rocm_fft_plan = dynamic_cast<ROCMFftPlan*>(plan);
   if (rocm_fft_plan == nullptr) {
     LOG(ERROR) << "the passed-in plan is not a ROCMFftPlan object.";
     return false;
@@ -430,7 +430,7 @@ bool ROCMFft::DoFftWithDirectionInternal(Stream* stream, fft::Plan* plan,
   }
 
   auto ret = hipfftExec(parent_, rocm_fft_plan->GetPlan(),
-                        ROCMComplex(const_cast<InputT *>(GpuMemory(input))),
+                        ROCMComplex(const_cast<InputT*>(GpuMemory(input))),
                         ROCMComplex(GpuMemoryMutable(output)),
                         rocm_fft_plan->GetFftDirection());
 
@@ -478,7 +478,7 @@ void initialize_rocfft() {
     absl::Status status =
         PluginRegistry::Instance()->RegisterFactory<PluginRegistry::FftFactory>(
             rocm::kROCmPlatformId, "rocFFT",
-            [](StreamExecutor *parent) -> fft::FftSupport * {
+            [](StreamExecutor* parent) -> fft::FftSupport* {
               return new gpu::ROCMFft(parent);
             });
     if (!status.ok()) {

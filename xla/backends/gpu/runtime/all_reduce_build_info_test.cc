@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -90,7 +91,7 @@ class BuildAllReduceInfoTest : public HloHardwareIndependentTestBase {
         ->set_active_links(18);
     target_config_proto.set_platform_name("CUDA");
     ABSL_ASSIGN_OR_RETURN(gpu::GpuTargetConfig target_config,
-                     gpu::GpuTargetConfig::FromProto(target_config_proto));
+                          gpu::GpuTargetConfig::FromProto(target_config_proto));
     GpuTopology gpu_topology("platform_version", /*num_partitions=*/1,
                              /*num_hosts_per_partition=*/1,
                              /*num_devices_per_host=*/16, target_config);
@@ -108,9 +109,10 @@ class BuildAllReduceInfoTest : public HloHardwareIndependentTestBase {
 
     SCOPED_TRACE(testing::Message() << "module_str: " << module_str);
 
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(
-                         module_str, num_replicas == 0 ? 1 : num_replicas));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(module_str,
+                                     num_replicas == 0 ? 1 : num_replicas));
     const HloInstruction* hlo_instr =
         HloHardwareIndependentTestBase::FindInstruction(module.get(),
                                                         HloOpcode::kAllReduce);

@@ -38,6 +38,9 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -58,9 +61,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::memory_space_assignment {
 namespace {
@@ -507,9 +507,9 @@ absl::Status CopyAllocation::Process(const BitcastSplitFn& bitcast_split_fn,
         sync_mem_op_->opcode() == HloOpcode::kDynamicSlice ||
         sync_mem_op_->IsCustomFusion()) {
       ABSL_ASSIGN_OR_RETURN(copy_done_,
-                       computation->CreateAsyncInstructions(
-                           sync_mem_op_, {ShapeUtil::MakeShape(S32, {})},
-                           HloInstruction::kMainExecutionThread, false));
+                            computation->CreateAsyncInstructions(
+                                sync_mem_op_, {ShapeUtil::MakeShape(S32, {})},
+                                HloInstruction::kMainExecutionThread, false));
     } else {
       return Internal("Sync mem op is not a copy, slice, or dynamic slice.");
     }
@@ -525,8 +525,8 @@ absl::Status CopyAllocation::Process(const BitcastSplitFn& bitcast_split_fn,
               copy_start_->operand(source_operand_index_)->shape(),
               producing_instruction));
     }
-    ABSL_RETURN_IF_ERROR(copy_start_->ReplaceOperandWith(source_operand_index_,
-                                                    producing_instruction));
+    ABSL_RETURN_IF_ERROR(copy_start_->ReplaceOperandWith(
+        source_operand_index_, producing_instruction));
   } else {
     Shape dest_shape = shape;
     if (memory_space() == MemorySpace::kDefault) {
@@ -921,7 +921,7 @@ absl::Status SlicedCopyAllocation::SliceDetail::CreateAsyncSlice(
       HloInstruction::CreateSlice(slice_decision.sizing.slice_shape, &producer,
                                   start_indices, limit_indices, strides));
   ABSL_ASSIGN_OR_RETURN(copy_done, parent.CreateAsyncInstructions(
-                                  slice, {ShapeUtil::MakeShape(S32, {})}));
+                                       slice, {ShapeUtil::MakeShape(S32, {})}));
   copy_start = copy_done->mutable_operand(0);
 
   return absl::OkStatus();
@@ -1074,10 +1074,11 @@ absl::Status ParentAllocation::PostProcess() {
   // new root. Doing the post-process step later ensures the root has been
   // updated with other changes, and we can safely add the additional parameter.
   HloComputation* while_body = calling_instruction_->while_body();
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * new_while_body_root,
-                   TupleUtil::ReplaceTupleWith(
-                       AddGetTupleElements(), while_body->root_instruction(),
-                       original_defining_position().index));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * new_while_body_root,
+      TupleUtil::ReplaceTupleWith(AddGetTupleElements(),
+                                  while_body->root_instruction(),
+                                  original_defining_position().index));
   while_body->set_root_instruction(new_while_body_root,
                                    /*accept_different_shape=*/true);
   return absl::OkStatus();

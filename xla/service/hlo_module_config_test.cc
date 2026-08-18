@@ -17,10 +17,10 @@ limitations under the License.
 
 #include <string>
 
-#include "xla/tests/test_utils.h"
-#include "xla/xla.pb.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
+#include "xla/tests/test_utils.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace {

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/collective_combiner_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

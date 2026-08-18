@@ -13,12 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
@@ -26,8 +29,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 namespace {

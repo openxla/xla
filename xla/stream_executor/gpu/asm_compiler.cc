@@ -32,10 +32,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/subprocess.h"
-#include "tsl/platform/path.h"
 
 namespace stream_executor {
 

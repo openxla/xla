@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/sort_rewriter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"

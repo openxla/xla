@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/mlir/utils/error_util.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "mlir/IR/Builders.h"

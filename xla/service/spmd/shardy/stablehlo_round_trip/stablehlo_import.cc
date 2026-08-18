@@ -580,7 +580,6 @@ bool shouldOpenDims(ArrayRef<bool> allowPropagationToTensors, int64_t index) {
   return allowPropagationToTensors[index];
 }
 
-
 // Convert the shardings in `funcOp` from kXlaShardingAttr into kShardingAttr.
 LogicalResult importShardings(
     FuncOp funcOp, MeshAttr globalMesh,

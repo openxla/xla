@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/device_address.h"
 
-#include <cstdint>
-
 #include <gtest/gtest.h>
+
+#include <cstdint>
 
 namespace stream_executor {
 namespace {

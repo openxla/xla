@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/stream_executor/cuda/compilation_provider_test.h"
 
 namespace stream_executor::cuda {

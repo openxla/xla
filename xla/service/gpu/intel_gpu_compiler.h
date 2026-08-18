@@ -39,7 +39,6 @@ class IntelGpuCompiler : public GpuCompiler {
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
 
-
   absl::Status AddAutotunerPass(
       HloPassPipeline* pipeline, HloModule* hlo_module,
       const se::GpuComputeCapability& gpu_version,

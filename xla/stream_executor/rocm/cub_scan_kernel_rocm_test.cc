@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/cub_scan_kernel_rocm.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -110,8 +111,8 @@ class CubScanKernelRocmTest
     }
 
     ABSL_ASSIGN_OR_RETURN(size_t temp_bytes,
-                     CubScanGetScratchSize(type, vector_length, row_length,
-                                           col_length, kind, is_reverse));
+                          CubScanGetScratchSize(type, vector_length, row_length,
+                                                col_length, kind, is_reverse));
 
     se::DeviceAddress<T> device_data =
         executor_->AllocateArray<T>(num_elements);
@@ -133,7 +134,8 @@ class CubScanKernelRocmTest
         static_cast<hipStream_t>(stream_->platform_specific_handle().stream)));
 
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
-    ABSL_RETURN_IF_ERROR(stream_->Memcpy(host_data.data(), device_data, size_bytes));
+    ABSL_RETURN_IF_ERROR(
+        stream_->Memcpy(host_data.data(), device_data, size_bytes));
 
     if constexpr (std::is_same_v<T, float>) {
       EXPECT_THAT(host_data,
@@ -175,8 +177,8 @@ class CubScanKernelRocmTest
     }
 
     ABSL_ASSIGN_OR_RETURN(size_t temp_bytes,
-                     CubScanGetScratchSize(type, vector_length, row_length,
-                                           col_length, kind, is_reverse));
+                          CubScanGetScratchSize(type, vector_length, row_length,
+                                                col_length, kind, is_reverse));
 
     se::DeviceAddress<hip_bfloat16> device_data =
         executor_->AllocateArray<hip_bfloat16>(num_elements);
@@ -198,7 +200,8 @@ class CubScanKernelRocmTest
         static_cast<hipStream_t>(stream_->platform_specific_handle().stream)));
 
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
-    ABSL_RETURN_IF_ERROR(stream_->Memcpy(host_data.data(), device_data, size_bytes));
+    ABSL_RETURN_IF_ERROR(
+        stream_->Memcpy(host_data.data(), device_data, size_bytes));
 
     for (size_t i = 0; i < num_elements; ++i) {
       EXPECT_FLOAT_EQ(Bf16ToFloat(host_data[i]), expected_f[i]);
@@ -229,8 +232,8 @@ class CubScanKernelRocmTest
     }
 
     ABSL_ASSIGN_OR_RETURN(size_t temp_bytes,
-                     CubScanGetScratchSize(type, vector_length, row_length,
-                                           col_length, kind, is_reverse));
+                          CubScanGetScratchSize(type, vector_length, row_length,
+                                                col_length, kind, is_reverse));
 
     se::DeviceAddress<__half> device_data =
         executor_->AllocateArray<__half>(num_elements);
@@ -252,7 +255,8 @@ class CubScanKernelRocmTest
         static_cast<hipStream_t>(stream_->platform_specific_handle().stream)));
 
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
-    ABSL_RETURN_IF_ERROR(stream_->Memcpy(host_data.data(), device_data, size_bytes));
+    ABSL_RETURN_IF_ERROR(
+        stream_->Memcpy(host_data.data(), device_data, size_bytes));
 
     for (size_t i = 0; i < num_elements; ++i) {
       EXPECT_FLOAT_EQ(__half2float(host_data[i]), expected_f[i]);

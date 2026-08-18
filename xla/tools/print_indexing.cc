@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/init_main.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/tools/hlo_module_loader.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 // At the moment we only print output indexing maps but feel free to extend it.
 const char* const kUsage = R"(
@@ -45,7 +45,7 @@ namespace xla {
 
 absl::Status Run(const std::string& filename, int operand_id, int output_id) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   LoadModuleFromFile(filename));
+                        LoadModuleFromFile(filename));
   auto root = module->entry_computation()->root_instruction();
   bool print_all = operand_id < 0;
   int get_operand_id = operand_id;

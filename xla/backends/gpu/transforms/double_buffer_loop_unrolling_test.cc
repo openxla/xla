@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <set>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"

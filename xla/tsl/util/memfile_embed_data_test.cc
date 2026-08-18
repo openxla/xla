@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace tsl {
 namespace {

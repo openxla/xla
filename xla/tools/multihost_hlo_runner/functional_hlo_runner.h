@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -42,8 +44,6 @@ limitations under the License.
 #include "xla/tools/multihost_hlo_runner/profiler_interface.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 // Interface that may optionally returns an XSpace proto after UploadSession()
@@ -303,7 +303,6 @@ struct RunningOptions {
     return log_input_output_mode == LogOutputMode::kLogOutput;
   }
 };
-
 
 struct ReplicasAndPartitions {
   int replicas = 1;

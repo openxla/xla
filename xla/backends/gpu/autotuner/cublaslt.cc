@@ -102,12 +102,13 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
           &instr, target_config().device_description.gpu_compute_capability()));
 
   ABSL_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
-                   AsBlasLtEpilogue(backend_config.epilogue()));
+                        AsBlasLtEpilogue(backend_config.epilogue()));
 
-  ABSL_ASSIGN_OR_RETURN(BlasLt * blas_lt, se::gpu::BlasLt::Get(stream_executor()));
+  ABSL_ASSIGN_OR_RETURN(BlasLt * blas_lt,
+                        se::gpu::BlasLt::Get(stream_executor()));
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BlasLt::MatmulPlan> plan,
-                   blas_lt->GetMatmulPlan(gemm_config, epilogue));
+                        blas_lt->GetMatmulPlan(gemm_config, epilogue));
 
   const Shape& output_shape = instr.shape();
   if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
@@ -124,7 +125,7 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<BlasLt::MatmulAlgorithm> algorithms,
-                   plan->GetAlgorithms(max_algorithms, workspace_size));
+                        plan->GetAlgorithms(max_algorithms, workspace_size));
   int num_algorithms = algorithms.size();
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.reserve(num_algorithms);
@@ -163,7 +164,7 @@ absl::Status CublasLtBackend::ApplyConfig(HloInstruction& instr,
   }
   const AutotuneResult::GemmKey& gemm_key = config.gemm();
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   GemmBackendConfig& backend_config = *gpu_config.mutable_gemm_backend_config();
   backend_config.set_selected_algorithm(gemm_key.algorithm());
   backend_config.set_autotune_workspace_size(

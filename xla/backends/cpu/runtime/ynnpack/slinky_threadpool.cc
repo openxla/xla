@@ -33,8 +33,8 @@ limitations under the License.
 #include "slinky/base/function_ref.h"
 #include "slinky/base/ref_count.h"
 #include "slinky/base/thread_pool.h"
-#include "xla/backends/cpu/runtime/work_queue.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "xla/backends/cpu/runtime/work_queue.h"
 
 #define EIGEN_USE_THREADS
 #include "Eigen/ThreadPool"

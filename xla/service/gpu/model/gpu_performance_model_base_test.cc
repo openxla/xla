@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"

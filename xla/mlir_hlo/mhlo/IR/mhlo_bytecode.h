@@ -22,7 +22,7 @@ class MhloDialect;
 
 // Add the interface necessary for encoding and decoding StableHLO dialect
 // components in bytecode.
-void addBytecodeInterface(MhloDialect *dialect);
+void addBytecodeInterface(MhloDialect* dialect);
 }  // namespace mhlo
 }  // namespace mlir
 

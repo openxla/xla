@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/pjrt/exceptions.h"
 #include "tsl/platform/macros.h"
+#include "xla/pjrt/exceptions.h"
 
 namespace xla {
 

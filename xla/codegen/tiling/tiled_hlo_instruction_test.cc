@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -168,16 +169,17 @@ TEST_F(TiledHloInstructionTest, ToString) {
         /*parameter_number=*/number,
         ShapeUtil::MakeShape(PrimitiveType::F32, {4}),
         absl::StrCat("p", number));
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TiledHloInstruction> tiled_hlo,
-                     TiledHloInstruction::Create(
-                         hlo.get(), /*operands=*/{},
-                         /*runtime_variables=*/{},
-                         /*tile_sizes=*/{4},
-                         /*tile_strides=*/{1},
-                         IndexingMap::FromTensorSizes(
-                             ParseSymbolicMap("(d0) -> (d0)", &mlir_context_),
-                             /*dim_upper_bounds=*/{0},
-                             /*symbol_upper_bounds=*/{})));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<TiledHloInstruction> tiled_hlo,
+        TiledHloInstruction::Create(
+            hlo.get(), /*operands=*/{},
+            /*runtime_variables=*/{},
+            /*tile_sizes=*/{4},
+            /*tile_strides=*/{1},
+            IndexingMap::FromTensorSizes(
+                ParseSymbolicMap("(d0) -> (d0)", &mlir_context_),
+                /*dim_upper_bounds=*/{0},
+                /*symbol_upper_bounds=*/{})));
     return std::make_pair(std::move(hlo), std::move(tiled_hlo));
   };
   TF_ASSERT_OK_AND_ASSIGN(auto p0, create_simple_tiled_hlo(0));

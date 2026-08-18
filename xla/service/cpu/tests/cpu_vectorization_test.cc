@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/status/statusor.h"
@@ -28,6 +29,8 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "llvm-c/Target.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -45,8 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/platform.h"
 
 namespace xla {
 namespace cpu {

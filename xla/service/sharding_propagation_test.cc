@@ -15,19 +15,21 @@ limitations under the License.
 
 #include "xla/service/sharding_propagation.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -42,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace op = xla::testing::opcode_matchers;
 

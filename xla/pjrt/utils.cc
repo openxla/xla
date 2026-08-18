@@ -48,6 +48,8 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -68,15 +70,14 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 
 namespace {
 absl::StatusOr<Shape> GetShardedShape(const Shape& shape,
                                       const OpSharding& sharding) {
-  ABSL_ASSIGN_OR_RETURN(HloSharding hlo_sharding, HloSharding::FromProto(sharding));
+  ABSL_ASSIGN_OR_RETURN(HloSharding hlo_sharding,
+                        HloSharding::FromProto(sharding));
   if (shape.IsTuple()) {
     Shape sharded_shape = shape;
     ShapeUtil::ForEachMutableSubshape(
@@ -96,7 +97,7 @@ absl::StatusOr<Shape> GetShardedShape(const HloInstructionProto& instr) {
   Shape sharded_shape;
   if (instr.has_sharding()) {
     ABSL_ASSIGN_OR_RETURN(sharded_shape,
-                     GetShardedShape(unsharded_shape, instr.sharding()));
+                          GetShardedShape(unsharded_shape, instr.sharding()));
   } else {
     sharded_shape = unsharded_shape;
   }
@@ -122,7 +123,7 @@ absl::StatusOr<std::pair<std::vector<Shape>, Shape>> GetShardedProgramShapes(
               instr.parameter_number(), program_shape.parameters_size());
         }
         ABSL_ASSIGN_OR_RETURN(arg_shapes[instr.parameter_number()],
-                         GetShardedShape(instr));
+                              GetShardedShape(instr));
       }
       if (HloInstruction::CalculateLocalId(instr.id()) ==
           HloInstruction::CalculateLocalId(comp.root_id())) {
@@ -209,7 +210,7 @@ static absl::StatusOr<std::vector<LayoutMode>> MlirAttrsToLayoutModes(
             "mhlo.layout_mode");
     if (attr != nullptr) {
       ABSL_ASSIGN_OR_RETURN(LayoutMode mode,
-                       LayoutMode::FromString(attr.getValue().str()));
+                            LayoutMode::FromString(attr.getValue().str()));
       result.emplace_back(std::move(mode));
     } else {
       result.emplace_back();
@@ -258,7 +259,7 @@ static absl::StatusOr<std::vector<MemorySpaceColor>> MlirAttrsToMemoryKinds(
             "mhlo.memory_kind");
     if (attr != nullptr) {
       ABSL_ASSIGN_OR_RETURN(MemorySpaceColor memory_space,
-                       GetMemorySpaceColor(attr.getValue().str()));
+                            GetMemorySpaceColor(attr.getValue().str()));
       result.push_back(memory_space);
     } else {
       result.emplace_back(xla::Layout::kDefaultMemorySpace);
@@ -329,8 +330,8 @@ absl::StatusOr<std::vector<LayoutMode>> GetArgLayoutModes(
 
   // Special case: tupled arguments
   ABSL_ASSIGN_OR_RETURN(std::optional<std::vector<LayoutMode>> maybe_result,
-                   GetTupleLayoutModes(main.getFunctionType().getInputs(),
-                                       main.getAllArgAttrs()));
+                        GetTupleLayoutModes(main.getFunctionType().getInputs(),
+                                            main.getAllArgAttrs()));
   if (maybe_result) {
     return *maybe_result;
   }
@@ -347,9 +348,10 @@ absl::StatusOr<std::vector<LayoutMode>> GetOutputLayoutModes(
   }
 
   // Special case: tupled outputs
-  ABSL_ASSIGN_OR_RETURN(std::optional<std::vector<LayoutMode>> maybe_tuple_result,
-                   GetTupleLayoutModes(main.getFunctionType().getResults(),
-                                       main.getAllResultAttrs()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::optional<std::vector<LayoutMode>> maybe_tuple_result,
+      GetTupleLayoutModes(main.getFunctionType().getResults(),
+                          main.getAllResultAttrs()));
   if (maybe_tuple_result) {
     return *maybe_tuple_result;
   }
@@ -453,7 +455,8 @@ static absl::StatusOr<std::vector<MemorySpaceColor>> GetMemoryKinds(
 
 absl::StatusOr<std::vector<LayoutMode>> GetArgLayoutModes(
     const XlaComputation& computation) {
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
   size_t num_args = program_shape.parameters_size() == 1 &&
                             program_shape.parameters(0).IsTuple()
                         ? program_shape.parameters(0).tuple_shapes().size()
@@ -463,7 +466,8 @@ absl::StatusOr<std::vector<LayoutMode>> GetArgLayoutModes(
 
 absl::StatusOr<std::vector<MemorySpaceColor>> GetArgMemoryKinds(
     const XlaComputation& computation) {
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
   size_t num_args = program_shape.parameters_size() == 1 &&
                             program_shape.parameters(0).IsTuple()
                         ? program_shape.parameters(0).tuple_shapes().size()
@@ -473,7 +477,8 @@ absl::StatusOr<std::vector<MemorySpaceColor>> GetArgMemoryKinds(
 
 absl::StatusOr<std::vector<LayoutMode>> GetOutputLayoutModes(
     const XlaComputation& computation) {
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
   size_t num_outputs = program_shape.result().IsTuple()
                            ? program_shape.result().tuple_shapes().size()
                            : 1;
@@ -482,7 +487,8 @@ absl::StatusOr<std::vector<LayoutMode>> GetOutputLayoutModes(
 
 absl::StatusOr<std::vector<MemorySpaceColor>> GetOutputMemoryKinds(
     const XlaComputation& computation) {
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
   size_t num_outputs = program_shape.result().IsTuple()
                            ? program_shape.result().tuple_shapes().size()
                            : 1;
@@ -554,8 +560,9 @@ absl::StatusOr<Shape> LayoutModeToXlaShape(
   }
   switch (mode) {
     case LayoutMode::Mode::kDefault: {
-      ABSL_ASSIGN_OR_RETURN(Shape layout,
-                       choose_compact_layout_for_shape_function(sharded_shape));
+      ABSL_ASSIGN_OR_RETURN(
+          Shape layout,
+          choose_compact_layout_for_shape_function(sharded_shape));
       *result.mutable_layout() = layout.layout();
       break;
     }
@@ -584,9 +591,10 @@ absl::StatusOr<std::pair<std::vector<Shape>, Shape>> LayoutModesToXlaShapes(
     std::function<absl::StatusOr<Shape>(Shape)>
         choose_compact_layout_for_shape_function) {
   // Compute sharded argument and output shapes.
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
   ABSL_ASSIGN_OR_RETURN(auto sharded_shapes,
-                   GetShardedProgramShapes(computation, program_shape));
+                        GetShardedProgramShapes(computation, program_shape));
 
   // Untuple if necessary.
   bool args_tupled = program_shape.parameters_size() == 1 &&
@@ -713,7 +721,8 @@ absl::Status DetermineArgumentLayoutsFromCompileOptions(
     std::optional<std::vector<Shape>>& argument_layouts,
     ExecutableBuildOptions* build_options,
     std::vector<const Shape*>* argument_layout_pointers) {
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
   const bool given_argument_layouts = argument_layouts.has_value();
   if (!argument_layouts) {
     argument_layouts.emplace(program_shape.parameters());
@@ -751,7 +760,7 @@ absl::Status DetermineArgumentLayoutsFromCompileOptions(
         });
   };
   ABSL_ASSIGN_OR_RETURN(auto sharded_shapes,
-                   GetShardedProgramShapes(computation, program_shape));
+                        GetShardedProgramShapes(computation, program_shape));
 
   CHECK_EQ(sharded_shapes.first.size(), argument_layouts->size());
   for (int i = 0; i < argument_layouts->size(); ++i) {

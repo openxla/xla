@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/ffi/execution_state.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/ffi/execution_state.pb.h"

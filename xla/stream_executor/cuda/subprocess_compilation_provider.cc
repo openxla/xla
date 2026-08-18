@@ -82,8 +82,8 @@ SubprocessCompilationProvider::CompileToRelocatableModule(
     const CudaComputeCapability& cc, absl::string_view ptx,
     const CompilationOptions& options) const {
   ABSL_ASSIGN_OR_RETURN(auto assembly,
-                   CompileHelper(path_to_ptxas_, cc, ptx, options,
-                                 /*compile_to_relocatable_module=*/true));
+                        CompileHelper(path_to_ptxas_, cc, ptx, options,
+                                      /*compile_to_relocatable_module=*/true));
   return RelocatableModule{std::move(assembly.cubin),
                            std::move(assembly.compilation_log)};
 }
@@ -105,7 +105,8 @@ absl::StatusOr<Assembly> SubprocessCompilationProvider::CompileAndLink(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto cubin, LinkUsingNvlink(path_to_nvlink_, cc, images));
+  ABSL_ASSIGN_OR_RETURN(auto cubin,
+                        LinkUsingNvlink(path_to_nvlink_, cc, images));
   return Assembly{std::move(cubin)};
 }
 

@@ -17,13 +17,14 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/constants.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
@@ -35,11 +36,11 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -50,17 +51,12 @@ using ConstantsTest =
     ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
 
 template <typename T>
-class ConstantsFloatTest : public ConstantsTest {
-};
+class ConstantsFloatTest : public ConstantsTest {};
 
-using FloatTypes =
-    ::testing::Types<float, half, tsl::float8_e3m4, tsl::float8_e4m3,
-                     tsl::float8_e4m3fn, tsl::float8_e4m3b11fnuz,
-                     tsl::float8_e4m3fnuz, tsl::float8_e5m2,
-                     tsl::float8_e5m2fnuz
-                     ,
-                     tsl::float4_e2m1fn, tsl::float8_e8m0fnu
-                     >;
+using FloatTypes = ::testing::Types<
+    float, half, tsl::float8_e3m4, tsl::float8_e4m3, tsl::float8_e4m3fn,
+    tsl::float8_e4m3b11fnuz, tsl::float8_e4m3fnuz, tsl::float8_e5m2,
+    tsl::float8_e5m2fnuz, tsl::float4_e2m1fn, tsl::float8_e8m0fnu>;
 
 TYPED_TEST_SUITE(ConstantsFloatTest, FloatTypes);
 

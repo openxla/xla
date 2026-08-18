@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/tools/hlo_isolation/hlo_isolation_api.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"

@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/utils/hlo_live_range.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -21,8 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "xla/comparison_util.h"

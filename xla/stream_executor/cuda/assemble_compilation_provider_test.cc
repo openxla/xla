@@ -15,22 +15,23 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "tsl/platform/cuda_root_path.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/cuda/nvjitlink_support.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/cuda_root_path.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
 
 namespace stream_executor::cuda {
 

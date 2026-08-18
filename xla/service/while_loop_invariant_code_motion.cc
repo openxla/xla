@@ -339,8 +339,9 @@ absl::StatusOr<bool> WhileLoopInvariantCodeMotion::RunImpl(
       continue;
     }
 
-    ABSL_ASSIGN_OR_RETURN(bool result, TryHoistingInvariantInstructionsFromWhileBody(
-                                      while_instr, &allowance));
+    ABSL_ASSIGN_OR_RETURN(
+        bool result,
+        TryHoistingInvariantInstructionsFromWhileBody(while_instr, &allowance));
     changed |= result;
   }
 

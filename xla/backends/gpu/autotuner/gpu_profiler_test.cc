@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -127,11 +128,13 @@ absl::StatusOr<ScopedShapedBuffer> CreateTestBuffer(
     se::DeviceAddressAllocator* allocator, se::StreamExecutor* stream_exec,
     se::Stream* stream, int32_t value) {
   Shape test_shape = ShapeUtil::MakeShape(S32, {});
-  ABSL_ASSIGN_OR_RETURN(auto* transfer_manager,
-                   TransferManager::GetForPlatform(stream_exec->GetPlatform()));
-  ABSL_ASSIGN_OR_RETURN(ScopedShapedBuffer output,
-                   transfer_manager->AllocateScopedShapedBuffer(
-                       test_shape, allocator, stream_exec->device_ordinal()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto* transfer_manager,
+      TransferManager::GetForPlatform(stream_exec->GetPlatform()));
+  ABSL_ASSIGN_OR_RETURN(
+      ScopedShapedBuffer output,
+      transfer_manager->AllocateScopedShapedBuffer(
+          test_shape, allocator, stream_exec->device_ordinal()));
   Literal literal = LiteralUtil::CreateR0<int32_t>(value);
   ABSL_RETURN_IF_ERROR(
       transfer_manager->TransferLiteralToDevice(stream, literal, output));
@@ -143,8 +146,9 @@ absl::StatusOr<ScopedShapedBuffer> CreateTupleTestBuffer(
     se::Stream* stream, int32_t value1, int32_t value2) {
   Shape test_shape = ShapeUtil::MakeShape(S32, {});
   Shape test_shape_tuple = ShapeUtil::MakeTupleShape({test_shape, test_shape});
-  ABSL_ASSIGN_OR_RETURN(auto* transfer_manager,
-                   TransferManager::GetForPlatform(stream_exec->GetPlatform()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto* transfer_manager,
+      TransferManager::GetForPlatform(stream_exec->GetPlatform()));
   ABSL_ASSIGN_OR_RETURN(
       ScopedShapedBuffer output,
       transfer_manager->AllocateScopedShapedBuffer(
@@ -172,19 +176,19 @@ class GpuProfilerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<int64_t> GetScratchBytes(absl::string_view hlo_text) {
     NVPTXCompiler compiler;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     module->mutable_config()
         .mutable_debug_options()
         .clear_xla_gpu_enable_command_buffer();
     ABSL_ASSIGN_OR_RETURN(auto gpu_executable,
-                     compiler.RunBackend(std::move(module), stream_exec_,
-                                         GpuCompiler::CompileOptions()));
+                          compiler.RunBackend(std::move(module), stream_exec_,
+                                              GpuCompiler::CompileOptions()));
     auto profiler =
         GpuProfiler::Create(stream_exec_, ProfileOptions(), allocator_.get());
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<InputBuffers> buffers,
-                     profiler->CreateInputBuffers(gpu_executable.get()));
+                          profiler->CreateInputBuffers(gpu_executable.get()));
     ABSL_ASSIGN_OR_RETURN(ProfileResult profile,
-                     profiler->Profile(gpu_executable.get(), *buffers));
+                          profiler->Profile(gpu_executable.get(), *buffers));
     return profile.scratch_bytes;
   }
 

@@ -122,7 +122,7 @@ absl::Status SyclStream::WaitFor(Stream* other) {
 
 absl::Status SyclStream::RecordEvent(Event* event) {
   ABSL_ASSIGN_OR_RETURN(::sycl::event recent_event,
-                   SyclGetRecentEventFromStream(stream_handle_.get()));
+                        SyclGetRecentEventFromStream(stream_handle_.get()));
   // Update the event to the most recent one on the stream.
   static_cast<SyclEvent*>(event)->SetEvent(recent_event);
   VLOG(2) << "Recording SYCL event on stream " << stream_handle_.get();
@@ -147,9 +147,9 @@ absl::Status SyclStream::Memset32(DeviceAddressBase* location, uint32_t pattern,
   if (size % sizeof(uint32_t) != 0) {
     return absl::InvalidArgumentError("Size must be a multiple of 4 bytes.");
   }
-  ABSL_RETURN_IF_ERROR(SyclMemfillDeviceAsync(stream_handle_.get(),
-                                         const_cast<void*>(location->opaque()),
-                                         pattern, size / sizeof(uint32_t)));
+  ABSL_RETURN_IF_ERROR(SyclMemfillDeviceAsync(
+      stream_handle_.get(), const_cast<void*>(location->opaque()), pattern,
+      size / sizeof(uint32_t)));
   VLOG(2) << "Successfully enqueued async memset32 of "
           << size / sizeof(uint32_t) << " uint32s at " << location
           << " with value 0x" << std::hex << pattern << std::dec
@@ -263,9 +263,10 @@ absl::StatusOr<std::unique_ptr<SyclStream>> SyclStream::Create(
           << (enable_multiple_streams ? " with" : " without")
           << " multiple streams enabled";
 
-  ABSL_ASSIGN_OR_RETURN(StreamPtr stream_handle,
-                   SyclStreamPool::GetOrCreateStream(executor->device_ordinal(),
-                                                     enable_multiple_streams));
+  ABSL_ASSIGN_OR_RETURN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(executor->device_ordinal(),
+                                        enable_multiple_streams));
 
   ABSL_ASSIGN_OR_RETURN(SyclEvent completed_event, SyclEvent::Create(executor));
 

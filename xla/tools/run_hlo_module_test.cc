@@ -15,13 +15,16 @@ limitations under the License.
 
 #include "xla/tools/run_hlo_module.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <random>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -29,8 +32,6 @@ limitations under the License.
 #include "xla/tools/run_hlo_module.pb.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -114,11 +115,13 @@ TEST(RunHloModule, DeterminismWithSeed) {
   options.run_test_hlo_passes = false;
 
   auto run_once = [&]() -> absl::StatusOr<Literal> {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
     RunHloModuleIterationLiterals iteration_literals;
     std::minstd_rand0 engine;
-    ABSL_RETURN_IF_ERROR(RunAndCompare(std::move(module), nullptr, &runner, nullptr,
-                                  &engine, options, &iteration_literals));
+    ABSL_RETURN_IF_ERROR(RunAndCompare(std::move(module), nullptr, &runner,
+                                       nullptr, &engine, options,
+                                       &iteration_literals));
     return Literal::CreateFromProto(iteration_literals.result());
   };
 
@@ -147,11 +150,13 @@ TEST(RunHloModule, NonDeterminismWithoutSeed) {
   options.run_test_hlo_passes = false;
 
   auto run_once = [&]() -> absl::StatusOr<Literal> {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
     RunHloModuleIterationLiterals iteration_literals;
     std::minstd_rand0 engine;
-    ABSL_RETURN_IF_ERROR(RunAndCompare(std::move(module), nullptr, &runner, nullptr,
-                                  &engine, options, &iteration_literals));
+    ABSL_RETURN_IF_ERROR(RunAndCompare(std::move(module), nullptr, &runner,
+                                       nullptr, &engine, options,
+                                       &iteration_literals));
     return Literal::CreateFromProto(iteration_literals.result());
   };
 

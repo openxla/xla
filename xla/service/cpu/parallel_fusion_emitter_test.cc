@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/cpu/parallel_fusion_emitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"

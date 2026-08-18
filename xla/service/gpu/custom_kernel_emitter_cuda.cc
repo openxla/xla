@@ -42,8 +42,9 @@ absl::StatusOr<std::unique_ptr<Thunk>> EmitPtxCustomKernelThunk(
         "PTX custom call backend config is empty");
   }
 
-  ABSL_ASSIGN_OR_RETURN(KernelCall call, KernelCall::Parse(backend_config_str,
-                                                      context->mlir_context()));
+  ABSL_ASSIGN_OR_RETURN(
+      KernelCall call,
+      KernelCall::Parse(backend_config_str, context->mlir_context()));
   if (call.kernel_type != KernelCall::KernelType::kPtxSource) {
     return absl::InvalidArgumentError(
         "PTX custom call backend config is not a PTX source");
@@ -52,9 +53,9 @@ absl::StatusOr<std::unique_ptr<Thunk>> EmitPtxCustomKernelThunk(
   emitters::KernelArguments::BufferAlignment buffer_alignment =
       GetDefaultBufferAlignment();
   ABSL_ASSIGN_OR_RETURN(emitters::KernelArguments kernel_arguments,
-                   emitters::KernelArguments::Create(
-                       context->buffer_assignment(), buffer_alignment, instr,
-                       call.output_indices));
+                        emitters::KernelArguments::Create(
+                            context->buffer_assignment(), buffer_alignment,
+                            instr, call.output_indices));
 
   ABSL_ASSIGN_OR_RETURN(
       CustomKernel ptx_custom_kernel,

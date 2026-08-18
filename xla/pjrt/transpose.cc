@@ -98,6 +98,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/ef57.h"
 #include "xla/permutation_util.h"
 #include "xla/pjrt/transpose_kernels.h"
@@ -105,7 +106,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -1780,7 +1780,7 @@ absl::StatusOr<std::shared_ptr<TransposePlan>> TransposePlanCache::GetOrCreate(
       [&](const TransposePlanCacheKey& key)
           -> absl::StatusOr<std::shared_ptr<TransposePlan>> {
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TransposePlan> plan,
-                         TransposePlan::Create(o));
+                              TransposePlan::Create(o));
         return std::shared_ptr<TransposePlan>(std::move(plan));
       });
 }

@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuner.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
@@ -58,7 +59,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace {
@@ -129,7 +129,7 @@ absl::Status ConfigAssigner::AssignConfigs(
           << " unique instructions.";
 
   ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
-                   GetConfigsForAll(instruction_groups));
+                        GetConfigsForAll(instruction_groups));
 
   for (int i = 0; i < instruction_groups.size(); i++) {
     auto& instructions = instruction_groups[i];
@@ -189,7 +189,7 @@ absl::Status ConfigAssigner::AssignConfigs(
           << all_instruction_groups.size() << " unique instructions ";
 
   ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
-                   GetConfigsForAll(instruction_groups));
+                        GetConfigsForAll(instruction_groups));
 
   std::vector<const HloInstruction*> autotuned_instructions;
   autotuned_instructions.reserve(instruction_groups.size());
@@ -206,8 +206,8 @@ absl::Status ConfigAssigner::AssignConfigs(
       GetKvStoreKey(module, my_shard_index, orchestrator_->codegen_backends());
   std::string local_results;
   if (!autotuned_instructions.empty()) {
-    ABSL_ASSIGN_OR_RETURN(local_results,
-                     optimal_config_cache_->Serialize(autotuned_instructions));
+    ABSL_ASSIGN_OR_RETURN(local_results, optimal_config_cache_->Serialize(
+                                             autotuned_instructions));
   }
   absl::StatusOr<std::string> stored_result = kv_store.TryGet(local_key);
   if (stored_result.status().code() == absl::StatusCode::kNotFound) {
@@ -241,7 +241,7 @@ absl::Status ConfigAssigner::AssignConfigs(
     // TODO(b/361009609): reset to infinite duration once issue with MPI is
     // fixed. https://github.com/google/jax/issues/22995.
     ABSL_ASSIGN_OR_RETURN(std::string remote_results,
-                     kv_store.Get(remote_key, absl::Hours(24)));
+                          kv_store.Get(remote_key, absl::Hours(24)));
     if (!remote_results.empty()) {
       ABSL_RETURN_IF_ERROR(optimal_config_cache_->Deserialize(remote_results));
     }
@@ -346,7 +346,6 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
       });
 }
 
-
 std::optional<ConfigAssigner::Config> ConfigAssigner::LookUp(
     const HloInstruction* instr) const {
   auto cached_config = optimal_config_cache_->Lookup(instr);
@@ -440,8 +439,6 @@ absl::Status ConfigAssigner::DumpHlo(const HloInstruction& instr,
                           module->ToString());
   return absl::OkStatus();
 }
-
-
 
 std::string ConfigAssigner::Options::ToString() const {
   return absl::StrFormat(

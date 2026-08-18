@@ -15,16 +15,17 @@ limitations under the License.
 
 #include "xla/backends/autotuner/autotune_fingerprint.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace {

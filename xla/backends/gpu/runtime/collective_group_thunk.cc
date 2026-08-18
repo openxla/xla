@@ -79,9 +79,11 @@ absl::Status CollectiveGroupThunk::ExecuteOnStream(
           thunk->kind());
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto clique_key, collective_thunk->GetCliqueKey(params));
-    ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm, params.collective_cliques->GetComm(
-                                                 clique_key, global_device_id));
+    ABSL_ASSIGN_OR_RETURN(auto clique_key,
+                          collective_thunk->GetCliqueKey(params));
+    ABSL_ASSIGN_OR_RETURN(
+        GpuCommunicator * comm,
+        params.collective_cliques->GetComm(clique_key, global_device_id));
     if (!absl::c_contains(comms, comm)) {
       comms.push_back(comm);
     }
@@ -121,12 +123,12 @@ CollectiveGroupThunk::FromProto(
   ThunkSequence thunk_sequence;
   for (const auto& sub_thunk_proto : thunk_proto.thunks()) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> sub_thunk,
-                     deserializer(sub_thunk_proto));
+                          deserializer(sub_thunk_proto));
     thunk_sequence.push_back(std::move(sub_thunk));
   }
 
   ABSL_ASSIGN_OR_RETURN(Thunk::Kind kind,
-                   Thunk::KindFromProto(thunk_proto.thunk_kind()));
+                        Thunk::KindFromProto(thunk_proto.thunk_kind()));
 
   return std::make_unique<CollectiveGroupThunk>(std::move(thunk_info), kind,
                                                 std::move(thunk_sequence));

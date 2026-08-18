@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/memory_bound_loop_optimizer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -297,13 +298,13 @@ class MemoryBoundLoopOptimizerTest : public HloHardwareIndependentTestBase {
             CreateHloCostAnalysisCalculator(*hlo_cost_analysis_wrapper_),
             /*enable_cache=*/false));
     ABSL_ASSIGN_OR_RETURN(alias_analysis_,
-                     HloAliasAnalysis::Run(module, &alias_info_));
+                          HloAliasAnalysis::Run(module, &alias_info_));
     ABSL_ASSIGN_OR_RETURN(
         cost_analysis_,
         CostAnalysis::Create(*op_cost_manager_, cost_analysis_options_,
                              &alias_info_, *module, alias_analysis_.get()));
-    ABSL_ASSIGN_OR_RETURN(live_range_,
-                     HloLiveRange::Run(module->schedule(), *alias_analysis_,
+    ABSL_ASSIGN_OR_RETURN(
+        live_range_, HloLiveRange::Run(module->schedule(), *alias_analysis_,
                                        module->entry_computation()));
     return absl::OkStatus();
   }
@@ -327,8 +328,8 @@ class MemoryBoundLoopOptimizerTest : public HloHardwareIndependentTestBase {
     options.reserved_scoped_memory_fn = reserved_scoped_memory_fn;
     options.memory_bound_loop_optimizer_options = optimizer_options;
     ABSL_ASSIGN_OR_RETURN(optimizer_, MemoryBoundLoopOptimizer::Create(
-                                     loop_start, loop_end, *live_range_,
-                                     *alias_analysis_, options));
+                                          loop_start, loop_end, *live_range_,
+                                          *alias_analysis_, options));
     return optimizer_.get();
   }
 
@@ -342,7 +343,7 @@ class MemoryBoundLoopOptimizerTest : public HloHardwareIndependentTestBase {
         std::string module_str,
         ParseAndCreateModuleString(hlo_loop_str, loop_start_idx, loop_end_idx));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(module_str));
+                          ParseAndReturnVerifiedModule(module_str));
     ABSL_ASSIGN_OR_RETURN(
         *optimizer,
         CreateOptimizer(loop_start_idx, loop_end_idx, module.get(),
@@ -598,10 +599,10 @@ ENTRY Entry {
     };
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                     HloAliasAnalysis::Run(module, &alias_info_));
+                          HloAliasAnalysis::Run(module, &alias_info_));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> live_range,
-                     HloLiveRange::Run(module->schedule(), *alias_analysis,
-                                       module->entry_computation()));
+                          HloLiveRange::Run(module->schedule(), *alias_analysis,
+                                            module->entry_computation()));
     const auto& flattened_instructions =
         live_range->flattened_instruction_sequence().instructions();
     for (int iteration = 1; iteration < 3; ++iteration) {

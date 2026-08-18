@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <algorithm>  // IWYU pragma: keep, exhaustive_unary_test_ops.inc
 #include <array>      // IWYU pragma: keep, exhaustive_unary_test_ops.inc
-#include <cfenv>  // NOLINT
+#include <cfenv>      // NOLINT
 #include <cmath>
 #include <cstddef>  // IWYU pragma: keep, exhaustive_unary_test_ops.inc
 #include <limits>

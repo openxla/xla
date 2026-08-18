@@ -624,11 +624,11 @@ absl::Status VerifyNamedSharding(const NamedSharding& named_sharding) {
   ABSL_RETURN_IF_ERROR(
       VerifyDimShardings(named_sharding.dim_shardings(), mesh, seen_axes));
   ABSL_RETURN_IF_ERROR(VerifySortedAxes(named_sharding.replicated_axes(),
-                                   "Replicated", mesh, seen_axes));
-  ABSL_RETURN_IF_ERROR(VerifySortedAxes(named_sharding.unreduced_axes(), "Unreduced",
-                                   mesh, seen_axes));
-  ABSL_RETURN_IF_ERROR(VerifySortedAxes(named_sharding.manual_axes(), "Manual", mesh,
-                                   seen_axes));
+                                        "Replicated", mesh, seen_axes));
+  ABSL_RETURN_IF_ERROR(VerifySortedAxes(named_sharding.unreduced_axes(),
+                                        "Unreduced", mesh, seen_axes));
+  ABSL_RETURN_IF_ERROR(VerifySortedAxes(named_sharding.manual_axes(), "Manual",
+                                        mesh, seen_axes));
   return absl::OkStatus();
 }
 

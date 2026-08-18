@@ -135,7 +135,8 @@ absl::Status CombineCollectivePermutes(
   // CollectivePermute or elements of the tuple output.
   for (int64_t i = 0; i < to_combine.size(); ++i) {
     if (operands.size() == 1) {
-      ABSL_RETURN_IF_ERROR(computation.ReplaceInstruction(to_combine[i], combined));
+      ABSL_RETURN_IF_ERROR(
+          computation.ReplaceInstruction(to_combine[i], combined));
     } else {
       int64_t index = enable_enzyme_comms_opt ? forward_indices[i] : i;
       auto replace_with = HloInstruction::CreateGetTupleElement(

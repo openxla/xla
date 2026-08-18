@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/stacktrace.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -59,7 +60,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/bitmap.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 

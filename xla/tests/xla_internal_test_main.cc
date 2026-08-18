@@ -13,17 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstring>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
-#include "xla/debug_options_flags.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
+#include "xla/debug_options_flags.h"
 
 GTEST_API_ int main(int argc, char** argv) {
   std::vector<tsl::Flag> flag_list;

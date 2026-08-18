@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "xla/tests/hlo_runner_agnostic_reference_mixin.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

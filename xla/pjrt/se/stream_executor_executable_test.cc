@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/pjrt/se/stream_executor_executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"

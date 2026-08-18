@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/pjrt/interpreter/interpreter_client.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"

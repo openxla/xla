@@ -59,7 +59,7 @@ absl::StatusOr<ThunkSequence> WriteValueThunkFoldedHandler(
   int64_t num_elements = ShapeUtil::ElementsIn(out_shape);
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice out_slice,
-                   ctx.GetResultAllocationSlice(/*index=*/{}));
+                        ctx.GetResultAllocationSlice(/*index=*/{}));
 
   ABSL_ASSIGN_OR_RETURN(xla::ffi::AttributesMap attrs, ctx.GetFfiAttributes());
   auto it = attrs.find("val");
@@ -77,9 +77,10 @@ absl::StatusOr<ThunkSequence> WriteValueThunkFoldedHandler(
   }
   int32_t val = std::get<int32_t>(scalar.AsVariant());
 
-  ABSL_ASSIGN_OR_RETURN(stream_executor::KernelLoaderSpec kernel_spec,
-                   stream_executor::cuda::FindCudaRuntimeKernel(
-                       stream_executor::cuda::GetWriteValueFoldedKernel()));
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::KernelLoaderSpec kernel_spec,
+      stream_executor::cuda::FindCudaRuntimeKernel(
+          stream_executor::cuda::GetWriteValueFoldedKernel()));
 
   stream_executor::KernelArgsPackingSpec packing_spec;
   packing_spec.AddAddressArgument(0);

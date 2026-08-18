@@ -16,9 +16,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/nccl/nccl.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
+#include "xla/tsl/platform/logging.h"
 
 // Implements the nccl API by forwarding to nccl loaded from a DSO.
 

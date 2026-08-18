@@ -42,7 +42,7 @@ namespace mhlo {
 namespace {
 
 // Calculates the flatten types of a value.
-void flattenTupleType(Value value, llvm::SmallVectorImpl<Type> &types) {
+void flattenTupleType(Value value, llvm::SmallVectorImpl<Type>& types) {
   if (!mlir::isa<TupleType>(value.getType())) {
     types.push_back(value.getType());
     return;
@@ -56,7 +56,7 @@ void flattenTupleType(Value value, llvm::SmallVectorImpl<Type> &types) {
 // FlattenTupleValue and CreateTupleValue is a pair of functions to create and
 // flatten tuples in the exact same order. CreateTupleValue returns the result
 // of the root TupleOp or given value if the type is not TupleType.
-Value createTupleValue(OpBuilder &builder, Location loc,
+Value createTupleValue(OpBuilder& builder, Location loc,
                        ValueRange flattenValues, Type tupleType) {
   if (!mlir::isa<TupleType>(tupleType)) {
     assert(flattenValues.size() == 1);
@@ -68,8 +68,8 @@ Value createTupleValue(OpBuilder &builder, Location loc,
   return mhlo::TupleOp::create(builder, loc, flattenValues);
 }
 
-void flattenTupleValue(OpBuilder &builder, Location loc, Value value,
-                       llvm::SmallVectorImpl<Value> &flattenedValues) {
+void flattenTupleValue(OpBuilder& builder, Location loc, Value value,
+                       llvm::SmallVectorImpl<Value>& flattenedValues) {
   auto tupleType = mlir::dyn_cast<TupleType>(value.getType());
   if (!tupleType) {
     flattenedValues.push_back(value);
@@ -88,7 +88,7 @@ struct FlattenCustomCallOp : public OpRewritePattern<CustomCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(CustomCallOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     bool flattenResult = op->getNumResults() == 1 &&
                          mlir::isa<TupleType>(op->getResult(0).getType());
     bool flattenOperands = llvm::any_of(op.getInputs(), [](Value operand) {
@@ -130,7 +130,7 @@ struct FlattenCustomCallOp : public OpRewritePattern<CustomCallOp> {
 class FlattenTuplePass : public impl::FlattenTuplePassBase<FlattenTuplePass> {
  public:
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
+    MLIRContext* context = &getContext();
     RewritePatternSet patterns(context);
     patterns.add<FlattenCustomCallOp>(context);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {

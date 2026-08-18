@@ -20,7 +20,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/error_spec.h"
@@ -38,6 +37,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -389,7 +389,6 @@ ENTRY main {
       {{2, 7}, {2, 1}, {1, 1}, {5, 1}, {7, 1}, {1, 2}, {0x80, 0x80}});
   RunTest(hlo_text, &operand, &start_indices);
 }
-
 
 TEST_F(GatherOperationTest, OutOfBoundsUnsignedIndex) {
   // Out of bounds indices must not crash, and the indices in range should

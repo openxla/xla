@@ -1193,7 +1193,8 @@ class LiteralBase {
       if (auto* tuple_rep = piece.storage_.GetTupleRep()) {
         for (int64_t i = 0; i < tuple_rep->children.size(); ++i) {
           index->push_back(i);
-          ABSL_RETURN_IF_ERROR(ForEachHelper(func, tuple_rep->children[i], index));
+          ABSL_RETURN_IF_ERROR(
+              ForEachHelper(func, tuple_rep->children[i], index));
           index->pop_back();
         }
       }

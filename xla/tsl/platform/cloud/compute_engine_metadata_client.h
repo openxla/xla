@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef XLA_TSL_PLATFORM_CLOUD_COMPUTE_ENGINE_METADATA_CLIENT_H_
 #define XLA_TSL_PLATFORM_CLOUD_COMPUTE_ENGINE_METADATA_CLIENT_H_
 
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/platform/cloud/http_request.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/retrying_utils.h"
 
 namespace tsl {
 

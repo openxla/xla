@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/lru_cache.h"
 
+#include <gmock/gmock.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/random/random.h"
 #include "xla/hlo/testlib/test.h"

@@ -17,8 +17,6 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "nvidia/include/NVGPUToLLVM/NVGPUToLLVMPass.h"
-#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "absl/base/call_once.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -52,6 +50,11 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
+#include "nvidia/include/NVGPUToLLVM/NVGPUToLLVMPass.h"
+#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/pjrt/triton.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
@@ -60,9 +63,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/xla.pb.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
-#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
 namespace xla::triton {
 
@@ -86,7 +86,7 @@ absl::StatusOr<std::string> LLVMToPTX(mlir::ModuleOp module,
   }
 
   ABSL_ASSIGN_OR_RETURN(auto cuda_cc,
-                   se::CudaComputeCapability::FromString(arch_name));
+                        se::CudaComputeCapability::FromString(arch_name));
   // Hopper and Blackwell require accelerated features ("a" suffix) for TMA and
   // other advanced instructions.
   if (cuda_cc.major >= 9) {
@@ -143,7 +143,7 @@ absl::StatusOr<CompilationResult> Compile(absl::string_view module,
   mlir::PassManager pm(&context);
   pm.enableVerifier();
   ABSL_ASSIGN_OR_RETURN(auto cuda_cc,
-                   se::CudaComputeCapability::FromString(arch_name));
+                        se::CudaComputeCapability::FromString(arch_name));
 
   gpu::CreateTritonPipeline(&pm, se::GpuComputeCapability(cuda_cc), num_warps,
                             num_ctas, num_stages);

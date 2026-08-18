@@ -33,9 +33,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/profiler/utils/buffer_pool.h"
 #include "xla/tsl/profiler/utils/lock_free_queue.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace xla {
 namespace profiler {

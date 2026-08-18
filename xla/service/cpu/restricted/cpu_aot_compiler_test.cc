@@ -24,6 +24,7 @@ limitations under the License.
 #include "llvm/ADT/StringMap.h"  // IWYU pragma: keep
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/debug_options_flags.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace cpu {

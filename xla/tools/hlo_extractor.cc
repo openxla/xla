@@ -374,13 +374,13 @@ absl::Status Inline(HloModule* module) {
                 /*computation=*/
                 instruction->fused_instructions_computation()));
         ABSL_RETURN_IF_ERROR(computation
-                            ->ReplaceInstruction(
-                                /*old_instruction=*/instruction,
-                                /*new_instruction=*/new_instruction,
-                                /*preserve_sharding=*/false,
-                                /*relay_control_dependency=*/true,
-                                /*remove_unused_operands=*/true)
-                            .status());
+                                 ->ReplaceInstruction(
+                                     /*old_instruction=*/instruction,
+                                     /*new_instruction=*/new_instruction,
+                                     /*preserve_sharding=*/false,
+                                     /*relay_control_dependency=*/true,
+                                     /*remove_unused_operands=*/true)
+                                 .status());
       }
     }
   }

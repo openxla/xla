@@ -250,7 +250,7 @@ absl::Status ApplyRotations(int64_t n, XlaOp& w_tl, XlaOp& w_tr, XlaOp& w_bl,
                             XlaOp& w_br, XlaOp& v_tl, XlaOp& v_tr, XlaOp& v_bl,
                             XlaOp& v_br) {
   ABSL_ASSIGN_OR_RETURN(Eigh2x2 rotation,
-                   HermitianEigenDecomposition2x2(w_tl, w_tr, w_br));
+                        HermitianEigenDecomposition2x2(w_tl, w_tr, w_br));
 
   ApplyJacobiRotationOverRows(rotation, w_tl, w_tr, w_bl, w_br);
   ApplyJacobiRotationOverCols(rotation, w_tl, w_tr, w_bl, w_br);
@@ -319,7 +319,8 @@ absl::StatusOr<std::vector<XlaOp>> Sweeps(
     XlaOp w_tl, w_tr, w_bl, w_br;
     std::tie(w_tl, w_tr, w_bl, w_br) =
         std::make_tuple(values[2], values[3], values[4], values[5]);
-    ABSL_ASSIGN_OR_RETURN(auto norms, ComputeFrobeniusNorms(w_tl, w_tr, w_bl, w_br));
+    ABSL_ASSIGN_OR_RETURN(auto norms,
+                          ComputeFrobeniusNorms(w_tl, w_tr, w_bl, w_br));
     auto tol = norms.frobenius_sq_norm * Square(values[1]);
     auto tol_cond = ReduceAll(Lt(tol, norms.off_diagonal_sq_norm),
                               xla::ConstantR0<bool>(cond_builder, false),
@@ -343,8 +344,8 @@ absl::StatusOr<std::vector<XlaOp>> Sweeps(
                   std::make_tuple(values[0], values[1], values[2], values[3],
                                   values[4], values[5], values[6], values[7],
                                   values[8]);
-              ABSL_RETURN_IF_ERROR(ApplyRotations(n, w_tl, w_tr, w_bl, w_br, v_tl,
-                                             v_tr, v_bl, v_br));
+              ABSL_RETURN_IF_ERROR(ApplyRotations(n, w_tl, w_tr, w_bl, w_br,
+                                                  v_tl, v_tr, v_bl, v_br));
               return std::vector<XlaOp>{tol,  w_tl, w_tr, w_bl, w_br,
                                         v_tl, v_tr, v_bl, v_br};
             },
@@ -505,19 +506,19 @@ XlaOp EighExpander::BuildEigh(XlaOp a, bool lower, int64_t max_iter, float tol,
     auto v_bl = v_tr;
 
     ABSL_ASSIGN_OR_RETURN(auto output, Sweeps(
-                                      {
-                                          Zero(builder, S32),
-                                          ScalarLike(Real(a), tol),
-                                          tl,
-                                          tr,
-                                          bl,
-                                          br,
-                                          v_tl,
-                                          v_tr,
-                                          v_bl,
-                                          v_br,
-                                      },
-                                      k * 2, max_iter, S32, builder));
+                                           {
+                                               Zero(builder, S32),
+                                               ScalarLike(Real(a), tol),
+                                               tl,
+                                               tr,
+                                               bl,
+                                               br,
+                                               v_tl,
+                                               v_tr,
+                                               v_bl,
+                                               v_br,
+                                           },
+                                           k * 2, max_iter, S32, builder));
 
     std::tie(tl, tr, bl, br) =
         std::make_tuple(output[2], output[3], output[4], output[5]);
@@ -590,9 +591,10 @@ absl::StatusOr<HloInstruction*> EighExpander::ExpandInstruction(
                       instruction->raw_backend_config_string());
     }
     XlaOp result = BuildEigh(a, lower, max_iter, tol, sort_eigenvalues);
-    ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build(result));
-    ABSL_ASSIGN_OR_RETURN(computation,
-                     XlaComputationToHloComputation(xla_computation, module));
+    ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation,
+                          builder.Build(result));
+    ABSL_ASSIGN_OR_RETURN(
+        computation, XlaComputationToHloComputation(xla_computation, module));
   }
 
   return instruction->parent()->AddInstruction(HloInstruction::CreateCall(

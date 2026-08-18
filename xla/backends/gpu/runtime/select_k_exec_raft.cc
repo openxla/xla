@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
-#include "third_party/gpus/cuda/include/cuda_bf16.h"
 #include "raft/core/device_mdspan.hpp"
 #include "raft/core/mdspan_types.hpp"
 #include "raft/core/resource/cuda_stream.hpp"
@@ -36,6 +35,7 @@ limitations under the License.
 #include "raft/core/resources.hpp"
 #include "raft/matrix/select_k.cuh"
 #include "raft/matrix/select_k_types.hpp"
+#include "third_party/gpus/cuda/include/cuda_bf16.h"
 #include "xla/backends/gpu/runtime/select_k_exec.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
@@ -64,8 +64,8 @@ class OwningScratchAllocator {
   // Allocate memory and track ownership
   absl::StatusOr<se::DeviceAddress<uint8_t>> AllocateBytes(int64_t byte_size) {
     ABSL_ASSIGN_OR_RETURN(se::ScopedDeviceAddress<uint8_t> buffer,
-                     allocator_->Allocate(device_ordinal_, byte_size,
-                                          /*retry_on_failure=*/false));
+                          allocator_->Allocate(device_ordinal_, byte_size,
+                                               /*retry_on_failure=*/false));
 
     se::DeviceAddress<uint8_t> res = *buffer;
     void* raw_ptr = res.opaque();

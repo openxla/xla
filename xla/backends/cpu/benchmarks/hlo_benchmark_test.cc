@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "benchmark/benchmark.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/stacktrace_handler.h"
 #include "xla/backends/cpu/benchmarks/aot_benchmark_helper.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -38,8 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/stacktrace_handler.h"
 
 ABSL_FLAG(std::vector<std::string>, hlo_paths, std::vector<std::string>({}),
           "Comma-separated list of paths to HLO modules to benchmark");
@@ -99,7 +99,7 @@ absl::Status RunBenchmark(benchmark::State* absl_nullable state,
                                       : nullptr;
 
   ABSL_ASSIGN_OR_RETURN(auto module_and_iteration_literals,
-                   LoadHloModuleAndMaybeIterationLiterals(hlo_abs_path));
+                        LoadHloModuleAndMaybeIterationLiterals(hlo_abs_path));
 
   std::unique_ptr<HloModule> hlo_module =
       std::move(module_and_iteration_literals.first);

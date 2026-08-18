@@ -15,15 +15,16 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/subprocess_compilation.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "tsl/platform/path.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/path.h"
 
 namespace stream_executor {
 namespace {

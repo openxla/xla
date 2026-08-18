@@ -184,8 +184,9 @@ tsl::AsyncValueRef<SortThunk::ExecuteEvent> SortThunk::Execute(
 
   for (const Input& input : inputs_) {
     size_t idx = data.size();
-    ABSL_ASSIGN_OR_RETURN(data.emplace_back(),
-                     params.buffer_allocations->GetDeviceAddress(input.slice));
+    ABSL_ASSIGN_OR_RETURN(
+        data.emplace_back(),
+        params.buffer_allocations->GetDeviceAddress(input.slice));
     raw_data.push_back(reinterpret_cast<std::byte*>(data.back().opaque()));
     primitive_sizes.push_back(
         primitive_util::ByteWidth(input.shape.element_type()));

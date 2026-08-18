@@ -21,8 +21,8 @@ limitations under the License.
 
 #define TOKEN_CONCAT(a, b) a##b
 #define WRAPPED_PY_MODULE(name)                                  \
-  extern "C" void *TOKEN_CONCAT(Wrapped_PyInit_, name)();        \
-  extern "C" EXPORT_SYMBOL void *TOKEN_CONCAT(PyInit_, name)() { \
+  extern "C" void* TOKEN_CONCAT(Wrapped_PyInit_, name)();        \
+  extern "C" EXPORT_SYMBOL void* TOKEN_CONCAT(PyInit_, name)() { \
     return TOKEN_CONCAT(Wrapped_PyInit_, name)();                \
   }
 

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "xla/hlo/parser/hlo_parser.h"

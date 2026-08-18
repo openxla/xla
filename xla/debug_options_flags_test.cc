@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/debug_options_flags.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "google/protobuf/descriptor.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;

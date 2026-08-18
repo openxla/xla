@@ -81,7 +81,7 @@ using RocBlasType_t =
 // Thread-safe post-initialization.
 class ROCMBlas : public blas::BlasSupport {
  public:
-  explicit ROCMBlas(StreamExecutor *parent);
+  explicit ROCMBlas(StreamExecutor* parent);
 
   // Allocates a rocBLAS handle.
   bool Init();
@@ -91,9 +91,7 @@ class ROCMBlas : public blas::BlasSupport {
 
   TENSORFLOW_STREAM_EXECUTOR_GPU_BLAS_SUPPORT_OVERRIDES
 
-  gpu::BlasLt *GetBlasLt() override {
-    return &blas_lt_;
-  }
+  gpu::BlasLt* GetBlasLt() override { return &blas_lt_; }
 
  private:
   // Tells rocBLAS to enqueue the BLAS operation onto a particular Stream.
@@ -101,7 +99,7 @@ class ROCMBlas : public blas::BlasSupport {
   // rocBLAS is stateful, and only be associated with one stream (in order to
   // enqueue dispatch) at a given time. As a result, this generally must be
   // invoked before calling into rocBLAS.
-  bool SetStream(Stream *stream) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  bool SetStream(Stream* stream) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   // A helper function that calls the real rocBLAS function together with error
   // handling.
@@ -114,15 +112,15 @@ class ROCMBlas : public blas::BlasSupport {
   // err_on_failure:     Whether to print an error if the rocBLAS function
   // fails. args:               Arguments of rocBLAS function.
   template <typename FuncT, typename... Args>
-  absl::Status DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
+  absl::Status DoBlasInternalImpl(FuncT rocblas_func, Stream* stream,
                                   bool pointer_mode_host, bool err_on_failure,
-                                  Args &&...args);
+                                  Args&&... args);
 
   // Convenience functions that call DoBlasInternalImpl with different values
   // for err_on_failure.
   template <typename FuncT, typename... Args>
-  bool DoBlasInternal(FuncT rocblas_func, Stream *stream,
-                      bool pointer_mode_host, Args &&...args) {
+  bool DoBlasInternal(FuncT rocblas_func, Stream* stream,
+                      bool pointer_mode_host, Args&&... args) {
     auto ret = DoBlasInternalImpl(rocblas_func, stream, pointer_mode_host,
                                   /*err_on_failure=*/true,
                                   std::forward<Args>(args)...);
@@ -131,16 +129,16 @@ class ROCMBlas : public blas::BlasSupport {
 
   // Same as above, but returns absl::Status.
   template <typename FuncT, typename... Args>
-  absl::Status DoBlasInternalStatus(FuncT rocblas_func, Stream *stream,
-                                    bool pointer_mode_host, Args &&...args) {
+  absl::Status DoBlasInternalStatus(FuncT rocblas_func, Stream* stream,
+                                    bool pointer_mode_host, Args&&... args) {
     return DoBlasInternalImpl(rocblas_func, stream, pointer_mode_host,
                               /*err_on_failure=*/true,
                               std::forward<Args>(args)...);
   }
 
   template <typename FuncT, typename... Args>
-  bool DoBlasInternalFailureOK(FuncT rocblas_func, Stream *stream,
-                               bool pointer_mode_host, Args &&...args) {
+  bool DoBlasInternalFailureOK(FuncT rocblas_func, Stream* stream,
+                               bool pointer_mode_host, Args&&... args) {
     auto ret = DoBlasInternalImpl(rocblas_func, stream, pointer_mode_host,
                                   /*err_on_failure=*/false,
                                   std::forward<Args>(args)...);
@@ -177,7 +175,7 @@ class ROCMBlas : public blas::BlasSupport {
 
   // StreamExecutor which instantiated this ROCMBlas.
   // Immutable post-initialization.
-  StreamExecutor *parent_;
+  StreamExecutor* parent_;
 
   // rocBLAS library handle on the device.
   rocblas_handle blas_ ABSL_GUARDED_BY(mu_);
@@ -191,8 +189,8 @@ class ROCMBlas : public blas::BlasSupport {
 
   rocm::BlasLt blas_lt_;
 
-  ROCMBlas(const ROCMBlas &) = delete;
-  void operator=(const ROCMBlas &) = delete;
+  ROCMBlas(const ROCMBlas&) = delete;
+  void operator=(const ROCMBlas&) = delete;
 
   bool has_mfma_ = false;
   bool use_hgemm_alt_impl_ = false;

@@ -15,17 +15,18 @@ limitations under the License.
 
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

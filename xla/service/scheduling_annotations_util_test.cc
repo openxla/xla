@@ -15,21 +15,22 @@ limitations under the License.
 
 #include "xla/service/scheduling_annotations_util.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

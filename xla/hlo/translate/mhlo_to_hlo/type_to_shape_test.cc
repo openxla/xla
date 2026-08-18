@@ -15,24 +15,25 @@ limitations under the License.
 
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iostream>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 using mlir::Builder;
 using mlir::MemRefType;

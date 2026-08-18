@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/buffer_debug_float_check_kernel.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -110,7 +111,7 @@ class FloatCheckKernelTest : public ::testing::Test {
     gpu::GpuKernelRegistry registry =
         gpu::GpuKernelRegistry::GetGlobalRegistry();
     ABSL_ASSIGN_OR_RETURN(auto check_kernel,
-                     registry.LoadKernel<CheckKernel>(executor_));
+                          registry.LoadKernel<CheckKernel>(executor_));
     ABSL_ASSIGN_OR_RETURN(
         auto reduce_kernel,
         registry
@@ -137,7 +138,7 @@ class FloatCheckKernelTest : public ::testing::Test {
 
     // Call kernel
     ABSL_RETURN_IF_ERROR(stream_->Memcpy(&device_input, input.data(),
-                                    input.size() * sizeof(input[0])));
+                                         input.size() * sizeof(input[0])));
     ABSL_RETURN_IF_ERROR(check_kernel.Launch(
         thread_dim, block_dim, stream_.get(), device_input,
         device_input.ElementCount(), device_tmp, device_tmp.ElementCount()));

@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/ifrt/layout.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <tuple>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"

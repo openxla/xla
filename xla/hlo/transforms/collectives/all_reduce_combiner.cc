@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -44,8 +46,6 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -166,7 +166,8 @@ absl::StatusOr<bool> AllReduceCombiner::RunWithKeyCombiner(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
+    ABSL_ASSIGN_OR_RETURN(auto domain_map,
+                          HloDomainMap::Create(computation, ""));
 
     auto key_fn = [&domain_map, &combine_key](const HloInstruction* instruction)
         -> std::optional<AllReduceCombiner::GroupKey> {

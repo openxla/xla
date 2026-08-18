@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/ir_emission_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"

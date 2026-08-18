@@ -74,12 +74,14 @@ class CompilationEnvironments {
   // - The output is *not* allowed to be null, even for null input.
   // - `descriptor` must stay alive until the process ends, or until
   //   `DeregisterProcessNewEnvFn` is called.
-  static void RegisterProcessNewEnvFn(const google::protobuf::Descriptor* descriptor,
-                                      ProcessNewEnvFn process_new_env);
+  static void RegisterProcessNewEnvFn(
+      const google::protobuf::Descriptor* descriptor,
+      ProcessNewEnvFn process_new_env);
 
   // Deregisters the ProcessNewEnvFn for the given proto descriptor, if one
   // exists.
-  static void DeregisterProcessNewEnvFn(const google::protobuf::Descriptor* descriptor);
+  static void DeregisterProcessNewEnvFn(
+      const google::protobuf::Descriptor* descriptor);
 
   // Adds env to the list of CompilationEnvironments. If an environment with
   // the same proto descriptor has already been added, returns an error.

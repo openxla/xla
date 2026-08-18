@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -67,7 +68,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace memory_space_assignment {
@@ -413,7 +413,8 @@ MemorySpaceAssignment::RunMemorySpaceAssignment(
   ScheduleAsynchronousCopies();
   ABSL_RETURN_IF_ERROR(SimplifyGraph());
   ABSL_RETURN_IF_ERROR(SetSchedule());
-  ABSL_ASSIGN_OR_RETURN(auto alias, HloAliasAnalysis::Run(module_, alias_info_));
+  ABSL_ASSIGN_OR_RETURN(auto alias,
+                        HloAliasAnalysis::Run(module_, alias_info_));
   ABSL_RETURN_IF_ERROR(ExportAndColorBuffers(*alias));
   std::vector<int64_t> alt_mem_bytes_occupied;
   // alt_mem_bytes_occupied is used for logging in the RuntimeSimulator below.
@@ -435,7 +436,7 @@ MemorySpaceAssignment::RunMemorySpaceAssignment(
   CHECK_OK(module_->schedule().Verify());
   if (VLOG_IS_ON(1)) {
     ABSL_ASSIGN_OR_RETURN(AsyncCopyStats stats,
-                     CalculateAsyncCopyStats(alias->dataflow_analysis()));
+                          CalculateAsyncCopyStats(alias->dataflow_analysis()));
     LOG(INFO) << "Maximum number of outstanding async copies/slices: "
               << stats.max_outstanding_async_copies;
     LOG(INFO) << "Number of prefetches: " << stats.num_prefetches
@@ -507,7 +508,7 @@ absl::Status MemorySpaceAssignment::Process(
       continue;
     }
     ABSL_RETURN_IF_ERROR(allocation->Process(options_.bitcast_split_fn,
-                                        hlo_live_range, alias_analysis));
+                                             hlo_live_range, alias_analysis));
     // Add the offset and size of the allocation in the alternate memory to
     // the output map.
     if (allocation->is_scoped_allocation()) {
@@ -745,8 +746,8 @@ absl::Status CleanupDeadFusionComputations(
   while (!worklist.empty()) {
     HloComputation* computation = worklist.back();
     worklist.pop_back();
-    ABSL_RETURN_IF_ERROR(ProcessDeadComputation(module, computation,
-                                           removed_instructions, worklist));
+    ABSL_RETURN_IF_ERROR(ProcessDeadComputation(
+        module, computation, removed_instructions, worklist));
   }
   return absl::OkStatus();
 }
@@ -861,7 +862,8 @@ absl::Status MemorySpaceAssignment::SimplifyGraph() {
     }
   }
 
-  ABSL_RETURN_IF_ERROR(CleanupDeadFusionComputations(module_, removed_instructions));
+  ABSL_RETURN_IF_ERROR(
+      CleanupDeadFusionComputations(module_, removed_instructions));
 
   RemoveAlternateMemoryAssignments(removed_instructions);
   RemoveScopedMemoryAssignments(removed_instructions);
@@ -1376,8 +1378,8 @@ absl::Status MemorySpaceAssignment::VerifyAndExportHeapSimulatorTrace(
     std::vector<int64_t>* alt_mem_bytes_occupied) {
   VLOG(1) << "Verifying...";
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> hlo_live_range,
-                   HloLiveRange::Run(module_->schedule(), alias_analysis,
-                                     module_->entry_computation()));
+                        HloLiveRange::Run(module_->schedule(), alias_analysis,
+                                          module_->entry_computation()));
 
   BufferIntervalTree interval_tree;
   absl::flat_hash_set<int64_t> seen_buffers;
@@ -1542,8 +1544,8 @@ absl::Status MemorySpaceAssignment::VerifyAndExportHeapSimulatorTrace(
                 << " value: " << value->ToShortString() << ": ("
                 << time_bound.start << ", " << last_use_time
                 << ") off: " << chunk.offset << ", size: " << chunk.size;
-        ABSL_RETURN_IF_ERROR(add_allocation_and_verify(time_bound.start,
-                                                  last_use_time, chunk, value));
+        ABSL_RETURN_IF_ERROR(add_allocation_and_verify(
+            time_bound.start, last_use_time, chunk, value));
       }
     }
   }

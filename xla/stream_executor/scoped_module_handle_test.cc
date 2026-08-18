@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/scoped_module_handle.h"
 
-#include <utility>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/tsl/platform/test.h"

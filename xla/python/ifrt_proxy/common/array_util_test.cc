@@ -14,14 +14,15 @@
 
 #include "xla/python/ifrt_proxy/common/array_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"

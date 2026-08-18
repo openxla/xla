@@ -31,10 +31,11 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_common.hpp"
 #include "oneapi/dnnl/dnnl_types.h"
+#include "tsl/platform/cpu_info.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/shape.h"
-#include "tsl/platform/cpu_info.h"
 
 #define EIGEN_USE_THREADS
 

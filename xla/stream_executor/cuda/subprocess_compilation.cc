@@ -45,6 +45,9 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cuda_root_path.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/regexp.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cubin_or_ptx_image.h"
@@ -58,9 +61,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/subprocess.h"
 #include "xla/util.h"
-#include "tsl/platform/cuda_root_path.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/regexp.h"
 
 namespace stream_executor {
 static absl::StatusOr<std::string> GetToolVersionString(
@@ -259,7 +259,7 @@ absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingPtxAs(
     const CudaComputeCapability& cc, absl::string_view ptx, GpuAsmOpts options,
     bool cancel_if_reg_spill, bool dump_compilation_log) {
   ABSL_ASSIGN_OR_RETURN(std::string ptxas_path,
-                   FindPtxAsExecutable(options.preferred_cuda_dir));
+                        FindPtxAsExecutable(options.preferred_cuda_dir));
   return CompileGpuAsmUsingPtxAs(ptxas_path, cc, ptx, options,
                                  cancel_if_reg_spill, dump_compilation_log);
 }
@@ -374,14 +374,15 @@ absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingPtxAs(
 absl::StatusOr<SemanticVersion> GetAsmCompilerVersion(
     absl::string_view preferred_cuda_dir) {
   ABSL_ASSIGN_OR_RETURN(std::string ptxas_path,
-                   FindPtxAsExecutable(preferred_cuda_dir));
+                        FindPtxAsExecutable(preferred_cuda_dir));
   return GetToolVersion(ptxas_path);
 }
 
 absl::StatusOr<std::vector<uint8_t>> BundleGpuAsmUsingFatbin(
     std::vector<CubinOrPTXImage> images, GpuAsmOpts options) {
-  ABSL_ASSIGN_OR_RETURN(std::string fatbinary_path,
-                   FindCudaExecutable("fatbinary", options.preferred_cuda_dir));
+  ABSL_ASSIGN_OR_RETURN(
+      std::string fatbinary_path,
+      FindCudaExecutable("fatbinary", options.preferred_cuda_dir));
 
   // Write images to temporary files.
   std::vector<std::string> image_paths;
@@ -479,7 +480,7 @@ absl::StatusOr<SemanticVersion> GetNvLinkVersion(
     absl::string_view preferred_cuda_dir) {
   // Make sure nvlink exists and is executable.
   ABSL_ASSIGN_OR_RETURN(std::string bin_path,
-                   FindNvlinkExecutable(preferred_cuda_dir));
+                        FindNvlinkExecutable(preferred_cuda_dir));
 
   return GetToolVersion(bin_path);
 }
@@ -489,7 +490,7 @@ absl::StatusOr<std::vector<uint8_t>> LinkUsingNvlink(
     absl::string_view preferred_cuda_dir,
     absl::Span<const std::vector<uint8_t>> images) {
   ABSL_ASSIGN_OR_RETURN(std::string bin_path,
-                   FindNvlinkExecutable(preferred_cuda_dir));
+                        FindNvlinkExecutable(preferred_cuda_dir));
 
   return LinkUsingNvlink(bin_path, cc, images);
 }
@@ -581,7 +582,7 @@ absl::StatusOr<SemanticVersion> GetNvdisasmVersion(
     absl::string_view preferred_cuda_dir) {
   // Make sure nvdisasm exists and is executable.
   ABSL_ASSIGN_OR_RETURN(std::string bin_path,
-                   FindNvdisasmExecutable(preferred_cuda_dir));
+                        FindNvdisasmExecutable(preferred_cuda_dir));
 
   return GetToolVersion(bin_path);
 }

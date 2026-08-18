@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/all_reduce_reduce_scatter_reorder.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_event.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/platform.h"

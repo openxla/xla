@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -329,7 +330,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   if (!input_data.empty()) {
     VLOG(3) << "Copying input data to the device";
     ABSL_RETURN_IF_ERROR(stream->Memcpy(&input_buffer, input_data.data(),
-                                   metadata.input_data_size_bytes));
+                                        metadata.input_data_size_bytes));
     ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   }
 
@@ -360,8 +361,9 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   ABSL_RETURN_IF_ERROR(metadata.thunk->Prepare(prepare_params));
   CollectiveMemoryCache collective_memory_cache;
   CollectiveCliques collective_cliques;
-  ABSL_ASSIGN_OR_RETURN(collective_cliques, AcquireCollectiveCliques(
-                                           collective_params, clique_requests));
+  ABSL_ASSIGN_OR_RETURN(
+      collective_cliques,
+      AcquireCollectiveCliques(collective_params, clique_requests));
   ABSL_ASSIGN_OR_RETURN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
@@ -384,9 +386,10 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
 
   std::vector<uint8_t> cubin;
   if (!metadata.use_ptx) {
-    ABSL_ASSIGN_OR_RETURN(cubin, CompilePtxToCubin(kKernelSource,
-                                              executor->GetDeviceDescription(),
-                                              DebugOptions()));
+    ABSL_ASSIGN_OR_RETURN(
+        cubin,
+        CompilePtxToCubin(kKernelSource, executor->GetDeviceDescription(),
+                          DebugOptions()));
     initialize_params.src.binary = cubin;
   }
   ABSL_RETURN_IF_ERROR(metadata.thunk->Initialize(initialize_params));

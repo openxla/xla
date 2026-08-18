@@ -111,15 +111,16 @@ ConcatenateFusionKernelEmitter::EmitKernelDefinition() {
       GetEpilogues(fusion_, &mlir_context_);
   emitters::PartitionedComputations computations(
       fusion_.fused_instructions_computation(), &mlir_context_, epilogues);
-  ABSL_ASSIGN_OR_RETURN(auto call_targets, emitters::EmitPartitionedComputations(
-                                          *module, computations));
+  ABSL_ASSIGN_OR_RETURN(
+      auto call_targets,
+      emitters::EmitPartitionedComputations(*module, computations));
 
   ABSL_RETURN_IF_ERROR(
       EmitEntryFunction(computations, call_targets, entry_func, fusion_));
 
   ABSL_ASSIGN_OR_RETURN(auto kernel_spec,
-                   GetKernelSpec(entry_function_name_, fusion_,
-                                 buffer_assignment_, work_dimensions_));
+                        GetKernelSpec(entry_function_name_, fusion_,
+                                      buffer_assignment_, work_dimensions_));
 
   return KernelDefinition(std::move(kernel_spec),
                           MlirKernelSource(std::move(module)));

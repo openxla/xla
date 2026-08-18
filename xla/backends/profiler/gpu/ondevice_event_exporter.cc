@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/tsl/profiler/backends/gpu/ondevice_trace_event.h"
 #include "xla/tsl/profiler/utils/lock_free_queue.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 using ::tensorflow::profiler::XPlane;
 using ::tensorflow::profiler::XSpace;

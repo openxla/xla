@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/separate_compilation/hlo_module_linking.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"

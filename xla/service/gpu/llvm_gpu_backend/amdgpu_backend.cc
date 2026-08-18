@@ -89,6 +89,9 @@ limitations under the License.
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Scalar.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/random.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
@@ -102,9 +105,6 @@ limitations under the License.
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/random.h"
-#include "tsl/profiler/lib/traceme.h"
 
 #ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
 #include <array>

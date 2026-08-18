@@ -15,23 +15,24 @@ limitations under the License.
 
 #include "xla/tsl/profiler/rpc/client/save_profile.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "riegeli/bytes/fd_reader.h"
 #include "riegeli/records/record_reader.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

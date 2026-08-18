@@ -20,8 +20,8 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/macros.h"
 #include "tsl/profiler/lib/traceme_encode.h"
+#include "xla/tsl/platform/macros.h"
 
 namespace tsl {
 namespace profiler {

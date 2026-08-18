@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
 #include "third_party/gpus/cuda/include/cuda.h"

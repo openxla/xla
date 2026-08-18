@@ -155,7 +155,6 @@ class CollectiveCliqueRequests {
 
   size_t size() const { return cliques_.size(); }
 
-
  private:
   absl::flat_hash_map<GpuCliqueKey, CliqueRequest> cliques_;
 };

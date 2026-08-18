@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/service/p2p_schedule_preparation.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

@@ -104,8 +104,8 @@ absl::StatusOr<bool> GpuReduceScatterCombiner::RunImpl(
   if (auto suggested_threshold = SuggestedCombinerThreshold(*module)) {
     combine_threshold_in_bytes_ = *suggested_threshold;
     ABSL_ASSIGN_OR_RETURN(bool combined,
-                     RunWithKeyCombiner(module, execution_threads,
-                                        CustomCombinerKey, post_combine));
+                          RunWithKeyCombiner(module, execution_threads,
+                                             CustomCombinerKey, post_combine));
     changed |= combined;
   }
 
@@ -113,8 +113,8 @@ absl::StatusOr<bool> GpuReduceScatterCombiner::RunImpl(
   // synchronous collectives.
   combine_threshold_in_bytes_ = default_combine_threshold_in_bytes_;
   ABSL_ASSIGN_OR_RETURN(bool combined,
-                   RunWithKeyCombiner(module, execution_threads,
-                                      DefaultCombinerKey, post_combine));
+                        RunWithKeyCombiner(module, execution_threads,
+                                           DefaultCombinerKey, post_combine));
   changed |= combined;
   return changed;
 }

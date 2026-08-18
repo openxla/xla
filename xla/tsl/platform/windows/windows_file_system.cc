@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/strcat.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_statistics.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/tsl/platform/windows/error_windows.h"
 #include "xla/tsl/platform/windows/wide_char.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
-#include "tsl/platform/strcat.h"
 
 // TODO(mrry): Prevent this Windows.h #define from leaking out of our headers.
 #undef DeleteFile
@@ -710,7 +710,7 @@ absl::Status WindowsFileSystem::GetMatchingPaths(
   std::string converted_pattern(pattern);
   std::replace(converted_pattern.begin(), converted_pattern.end(), '\\', '/');
   ABSL_RETURN_IF_ERROR(internal::GetMatchingPaths(this, Env::Default(),
-                                             converted_pattern, results));
+                                                  converted_pattern, results));
   for (std::string& result : *results) {
     std::replace(result.begin(), result.end(), '/', '\\');
   }

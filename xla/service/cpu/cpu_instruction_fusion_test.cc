@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_instruction_fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/status/statusor.h"

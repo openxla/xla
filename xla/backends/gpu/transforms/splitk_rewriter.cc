@@ -340,18 +340,19 @@ absl::StatusOr<HloInstruction*> SplitKDimensionOfDot(HloDotInstruction* src_dot,
   // insert at the same index in the rhs.
   std::optional<int64_t> insertion_idx = std::nullopt;
   for (size_t i : {0, 1}) {
-    ABSL_ASSIGN_OR_RETURN(insertion_idx, dims[i].InsertDimension(
-                                        DotOperandDims::kBatch, k_incices[i],
-                                        split_k, insertion_idx));
+    ABSL_ASSIGN_OR_RETURN(
+        insertion_idx,
+        dims[i].InsertDimension(DotOperandDims::kBatch, k_incices[i], split_k,
+                                insertion_idx));
     ABSL_RETURN_IF_ERROR(dims[i].SetShape(operands[i]->shape()));
   }
 
   ABSL_ASSIGN_OR_RETURN(DotDimensionNumbers new_dnums,
-                   DotOperandDims::CreateDotDimensionNumbers(dims));
+                        DotOperandDims::CreateDotDimensionNumbers(dims));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * new_dot,
-                   MakeDotHlo(operands[0], operands[1], new_dnums,
-                              src_dot->precision_config(), accumulator_type,
-                              &src_dot->metadata()));
+                        MakeDotHlo(operands[0], operands[1], new_dnums,
+                                   src_dot->precision_config(),
+                                   accumulator_type, &src_dot->metadata()));
 
   // Reduce along the new batch dimension. Batch dimensions are first in the dot
   // result, so we use index within the batch category to get it.
@@ -360,7 +361,7 @@ absl::StatusOr<HloInstruction*> SplitKDimensionOfDot(HloDotInstruction* src_dot,
       dims[0].IndexWithinCategory(DotOperandDims::kBatch, k_incices[0]));
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * splitk_root,
-                   ReduceDimension(new_dot, splitk_dim_idx));
+                        ReduceDimension(new_dot, splitk_dim_idx));
   *splitk_root->mutable_shape()->mutable_layout() = src_dot->shape().layout();
   if (output_type != accumulator_type) {
     splitk_root = MakeConvertToHlo(splitk_root, output_type);
@@ -400,7 +401,7 @@ class SplitkRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
     ABSL_ASSIGN_OR_RETURN(HloInstruction * new_dot,
-                     SplitKDimensionOfDot(dot, split_k));
+                          SplitKDimensionOfDot(dot, split_k));
     ABSL_RETURN_IF_ERROR(ReplaceInstruction(instr, new_dot));
     return absl::OkStatus();
   }

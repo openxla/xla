@@ -61,29 +61,29 @@ class ROCMFftPlan : public fft::Plan {
   }
 
   // Initialize function for batched plan
-  absl::Status Initialize(StreamExecutor *parent, Stream *stream, int rank,
-                          uint64_t *elem_count, uint64_t *input_embed,
+  absl::Status Initialize(StreamExecutor* parent, Stream* stream, int rank,
+                          uint64_t* elem_count, uint64_t* input_embed,
                           uint64_t input_stride, uint64_t input_distance,
-                          uint64_t *output_embed, uint64_t output_stride,
+                          uint64_t* output_embed, uint64_t output_stride,
                           uint64_t output_distance, fft::Type type,
-                          int batch_count, ScratchAllocator *scratch_allocator);
+                          int batch_count, ScratchAllocator* scratch_allocator);
 
   // Initialize function for 1d,2d, and 3d plan
-  absl::Status Initialize(StreamExecutor *parent, Stream *stream, int rank,
-                          uint64_t *elem_count, fft::Type type,
-                          ScratchAllocator *scratch_allocator);
+  absl::Status Initialize(StreamExecutor* parent, Stream* stream, int rank,
+                          uint64_t* elem_count, fft::Type type,
+                          ScratchAllocator* scratch_allocator);
 
-  absl::Status UpdateScratchAllocator(Stream *stream,
-                                      ScratchAllocator *scratch_allocator);
+  absl::Status UpdateScratchAllocator(Stream* stream,
+                                      ScratchAllocator* scratch_allocator);
 
-  ScratchAllocator *GetScratchAllocator() const { return scratch_allocator_; }
+  ScratchAllocator* GetScratchAllocator() const { return scratch_allocator_; }
 
  protected:
   bool IsInitialized() const { return is_initialized_; }
-  ScratchAllocator *scratch_allocator_;
+  ScratchAllocator* scratch_allocator_;
 
  private:
-  StreamExecutor *parent_;
+  StreamExecutor* parent_;
   hipfftHandle plan_;
   fft::Type fft_type_;
   DeviceAddress<uint8_t> scratch_;
@@ -104,13 +104,13 @@ class ROCMFftPlan : public fft::Plan {
 // context of parent_, so all context is explicit.
 class ROCMFft : public fft::FftSupport {
  public:
-  explicit ROCMFft(StreamExecutor *parent) : parent_(parent) {}
+  explicit ROCMFft(StreamExecutor* parent) : parent_(parent) {}
   ~ROCMFft() override {}
 
   TENSORFLOW_STREAM_EXECUTOR_GPU_FFT_SUPPORT_OVERRIDES
 
  private:
-  StreamExecutor *parent_;
+  StreamExecutor* parent_;
 
   // Two helper functions that execute dynload::hipfftExec?2?.
 
@@ -128,8 +128,8 @@ class ROCMFft : public fft::FftSupport {
                      const DeviceAddress<InputT>& input,
                      DeviceAddress<OutputT>* output);
 
-  ROCMFft(const ROCMFft &) = delete;
-  void operator=(const ROCMFft &) = delete;
+  ROCMFft(const ROCMFft&) = delete;
+  void operator=(const ROCMFft&) = delete;
 };
 
 }  // namespace gpu

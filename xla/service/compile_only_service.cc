@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/logging.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/backend.h"
 #include "xla/service/compiler.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -50,7 +50,8 @@ CompileOnlyService::NewService(const ServiceOptions& options) {
     ABSL_ASSIGN_OR_RETURN(platform, PlatformUtil::GetDefaultPlatform());
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto compiler, Compiler::GetForPlatform(platform->id()));
+  ABSL_ASSIGN_OR_RETURN(auto compiler,
+                        Compiler::GetForPlatform(platform->id()));
 
   std::unique_ptr<CompileOnlyService> service(
       new CompileOnlyService(options, std::move(compiler)));

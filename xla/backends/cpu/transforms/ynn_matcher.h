@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/transforms/library_fusion_kinds.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::cpu {
 

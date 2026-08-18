@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_metadata.h"
 
-#include <optional>
-
 #include <gtest/gtest.h>
+
+#include <optional>
 
 namespace stream_executor {
 namespace {

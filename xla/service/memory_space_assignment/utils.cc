@@ -33,6 +33,7 @@ limitations under the License.
 #include "highwayhash/hh_types.h"
 #include "highwayhash/highwayhash.h"
 #include "re2/re2.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/memory_space_assignment.pb.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace memory_space_assignment {

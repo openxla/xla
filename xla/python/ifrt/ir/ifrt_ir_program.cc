@@ -35,6 +35,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/human_readable_json.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/python/ifrt/basic_device_list.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
-#include "tsl/platform/human_readable_json.h"
 
 namespace xla {
 namespace ifrt {
@@ -91,7 +91,7 @@ IfrtIRCompileOptions::FromProto(const IfrtIrCompileOptionsProto& proto) {
 
   for (const auto& [key, value] : proto.compile_option_overrides()) {
     ABSL_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
-                     xla::CompileOptions::FromProto(value));
+                          xla::CompileOptions::FromProto(value));
     // TODO(emilyaf): XlaCompileOptions should be built with the correct
     // devices. Pass `ifrt::Client*` to `IfrtIRCompileOptions::FromProto` and
     // look up the IFRT devices corresponding to `device_ids`.
@@ -147,9 +147,10 @@ absl::Status IfrtIRCompileOptions::ToProto(IfrtIrCompileOptionsProto& proto,
             "compile_options must be XlaCompileOptions");
       }
 
-      ABSL_ASSIGN_OR_RETURN(CompileOptionsProto compile_options_proto,
-                       static_cast<XlaCompileOptions*>(compile_options.get())
-                           ->compile_options.ToProto());
+      ABSL_ASSIGN_OR_RETURN(
+          CompileOptionsProto compile_options_proto,
+          static_cast<XlaCompileOptions*>(compile_options.get())
+              ->compile_options.ToProto());
       proto.mutable_compile_option_overrides()->insert(
           {id, compile_options_proto});
     }

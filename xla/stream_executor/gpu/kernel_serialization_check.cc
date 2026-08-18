@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/kernel_serialization_check.h"
 
 #include <gmock/gmock.h>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/kernel_spec.h"

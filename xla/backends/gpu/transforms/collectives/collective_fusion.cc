@@ -156,7 +156,8 @@ absl::StatusOr<HloInstruction*> NormalizeAsyncCandidate(
   HloInstruction* new_start = new_done->mutable_operand(0);
 
   // new_start has a tuple.
-  ABSL_RETURN_IF_ERROR(start_instr->ReplaceAllUsesWithDifferentShape(new_start));
+  ABSL_RETURN_IF_ERROR(
+      start_instr->ReplaceAllUsesWithDifferentShape(new_start));
   ABSL_RETURN_IF_ERROR(done_instr->ReplaceAllUsesWith(new_done));
   ABSL_RETURN_IF_ERROR(start_instr->CopyAllControlDepsTo(new_start, new_start));
   ABSL_RETURN_IF_ERROR(done_instr->CopyAllControlDepsTo(new_done, new_done));
@@ -176,8 +177,9 @@ absl::Status FuseCandidate(HloInstruction* candidate,
                            const GpuTopology& gpu_topology,
                            const DeviceAssignment* device_assignment) {
   if (candidate->opcode() == HloOpcode::kAllReduceStart) {
-    ABSL_ASSIGN_OR_RETURN(candidate, NormalizeAsyncCandidate(
-                                    Cast<HloAllReduceInstruction>(candidate)));
+    ABSL_ASSIGN_OR_RETURN(
+        candidate,
+        NormalizeAsyncCandidate(Cast<HloAllReduceInstruction>(candidate)));
   }
   const bool should_flatten = ShouldFlatten(candidate);
   HloComputation* computation = candidate->parent();
@@ -219,7 +221,8 @@ absl::StatusOr<bool> CollectiveFusion::RunImpl(
   VLOG(3) << "Found " << candidates.size()
           << " candidates for collective fusion.";
   for (HloInstruction* candidate : candidates) {
-    ABSL_RETURN_IF_ERROR(FuseCandidate(candidate, gpu_topology_, device_assignment));
+    ABSL_RETURN_IF_ERROR(
+        FuseCandidate(candidate, gpu_topology_, device_assignment));
   }
   return !candidates.empty();
 }

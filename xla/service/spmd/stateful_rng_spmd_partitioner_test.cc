@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -45,9 +46,9 @@ namespace xla {
 namespace spmd {
 namespace {
 
-int64_t CountInstructions(const HloComputation &computation, HloOpcode opcode) {
+int64_t CountInstructions(const HloComputation& computation, HloOpcode opcode) {
   int64_t count = 0;
-  for (const auto &instruction : computation.instructions()) {
+  for (const auto& instruction : computation.instructions()) {
     if (instruction->opcode() == opcode) {
       count++;
     }
@@ -60,7 +61,7 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
       absl::string_view hlo_module, int64_t num_partitions,
       DebugOptions debug_options,
-      std::function<void(HloPassPipeline &pipeline)> add_passes = nullptr,
+      std::function<void(HloPassPipeline& pipeline)> add_passes = nullptr,
       bool skip_checking_windowed_einsum_users = false,
       bool disable_ag_rewrite_for_multiple_consumers = false,
       bool enable_partial_windowed_einsums = false) {
@@ -68,7 +69,7 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -91,9 +92,9 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  void VerifyNoAllReduce(HloModule *module) {
-    for (HloComputation *computation : module->computations()) {
-      for (HloInstruction *hlo : computation->instructions()) {
+  void VerifyNoAllReduce(HloModule* module) {
+    for (HloComputation* computation : module->computations()) {
+      for (HloInstruction* hlo : computation->instructions()) {
         EXPECT_NE(hlo->opcode(), HloOpcode::kAllReduce);
       }
     }
@@ -120,7 +121,7 @@ ENTRY entry {
 }
 )";
 
-  auto add_passes = [](HloPassPipeline &pipeline) {
+  auto add_passes = [](HloPassPipeline& pipeline) {
     pipeline.AddPass<RngExpander>();
   };
 
@@ -146,7 +147,7 @@ ENTRY entry {
 }
 )";
 
-  auto add_passes = [](HloPassPipeline &pipeline) {
+  auto add_passes = [](HloPassPipeline& pipeline) {
     pipeline.AddPass<RngExpander>();
   };
 

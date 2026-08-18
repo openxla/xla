@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/pjrt/string_utils.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 
@@ -150,8 +150,8 @@ PjRtCApiPhaseCompiler::RunPhases(
 
   const size_t* programs_in_buffer_sizes;
   ABSL_ASSIGN_OR_RETURN(const char** programs_in_buffers,
-                   xla::ConvertPjRtPartialProgramProtosToCharBuffers(
-                       partial_programs_in, programs_in_buffer_sizes));
+                        xla::ConvertPjRtPartialProgramProtosToCharBuffers(
+                            partial_programs_in, programs_in_buffer_sizes));
   size_t num_programs_in = partial_programs_in.size();
   absl::Cleanup cleanup_programs_in_buffers =
       [programs_in_buffers, programs_in_buffer_sizes, num_programs_in] {
@@ -162,7 +162,7 @@ PjRtCApiPhaseCompiler::RunPhases(
       };
 
   ABSL_ASSIGN_OR_RETURN(const xla::CompileOptionsProto options_proto,
-                   options.ToProto());
+                        options.ToProto());
   std::string options_str = options_proto.SerializeAsString();
 
   const size_t* phases_to_run_buffer_sizes;
@@ -194,12 +194,13 @@ PjRtCApiPhaseCompiler::RunPhases(
   RETURN_STATUS_IF_PJRT_ERROR(
       phase_compile_extension_->phase_compile_run_phases(&run_args), api_);
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<xla::PjRtPartialProgramProto> output_programs,
-                   xla::ConvertCharBuffersToPjRtPartialProgramProtos(
-                       absl::MakeSpan(run_args.output_programs,
-                                      run_args.num_output_programs),
-                       absl::MakeConstSpan(run_args.output_programs_sizes,
-                                           run_args.num_output_programs)));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<xla::PjRtPartialProgramProto> output_programs,
+      xla::ConvertCharBuffersToPjRtPartialProgramProtos(
+          absl::MakeSpan(run_args.output_programs,
+                         run_args.num_output_programs),
+          absl::MakeConstSpan(run_args.output_programs_sizes,
+                              run_args.num_output_programs)));
   CleanUpPluginDefinedCBuffers(
       run_args.output_programs, run_args.output_programs_sizes,
       run_args.num_output_programs, phase_compile_extension_);

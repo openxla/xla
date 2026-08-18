@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/lib/loops.h"
@@ -43,8 +45,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -787,7 +787,8 @@ XlaOp IgammaSeries(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
         FullLike(a, 0),
     };
 
-    ABSL_ASSIGN_OR_RETURN(vals, WhileLoopHelper(cond, body, vals, "igamma", &b));
+    ABSL_ASSIGN_OR_RETURN(vals,
+                          WhileLoopHelper(cond, body, vals, "igamma", &b));
     XlaOp ans = vals[3];
     XlaOp dans_da = vals[6];
     if (mode == VALUE) {
@@ -920,7 +921,8 @@ XlaOp IgammacContinuedFraction(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
                                c,        pkm1,     qkm1,     pkm2,     qkm2,
                                dpkm2_da, dqkm2_da, dpkm1_da, dqkm1_da, dans_da};
 
-    ABSL_ASSIGN_OR_RETURN(vals, WhileLoopHelper(cond, body, vals, "igammac", &b));
+    ABSL_ASSIGN_OR_RETURN(vals,
+                          WhileLoopHelper(cond, body, vals, "igammac", &b));
     ans = vals[1];
     if (mode == VALUE) {
       return ans * ax;
@@ -1826,7 +1828,7 @@ static XlaOp LentzThompsonBarnettAlgorithm(
     };
 
     ABSL_ASSIGN_OR_RETURN(std::vector<XlaOp> partial_denominator,
-                     nth_partial_denominator(Zero(&b, U32), inputs, &b));
+                          nth_partial_denominator(Zero(&b, U32), inputs, &b));
     TF_RET_CHECK(partial_denominator.size() == 1);
     auto h = partial_denominator[0];
     auto small_constant = FullLike(h, small);
@@ -1840,7 +1842,7 @@ static XlaOp LentzThompsonBarnettAlgorithm(
     values[kHIdx] = h;
     std::copy(inputs.begin(), inputs.end(), values.begin() + kFirstInputIdx);
     ABSL_ASSIGN_OR_RETURN(values, WhileLoopHelper(while_cond_fn, while_body_fn,
-                                             values, name, &b));
+                                                  values, name, &b));
     return values[kHIdx];
   });
 }

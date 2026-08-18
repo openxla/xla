@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/service/gpu_topology.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::gpu {
 namespace {
@@ -52,7 +52,7 @@ absl::Status CompileAndWriteExecutable(absl::string_view output_path) {
       stream_executor::GpuTargetConfigProto gpu_target_config_proto,
       GetGpuTargetConfig(GpuModel::H100_SXM));
   ABSL_ASSIGN_OR_RETURN(GpuTargetConfig gpu_target_config,
-                   GpuTargetConfig::FromProto(gpu_target_config_proto));
+                        GpuTargetConfig::FromProto(gpu_target_config_proto));
 
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<Compiler> compiler,
@@ -63,14 +63,14 @@ absl::Status CompileAndWriteExecutable(absl::string_view output_path) {
       GetSingleDeviceGpuTopology(CudaName(), gpu_target_config));
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   ParseAndReturnUnverifiedModule(kHloText, {}));
+                        ParseAndReturnUnverifiedModule(kHloText, {}));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<CompiledModule>> aot_results,
       compiler->CompileAheadOfTime(std::move(hlo_module), aot_options));
 
   ABSL_ASSIGN_OR_RETURN(std::string serialized_executable,
-                   aot_results[0]->SerializeAsString());
+                        aot_results[0]->SerializeAsString());
 
   return tsl::WriteStringToFile(tsl::Env::Default(), output_path,
                                 serialized_executable);

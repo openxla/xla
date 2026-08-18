@@ -41,14 +41,14 @@ namespace {
 template <typename OpTy>
 class ApproximateOnExtendedF32Lowering : public OpRewritePattern<OpTy> {
  public:
-  explicit ApproximateOnExtendedF32Lowering(MLIRContext *ctx)
+  explicit ApproximateOnExtendedF32Lowering(MLIRContext* ctx)
       : OpRewritePattern<OpTy>(ctx, /*benefit=*/100) {}
 
   virtual Value emitApproximation(ValueRange, Location,
-                                  PatternRewriter &) const = 0;
+                                  PatternRewriter&) const = 0;
 
   LogicalResult matchAndRewrite(OpTy op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     Location loc = op.getLoc();
     auto rawArgs = op.getOperation()->getOperands();
 
@@ -92,12 +92,12 @@ class ApproximateOnExtendedF32Lowering : public OpRewritePattern<OpTy> {
 class ApproximateTanhLowering
     : public ApproximateOnExtendedF32Lowering<math::TanhOp> {
  public:
-  explicit ApproximateTanhLowering(MLIRContext *ctx)
+  explicit ApproximateTanhLowering(MLIRContext* ctx)
       : ApproximateOnExtendedF32Lowering<math::TanhOp>(ctx) {}
 
   // Emits the fast tanh approximation that is also used by XLA.
   Value emitApproximation(ValueRange args, Location loc,
-                          PatternRewriter &rewriter) const override {
+                          PatternRewriter& rewriter) const override {
     Value input = args.front();
     assert(input.getType().isF32());
     static constexpr std::array<float, 7> numeratorCoeffs{
@@ -185,8 +185,8 @@ struct LegalizeTrigonometricToApproximationPass
 
 }  // anonymous namespace
 
-void populateTrigonometricToApproximationPatterns(mlir::MLIRContext *context,
-                                                  RewritePatternSet *patterns) {
+void populateTrigonometricToApproximationPatterns(mlir::MLIRContext* context,
+                                                  RewritePatternSet* patterns) {
   // clang-format off
   patterns->add<ApproximateTanhLowering>(context);
   // clang-format on

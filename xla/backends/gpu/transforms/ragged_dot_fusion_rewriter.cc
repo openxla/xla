@@ -158,12 +158,14 @@ absl::StatusOr<bool> RaggedDotFusionRewriter::RunImpl(
   }
 
   for (auto* ragged_dot : ragged_dots) {
-    ABSL_ASSIGN_OR_RETURN(auto ragged_dot_fusion, RaggedToCuDNNFusion(ragged_dot));
+    ABSL_ASSIGN_OR_RETURN(auto ragged_dot_fusion,
+                          RaggedToCuDNNFusion(ragged_dot));
     gpu::GpuBackendConfig gpu_backend_config;
     gpu::FusionBackendConfig* fusion_config =
         gpu_backend_config.mutable_fusion_backend_config();
     fusion_config->set_kind(gpu::kCuDnnFusionKind);
-    ABSL_RETURN_IF_ERROR(ragged_dot_fusion->set_backend_config(gpu_backend_config));
+    ABSL_RETURN_IF_ERROR(
+        ragged_dot_fusion->set_backend_config(gpu_backend_config));
     ragged_dot_fusion->set_metadata(ragged_dot->metadata());
     ABSL_RETURN_IF_ERROR(ragged_dot->parent()->ReplaceWithNewInstruction(
         ragged_dot, std::move(ragged_dot_fusion)));

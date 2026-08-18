@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/model/matmul_interpolator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <time.h>
 
 #include <cstdint>
@@ -23,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -80,9 +80,10 @@ absl::StatusOr<DotContext> Dot(int b, int m, int n, int k,
        lhs_contracting_dims={2}, rhs_contracting_dims={1},
        lhs_batch_dims={0}, rhs_batch_dims={0}
     })";
-  ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(absl::Substitute(
-                                    kTemplate, b, m, k, n, lhs_type, rhs_type,
-                                    result_type)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto module,
+      ParseAndReturnUnverifiedModule(absl::Substitute(
+          kTemplate, b, m, k, n, lhs_type, rhs_type, result_type)));
   return DotContext{
       /*dot=*/module->entry_computation()->root_instruction(),
       /*module=*/std::move(module),
@@ -139,8 +140,8 @@ class MatmulInterpolatorParamTest : public TestWithParam<ParametrizedTestCase> {
     HloInstructionProfileList list;
     for (DotSpec spec : specs) {
       ABSL_ASSIGN_OR_RETURN(DotContext dot_context,
-                       Dot(spec.b, spec.m, spec.n, spec.k, spec.lhs_type,
-                           spec.rhs_type, spec.result_type));
+                            Dot(spec.b, spec.m, spec.n, spec.k, spec.lhs_type,
+                                spec.rhs_type, spec.result_type));
       AddProfileEntry(std::move(dot_context), spec.clock_cycles, list);
     }
     return list;

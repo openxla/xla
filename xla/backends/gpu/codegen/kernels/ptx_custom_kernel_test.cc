@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"

@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -27,6 +26,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 

@@ -18,11 +18,12 @@ limitations under the License.
 // CUDA 12.9+ driver/toolkit for CreateChildCommand / UpdateChildCommand
 // support.
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
@@ -123,14 +124,15 @@ static absl::Status FillDestinationBuffer(se::Stream& stream,
 static absl::Status PrepareInputs(
     se::Stream& stream, absl::Span<const se::DeviceAddressBase> buffers,
     int device_ordinal, int phase) {
-  ABSL_RETURN_IF_ERROR(FillSourceBuffer(stream, buffers[0], device_ordinal, phase));
+  ABSL_RETURN_IF_ERROR(
+      FillSourceBuffer(stream, buffers[0], device_ordinal, phase));
   return FillDestinationBuffer(stream, buffers[1], -1.0f);
 }
 
 static absl::Status VerifyOutput(se::Stream& stream, se::DeviceAddressBase dst,
                                  int device_ordinal, int phase) {
   ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadDeviceBuffer(stream, dst, kLength));
+                        ReadDeviceBuffer(stream, dst, kLength));
   std::vector<float> expected = SourceValues(/*device_ordinal=*/0, phase);
   for (int i = 0; i < kLength; ++i) {
     if (output[i] != expected[i]) {
@@ -221,7 +223,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, ExecuteOnStream) {
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_broadcast_execute", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
       }));
 }
@@ -242,7 +245,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, RecordCommandBufferCreate) {
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_broadcast_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
 }
@@ -263,7 +267,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, RecordCommandBufferUpdate) {
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_broadcast_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
 
@@ -287,8 +292,8 @@ TEST(CollectiveBroadcastThunkMultiGpuTest, ExecuteOnStreamWithDynamicRoot) {
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_broadcast_execute", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment,
-                                        alloc_root.size()));
+        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(
+            d, slots[d], thunk, device_assignment, alloc_root.size()));
         return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
       }));
 }

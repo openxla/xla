@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_ABI_MOCK_RUNTIME_ABI_VERSION_H_
 
 #include <gmock/gmock.h>
+
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"

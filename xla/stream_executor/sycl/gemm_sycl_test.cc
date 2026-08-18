@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_replace.h"

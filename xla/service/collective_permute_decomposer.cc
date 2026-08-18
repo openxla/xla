@@ -439,8 +439,9 @@ absl::StatusOr<bool> CollectivePermuteDecomposer::RunImpl(
     // so that these cannot be scheduled in between the send/recv, which would
     // also lead to deadlocks.
     ABSL_RETURN_IF_ERROR(EnforceOrderOfSendRecvChain(deco_post_order));
-    ABSL_RETURN_IF_ERROR(EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
-        deco_post_order, conflicing_collectives));
+    ABSL_RETURN_IF_ERROR(
+        EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
+            deco_post_order, conflicing_collectives));
 
     if (!cps_to_decompose.empty()) {
       changed = true;

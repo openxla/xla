@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/pjrt/extensions/abi_version/abi_version_extension.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

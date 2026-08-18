@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_runner.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -32,6 +33,9 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/message_lite.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -47,9 +51,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -205,8 +206,8 @@ TEST_F(CompilePhaseHloRunnerTest,
       test::TestCompilationEnvironment1::GetDescriptor(),
       [](std::unique_ptr<tsl::protobuf::Message> msg) {
         std::unique_ptr<test::TestCompilationEnvironment1> env(
-            google::protobuf::DownCastMessage<test::TestCompilationEnvironment1>(
-                msg.release()));
+            google::protobuf::DownCastMessage<
+                test::TestCompilationEnvironment1>(msg.release()));
         if (env == nullptr) {
           env = std::make_unique<test::TestCompilationEnvironment1>();
         }

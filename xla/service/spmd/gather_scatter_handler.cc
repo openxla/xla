@@ -408,10 +408,11 @@ absl::StatusOr<HloInstruction*> PartitionGatherIndexPassthroughDimensions(
   PartitionedHlo per_group_indices =
       PerGroupPartitionedHlo(indices, indices_grouped, b, clean_ups);
   const Shape pshape = GetPerGroupBaseShape(output_grouped, output_shape);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * pgather,
-                   PartitionGather(gather, per_group_operand, per_group_indices,
-                                   pshape, output_grouped.sharding, batch_dims,
-                                   slice_sizes, visitor, allow_recursive));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * pgather,
+      PartitionGather(gather, per_group_operand, per_group_indices, pshape,
+                      output_grouped.sharding, batch_dims, slice_sizes, visitor,
+                      allow_recursive));
   pgather->set_sharding(passthrough_sharding);
   if (allow_recursive) {
     VLOG(5) << "[Gather partitioning]: Partitioned as index only";
@@ -963,10 +964,11 @@ absl::StatusOr<HloInstruction*> PartitionGather(
     for (auto partition_method : GatherPartitionMethodsOrderedByCost(
              gather, operand, indices, output_shape, output_sharding,
              batch_dims, slice_sizes, visitor)) {
-      ABSL_ASSIGN_OR_RETURN(partitioned_gather,
-                       partition_method(gather, operand, indices, output_shape,
-                                        output_sharding, batch_dims,
-                                        slice_sizes, visitor, allow_recursive));
+      ABSL_ASSIGN_OR_RETURN(
+          partitioned_gather,
+          partition_method(gather, operand, indices, output_shape,
+                           output_sharding, batch_dims, slice_sizes, visitor,
+                           allow_recursive));
       if (partitioned_gather) {
         return partitioned_gather;
       }
@@ -1985,10 +1987,11 @@ absl::StatusOr<HloInstruction*> PartitionScatter(
     for (auto partition_method : ScatterPartitionMethodsOrderedByCost(
              scatter, operands, indices, updates, output_shape, output_sharding,
              slice_sizes, visitor)) {
-      ABSL_ASSIGN_OR_RETURN(partitioned_scatter,
-                       partition_method(scatter, operands, indices, updates,
-                                        output_shape, output_sharding,
-                                        slice_sizes, visitor, allow_recursive));
+      ABSL_ASSIGN_OR_RETURN(
+          partitioned_scatter,
+          partition_method(scatter, operands, indices, updates, output_shape,
+                           output_sharding, slice_sizes, visitor,
+                           allow_recursive));
       if (partitioned_scatter) {
         return partitioned_scatter;
       }

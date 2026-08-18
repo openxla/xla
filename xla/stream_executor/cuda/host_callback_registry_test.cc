@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/host_callback_registry.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"

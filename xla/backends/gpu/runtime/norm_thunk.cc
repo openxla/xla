@@ -187,28 +187,30 @@ absl::StatusOr<std::unique_ptr<NormThunk>> NormThunk::FromProto(
     ThunkInfo thunk_info, const NormThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(GpuNormDescriptor descriptor,
-                   GpuNormDescriptor::FromProto(proto.norm_descriptor()));
+                        GpuNormDescriptor::FromProto(proto.norm_descriptor()));
 
   ABSL_ASSIGN_OR_RETURN(auto x, BufferAllocation::Slice::FromProto(
-                               proto.x(), buffer_allocations));
+                                    proto.x(), buffer_allocations));
   ABSL_ASSIGN_OR_RETURN(auto scale, BufferAllocation::Slice::FromProto(
-                                   proto.scale(), buffer_allocations));
+                                        proto.scale(), buffer_allocations));
   ABSL_ASSIGN_OR_RETURN(auto y_or_dx, BufferAllocation::Slice::FromProto(
-                                     proto.y_or_dx(), buffer_allocations));
+                                          proto.y_or_dx(), buffer_allocations));
   std::optional<BufferAllocation::Slice> bias;
   if (proto.has_bias()) {
     ABSL_ASSIGN_OR_RETURN(bias, BufferAllocation::Slice::FromProto(
-                               proto.bias(), buffer_allocations));
+                                    proto.bias(), buffer_allocations));
   }
   std::optional<BufferAllocation::Slice> expectation;
   if (proto.has_expectation()) {
-    ABSL_ASSIGN_OR_RETURN(expectation, BufferAllocation::Slice::FromProto(
-                                      proto.expectation(), buffer_allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        expectation, BufferAllocation::Slice::FromProto(proto.expectation(),
+                                                        buffer_allocations));
   }
   std::optional<BufferAllocation::Slice> norm_factor;
   if (proto.has_norm_factor()) {
-    ABSL_ASSIGN_OR_RETURN(norm_factor, BufferAllocation::Slice::FromProto(
-                                      proto.norm_factor(), buffer_allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        norm_factor, BufferAllocation::Slice::FromProto(proto.norm_factor(),
+                                                        buffer_allocations));
   }
   std::optional<BufferAllocation::Slice> dy;
   if (proto.has_dy()) {
@@ -218,15 +220,15 @@ absl::StatusOr<std::unique_ptr<NormThunk>> NormThunk::FromProto(
   std::optional<BufferAllocation::Slice> dscale;
   if (proto.has_dscale()) {
     ABSL_ASSIGN_OR_RETURN(dscale, BufferAllocation::Slice::FromProto(
-                                 proto.dscale(), buffer_allocations));
+                                      proto.dscale(), buffer_allocations));
   }
   std::optional<BufferAllocation::Slice> dbias;
   if (proto.has_dbias()) {
     ABSL_ASSIGN_OR_RETURN(dbias, BufferAllocation::Slice::FromProto(
-                                proto.dbias(), buffer_allocations));
+                                     proto.dbias(), buffer_allocations));
   }
   ABSL_ASSIGN_OR_RETURN(auto scratch, BufferAllocation::Slice::FromProto(
-                                     proto.scratch(), buffer_allocations));
+                                          proto.scratch(), buffer_allocations));
 
   return Create(std::move(thunk_info), descriptor, x, scale, y_or_dx, bias,
                 expectation, norm_factor, dy, dscale, dbias, scratch);
@@ -241,28 +243,32 @@ absl::StatusOr<ThunkProto> NormThunk::ToProto() const {
 
   ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_x(), x_buffer_.ToProto());
   ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_scale(), scale_buffer_.ToProto());
-  ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_y_or_dx(), y_or_dx_buffer_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_y_or_dx(),
+                        y_or_dx_buffer_.ToProto());
   if (bias_buffer_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_bias(), bias_buffer_->ToProto());
   }
   if (expectation_buffer_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_expectation(),
-                     expectation_buffer_->ToProto());
+                          expectation_buffer_->ToProto());
   }
   if (norm_factor_buffer_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_norm_factor(),
-                     norm_factor_buffer_->ToProto());
+                          norm_factor_buffer_->ToProto());
   }
   if (dy_buffer_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_dy(), dy_buffer_->ToProto());
   }
   if (dscale_buffer_.has_value()) {
-    ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_dscale(), dscale_buffer_->ToProto());
+    ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_dscale(),
+                          dscale_buffer_->ToProto());
   }
   if (dbias_buffer_.has_value()) {
-    ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_dbias(), dbias_buffer_->ToProto());
+    ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_dbias(),
+                          dbias_buffer_->ToProto());
   }
-  ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_scratch(), scratch_buffer_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*norm_proto->mutable_scratch(),
+                        scratch_buffer_.ToProto());
 
   return proto;
 }

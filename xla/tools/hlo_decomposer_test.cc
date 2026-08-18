@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tools/hlo_decomposer.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"

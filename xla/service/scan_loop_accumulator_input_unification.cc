@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -40,8 +42,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -242,7 +242,8 @@ absl::StatusOr<bool> UnifyAccumulatorWithInput(
           acc->tuple_index(),
           while_instr->while_init()->mutable_operand(input->tuple_index())));
       if (input->user_count() == 0) {
-        ABSL_RETURN_IF_ERROR(while_instr->while_body()->RemoveInstruction(input));
+        ABSL_RETURN_IF_ERROR(
+            while_instr->while_body()->RemoveInstruction(input));
       }
       unified = true;
     }
@@ -259,7 +260,7 @@ absl::StatusOr<bool> ScanLoopAccumulatorInputUnification::RunImpl(
   XLA_VLOG_LINES(2, module->ToString());
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
-                   HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
+                        HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
 
   // This pass can only be applied to unrollable loops since we need to find the
   // accumulators and inputs that are by definition updated and read fully via
@@ -270,8 +271,9 @@ absl::StatusOr<bool> ScanLoopAccumulatorInputUnification::RunImpl(
 
   // TODO(b/337883537): We might want to simplify compare instructions before
   // this. It helps us identify more inputs and accumulators.
-  ABSL_ASSIGN_OR_RETURN(bool changed, UnifyAccumulatorWithInput(*dataflow_analysis,
-                                                           unrollable_loops));
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed,
+      UnifyAccumulatorWithInput(*dataflow_analysis, unrollable_loops));
 
   if (changed) {
     for (auto& [while_instr, loop_config] : unrollable_loops) {

@@ -13,17 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include "google/protobuf/duration.pb.h"
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/synchronization/mutex.h"
+#include "google/protobuf/duration.pb.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/symbol_repository.h"
 #include "xla/service/xla_compile_result.pb.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/tsl/protobuf/status.pb.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {

@@ -60,120 +60,118 @@ void IfrtOutlineAtomProgramToModulePass::runOnOperation() {
   llvm::SmallVector<mlir::Operation*, 16> to_erase;
   mlir::ModuleOp module_op = getOperation();
   mlir::func::FuncOp main_func = GetMainFunction(module_op);
-  auto result =
-      main_func.walk([&](CallOp call_op) -> mlir::WalkResult {
-        // Maybe visited by a previous CallOp with the same callee.
-        if (visited.contains(call_op)) {
-          return mlir::WalkResult::advance();
+  auto result = main_func.walk([&](CallOp call_op) -> mlir::WalkResult {
+    // Maybe visited by a previous CallOp with the same callee.
+    if (visited.contains(call_op)) {
+      return mlir::WalkResult::advance();
+    }
+
+    // Find the callee.
+    mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
+    if (callee.getSymName() == kCalleeMainFuncName &&
+        llvm::isa<mlir::ModuleOp>(callee->getParentOp())) {
+      // Atom program is already outlined in module. Do nothing.
+      return mlir::WalkResult::advance();
+    }
+
+    // Create a ModuleOp and clone callee into it.
+    builder.setInsertionPointAfter(callee);
+    auto callee_module =
+        mlir::ModuleOp::create(  // ALLOW_MLIR_MODULE_OP_CREATE - does not
+                                 // work with CreateMlirModuleOp.
+            builder, callee->getLoc(), callee.getSymName());
+    callee_module.setVisibility(mlir::SymbolTable::Visibility::Private);
+
+    mlir::func::FuncOp cloned_callee;
+    // Find all symbols directly or indirectly referenced by callee and copy
+    // them to the newly created module.
+    {
+      // Setup for DFS.
+      llvm::DenseSet<mlir::func::FuncOp> visited_funcs;
+      llvm::DenseSet<mlir::sdy::MeshOp> visited_meshes;
+      llvm::SmallVector<mlir::func::FuncOp, 8> func_stack = {callee};
+      while (!func_stack.empty()) {
+        mlir::func::FuncOp current_func = func_stack.back();
+        func_stack.pop_back();
+        if (!visited_funcs.insert(current_func).second) {
+          continue;
         }
 
-        // Find the callee.
-        mlir::func::FuncOp callee = call_op.getCalleeOp(symbol_table);
-        if (callee.getSymName() == kCalleeMainFuncName &&
-            llvm::isa<mlir::ModuleOp>(callee->getParentOp())) {
-          // Atom program is already outlined in module. Do nothing.
-          return mlir::WalkResult::advance();
+        // Copy function into the new module.
+        mlir::func::FuncOp cloned_func = current_func.clone();
+        builder.setInsertionPointToEnd(callee_module.getBody());
+        builder.insert(cloned_func);
+        // If the current function is the callee, then make it public and
+        // set it as the main function of the new module.
+        if (current_func == callee) {
+          cloned_callee = cloned_func;
+          cloned_func.setSymName(kCalleeMainFuncName);
+          cloned_func.setVisibility(mlir::SymbolTable::Visibility::Public);
         }
 
-        // Create a ModuleOp and clone callee into it.
-        builder.setInsertionPointAfter(callee);
-        auto callee_module =
-            mlir::ModuleOp::create(  // ALLOW_MLIR_MODULE_OP_CREATE - does not
-                                     // work with CreateMlirModuleOp.
-                builder, callee->getLoc(), callee.getSymName());
-        callee_module.setVisibility(mlir::SymbolTable::Visibility::Private);
-
-        mlir::func::FuncOp cloned_callee;
-        // Find all symbols directly or indirectly referenced by callee and copy
-        // them to the newly created module.
-        {
-          // Setup for DFS.
-          llvm::DenseSet<mlir::func::FuncOp> visited_funcs;
-          llvm::DenseSet<mlir::sdy::MeshOp> visited_meshes;
-          llvm::SmallVector<mlir::func::FuncOp, 8> func_stack = {callee};
-          while (!func_stack.empty()) {
-            mlir::func::FuncOp current_func = func_stack.back();
-            func_stack.pop_back();
-            if (!visited_funcs.insert(current_func).second) {
-              continue;
+        // Check all symbols in function.
+        std::optional<mlir::SymbolTable::UseRange> sym_uses =
+            mlir::SymbolTable::getSymbolUses(current_func);
+        if (!sym_uses.has_value()) {
+          continue;
+        }
+        for (const mlir::SymbolTable::SymbolUse& sym_use : *sym_uses) {
+          // Ensure the symbol represents a function.
+          mlir::Operation* sym_op =
+              module_op.lookupSymbol(sym_use.getSymbolRef().getRootReference());
+          if (sym_op == nullptr) {
+            sym_use.getUser()->emitOpError()
+                << "uses a symbol in attributes `"
+                << sym_use.getSymbolRef().getRootReference().str()
+                << "` that does not exist in the ModuleOp.";
+            return mlir::WalkResult::interrupt();
+          }
+          if (auto mesh_op = llvm::dyn_cast<mlir::sdy::MeshOp>(sym_op)) {
+            if (visited_meshes.insert(mesh_op).second) {
+              builder.setInsertionPointToStart(callee_module.getBody());
+              builder.insert(mesh_op.clone());
             }
-
-            // Copy function into the new module.
-            mlir::func::FuncOp cloned_func = current_func.clone();
-            builder.setInsertionPointToEnd(callee_module.getBody());
-            builder.insert(cloned_func);
-            // If the current function is the callee, then make it public and
-            // set it as the main function of the new module.
-            if (current_func == callee) {
-              cloned_callee = cloned_func;
-              cloned_func.setSymName(kCalleeMainFuncName);
-              cloned_func.setVisibility(mlir::SymbolTable::Visibility::Public);
-            }
-
-            // Check all symbols in function.
-            std::optional<mlir::SymbolTable::UseRange> sym_uses =
-                mlir::SymbolTable::getSymbolUses(current_func);
-            if (!sym_uses.has_value()) {
-              continue;
-            }
-            for (const mlir::SymbolTable::SymbolUse& sym_use : *sym_uses) {
-              // Ensure the symbol represents a function.
-              mlir::Operation* sym_op = module_op.lookupSymbol(
-                  sym_use.getSymbolRef().getRootReference());
-              if (sym_op == nullptr) {
-                sym_use.getUser()->emitOpError()
-                    << "uses a symbol in attributes `"
-                    << sym_use.getSymbolRef().getRootReference().str()
-                    << "` that does not exist in the ModuleOp.";
-                return mlir::WalkResult::interrupt();
-              }
-              if (auto mesh_op = llvm::dyn_cast<mlir::sdy::MeshOp>(sym_op)) {
-                if (visited_meshes.insert(mesh_op).second) {
-                  builder.setInsertionPointToStart(callee_module.getBody());
-                  builder.insert(mesh_op.clone());
-                }
-              } else if (auto func =
-                             llvm::dyn_cast<mlir::func::FuncOp>(sym_op)) {
-                func_stack.push_back(func);
-              } else {
-                sym_use.getUser()->emitOpError()
-                    << "uses a symbol in attributes `"
-                    << sym_use.getSymbolRef().getRootReference().str()
-                    << "` that is not a FuncOp or MeshOp. Cannot handle such "
-                       "cases for now.";
-                return mlir::WalkResult::interrupt();
-              }
-            }
+          } else if (auto func = llvm::dyn_cast<mlir::func::FuncOp>(sym_op)) {
+            func_stack.push_back(func);
+          } else {
+            sym_use.getUser()->emitOpError()
+                << "uses a symbol in attributes `"
+                << sym_use.getSymbolRef().getRootReference().str()
+                << "` that is not a FuncOp or MeshOp. Cannot handle such "
+                   "cases for now.";
+            return mlir::WalkResult::interrupt();
           }
         }
+      }
+    }
 
-        // Replace all uses of old callee.
-        mlir::SymbolRefAttr new_symbol = mlir::SymbolRefAttr::get(
-            callee_module.getSymNameAttr(),
-            mlir::SymbolRefAttr::get(cloned_callee.getSymNameAttr()));
-        // It is sufficient to get the symbols in the main func because
-        // ifrt.Call nested within callees are not supported.
-        std::optional<mlir::SymbolTable::UseRange> symbol_uses =
-            callee.getSymbolUses(main_func);
-        if (symbol_uses.has_value()) {
-          for (const mlir::SymbolTable::SymbolUse symbol_use : *symbol_uses) {
-            auto user = llvm::dyn_cast<CallOp>(symbol_use.getUser());
-            if (user == nullptr) {
-              symbol_use.getUser()->emitOpError()
-                  << "requires symbol `" << callee.getSymName()
-                  << "` only used by ifrt.Call. Found use by `"
-                  << user.getOperationName() << "`";
-              return mlir::WalkResult::interrupt();
-            }
-            user.setCalleeAttr(new_symbol);
-            visited.insert(user);
-          }
+    // Replace all uses of old callee.
+    mlir::SymbolRefAttr new_symbol = mlir::SymbolRefAttr::get(
+        callee_module.getSymNameAttr(),
+        mlir::SymbolRefAttr::get(cloned_callee.getSymNameAttr()));
+    // It is sufficient to get the symbols in the main func because
+    // ifrt.Call nested within callees are not supported.
+    std::optional<mlir::SymbolTable::UseRange> symbol_uses =
+        callee.getSymbolUses(main_func);
+    if (symbol_uses.has_value()) {
+      for (const mlir::SymbolTable::SymbolUse symbol_use : *symbol_uses) {
+        auto user = llvm::dyn_cast<CallOp>(symbol_use.getUser());
+        if (user == nullptr) {
+          symbol_use.getUser()->emitOpError()
+              << "requires symbol `" << callee.getSymName()
+              << "` only used by ifrt.Call. Found use by `"
+              << user.getOperationName() << "`";
+          return mlir::WalkResult::interrupt();
         }
+        user.setCalleeAttr(new_symbol);
+        visited.insert(user);
+      }
+    }
 
-        // Can't erase callee yet during iteration.
-        to_erase.push_back(callee);
-        return mlir::WalkResult::advance();
-      });
+    // Can't erase callee yet during iteration.
+    to_erase.push_back(callee);
+    return mlir::WalkResult::advance();
+  });
 
   if (result.wasInterrupted()) {
     signalPassFailure();

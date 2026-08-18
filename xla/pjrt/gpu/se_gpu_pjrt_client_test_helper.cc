@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -24,7 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -72,7 +73,7 @@ absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
     absl::string_view program, xla::PjRtClient& client,
     xla::CompileOptions compile_options) {
   ABSL_ASSIGN_OR_RETURN(auto hlo_module,
-                   ParseAndReturnUnverifiedModule(program, {}));
+                        ParseAndReturnUnverifiedModule(program, {}));
 
   xla::XlaComputation xla_computation(hlo_module->ToProto());
   return client.CompileAndLoad(xla_computation, compile_options);

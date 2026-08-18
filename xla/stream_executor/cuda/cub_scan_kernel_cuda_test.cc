@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cub_scan_kernel_cuda.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -92,8 +93,8 @@ class CubScanKernelCudaTest
 
     // Get scratch size.
     ABSL_ASSIGN_OR_RETURN(size_t temp_bytes,
-                     CubScanGetScratchSize(type, vector_length, row_length,
-                                           col_length, kind, is_reverse));
+                          CubScanGetScratchSize(type, vector_length, row_length,
+                                                col_length, kind, is_reverse));
 
     // Allocate device buffers
     se::DeviceAddress<T> device_data =
@@ -119,7 +120,8 @@ class CubScanKernelCudaTest
         static_cast<CUstream>(stream_->platform_specific_handle().stream)));
 
     ABSL_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
-    ABSL_RETURN_IF_ERROR(stream_->Memcpy(host_data.data(), device_data, size_bytes));
+    ABSL_RETURN_IF_ERROR(
+        stream_->Memcpy(host_data.data(), device_data, size_bytes));
 
     if constexpr (std::is_same_v<T, float>) {
       EXPECT_THAT(host_data,

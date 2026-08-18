@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -47,7 +48,7 @@ using ::absl_testing::StatusIs;
 
 absl::StatusOr<std::unique_ptr<Compiler>> GetGpuCompiler() {
   ABSL_ASSIGN_OR_RETURN(stream_executor::PlatformId platform_id,
-                   PlatformUtil::GetPlatformIdFromCanonicalName("CUDA"));
+                        PlatformUtil::GetPlatformIdFromCanonicalName("CUDA"));
   return Compiler::GetForPlatform(platform_id);
 }
 

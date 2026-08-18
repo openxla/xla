@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/profiler/cpu/host_tracer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <any>
 #include <cstdint>
 #include <memory>
@@ -22,10 +25,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
@@ -35,9 +39,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/timespan.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/lib/profiler_interface.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -73,14 +74,28 @@ TEST(HostTracerTest, CollectsTraceMeEventsAsXSpace) {
         auto tracer = CreateHostTracer({});
 
         TF_ASSERT_OK(tracer->Start());
-        { TraceMe traceme("hello"); }
-        { TraceMe traceme("world"); }
-        { TraceMe traceme("contains#inside"); }
-        { TraceMe traceme("good#key1=value1#"); }
-        { TraceMe traceme("morning#key1=value1,key2=value2#"); }
-        { TraceMe traceme("incomplete#key1=value1,key2#"); }
+        {
+          TraceMe traceme("hello");
+        }
+        {
+          TraceMe traceme("world");
+        }
+        {
+          TraceMe traceme("contains#inside");
+        }
+        {
+          TraceMe traceme("good#key1=value1#");
+        }
+        {
+          TraceMe traceme("morning#key1=value1,key2=value2#");
+        }
+        {
+          TraceMe traceme("incomplete#key1=value1,key2#");
+        }
         // Special cases for tf.data
-        { TraceMe traceme("Iterator::XXX::YYY::ParallelMap"); }
+        {
+          TraceMe traceme("Iterator::XXX::YYY::ParallelMap");
+        }
         TF_ASSERT_OK(tracer->Stop());
 
         TF_ASSERT_OK(tracer->CollectData(&space));

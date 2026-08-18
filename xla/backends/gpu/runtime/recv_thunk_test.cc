@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/recv_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"

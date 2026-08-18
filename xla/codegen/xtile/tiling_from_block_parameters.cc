@@ -74,7 +74,7 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
               " does not have a backend config for tile sizes set."));
         }
         ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile tile_config,
-                         hlo->backend_config<xla::xtile::Tile>());
+                              hlo->backend_config<xla::xtile::Tile>());
         if (tile_config.sizes().empty()) {
           return absl::FailedPreconditionError(
               absl::StrCat("Dot instruction ", hlo->name(),
@@ -158,7 +158,7 @@ absl::StatusOr<llvm::SmallVector<int64_t>> GetTilingSpaceConcreteSizes(
       case DimensionSemantics::kSequential: {
         if (dim.hlo->has_backend_config()) {
           ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile config,
-                           dim.hlo->backend_config<xla::xtile::Tile>());
+                                dim.hlo->backend_config<xla::xtile::Tile>());
           // For reductions/dots, sequential (reduction/contracting) dimensions
           // are indexed after output dimensions in TilingSpace, so their index
           // in config.sizes is offset by output_rank. For scans, the sequential

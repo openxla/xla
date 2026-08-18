@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/python/transfer/streaming.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -25,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -35,9 +35,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
+#include "tsl/platform/env.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/platform/env.h"
 
 namespace aux {
 namespace {

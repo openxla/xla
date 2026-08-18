@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -85,7 +86,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace gpu {
@@ -201,8 +201,8 @@ absl::Status LoadRaggedTensorMetadata(
         << "RaggedAllToAll metadata buffer " << i << " has "
         << metadata_buffer.size() << " bytes, expected at least "
         << metadata_bytes << " bytes";
-    ABSL_RETURN_IF_ERROR(stream.Memcpy(ragged_metadata_allocs[i], metadata_buffer,
-                                  metadata_bytes));
+    ABSL_RETURN_IF_ERROR(stream.Memcpy(ragged_metadata_allocs[i],
+                                       metadata_buffer, metadata_bytes));
   }
 
   // Wait for the copies to complete.
@@ -232,14 +232,14 @@ absl::Status RunAllToAllOnIndexBuffer(
       se::DeviceAddressBase recv_slice =
           GpuCollectives::Slice(destination_buffer, element_type, offset,
                                 /*count=*/num_updates_per_replica);
-      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchSend(send_slice, element_type,
-                                           /*count=*/num_updates_per_replica,
-                                           RankId(peer),
-                                           GpuCollectives::On(stream)));
-      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchRecv(recv_slice, element_type,
-                                           /*count=*/num_updates_per_replica,
-                                           RankId(peer),
-                                           GpuCollectives::On(stream)));
+      ABSL_RETURN_IF_ERROR(
+          gpu_comm->LaunchSend(send_slice, element_type,
+                               /*count=*/num_updates_per_replica, RankId(peer),
+                               GpuCollectives::On(stream)));
+      ABSL_RETURN_IF_ERROR(
+          gpu_comm->LaunchRecv(recv_slice, element_type,
+                               /*count=*/num_updates_per_replica, RankId(peer),
+                               GpuCollectives::On(stream)));
     }
     return absl::OkStatus();
   });
@@ -433,8 +433,8 @@ absl::Status RunNcclFallbackRaggedAllToAll(
     output_offsets_buffer_pair.source_buffer = output_offsets_device_buffer;
   }
 
-  ABSL_RETURN_IF_ERROR(LoadRaggedTensorMetadata(stream, buffers, num_total_updates,
-                                           ragged_metadata_allocs));
+  ABSL_RETURN_IF_ERROR(LoadRaggedTensorMetadata(
+      stream, buffers, num_total_updates, ragged_metadata_allocs));
 
   const int64_t* input_offsets = ragged_metadata_allocs[0];
   const int64_t* send_sizes = ragged_metadata_allocs[1];
@@ -475,9 +475,10 @@ absl::Status RunNcclFallbackRaggedAllToAll(
     GpuSignalDesc signal_desc(/*sig_idx=*/0, /*ctx=*/0);
     for (int peer = 0; peer < num_ranks; ++peer) {
       ABSL_RETURN_IF_ERROR(comm.WaitSignal(RankId(peer),
-                                      /*op_cnt=*/num_updates_per_replica,
-                                      signal_desc, GpuCollectives::On(stream))
-                          .Await());
+                                           /*op_cnt=*/num_updates_per_replica,
+                                           signal_desc,
+                                           GpuCollectives::On(stream))
+                               .Await());
     }
 
     return absl::OkStatus();
@@ -613,8 +614,8 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
   // ragged tensors from device memory.
   for (int64_t i = 0; i < kNumRaggedMetadataOperands; ++i) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::MemoryAllocation> alloc,
-                     executor->HostMemoryAllocate(config_.num_total_updates *
-                                                  sizeof(int64_t)));
+                          executor->HostMemoryAllocate(
+                              config_.num_total_updates * sizeof(int64_t)));
     state->host_buffer_allocs.push_back(std::move(alloc));
   }
 
@@ -636,7 +637,7 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
       state->lsa_size = config_.fast_interconnect_slice_size_override.value();
     } else {
       ABSL_ASSIGN_OR_RETURN(auto* comm, params.collective_cliques->GetComm(
-                                       state->clique_key, state->rank));
+                                            state->clique_key, state->rank));
 
       state->lsa_size = comm->LsaSize();
     }
@@ -663,11 +664,12 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
 
     // This value acts as the local step counter.
     ABSL_ASSIGN_OR_RETURN(state->barrier_signal_value,
-                     collective_allocator->Allocate(sizeof(uint32_t)));
+                          collective_allocator->Allocate(sizeof(uint32_t)));
 
-    ABSL_ASSIGN_OR_RETURN(state->output_buffer_ptr_storage,
-                     collective_allocator->Allocate(
-                         MultiGpuBarrierKernel::kMaxPeers * sizeof(void*)));
+    ABSL_ASSIGN_OR_RETURN(
+        state->output_buffer_ptr_storage,
+        collective_allocator->Allocate(MultiGpuBarrierKernel::kMaxPeers *
+                                       sizeof(void*)));
 
     ABSL_RETURN_IF_ERROR(ZeroBarrierSignalBuffers(
         *params.stream, state->barrier_signal_buffer->address(),
@@ -690,7 +692,8 @@ absl::StatusOr<RaggedAllToAllStreamState*> RaggedAllToAllThunk::InitializeOnce(
 absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
   ABSL_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
 
-  ABSL_ASSIGN_OR_RETURN(RaggedAllToAllStreamState * state, InitializeOnce(params));
+  ABSL_ASSIGN_OR_RETURN(RaggedAllToAllStreamState * state,
+                        InitializeOnce(params));
 
   // If the symmetric memory handlers are not initialized, initialize it.
   // This can happen in two scenarios:
@@ -735,8 +738,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
          "kernel to work";
 
   ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                   GetCollectiveGpuCliqueKey(*execute_params.collective_params,
-                                             config_.config));
+                        GetCollectiveGpuCliqueKey(
+                            *execute_params.collective_params, config_.config));
 
   int device_ordinal = executor->device_ordinal();
   const std::optional<RankId> rank_opt =
@@ -918,12 +921,14 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
                                                 const GpuCliqueKey& clique_key,
                                                 se::Stream& stream,
                                                 Communicator& comm) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
 
-  ABSL_ASSIGN_OR_RETURN(bool peer_access_enabled,
-                   params.collective_cliques->peer_access_enabled(clique_key));
+  ABSL_ASSIGN_OR_RETURN(
+      bool peer_access_enabled,
+      params.collective_cliques->peer_access_enabled(clique_key));
 
   RaggedAllToAllStreamState* state = nullptr;
   {
@@ -1195,9 +1200,9 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
   const int64_t num_updates_per_replica = num_total_updates / num_ranks;
 
   if (VLOG_IS_ON(5)) {
-    ABSL_RETURN_IF_ERROR(CheckRaggedAllToAllBounds(stream, num_total_updates,
-                                              num_row_elements, output_sym_mem,
-                                              output_sym_offset, buffers));
+    ABSL_RETURN_IF_ERROR(
+        CheckRaggedAllToAllBounds(stream, num_total_updates, num_row_elements,
+                                  output_sym_mem, output_sym_offset, buffers));
   }
 
   ABSL_RETURN_IF_ERROR(RunRaggedAllToAllWithSymmetricMemoryKernel(
@@ -1269,8 +1274,8 @@ absl::Status RunOneShotRaggedAllToAll(
   // Ensures that all peers have reached this point and their output buffers are
   // ready to receive data. This prevents the kernel from attempting to write
   // to a peer's memory before that peer has completed the rendezvous setup.
-  ABSL_RETURN_IF_ERROR(LaunchMultiGpuBarrier(&stream, rank, num_ranks, participants,
-                                        barrier_signal_value));
+  ABSL_RETURN_IF_ERROR(LaunchMultiGpuBarrier(
+      &stream, rank, num_ranks, participants, barrier_signal_value));
 
   // 2. Execution of RunRaggedAllToAllKernel
   const int64_t num_updates_per_replica = num_total_updates / num_ranks;
@@ -1291,8 +1296,8 @@ absl::Status RunOneShotRaggedAllToAll(
   // We wait for all peers to signal completion.
   // This guarantees that all P2P writes to our output buffer are complete and
   // safe to consume.
-  ABSL_RETURN_IF_ERROR(LaunchMultiGpuBarrier(&stream, rank, num_ranks, participants,
-                                        barrier_signal_value));
+  ABSL_RETURN_IF_ERROR(LaunchMultiGpuBarrier(
+      &stream, rank, num_ranks, participants, barrier_signal_value));
 
   return absl::OkStatus();
 }

@@ -51,6 +51,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "google/protobuf/repeated_ptr_field.h"
 #include "re2/re2.h"
+#include "tsl/platform/path.h"
 #include "xla/comparison_util.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -75,7 +76,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 using ::xla::hlo_isolation::ModuleIsolationOptions;
 using ::xla::hlo_isolation::PipelineIsolationOptions;
@@ -659,7 +659,8 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
     std::unique_ptr<HloModule> despecialized_module =
         module.Clone("despecialized");
     Despecializer despecializer;
-    ABSL_RETURN_IF_ERROR(despecializer.Run(despecialized_module.get()).status());
+    ABSL_RETURN_IF_ERROR(
+        despecializer.Run(despecialized_module.get()).status());
     std::string despecialized_module_name = despecialized_module->name();
 
     // Run the reference runner.
@@ -910,7 +911,7 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
     const std::string& input_path, HloRunnerInterface* test_runner,
     HloRunnerInterface* reference_runner, PipelineIsolationOptions options) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> loaded_module,
-                   LoadModuleFromFile(input_path));
+                        LoadModuleFromFile(input_path));
   return RunIsolationPipeline(*loaded_module, test_runner, reference_runner,
                               options);
 }
@@ -1048,7 +1049,7 @@ absl::StatusOr<std::vector<NumericMismatch>> ExtractTopMismatches(
 absl::StatusOr<NumericMismatch> ExtractTopRelativeErrorMismatch(
     std::string error_message) {
   ABSL_ASSIGN_OR_RETURN(std::vector<NumericMismatch> mismatches,
-                   ExtractTopMismatches(error_message, false));
+                        ExtractTopMismatches(error_message, false));
   if (mismatches.empty()) {
     return absl::NotFoundError(
         "Could not find top relative error mismatch in the error message.");
@@ -1215,9 +1216,9 @@ absl::StatusOr<std::vector<NumericMismatch>> ExtractAndEnrichTopMismatches(
       is_tuple ? module->result_shape().tuple_shapes().size() : 1;
 
   ABSL_ASSIGN_OR_RETURN(std::vector<NumericMismatch> mismatches,
-                   ExtractTopMismatches(error_message, is_tuple));
+                        ExtractTopMismatches(error_message, is_tuple));
   ABSL_ASSIGN_OR_RETURN(std::vector<bool> reduce_in_output,
-                   DetectReducesInModuleOutput(module));
+                        DetectReducesInModuleOutput(module));
   for (NumericMismatch& mismatch : mismatches) {
     int output_index = mismatch.output_shape_index();
     if (output_index >= num_outputs) {

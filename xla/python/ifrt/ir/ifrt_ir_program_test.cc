@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/pjrt_executable.h"

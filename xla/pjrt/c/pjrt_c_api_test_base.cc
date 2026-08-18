@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/pjrt/c/pjrt_c_api_test_base.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"

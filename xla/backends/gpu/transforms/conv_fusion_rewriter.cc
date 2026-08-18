@@ -341,7 +341,8 @@ absl::StatusOr<bool> ConvFusionRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation, device_info_));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          RunOnComputation(computation, device_info_));
     changed |= result;
   }
   XLA_VLOG_LINES(2, "ConvFusionRewriter::Run(), after:\n" + module->ToString());

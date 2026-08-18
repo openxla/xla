@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/collective_ops_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -25,8 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -706,11 +707,11 @@ absl::StatusOr<std::unique_ptr<HloComputation>> CreateMaxComputation() {
   Shape scalar = ShapeUtil::MakeScalarShape(F32);
   auto builder_max = HloComputation::Builder("max");
   ABSL_ASSIGN_OR_RETURN(HloInstruction * a,
-                   builder_max.AddParameter(
-                       HloInstruction::CreateParameter(0, scalar, "a")));
+                        builder_max.AddParameter(
+                            HloInstruction::CreateParameter(0, scalar, "a")));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * b,
-                   builder_max.AddParameter(
-                       HloInstruction::CreateParameter(1, scalar, "b")));
+                        builder_max.AddParameter(
+                            HloInstruction::CreateParameter(1, scalar, "b")));
   HloInstruction* max = builder_max.AddInstruction(
       HloInstruction::CreateBinary(scalar, HloOpcode::kMaximum, a, b), "max");
   return builder_max.Build(max);

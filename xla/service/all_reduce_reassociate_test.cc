@@ -15,17 +15,19 @@ limitations under the License.
 
 #include "xla/service/all_reduce_reassociate.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -48,7 +49,8 @@ class AllReduceSimplifierTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<HloModule>> RunPass(
       absl::string_view hlo_module, bool expect_change,
       bool reassociate_converted_ar = false) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_module));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_module));
     auto changed =
         AllReduceReassociate(reassociate_converted_ar).Run(module.get());
     if (!changed.ok()) {

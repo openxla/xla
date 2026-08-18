@@ -105,7 +105,8 @@ absl::StatusOr<CommonPjRtLoadedExecutable::DispatchInfo> InferDispatchInfo(
             : absl::MakeSpan(&*result.output_device_shape, 1);
     result.output_memory_space_kind_ids.reserve(shapes.size());
     for (const auto& shape : shapes) {
-      ABSL_ASSIGN_OR_RETURN(int kind, client->GetMemorySpaceKindForShape(shape));
+      ABSL_ASSIGN_OR_RETURN(int kind,
+                            client->GetMemorySpaceKindForShape(shape));
       result.output_memory_space_kind_ids.push_back(kind);
     }
   }
@@ -121,7 +122,7 @@ absl::StatusOr<CommonPjRtLoadedExecutable::DispatchInfo> InferDispatchInfo(
     DCHECK(!shape.IsTuple());
     ABSL_ASSIGN_OR_RETURN(int kind, client->GetMemorySpaceKindForShape(shape));
     ABSL_ASSIGN_OR_RETURN(int64_t size_in_bytes,
-                     client->GetOnDeviceBytesCount(kind, shape));
+                          client->GetOnDeviceBytesCount(kind, shape));
     result.input_buffer_sizes_in_bytes.push_back(size_in_bytes);
   }
   return result;
@@ -196,22 +197,23 @@ absl::StatusOr<CommonPjRtLoadedExecutable::DispatchInfo> InferDispatchInfo(
     xla::PrimitiveType primitive_type;
     if (auto tensor_type = mlir::dyn_cast<mlir::RankedTensorType>(type)) {
       llvm::ArrayRef<int64_t> dims = tensor_type.getShape();
-      ABSL_ASSIGN_OR_RETURN(shard_shape, GetShardShape(sharding, dims,
-                                                  extras->num_replicas *
-                                                      extras->num_partitions));
+      ABSL_ASSIGN_OR_RETURN(
+          shard_shape,
+          GetShardShape(sharding, dims,
+                        extras->num_replicas * extras->num_partitions));
       primitive_type =
           xla::ConvertMlirTypeToPrimitiveType(tensor_type.getElementType());
     } else {
       primitive_type = xla::ConvertMlirTypeToPrimitiveType(type);
     }
     ABSL_ASSIGN_OR_RETURN(auto* memory_space,
-                     addressable_devices[0]->default_memory_space());
+                          addressable_devices[0]->default_memory_space());
     auto xla_shard_shape =
         xla::ShapeUtil::MakeShape(primitive_type, shard_shape);
     // TODO(parkers): Fix the nullptr layout.
     ABSL_ASSIGN_OR_RETURN(auto xla_shape,
-                     client->MakeDefaultShapeForMemorySpace(
-                         memory_space, xla_shard_shape, nullptr));
+                          client->MakeDefaultShapeForMemorySpace(
+                              memory_space, xla_shard_shape, nullptr));
     auto layout = std::make_shared<PjRtLayout>(xla_shape.layout());
     return std::make_tuple(xla_shape, layout);
   };
@@ -229,8 +231,9 @@ absl::StatusOr<CommonPjRtLoadedExecutable::DispatchInfo> InferDispatchInfo(
                                        /*manualAxes=*/{});
     xla::Shape shape;
     std::shared_ptr<const xla::PjRtLayout> layout;
-    ABSL_ASSIGN_OR_RETURN((std::tie(shape, layout)),
-                     get_xla_shape(hlo_sharding, main.getArgumentTypes()[i]));
+    ABSL_ASSIGN_OR_RETURN(
+        (std::tie(shape, layout)),
+        get_xla_shape(hlo_sharding, main.getArgumentTypes()[i]));
 
     parameter_device_shapes.push_back(shape);
     extras->parameter_shardings->push_back(hlo_sharding.ToProto());
@@ -252,8 +255,9 @@ absl::StatusOr<CommonPjRtLoadedExecutable::DispatchInfo> InferDispatchInfo(
 
     xla::Shape shape;
     std::shared_ptr<const xla::PjRtLayout> layout;
-    ABSL_ASSIGN_OR_RETURN((std::tie(shape, layout)),
-                     get_xla_shape(hlo_sharding, main.getResultTypes()[i]));
+    ABSL_ASSIGN_OR_RETURN(
+        (std::tie(shape, layout)),
+        get_xla_shape(hlo_sharding, main.getResultTypes()[i]));
 
     result_shapes.push_back(std::move(shape));
     extras->output_shardings->push_back(hlo_sharding.ToProto());

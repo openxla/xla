@@ -59,9 +59,10 @@ namespace {
 absl::StatusOr<HloInstruction*> ExpandInstructionUsingBuilder(
     XlaBuilder& builder, HloInstruction* old_instruction) {
   ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
-  ABSL_ASSIGN_OR_RETURN(HloComputation * computation,
-                   XlaComputationToHloComputation(
-                       xla_computation, old_instruction->parent()->parent()));
+  ABSL_ASSIGN_OR_RETURN(
+      HloComputation * computation,
+      XlaComputationToHloComputation(xla_computation,
+                                     old_instruction->parent()->parent()));
 
   // Fix broadcast layouts (they cannot be inferred correctly).
   for (HloInstruction* instruction : computation->instructions()) {
@@ -183,8 +184,8 @@ absl::StatusOr<HloInstruction*> ExpandQuantizeCustomCall(
   // Build replacement instruction sequence.
   XlaBuilder builder(std::string(instruction->name()));
   ABSL_RETURN_IF_ERROR(BuildQuantize(builder, instruction->operand(0)->shape(),
-                                instruction->shape())
-                      .status());
+                                     instruction->shape())
+                           .status());
   return ExpandInstructionUsingBuilder(builder, instruction);
 }
 
@@ -241,10 +242,11 @@ absl::StatusOr<HloInstruction*> ExpandDequantizeCustomCall(
 
   // Build replacement instruction sequence.
   XlaBuilder builder(std::string(instruction->name()));
-  ABSL_RETURN_IF_ERROR(BuildDequantize(Parameter(&builder, 0, input_shape, "input"),
-                                  Parameter(&builder, 1, scale_shape, "scale"),
-                                  instruction->shape().element_type())
-                      .status());
+  ABSL_RETURN_IF_ERROR(
+      BuildDequantize(Parameter(&builder, 0, input_shape, "input"),
+                      Parameter(&builder, 1, scale_shape, "scale"),
+                      instruction->shape().element_type())
+          .status());
   return ExpandInstructionUsingBuilder(builder, instruction);
 }
 
@@ -411,14 +413,16 @@ absl::StatusOr<XlaOp> BuildCudnnScaledDot(XlaOp lhs_input, XlaOp rhs_input,
       cudnn_version >= kCudnnSupportsBlockScaledDotWithGlobalScale;
 
   // Get inputs from parameters.
-  ABSL_ASSIGN_OR_RETURN(auto lhs_ops_and_size,
-                   BuildCudnnScaledDotInput(lhs_input, lhs_scale, block_size,
-                                            /*pad_input=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      auto lhs_ops_and_size,
+      BuildCudnnScaledDotInput(lhs_input, lhs_scale, block_size,
+                               /*pad_input=*/true));
   auto [lhs_input_op, lhs_scale_op, lhs_size] = lhs_ops_and_size;
 
-  ABSL_ASSIGN_OR_RETURN(auto rhs_ops_and_size,
-                   BuildCudnnScaledDotInput(rhs_input, rhs_scale, block_size,
-                                            /*pad_input=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      auto rhs_ops_and_size,
+      BuildCudnnScaledDotInput(rhs_input, rhs_scale, block_size,
+                               /*pad_input=*/true));
   auto [rhs_input_op, rhs_scale_op, rhs_size] = rhs_ops_and_size;
 
   // Calculate output shape.
@@ -553,11 +557,13 @@ absl::StatusOr<XlaOp> BuildBlockScaledDot(
   }
 
   // Build general dot op.
-  ABSL_ASSIGN_OR_RETURN(lhs_op, BuildBlockScaledDotInput(lhs_op, lhs_scale_op,
-                                                    result_type, block_size));
+  ABSL_ASSIGN_OR_RETURN(
+      lhs_op,
+      BuildBlockScaledDotInput(lhs_op, lhs_scale_op, result_type, block_size));
   if (rhs_scale_op.valid()) {
-    ABSL_ASSIGN_OR_RETURN(rhs_op, BuildBlockScaledDotInput(rhs_op, rhs_scale_op,
-                                                      result_type, block_size));
+    ABSL_ASSIGN_OR_RETURN(
+        rhs_op, BuildBlockScaledDotInput(rhs_op, rhs_scale_op, result_type,
+                                         block_size));
   }
   XlaOp result = DotGeneral(lhs_op, rhs_op, dnums, /*precision_config=*/nullptr,
                             /*preferred_element_type=*/result_type);
@@ -593,8 +599,8 @@ absl::StatusOr<HloInstruction*> ExpandBlockScaledDotCustomCall(
   }
 
   ABSL_ASSIGN_OR_RETURN(Shape inferred_shape,
-                   ShapeInference::InferDotOpShape(lhs_shape, rhs_shape, dnums,
-                                                   result_type));
+                        ShapeInference::InferDotOpShape(lhs_shape, rhs_shape,
+                                                        dnums, result_type));
   if (inferred_shape != instruction->shape()) {
     return InvalidArgument("Incorrect output shape for block scaled dot op");
   }
@@ -788,8 +794,8 @@ absl::StatusOr<HloInstruction*> CudnnScaledDotHelper::AddScaleSwizzle(
   std::vector<HloInstruction*> swizzled_operands(4);
   for (int i = 0; i < 2; ++i) {
     ABSL_ASSIGN_OR_RETURN(HloComputation * swizzle_computation,
-                     CreateScaleSwizzleComputation(fusion->operand(i),
-                                                   fusion->operand(i + 2)));
+                          CreateScaleSwizzleComputation(
+                              fusion->operand(i), fusion->operand(i + 2)));
     HloInstruction* call = parent->AddInstruction(HloInstruction::CreateCall(
         swizzle_computation->root_instruction()->shape(),
         {fusion->mutable_operand(i), fusion->mutable_operand(i + 2)},

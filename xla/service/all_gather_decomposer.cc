@@ -23,6 +23,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,9 +38,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -89,8 +89,8 @@ HloInstruction* AllGatherDecomposer::TranslateAllGatherToAllReducePerOperand(
 absl::Status AllGatherDecomposer::DecomposeAllGather(
     HloAllGatherInstruction* ag, HloComputation* comp) {
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(ag->channel_id().has_value(),
-                                            ag->use_global_device_ids()));
+                        GetCollectiveOpGroupMode(ag->channel_id().has_value(),
+                                                 ag->use_global_device_ids()));
   if (ag->operand_count() > 1) {
     std::vector<HloInstruction*> tuple_inputs;
     for (int i = 0; i < ag->operand_count(); ++i) {

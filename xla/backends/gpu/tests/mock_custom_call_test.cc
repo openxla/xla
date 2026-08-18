@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/xla.pb.h"
 

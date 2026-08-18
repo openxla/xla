@@ -115,7 +115,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
     const std::optional<xla::cpu::TargetMachineOptions>&
         cpu_target_machine_options) {
   ABSL_ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
-                   Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
+                        Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
   auto deserializer = [&](const ThunkProto& thunk_proto) {
     return DeserializeThunkProtoImpl(
         thunk_proto, buffer_allocations, hlo_module, platform_name,

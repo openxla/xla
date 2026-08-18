@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/array2d.h"
 #include "xla/index_util.h"
 #include "xla/layout_util.h"
@@ -54,7 +55,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

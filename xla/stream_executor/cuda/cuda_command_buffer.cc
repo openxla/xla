@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/path.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/command_buffer_kernels.h"
@@ -59,7 +60,6 @@ limitations under the License.
 #include "xla/stream_executor/typed_kernel_factory.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -77,7 +77,7 @@ absl::StatusOr<CUgraph> CreateGraph() {
   VLOG(2) << "Create new CUDA graph";
   CUgraph graph = nullptr;
   ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuGraphCreate(&graph, /*flags=*/0),
-                                 "Failed to create CUDA graph"));
+                                      "Failed to create CUDA graph"));
   VLOG(2) << "Created CUDA graph " << graph;
   return graph;
 }
@@ -192,7 +192,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetWhileConditionNode(
           << "; predicate: " << predicate.opaque();
 
   if (!set_while_condition_kernel_) {
-    ABSL_ASSIGN_OR_RETURN(auto spec, cuda::GetSetWhileConditionKernelLoaderSpec());
+    ABSL_ASSIGN_OR_RETURN(auto spec,
+                          cuda::GetSetWhileConditionKernelLoaderSpec());
     ABSL_ASSIGN_OR_RETURN(
         set_while_condition_kernel_,
         SetWhileConditionKernel::FactoryType::Create(stream_exec_, spec));
@@ -249,7 +250,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateSetCaseConditionNode(
           << "): " << FormatGraphConditionalHandles(conditionals);
 
   if (!set_case_condition_kernel_) {
-    ABSL_ASSIGN_OR_RETURN(auto spec, cuda::GetSetCaseConditionKernelLoaderSpec());
+    ABSL_ASSIGN_OR_RETURN(auto spec,
+                          cuda::GetSetCaseConditionKernelLoaderSpec());
     ABSL_ASSIGN_OR_RETURN(
         set_case_condition_kernel_,
         SetCaseConditionKernel::FactoryType::Create(stream_exec_, spec));
@@ -283,7 +285,7 @@ CudaCommandBuffer::GetNoOpKernel() {
   if (!noop_kernel_) {
     ABSL_ASSIGN_OR_RETURN(auto spec, cuda::GetNoOpKernelLoaderSpec());
     ABSL_ASSIGN_OR_RETURN(noop_kernel_,
-                     NoOpKernel::FactoryType::Create(stream_exec_, spec));
+                          NoOpKernel::FactoryType::Create(stream_exec_, spec));
   }
   return &noop_kernel_;
 }
@@ -540,7 +542,8 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
   std::unique_ptr<KernelArgsPackedArrayBase> repacked;
   const KernelArgsPackedArrayBase* packed_args;
   if (cuda_kernel.args_packing()) {
-    ABSL_ASSIGN_OR_RETURN(repacked, cuda_kernel.args_packing()(cuda_kernel, args));
+    ABSL_ASSIGN_OR_RETURN(repacked,
+                          cuda_kernel.args_packing()(cuda_kernel, args));
     packed_args = repacked.get();
   } else {
     packed_args = &args;
@@ -659,7 +662,8 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
   std::unique_ptr<KernelArgsPackedArrayBase> repacked;
   const KernelArgsPackedArrayBase* packed_args;
   if (cuda_kernel.args_packing()) {
-    ABSL_ASSIGN_OR_RETURN(repacked, cuda_kernel.args_packing()(cuda_kernel, args));
+    ABSL_ASSIGN_OR_RETURN(repacked,
+                          cuda_kernel.args_packing()(cuda_kernel, args));
     packed_args = repacked.get();
   } else {
     packed_args = &args;
@@ -762,7 +766,8 @@ absl::Status CudaCommandBuffer::Trace(
 
   if (num_root_nodes == 0) {
     VLOG(5) << "Traced CUDA graph is empty; adding an empty node";
-    ABSL_ASSIGN_OR_RETURN(auto* empty, CreateEmptyCmd({}, StreamPriority::Default));
+    ABSL_ASSIGN_OR_RETURN(auto* empty,
+                          CreateEmptyCmd({}, StreamPriority::Default));
     (void)empty;
   }
   return absl::OkStatus();
@@ -802,7 +807,7 @@ absl::Status CudaCommandBuffer::SetPriority(StreamPriority priority) {
   for (size_t i = 0; i < num_nodes; i++) {
     CUgraphNodeType type;
     ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuGraphNodeGetType(nodes[i], &type),
-                                   "Failed to get kernel node type"));
+                                        "Failed to get kernel node type"));
 
     if (type == CU_GRAPH_NODE_TYPE_KERNEL) {
       CUlaunchAttributeValue value;
@@ -871,7 +876,7 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
         cuda::ToStatus(cuDeviceGet(&device, stream_exec_->device_ordinal()),
                        "Failed call to cuDeviceGet"));
     ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuDeviceGraphMemTrim(device),
-                                   "Failed to trim device graph memory"));
+                                        "Failed to trim device graph memory"));
     ABSL_RETURN_IF_ERROR(GraphInstantiate(&graph_exec_, graph_));
   } else {
     ABSL_RETURN_IF_ERROR(instantiated);

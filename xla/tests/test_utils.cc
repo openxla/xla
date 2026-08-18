@@ -419,8 +419,9 @@ absl::StatusOr<std::vector<Literal>> MakeDataflowConstrainedArguments(
     engine = default_engine.get();
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto constraint_states,
-                   ConstraintPropagator::Run(*module, get_index_known_zeroes));
+  ABSL_ASSIGN_OR_RETURN(
+      auto constraint_states,
+      ConstraintPropagator::Run(*module, get_index_known_zeroes));
 
   const auto params = module->entry_computation()->parameter_instructions();
   std::vector<Literal> arguments(params.size());

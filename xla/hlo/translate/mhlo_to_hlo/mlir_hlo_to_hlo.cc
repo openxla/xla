@@ -25,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "mhlo/transforms/passes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mhlo/transforms/passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1222,7 +1222,7 @@ class ConvertToHloModule {
     // function and so the main proto shouldn't be consumed in that case.
     TF_RET_CHECK(main) << "requires module to have main function";
     ABSL_ASSIGN_OR_RETURN(xla::XlaComputation computation,
-                     module_builder_.Build(lowered_computation_[main]));
+                          module_builder_.Build(lowered_computation_[main]));
     return std::move(*computation.mutable_proto());
   }
 
@@ -6142,7 +6142,7 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
     return diag_handler.ConsumeStatus();
   }
   ABSL_ASSIGN_OR_RETURN(xla::HloModuleProto hlo_module,
-                   converter.ConsumeMainProto());
+                        converter.ConsumeMainProto());
   StringRef module_name = module.getName() ? *module.getName() : kMain;
   hlo_module.set_name(module_name.str());
   if (auto cross_program_prefetches = module->getAttrOfType<mlir::ArrayAttr>(
@@ -6237,8 +6237,8 @@ absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertMlirHloToHloModule(
   // Create default config.
   const xla::HloModuleProto& module_proto = hlo_proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(xla::HloModuleConfig config,
-                   xla::HloModule::CreateModuleConfigFromProto(
-                       module_proto, xla::GetDebugOptionsFromFlags()));
+                        xla::HloModule::CreateModuleConfigFromProto(
+                            module_proto, xla::GetDebugOptionsFromFlags()));
 
   // Modify config with values stored in MLIR module attributes
   mhlo::ExportHloModuleConfig(config, module);

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/while_loop_all_reduce_code_motion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status_matchers.h"

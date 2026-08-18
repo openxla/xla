@@ -30,6 +30,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
@@ -43,8 +44,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "hwy//highway.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -66,8 +68,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -284,7 +284,7 @@ absl::Status Literal::SetPiece(const Shape& shape, Piece* piece,
       Piece child_piece;
       child_piece.set_subshape(&subshape);
       ABSL_RETURN_IF_ERROR(SetPiece(subshape, &child_piece, allocate_arrays,
-                               leaf_array_value_state));
+                                    leaf_array_value_state));
       piece->emplace_back(std::move(child_piece));
     }
   } else if (shape.IsArray()) {
@@ -314,7 +314,8 @@ absl::StatusOr<Literal> Literal::Make(
   CHECK(&literal.root_piece_.subshape() == literal.shape_.get());
 
   ABSL_RETURN_IF_ERROR(literal.SetPiece(*literal.shape_, &literal.root_piece_,
-                                   allocate_arrays, leaf_array_value_state));
+                                        allocate_arrays,
+                                        leaf_array_value_state));
   return literal;
 }
 
@@ -322,7 +323,7 @@ absl::StatusOr<absl_nonnull std::unique_ptr<Literal>> Literal::MakeUnique(
     const Shape& shape, const bool allocate_arrays,
     const ArrayValueState leaf_array_value_state) {
   ABSL_ASSIGN_OR_RETURN(Literal literal, Literal::Make(shape, allocate_arrays,
-                                                  leaf_array_value_state));
+                                                       leaf_array_value_state));
   return std::make_unique<Literal>(std::move(literal));
 }
 
@@ -421,8 +422,8 @@ void LiteralBase::BuildPieceSubtree(const Shape& shape, Piece* piece) {
 
 absl::Status LiteralBase::SerializeToString(std::string* output) const {
   ShapeProto shape_proto = shape().ToProto();
-  ABSL_ASSIGN_OR_RETURN(int64_t size,
-                   ShapeUtil::SerializedSizeWithProto(shape(), shape_proto));
+  ABSL_ASSIGN_OR_RETURN(
+      int64_t size, ShapeUtil::SerializedSizeWithProto(shape(), shape_proto));
   output->resize(size);
   return SerializeWithShapeProto(shape_proto, output->data());
 }
@@ -2732,10 +2733,12 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
       break;
     }
     case S32:
-      ABSL_RETURN_IF_ERROR(CopyFromRepeatedField(data<int32_t>(), proto.s32s()));
+      ABSL_RETURN_IF_ERROR(
+          CopyFromRepeatedField(data<int32_t>(), proto.s32s()));
       break;
     case S64:
-      ABSL_RETURN_IF_ERROR(CopyFromRepeatedField(data<int64_t>(), proto.s64s()));
+      ABSL_RETURN_IF_ERROR(
+          CopyFromRepeatedField(data<int64_t>(), proto.s64s()));
       break;
     case U2: {
       const std::string& s(proto.u2s());
@@ -2766,10 +2769,12 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
       break;
     }
     case U32:
-      ABSL_RETURN_IF_ERROR(CopyFromRepeatedField(data<uint32_t>(), proto.u32s()));
+      ABSL_RETURN_IF_ERROR(
+          CopyFromRepeatedField(data<uint32_t>(), proto.u32s()));
       break;
     case U64:
-      ABSL_RETURN_IF_ERROR(CopyFromRepeatedField(data<uint64_t>(), proto.u64s()));
+      ABSL_RETURN_IF_ERROR(
+          CopyFromRepeatedField(data<uint64_t>(), proto.u64s()));
       break;
     case F4E2M1FN: {
       const std::string& s(proto.f4e2m1fns());

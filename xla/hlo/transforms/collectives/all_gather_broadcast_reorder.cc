@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -50,15 +50,15 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
 
   bool changed = false;
   for (auto computation : module->computations(execution_threads)) {
-    for (HloInstruction *inst : computation->MakeInstructionPostOrder()) {
+    for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
       // Check for all-gather with a broadcast operand.
       if (inst->opcode() != HloOpcode::kAllGather || !inst->shape().IsArray() ||
           inst->operand(0)->opcode() != HloOpcode::kBroadcast) {
         continue;
       }
 
-      HloAllGatherInstruction *ag = Cast<HloAllGatherInstruction>(inst);
-      HloBroadcastInstruction *bcast =
+      HloAllGatherInstruction* ag = Cast<HloAllGatherInstruction>(inst);
+      HloBroadcastInstruction* bcast =
           Cast<HloBroadcastInstruction>(inst->mutable_operand(0));
 
       // We categorize each dimension of the all-gather result as either
@@ -87,7 +87,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
         continue;
       }
 
-      HloInstruction *replacement;
+      HloInstruction* replacement;
       const int64_t ag_dim = ag->all_gather_dimension();
       // Transform the all-gather(broadcast(x)) to broadcast(all-gather(x)).
       // There are 2 cases here:
@@ -114,7 +114,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
                                     ag->shape().dimensions(ag_dim));
 
         // Create a new gather, which is going to gather along `ag_dim_index`.
-        auto *new_ag =
+        auto* new_ag =
             Cast<HloAllGatherInstruction>(computation->AddInstruction(
                 ag->CloneWithNewOperands(new_ag_shape, bcast->operands())));
         if (ag->channel_id()) {
@@ -142,7 +142,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
         //       rs1 = f32[5, 12, 8, 128] reshape(bc)
 
         VLOG(2) << "All-gather along uniform dimension";
-        HloInstruction *x = bcast->mutable_operand(0);
+        HloInstruction* x = bcast->mutable_operand(0);
 
         // Reshape to add a leading '1' dimension.
         std::vector<int64_t> shape_dims{1};
@@ -151,7 +151,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
         Shape shape =
             ShapeUtil::MakeShape(x->shape().element_type(), shape_dims);
 
-        HloInstruction *rs0 = computation->AddInstruction(
+        HloInstruction* rs0 = computation->AddInstruction(
             HloInstruction::CreateReshape(shape, x));
 
         // Number of participants in the all-gather.
@@ -160,7 +160,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
 
         shape.set_dimensions(0, ag_factor);
 
-        auto *new_ag =
+        auto* new_ag =
             Cast<HloAllGatherInstruction>(computation->AddInstruction(
                 ag->CloneWithNewOperands(shape, {rs0})));
         if (ag->channel_id()) {
@@ -196,7 +196,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
         for (int64_t d : bcast->dimensions()) {
           bcast_dims.push_back(d + (d > ag_dim));
         }
-        HloInstruction *bcast = computation->AddInstruction(
+        HloInstruction* bcast = computation->AddInstruction(
             HloInstruction::CreateBroadcast(bcast_shape, new_ag, bcast_dims));
 
         // Finally, "flatten" the [ag_factor, ag_dim_size/ag_factor] to just

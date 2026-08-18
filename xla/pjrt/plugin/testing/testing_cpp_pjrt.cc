@@ -21,9 +21,9 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace testing {
 

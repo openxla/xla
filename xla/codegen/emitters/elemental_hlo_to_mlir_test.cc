@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
@@ -39,6 +40,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
@@ -54,8 +57,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace emitters {
@@ -112,14 +113,14 @@ class ElementalHloToMlirTest : public HloHardwareIndependentTestBase {
     auto& entry_pc =
         partitioned_computations.FindPartitionedComputation(entry_computation);
     auto call_targets = partitioned_computations.CreateCallTargetProvider(fns);
-    ABSL_RETURN_IF_ERROR(SubgraphToMlirFunction(entry_pc, entry_pc.GetRootSubgraph(),
-                                           entry_func, call_targets,
-                                           &mlir_context_));
+    ABSL_RETURN_IF_ERROR(
+        SubgraphToMlirFunction(entry_pc, entry_pc.GetRootSubgraph(), entry_func,
+                               call_targets, &mlir_context_));
 
     if (!partitioned_computations.epilogues().empty()) {
       const auto& epilogue = partitioned_computations.epilogues().front();
-      ABSL_RETURN_IF_ERROR(SubgraphToMlirFunction(entry_pc, epilogue, fns[&epilogue],
-                                             call_targets, &mlir_context_));
+      ABSL_RETURN_IF_ERROR(SubgraphToMlirFunction(
+          entry_pc, epilogue, fns[&epilogue], call_targets, &mlir_context_));
     }
 
     // Canonicalize and CSE for better readability of check tests.
@@ -132,7 +133,8 @@ class ElementalHloToMlirTest : public HloHardwareIndependentTestBase {
     llvm::raw_string_ostream stream(out);
     stream << module.get();
 
-    ABSL_ASSIGN_OR_RETURN(auto filecheck_result, RunFileCheck(out, filecheck_str));
+    ABSL_ASSIGN_OR_RETURN(auto filecheck_result,
+                          RunFileCheck(out, filecheck_str));
     TF_RET_CHECK(filecheck_result);
     return absl::OkStatus();
   }

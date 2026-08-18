@@ -13,15 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo_runner_interface.h"
@@ -30,7 +32,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace xla_compile {

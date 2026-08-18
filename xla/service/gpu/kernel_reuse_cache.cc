@@ -158,8 +158,8 @@ absl::Status UpdateDiskKernelCache(absl::string_view path, const bool do_append,
                                    const CompilationCacheProto& current_cache) {
   CompilationCacheProto disk_cache;
   if (do_append) {
-    ABSL_RETURN_IF_ERROR(tsl::ReadBinaryProto(tsl::Env::Default(), std::string(path),
-                                         &disk_cache));
+    ABSL_RETURN_IF_ERROR(tsl::ReadBinaryProto(tsl::Env::Default(),
+                                              std::string(path), &disk_cache));
     if (disk_cache.compatibility_version() != kCacheCompatibilityVersion) {
       LOG(WARNING) << "Provided CompilationCacheProto contains no longer "
                       "compatible data and needs to be regenerated.";
@@ -183,7 +183,8 @@ absl::Status UpdateDiskKernelCache(absl::string_view path, const bool do_append,
 
   disk_cache.set_compatibility_version(kCacheCompatibilityVersion);
   if (stored_kernel_count) {
-    ABSL_RETURN_IF_ERROR(gpu::SetFileContent(path, disk_cache.SerializeAsString()));
+    ABSL_RETURN_IF_ERROR(
+        gpu::SetFileContent(path, disk_cache.SerializeAsString()));
     VLOG(2) << "Stored " << stored_kernel_count
             << " kernels in the cache file.";
   }

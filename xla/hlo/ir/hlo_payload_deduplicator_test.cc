@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_payload_deduplicator.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/backend_config.h"
 

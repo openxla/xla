@@ -103,7 +103,6 @@ class ConfigAssigner {
   // Tuned config is updated in the cache if it is provided.
   tsl::Future<Config> GetConfig(const HloInstruction* instr);
 
-
   // Returns the cached config for the given HLO instruction, if any.
   // Otherwise, returns std::nullopt.
   std::optional<Config> LookUp(const HloInstruction* instr) const;

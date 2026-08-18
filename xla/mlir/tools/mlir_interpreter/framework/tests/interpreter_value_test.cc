@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter_value.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <complex>
 #include <cstdint>
 #include <optional>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "llvm/ADT/ArrayRef.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/tensor_or_memref.h"
 

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/stream_executor.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/platform.h"
@@ -35,7 +36,8 @@ struct TestResource : public StreamExecutor::Resource {
 };
 
 static absl::StatusOr<StreamExecutor*> NewStreamExecutor() {
-  ABSL_ASSIGN_OR_RETURN(auto platform, PlatformManager::PlatformWithName("Host"));
+  ABSL_ASSIGN_OR_RETURN(auto platform,
+                        PlatformManager::PlatformWithName("Host"));
   ABSL_ASSIGN_OR_RETURN(auto stream_exec, platform->ExecutorForDevice(0));
   return stream_exec;
 }

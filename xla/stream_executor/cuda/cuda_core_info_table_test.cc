@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_core_info_table.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"

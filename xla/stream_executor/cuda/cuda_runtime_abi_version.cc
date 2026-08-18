@@ -46,10 +46,11 @@ CudaRuntimeAbiVersion::FromProto(const CudaRuntimeAbiVersionProto& proto) {
   ABSL_ASSIGN_OR_RETURN(
       SemanticVersion cuda_toolkit_version,
       SemanticVersion::ParseFromString(proto.cuda_toolkit_version()));
-  ABSL_ASSIGN_OR_RETURN(SemanticVersion cudnn_version,
-                   SemanticVersion::ParseFromString(proto.cudnn_version()));
+  ABSL_ASSIGN_OR_RETURN(
+      SemanticVersion cudnn_version,
+      SemanticVersion::ParseFromString(proto.cudnn_version()));
   ABSL_ASSIGN_OR_RETURN(SemanticVersion cub_version,
-                   SemanticVersion::ParseFromString(proto.cub_version()));
+                        SemanticVersion::ParseFromString(proto.cub_version()));
   return std::make_unique<CudaRuntimeAbiVersion>(cuda_toolkit_version,
                                                  cudnn_version, cub_version);
 }
@@ -123,9 +124,10 @@ absl::Status CudaRuntimeAbiVersion::IsCompatibleWith(
         ", but executable requires >= ", required_cudnn_version));
   }
 
-  ABSL_ASSIGN_OR_RETURN(SemanticVersion required_cub_version,
-                   SemanticVersion::ParseFromString(
-                       executable_proto.cuda_platform_version().cub_version()));
+  ABSL_ASSIGN_OR_RETURN(
+      SemanticVersion required_cub_version,
+      SemanticVersion::ParseFromString(
+          executable_proto.cuda_platform_version().cub_version()));
   if (cub_version_ < required_cub_version) {
     return absl::FailedPreconditionError(absl::StrCat(
         "CUB version mismatch. Running with version ", cub_version_,

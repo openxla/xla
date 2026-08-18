@@ -462,14 +462,15 @@ absl::Status CopyLayoutInternal(const Shape& src, Shape* dst) {
     }
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(src); ++i) {
       ABSL_RETURN_IF_ERROR(CopyLayoutInternal(src.tuple_shapes(i),
-                                         dst->mutable_tuple_shapes(i)));
+                                              dst->mutable_tuple_shapes(i)));
     }
   } else if (src.IsArray()) {
     if (src.has_layout()) {
       if (src.dimensions().size() != dst->dimensions().size()) {
         return InvalidArgument("cannot copy layout from shape: ranks differs");
       }
-      ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
+      ABSL_RETURN_IF_ERROR(
+          LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
       *dst->mutable_layout() = src.layout();
     } else {
       dst->clear_layout();

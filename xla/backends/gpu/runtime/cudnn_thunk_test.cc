@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -24,17 +27,15 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"  // IWYU pragma: keep - cudnn frontend headers are not hermetic
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
-#include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_state.h"
@@ -127,9 +128,10 @@ TEST(CuDnnThunkTest, TestSerializationDeserialization) {
 
 absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
   ABSL_ASSIGN_OR_RETURN(std::string canonical_name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
   std::string name = absl::AsciiStrToUpper(canonical_name);
-  ABSL_ASSIGN_OR_RETURN(auto* platform, se::PlatformManager::PlatformWithName(name));
+  ABSL_ASSIGN_OR_RETURN(auto* platform,
+                        se::PlatformManager::PlatformWithName(name));
   return platform->ExecutorForDevice(0);
 }
 

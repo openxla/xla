@@ -167,7 +167,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
     const HloInstruction* pad) {
   VLOG(2) << "Emit Pad host kernel.";
 
-  ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype, EmitKernelPrototype(pad));
+  ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                        EmitKernelPrototype(pad));
 
   llvm_ir::IrArray operand_array = kernel_prototype.arguments[0];
   llvm_ir::IrArray padvalue_array = kernel_prototype.arguments[1];
@@ -205,7 +206,7 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
   }
 
   ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
-                   EmitKernelPrototype(fusion));
+                        EmitKernelPrototype(fusion));
 
   llvm::IRBuilder<> b(module_->getContext());
   b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
@@ -214,9 +215,10 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
 
   HloComputation* nested_computation = fusion->fused_instructions_computation();
   ABSL_RETURN_IF_ERROR(nested_ir_emitter_
-                      ->EmitNestedComputation(*nested_computation,
-                                              llvm_ir::IrName(fusion), false)
-                      .status());
+                           ->EmitNestedComputation(*nested_computation,
+                                                   llvm_ir::IrName(fusion),
+                                                   false)
+                           .status());
 
   CpuElementalIrEmitter elemental_emitter = ElementalIrEmmiterFactory(&b);
 
@@ -290,7 +292,7 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
   int64_t addend_pnum = add->operand(addend_op_index)->parameter_number();
 
   ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
-                   EmitKernelPrototype(fusion));
+                        EmitKernelPrototype(fusion));
 
   llvm::IRBuilder<> b(module_->getContext());
   b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
@@ -319,7 +321,7 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitSliceToDynamicHostKernel(
   VLOG(2) << "Emit slice-to-dynamic host kernel: " << instr->name();
 
   ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
-                   EmitKernelPrototype(instr));
+                        EmitKernelPrototype(instr));
   llvm::IRBuilder<> ir_builder(module_->getContext());
   ir_builder.SetInsertPoint(
       kernel_prototype.function->getEntryBlock().getTerminator());
@@ -339,9 +341,9 @@ absl::StatusOr<IrEmitter2::ComparatorInfo> IrEmitter2::EmitSortComparator(
   if (hlo_module_.config()
           .debug_options()
           .xla_cpu_generate_unique_c_style_kernel_entry_points()) {
-    ABSL_ASSIGN_OR_RETURN(comparator_name,
-                     ConvertToCName(absl::StrCat(comparator->parent()->name(),
-                                                 "_", comparator->name())));
+    ABSL_ASSIGN_OR_RETURN(comparator_name, ConvertToCName(absl::StrCat(
+                                               comparator->parent()->name(),
+                                               "_", comparator->name())));
   }
 
   // Find if we already emitted this comparator.
@@ -357,10 +359,10 @@ absl::StatusOr<IrEmitter2::ComparatorInfo> IrEmitter2::EmitSortComparator(
   // Emit LLVM IR for comparator function. We emit it as a top-level computation
   // to set external linkage and to get a pointer to compiled function later.
   ABSL_ASSIGN_OR_RETURN(llvm::Function * comparator_function,
-                   nested_ir_emitter_->EmitComputation(
-                       comparator, comparator_name,
-                       /*is_top_level_computation=*/true, schedule,
-                       /*allow_reassociation=*/false));
+                        nested_ir_emitter_->EmitComputation(
+                            comparator, comparator_name,
+                            /*is_top_level_computation=*/true, schedule,
+                            /*allow_reassociation=*/false));
 
   // Generate unwind information so that GDB can crawl through the stack frames
   // created by the JIT compiled code.
@@ -509,7 +511,7 @@ absl::StatusOr<se::ThreadDim> IrEmitter2::EmitElementalLoops(
 
   // Emit a whole loop for the instruction.
   ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(element_generator, result, &b)
-                      .EmitLoop(llvm_ir::IrName(instr)));
+                           .EmitLoop(llvm_ir::IrName(instr)));
   return se::ThreadDim();
 }
 

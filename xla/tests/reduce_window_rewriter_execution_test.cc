@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
 #include <stdlib.h>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"

@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/types.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

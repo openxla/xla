@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "riegeli/bytes/string_writer.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

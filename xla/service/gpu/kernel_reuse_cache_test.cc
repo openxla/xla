@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/kernel_reuse_cache.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"

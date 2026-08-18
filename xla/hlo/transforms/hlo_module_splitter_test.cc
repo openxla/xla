@@ -50,9 +50,9 @@ class HloModuleSplitterTest : public HloHardwareIndependentTestBase {
     }
     for (auto& submodule : splitter.submodules()) {
       ABSL_RETURN_IF_ERROR(HloVerifier(/*layout_sensitive=*/false,
-                                  /*allow_mixed_precision=*/true)
-                          .Run(submodule.get())
-                          .status());
+                                       /*allow_mixed_precision=*/true)
+                               .Run(submodule.get())
+                               .status());
     }
     return SplitResult{std::move(module), std::move(splitter.submodules())};
   }

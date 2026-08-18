@@ -20,6 +20,8 @@ limitations under the License.
 
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
@@ -35,8 +37,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 
@@ -52,7 +52,8 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
                          {{"computation", computation.name()}});
   });
 
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
 
   HloModuleConfig hlo_module_config(program_shape, /*ignore_layouts=*/false);
   hlo_module_config.set_debug_options(GetDebugOptionsFromFlags());
@@ -70,9 +71,10 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
   // Run high-level XLA CPU compiler passes.
   cpu::CpuCompiler compiler;
   if (!executable_build_options.run_backend_only()) {
-    ABSL_ASSIGN_OR_RETURN(hlo_module, compiler.RunHloPasses(std::move(hlo_module),
-                                                       /*stream_exec=*/nullptr,
-                                                       compile_options));
+    ABSL_ASSIGN_OR_RETURN(
+        hlo_module,
+        compiler.RunHloPasses(std::move(hlo_module),
+                              /*stream_exec=*/nullptr, compile_options));
   }
 
   auto optimized_hlo_program_shape =

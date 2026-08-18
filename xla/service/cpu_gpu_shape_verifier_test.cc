@@ -15,18 +15,19 @@ limitations under the License.
 
 #include "xla/service/cpu_gpu_shape_verifier.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

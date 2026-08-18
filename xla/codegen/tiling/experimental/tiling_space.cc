@@ -616,7 +616,8 @@ TilingSpace::GetValidTilings() {
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto flat_tilings, GetFlatTilingsForInputSpace(input_space));
+  ABSL_ASSIGN_OR_RETURN(auto flat_tilings,
+                        GetFlatTilingsForInputSpace(input_space));
 
   for (auto& flat_tiling : flat_tilings) {
     for (const auto& [idx, dim] : llvm::enumerate(dimensions_)) {

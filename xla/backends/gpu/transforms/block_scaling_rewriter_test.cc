@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 
-#include <utility>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

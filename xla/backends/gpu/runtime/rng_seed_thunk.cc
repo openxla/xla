@@ -24,11 +24,11 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/random.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
-#include "tsl/platform/random.h"
 
 namespace xla::gpu {
 
@@ -68,7 +68,7 @@ absl::StatusOr<ThunkProto> RngSeedThunk::ToProto() const {
 
   auto* rng_seed_thunk_proto = proto.mutable_rng_seed_thunk();
   ABSL_ASSIGN_OR_RETURN(*rng_seed_thunk_proto->mutable_dest_buffer(),
-                   dest().ToProto());
+                        dest().ToProto());
   return proto;
 }
 
@@ -76,8 +76,8 @@ absl::StatusOr<std::unique_ptr<RngSeedThunk>> RngSeedThunk::FromProto(
     ThunkInfo thunk_info, const RngSeedThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice dest,
-                   BufferAllocation::Slice::FromProto(thunk_proto.dest_buffer(),
-                                                      buffer_allocations));
+                        BufferAllocation::Slice::FromProto(
+                            thunk_proto.dest_buffer(), buffer_allocations));
   return std::make_unique<RngSeedThunk>(std::move(thunk_info), dest);
 }
 

@@ -80,9 +80,9 @@ absl::Status InlineFissionedComputation(HloInstruction* fusion_instr,
   HloInstruction* new_root =
       cloned_instructions.at(fissioned_computation->root_instruction());
   ABSL_ASSIGN_OR_RETURN(bool replaced,
-                   parent_computation->ReplaceInstruction(
-                       fusion_instr, new_root, /*preserve_sharding=*/false,
-                       /*relay_control_dependency=*/true));
+                        parent_computation->ReplaceInstruction(
+                            fusion_instr, new_root, /*preserve_sharding=*/false,
+                            /*relay_control_dependency=*/true));
   TF_RET_CHECK(replaced) << "Failed to inline fissioned computation for "
                          << fusion_instr->name();
   return absl::OkStatus();
@@ -98,7 +98,7 @@ FissionBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   GetFissionedAndRewrittenModule(instr));
+                        GetFissionedAndRewrittenModule(instr));
   absl::StatusOr<std::vector<HloInstruction*>> supported_instrs =
       FindSupportedInstructions(hlo_module.get());
   if (supported_instrs.status().code() == absl::StatusCode::kNotFound) {
@@ -142,9 +142,9 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
                                          const BackendConfig& config) {
   HloModule* module = instr.GetModule();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   GetFissionedAndRewrittenModule(instr));
+                        GetFissionedAndRewrittenModule(instr));
   ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> supported_instrs,
-                   FindSupportedInstructions(hlo_module.get()));
+                        FindSupportedInstructions(hlo_module.get()));
 
   for (size_t i = 0; i < supported_instrs.size(); ++i) {
     HloInstruction* supported_instr = supported_instrs[i];
@@ -163,7 +163,8 @@ absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
             "compatible shapes, but found incompatible shapes.");
       }
     }
-    ABSL_RETURN_IF_ERROR(codegen_backend_->ApplyConfig(*supported_instr, config));
+    ABSL_RETURN_IF_ERROR(
+        codegen_backend_->ApplyConfig(*supported_instr, config));
   }
 
   // Given that the autotuner runs post fusion, we have to run priority fusion

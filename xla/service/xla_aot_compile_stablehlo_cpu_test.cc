@@ -13,13 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/client/client_library.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -31,10 +36,6 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace xla_compile {

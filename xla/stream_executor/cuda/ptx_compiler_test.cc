@@ -15,14 +15,14 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <sys/types.h>
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -187,9 +187,9 @@ absl::StatusOr<std::vector<uint8_t>> CompileHelper(
                                       /*preferred_cuda_dir=*/"", extra_flags);
 
   ABSL_ASSIGN_OR_RETURN(stream_executor::cuda::Assembly assembly,
-                   stream_executor::CompileGpuAsmUsingLibNvPtxCompiler(
-                       cc, ptx_input, options, cancel_if_reg_spill,
-                       /*dump_compilation_log=*/false));
+                        stream_executor::CompileGpuAsmUsingLibNvPtxCompiler(
+                            cc, ptx_input, options, cancel_if_reg_spill,
+                            /*dump_compilation_log=*/false));
   return assembly.cubin;
 }
 

@@ -15,18 +15,21 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/simulator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <list>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -41,8 +44,6 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -104,14 +105,15 @@ class MemorySpaceAssignmentSimulatorTest
     cost_analysis_options.default_mem_bandwidth_bytes_per_second = 1.0;
 
     ABSL_ASSIGN_OR_RETURN(alias_analysis_,
-                     HloAliasAnalysis::Run(module_.get(), &alias_info_));
+                          HloAliasAnalysis::Run(module_.get(), &alias_info_));
     ABSL_ASSIGN_OR_RETURN(
         cost_analysis_,
         CostAnalysis::Create(*op_cost_manager_, cost_analysis_options,
                              &alias_info_, *module_, alias_analysis_.get()));
-    ABSL_ASSIGN_OR_RETURN(hlo_live_range_,
-                     HloLiveRange::Run(module_->schedule(), *alias_analysis_,
-                                       module_->entry_computation()));
+    ABSL_ASSIGN_OR_RETURN(
+        hlo_live_range_,
+        HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                          module_->entry_computation()));
     runtime_simulator_ = std::make_unique<RuntimeSimulator>(
         cost_analysis_.get(), kAlternateMemorySpace);
     return absl::OkStatus();
@@ -334,7 +336,8 @@ class SimulateAsyncCopyLikeDoneTest
     : public MemorySpaceAssignmentSimulatorTest {
  protected:
   absl::Status Initialize(absl::string_view hlo_string) {
-    ABSL_RETURN_IF_ERROR(MemorySpaceAssignmentSimulatorTest::Initialize(hlo_string));
+    ABSL_RETURN_IF_ERROR(
+        MemorySpaceAssignmentSimulatorTest::Initialize(hlo_string));
     if (instruction_map_.contains("copy-start.1")) {
       outstanding_read_default_queue_.push_back(
           memory_space_assignment::OutstandingAsyncCopyLike{

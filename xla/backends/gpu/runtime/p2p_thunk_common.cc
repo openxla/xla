@@ -79,7 +79,7 @@ absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> GetSourceTargetPairs(
                      kSendRecvSourceTargetPairsAttr));
   }
   ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                   ParseReplicaGroupsOnly(src_dst_string.str()));
+                        ParseReplicaGroupsOnly(src_dst_string.str()));
   std::vector<std::pair<int64_t, int64_t>> source_target_pairs;
   source_target_pairs.reserve(replica_groups.size());
   for (const ReplicaGroup& replica_group : replica_groups) {

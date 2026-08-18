@@ -16,12 +16,13 @@ limitations under the License.
 #ifndef XLA_BACKENDS_AUTOTUNER_MOCK_CODEGEN_BACKEND_H_
 #define XLA_BACKENDS_AUTOTUNER_MOCK_CODEGEN_BACKEND_H_
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

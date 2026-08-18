@@ -47,6 +47,10 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/random.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/triton.h"
@@ -59,10 +63,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/random.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 namespace xla::triton {
 
@@ -118,8 +118,8 @@ absl::StatusOr<std::string> LLVMToHSACO(mlir::ModuleOp module,
 
   xla::DebugOptions debug_opts = xla::DefaultDebugOptionsIgnoringFlags();
   ABSL_ASSIGN_OR_RETURN(auto compile_result,
-                   gpu::amdgpu::CompileToHsaco(llvm_module.get(), gpu_version,
-                                               debug_opts, ""));
+                        gpu::amdgpu::CompileToHsaco(
+                            llvm_module.get(), gpu_version, debug_opts, ""));
 
   std::vector<std::string> tempdir_vector;
   tsl::Env::Default()->GetLocalTempDirectories(&tempdir_vector);
@@ -176,7 +176,7 @@ absl::StatusOr<CompilationResult> Compile(absl::string_view module,
       (*module_op)->getAttrOfType<mlir::IntegerAttr>("ttg.shared").getInt();
 
   ABSL_ASSIGN_OR_RETURN(std::string hsaco_path,
-                   LLVMToHSACO(*module_op, arch_name, num_warps));
+                        LLVMToHSACO(*module_op, arch_name, num_warps));
 
   // There is no clusters in ROCm for now.
   return CompilationResult{

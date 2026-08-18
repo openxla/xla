@@ -468,7 +468,8 @@ GetParticipatingFlattenedIdGroups(
 absl::StatusOr<std::unique_ptr<CollectiveDeviceListBase>>
 GetParticipatingFlattenedIdGroups(const HloInstruction* hlo,
                                   const DeviceAssignment& device_assignment) {
-  ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode, GetCollectiveOpGroupMode(hlo));
+  ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
+                        GetCollectiveOpGroupMode(hlo));
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<CollectiveDeviceListBase> collective_device_list,
       GetParticipatingFlattenedIdGroups(device_assignment, *hlo->device_list(),
@@ -557,11 +558,11 @@ GetReplicaGroupCountAndSize(const HloInstruction* hlo) {
                           device_list->num_devices_per_group());
   }
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(hlo));
+                        GetCollectiveOpGroupMode(hlo));
   ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> participant_counts,
-                   GetParticipantCountsForReplicaGroups(
-                       config.replica_count(), config.num_partitions(),
-                       device_list->replica_groups(), group_mode));
+                        GetParticipantCountsForReplicaGroups(
+                            config.replica_count(), config.num_partitions(),
+                            device_list->replica_groups(), group_mode));
   int64_t replica_group_size = participant_counts[0];
   for (int64_t participant_count : participant_counts) {
     if (participant_count != replica_group_size) {
@@ -829,7 +830,7 @@ GetParticipatingDevicesGroups(const HloInstruction* collective) {
   const DeviceAssignment& device_assignment =
       collective->GetModule()->config().static_device_assignment();
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
-                   GetCollectiveOpGroupMode(collective));
+                        GetCollectiveOpGroupMode(collective));
   return GetParticipatingDevicesGroups(device_assignment,
                                        collective->replica_groups(), mode);
 }
@@ -842,7 +843,7 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
   int partition_count = device_assignment.computation_count();
 
   ABSL_ASSIGN_OR_RETURN(const DeviceAssignment::LogicalID logical_id,
-                   device_assignment.LogicalIdForDevice(device_id));
+                        device_assignment.LogicalIdForDevice(device_id));
   int current_replica_id = logical_id.replica_id;
   int current_partition_id = logical_id.computation_id;
   TF_RET_CHECK(0 <= current_replica_id && current_replica_id < replica_count)
@@ -858,8 +859,8 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
       // use current replica id to find the set of participating replicas. If
       // replica groups are empty, assume a group with all replicas.
       ABSL_ASSIGN_OR_RETURN(std::vector<int> participating_replicas,
-                       GetParticipatingIDs(group_mode, current_replica_id,
-                                           replica_count, replica_groups));
+                            GetParticipatingIDs(group_mode, current_replica_id,
+                                                replica_count, replica_groups));
 
       // The set of participating devices is the replicas from the current
       // partition.
@@ -876,9 +877,10 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
     case CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION: {
       // replica_groups contain partition_id, group contains all partitions for
       // the current replica.
-      ABSL_ASSIGN_OR_RETURN(std::vector<int> participating_partitions,
-                       GetParticipatingIDs(group_mode, current_partition_id,
-                                           partition_count, replica_groups));
+      ABSL_ASSIGN_OR_RETURN(
+          std::vector<int> participating_partitions,
+          GetParticipatingIDs(group_mode, current_partition_id, partition_count,
+                              replica_groups));
       participants.reserve(participating_partitions.size());
       for (int partition_id : participating_partitions) {
         TF_RET_CHECK(0 <= partition_id && partition_id < partition_count)
@@ -894,8 +896,8 @@ absl::StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
       // replica_groups contain replica_ids. Group contains replicas for all
       // partitions.
       ABSL_ASSIGN_OR_RETURN(std::vector<int> participating_replicas,
-                       GetParticipatingIDs(group_mode, current_replica_id,
-                                           replica_count, replica_groups));
+                            GetParticipatingIDs(group_mode, current_replica_id,
+                                                replica_count, replica_groups));
       participants.reserve(participating_replicas.size() * partition_count);
       for (int replica_id : participating_replicas) {
         TF_RET_CHECK(0 <= replica_id && replica_id < replica_count)

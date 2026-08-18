@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/array2d.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 #define EIGEN_USE_THREADS
 
@@ -77,7 +77,7 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> GetExecutable(
     const XlaComputation& computation, bool export_executable) {
   NanoRtClient client;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<NanoRtExecutable> executable,
-                   client.Compile(computation));
+                        client.Compile(computation));
 
   if (export_executable) {
     ABSL_ASSIGN_OR_RETURN(auto exported, client.Export(executable.get()));

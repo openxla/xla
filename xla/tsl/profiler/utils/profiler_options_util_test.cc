@@ -15,15 +15,16 @@ limitations under the License.
 
 #include "xla/tsl/profiler/utils/profiler_options_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-#include "xla/tsl/platform/test.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 namespace profiler {

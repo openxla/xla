@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"

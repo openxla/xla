@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/fd_writer.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/tools/comparison/comparison_result.pb.h"
 #include "xla/hlo/tools/comparison/original_tensor_summary_utils.h"
 #include "xla/hlo/tools/hlo_diff/utils/bidirectional_map.h"
@@ -36,7 +37,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 namespace {
@@ -79,7 +79,7 @@ class OriginalTensorSummaryKeyMatcherTest : public ::testing::Test {
     CHECK_OK(WriteSummaries(baseline_file_, baseline_summaries));
     CHECK_OK(WriteSummaries(target_file_, target_summaries));
     ABSL_ASSIGN_OR_RETURN(matcher_, OriginalTensorSummaryKeyMatcher::Create(
-                                   bimap_, baseline_file_, target_file_));
+                                        bimap_, baseline_file_, target_file_));
     return absl::OkStatus();
   }
   void AddBimap(const std::string& baseline, const std::string& target) {

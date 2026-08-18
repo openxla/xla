@@ -923,8 +923,6 @@ ENTRY main {
   EXPECT_TRUE(AnyValuesInSameBufferInterfere());
 }
 
-
-
 TEST_F(HloAliasAnalysisTest, Bitcast) {
   // Bitcasting a value should not produce a new buffer.
   const char* hlo_string = R"(

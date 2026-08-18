@@ -98,10 +98,11 @@ absl::Status UpdateFusionUsers(HloInstruction* fusion_instruction,
     for (HloInstruction* gte : users) {
       // Replace and change control successors to be dependent on the fusion
       // instruction itself.
-      ABSL_ASSIGN_OR_RETURN(std::ignore, gte->parent()->ReplaceInstruction(
-                                        gte, fusion_instruction,
-                                        /*preserve_sharding=*/true,
-                                        /*relay_control_dependency=*/true));
+      ABSL_ASSIGN_OR_RETURN(
+          std::ignore,
+          gte->parent()->ReplaceInstruction(gte, fusion_instruction,
+                                            /*preserve_sharding=*/true,
+                                            /*relay_control_dependency=*/true));
     }
   }
   return absl::OkStatus();
@@ -428,7 +429,7 @@ absl::StatusOr<bool> RemoveDanglingComputations(
 
   bool changed = false;
   ABSL_ASSIGN_OR_RETURN(bool fusion_changed,
-                   RemoveMultiOutputFusionsUnusedOutputs(computation));
+                        RemoveMultiOutputFusionsUnusedOutputs(computation));
   changed |= fusion_changed;
 
   ABSL_ASSIGN_OR_RETURN(

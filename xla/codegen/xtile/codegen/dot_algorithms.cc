@@ -128,9 +128,9 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
   }
 
   ABSL_ASSIGN_OR_RETURN(Type lhs_elem_type,
-                   PrimitiveTypeToMlirType(b, lhs_primitive_type));
+                        PrimitiveTypeToMlirType(b, lhs_primitive_type));
   ABSL_ASSIGN_OR_RETURN(Type rhs_elem_type,
-                   PrimitiveTypeToMlirType(b, rhs_primitive_type));
+                        PrimitiveTypeToMlirType(b, rhs_primitive_type));
 
   auto dot_scaled_op = xtile::DotScaledOp::create(
       b, operands.accumulator.getType(), operands.lhs, operands.rhs, lhs_scale,
@@ -223,7 +223,8 @@ absl::StatusOr<std::optional<Type>> GetForceOperandsType(
   std::vector<Type> allowed_operands_types;
   allowed_operands_types.reserve(allowed_operands_primitive_types.size());
   for (PrimitiveType primitive_type : allowed_operands_primitive_types) {
-    ABSL_ASSIGN_OR_RETURN(Type type, PrimitiveTypeToMlirType(b, primitive_type));
+    ABSL_ASSIGN_OR_RETURN(Type type,
+                          PrimitiveTypeToMlirType(b, primitive_type));
     allowed_operands_types.push_back(type);
   }
 
@@ -264,7 +265,7 @@ absl::StatusOr<Type> GetDotAccumulatorType(mlir::ImplicitLocOpBuilder& b,
   }
 
   ABSL_ASSIGN_OR_RETURN(PrimitiveType accumulator_type,
-                   algorithm_util::GetDotAccumulatorType(algorithm));
+                        algorithm_util::GetDotAccumulatorType(algorithm));
   return PrimitiveTypeToMlirType(b, accumulator_type);
 }
 
@@ -280,9 +281,10 @@ absl::StatusOr<Value> EmitSingleTileDot(mlir::ImplicitLocOpBuilder& b,
           dot.precision_config().operand_precision(1))};
 
   ABSL_ASSIGN_OR_RETURN(std::optional<Type> force_operands_type,
-                   GetForceOperandsType(b, dot, dot_operands));
+                        GetForceOperandsType(b, dot, dot_operands));
 
-  ABSL_ASSIGN_OR_RETURN(Type force_accumulator_type, GetDotAccumulatorType(b, dot));
+  ABSL_ASSIGN_OR_RETURN(Type force_accumulator_type,
+                        GetDotAccumulatorType(b, dot));
 
   if (force_operands_type.has_value()) {
     if (ElementType(dot_operands.lhs) != *force_operands_type) {

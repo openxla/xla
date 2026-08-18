@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/evaluator/hlo_evaluator_interface.h"
@@ -74,7 +75,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -242,12 +242,12 @@ absl::Status RunAndCompareInternal(
             .status());
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto args,
-                   copy_result_on_failure(
-                       MakeFakeArguments(test_module.get(), engine,
-                                         options.use_large_float_range,
-                                         options.treat_gte_as_data_formatting),
-                       ModuleResult::kOtherError, test_run_result));
+  ABSL_ASSIGN_OR_RETURN(
+      auto args, copy_result_on_failure(
+                     MakeFakeArguments(test_module.get(), engine,
+                                       options.use_large_float_range,
+                                       options.treat_gte_as_data_formatting),
+                     ModuleResult::kOtherError, test_run_result));
   // Use provided input literals as arguments, if any.
   if (iteration_literals_proto != nullptr &&
       iteration_literals_proto->arguments_size() != 0) {
@@ -260,9 +260,10 @@ absl::Status RunAndCompareInternal(
           "number of expected arguments.");
     } else {
       for (int i = 0; i < args.size(); ++i) {
-        ABSL_ASSIGN_OR_RETURN(auto expected_shape,
-                         xla::Shape::FromProto(
-                             iteration_literals_proto->arguments(i).shape()));
+        ABSL_ASSIGN_OR_RETURN(
+            auto expected_shape,
+            xla::Shape::FromProto(
+                iteration_literals_proto->arguments(i).shape()));
         if (!literal_comparison::EqualShapes(xla::Shape(args[i].shape()),
                                              expected_shape)
                  .ok()) {
@@ -548,13 +549,13 @@ absl::Status RunAndCompare(
     input_format = std::string(tsl::io::Extension(hlo_filename));
   }
   BufferAssignmentProto buffer_assignment_proto;
-  ABSL_ASSIGN_OR_RETURN(auto test_module,
-                   LoadModuleFromFile(hlo_filename, input_format,
-                                      hlo_module_loader_details::Config(),
-                                      config_modifier_hook,
-                                      options.use_buffer_assignment_from_proto
-                                          ? &buffer_assignment_proto
-                                          : nullptr));
+  ABSL_ASSIGN_OR_RETURN(
+      auto test_module,
+      LoadModuleFromFile(
+          hlo_filename, input_format, hlo_module_loader_details::Config(),
+          config_modifier_hook,
+          options.use_buffer_assignment_from_proto ? &buffer_assignment_proto
+                                                   : nullptr));
   HloVerifier verifier(
       HloVerifierOpts{}.WithLayoutSensitive(false).WithAllowMixedPrecision(
           true));
@@ -577,7 +578,7 @@ absl::Status RunAndCompare(
       // User is giving a snapshot (which contains inputs)
       LOG(INFO) << "Using input data from the user-provided snapshot.";
       ABSL_ASSIGN_OR_RETURN(iteration_literals_proto_local,
-                       LoadInputFromFile(hlo_filename, input_format));
+                            LoadInputFromFile(hlo_filename, input_format));
       iteration_literals_proto = iteration_literals_proto_local.get();
     } else if (input_format == "pb" || input_format == "pbtxt") {
       LOG(INFO)

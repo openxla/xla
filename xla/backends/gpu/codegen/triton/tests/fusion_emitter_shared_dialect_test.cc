@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/codegen/triton/xtile_test_base.h"
 #include "xla/hlo/ir/hlo_module.h"

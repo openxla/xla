@@ -249,8 +249,9 @@ HloSharding::DisassembleUneven(
     const Shape& shape,
     SingleDeviceShardSemantics single_device_shard_semantics) const {
   // Slow path that uses `IndexDomains()` to handle uneven sharding.
-  ABSL_ASSIGN_OR_RETURN(std::vector<IndexDomain> index_domains,
-                   IndexDomains(shape, SingleDeviceShardSemantics::kAllShards));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<IndexDomain> index_domains,
+      IndexDomains(shape, SingleDeviceShardSemantics::kAllShards));
   CHECK_EQ(index_domains.size(), devices_->size());
   std::vector<std::pair<Shape, ShardingRef>> result;
   if (single_device_shard_semantics == SingleDeviceShardSemantics::kAllShards) {

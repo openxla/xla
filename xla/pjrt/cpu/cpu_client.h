@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/executable_run_options.h"
@@ -78,7 +79,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -382,9 +382,9 @@ class PjRtCpuClient final : public CommonPjRtClient {
       std::shared_ptr<DeviceAssignment> device_assignment);
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-  LoadSerializedExecutableInternal(google::protobuf::io::ZeroCopyInputStream* stream,
-                                   std::optional<CompileOptions> options,
-                                   const LoadOptions& load_options);
+  LoadSerializedExecutableInternal(
+      google::protobuf::io::ZeroCopyInputStream* stream,
+      std::optional<CompileOptions> options, const LoadOptions& load_options);
 
   int process_index_;
   // Includes all devices, including non-addressable devices.

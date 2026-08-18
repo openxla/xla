@@ -349,4 +349,3 @@ TEST_F(LayerNormTest, LayerNormTest1_BF16) {
 
 }  // namespace
 }  // namespace xla
-

@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -25,8 +28,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "Eigen/Core"
 #include "absl/log/log.h"
 #include "absl/random/uniform_int_distribution.h"
 #include "absl/status/status.h"
@@ -38,13 +40,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
+#include "tsl/platform/path.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
@@ -83,7 +85,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace gpu {
@@ -136,7 +137,7 @@ class TritonEmitterTest
                             absl::string_view triton_fusion_name,
                             absl::string_view filecheck_pattern) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     return XTileTestBase::CreateXTileIrAndFileCheck(
         std::move(module), triton_fusion_name, filecheck_pattern);
   }
@@ -144,7 +145,7 @@ class TritonEmitterTest
       absl::string_view hlo_text, absl::string_view triton_fusion_name,
       absl::string_view filecheck_pattern) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     return CreateTritonIrAndFileCheck(module.get(), triton_fusion_name,
                                       filecheck_pattern);
   }
@@ -152,7 +153,7 @@ class TritonEmitterTest
       absl::string_view hlo_text, absl::string_view triton_fusion_name,
       absl::string_view filecheck_pattern) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     return CreateTritonIrAndFileCheckForDot(module.get(), triton_fusion_name,
                                             filecheck_pattern);
   }
@@ -2571,7 +2572,7 @@ class TritonScaledDotTestBase : public TritonEmitterTest {
       const HloModule* module) {
     std::minstd_rand0 engine;
     ABSL_ASSIGN_OR_RETURN(std::vector<Literal> arguments,
-                     MakeFakeArguments(module, &engine));
+                          MakeFakeArguments(module, &engine));
     if (arguments.size() != 4) {
       return absl::InternalError(absl::StrCat(
           "Expected 4 scaled-dot arguments, got ", arguments.size()));

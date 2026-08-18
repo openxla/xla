@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/collective_permute_decomposer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"

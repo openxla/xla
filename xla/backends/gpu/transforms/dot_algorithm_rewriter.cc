@@ -409,13 +409,13 @@ DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32(HloInstruction* lhs,
   if (lhs->shape().element_type() == PrimitiveType::BF16 &&
       rhs->shape().element_type() == PrimitiveType::BF16) {
     ABSL_ASSIGN_OR_RETURN(auto result_bf16,
-                     MakeBinaryHlo(HloOpcode::kMultiply, lhs, rhs));
+                          MakeBinaryHlo(HloOpcode::kMultiply, lhs, rhs));
     return UpcastToF32(result_bf16);
   }
   auto lhs_bf16 = RoundToBF16(lhs);
   auto rhs_bf16 = RoundToBF16(rhs);
-  ABSL_ASSIGN_OR_RETURN(auto result_bf16,
-                   MakeBinaryHlo(HloOpcode::kMultiply, lhs_bf16, rhs_bf16));
+  ABSL_ASSIGN_OR_RETURN(auto result_bf16, MakeBinaryHlo(HloOpcode::kMultiply,
+                                                        lhs_bf16, rhs_bf16));
   return UpcastToF32(result_bf16);
 }
 

@@ -687,7 +687,7 @@ absl::StatusOr<DevicelessLookupParams> GetDevicelessLookupParams(
 absl::StatusOr<bool> DevicelessTableHasDataForSort(
     const DevicelessLookupParams& params) {
   ABSL_ASSIGN_OR_RETURN(const CubScratchSizeDevicelessLookup& lookup,
-                   CubScratchSizeDevicelessLookup::GetInstance());
+                        CubScratchSizeDevicelessLookup::GetInstance());
   return lookup.CanLookup(params.cub_version, params.device_name,
                           params.key_type_size, params.value_type_size,
                           params.num_items, params.batch_size);
@@ -749,12 +749,12 @@ absl::StatusOr<bool> ShouldRewriteSort(
   // CUB API to do so requires a device, so we need to differentiate between
   // deviceless and non-deviceless compilation here.
   ABSL_ASSIGN_OR_RETURN(DevicelessLookupParams lookup_params,
-                   GetDevicelessLookupParams(device_description, sort));
+                        GetDevicelessLookupParams(device_description, sort));
 
   if (deviceless_cub_mode ==
       DebugOptions::DEVICELESS_CUB_FORCE_ON_NO_FALLBACK) {
     ABSL_ASSIGN_OR_RETURN(bool has_deviceless_data,
-                     DevicelessTableHasDataForSort(lookup_params));
+                          DevicelessTableHasDataForSort(lookup_params));
     if (!has_deviceless_data) {
       return absl::NotFoundError(absl::StrFormat(
           "Missing deviceless CUB scratch size data for sort. Lookup "
@@ -780,7 +780,7 @@ absl::StatusOr<bool> ShouldRewriteSort(
   }
 
   ABSL_ASSIGN_OR_RETURN(bool has_deviceless_data,
-                   DevicelessTableHasDataForSort(lookup_params));
+                        DevicelessTableHasDataForSort(lookup_params));
   if (has_deviceless_data) {
     return true;
   }
@@ -892,7 +892,8 @@ absl::StatusOr<bool> SortRewriter::RunOnInstruction(
   }
 
   // Replace sort operation with custom call followed by GTE.
-  ABSL_RETURN_IF_ERROR(sort_op->parent()->ReplaceInstruction(sort_op, replacement));
+  ABSL_RETURN_IF_ERROR(
+      sort_op->parent()->ReplaceInstruction(sort_op, replacement));
   return true;
 }
 
@@ -940,7 +941,7 @@ absl::StatusOr<bool> SortRewriter::RunImpl(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     ABSL_ASSIGN_OR_RETURN(bool result,
-                     RunOnComputation(computation, deviceless_cub_mode));
+                          RunOnComputation(computation, deviceless_cub_mode));
     changed |= result;
   }
   XLA_VLOG_LINES(3, "SortRewriter::RunImpl(), after:\n" + module->ToString());

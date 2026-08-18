@@ -241,9 +241,10 @@ absl::StatusOr<MlirKernelSource> MlirKernelEmitter::Emit(
     mlir::MLIRContext* mlir_context, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment) const {
-  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                   CreateMLIRModule(*mlir_context, fusion, entry_function_name,
-                                    buffer_assignment));
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> module,
+      CreateMLIRModule(*mlir_context, fusion, entry_function_name,
+                       buffer_assignment));
   return MlirKernelSource(nullptr, std::move(module));
 }
 
@@ -366,8 +367,8 @@ AsyncThunkSequence MlirKernelFusion::Emit(
     const HloFusionInstruction& fusion) const {
   VLOG(4) << "Fusion: " << fusion.fused_instructions_computation()->ToString();
   ABSL_ASSIGN_OR_RETURN(auto args, emitters::KernelArguments::Create(
-                                  ir_emitter_context.buffer_assignment(),
-                                  GetDefaultBufferAlignment(), &fusion));
+                                       ir_emitter_context.buffer_assignment(),
+                                       GetDefaultBufferAlignment(), &fusion));
   auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
       fusion.fused_instructions_computation(), args.args(),
       /*discriminator=*/"MlirKernelFusion",
@@ -405,23 +406,24 @@ AsyncThunkSequence MlirKernelFusion::Emit(
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       &fusion, ir_emitter_context.GetNextThunkId());
   bool kernel_cached = cached;
-  return future_entry.Map([&fusion, thunk_info = std::move(thunk_info),
-                           args = std::move(args), kernel_cached](
-                              const KernelReuseCache::Entry* entry) mutable
-                              -> absl::StatusOr<ThunkSequence> {
-    if (kernel_cached) {
-      VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry->kernel_name;
-    }
-    ABSL_ASSIGN_OR_RETURN(CustomKernel custom_kernel,
-                     kernel::CreateOwnedCubinCustomKernel(
-                         entry->kernel_name, entry->binary, args.args().size(),
-                         entry->launch_dimensions.block_counts(),
-                         entry->launch_dimensions.thread_counts_per_block(),
-                         entry->shmem_bytes));
+  return future_entry.Map(
+      [&fusion, thunk_info = std::move(thunk_info), args = std::move(args),
+       kernel_cached](const KernelReuseCache::Entry* entry) mutable
+          -> absl::StatusOr<ThunkSequence> {
+        if (kernel_cached) {
+          VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry->kernel_name;
+        }
+        ABSL_ASSIGN_OR_RETURN(
+            CustomKernel custom_kernel,
+            kernel::CreateOwnedCubinCustomKernel(
+                entry->kernel_name, entry->binary, args.args().size(),
+                entry->launch_dimensions.block_counts(),
+                entry->launch_dimensions.thread_counts_per_block(),
+                entry->shmem_bytes));
 
-    return ThunkSequence::Of<CustomKernelThunk>(
-        thunk_info, std::move(custom_kernel), args, entry->use_pdl);
-  });
+        return ThunkSequence::Of<CustomKernelThunk>(
+            thunk_info, std::move(custom_kernel), args, entry->use_pdl);
+      });
 }
 
 xla::Future<LlvmKernelSource> MlirKernelFusion::CreateLLVMModule(
@@ -435,8 +437,8 @@ xla::Future<LlvmKernelSource> MlirKernelFusion::CreateLLVMModule(
   mlir_context->loadAllAvailableDialects();
 
   ABSL_ASSIGN_OR_RETURN(MlirKernelSource source,
-                   emitter_->Emit(mlir_context, fusion, entry_function_name,
-                                  buffer_assignment));
+                        emitter_->Emit(mlir_context, fusion,
+                                       entry_function_name, buffer_assignment));
 
   if (DoesPdlLaunch(fusion)) {
     source.module()->setAttr(kXlaPdlLaunch, mlir::UnitAttr::get(mlir_context));
@@ -458,12 +460,13 @@ MlirKernelEmitter::CreateMLIRModule(
   mlir::OwningOpRef<mlir::ModuleOp> module = llvm_ir::CreateMlirModuleOp(loc);
 
   ABSL_ASSIGN_OR_RETURN(mlir::func::FuncOp entry_func,
-                   emitters::EmitKernelApi(*module, fusion, buffer_assignment,
-                                           GetDefaultBufferAlignment(),
-                                           entry_function_name));
+                        emitters::EmitKernelApi(
+                            *module, fusion, buffer_assignment,
+                            GetDefaultBufferAlignment(), entry_function_name));
   SetBackendKind(&mlir_context, entry_func, BackendKind::kGpu);
 
-  ABSL_RETURN_IF_ERROR(EmitMlir(module.get(), entry_func, fusion, mlir_context));
+  ABSL_RETURN_IF_ERROR(
+      EmitMlir(module.get(), entry_func, fusion, mlir_context));
   return module;
 }
 
@@ -537,8 +540,9 @@ absl::Status MlirKernelEmitter::EmitMlir(mlir::ModuleOp module,
   emitters::PartitionedComputations computations(
       fusion.fused_instructions_computation(), &mlir_context, epilogues);
 
-  ABSL_ASSIGN_OR_RETURN(auto call_targets,
-                   emitters::EmitPartitionedComputations(module, computations));
+  ABSL_ASSIGN_OR_RETURN(
+      auto call_targets,
+      emitters::EmitPartitionedComputations(module, computations));
 
   emitters::SetIndexDataLayout(module, fusion);
 

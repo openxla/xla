@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/xla_sharding_spec.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"

@@ -20,12 +20,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
+#include "tsl/platform/casts.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 

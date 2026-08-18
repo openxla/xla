@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/slice.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <numeric>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "xla/service/time_utils.h"

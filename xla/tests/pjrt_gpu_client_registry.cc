@@ -25,17 +25,16 @@ namespace xla {
 namespace {
 
 // Register a GPU PjRt client for tests.
-const bool kUnused =
-    (RegisterPjRtClientTestFactory([]() {
-       GpuAllocatorConfig gpu_config;
-       gpu_config.kind = GpuAllocatorConfig::Kind::kDefault;
-       gpu_config.preallocate = false;
-       gpu_config.collective_memory_size = 0;
-       GpuClientOptions options;
-       options.allocator_config = std::move(gpu_config);
-       return GetXlaPjrtGpuClient(options);
-     }),
-     true);
+const bool kUnused = (RegisterPjRtClientTestFactory([]() {
+                        GpuAllocatorConfig gpu_config;
+                        gpu_config.kind = GpuAllocatorConfig::Kind::kDefault;
+                        gpu_config.preallocate = false;
+                        gpu_config.collective_memory_size = 0;
+                        GpuClientOptions options;
+                        options.allocator_config = std::move(gpu_config);
+                        return GetXlaPjrtGpuClient(options);
+                      }),
+                      true);
 
 }  // namespace
 }  // namespace xla

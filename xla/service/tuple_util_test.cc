@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/service/tuple_util.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -26,7 +28,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

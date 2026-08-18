@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
@@ -84,9 +85,9 @@ CreateHostExecuteStartThunk(
       *host_offloading_executable_proto.mutable_hlo_module());
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::cpu::NanoRtExecutable> executable,
-                   client.Compile(host_computation));
+                        client.Compile(host_computation));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CompiledModule> aot_compilation_result,
-                   client.Export(executable.get()));
+                        client.Export(executable.get()));
 
   xla::cpu::CpuAotCompilationResult* cpu_aot_compilation_result =
       absl::down_cast<cpu::CpuAotCompilationResult*>(

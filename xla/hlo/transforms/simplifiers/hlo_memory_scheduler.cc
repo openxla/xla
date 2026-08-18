@@ -37,6 +37,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -56,8 +58,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla {
 namespace {
@@ -443,7 +443,7 @@ absl::StatusOr<HloSchedule> ComputationSchedulerAlgorithm::Run(
        module->MakeComputationPostOrder(execution_threads)) {
     if (!computation->IsFusionComputation()) {
       ABSL_ASSIGN_OR_RETURN(HloInstructionSequence computation_sequence,
-                       Run(computation, alias_analysis));
+                            Run(computation, alias_analysis));
       if (postprocessor_) {
         computation_sequence = postprocessor_(computation_sequence);
       }
@@ -452,15 +452,14 @@ absl::StatusOr<HloSchedule> ComputationSchedulerAlgorithm::Run(
   }
   if (peak_memory) {
     ABSL_ASSIGN_OR_RETURN(*peak_memory, HeapSimulator::MinimumMemoryForModule(
-                                       schedule, alias_analysis, alias_info_,
-                                       size_function_));
+                                            schedule, alias_analysis,
+                                            alias_info_, size_function_));
   }
   return schedule;
 }
 
 absl::StatusOr<HloInstructionSequence> DFSMemoryScheduler::Run(
-    HloComputation* computation,
-    const HloAliasAnalysis& alias_analysis) const {
+    HloComputation* computation, const HloAliasAnalysis& alias_analysis) const {
   // These variables are a hack to prevent overflows.
   int64_t cumulative_total_size = 0;
   int64_t total_hlos = computation->instruction_count();
@@ -537,8 +536,7 @@ absl::StatusOr<HloInstructionSequence> DFSMemoryScheduler::Run(
 }
 
 absl::StatusOr<HloInstructionSequence> BFScheduler::Run(
-    HloComputation* computation,
-    const HloAliasAnalysis& alias_analysis) const {
+    HloComputation* computation, const HloAliasAnalysis& alias_analysis) const {
   // Index of HloInstruction in the `computation`.
   absl::flat_hash_map<const HloInstruction*, int64_t> inst_index;
 
@@ -590,14 +588,12 @@ absl::StatusOr<HloInstructionSequence> BFScheduler::Run(
 }
 
 absl::StatusOr<HloInstructionSequence> ListMemoryScheduler::Run(
-    HloComputation* computation,
-    const HloAliasAnalysis& alias_analysis) const {
+    HloComputation* computation, const HloAliasAnalysis& alias_analysis) const {
   return ListScheduler::Run(computation, alias_analysis, size_function_);
 }
 
 absl::StatusOr<HloInstructionSequence> PostOrderScheduler::Run(
-    HloComputation* computation,
-    const HloAliasAnalysis& alias_analysis) const {
+    HloComputation* computation, const HloAliasAnalysis& alias_analysis) const {
   return HloInstructionSequence(computation->MakeInstructionPostOrder());
 }
 
@@ -616,8 +612,8 @@ absl::StatusOr<HloSchedule> DefaultMemoryScheduler::Run(
   MemorySchedulerMetrics memory_scheduler_metrics;
   int64_t list_memory;
   ABSL_ASSIGN_OR_RETURN(HloSchedule list_sequence,
-                   list_scheduler_.Run(module, alias_analysis,
-                                       execution_threads, &list_memory));
+                        list_scheduler_.Run(module, alias_analysis,
+                                            execution_threads, &list_memory));
   MetricsForSingleMemoryScheduler* list_metrics =
       memory_scheduler_metrics.add_schedulers();
   list_metrics->set_type(MemorySchedulerProto::LIST);
@@ -627,8 +623,8 @@ absl::StatusOr<HloSchedule> DefaultMemoryScheduler::Run(
 
   int64_t dfs_memory;
   ABSL_ASSIGN_OR_RETURN(HloSchedule dfs_sequence,
-                   dfs_scheduler_.Run(module, alias_analysis, execution_threads,
-                                      &dfs_memory));
+                        dfs_scheduler_.Run(module, alias_analysis,
+                                           execution_threads, &dfs_memory));
   MetricsForSingleMemoryScheduler* dfs_metrics =
       memory_scheduler_metrics.add_schedulers();
   dfs_metrics->set_type(MemorySchedulerProto::DFS);
@@ -697,7 +693,7 @@ absl::StatusOr<HloSchedule> ScheduleModule(
                            module->name(), module->unique_id());
   });
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                   HloAliasAnalysis::Run(module, algorithm.alias_info()));
+                        HloAliasAnalysis::Run(module, algorithm.alias_info()));
 
   ABSL_ASSIGN_OR_RETURN(
       HloSchedule schedule,
@@ -722,7 +718,7 @@ absl::StatusOr<bool> HloMemoryScheduler::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
-                   ScheduleModule(module, *algorithm_, execution_threads));
+                        ScheduleModule(module, *algorithm_, execution_threads));
   ABSL_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
   return true;
 }

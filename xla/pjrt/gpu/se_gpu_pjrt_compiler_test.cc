@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -104,7 +105,7 @@ constexpr absl::string_view kMlirProgramWithAutoLayout = R"mlir(
 absl::StatusOr<xla::XlaComputation> GetXlaComputation(
     absl::string_view program) {
   ABSL_ASSIGN_OR_RETURN(auto hlo_module,
-                   xla::ParseAndReturnUnverifiedModule(program, {}));
+                        xla::ParseAndReturnUnverifiedModule(program, {}));
 
   return XlaComputation(hlo_module->ToProto());
 }
@@ -402,9 +403,9 @@ TEST(StreamExecutorGpuCompilerTest, CrossCompilation) {
 
 absl::StatusOr<std::shared_ptr<GpuTopology>> GetSampleH100basedGpuTopology() {
   ABSL_ASSIGN_OR_RETURN(auto gpu_target_config_proto,
-                   gpu::GetGpuTargetConfig(gpu::GpuModel::H100_SXM));
-  ABSL_ASSIGN_OR_RETURN(auto gpu_target_config,
-                   gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
+                        gpu::GetGpuTargetConfig(gpu::GpuModel::H100_SXM));
+  ABSL_ASSIGN_OR_RETURN(auto gpu_target_config, gpu::GpuTargetConfig::FromProto(
+                                                    gpu_target_config_proto));
   cpu::TargetMachineOptions host_target_machine_options(
       "some_triple", "some_cpu", "+some_feature,-some_other_feature");
   return std::make_shared<GpuTopology>(GetSingleDeviceGpuTopology(

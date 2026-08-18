@@ -63,7 +63,7 @@ limitations under the License.
   [&]() -> absl::StatusOr<ValueT> {                                     \
     ValueT value;                                                       \
     size_t size;                                                        \
-    ABSL_RETURN_IF_ERROR(ToStatus(                                           \
+    ABSL_RETURN_IF_ERROR(ToStatus(                                      \
         getter(handle, attr, &value, sizeof(ValueT), &size), #getter)); \
     return std::move(value);                                            \
   }()
@@ -174,7 +174,7 @@ absl::Status BlasLt::Init() {
   if (m.order != gpu::MatrixLayout::Order::kColumnMajor)
     return absl::InternalError("HipblasLT does not support row-major matrices");
   ABSL_RETURN_IF_ERROR(SetAttr(hip_layout, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
-                          static_cast<int32_t>(m.batch_size)));
+                               static_cast<int32_t>(m.batch_size)));
 
   VLOG(2) << "BlasLt::MatrixLayout::Create type: " << (int)type
           << " rows: " << m.num_rows << " cols: " << m.num_cols
@@ -183,8 +183,8 @@ absl::Status BlasLt::Init() {
           << " batch_stride: " << m.batch_stride;
 
   ABSL_RETURN_IF_ERROR(SetAttr(hip_layout,
-                          HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET,
-                          m.batch_stride));
+                               HIPBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET,
+                               m.batch_stride));
   return std::move(layout);
 }
 
@@ -214,9 +214,9 @@ absl::Status BlasLt::Init() {
   }
 
   ABSL_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_TRANSA,
-                          AsHipblasOperation(trans_a)));
+                               AsHipblasOperation(trans_a)));
   ABSL_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_TRANSB,
-                          AsHipblasOperation(trans_b)));
+                               AsHipblasOperation(trans_b)));
   ABSL_ASSIGN_OR_RETURN(hipblasLtEpilogue_t epi, AsHipblasLtEpilogue(epilogue));
   ABSL_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_EPILOGUE, epi));
   return std::move(desc);
@@ -239,9 +239,9 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     Owned<hipblasLtMatmulPreference_t> preference(
         hip_preference, hipblasLtMatmulPreferenceDestroy);
 
-    ABSL_RETURN_IF_ERROR(SetAttr<uint64_t>(hip_preference,
-                                      HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-                                      max_workspace_size));
+    ABSL_RETURN_IF_ERROR(SetAttr<uint64_t>(
+        hip_preference, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+        max_workspace_size));
 
     std::unique_ptr<ActivateContext> activation =
         blas_lt_.executor_->Activate();
@@ -264,27 +264,27 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
       case gpu::ScaleMode::kTensorScaling: {
         static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
-                                &dummy_pointer));
+                                     HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
+                                     &dummy_pointer));
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
-                                &dummy_pointer));
+                                     HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
+                                     &dummy_pointer));
         break;
       }
       case gpu::ScaleMode::kBlockScaling: {
         static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
-                                &dummy_pointer));
+                                     HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
+                                     &dummy_pointer));
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
-                                &dummy_pointer));
+                                     HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
+                                     &dummy_pointer));
         hipblasLtMatmulMatrixScale_t mx_scale =
             HIPBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
-        ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                HIPBLASLT_MATMUL_DESC_A_SCALE_MODE, mx_scale));
-        ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                HIPBLASLT_MATMUL_DESC_B_SCALE_MODE, mx_scale));
+        ABSL_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), HIPBLASLT_MATMUL_DESC_A_SCALE_MODE, mx_scale));
+        ABSL_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), HIPBLASLT_MATMUL_DESC_B_SCALE_MODE, mx_scale));
         break;
       }
     }
@@ -359,7 +359,8 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
     return xla::Internal("The F8/MX RHS must be column-major");
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto output_dtype, gpu::AsBlasDataType(output_layout.dtype));
+  ABSL_ASSIGN_OR_RETURN(auto output_dtype,
+                        gpu::AsBlasDataType(output_layout.dtype));
 
   auto compute_type = cfg.compute_type;
   if (!compute_type) {  // obtain compute_type unless provided by the user
@@ -660,15 +661,16 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
   std::unique_ptr<EventBasedTimer> timer;
   if (profile_result != nullptr) {
     ABSL_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
-                                profile_result->warmup_run_executed()));
+                                     profile_result->warmup_run_executed()));
   }
 
   void* workspace_addr = nullptr;
   uint64_t workspace_size = workspace_size_;
   if (workspace_size > 0) {
     if (args.scratch_allocator != nullptr) {
-      ABSL_ASSIGN_OR_RETURN(DeviceAddress<uint8_t> alloc,
-                       args.scratch_allocator->AllocateBytes(workspace_size));
+      ABSL_ASSIGN_OR_RETURN(
+          DeviceAddress<uint8_t> alloc,
+          args.scratch_allocator->AllocateBytes(workspace_size));
       workspace_addr = gpu::GpuMemoryMutable(&alloc);
     } else {
       workspace_addr = args.workspace.opaque();
@@ -685,29 +687,29 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
     // potential race condition from multiple threads sharing the same plan.
     if (op_desc_.has_bias_epilogue() && args.bias != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              HIPBLASLT_MATMUL_DESC_BIAS_POINTER,
-                              args.bias.opaque()));
+                                   HIPBLASLT_MATMUL_DESC_BIAS_POINTER,
+                                   args.bias.opaque()));
     }
 
     if (a_scale != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
-                              a_scale.opaque()));
+                                   HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
+                                   a_scale.opaque()));
     }
     if (b_scale != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
-                              b_scale.opaque()));
+                                   HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
+                                   b_scale.opaque()));
     }
     if (args.c_scale != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              HIPBLASLT_MATMUL_DESC_C_SCALE_POINTER,
-                              args.c_scale.opaque()));
+                                   HIPBLASLT_MATMUL_DESC_C_SCALE_POINTER,
+                                   args.c_scale.opaque()));
     }
     if (args.d_scale != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
-                              args.d_scale.opaque()));
+                                   HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
+                                   args.d_scale.opaque()));
     }
     if (args.d_amax != nullptr) {
       return absl::InternalError("hipblaslt does not support amax");
@@ -909,9 +911,9 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   auto compute_type = cfg.compute_type;
   if (!compute_type) {  // obtain compute_type unless provided by the user
     ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_a,
-                     gpu::AsXlaPrimitiveType(cfg.type_a));
+                          gpu::AsXlaPrimitiveType(cfg.type_a));
     ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType primitive_type_d,
-                     gpu::AsXlaPrimitiveType(cfg.type_d));
+                          gpu::AsXlaPrimitiveType(cfg.type_d));
     ABSL_ASSIGN_OR_RETURN(
         compute_type,
         gpu::GetBlasComputationType(
@@ -1000,7 +1002,7 @@ absl::Status BlasLt::GroupedMatmulPlan::ExecuteOnStream(
 
   if (profile_result != nullptr) {
     ABSL_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
-                                profile_result->warmup_run_executed()));
+                                     profile_result->warmup_run_executed()));
   }
 
   uint32_t strideA1 = cfg_.lhs_leading_dim_stride;

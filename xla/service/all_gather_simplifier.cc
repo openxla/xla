@@ -83,8 +83,9 @@ absl::StatusOr<bool> AllGatherSimplifier::RunImpl(
   bool changed = false;
   for (auto computation : module->computations(execution_threads)) {
     for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
-      ABSL_ASSIGN_OR_RETURN(bool local_changed,
-                       CancelSingleDynamicSliceFromAllGather(module, inst));
+      ABSL_ASSIGN_OR_RETURN(
+          bool local_changed,
+          CancelSingleDynamicSliceFromAllGather(module, inst));
       changed |= local_changed;
     }
   }

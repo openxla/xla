@@ -47,6 +47,10 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/numbers.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
@@ -94,10 +98,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/numbers.h"
 
 namespace stream_executor {
 namespace gpu {
@@ -130,7 +130,7 @@ absl::StatusOr<hipModule_t> LoadHsaco(Context* context,
   hipModule_t module;
   ScopedActivateContext activated(context);
   ABSL_RETURN_IF_ERROR(ToStatus(hipModuleLoadData(&module, hsaco_contents),
-                           "Failed to load HSACO"));
+                                "Failed to load HSACO"));
   CHECK(module != nullptr);
 
   return module;
@@ -145,8 +145,9 @@ absl::StatusOr<hipFunction_t> GetModuleFunction(Context* context,
   ScopedActivateContext activated(context);
   CHECK(module != nullptr && kernel_name != nullptr);
   hipFunction_t function;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipModuleGetFunction(&function, module, kernel_name),
-                           "Failed to get kernel"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipModuleGetFunction(&function, module, kernel_name),
+               "Failed to get kernel"));
   return function;
 }
 
@@ -663,7 +664,8 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
     const char* hsaco = reinterpret_cast<const char*>(
         spec.cuda_cubin_in_memory()->cubin_bytes.data());
     absl::MutexLock lock{in_memory_modules_mu_};
-    ABSL_ASSIGN_OR_RETURN(ModuleHandle module_handle, LoadModuleFromHsaco(hsaco));
+    ABSL_ASSIGN_OR_RETURN(ModuleHandle module_handle,
+                          LoadModuleFromHsaco(hsaco));
     hipModule_t module = gpu_binary_to_module_.at(module_handle).first;
     kernel_to_gpu_binary_[rocm_kernel.get()] = module_handle;
 
@@ -698,7 +700,7 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
   // unable to get kernel metadata for in-process kernel
   if (!spec.has_in_process_symbol()) {
     ABSL_ASSIGN_OR_RETURN(KernelMetadata kernel_metadata,
-                     rocm_kernel->GetKernelMetadata());
+                          rocm_kernel->GetKernelMetadata());
     rocm_kernel->set_metadata(kernel_metadata);
   }
   rocm_kernel->set_name(kernel_name);
@@ -856,8 +858,8 @@ RocmExecutor::CreateMemoryAllocator(MemorySpace type) {
       return std::make_unique<GenericMemoryAllocator>(
           [this](uint64_t size)
               -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-            ABSL_ASSIGN_OR_RETURN(void* ptr,
-                             CollectiveMemoryAllocate(&rocm_context_, size));
+            ABSL_ASSIGN_OR_RETURN(
+                void* ptr, CollectiveMemoryAllocate(&rocm_context_, size));
             return std::make_unique<GenericMemoryAllocation>(
                 ptr, size, [this](void* location, uint64_t size) {
                   CollectiveMemoryDeallocate(&rocm_context_, location);
@@ -1092,7 +1094,8 @@ absl::Status FillBlockDimLimit(hipDevice_t device, BlockDim* block_dim_limit) {
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<Event>> RocmExecutor::CreateEvent() {
-  ABSL_ASSIGN_OR_RETURN(auto event, RocmEvent::Create(this, /*allow_timing=*/false));
+  ABSL_ASSIGN_OR_RETURN(auto event,
+                        RocmEvent::Create(this, /*allow_timing=*/false));
   return std::make_unique<RocmEvent>(std::move(event));
 }
 
@@ -1251,19 +1254,19 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   desc.set_threads_per_warp(GetThreadsPerWarp(device).value());
   {
     ABSL_ASSIGN_OR_RETURN(int64_t regs_per_mp,
-                     GetMaxRegistersPerMultiprocessor(device));
+                          GetMaxRegistersPerMultiprocessor(device));
     desc.set_registers_per_core_limit(regs_per_mp);
   }
   desc.set_compile_time_toolkit_version(
       SemanticVersion{HIP_VERSION_MAJOR, HIP_VERSION_MINOR, HIP_VERSION_PATCH});
   int32_t runtime_version;
   ABSL_RETURN_IF_ERROR(ToStatus(hipRuntimeGetVersion(&runtime_version),
-                           "Failed call to hipRuntimeGetVersion"));
+                                "Failed call to hipRuntimeGetVersion"));
   desc.set_runtime_version(
       ParseRocmVersion(runtime_version).value_or(SemanticVersion{0, 0, 0}));
   int32_t driver_version;
   ABSL_RETURN_IF_ERROR(ToStatus(hipDriverGetVersion(&driver_version),
-                           "Could not get driver version"));
+                                "Could not get driver version"));
   desc.set_driver_version(
       ParseRocmVersion(driver_version).value_or(SemanticVersion{0, 0, 0}));
   // This is currently hardcoded in rocm_dnn.cc.

@@ -3117,7 +3117,7 @@ absl::Status HloFusionInstruction::DeduplicateFusionOperands() {
     return absl::OkStatus();
   }
   ABSL_RETURN_IF_ERROR(fused_instructions_computation()
-                      ->RemoveUnusedParametersFromFusedComputation());
+                           ->RemoveUnusedParametersFromFusedComputation());
   RemoveOperandsAtAscendingIndices(operands_to_remove);
   return absl::OkStatus();
 }

@@ -34,7 +34,7 @@ class CpuSpmdCompileTest : public HloTestBase {};
 
 TEST_F(CpuSpmdCompileTest, SinglePartition) {
   // Module with "Sharding" custom call and use_spmd_partitioning enabled.
-  const char *const hlo_string = R"(
+  const char* const hlo_string = R"(
 HloModule module
 
 ENTRY entry {

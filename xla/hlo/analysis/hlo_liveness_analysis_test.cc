@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/analysis/hlo_liveness_analysis.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -26,7 +28,6 @@ limitations under the License.
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

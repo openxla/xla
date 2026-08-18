@@ -203,8 +203,9 @@ absl::StatusOr<bool> ProcessFusionInstruction(
                                        .debug_options()
                                        .xla_dump_fusion_visualization();
 
-  ABSL_ASSIGN_OR_RETURN(bool should_try_rewrite,
-                   ShouldTryRewriteFusion(fusion_instruction, device_info));
+  ABSL_ASSIGN_OR_RETURN(
+      bool should_try_rewrite,
+      ShouldTryRewriteFusion(fusion_instruction, device_info));
   if (!should_try_rewrite) {
     VLOG(2) << "Not rewriting fusion " << fusion_instruction->ToString()
             << " because it is not supported.";
@@ -230,7 +231,7 @@ absl::StatusOr<bool> ProcessFusionInstruction(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                   fusion_instruction->backend_config<GpuBackendConfig>());
+                        fusion_instruction->backend_config<GpuBackendConfig>());
 
   if (backend_config.has_fusion_backend_config() &&
       backend_config.fusion_backend_config().has_block_level_fusion_config()) {

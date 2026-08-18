@@ -131,13 +131,13 @@ absl::Status CopyCollectiveMetadataToDevice(
           ? reinterpret_cast<void**>(multimem_addresses_buffer.opaque())
           : nullptr;
   ABSL_RETURN_IF_ERROR(stream->Memcpy(&destination, &metadata,
-                                 sizeof(CollectiveKernelMetadata)));
+                                      sizeof(CollectiveKernelMetadata)));
   ABSL_RETURN_IF_ERROR(stream->Memcpy(&param_to_peers_ptrs_buffer,
-                                 param_to_peers_ptrs.data(),
-                                 param_to_peers_ptrs_size));
+                                      param_to_peers_ptrs.data(),
+                                      param_to_peers_ptrs_size));
   ABSL_RETURN_IF_ERROR(stream->Memcpy(&multimem_addresses_buffer,
-                                 multimem_addresses.data(),
-                                 multimem_addresses_size));
+                                      multimem_addresses.data(),
+                                      multimem_addresses_size));
   return absl::OkStatus();
 }
 
@@ -187,14 +187,14 @@ absl::StatusOr<std::vector<se::KernelArg>> BuildKernelArguments(
     switch (desc.type) {
       case KernelArgType::kInputBuffer: {
         ABSL_ASSIGN_OR_RETURN(const int32_t buffer_index,
-                         get_buffer_index(desc.index, buffers.size()));
+                              get_buffer_index(desc.index, buffers.size()));
         kernel_args.push_back(params.buffer_allocations->GetDeviceAddress(
             buffers[buffer_index].source_buffer.slice));
         break;
       }
       case KernelArgType::kOutputBuffer: {
         ABSL_ASSIGN_OR_RETURN(const int32_t buffer_index,
-                         get_buffer_index(desc.index, buffers.size()));
+                              get_buffer_index(desc.index, buffers.size()));
         kernel_args.push_back(params.buffer_allocations->GetDeviceAddress(
             buffers[buffer_index].destination_buffer.slice));
         break;
@@ -209,10 +209,11 @@ absl::StatusOr<std::vector<se::KernelArg>> BuildKernelArguments(
         ABSL_ASSIGN_OR_RETURN(
             const int32_t buffer_index,
             get_buffer_index(desc.index, kernel_spec.scratch_buffers.size()));
-        ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase peer_buf,
-                         GetParameterDeviceMemoryBase(
-                             metadata, num_parameters, clique_key.num_devices(),
-                             buffer_index + param_index_offset));
+        ABSL_ASSIGN_OR_RETURN(
+            se::DeviceAddressBase peer_buf,
+            GetParameterDeviceMemoryBase(metadata, num_parameters,
+                                         clique_key.num_devices(),
+                                         buffer_index + param_index_offset));
         kernel_args.push_back(peer_buf);
         break;
       }
@@ -256,7 +257,7 @@ absl::Status CollectiveKernelThunk::IsSupported(
   // Check if peer access is supported for all devices in the clique.
   for (const GlobalDeviceId& device : clique_key.devices()) {
     ABSL_ASSIGN_OR_RETURN(const int peer_device_id,
-                     GetLocalDeviceId(device, collective_params));
+                          GetLocalDeviceId(device, collective_params));
     if (!executor.CanEnablePeerAccessTo(peer_device_id)) {
       return absl::FailedPreconditionError(absl::StrFormat(
           "Peer access is not supported from device %d to device %d",
@@ -339,8 +340,8 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
               (buf_spec.should_double_buffer ? kNumBuffers : 1),
           kXlaAllocatedBufferAlignBytes);
       ABSL_ASSIGN_OR_RETURN(se::DeviceAddressHandle alloc_handle,
-                       AllocateMemory(params.executor, total_bytes,
-                                      absl::StrCat("Scratch ", i)));
+                            AllocateMemory(params.executor, total_bytes,
+                                           absl::StrCat("Scratch ", i)));
       scratch_allocations.push_back(std::move(alloc_handle));
     }
     per_stream_memory_.emplace(
@@ -406,16 +407,17 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
       std::unique_ptr<se::Kernel> kernel = nullptr;
       const int32_t num_args = kernel_spec_.argument_descriptors.size();
       if (cubin_.has_value()) {
-        ABSL_ASSIGN_OR_RETURN(kernel, CreateKernel(kernel_name_, num_args, *cubin_,
-                                              params.executor, shmem_bytes_));
+        ABSL_ASSIGN_OR_RETURN(kernel,
+                              CreateKernel(kernel_name_, num_args, *cubin_,
+                                           params.executor, shmem_bytes_));
       } else if (!params.src.binary.empty()) {
-        ABSL_ASSIGN_OR_RETURN(kernel,
-                         CreateKernel(kernel_name_, num_args, params.src.binary,
-                                      params.executor, shmem_bytes_));
+        ABSL_ASSIGN_OR_RETURN(
+            kernel, CreateKernel(kernel_name_, num_args, params.src.binary,
+                                 params.executor, shmem_bytes_));
       } else {  // Use PTX.
-        ABSL_ASSIGN_OR_RETURN(kernel,
-                         CreateKernel(kernel_name_, num_args, params.src.text,
-                                      params.executor, shmem_bytes_));
+        ABSL_ASSIGN_OR_RETURN(
+            kernel, CreateKernel(kernel_name_, num_args, params.src.text,
+                                 params.executor, shmem_bytes_));
       }
       kernel->set_use_pdl(use_pdl_);
       // Step2: Emplace into the stream state.
@@ -463,15 +465,16 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
             clique_key, parameters[i]);
         if (mmem != nullptr) {
           ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase mmem_addr,
-                           mmem->multimem_addr());
+                                mmem->multimem_addr());
           multimem_addresses[i] =
               tsl::safe_reinterpret_cast<char*>(mmem_addr.opaque()) + offset;
         }
       }
     }
-    ABSL_ASSIGN_OR_RETURN(std::vector<void*> param_to_peers_ptrs,
-                     CollectParamToPeers(clique_key, state->rank, params.stream,
-                                         std::move(parameters)));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<void*> param_to_peers_ptrs,
+        CollectParamToPeers(clique_key, state->rank, params.stream,
+                            std::move(parameters)));
     const size_t multimem_size_bytes =
         multimem_addresses.size() * sizeof(void*);
     state->metadata = params.executor->Allocate(
@@ -565,8 +568,9 @@ CollectiveKernelThunk::FromProto(
     return absl::InvalidArgumentError(
         "Launch dimensions are required for collective kernel thunk.");
   }
-  ABSL_ASSIGN_OR_RETURN(launch_dimensions, LaunchDimensions::FromProto(
-                                          thunk_proto.launch_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      launch_dimensions,
+      LaunchDimensions::FromProto(thunk_proto.launch_dimensions()));
   CollectiveKernelSpec kernel_spec;
   if (thunk_proto.has_kernel_spec()) {
     const CollectiveKernelSpecProto& proto_spec = thunk_proto.kernel_spec();

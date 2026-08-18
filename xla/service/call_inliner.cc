@@ -101,7 +101,7 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     // Account for control edges.
     for (HloInstruction* control_predecessor : hlo->control_predecessors()) {
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_control_predecessor,
-                       Resolve(control_predecessor));
+                            Resolve(control_predecessor));
       ABSL_RETURN_IF_ERROR(
           new_control_predecessor->AddControlDependencyTo(new_hlo_pointer));
     }
@@ -404,7 +404,7 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
       // callee computation beforehand, so we can find its schedule.
       HloComputation* callee = instruction->to_apply();
       ABSL_ASSIGN_OR_RETURN(InlinedInstructionMap inline_map_cur_call,
-                       Inline(instruction, propagate_metadata_));
+                            Inline(instruction, propagate_metadata_));
       if (module->has_schedule()) {
         for (HloInstruction* inlined_instruction :
              module->schedule().sequence(callee).instructions()) {

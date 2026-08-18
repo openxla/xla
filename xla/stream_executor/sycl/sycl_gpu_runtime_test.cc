@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -41,8 +42,8 @@ class SyclGpuRuntimeTest : public ::testing::Test {
 
   absl::StatusOr<void*> AllocateDeviceBuffer(
       int count, int device_ordinal = kDefaultDeviceOrdinal) {
-    ABSL_ASSIGN_OR_RETURN(void* buf,
-                     SyclMallocDevice(device_ordinal, sizeof(int) * count));
+    ABSL_ASSIGN_OR_RETURN(
+        void* buf, SyclMallocDevice(device_ordinal, sizeof(int) * count));
     if (buf == nullptr) {
       return absl::InternalError(
           "SyclGpuRuntimeTest::AllocateDeviceBuffer: Failed to allocate "

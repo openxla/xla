@@ -25,11 +25,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/descriptor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "google/protobuf/descriptor.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -108,10 +108,11 @@ absl::Status CreateTritonIrAndFileCheck(
       Cast<HloFusionInstruction>(computation.FusionInstruction());
 
   mlir::MLIRContext mlir_context;
-  ABSL_ASSIGN_OR_RETURN(TritonKernelSource triton_source,
-                   CreateTritonModule("triton_fn", *fusion,
-                                      TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                                      block_level_parameters, mlir_context));
+  ABSL_ASSIGN_OR_RETURN(
+      TritonKernelSource triton_source,
+      CreateTritonModule("triton_fn", *fusion,
+                         TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+                         block_level_parameters, mlir_context));
 
   std::string out;
   llvm::raw_string_ostream os(out);

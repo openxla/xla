@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/container/fixed_array.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/ffi/execution_context.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
-#include "tsl/platform/mem.h"
 
 #define EIGEN_USE_THREADS
 

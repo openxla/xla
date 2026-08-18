@@ -23,6 +23,8 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/shaped_buffer.h"
@@ -38,8 +40,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/types.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

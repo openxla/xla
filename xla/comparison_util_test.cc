@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/comparison_util.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/test.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"

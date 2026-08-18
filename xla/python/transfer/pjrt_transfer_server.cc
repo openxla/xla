@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/layout.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace ifrt {
@@ -128,11 +128,11 @@ PjRtTransferServer::MakePjRtTransferServerFactory(
     const std::string& socket_address,
     const std::vector<std::string>& transport_addresses) {
   ABSL_ASSIGN_OR_RETURN(aux::SocketAddress address,
-                   aux::SocketAddress::Parse(socket_address));
+                        aux::SocketAddress::Parse(socket_address));
   std::vector<aux::SocketAddress> transport_socket_addresses;
   if (transport_addresses.empty()) {
     ABSL_ASSIGN_OR_RETURN(aux::SocketAddress transport_address,
-                     aux::SocketAddress::Parse("0.0.0.0:0"));
+                          aux::SocketAddress::Parse("0.0.0.0:0"));
     // TODO(emilyaf, parkers): Remove this once defaults are set per device
     // platform.
     transport_socket_addresses.reserve(4);
@@ -143,7 +143,7 @@ PjRtTransferServer::MakePjRtTransferServerFactory(
     transport_socket_addresses.reserve(transport_addresses.size());
     for (const std::string& transport_address : transport_addresses) {
       ABSL_ASSIGN_OR_RETURN(aux::SocketAddress socket_address,
-                       aux::SocketAddress::Parse(transport_address));
+                            aux::SocketAddress::Parse(transport_address));
       transport_socket_addresses.push_back(socket_address);
     }
   }
@@ -170,15 +170,15 @@ absl::Status PjRtTransferServer::StartTransferServer() {
   size_t total_size = transfer_size_ * max_num_parallel_copies_;
   ABSL_ASSIGN_OR_RETURN(auto tmp, aux::AllocateAlignedMemory(total_size));
   ABSL_ASSIGN_OR_RETURN(auto map, aux::MapPjrtMemory(pjrt_client_, tmp->data(),
-                                                tmp->size(), tmp));
+                                                     tmp->size(), tmp));
   aux::SlabAllocator uallocator(map, transfer_size_);
   ABSL_ASSIGN_OR_RETURN(auto factory, aux::CreateSocketBulkTransportFactory(
-                                     transport_addresses_, std::nullopt,
-                                     std::move(uallocator)));
+                                          transport_addresses_, std::nullopt,
+                                          std::move(uallocator)));
 
   socket_server_ = std::make_shared<aux::SocketServer>();
-  ABSL_ASSIGN_OR_RETURN(auto mem,
-                   aux::AllocateAndMapPjrtMemory(pjrt_client_, total_size * 2));
+  ABSL_ASSIGN_OR_RETURN(
+      auto mem, aux::AllocateAndMapPjrtMemory(pjrt_client_, total_size * 2));
   premapped_copier_ = std::make_shared<aux::PremappedCopierState>(
       mem, max_num_parallel_copies_, transfer_size_);
   return (*socket_server_)->Start(socket_address_, factory);
@@ -206,8 +206,8 @@ absl::Status PjRtTransferServer::CrossHostAwaitPull(
     if (pjrt_arr->pjrt_buffers().empty()) {
       return absl::InvalidArgumentError("PjRtArray has no buffers.");
     }
-    ABSL_ASSIGN_OR_RETURN(size_t buf_size,
-                     pjrt_arr->pjrt_buffers()[0]->GetOnDeviceSizeInBytes());
+    ABSL_ASSIGN_OR_RETURN(
+        size_t buf_size, pjrt_arr->pjrt_buffers()[0]->GetOnDeviceSizeInBytes());
     for (int j : buffer_idxs) {
       auto& pjrt_buf = pjrt_arr->pjrt_buffers()[j];
       refs.push_back({pjrt_buf, buf_size});
@@ -252,9 +252,9 @@ absl::Status PjRtTransferServer::CrossHostPull(
   layouts.reserve(arrays.size());
   for (int i = 0; i < arrays.size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(xla::PrimitiveType prim_type,
-                     xla::ifrt::ToPrimitiveType(arrays[i]->dtype()));
-    ABSL_ASSIGN_OR_RETURN(Shape shape,
-                     arrays[i]->sharding().GetShardShape(arrays[i]->shape()));
+                          xla::ifrt::ToPrimitiveType(arrays[i]->dtype()));
+    ABSL_ASSIGN_OR_RETURN(
+        Shape shape, arrays[i]->sharding().GetShardShape(arrays[i]->shape()));
     xla::PjRtClient::ShapeSpec shape_spec = {
         prim_type,
         xla::DimensionVector(shape.dims().begin(), shape.dims().end())};
@@ -264,10 +264,11 @@ absl::Status PjRtTransferServer::CrossHostPull(
         arrays[i]->pjrt_layout();
     std::optional<xla::Layout> layout;
     if (pjrt_layout.ok() && *pjrt_layout == nullptr) {
-      ABSL_ASSIGN_OR_RETURN(xla::ifrt::Shape shard_shape,
-                       arrays[i]->sharding().GetShardShape(arrays[i]->shape()));
-      ABSL_ASSIGN_OR_RETURN(pjrt_layout,
-                       arrays[i]->client()->GetDefaultPjRtLayout(
+      ABSL_ASSIGN_OR_RETURN(
+          xla::ifrt::Shape shard_shape,
+          arrays[i]->sharding().GetShardShape(arrays[i]->shape()));
+      ABSL_ASSIGN_OR_RETURN(
+          pjrt_layout, arrays[i]->client()->GetDefaultPjRtLayout(
                            arrays[i]->dtype(), shard_shape.dims(),
                            arrays[i]->sharding().devices()->devices().front(),
                            arrays[i]->sharding().memory_kind()));
@@ -363,18 +364,20 @@ PjRtTransferServer::CopyArraysForCrossHost(
   std::vector<xla::ifrt::ArrayRef> new_arrays;
   new_arrays.reserve(arrays.size());
   for (size_t i = 0; i < arrays.size(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(auto new_sharding,
-                     arrays[i]->shared_ptr_sharding()->WithDeviceAssignment(
-                         dst_devices, memory_kind));
+    ABSL_ASSIGN_OR_RETURN(
+        auto new_sharding,
+        arrays[i]->shared_ptr_sharding()->WithDeviceAssignment(dst_devices,
+                                                               memory_kind));
     ABSL_ASSIGN_OR_RETURN(auto new_layout, arrays[i]->pjrt_layout());
     if (new_layout == nullptr) {
-      ABSL_ASSIGN_OR_RETURN(xla::ifrt::Shape shard_shape,
-                       arrays[i]->sharding().GetShardShape(arrays[i]->shape()));
-      ABSL_ASSIGN_OR_RETURN(new_layout,
-                       arrays[i]->client()->GetDefaultPjRtLayout(
-                           arrays[i]->dtype(), shard_shape.dims(),
-                           arrays[i]->sharding().devices()->devices().front(),
-                           arrays[i]->sharding().memory_kind()));
+      ABSL_ASSIGN_OR_RETURN(
+          xla::ifrt::Shape shard_shape,
+          arrays[i]->sharding().GetShardShape(arrays[i]->shape()));
+      ABSL_ASSIGN_OR_RETURN(
+          new_layout, arrays[i]->client()->GetDefaultPjRtLayout(
+                          arrays[i]->dtype(), shard_shape.dims(),
+                          arrays[i]->sharding().devices()->devices().front(),
+                          arrays[i]->sharding().memory_kind()));
     }
     PjRtArray::PjRtBuffers array_buffers;
     array_buffers.reserve(buffers_by_device.size());

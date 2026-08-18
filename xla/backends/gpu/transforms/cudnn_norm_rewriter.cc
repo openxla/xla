@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/wrappers.pb.h"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -33,6 +32,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "google/protobuf/wrappers.pb.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -982,7 +982,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
           y_transpose_order[x_transpose_order[k]] = k;
         }
         ABSL_ASSIGN_OR_RETURN(x_transpose,
-                         MakeTransposeHlo(x.instr(), x_transpose_order));
+                              MakeTransposeHlo(x.instr(), x_transpose_order));
       }
 
       // Combine the dimensions not normalized into the first dimension of the
@@ -1013,9 +1013,9 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       Shape scale_bias_shape = ShapeUtil::MakeShape(
           scale->shape().element_type(), reshaped_scale_dims);
       ABSL_ASSIGN_OR_RETURN(HloInstruction * scale_reshape,
-                       MakeReshapeHlo(scale_bias_shape, scale));
+                            MakeReshapeHlo(scale_bias_shape, scale));
       ABSL_ASSIGN_OR_RETURN(HloInstruction * bias_reshape,
-                       MakeReshapeHlo(scale_bias_shape, bias));
+                            MakeReshapeHlo(scale_bias_shape, bias));
       GpuBackendConfig gpu_backend_config;
       CudnnNormBackendConfig& backend_config =
           *gpu_backend_config.mutable_cudnn_norm_backend_config();
@@ -1029,7 +1029,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Set the workspace size to its upper bound.
       // TODO(philipphack): Consider autotuning the norm kernels.
       ABSL_ASSIGN_OR_RETURN(const int64_t c_constant,
-                       CConstant(cuda_compute_capability_));
+                            CConstant(cuda_compute_capability_));
       const int64_t workspace_size =
           (2 * c_constant * (4 + 256)) + (2 * reshaped_dims[0] * 4) + 64;
       algorithm->mutable_workspace_size()->set_value(workspace_size);
@@ -1046,7 +1046,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       ABSL_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_backend_config));
 
       ABSL_ASSIGN_OR_RETURN(HloInstruction * gte,
-                       MakeGetTupleElementHlo(custom_call, 0));
+                            MakeGetTupleElementHlo(custom_call, 0));
       ABSL_ASSIGN_OR_RETURN(
           HloInstruction * y_reshape,
           MakeReshapeHlo(x_transpose.value_or(instr)->shape(), gte));
@@ -1054,7 +1054,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       std::optional<HloInstruction*> y_transpose;
       if (apply_transpose) {
         ABSL_ASSIGN_OR_RETURN(y_transpose,
-                         MakeTransposeHlo(y_reshape, y_transpose_order));
+                              MakeTransposeHlo(y_reshape, y_transpose_order));
       }
       ABSL_RETURN_IF_ERROR(
           ReplaceInstruction(instr, y_transpose.value_or(y_reshape)));
@@ -1074,8 +1074,8 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         if (HloPredicateIsOp<HloOpcode::kDivide>(user) &&
             user->operand_index(norm_factor) == 0) {
           ABSL_ASSIGN_OR_RETURN(bool changed,
-                           MatchNormFactor(user, custom_call, variance,
-                                           expectation, epsilon));
+                                MatchNormFactor(user, custom_call, variance,
+                                                expectation, epsilon));
           if (changed) {
             break;
           }
@@ -1155,21 +1155,23 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // Update the workspace size.
       ABSL_ASSIGN_OR_RETURN(const int64_t c_constant,
-                       CConstant(cuda_compute_capability_));
+                            CConstant(cuda_compute_capability_));
       const int64_t workspace_size = (2 * c_constant * (4 + 256)) + 32;
       backend_config.mutable_algorithm()->mutable_workspace_size()->set_value(
           workspace_size);
-      ABSL_RETURN_IF_ERROR(new_custom_call->set_backend_config(gpu_backend_config));
+      ABSL_RETURN_IF_ERROR(
+          new_custom_call->set_backend_config(gpu_backend_config));
 
       auto replace_with_new_cc = [new_custom_call, this](
                                      HloInstruction* old_instr,
                                      int tuple_index) -> absl::Status {
-        ABSL_ASSIGN_OR_RETURN(HloInstruction * new_gte,
-                         MakeGetTupleElementHlo(new_custom_call, tuple_index));
+        ABSL_ASSIGN_OR_RETURN(
+            HloInstruction * new_gte,
+            MakeGetTupleElementHlo(new_custom_call, tuple_index));
         HloInstruction* new_instr = new_gte;
         if (!ShapeUtil::Equal(new_gte->shape(), old_instr->shape())) {
           ABSL_ASSIGN_OR_RETURN(new_instr,
-                           MakeReshapeHlo(old_instr->shape(), new_gte));
+                                MakeReshapeHlo(old_instr->shape(), new_gte));
         }
         if (HloPredicateIsNotOp<HloOpcode::kDivide>(old_instr)) {
           // Replace the result of the layer norm or the expectation.
@@ -1402,7 +1404,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
                              norm_metadata->second.x_transpose->dimensions()));
       }
       ABSL_ASSIGN_OR_RETURN(HloInstruction * reshaped_dy,
-                       MakeReshapeHlo(x.instr()->shape(), transposed_dy));
+                            MakeReshapeHlo(x.instr()->shape(), transposed_dy));
 
       Shape dx_shape = ShapeUtil::MakeShape(instr->shape().element_type(),
                                             x.instr()->shape().dimensions());
@@ -1421,7 +1423,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Set the workspace size to its upper bound.
       // TODO(philipphack): Consider autotuning the norm kernels.
       ABSL_ASSIGN_OR_RETURN(const int64_t c_constant,
-                       CConstant(cuda_compute_capability_));
+                            CConstant(cuda_compute_capability_));
       const int64_t workspace_size =
           (2 * c_constant * (4 + 256)) +
           (2 * x.instr()->shape().dimensions(0) * 4) + 64;
@@ -1445,19 +1447,20 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
                                  HloInstruction* old_instr,
                                  int tuple_index) -> absl::Status {
         ABSL_ASSIGN_OR_RETURN(HloInstruction * gte,
-                         MakeGetTupleElementHlo(custom_call, tuple_index));
+                              MakeGetTupleElementHlo(custom_call, tuple_index));
         HloInstruction* new_instr;
         // Transpose DX applying the stored transpose order of Y from the
         // forward graph.
         if (tuple_index == 0 && norm_metadata->second.y_transpose) {
           ABSL_ASSIGN_OR_RETURN(new_instr,
-                           MakeReshapeHlo(transposed_dy->shape(), gte));
+                                MakeReshapeHlo(transposed_dy->shape(), gte));
           ABSL_ASSIGN_OR_RETURN(
               new_instr,
               MakeTransposeHlo(
                   new_instr, norm_metadata->second.y_transpose->dimensions()));
         } else {
-          ABSL_ASSIGN_OR_RETURN(new_instr, MakeReshapeHlo(old_instr->shape(), gte));
+          ABSL_ASSIGN_OR_RETURN(new_instr,
+                                MakeReshapeHlo(old_instr->shape(), gte));
         }
         ABSL_RETURN_IF_ERROR(ReplaceInstruction(old_instr, new_instr));
         return absl::OkStatus();
@@ -1501,8 +1504,8 @@ absl::StatusOr<bool> CudnnNormRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result,
-                     RunOnComputation(computation, cuda_compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(
+        bool result, RunOnComputation(computation, cuda_compute_capability_));
     changed |= result;
   }
   return changed;

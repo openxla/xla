@@ -39,6 +39,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Support/WalkResult.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
@@ -51,8 +53,6 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace ifrt {

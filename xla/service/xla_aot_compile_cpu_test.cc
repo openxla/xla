@@ -13,17 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log_entry.h"
 #include "absl/log/log_sink.h"
 #include "absl/log/log_sink_registry.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/client/client_library.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace xla_compile {

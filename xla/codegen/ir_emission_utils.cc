@@ -276,10 +276,10 @@ absl::StatusOr<bool> CanEmitFusedDynamicUpdateSliceInPlace(
       }
       // Get output buffer for the fusion root.
       ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_buffer,
-                       get_allocation_slice(fusion, root_index));
+                            get_allocation_slice(fusion, root_index));
 
       ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice lhs_buffer,
-                       get_allocation_slice(&operand.instruction(), {}));
+                            get_allocation_slice(&operand.instruction(), {}));
       if (lhs_buffer != output_buffer) {
         return false;
       }

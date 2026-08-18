@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/autotuner/autotuner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -31,6 +32,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
@@ -53,8 +56,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

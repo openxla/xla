@@ -44,6 +44,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/bytes/writer.h"
+#include "tsl/platform/random.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/annotation.h"
@@ -123,9 +126,6 @@ limitations under the License.
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/random.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -206,7 +206,7 @@ absl::StatusOr<bool> ShouldCollectiveUseMinimalResource(
     for (HloInstruction* inst : computation->instructions()) {
       if (IsCollective(inst)) {
         ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                         inst->backend_config<GpuBackendConfig>());
+                              inst->backend_config<GpuBackendConfig>());
 
         bool is_sync = gpu_backend_config.collective_backend_config().is_sync();
         int64_t total_size =
@@ -322,8 +322,8 @@ static absl::Status RunThunkPasses(
       hlo_module ? hlo_module->name() : "Anonymous"));
 
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   pipeline.Run(&root_thunk->thunks(), debug_options,
-                                hlo_module, device_info, allocator));
+                        pipeline.Run(&root_thunk->thunks(), debug_options,
+                                     hlo_module, device_info, allocator));
   if (changed) {
     VLOG(3) << "Thunk passes changed the thunk tree.";
     if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
@@ -429,8 +429,9 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   // expensive because it requires whole HLO module traversal.
   bool collective_use_minimal_resource = false;
   if (params.debug_module != nullptr) {
-    ABSL_ASSIGN_OR_RETURN(collective_use_minimal_resource,
-                     ShouldCollectiveUseMinimalResource(*params.debug_module));
+    ABSL_ASSIGN_OR_RETURN(
+        collective_use_minimal_resource,
+        ShouldCollectiveUseMinimalResource(*params.debug_module));
   }
 
   return std::unique_ptr<GpuExecutable>(new GpuExecutable(
@@ -608,7 +609,8 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
 
   std::optional<ThunkExecutor::ScopedProgressTracker> tracker;
   if (progress_tracking_n > 0) {
-    ABSL_ASSIGN_OR_RETURN(tracker, InstallProgressTracker(executor, thunk_executor));
+    ABSL_ASSIGN_OR_RETURN(tracker,
+                          InstallProgressTracker(executor, thunk_executor));
   }
 
   if (execution_watchdog != nullptr) {
@@ -662,8 +664,9 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   se::Stream* command_buffer_trace_stream = nullptr;
   StreamPool::Ptr borrowed_command_buffer_trace_stream;
   if (run_options->HasStreamBorrower()) {
-    ABSL_ASSIGN_OR_RETURN(borrowed_command_buffer_trace_stream,
-                     run_options->BorrowStream(executor->device_ordinal()));
+    ABSL_ASSIGN_OR_RETURN(
+        borrowed_command_buffer_trace_stream,
+        run_options->BorrowStream(executor->device_ordinal()));
     command_buffer_trace_stream = borrowed_command_buffer_trace_stream.get();
   }
 
@@ -671,10 +674,11 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   BorrowedStreams communication_streams = BorrowedStreams::Assign(
       main_stream, num_additional_streams.communication);
   if (run_options->HasStreamBorrower()) {
-    ABSL_ASSIGN_OR_RETURN(communication_streams,
-                     BorrowStreams(*run_options, executor->device_ordinal(),
-                                   num_additional_streams.communication,
-                                   communication_stream_priority));
+    ABSL_ASSIGN_OR_RETURN(
+        communication_streams,
+        BorrowStreams(*run_options, executor->device_ordinal(),
+                      num_additional_streams.communication,
+                      communication_stream_priority));
     XLA_VLOG_DEVICE(2, run_options->device_ordinal())
         << absl::StreamFormat("Using %d additional communication streams.",
                               num_additional_streams.communication);
@@ -684,10 +688,10 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   BorrowedStreams compute_streams =
       BorrowedStreams::Assign(main_stream, num_additional_streams.compute);
   if (run_options->HasStreamBorrower()) {
-    ABSL_ASSIGN_OR_RETURN(compute_streams,
-                     BorrowStreams(*run_options, executor->device_ordinal(),
-                                   num_additional_streams.compute,
-                                   se::StreamPriority::Default));
+    ABSL_ASSIGN_OR_RETURN(
+        compute_streams, BorrowStreams(*run_options, executor->device_ordinal(),
+                                       num_additional_streams.compute,
+                                       se::StreamPriority::Default));
     XLA_VLOG_DEVICE(2, run_options->device_ordinal()) << absl::StreamFormat(
         "Using %d additional compute streams.", num_additional_streams.compute);
   }
@@ -701,18 +705,19 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
           run_options->run_options().execution_profile();
       profile) {
     ABSL_ASSIGN_OR_RETURN(execution_timer, main_stream->CreateEventBasedTimer(
-                                          profile->warmup_run_executed()));
+                                               profile->warmup_run_executed()));
   }
 
   // A state container for this execution.
   Thunk::ExecutionScopedState execution_scoped_state;
 
-  ABSL_ASSIGN_OR_RETURN(CollectiveParams collective_params,
-                   CollectiveParams::Create(
-                       *run_options, communication_streams.streams,
-                       LocalDeviceId(main_stream->parent()->device_ordinal()),
-                       collective_max_nchannels, p2p_max_nchannels,
-                       collective_use_minimal_resource));
+  ABSL_ASSIGN_OR_RETURN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(
+          *run_options, communication_streams.streams,
+          LocalDeviceId(main_stream->parent()->device_ordinal()),
+          collective_max_nchannels, p2p_max_nchannels,
+          collective_use_minimal_resource));
 
   CollectiveCliqueRequests collective_clique_requests;
   CollectiveMemoryRequests collective_memory_requests(buffer_allocations);
@@ -746,15 +751,16 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   CollectiveCliques collective_cliques;
   if (!mock_collectives) {
     ABSL_ASSIGN_OR_RETURN(collective_cliques,
-                     AcquireCollectiveCliques(collective_params,
-                                              collective_clique_requests));
+                          AcquireCollectiveCliques(collective_params,
+                                                   collective_clique_requests));
   }
 
   // Acquire collective memories requested by thunks.
-  ABSL_ASSIGN_OR_RETURN(CollectiveMemory collective_memory,
-                   AcquireCollectiveMemory(
-                       collective_params, collective_cliques,
-                       collective_memory_requests, collective_memory_cache));
+  ABSL_ASSIGN_OR_RETURN(
+      CollectiveMemory collective_memory,
+      AcquireCollectiveMemory(collective_params, collective_cliques,
+                              collective_memory_requests,
+                              collective_memory_cache));
   {  // Initialize thunks using prepared resources before execution.
     Thunk::InitializeParams initialize_params{
         executor,
@@ -780,7 +786,8 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   // deadlocks if we try to execute it concurrently with other potentially
   // memory-allocating operations.
   if (!collective_cliques.empty()) {
-    ABSL_RETURN_IF_ERROR(RendezvousAfterInitialization(*run_options, debug_options));
+    ABSL_RETURN_IF_ERROR(
+        RendezvousAfterInitialization(*run_options, debug_options));
   }
 
   // Prepare parameters for thunks execution.
@@ -893,7 +900,7 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
           run_options->run_options().execution_profile();
       profile) {
     ABSL_ASSIGN_OR_RETURN(absl::Duration elapsed,
-                     execution_timer->GetElapsedDuration());
+                          execution_timer->GetElapsedDuration());
     profile->set_compute_time_ns(
         std::max(absl::ToDoubleNanoseconds(elapsed), 1.0));
   }
@@ -929,7 +936,7 @@ absl::StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteAsyncOnStream(
     const ServiceExecutableRunOptions* run_options,
     absl::Span<const ShapedBuffer* const> arguments) {
   ABSL_ASSIGN_OR_RETURN(ExecutionOutput out,
-                   ExecuteAsyncOnStreamImpl(run_options, arguments));
+                        ExecuteAsyncOnStreamImpl(run_options, arguments));
   return out.ConsumeResult();
 }
 
@@ -984,7 +991,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         [&] { return std::string("Resolve constant globals"); },
         tsl::profiler::TraceMeLevel::kInfo);
 
-    ABSL_ASSIGN_OR_RETURN(globals, ResolveConstantGlobals(run_options->stream()));
+    ABSL_ASSIGN_OR_RETURN(globals,
+                          ResolveConstantGlobals(run_options->stream()));
   }
 
   // Use the `device_ordinal` from the `run_options` if it is provided. This is
@@ -1014,15 +1022,16 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
         param_no};
   };
 
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>
-                       allocation_scope,
-                   buffer_allocator_->CreateExecutionScope(
-                       run_options, memory_allocator, device_ordinal));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>
+          allocation_scope,
+      buffer_allocator_->CreateExecutionScope(run_options, memory_allocator,
+                                              device_ordinal));
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
-                   allocation_scope->GenerateBufferAllocations(
-                       run_options, get_parameter_buffer, globals,
-                       memory_allocator, device_ordinal));
+                        allocation_scope->GenerateBufferAllocations(
+                            run_options, get_parameter_buffer, globals,
+                            memory_allocator, device_ordinal));
   XLA_VLOG_DEVICE(3, device_ordinal) << buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
 
@@ -1362,7 +1371,8 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
   // TODO(b/461380690): Generate the proto on-the-fly once we have a better way
   // to distinguish between compiler-generated and runtime-loaded GPU
   // executables.
-  ABSL_ASSIGN_OR_RETURN(const auto& thunk_sequence_proto, thunk_sequence_proto_);
+  ABSL_ASSIGN_OR_RETURN(const auto& thunk_sequence_proto,
+                        thunk_sequence_proto_);
   proto.mutable_thunks()->Reserve(thunk_sequence_proto.size());
   for (const auto& thunk_proto : thunk_sequence_proto) {
     *proto.add_thunks() = thunk_proto;
@@ -1423,8 +1433,9 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   const std::string& binary = proto.binary();
   params.binary.assign(binary.begin(), binary.end());
   if (proto.has_hlo_module_with_config()) {
-    ABSL_ASSIGN_OR_RETURN(params.debug_module, HloModule::CreateFromProtoWithConfig(
-                                              proto.hlo_module_with_config()));
+    ABSL_ASSIGN_OR_RETURN(
+        params.debug_module,
+        HloModule::CreateFromProtoWithConfig(proto.hlo_module_with_config()));
     // The HLO module deserialized from the proto carries xla_dump_to from the
     // process that originally compiled it. Override with the current process's
     // dump path so that runtime dumps (checksum logs, etc.) land in the correct
@@ -1470,8 +1481,8 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
 
   if (proto.has_cpu_target_machine_options()) {
     ABSL_ASSIGN_OR_RETURN(params.cpu_target_machine_options,
-                     xla::cpu::TargetMachineOptions::FromProto(
-                         proto.cpu_target_machine_options()));
+                          xla::cpu::TargetMachineOptions::FromProto(
+                              proto.cpu_target_machine_options()));
   }
 
   ThunkSequenceProto thunk_sequence_proto;
@@ -1502,14 +1513,15 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
   for (const auto& output_info_proto : proto.output_info_map()) {
     ShapeIndex shape_index =
         ShapeIndex::FromProto(output_info_proto.shape_index());
-    ABSL_ASSIGN_OR_RETURN(OutputInfo output_info,
-                     OutputInfo::FromProto(output_info_proto.output_info()));
+    ABSL_ASSIGN_OR_RETURN(
+        OutputInfo output_info,
+        OutputInfo::FromProto(output_info_proto.output_info()));
     params.output_info.emplace(std::move(shape_index), std::move(output_info));
   }
 
   params.module_name = proto.module_name();
   ABSL_ASSIGN_OR_RETURN(params.program_shape,
-                   ProgramShape::FromProto(proto.program_shape()));
+                        ProgramShape::FromProto(proto.program_shape()));
 
   ABSL_ASSIGN_OR_RETURN(
       params.executable_abi_version,
@@ -1548,9 +1560,10 @@ absl::Status GpuExecutable::DumpExecutableIfEnabled(
       CreateSerializableBuildOptionsProto(options));
 
   constexpr absl::string_view kDumpFilename = "gpu_executable.riegeli";
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<riegeli::Writer> writer,
-                   CreateRiegeliDumpWriter(debug_options, kDumpFilename,
-                                           has_module() ? &module() : nullptr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<riegeli::Writer> writer,
+      CreateRiegeliDumpWriter(debug_options, kDumpFilename,
+                              has_module() ? &module() : nullptr));
   ABSL_RETURN_IF_ERROR(
       WriteSplitExecutableAndOptions(dump_proto, std::move(writer)));
 

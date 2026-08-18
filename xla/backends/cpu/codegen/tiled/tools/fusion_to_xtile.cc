@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/tiled/tiled_fusion_emitter.h"
 #include "xla/debug_options_flags.h"
@@ -38,18 +39,18 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::gpu {
 namespace {
 
 absl::Status RealMain(absl::string_view input_file) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   xla::LoadModuleFromFile(std::string(input_file)));
+                        xla::LoadModuleFromFile(std::string(input_file)));
 
   const HloInstruction& fusion =
       *hlo_module->entry_computation()->root_instruction();
-  ABSL_ASSIGN_OR_RETURN(auto gpu_config, fusion.backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                        fusion.backend_config<GpuBackendConfig>());
   const HloFusionInstruction* fusion_instr =
       Cast<HloFusionInstruction>(&fusion);
   const FusionBackendConfig& backend_config =

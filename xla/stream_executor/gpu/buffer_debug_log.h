@@ -73,7 +73,7 @@ class BufferDebugLog : public BufferDebugLogBase {
   static absl::StatusOr<BufferDebugLog<Entry>> CreateOnDevice(
       Stream& stream, DeviceAddress<uint8_t> log_buffer) {
     ABSL_ASSIGN_OR_RETURN(auto memory, BufferDebugLogBase::CreateOnDevice(
-                                      stream, log_buffer, sizeof(Entry)));
+                                           stream, log_buffer, sizeof(Entry)));
     return BufferDebugLog<Entry>(memory);
   }
 
@@ -105,8 +105,8 @@ class BufferDebugLog : public BufferDebugLogBase {
   absl::StatusOr<std::vector<Entry>> ReadFromDevice(Stream& stream) const {
     std::vector<Entry> entries(memory_.size() / sizeof(Entry), Entry{});
     ABSL_ASSIGN_OR_RETURN(size_t initialized_entries,
-                     BufferDebugLogBase::ReadFromDevice(
-                         stream, memory_, sizeof(Entry), entries.data()));
+                          BufferDebugLogBase::ReadFromDevice(
+                              stream, memory_, sizeof(Entry), entries.data()));
     entries.resize(initialized_entries);
     return entries;
   }

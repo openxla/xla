@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/caching_compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/cuda/compilation_options.h"

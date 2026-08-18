@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/tiling/tiling_specification.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"

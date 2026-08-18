@@ -536,7 +536,8 @@ absl::Status RestructureConditionalInstruction(HloComputation* computation,
       }
     }
     for (auto new_tuple_user : new_tuple_users) {
-      ABSL_RETURN_IF_ERROR(conditional->ReplaceUseWith(new_tuple_user, new_tuple));
+      ABSL_RETURN_IF_ERROR(
+          conditional->ReplaceUseWith(new_tuple_user, new_tuple));
     }
   }
   VLOG(2) << "computation after root restructure:\n" << computation->ToString();
@@ -1165,7 +1166,8 @@ class MoveOperandIntoBranch {
         op_map_[new_operands[i]] = i;
       }
       user = new_input;
-      ABSL_RETURN_IF_ERROR(input->ReplaceUseWithDifferentShape(cond, new_input));
+      ABSL_RETURN_IF_ERROR(
+          input->ReplaceUseWithDifferentShape(cond, new_input));
     }
     TF_RET_CHECK(cond->opcode() == HloOpcode::kConditional)
         << "User has non-conditional users";
@@ -2193,8 +2195,8 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
     if (final_d == Decision::Direction::kMoveOutOfBranch) {
       CHECK(to_move_out.size() == new_boundaries_for_moveout.size());
       for (int i = 0; i < to_move_out.size(); ++i) {
-        ABSL_ASSIGN_OR_RETURN(bool result,
-                         MoveInstructionOut(conditional, to_move_out[i],
+        ABSL_ASSIGN_OR_RETURN(
+            bool result, MoveInstructionOut(conditional, to_move_out[i],
                                             new_boundaries_for_moveout[i]));
         changed |= result;
       }
@@ -2219,14 +2221,14 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
           VLOG(1) << "Modifying code---number of operand boundaries to move in:"
                   << to_move_in[i].size() << "\n";
           ABSL_ASSIGN_OR_RETURN(bool result, MoveOperandInstructionsIn(
-                                            conditional, to_move_in[i]));
+                                                 conditional, to_move_in[i]));
           changed |= result;
         } else {
           VLOG(1) << "Modifying code---number of user boundaries to move in:"
                   << to_move_in[i].size() << "\n";
           CHECK(to_move_in[i][0].IsOutsideBranchUser());
-          ABSL_ASSIGN_OR_RETURN(bool result,
-                           MoveUserInstructionsIn(conditional, to_move_in[i]));
+          ABSL_ASSIGN_OR_RETURN(
+              bool result, MoveUserInstructionsIn(conditional, to_move_in[i]));
           changed |= result;
         }
         VLOG(2) << "Before removing instructions:"
@@ -2262,8 +2264,9 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
       // cloning has been done by the earlier analysis.
       // TOOD[b/165848866]: extend solution to handle cloning for special
       // move.
-      ABSL_ASSIGN_OR_RETURN(bool convert_result,
-                       ConvertSpecialMove(conditional, is_layout_sensitive_));
+      ABSL_ASSIGN_OR_RETURN(
+          bool convert_result,
+          ConvertSpecialMove(conditional, is_layout_sensitive_));
       if (convert_result) {
         VLOG(2) << "Done special moving of convert\n";
         if (!ConsumeFuel("conditional_code_motion", [&] {

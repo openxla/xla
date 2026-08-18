@@ -54,35 +54,35 @@ namespace mhlo {
 
 class MhloDialect : public Dialect {
  public:
-  explicit MhloDialect(MLIRContext *context);
+  explicit MhloDialect(MLIRContext* context);
   static StringRef getDialectNamespace() { return "mhlo"; }
 
   // Registered hook to materialize a constant operation from a given attribute
   // value with the desired resultant type.
-  Operation *materializeConstant(OpBuilder &builder, Attribute value, Type type,
+  Operation* materializeConstant(OpBuilder& builder, Attribute value, Type type,
                                  Location loc) override;
 
   // Registered hook to verify region arg attributes on operations.
-  LogicalResult verifyRegionArgAttribute(mlir::Operation *op,
+  LogicalResult verifyRegionArgAttribute(mlir::Operation* op,
                                          unsigned regionIndex,
                                          unsigned argIndex,
                                          mlir::NamedAttribute attr) override;
 
   // Registered hook to verify an attribute from this dialect on operations.
-  LogicalResult verifyOperationAttribute(mlir::Operation *op,
+  LogicalResult verifyOperationAttribute(mlir::Operation* op,
                                          mlir::NamedAttribute attr) override;
 
   // Parses a type registered to this dialect.
-  Type parseType(DialectAsmParser &parser) const override;
+  Type parseType(DialectAsmParser& parser) const override;
 
   // Prints a type registered to this dialect.
-  void printType(Type type, DialectAsmPrinter &os) const override;
+  void printType(Type type, DialectAsmPrinter& os) const override;
 
   // Parses an attribute registered to this dialect.
-  Attribute parseAttribute(DialectAsmParser &parser, Type type) const override;
+  Attribute parseAttribute(DialectAsmParser& parser, Type type) const override;
 
   // Prints an attribute registered to this dialect.
-  void printAttribute(Attribute attr, DialectAsmPrinter &os) const override;
+  void printAttribute(Attribute attr, DialectAsmPrinter& os) const override;
 };
 
 class TokenType : public Type::TypeBase<TokenType, Type, TypeStorage> {
@@ -91,11 +91,11 @@ class TokenType : public Type::TypeBase<TokenType, Type, TypeStorage> {
   static constexpr StringLiteral name = "mhlo.token";
 };
 
-void printConvolutionDimensions(AsmPrinter &p, ConvDimensionNumbersAttr dnums);
-void printConvolutionDimensions(AsmPrinter &p, Operation *,
+void printConvolutionDimensions(AsmPrinter& p, ConvDimensionNumbersAttr dnums);
+void printConvolutionDimensions(AsmPrinter& p, Operation*,
                                 ConvDimensionNumbersAttr dnums);
-ParseResult parseConvolutionDimensions(AsmParser &parser,
-                                       ConvDimensionNumbersAttr &dnums);
+ParseResult parseConvolutionDimensions(AsmParser& parser,
+                                       ConvDimensionNumbersAttr& dnums);
 
 }  // namespace mhlo
 }  // namespace mlir
@@ -105,9 +105,9 @@ ParseResult parseConvolutionDimensions(AsmParser &parser,
 
 namespace mlir::mhlo {
 
-SortOp createSortOp(PatternRewriter *rewriter, const Location &loc,
-                    const llvm::ArrayRef<Value> &operands,
-                    const llvm::ArrayRef<Type> &elementTypes, int64_t dimension,
+SortOp createSortOp(PatternRewriter* rewriter, const Location& loc,
+                    const llvm::ArrayRef<Value>& operands,
+                    const llvm::ArrayRef<Type>& elementTypes, int64_t dimension,
                     bool isStable, ComparisonDirection direction);
 
 }  // namespace mlir::mhlo

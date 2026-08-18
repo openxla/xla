@@ -27,7 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
@@ -1424,12 +1424,9 @@ class TotalOrderTest : public ClientLibraryTestRunnerMixin<
 using Types =
     ::testing::Types<tsl::float8_e3m4, tsl::float8_e4m3, tsl::float8_e4m3fn,
                      tsl::float8_e4m3fnuz, tsl::float8_e4m3b11fnuz,
-                     tsl::float8_e5m2, tsl::float8_e5m2fnuz,
-                     Eigen::half,
-                     Eigen::bfloat16,
-                     double,
-                     tsl::float4_e2m1fn, tsl::float8_e8m0fnu,
-                     float>;
+                     tsl::float8_e5m2, tsl::float8_e5m2fnuz, Eigen::half,
+                     Eigen::bfloat16, double, tsl::float4_e2m1fn,
+                     tsl::float8_e8m0fnu, float>;
 
 TYPED_TEST_SUITE(TotalOrderTest, Types);
 

@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -86,7 +87,7 @@ class IfrtIrLoadedExecutableTest
   absl::StatusOr<bool> IsUsingTpuV4() {
     ABSL_ASSIGN_OR_RETURN(DeviceListRef devices, PickDevices(1));
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<Topology> topology,
-                     client_->GetTopologyForDevices(devices));
+                          client_->GetTopologyForDevices(devices));
     return topology->DeviceDescriptions().front()->device_kind() == "TPU v4";
   }
 

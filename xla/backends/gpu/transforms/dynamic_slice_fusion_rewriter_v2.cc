@@ -804,7 +804,7 @@ absl::StatusOr<bool> RewriteHero(
   }
 
   ABSL_ASSIGN_OR_RETURN(HloComputation * fusion_body,
-                   CreateFusionBody(module, *plan, sliced_results, hero));
+                        CreateFusionBody(module, *plan, sliced_results, hero));
 
   HloComputation* parent = hero->parent();
   HloInstruction* fusion = parent->AddInstruction(

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/aot_compiled_function_library.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/tsl/platform/statusor.h"

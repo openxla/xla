@@ -15,18 +15,19 @@ limitations under the License.
 
 #include "xla/tsl/testing/temporary_directory.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/path.h"
 
 namespace tsl {
 namespace testing {

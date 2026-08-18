@@ -15,15 +15,18 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -37,8 +40,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -54,7 +55,7 @@ class GpuSpmdPartitioningTest : public HloHardwareIndependentTestBase,
     config.set_num_partitions(num_devices);
     config.set_use_shardy_partitioner(UseShardy());
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
     if (UseShardy()) {
       module->add_frontend_attribute(
           std::string(xla::sdy::kImportMhloShardings), "t");

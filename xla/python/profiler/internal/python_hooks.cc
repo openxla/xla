@@ -25,14 +25,14 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/python/profiler/internal/traceme_state.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 #ifdef Py_GIL_DISABLED
 #include "absl/synchronization/mutex.h"

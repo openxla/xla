@@ -37,6 +37,8 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -48,8 +50,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/side_effect_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 #if GOOGLE_CUDA
 #include "nvtx3/nvToolsExt.h"

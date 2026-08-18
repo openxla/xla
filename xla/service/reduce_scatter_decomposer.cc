@@ -76,9 +76,10 @@ absl::StatusOr<bool> ReduceScatterDecomposer::RunImpl(
 
       // Create start indices for a dynamic slice to decompose the all-reduce
       // results.
-      ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                       GetCollectiveOpGroupMode(rs->channel_id().has_value(),
-                                                rs->use_global_device_ids()));
+      ABSL_ASSIGN_OR_RETURN(
+          CollectiveOpGroupMode group_mode,
+          GetCollectiveOpGroupMode(rs->channel_id().has_value(),
+                                   rs->use_global_device_ids()));
       ABSL_ASSIGN_OR_RETURN(
           std::vector<HloInstruction*> start_indices,
           CreateStartIndicesForCollectiveDecomposition(

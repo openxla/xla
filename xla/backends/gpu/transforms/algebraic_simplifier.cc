@@ -70,7 +70,8 @@ GpuAlgebraicSimplifierVisitor::TryToSinkBroadcastOperandsOfChainedAdds(
 }
 
 absl::Status GpuAlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
-  ABSL_ASSIGN_OR_RETURN(bool replaced, TryToSinkBroadcastOperandsOfChainedAdds(add));
+  ABSL_ASSIGN_OR_RETURN(bool replaced,
+                        TryToSinkBroadcastOperandsOfChainedAdds(add));
   if (replaced) {
     return absl::OkStatus();
   }

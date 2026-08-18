@@ -1258,7 +1258,7 @@ absl::Status InsertNewWhileResult(
   HloInstruction* new_while_result = while_parent->AddInstruction(
       HloInstruction::CreateTuple(new_while_result_elements));
   ABSL_RETURN_IF_ERROR(while_parent->ReplaceInstruction(old_while_instruction,
-                                                   new_while_result));
+                                                        new_while_result));
 
   // Forward GTE(tuple, i) to the corresponding tuple operand so nested while
   // hoisting can see through the reconstructed packing.
@@ -1313,8 +1313,8 @@ absl::Status AddSinkedAllReducesAndReplaceWhile(
                              new_while_init_context.tuple_index_to_old_buffer);
   // Step 4) create the tuple, replace the old while instruction for all of
   // its uses, and forward GTE users of the reconstructed tuple.
-  ABSL_RETURN_IF_ERROR(InsertNewWhileResult(while_instruction, new_while_instruction,
-                                       tuple_index_to_new_buffer));
+  ABSL_RETURN_IF_ERROR(InsertNewWhileResult(
+      while_instruction, new_while_instruction, tuple_index_to_new_buffer));
   return absl::OkStatus();
 }
 
@@ -1407,8 +1407,8 @@ absl::StatusOr<HloInstruction*> AddSinkedAllReducesAndReplaceWhile(
 
   // Replace the old while instruction with the reconstructed result and
   // forward GTE users of the reconstructed tuple.
-  ABSL_RETURN_IF_ERROR(InsertNewWhileResult(while_instruction, new_while_instruction,
-                                       tuple_index_to_new_buffer));
+  ABSL_RETURN_IF_ERROR(InsertNewWhileResult(
+      while_instruction, new_while_instruction, tuple_index_to_new_buffer));
   return new_while_instruction;
 }
 
@@ -1438,8 +1438,8 @@ absl::StatusOr<bool> WhileLoopAllReduceCodeMotion::RunImpl(
     VLOG(5) << "num_replicas: " << module->config().replica_count()
             << " run HloReplicationAnalysis across replicas";
     ABSL_ASSIGN_OR_RETURN(cross_replica_replication_analysis,
-                     HloReplicationAnalysis::RunWithPartialReplication(
-                         module, /*cross_partition_spmd=*/false));
+                          HloReplicationAnalysis::RunWithPartialReplication(
+                              module, /*cross_partition_spmd=*/false));
   }
   std::unique_ptr<HloReplicationAnalysis> cross_partition_replication_analysis;
   if (module->config().use_spmd_partitioning() &&
@@ -1447,8 +1447,8 @@ absl::StatusOr<bool> WhileLoopAllReduceCodeMotion::RunImpl(
     VLOG(5) << "num_partitions: " << module->config().num_partitions()
             << " run HloReplicationAnalysis across partitions";
     ABSL_ASSIGN_OR_RETURN(cross_partition_replication_analysis,
-                     HloReplicationAnalysis::RunWithPartialReplication(
-                         module, /*cross_partition_spmd=*/true));
+                          HloReplicationAnalysis::RunWithPartialReplication(
+                              module, /*cross_partition_spmd=*/true));
   }
 
   // Run setup passes that may setup the add(all-reduce/reduce-scatter,
@@ -1539,9 +1539,10 @@ absl::StatusOr<bool> WhileLoopAllReduceCodeMotion::RunImpl(
       // For each while instruction calling this computation, create the
       // corresponding all-reduces after the while loop.
       for (auto& while_instruction : while_caller_instructions) {
-        ABSL_ASSIGN_OR_RETURN(while_instruction,
-                         AddSinkedAllReducesAndReplaceWhile(
-                             while_instruction, all_reduce_to_update_slices));
+        ABSL_ASSIGN_OR_RETURN(
+            while_instruction,
+            AddSinkedAllReducesAndReplaceWhile(while_instruction,
+                                               all_reduce_to_update_slices));
       }
       // Remove all-reduce instructions in the loop body.
       for (const auto& [all_reduce, _] : all_reduce_to_update_slices) {

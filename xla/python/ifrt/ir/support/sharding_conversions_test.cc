@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/support/sharding_conversions.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -60,7 +61,8 @@ using ::xla::HloSharding;
 
 absl::StatusOr<HloSharding> ToHloShardingViaOpSharding(
     const ShardingParam& sharding_param) {
-  ABSL_ASSIGN_OR_RETURN(xla::OpSharding op_sharding, ToOpSharding(sharding_param));
+  ABSL_ASSIGN_OR_RETURN(xla::OpSharding op_sharding,
+                        ToOpSharding(sharding_param));
   return HloSharding::FromProto(op_sharding);
 }
 

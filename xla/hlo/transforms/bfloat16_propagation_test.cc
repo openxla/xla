@@ -15,14 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/bfloat16_propagation.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -41,7 +43,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 

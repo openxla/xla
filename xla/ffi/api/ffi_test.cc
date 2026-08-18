@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/ffi/api/ffi.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -27,8 +30,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/functional/overload.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"

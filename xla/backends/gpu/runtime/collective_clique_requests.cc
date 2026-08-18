@@ -133,5 +133,4 @@ CollectiveCliqueRequests::OrderedRequestedCliques() const {
   return cliques;
 }
 
-
 }  // namespace xla::gpu

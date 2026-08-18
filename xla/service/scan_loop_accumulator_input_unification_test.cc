@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/scan_loop_accumulator_input_unification.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

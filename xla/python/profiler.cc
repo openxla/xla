@@ -25,11 +25,17 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/pair.h"         // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/subprocess/subprocess_registry.h"
 #include "xla/backends/profiler/util/metadata_registry.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -42,12 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/profiler/rpc/client/capture_profile.h"
 #include "xla/tsl/profiler/rpc/profiler_server.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 

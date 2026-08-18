@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/tsl/distributed_runtime/coordination/coordination_service.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
+#include "tsl/platform/random.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
@@ -47,7 +49,6 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/random.h"
 
 namespace tsl {
 namespace {

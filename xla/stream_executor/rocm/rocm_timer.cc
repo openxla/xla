@@ -66,8 +66,8 @@ absl::StatusOr<absl::Duration> RocmTimer::GetElapsedDuration() {
   }
   ABSL_RETURN_IF_ERROR(stream_->RecordEvent(&stop_event_));
   ABSL_ASSIGN_OR_RETURN(float elapsed_milliseconds,
-                   GetEventElapsedTime(executor_, start_event_.GetHandle(),
-                                       stop_event_.GetHandle()));
+                        GetEventElapsedTime(executor_, start_event_.GetHandle(),
+                                            stop_event_.GetHandle()));
   is_stopped_ = true;
   return absl::Milliseconds(elapsed_milliseconds);
 }
@@ -75,9 +75,9 @@ absl::StatusOr<absl::Duration> RocmTimer::GetElapsedDuration() {
 absl::StatusOr<RocmTimer> RocmTimer::Create(StreamExecutor* executor,
                                             Stream* stream) {
   ABSL_ASSIGN_OR_RETURN(RocmEvent start_event,
-                   RocmEvent::Create(executor, /*allow_timing=*/true));
+                        RocmEvent::Create(executor, /*allow_timing=*/true));
   ABSL_ASSIGN_OR_RETURN(RocmEvent stop_event,
-                   RocmEvent::Create(executor, /*allow_timing=*/true));
+                        RocmEvent::Create(executor, /*allow_timing=*/true));
   ABSL_RETURN_IF_ERROR(stream->RecordEvent(&start_event));
   return RocmTimer(executor, std::move(start_event), std::move(stop_event),
                    stream);

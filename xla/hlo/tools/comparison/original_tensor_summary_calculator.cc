@@ -94,7 +94,7 @@ ParseInstructionNameAsRelativeScopedTensorKey(
     scope_instructions.reserve(parts.size() - 1);
     for (int64_t i = 0; i < parts.size() - 1; ++i) {
       ABSL_ASSIGN_OR_RETURN(ScopeInstruction scope_instr,
-                       ParseScopeInstruction(parts[i]));
+                            ParseScopeInstruction(parts[i]));
       scope_instructions.push_back(std::move(scope_instr));
     }
   }
@@ -1109,9 +1109,9 @@ absl::Status OriginalTensorSummaryCalculator::ProcessShardSummary(
 
   for (const auto& original_tensor_info : original_tensor_infos) {
     ABSL_ASSIGN_OR_RETURN(AbsoluteScopedTensorKey original_tensor_key,
-                     ConstructOriginalTensorKey(
-                         optimized_tensor_position.scope_instructions,
-                         original_tensor_info.original_scoped_tensor_key));
+                          ConstructOriginalTensorKey(
+                              optimized_tensor_position.scope_instructions,
+                              original_tensor_info.original_scoped_tensor_key));
     if (completed_tensor_keys_.find(original_tensor_key) !=
         completed_tensor_keys_.end()) {
       continue;
@@ -1162,9 +1162,9 @@ absl::Status OriginalTensorSummaryCalculator::ProcessShardSummary(
   bool all_completed = true;
   for (const auto& original_tensor_info : original_tensor_infos) {
     ABSL_ASSIGN_OR_RETURN(AbsoluteScopedTensorKey original_tensor_key,
-                     ConstructOriginalTensorKey(
-                         optimized_tensor_position.scope_instructions,
-                         original_tensor_info.original_scoped_tensor_key));
+                          ConstructOriginalTensorKey(
+                              optimized_tensor_position.scope_instructions,
+                              original_tensor_info.original_scoped_tensor_key));
     if (completed_tensor_keys_.find(original_tensor_key) ==
         completed_tensor_keys_.end()) {
       all_completed = false;

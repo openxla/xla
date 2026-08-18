@@ -29,6 +29,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/notification.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -40,9 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/notification.h"
 
 namespace xla {
 namespace {
@@ -110,7 +110,7 @@ absl::StatusOr<cpu::XfeedBuffer*> TransferBufferToInfeedInternal(
 absl::Status TransferBufferToInfeed(int device_ordinal, int64_t size,
                                     const void* source) {
   ABSL_ASSIGN_OR_RETURN(cpu::XfeedBuffer * buffer,
-                   TransferBufferToInfeedInternal(size, source));
+                        TransferBufferToInfeedInternal(size, source));
 
   cpu::XfeedManager* xfeed_manager = cpu::GetXfeedManager(device_ordinal);
   xfeed_manager->infeed()->EnqueueBuffersAtomically({buffer});
@@ -211,8 +211,8 @@ absl::Status TransferLiteralToInfeedOnCpu(int device_ordinal,
     int64_t tuple_element_size =
         cpu::GetByteSizeRequirement(tuple_element_shape, sizeof(void*));
     ABSL_ASSIGN_OR_RETURN(cpu::XfeedBuffer * buffer,
-                     TransferBufferToInfeedInternal(tuple_element_size,
-                                                    literal.untyped_data({i})));
+                          TransferBufferToInfeedInternal(
+                              tuple_element_size, literal.untyped_data({i})));
     buffers.push_back(buffer);
   }
 
@@ -233,8 +233,8 @@ absl::Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
         absl::bit_cast<const int64_t*>(literal.shape().dimensions().data()),
         literal.shape().dimensions().size());
     ABSL_ASSIGN_OR_RETURN(Shape received_shape,
-                     TransferArrayBufferFromOutfeed(
-                         device_ordinal, literal.untyped_data(), size));
+                          TransferArrayBufferFromOutfeed(
+                              device_ordinal, literal.untyped_data(), size));
     TF_RET_CHECK(ShapeUtil::Compatible(received_shape, literal.shape()))
         << "Shape received from outfeed "
         << ShapeUtil::HumanString(received_shape)
@@ -261,7 +261,7 @@ absl::Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
   }
 
   ABSL_ASSIGN_OR_RETURN(Shape received_shape, TransferTupleBuffersFromOutfeed(
-                                             device_ordinal, buffer_data));
+                                                  device_ordinal, buffer_data));
 
   TF_RET_CHECK(ShapeUtil::Compatible(received_shape, literal.shape()))
       << "Shape received from outfeed "

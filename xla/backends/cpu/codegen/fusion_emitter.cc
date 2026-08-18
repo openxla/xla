@@ -227,7 +227,7 @@ static absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitLoopFusionKernel(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                   loop_fusion_emitter.EmitKernelDefinition());
+                        loop_fusion_emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -251,7 +251,7 @@ EmitConcatenateFusionKernel(MLIRContext& context,
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                   concatenate_fusion_emitter.EmitKernelDefinition());
+                        concatenate_fusion_emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -275,7 +275,8 @@ EmitDynamicUpdateSliceFusionKernel(MLIRContext& context,
   emitters::DynamicUpdateSliceKernelEmitter emitter(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
-  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition, emitter.EmitKernelDefinition());
+  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
+                        emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -332,9 +333,10 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     }
     auto fusion_spec = GetLoopFusionSpec(fusion);
     if (IsDynamicUpdateSliceFusion(fusion_spec)) {
-      ABSL_ASSIGN_OR_RETURN(bool dus_inplace,
-                       CanEmitFusedDynamicUpdateSliceInPlace(
-                           fusion_spec.fusion(), buffer_assignment, &fusion));
+      ABSL_ASSIGN_OR_RETURN(
+          bool dus_inplace,
+          CanEmitFusedDynamicUpdateSliceInPlace(fusion_spec.fusion(),
+                                                buffer_assignment, &fusion));
       if (dus_inplace) {
         return EmitDynamicUpdateSliceFusionKernel(mlir_context, fusion,
                                                   buffer_assignment, name);

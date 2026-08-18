@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "oneapi/ccl.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
@@ -33,6 +32,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "oneapi/ccl.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/oneccl_communicator.h"
 #include "xla/backends/gpu/collectives/oneccl_errors.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -87,7 +87,7 @@ OnecclCollectives::CreateCommunicators(
     int32_t device_ordinal = device->stream_executor()->device_ordinal();
     XLA_ONECCL_RETURN_IF_ERROR(onecclSetDevice(device_ordinal));
     ABSL_ASSIGN_OR_RETURN(auto oneccl_unique_id,
-                     AsOnecclUniqueId(clique_ids->at(0)));
+                          AsOnecclUniqueId(clique_ids->at(0)));
     onecclComm_t comm;
     XLA_ONECCL_RETURN_IF_ERROR(onecclCommInitRankConfig(
         &comm, clique_key.num_devices(), oneccl_unique_id,

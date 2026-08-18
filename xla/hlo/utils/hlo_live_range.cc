@@ -119,7 +119,8 @@ absl::Status HloLiveRange::FlattenSchedule(
           instruction->opcode() == HloOpcode::kConditional) {
         for (const HloComputation* called_computation :
              instruction->called_computations()) {
-          ABSL_RETURN_IF_ERROR(FlattenSchedule(*called_computation, async_context));
+          ABSL_RETURN_IF_ERROR(
+              FlattenSchedule(*called_computation, async_context));
         }
       } else if (instruction->IsAsynchronous()) {
         // For async operations, the async wrapped computation is flattened

@@ -20,9 +20,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "tsl/platform/path.h"
 #include "xla/tests/aot_interception_pjrt_client.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace aot_compatibility_experimental {

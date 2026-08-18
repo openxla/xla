@@ -279,14 +279,15 @@ absl::StatusOr<absl::Duration> HloOpProfiler::MeasureOpChainDuration(
                                         .value();
   const absl::Time t_compile_start = absl::Now();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<OpaqueExecutable> ex,
-                   runner_.CreateExecutable(std::move(module),
-                                            /*run_hlo_passes=*/false));
+                        runner_.CreateExecutable(std::move(module),
+                                                 /*run_hlo_passes=*/false));
   if (absl::Now() - t_compile_start > absl::Seconds(10)) {
     return ResourceExhausted("Too slow compilation");
   }
 
   // Warmup.
-  ABSL_RETURN_IF_ERROR(runner_.ExecuteWithExecutable(ex.get(), args_small).status());
+  ABSL_RETURN_IF_ERROR(
+      runner_.ExecuteWithExecutable(ex.get(), args_small).status());
 
   std::unique_ptr<KernelTracer> kernel_tracer = GetKernelTracer();
   if (!kernel_tracer) {
@@ -336,13 +337,13 @@ absl::StatusOr<HloInstructionProfile> HloOpProfiler::MeasureClockCyclesPerOp(
                                 HloOpcodeString(op));
     }
     ABSL_ASSIGN_OR_RETURN(duration,
-                     MeasureOpChainDuration(op, data_type, chain_length));
+                          MeasureOpChainDuration(op, data_type, chain_length));
     VLOG(3) << chain_length << "\t" << duration;
     chain_length *= 2;
   } while (duration < min_duration_);
 
   ABSL_ASSIGN_OR_RETURN(absl::Duration double_duration,
-                   MeasureOpChainDuration(op, data_type, chain_length));
+                        MeasureOpChainDuration(op, data_type, chain_length));
   VLOG(3) << chain_length << "\t" << double_duration;
 
   // The difference between t_double and t corresponds to half of chain_length.

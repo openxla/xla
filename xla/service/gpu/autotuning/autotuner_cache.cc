@@ -35,9 +35,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h"
-#include "google/protobuf/text_format.h"
+#include "tsl/platform/base64.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/service/dump.h"
@@ -49,9 +52,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/base64.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace gpu {
@@ -117,10 +117,10 @@ absl::Status AddResultToFileBasedCacheIfEnabled(
   ABSL_RETURN_IF_ERROR(CreateDirIfNeeded(std::string(cache_dir), default_env));
 
   ABSL_ASSIGN_OR_RETURN(std::string key_hash,
-                   GetBase64EncodedSha256Hash(key.ToString()));
+                        GetBase64EncodedSha256Hash(key.ToString()));
 
   ABSL_ASSIGN_OR_RETURN(const std::string file_path,
-                   GetCacheFilePath(cache_dir, key_hash));
+                        GetCacheFilePath(cache_dir, key_hash));
 
   VLOG(1) << "Writing autotune result to file: " << file_path;
 
@@ -165,10 +165,10 @@ TryToFindInFileBasedCacheIfEnabled(const AutotuneCacheKey& key,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::string key_hash,
-                   GetBase64EncodedSha256Hash(key.ToString()));
+                        GetBase64EncodedSha256Hash(key.ToString()));
 
   ABSL_ASSIGN_OR_RETURN(const std::string file_path,
-                   GetCacheFilePath(cache_dir, key_hash));
+                        GetCacheFilePath(cache_dir, key_hash));
   if (!tsl::Env::Default()->FileExists(file_path).ok()) {
     VLOG(1) << "Autotune result file not found: " << file_path;
     return std::nullopt;
@@ -177,7 +177,7 @@ TryToFindInFileBasedCacheIfEnabled(const AutotuneCacheKey& key,
   VLOG(1) << "Autotune result file found: " << file_path;
   std::string autotune_result_str;
   ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(), file_path,
-                                        &autotune_result_str));
+                                             &autotune_result_str));
   AutotuneResult result;
   if (!tsl::protobuf::TextFormat::ParseFromString(autotune_result_str,
                                                   &result)) {
@@ -282,7 +282,7 @@ TryFindInAllCacheTypes(const AutotuneCacheKey& key, absl::string_view cache_dir)
   }
 
   ABSL_ASSIGN_OR_RETURN(opt_result,
-                   TryToFindInFileBasedCacheIfEnabled(key, cache_dir));
+                        TryToFindInFileBasedCacheIfEnabled(key, cache_dir));
   if (opt_result.has_value()) {
     AddResultToInMemoryCache(key, opt_result.value());
     return std::make_pair(CacheType::kOnDisk, opt_result);
@@ -385,8 +385,8 @@ bool IsTextProtoPath(absl::string_view file_path) {
   ABSL_ASSIGN_OR_RETURN(
       std::string autotune_results_str,
       AutotuneResultsToString(results, IsTextProtoPath(resolved_path)));
-  ABSL_RETURN_IF_ERROR(tsl::WriteStringToFile(tsl::Env::Default(), resolved_path,
-                                         autotune_results_str));
+  ABSL_RETURN_IF_ERROR(tsl::WriteStringToFile(
+      tsl::Env::Default(), resolved_path, autotune_results_str));
   LOG(INFO) << "Autotune results serialized to file: " << resolved_path;
 
   return absl::OkStatus();
@@ -414,10 +414,10 @@ bool IsTextProtoPath(absl::string_view file_path) {
   }
   std::string autotune_results_str;
   ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(), resolved_path,
-                                        &autotune_results_str));
+                                             &autotune_results_str));
 
   ABSL_RETURN_IF_ERROR(LoadAutotuneResults(autotune_results_str,
-                                      IsTextProtoPath(resolved_path)));
+                                           IsTextProtoPath(resolved_path)));
 
   LOG(INFO) << "Autotune results loaded from file: " << resolved_path;
 

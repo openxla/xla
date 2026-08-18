@@ -26,8 +26,9 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_format.h"
-#include "llvm/ADT/STLExtras.h"
 #include "google/protobuf/repeated_field.h"
+#include "llvm/ADT/STLExtras.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/tsl/lib/core/bits.h"
 #include "xla/util.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::gpu {
 namespace {

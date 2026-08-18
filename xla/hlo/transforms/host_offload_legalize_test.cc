@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/host_offload_legalize.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

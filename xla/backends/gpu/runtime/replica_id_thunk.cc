@@ -42,9 +42,10 @@ namespace gpu {
 absl::StatusOr<uint32_t> ReplicaOrPartitionIdThunk::ComputeId(
     const ExecuteParams& params) const {
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
-  ABSL_ASSIGN_OR_RETURN(const DeviceAssignment::LogicalID logical_id,
-                   params.collective_params->device_assn->LogicalIdForDevice(
-                       global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      const DeviceAssignment::LogicalID logical_id,
+      params.collective_params->device_assn->LogicalIdForDevice(
+          global_device_id));
   return static_cast<uint32_t>(kind() == Kind::kReplicaId
                                    ? logical_id.replica_id
                                    : logical_id.computation_id);
@@ -75,8 +76,9 @@ ReplicaOrPartitionIdThunk::Record(const Thunk::ExecuteParams& execute_params,
                                         create->dependencies);
   }
   if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
-    ABSL_RETURN_IF_ERROR(command_buffer->UpdateMemset(update->command, &dst, value,
-                                                 /*num_elements=*/1));
+    ABSL_RETURN_IF_ERROR(command_buffer->UpdateMemset(update->command, &dst,
+                                                      value,
+                                                      /*num_elements=*/1));
     return update->command;
   }
   return Internal("Invalid record action");
@@ -88,7 +90,7 @@ absl::StatusOr<ThunkProto> ReplicaIdThunk::ToProto() const {
 
   auto* replica_id_thunk_proto = proto.mutable_replica_id_thunk();
   ABSL_ASSIGN_OR_RETURN(*replica_id_thunk_proto->mutable_dest_buffer(),
-                   dest().ToProto());
+                        dest().ToProto());
   return proto;
 }
 
@@ -96,8 +98,8 @@ absl::StatusOr<std::unique_ptr<ReplicaIdThunk>> ReplicaIdThunk::FromProto(
     ThunkInfo thunk_info, const ReplicaIdThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice dest,
-                   BufferAllocation::Slice::FromProto(thunk_proto.dest_buffer(),
-                                                      buffer_allocations));
+                        BufferAllocation::Slice::FromProto(
+                            thunk_proto.dest_buffer(), buffer_allocations));
   return std::make_unique<ReplicaIdThunk>(std::move(thunk_info), dest);
 }
 
@@ -107,7 +109,7 @@ absl::StatusOr<ThunkProto> PartitionIdThunk::ToProto() const {
 
   auto* partition_id_thunk_proto = proto.mutable_partition_id_thunk();
   ABSL_ASSIGN_OR_RETURN(*partition_id_thunk_proto->mutable_dest_buffer(),
-                   dest().ToProto());
+                        dest().ToProto());
   return proto;
 }
 

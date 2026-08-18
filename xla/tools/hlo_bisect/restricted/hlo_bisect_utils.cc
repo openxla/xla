@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/tools/hlo_bisect/restricted/hlo_bisect_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <random>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -60,7 +62,6 @@ limitations under the License.
 #include "xla/tsl/platform/subprocess.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace bisect {
@@ -83,8 +84,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> LoadModuleFromHloProto(
     const HloProto& proto) {
   const HloModuleProto& module_proto = proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(const HloModuleConfig module_config,
-                   HloModule::CreateModuleConfigFromProto(
-                       module_proto, GetDebugOptionsFromFlags()));
+                        HloModule::CreateModuleConfigFromProto(
+                            module_proto, GetDebugOptionsFromFlags()));
   return CreateModuleFromProto(module_proto, module_config);
 }
 
@@ -93,7 +94,7 @@ LoadModuleAndInputDataFromHloSnapshot(const HloSnapshot& snapshot,
                                       std::vector<Literal>* input_data) {
   for (int64_t i = 0; i < snapshot.arguments_size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(Literal literal,
-                     Literal::CreateFromProto(snapshot.arguments(i)));
+                          Literal::CreateFromProto(snapshot.arguments(i)));
     input_data->push_back(std::move(literal));
   }
   ABSL_ASSIGN_OR_RETURN(
@@ -113,7 +114,7 @@ absl::StatusOr<ModuleWithInputs> GetModuleAndInputData(
   if (tsl::ReadBinaryProto(env, input_file, &hlo_snapshot).ok()) {
     std::vector<Literal> input_data;
     ABSL_ASSIGN_OR_RETURN(module, LoadModuleAndInputDataFromHloSnapshot(
-                                 hlo_snapshot, &input_data));
+                                      hlo_snapshot, &input_data));
     CHECK_EQ(module->entry_computation()->num_parameters(), input_data.size());
     return std::make_pair(std::move(module), std::move(input_data));
   }
@@ -236,8 +237,9 @@ absl::StatusOr<bool> MiscompareChecker::Run(const HloModule& module) {
   }
 
   // Prepare the reference module.
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> reference_module,
-                   PrepareReferenceModule(*test_module, test_runner_.get()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> reference_module,
+      PrepareReferenceModule(*test_module, test_runner_.get()));
 
   // Run the module on the reference platform.
   Literal reference_result = ExecuteWithRunnerAndRetrieveResult(
@@ -384,7 +386,7 @@ absl::StatusOr<ModuleWithInputs> GetVerifiedModuleAndInputData(
   std::unique_ptr<HloModule> module;
   std::vector<Literal> input_data;
   ABSL_ASSIGN_OR_RETURN(std::tie(module, input_data),
-                   GetModuleAndInputData(input_filename));
+                        GetModuleAndInputData(input_filename));
 
   // If any instruction doesn't have a layout, set to default layout.
   for (HloComputation* computation : module->computations()) {

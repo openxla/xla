@@ -358,7 +358,7 @@ absl::StatusOr<Shape> ComputeRootShapeAfterHoistingBitcasts(
 absl::Status HoistBitcastUpwardsToCallers(HloInstruction* bitcast,
                                           absl::Span<HloInstruction*> callers) {
   ABSL_ASSIGN_OR_RETURN(auto rewrite_plan,
-                   PlanHoistBitcastUpwardsToCallers(bitcast));
+                        PlanHoistBitcastUpwardsToCallers(bitcast));
   for (auto [instruction, result_shape] : rewrite_plan) {
     VLOG(2) << absl::StrCat("rewriting result shape of ",
                             instruction->ToString(), " to ",
@@ -404,7 +404,8 @@ absl::Status HoistBitcastUpwardsToCallers(HloInstruction* bitcast,
     // HloVerifier error.
     instruction->clear_sharding();
   }
-  ABSL_RETURN_IF_ERROR(bitcast->ReplaceAllUsesWith(bitcast->mutable_operand(0)));
+  ABSL_RETURN_IF_ERROR(
+      bitcast->ReplaceAllUsesWith(bitcast->mutable_operand(0)));
   ABSL_RETURN_IF_ERROR(bitcast->parent()->RemoveInstruction(bitcast));
   return absl::OkStatus();
 }
@@ -416,7 +417,7 @@ absl::Status HoistBitcastUpwardsToCallers(HloInstruction* bitcast,
 absl::StatusOr<bool> MaybeInsertRootBitcast(
     HloInstruction* dot, absl::Span<HloInstruction*> callers) {
   ABSL_ASSIGN_OR_RETURN(Shape root_shape,
-                   ComputeRootShapeAfterHoistingBitcasts(dot));
+                        ComputeRootShapeAfterHoistingBitcasts(dot));
 
   HloComputation* computation = dot->parent();
   HloInstruction* root = computation->root_instruction();
@@ -504,8 +505,8 @@ class HoistFusedBitcastsVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    ABSL_ASSIGN_OR_RETURN(bool changed,
-                     TryHoistBitcastsInComputationToCallers(instr, call_graph));
+    ABSL_ASSIGN_OR_RETURN(bool changed, TryHoistBitcastsInComputationToCallers(
+                                            instr, call_graph));
     if (changed) {
       MarkAsChanged();
     }

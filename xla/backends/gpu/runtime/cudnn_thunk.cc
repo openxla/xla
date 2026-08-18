@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -132,8 +132,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> CuDnnThunk::Record(
     operands.push_back(buf);
   }
 
-  ABSL_ASSIGN_OR_RETURN(const bool supports_explicit,
-                   graph_->get()->SupportsExplicitCommandBufferConstruction());
+  ABSL_ASSIGN_OR_RETURN(
+      const bool supports_explicit,
+      graph_->get()->SupportsExplicitCommandBufferConstruction());
   if (supports_explicit) {
     if (auto* create = std::get_if<RecordCreate>(&record_action)) {
       return command_buffer->CreateDnnGraphCommand(
@@ -163,7 +164,8 @@ absl::StatusOr<ThunkProto> CuDnnThunk::ToProto() const {
   proto.mutable_cudnn_thunk()->set_fingerprint(fingerprint_);
 
   for (const ShapedSlice& arg : args_) {
-    ABSL_ASSIGN_OR_RETURN(*proto.mutable_cudnn_thunk()->add_args(), arg.ToProto());
+    ABSL_ASSIGN_OR_RETURN(*proto.mutable_cudnn_thunk()->add_args(),
+                          arg.ToProto());
   }
   for (const bool is_output : output_args_) {
     proto.mutable_cudnn_thunk()->add_output_args(is_output);
@@ -183,7 +185,7 @@ absl::StatusOr<std::unique_ptr<CuDnnThunk>> CuDnnThunk::FromProto(
   args.reserve(proto.args_size());
   for (const ShapedSliceProto& arg : proto.args()) {
     ABSL_ASSIGN_OR_RETURN(args.emplace_back(),
-                     ShapedSlice::FromProto(arg, buffer_allocations));
+                          ShapedSlice::FromProto(arg, buffer_allocations));
   }
   std::vector<bool> output_args;
   output_args.reserve(proto.output_args_size());

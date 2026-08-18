@@ -22,11 +22,11 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "tsl/platform/random.h"
 #include "xla/tsl/lib/random/philox_random_test_utils.h"
 #include "xla/tsl/lib/random/random_distributions.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/random.h"
 
 namespace tsl {
 namespace random {

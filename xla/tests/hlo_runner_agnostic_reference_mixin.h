@@ -225,7 +225,7 @@ class HloRunnerAgnosticReferenceMixin : public T {
       const std::function<void(HloModule*)>& test_preprocessor = nullptr) {
     ABSL_RETURN_IF_ERROR(this->verifier().Run(module.get()).status());
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> reference_module,
-                     MakeReferenceModule(*module, reference_preprocessor));
+                          MakeReferenceModule(*module, reference_preprocessor));
     ABSL_RETURN_IF_ERROR(this->PreprocessModuleForTestRunner(module.get()));
     if (test_preprocessor != nullptr) {
       test_preprocessor(module.get());

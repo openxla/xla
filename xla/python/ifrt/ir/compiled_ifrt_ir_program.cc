@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/client.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -90,7 +90,7 @@ class FutureExecutor : public tsl::Executor {
 absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> BuildDefaultLayout(
     const ArraySpec& arg_spec, Client* client) {
   ABSL_ASSIGN_OR_RETURN(auto shard_shape,
-                   arg_spec.sharding->GetShardShape(arg_spec.shape));
+                        arg_spec.sharding->GetShardShape(arg_spec.shape));
   return client->GetDefaultPjRtLayout(
       arg_spec.dtype, shard_shape.dims(),
       arg_spec.sharding->devices()->devices().front(),
@@ -109,7 +109,8 @@ GetParameterLayoutFromLoadedExecutable(
   auto atom_program_name = loaded_exec_op.getSymName().str();
   auto exec_it = atom_program_executables.find(atom_program_name);
   if (exec_it != atom_program_executables.end()) {
-    ABSL_ASSIGN_OR_RETURN(auto exec_layouts, exec_it->second->GetParameterLayouts());
+    ABSL_ASSIGN_OR_RETURN(auto exec_layouts,
+                          exec_it->second->GetParameterLayouts());
     return std::move(exec_layouts[param_operand_number]);
   }
   return absl::FailedPreconditionError(
@@ -138,7 +139,8 @@ absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetLayoutForValue(
       return absl::FailedPreconditionError(absl::StrFormat(
           "Could not find SPMD executable %s", atom_program_name));
     }
-    ABSL_ASSIGN_OR_RETURN(auto exec_layouts, exec_it->second->GetOutputLayouts());
+    ABSL_ASSIGN_OR_RETURN(auto exec_layouts,
+                          exec_it->second->GetOutputLayouts());
     return exec_layouts[op_result.getResultNumber()];
   }
 
@@ -228,7 +230,8 @@ absl::Status PopulateLayouts(mlir::ModuleOp mlir_module, Client* client,
         GetLayoutForValue(return_operand.get(), client,
                           atom_program_executables, in_specs, symbol_table));
     if (!out_spec.layout) {
-      ABSL_ASSIGN_OR_RETURN(out_spec.layout, BuildDefaultLayout(out_spec, client));
+      ABSL_ASSIGN_OR_RETURN(out_spec.layout,
+                            BuildDefaultLayout(out_spec, client));
     }
   }
 
@@ -250,8 +253,9 @@ CompiledIfrtIrProgram::Create(
   std::shared_ptr<IfrtIRCompileOptions> compile_options =
       std::move(ifrt_ir_compile_options);
 
-  ABSL_ASSIGN_OR_RETURN(DeviceListRef device_list,
-                   LookUpDevices(client, compile_options->device_assignments));
+  ABSL_ASSIGN_OR_RETURN(
+      DeviceListRef device_list,
+      LookUpDevices(client, compile_options->device_assignments));
 
   mlir::ModuleOp mlir_module = ifrt_ir_program->mlir_module;
   std::string program_name = mlir_module.getName().value_or("unknown").str();
@@ -308,7 +312,7 @@ CompiledIfrtIrProgram::Create(
     auto context = std::make_unique<mlir::MLIRContext>(
         mlir::MLIRContext::Threading::DISABLED);
     ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> cloned_module,
-                     CloneModuleIntoContext(mlir_module, *context));
+                          CloneModuleIntoContext(mlir_module, *context));
     ifrt_ir_program = std::make_unique<xla::ifrt::IfrtIRProgram>(
         std::move(context), std::move(cloned_module));
   }
@@ -320,14 +324,15 @@ CompiledIfrtIrProgram::Create(
   in_specs.reserve(main_func.getNumArguments());
   for (const mlir::Type arg_type : main_func.getArgumentTypes()) {
     ABSL_ASSIGN_OR_RETURN(ArraySpec spec,
-                     ArraySpecFromMlirType(arg_type, client, device_list));
+                          ArraySpecFromMlirType(arg_type, client, device_list));
     in_specs.push_back(std::move(spec));
   }
   std::vector<ArraySpec> out_specs;
   out_specs.reserve(main_func.getNumResults());
   for (const mlir::Type result_type : main_func.getResultTypes()) {
-    ABSL_ASSIGN_OR_RETURN(ArraySpec spec,
-                     ArraySpecFromMlirType(result_type, client, device_list));
+    ABSL_ASSIGN_OR_RETURN(
+        ArraySpec spec,
+        ArraySpecFromMlirType(result_type, client, device_list));
     out_specs.push_back(std::move(spec));
   }
   std::vector<int> donatable_input_indices;
@@ -372,10 +377,11 @@ CompiledIfrtIrProgram::Create(
       }
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto interpreter,
-                     ProgramInterpreter::Create(
-                         client, program_name, ifrt_ir_program->mlir_module,
-                         atom_executable_map, device_list));
+    ABSL_ASSIGN_OR_RETURN(
+        auto interpreter,
+        ProgramInterpreter::Create(client, program_name,
+                                   ifrt_ir_program->mlir_module,
+                                   atom_executable_map, device_list));
     ABSL_ASSIGN_OR_RETURN(auto execute_fn, interpreter->BuildExecuteFn());
 
     return std::make_shared<CompiledIfrtIrProgram>(CompiledIfrtIrProgram{

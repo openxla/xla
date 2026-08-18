@@ -15,15 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

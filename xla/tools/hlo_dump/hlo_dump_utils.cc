@@ -44,6 +44,8 @@ limitations under the License.
 #include "re2/re2.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/zlib/zlib_writer.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -53,8 +55,6 @@ limitations under the License.
 #include "xla/tools/hlo_dump/hlo_lexer.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/coding.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::debug_info {
 

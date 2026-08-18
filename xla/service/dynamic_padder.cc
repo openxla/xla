@@ -33,6 +33,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -61,8 +63,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -186,8 +186,8 @@ absl::StatusOr<bool> ReplaceGetSize(
   HloComputation* computation = instr->parent();
 
   ABSL_ASSIGN_OR_RETURN(auto legal_shape,
-                   ShapeInference::InferGetDimensionSizeShape(
-                       instr->operand(0)->shape(), instr->dimension()));
+                        ShapeInference::InferGetDimensionSizeShape(
+                            instr->operand(0)->shape(), instr->dimension()));
   TF_RET_CHECK(ShapeUtil::Equal(instr->shape(), legal_shape))
       << "instr->shape() " << instr->shape().ToString() << " , "
       << "legal_shape " << legal_shape.ToString();
@@ -1250,7 +1250,7 @@ absl::StatusOr<bool> RewriteDynamicSelectAndScatterSamePadding(
   HloInstruction* source = hlo->mutable_operand(1);
   HloInstruction* init = hlo->mutable_operand(2);
   ABSL_ASSIGN_OR_RETURN(HloInstruction * input_padding_value,
-                   ChooseIdentityValue(hlo, /*operand_number=*/0));
+                        ChooseIdentityValue(hlo, /*operand_number=*/0));
   int64_t rank = hlo->shape().dimensions().size();
   Window window = hlo->window();
   std::vector<HloInstruction*> padding_before(hlo->shape().dimensions().size(),
@@ -1843,10 +1843,10 @@ absl::StatusOr<bool> RewriteDynamicReshape(
     }
 
     ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicReshapeSingleGroup(
-                                 reshape, input_dims, output_dims,
-                                 absl::MakeSpan(input_dynamic_dims),
-                                 absl::MakeSpan(output_dynamic_dims),
-                                 dynamic_dimension_inference));
+                                      reshape, input_dims, output_dims,
+                                      absl::MakeSpan(input_dynamic_dims),
+                                      absl::MakeSpan(output_dynamic_dims),
+                                      dynamic_dimension_inference));
     changed |= c;
   }
 
@@ -1923,7 +1923,7 @@ class DynamicShapeRemovingVisitor : public DfsHloRewriteVisitor {
       HloInstruction* root = computation->root_instruction();
       if (dynamic_shape_inference->HasDynamicDimension(root)) {
         ABSL_ASSIGN_OR_RETURN(HloInstruction * new_root,
-                         visitor.ConvertToDynamic(root));
+                              visitor.ConvertToDynamic(root));
         computation->set_root_instruction(new_root);
       }
     }
@@ -1990,7 +1990,7 @@ absl::Status DynamicShapeRemovingVisitor::ConvertOperandsToDynamic(
     auto operand = inst->mutable_operand(i);
     if (dynamic_dimension_inference_->HasDynamicDimension(operand)) {
       ABSL_ASSIGN_OR_RETURN(auto dynamic_operand,
-                       ConvertToDynamic(inst->mutable_operand(i)));
+                            ConvertToDynamic(inst->mutable_operand(i)));
       ABSL_RETURN_IF_ERROR(inst->ReplaceOperandWith(i, dynamic_operand));
       MarkAsChanged();
     }
@@ -2135,12 +2135,12 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
   // TODO(b/419842730): Support dynamic padder for graphs with complex CFGs.
   FlattenCallGraph flatten_call_graph;
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   flatten_call_graph.Run(module, execution_threads));
+                        flatten_call_graph.Run(module, execution_threads));
   CallInliner call_inliner(
       /*single_call_site=*/false,
       /*update_domain=*/false);
   ABSL_ASSIGN_OR_RETURN(bool inliner_changed,
-                   call_inliner.Run(module, execution_threads));
+                        call_inliner.Run(module, execution_threads));
   changed |= inliner_changed;
 
   // Run DCE before inference, in case earlier passes left dead instructions
@@ -2149,11 +2149,12 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
   ABSL_ASSIGN_OR_RETURN(bool dce_changed, dce.Run(module, execution_threads));
   changed |= dce_changed;
 
-  ABSL_ASSIGN_OR_RETURN(DynamicDimensionInference dynamic_dimension_inference,
-                   DynamicDimensionInference::Run(
-                       module, options_.op_supports_dynamism_handler,
-                       options_.custom_call_handler, options_.shape_check_mode,
-                       options_.assertion_generator, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(
+      DynamicDimensionInference dynamic_dimension_inference,
+      DynamicDimensionInference::Run(
+          module, options_.op_supports_dynamism_handler,
+          options_.custom_call_handler, options_.shape_check_mode,
+          options_.assertion_generator, execution_threads));
 
   changed |= dynamic_dimension_inference.changed();
   std::vector<HloComputation*> computations =
@@ -2176,8 +2177,8 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
         continue;
       }
       if (inst->opcode() == HloOpcode::kReverse) {
-        ABSL_ASSIGN_OR_RETURN(bool c,
-                         RewriteReverse(inst, &dynamic_dimension_inference));
+        ABSL_ASSIGN_OR_RETURN(
+            bool c, RewriteReverse(inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
@@ -2206,42 +2207,42 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
 
       if (inst->opcode() == HloOpcode::kDynamicUpdateSlice) {
         ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicUpdateSlice(
-                                     inst, &dynamic_dimension_inference));
+                                          inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
 
       if (inst->IsCustomCall("DynamicConvolutionInputGrad")) {
         ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicConvolutionInputGrad(
-                                     inst, &dynamic_dimension_inference));
+                                          inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
 
       if (inst->IsCustomCall("DynamicConvolutionForward")) {
         ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicConvolutionForward(
-                                     inst, &dynamic_dimension_inference));
+                                          inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
 
       if (inst->IsCustomCall("DynamicConvolutionKernelGrad")) {
         ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicConvolutionKernelGrad(
-                                     inst, &dynamic_dimension_inference));
+                                          inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
 
       if (inst->IsCustomCall("DynamicReduceWindowSamePadding")) {
         ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicReduceWindowSamePadding(
-                                     inst, &dynamic_dimension_inference));
+                                          inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
 
       if (inst->IsCustomCall("DynamicSelectAndScatterSamePadding")) {
         ABSL_ASSIGN_OR_RETURN(bool c, RewriteDynamicSelectAndScatterSamePadding(
-                                     inst, &dynamic_dimension_inference));
+                                          inst, &dynamic_dimension_inference));
         changed |= c;
         continue;
       }
@@ -2271,7 +2272,7 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
           }
 
           ABSL_ASSIGN_OR_RETURN(HloInstruction * identity_value,
-                           ChooseIdentityValue(inst, operand_num));
+                                ChooseIdentityValue(inst, operand_num));
           if (identity_value == nullptr) {
             continue;
           }
@@ -2306,11 +2307,11 @@ absl::StatusOr<bool> DynamicPadder::RunImpl(
     // the output tensor to be in dynamic form.
     bool require_dynamic_output = options_.slice_dynamic_output &&
                                   computation == module->entry_computation();
-    ABSL_ASSIGN_OR_RETURN(bool c,
-                     DynamicShapeRemovingVisitor::Run(
-                         computation, options_.op_supports_dynamism_handler,
-                         &dynamic_dimension_inference, execution_threads,
-                         /*require_dynamic_output=*/require_dynamic_output));
+    ABSL_ASSIGN_OR_RETURN(
+        bool c, DynamicShapeRemovingVisitor::Run(
+                    computation, options_.op_supports_dynamism_handler,
+                    &dynamic_dimension_inference, execution_threads,
+                    /*require_dynamic_output=*/require_dynamic_output));
     changed |= c;
   }
 

@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/client/local_client.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -383,7 +383,6 @@ void LocalDeviceState::ReturnStreamToPool(std::unique_ptr<se::Stream> stream) {
   absl::MutexLock lock(stream_pool_mu_);
   usage_stream_pool_.push(std::move(stream));
 }
-
 
 absl::Status LocalDeviceState::AllocateAndRecordEvent(
     AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,

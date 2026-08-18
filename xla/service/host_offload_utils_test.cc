@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/host_offload_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"

@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/support_test_base.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -128,10 +129,11 @@ absl::Status ConvertEntryToTritonFusion(HloModule* module) {
   auto builder = HloComputation::Builder("entry");
   std::vector<HloInstruction*> params;
   for (auto& param : module->entry_computation()->parameter_instructions()) {
-    ABSL_ASSIGN_OR_RETURN(auto param_clone,
-                     builder.AddParameter(HloInstruction::CreateParameter(
-                         param->parameter_number(), param->shape(),
-                         absl::StrCat("param_", param->parameter_number()))));
+    ABSL_ASSIGN_OR_RETURN(
+        auto param_clone,
+        builder.AddParameter(HloInstruction::CreateParameter(
+            param->parameter_number(), param->shape(),
+            absl::StrCat("param_", param->parameter_number()))));
     params.push_back(param_clone);
   }
 
@@ -164,7 +166,7 @@ SupportTestBase::ParseTemplateAndGetInstruction(absl::string_view hlo_template,
       hlo_template, primitive_util::LowercasePrimitiveTypeName(data_type),
       HloOpcodeString(opcode));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   parse_module_callback_(hlo_text));
+                        parse_module_callback_(hlo_text));
   ABSL_RETURN_IF_ERROR(ConvertEntryToTritonFusion(module.get()));
   const HloComputation* computation =
       module->GetComputationWithName("triton_computation");

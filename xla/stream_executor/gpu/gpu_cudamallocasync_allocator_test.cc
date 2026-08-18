@@ -15,19 +15,20 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/ascii.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/device_id.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace se = stream_executor;
 

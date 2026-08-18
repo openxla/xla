@@ -15,7 +15,6 @@ limitations under the License.
 
 // Tests that slice operations can be performed.
 
-
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/error_spec.h"

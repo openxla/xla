@@ -73,7 +73,7 @@ absl::Status GetInstructionSlices(
     absl::flat_hash_set<KernelApiIrBuilder::KernelParameter>& parameters) {
   const Shape& shape = instruction->shape();
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                   buffer_assignment->GetUniqueTopLevelSlice(instruction));
+                        buffer_assignment->GetUniqueTopLevelSlice(instruction));
   if (slice.allocation()->is_thread_local()) {
     return absl::OkStatus();
   }
@@ -117,7 +117,7 @@ absl::Status GetAllSlices(
       }
 
       ABSL_RETURN_IF_ERROR(GetAllSlices(nested_computation, buffer_assignment,
-                                   arguments, results));
+                                        arguments, results));
     }
   }
 
@@ -159,16 +159,16 @@ ComputationKernelEmitter::EmitKernelDefinition() {
       absl::StrCat(instr_->name(), "_computation_kernel_module"), *ctx);
 
   ABSL_ASSIGN_OR_RETURN(std::string kernel_name,
-                   kernel_api_ir_builder.GetKernelName(instr_, "_kernel"));
+                        kernel_api_ir_builder.GetKernelName(instr_, "_kernel"));
 
   ABSL_ASSIGN_OR_RETURN(KernelApiIrBuilder::KernelPrototype kernel_prototype,
-                   kernel_api_ir_builder.EmitKernelPrototype(
-                       *llvm_module, kernel_name,
-                       std::vector<KernelApiIrBuilder::KernelParameter>(
-                           arguments.begin(), arguments.end()),
-                       std::vector<KernelApiIrBuilder::KernelParameter>(
-                           results.begin(), results.end()),
-                       BuildModuleMemoryRegionName(name(), instr_)));
+                        kernel_api_ir_builder.EmitKernelPrototype(
+                            *llvm_module, kernel_name,
+                            std::vector<KernelApiIrBuilder::KernelParameter>(
+                                arguments.begin(), arguments.end()),
+                            std::vector<KernelApiIrBuilder::KernelParameter>(
+                                results.begin(), results.end()),
+                            BuildModuleMemoryRegionName(name(), instr_)));
 
   llvm::IRBuilder<> ir_builder(*ctx);
   ir_builder.SetInsertPoint(

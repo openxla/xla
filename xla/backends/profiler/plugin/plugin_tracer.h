@@ -19,10 +19,10 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/backends/profiler/plugin/profiler_c_api.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/backends/profiler/plugin/profiler_c_api.h"
 
 namespace xla {
 namespace profiler {

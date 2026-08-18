@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -140,7 +140,6 @@ bool IsCustomCallToTopK(const HloInstruction& hlo);
 // Returns true if `hlo` will be implmented as a call to a custom PTX kernel
 // implementation.
 bool IsCustomCallToPtxKernel(const HloInstruction& hlo);
-
 
 // Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
 // with multimem.
@@ -305,7 +304,8 @@ template <typename ConfigType>
 absl::StatusOr<std::string> FingerprintWithBackendConfig(
     const HloInstruction& hlo) {
   ABSL_ASSIGN_OR_RETURN(const auto config, hlo.backend_config<ConfigType>());
-  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint, GetProtoFingerprint(config));
+  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint,
+                        GetProtoFingerprint(config));
   return absl::StrCat(hlo.ToString(HloPrintOptions::Fingerprint()),
                       ", backend_config_fingerprint=", fingerprint);
 }

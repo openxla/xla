@@ -257,7 +257,7 @@ absl::StatusOr<CpuScatterFusion::KernelDefinition>
 CpuScatterFusion::EmitKernelDefinition() {
   mlir::OpBuilder builder(mlir_context_);
   ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
-                   CreateNamedMlirModuleOp(*fusion_, builder));
+                        CreateNamedMlirModuleOp(*fusion_, builder));
 
   absl::string_view module_name(mlir_module->getName().value());
   emitters::SetIndexDataLayout(mlir_module.get(), *fusion_);
@@ -294,8 +294,9 @@ CpuScatterFusion::EmitKernelDefinition() {
   KernelSpec::Buffers result_buffers;
 
   for (auto& indexed : ShapeUtil::GetLeafShapes(fusion_->shape())) {
-    ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                     buffer_assignment_.GetUniqueSlice(fusion_, indexed.index));
+    ABSL_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice slice,
+        buffer_assignment_.GetUniqueSlice(fusion_, indexed.index));
     result_buffers.push_back({slice, indexed.shape});
   }
 

@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/numeric/bits.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -45,7 +46,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace emitters {

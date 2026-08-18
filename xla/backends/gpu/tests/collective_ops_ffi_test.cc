@@ -344,8 +344,8 @@ static absl::Status AllReduce(se::Stream* stream,
 
   // Get the communicator for the requested clique.
   ABSL_ASSIGN_OR_RETURN(Communicator * comm,
-                   collective_cliques->GetComm(
-                       clique_key, collective_params->global_device_id));
+                        collective_cliques->GetComm(
+                            clique_key, collective_params->global_device_id));
 
   // Synchronize communication stream with the main stream: make the
   // communication stream wait for all prior work on the main stream.
@@ -396,16 +396,17 @@ static absl::Status DeviceAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
           GpuDeviceCommunicator::Requirements{.lsa_barrier_count = 8}));
 
   // Load custom kernel that does device-initiated collectives.
-  ABSL_ASSIGN_OR_RETURN(auto kernel, se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                                    .LoadKernel<SymmetricAllReduce>(
-                                        collective_params->executor));
+  ABSL_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<SymmetricAllReduce>(collective_params->executor));
 
   se::BlockDim block_dims(1);
   se::ThreadDim thread_dims(8);
 
   ABSL_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, dev_comm,
-                                sym_src, sym_dst, src_offset, dst_offset,
-                                src.element_count()));
+                                     sym_src, sym_dst, src_offset, dst_offset,
+                                     src.element_count()));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   SynchronizationSignals* signals = global_signals->get();
   signals->IncrementFinishedKernels();
@@ -419,7 +420,7 @@ static absl::Status BlockedDeviceAllReduce(
     const CollectiveCliques* collective_cliques,
     const CollectiveMemory* collective_memory) {
   ABSL_RETURN_IF_ERROR(DeviceAllReduce(stream, src, dst, collective_params,
-                                  collective_cliques, collective_memory));
+                                       collective_cliques, collective_memory));
   return stream->BlockHostUntilDone();
 }
 
@@ -434,7 +435,7 @@ static absl::Status DelayedDeviceAllReduce(
   ABSL_RETURN_IF_ERROR(
       stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(1)); }));
   ABSL_RETURN_IF_ERROR(DeviceAllReduce(stream, src, dst, collective_params,
-                                  collective_cliques, collective_memory));
+                                       collective_cliques, collective_memory));
   return absl::OkStatus();
 }
 
@@ -453,7 +454,7 @@ static absl::Status ExecuteMultiGpuBarrier(
 
   auto rank = clique_key.rank(collective_params->global_device_id);
   ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
-                   collective_cliques->GetComm(clique_key, *rank));
+                        collective_cliques->GetComm(clique_key, *rank));
 
   GpuCollectives::Executor executor(stream);
   ABSL_RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
@@ -461,7 +462,7 @@ static absl::Status ExecuteMultiGpuBarrier(
   // Copy src to dst so the HLO copy/return is valid.
   auto dst_addr = dst->device_memory();
   ABSL_RETURN_IF_ERROR(stream->Memcpy(&dst_addr, src.device_memory(),
-                                 src.element_count() * sizeof(uint32_t)));
+                                      src.element_count() * sizeof(uint32_t)));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   SynchronizationSignals* signals = global_signals->get();
   signals->IncrementFinishedKernels();
@@ -487,9 +488,10 @@ static absl::Status MulticastAllReduce(
   TF_RET_CHECK(src_mmem != nullptr);
 
   // Load custom kernel that does device-initiated collectives.
-  ABSL_ASSIGN_OR_RETURN(auto kernel, se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                                    .LoadKernel<MultimemAllReduce>(
-                                        collective_params->executor));
+  ABSL_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<MultimemAllReduce>(collective_params->executor));
 
   // Create device addresses from multimem pointer.
   auto src_addr =
@@ -511,8 +513,8 @@ static absl::Status MulticastAllReduce(
   se::ThreadDim thread_dims(8);
 
   ABSL_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, src_addr,
-                                dst->device_memory(), src_offset,
-                                src.element_count()));
+                                     dst->device_memory(), src_offset,
+                                     src.element_count()));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   SynchronizationSignals* signals = global_signals->get();
   signals->IncrementFinishedKernels();
@@ -529,7 +531,7 @@ static absl::Status DelayedMulticastAllReduce(
   ABSL_RETURN_IF_ERROR(
       stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(1)); }));
   ABSL_RETURN_IF_ERROR(MulticastAllReduce(stream, src, dst, collective_params,
-                                     collective_memory));
+                                          collective_memory));
   return absl::OkStatus();
 }
 
@@ -541,7 +543,7 @@ static absl::Status BlockedMulticastAllReduce(
     const CollectiveParams* collective_params,
     const CollectiveMemory* collective_memory) {
   ABSL_RETURN_IF_ERROR(MulticastAllReduce(stream, src, dst, collective_params,
-                                     collective_memory));
+                                          collective_memory));
   return stream->BlockHostUntilDone();
 }
 
@@ -563,9 +565,10 @@ static absl::Status SymMulticastAllReduce(
       collective_memory->FindSymmetricMemory(clique_key, src.device_memory());
 
   // Load custom kernel that does device-initiated collectives.
-  ABSL_ASSIGN_OR_RETURN(auto kernel, se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                                    .LoadKernel<MultimemAllReduce>(
-                                        collective_params->executor));
+  ABSL_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<MultimemAllReduce>(collective_params->executor));
 
   // Get multimem address for the src buffer.
   ABSL_ASSIGN_OR_RETURN(auto src_multimem, sym_src->multimem_addr());
@@ -589,9 +592,9 @@ static absl::Status SymMulticastAllReduce(
   se::ThreadDim thread_dims(8);
 
   ABSL_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream,
-                                se::DeviceAddress<uint32_t>(src_multimem),
-                                dst->device_memory(), src_offset,
-                                src.element_count()));
+                                     se::DeviceAddress<uint32_t>(src_multimem),
+                                     dst->device_memory(), src_offset,
+                                     src.element_count()));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   SynchronizationSignals* signals = global_signals->get();
   signals->IncrementFinishedKernels();
@@ -607,8 +610,8 @@ static absl::Status DelayedSymMulticastAllReduce(
     const CollectiveMemory* collective_memory) {
   ABSL_RETURN_IF_ERROR(
       stream->DoHostCallback([]() { absl::SleepFor(absl::Seconds(1)); }));
-  ABSL_RETURN_IF_ERROR(SymMulticastAllReduce(stream, src, dst, collective_params,
-                                        collective_memory));
+  ABSL_RETURN_IF_ERROR(SymMulticastAllReduce(
+      stream, src, dst, collective_params, collective_memory));
   return absl::OkStatus();
 }
 
@@ -619,8 +622,8 @@ static absl::Status BlockedSymMulticastAllReduce(
     ffi::Result<ffi::BufferR0<U32>> dst,
     const CollectiveParams* collective_params,
     const CollectiveMemory* collective_memory) {
-  ABSL_RETURN_IF_ERROR(SymMulticastAllReduce(stream, src, dst, collective_params,
-                                        collective_memory));
+  ABSL_RETURN_IF_ERROR(SymMulticastAllReduce(
+      stream, src, dst, collective_params, collective_memory));
   return stream->BlockHostUntilDone();
 }
 
@@ -642,9 +645,10 @@ static absl::Status SymPeerAllReduce(
       collective_memory->FindSymmetricMemory(clique_key, src.device_memory());
 
   // Load custom kernel that does device-initiated collectives.
-  ABSL_ASSIGN_OR_RETURN(auto kernel, se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                                    .LoadKernel<Peer2AllReduce>(
-                                        collective_params->executor));
+  ABSL_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<Peer2AllReduce>(collective_params->executor));
 
   // Get peer addresses for src buffer.
   ABSL_ASSIGN_OR_RETURN(auto src0, sym_src->peer_addr(RankId(0)));
@@ -669,10 +673,10 @@ static absl::Status SymPeerAllReduce(
   se::BlockDim block_dims(1);
   se::ThreadDim thread_dims(8);
 
-  ABSL_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream,
-                                se::DeviceAddress<uint32_t>(src0),
-                                se::DeviceAddress<uint32_t>(src1),
-                                dst->device_memory(), src.element_count()));
+  ABSL_RETURN_IF_ERROR(kernel.Launch(
+      thread_dims, block_dims, stream, se::DeviceAddress<uint32_t>(src0),
+      se::DeviceAddress<uint32_t>(src1), dst->device_memory(),
+      src.element_count()));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   SynchronizationSignals* signals = global_signals->get();
   signals->IncrementFinishedKernels();
@@ -727,9 +731,10 @@ static absl::Status PeerAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   TF_RET_CHECK(src0 && src1);
 
   // Load custom kernel that does device-initiated collectives.
-  ABSL_ASSIGN_OR_RETURN(auto kernel, se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                                    .LoadKernel<Peer2AllReduce>(
-                                        collective_params->executor));
+  ABSL_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<Peer2AllReduce>(collective_params->executor));
 
   // Block the host CPU thread until the asynchronous GPU copies / memory maps
   // are complete.
@@ -746,8 +751,9 @@ static absl::Status PeerAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   se::BlockDim block_dims(1);
   se::ThreadDim thread_dims(8);
 
-  ABSL_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, *src0, *src1,
-                                dst->device_memory(), src.element_count()));
+  ABSL_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, *src0,
+                                     *src1, dst->device_memory(),
+                                     src.element_count()));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   SynchronizationSignals* signals = global_signals->get();
   signals->IncrementFinishedKernels();

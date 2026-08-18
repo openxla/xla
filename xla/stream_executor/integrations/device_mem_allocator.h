@@ -20,11 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/device_id.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace stream_executor {
 

@@ -20,10 +20,10 @@ limitations under the License.
 #include <memory>
 
 #include "absl/status/statusor.h"
+#include "tsl/platform/numa.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/numa.h"
 
 namespace stream_executor::gpu {
 

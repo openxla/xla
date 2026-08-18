@@ -31,8 +31,8 @@ limitations under the License.
 #include "pybind11/cast.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
-#include "xla/tsl/platform/macros.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/macros.h"
 
 #ifdef Py_GIL_DISABLED
 #include "absl/synchronization/mutex.h"

@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/comparison_util.h"

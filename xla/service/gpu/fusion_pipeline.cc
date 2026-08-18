@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/threadpool.h"
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
 #include "xla/backends/gpu/transforms/conv_operand_canonicalizer.h"
 #include "xla/backends/gpu/transforms/multi_output_fusion.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace gpu {

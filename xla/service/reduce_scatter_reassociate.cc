@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/service/hlo_domain_map.h"
 #include "xla/service/scheduling_annotations_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {

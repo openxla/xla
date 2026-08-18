@@ -11,6 +11,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"

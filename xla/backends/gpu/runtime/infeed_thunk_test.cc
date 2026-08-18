@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/infeed_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/runtime/thunk.h"

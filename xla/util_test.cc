@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
@@ -33,12 +34,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "ml_dtypes/include/float8.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

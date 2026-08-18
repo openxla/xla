@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/live_range_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -44,8 +45,8 @@ class LiveRangeCalculatorTest : public HloHardwareIndependentTestBase {
   GetInstToIndex(const HloModule* module,
                  const HloAliasAnalysis& alias_analysis) {
     ABSL_ASSIGN_OR_RETURN(auto live_range,
-                     HloLiveRange::Run(module->schedule(), alias_analysis,
-                                       module->entry_computation()));
+                          HloLiveRange::Run(module->schedule(), alias_analysis,
+                                            module->entry_computation()));
     return live_range->instruction_schedule();
   }
 

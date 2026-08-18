@@ -17,7 +17,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "xla/error_spec.h"
@@ -26,6 +25,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"

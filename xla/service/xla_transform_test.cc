@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/xla_transform.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -604,7 +605,8 @@ class UpdateHloModuleFromProtoTest : public XlaTransformTest {
         ROOT neg = f32[2,3] negate(p0)
       }
     )";
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo_text));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_text));
     Shape non_default_shape = NonDefaultShape();
     *module->mutable_entry_computation_layout()->mutable_parameter_layout(0) =
         ShapeLayout(non_default_shape);
@@ -614,7 +616,8 @@ class UpdateHloModuleFromProtoTest : public XlaTransformTest {
   }
 
   absl::StatusOr<HloModuleProto> HloTextToProto(absl::string_view hlo_text) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo_text));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_text));
     return module->ToProto();
   }
 

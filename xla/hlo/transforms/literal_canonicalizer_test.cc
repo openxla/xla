@@ -16,14 +16,15 @@ limitations under the License.
 #include "xla/hlo/transforms/literal_canonicalizer.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/literal_pool.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

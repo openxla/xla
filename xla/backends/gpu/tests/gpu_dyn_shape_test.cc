@@ -12,9 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/hlo/ir/hlo_instruction.h"

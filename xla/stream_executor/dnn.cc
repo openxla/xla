@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/engine_options.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace stream_executor {
 namespace dnn {
