@@ -46,6 +46,25 @@ cc_library(
 )
 
 cc_library(
+    name = "mock_codegen_backend",
+    testonly = 1,
+    hdrs = ["mock_codegen_backend.h"],
+    deps = [
+        ":backend_config_proto_cc",
+        ":backends_proto_cc",
+        ":codegen_backend",
+        "//xla:autotuning_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:executable",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_for_library",
+    ],
+)
+
+cc_library(
     name = "autotune_fingerprint",
     srcs = ["autotune_fingerprint.cc"],
     hdrs = ["autotune_fingerprint.h"],
@@ -85,6 +104,19 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "hlo_extractor_test",
+    srcs = ["hlo_extractor_test.cc"],
+    deps = [
+        ":hlo_extractor",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "codegen_orchestrator",
     srcs = ["codegen_orchestrator.cc"],
@@ -108,6 +140,33 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "codegen_orchestrator_test",
+    srcs = ["codegen_orchestrator_test.cc"],
+    deps = [
+        ":backends_proto_cc",
+        ":codegen_backend",
+        ":codegen_orchestrator",
+        ":mock_codegen_backend",
+        "//xla:literal_util",
+        "//xla/backends/gpu/runtime:thunk",
+        "//xla/backends/gpu/runtime:thunk_executor",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:executable",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/stream_executor:kernel_stats",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -180,7 +239,6 @@ cc_library(
     ],
 )
 
-# TODO(b/519057668): Move unit tests to their respective cc_library targets.
 xla_cc_test(
     name = "config_assigner_test",
     srcs = ["config_assigner_test.cc"],
@@ -191,13 +249,9 @@ xla_cc_test(
         ":codegen_backend",
         ":codegen_orchestrator",
         ":config_assigner",
+        ":mock_codegen_backend",
         ":profiler",
-        "//xla:autotune_results_proto_cc",
-        "//xla:autotuning_proto_cc",
         "//xla:literal_util",
-        "//xla:shape_util",
-        "//xla/backends/gpu/runtime:thunk",
-        "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/pjrt/distributed:key_value_store_interface",
@@ -205,18 +259,12 @@ xla_cc_test(
         "//xla/service:hlo_proto_cc",
         "//xla/service:shaped_buffer",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/service/gpu:gpu_executable",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:kernel_stats",
         "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/testing:temporary_directory",
-        "//xla/tsl/util/proto:parse_text_proto",
-        "//xla/tsl/util/proto:proto_matchers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
@@ -224,10 +272,7 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@com_google_protobuf//:any_cc_proto",
-        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -239,26 +284,32 @@ xla_cc_test(
         ":backends_proto_cc",
         ":codegen_backend",
         ":codegen_orchestrator",
+        ":mock_codegen_backend",
         ":profiler",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
-        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
+        "//xla/tsl/testing:temporary_directory",
+        "//xla/tsl/util/proto:parse_text_proto",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:protobuf",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -462,6 +513,28 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "config_runner_test",
+    srcs = ["config_runner_test.cc"],
+    deps = [
+        ":config_runner",
+        ":mock_codegen_backend",
+        ":profiler",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:executable",
+        "//xla/service:service_executable_run_options",
+        "//xla/service:shaped_buffer",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "config_selector",
     srcs = ["config_selector.cc"],
@@ -473,6 +546,23 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+    ],
+)
+
+xla_cc_test(
+    name = "config_selector_test",
+    srcs = ["config_selector_test.cc"],
+    deps = [
+        ":codegen_backend",
+        ":config_runner",
+        ":config_selector",
+        ":mock_codegen_backend",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
