@@ -134,8 +134,8 @@ class CollectivesFacade {
     return hipSuccess;
   }
   hipError_t RunRecv(void*, size_t, int, hipStream_t) { return hipSuccess; }
-  hipError_t RunCollectivePermute(const void*, void*, size_t, int, const int*,
-                                  int, hipStream_t) {
+  hipError_t RunCollectivePermute(const void*, void*, size_t, int,
+                                  const std::vector<int>&, hipStream_t) {
     return hipSuccess;
   }
   hipError_t RunQuiet(hipStream_t) { return hipSuccess; }
