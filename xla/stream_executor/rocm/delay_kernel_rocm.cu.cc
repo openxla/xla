@@ -69,28 +69,42 @@ absl::StatusOr<GpuSemaphore> CreateCoherentSemaphore() {
       }));
 }
 
-// Wait for the value pointed to by `semaphore` to have value `target`, timing
-// out after approximately `timeout_ticks` wall clock ticks if that value is
-// not reached. That happens when something stalls the host between launching
-// this kernel and releasing it, e.g. the first launch of a not-yet-loaded
-// kernel synchronising while its code object is loaded.
+// Reads the clock the kernel times itself with, in ticks of `WallClockHz()`.
 //
 // Times with `wall_clock64()` rather than `clock64()`: only the former runs at
 // a constant rate, reported by `hipDeviceAttributeWallClockRate`, which is what
 // lets the host pass tick counts that mean the same duration on every device.
 // `clock64()` reads a counter whose rate differs per part, and on some targets
 // does not track the shader clock at all.
+//
+// `wall_clock64()` is declared only by the AMD backend. Built against the
+// NVIDIA backend, HIP maps onto CUDA, which exposes no constant rate clock as a
+// function, so that path reads `clock64()` against an assumed rate, as the CUDA
+// delay kernel does. See `xla/stream_executor/cuda/delay_kernel_cuda.cu.cc`.
+__device__ __forceinline__ int64_t WallClock() {
+#if defined(__HIP_PLATFORM_NVIDIA__)
+  return clock64();
+#else
+  return wall_clock64();
+#endif
+}
+
+// Wait for the value pointed to by `semaphore` to have value `target`, timing
+// out after approximately `timeout_ticks` wall clock ticks if that value is
+// not reached. That happens when something stalls the host between launching
+// this kernel and releasing it, e.g. the first launch of a not-yet-loaded
+// kernel synchronising while its code object is loaded.
 __global__ void DelayKernel(volatile GpuSemaphoreState* semaphore,
                             GpuSemaphoreState target, int64_t timeout_ticks,
                             int64_t poll_interval_ticks) {
-  const int64_t tstart{wall_clock64()};
+  const int64_t tstart{WallClock()};
   bool target_not_reached{true};
   while ((target_not_reached = (*semaphore != target)) &&
-         (wall_clock64() - tstart) < timeout_ticks) {
+         (WallClock() - tstart) < timeout_ticks) {
     int64_t elapsed{};
-    const int64_t t0{wall_clock64()};
+    const int64_t t0{WallClock()};
     do {
-      elapsed = wall_clock64() - t0;
+      elapsed = WallClock() - t0;
     } while (elapsed < poll_interval_ticks);
   }
   if (target_not_reached) {
@@ -103,8 +117,13 @@ __global__ void DelayKernel(volatile GpuSemaphoreState* semaphore,
 // Used only when hipDeviceAttributeWallClockRate cannot be queried.
 constexpr int64_t kFallbackWallClockHz = 100'000'000;
 
-// Returns the frequency of the device's constant rate wall clock in Hz.
+// Returns the frequency of the clock `WallClock()` reads, in Hz.
 int64_t WallClockHz(int device_ordinal) {
+#if defined(__HIP_PLATFORM_NVIDIA__)
+  // `clock64()` counts shader cycles, which have no fixed rate. The CUDA delay
+  // kernel assumes 2GHz for the same reason; keep the two consistent.
+  return 2'000'000'000;
+#else
   int rate_khz = 0;
   hipError_t result = hipDeviceGetAttribute(
       &rate_khz, hipDeviceAttributeWallClockRate, device_ordinal);
@@ -116,6 +135,7 @@ int64_t WallClockHz(int device_ordinal) {
     return kFallbackWallClockHz;
   }
   return int64_t{rate_khz} * 1000;
+#endif  // defined(__HIP_PLATFORM_NVIDIA__)
 }
 }  // namespace
 
