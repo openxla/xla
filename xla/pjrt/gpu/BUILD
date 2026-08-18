@@ -100,7 +100,6 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_cliques",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/collectives:gpu_communicator",
-        "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/backends/gpu/target_config",
         "//xla/client:client_library",
         "//xla/client:local_client",
@@ -226,6 +225,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_cuda_or_rocm([
         # keep sorted
+        "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:gpu_executable_buffer_allocator",
@@ -242,6 +242,7 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
+        "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:gpu_executable_buffer_allocator",

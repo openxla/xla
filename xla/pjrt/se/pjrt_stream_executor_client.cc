@@ -749,11 +749,10 @@ PjRtStreamExecutorExecutableLoadState::LoadRawExecutable(
                            ->local_device_state()
                            ->local_device_id()
                            .value();
-  StreamExecutorExecutable* se_executable =
-      absl::down_cast<StreamExecutorExecutable*>(&executable.get());
+  auto se_executable = std::move(executable).Cast<StreamExecutorExecutable>();
   const CompileOptions& compile_options = se_executable->compile_options();
-  ABSL_ASSIGN_OR_RETURN(auto local_exec,
-                   se_executable->GetOrLoadExecutable(raw_client()->client()));
+  ABSL_ASSIGN_OR_RETURN(auto local_exec, se_executable->GetOrLoadExecutable(
+                                             raw_client()->client()));
   if (!compile_options.compile_portable_executable) {
     ABSL_RETURN_IF_ERROR(local_exec->VerifyRunDeviceCompatible(device_ordinal));
   }
@@ -764,7 +763,7 @@ PjRtStreamExecutorExecutableLoadState::LoadRawExecutable(
   return std::make_unique<PjRtStreamExecutorRawLoadedExecutable>(
       replica, partition, run_id, device,
       std::move(device_and_assign.device_assignment), std::move(local_exec),
-      raw_client(), compile_options);
+      std::move(se_executable), raw_client());
 }
 
 // Transfer the given literal to the infeed queue of the given local device.
@@ -1419,6 +1418,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
   LocalDeviceState* device_state =
       tensorflow::down_cast<PjRtStreamExecutorDevice*>(device_)
           ->local_device_state();
+  const CompileOptions& compile_options = se_executable_->compile_options();
 
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
@@ -1480,12 +1480,12 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
   // outputs then fall back to the primary (error) event.
   std::vector<PjRtDeviceEventPromiseRef> result_definition_event_promises;
   std::vector<PjRtDeviceEventRef> result_definition_events;
-  if (!compile_options_.individually_defined_output_indices.empty() &&
+  if (!compile_options.individually_defined_output_indices.empty() &&
       !results.empty()) {
     result_definition_event_promises.resize(results.size());
     result_definition_events.resize(results.size());
     for (int result_index :
-         compile_options_.individually_defined_output_indices) {
+         compile_options.individually_defined_output_indices) {
       DCHECK_LT(static_cast<size_t>(result_index), results.size());
       auto promise = tsl::MakeRef<PjRtStreamExecutorDeviceEventPromise>(
           raw_client_, device_state, raw_client_->async_work_runner());
@@ -1507,7 +1507,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
        results = std::vector<PjRtRawBufferRef>(results.begin(), results.end()),
        executable = executable_, execution_profile = options.execution_profile,
        parameter_is_tupled_arguments =
-           compile_options_.parameter_is_tupled_arguments,
+           compile_options.parameter_is_tupled_arguments,
        replica = replica_, partition = partition_,
        extra_deps = std::move(extra_deps),
        result_definition_event_promises =

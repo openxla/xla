@@ -101,6 +101,8 @@ limitations under the License.
 
 namespace xla {
 
+class StreamExecutorExecutable;
+
 class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
   PjRtStreamExecutorDevice(int id,
@@ -586,16 +588,16 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
       int replica, int partition, RunId run_id, PjRtDevice* device,
       std::shared_ptr<DeviceAssignment> device_assignment,
       std::shared_ptr<LocalExecutable> executable,
-      PjRtStreamExecutorRawClient* raw_client,
-      const CompileOptions& compile_options)
+      tsl::AsyncValueRef<StreamExecutorExecutable> se_executable,
+      PjRtStreamExecutorRawClient* raw_client)
       : replica_(replica),
         partition_(partition),
         run_id_(run_id),
         device_(device),
         device_assignment_(std::move(device_assignment)),
         executable_(std::move(executable)),
-        raw_client_(raw_client),
-        compile_options_(compile_options) {}
+        se_executable_(std::move(se_executable)),
+        raw_client_(raw_client) {}
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options, absl::Span<const PjRtRawBufferRef> inputs,
       absl::Span<const PjRtRawBufferRef> results,
@@ -611,8 +613,8 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
   PjRtDevice* device_;
   std::shared_ptr<DeviceAssignment> device_assignment_;
   std::shared_ptr<LocalExecutable> executable_;
+  tsl::AsyncValueRef<StreamExecutorExecutable> se_executable_;
   PjRtStreamExecutorRawClient* raw_client_;
-  const CompileOptions& compile_options_;
 };
 
 // Wraps one or more XLA LocalExecutables (one per partition, as specified by
