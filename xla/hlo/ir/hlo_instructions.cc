@@ -2533,6 +2533,10 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     builder.AddInstruction(instruction_to_append->Clone(/*suffix=*/""));
     auto* new_computation = CHECK_NOTNULL(instruction_to_append->GetModule())
                                 ->AddEmbeddedComputation(builder.Build());
+    if (instruction_to_append->parent() != nullptr) {
+      new_computation->SetExecutionThread(
+          instruction_to_append->parent()->execution_thread());
+    }
     AppendComputation(new_computation);
     clone = called_computation_root();
   } else {

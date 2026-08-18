@@ -197,12 +197,10 @@ class ThunkEmitter {
   Future<ThunkSequence> EmitCall(const HloInstruction* instr);
 
   absl::StatusOr<ThunkSequence> EmitHostExecuteStart(
-      const HloInstruction* async_start,
-      const HloCustomCallInstruction* host_execute);
+      const HloInstruction* async_start, const HloInstruction* host_execute);
 
   absl::StatusOr<ThunkSequence> EmitHostExecuteDone(
-      const HloInstruction* async_done,
-      const HloCustomCallInstruction* host_execute);
+      const HloInstruction* async_done, const HloInstruction* host_execute);
 
   Future<ThunkSequence> EmitCollective(const HloInstruction* collective);
 
