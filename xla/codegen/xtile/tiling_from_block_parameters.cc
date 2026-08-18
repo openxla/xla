@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/tiling_from_block_parameters.h"
+#include "xla/codegen/xtile/tiling_from_block_parameters.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 
-namespace xla::gpu {
+namespace xla::xtile {
 
 namespace {
 
@@ -51,8 +51,8 @@ using DimensionSemantics =
 
 absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
     const SymbolicTileAnalysis& symbolic_tile_analysis,
-    const BlockLevelParameters& block_level_parameters,
-    const xla::xtile::Tile* dot_tiling_config_override) {
+    const ::xla::gpu::BlockLevelParameters& block_level_parameters,
+    const Tile* dot_tiling_config_override) {
   Tiling::TileMapping tile_mapping;
   int64_t real_root_index = symbolic_tile_analysis.real_root_index();
   const HloInstruction* real_root =
@@ -106,8 +106,8 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
 }
 
 absl::StatusOr<llvm::SmallVector<int64_t>> GetTilingSpaceConcreteSizes(
-    const xla::gpu::experimental::TilingSpace& tiling_space,
-    const BlockLevelParameters& block_level_parameters,
+    const ::xla::gpu::experimental::TilingSpace& tiling_space,
+    const ::xla::gpu::BlockLevelParameters& block_level_parameters,
     bool enable_same_shape_multi_output_fusion) {
   TF_RET_CHECK(!block_level_parameters.output_tile_sizes.empty())
       << "output_tile_sizes cannot be empty.";
@@ -190,4 +190,4 @@ absl::StatusOr<llvm::SmallVector<int64_t>> GetTilingSpaceConcreteSizes(
   return std::move(tile_sizes);
 }
 
-}  // namespace xla::gpu
+}  // namespace xla::xtile
