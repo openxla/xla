@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -223,6 +224,18 @@ bool IsImplicitAsyncSendRecvStart(const HloInstruction* instr) {
 bool HasCollectivesGroupAttribute(const HloInstruction* instr) {
   return instr->frontend_attributes().map().contains(
       kCollectiveGroupMarkerAttr);
+}
+
+// FFI custom-call targets that XLA:GPU itself introduces during lowering
+// (e.g. CUB radix sort), rather than the model author. They are always
+// AOT-safe and therefore bypass the opt-in, user-facing AOT allowlist
+// (--xla_gpu_hlo_custom_call_allowlist).
+bool IsInternalAotAllowlistedCustomCall(absl::string_view target_name) {
+  static constexpr absl::string_view kInternalAotAllowlist[] = {
+      kCubDeviceRadixSortPairsTarget,
+      kCubDeviceRadixSortKeysTarget,
+  };
+  return absl::c_linear_search(kInternalAotAllowlist, target_name);
 }
 
 }  // namespace
@@ -1274,6 +1287,21 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGenericCustomCall(
   }
 
   auto ffi_thunk = [&]() -> absl::StatusOr<std::unique_ptr<Thunk>> {
+    // Enforce the opt-in AOT custom-call allowlist. An empty allowlist
+    // disables the check. This only gates FFI custom calls that lower to a
+    // CustomCallThunk; legacy custom calls and custom kernels are unaffected.
+    // XLA-internal FFI targets are always permitted.
+    const auto& custom_call_allowlist =
+        ir_emitter_context_->debug_options()
+            .xla_gpu_hlo_custom_call_allowlist();
+    if (!custom_call_allowlist.empty() &&
+        !IsInternalAotAllowlistedCustomCall(call_target_name) &&
+        !absl::c_linear_search(custom_call_allowlist, call_target_name)) {
+      return absl::FailedPreconditionError(
+          absl::StrCat("Custom call target '", call_target_name,
+                       "' is not in the allowlist "
+                       "(--xla_gpu_hlo_custom_call_allowlist). "));
+    }
     auto& called_computations = instr->called_computations();
     auto& backend_config_str =
         backend_config.ok()

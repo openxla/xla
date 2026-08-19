@@ -1803,10 +1803,17 @@ message DebugOptions {
   // kCollectiveBroadcast hardware support).
   optional bool xla_spmd_enable_dynamic_slice_collective_broadcast = 520;
 
+  // Opt-in allowlist of FFI custom-call target names permitted for this module.
+  // When non-empty, creating an FFI CustomCallThunk for a custom-call target
+  // that is not on this list fails compilation.Empty (the default) disables the
+  // check. Scope is FFI-only: legacy custom calls and custom calls lowered to
+  // custom kernels (e.g. PTX) are not gated.
+  repeated string xla_gpu_hlo_custom_call_allowlist = 537;
+
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 537
+  // Next id: 538
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

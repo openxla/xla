@@ -776,6 +776,23 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
+  // Custom "sub-parser" lambda for xla_gpu_hlo_custom_call_allowlist. Each
+  // token is trimmed of surrounding whitespace and empty tokens are skipped, so
+  // an empty (or whitespace-only) flag value leaves the allowlist empty.
+  auto setter_for_xla_gpu_hlo_custom_call_allowlist =
+      [debug_options](std::string comma_separated_values) {
+        for (absl::string_view token :
+             absl::StrSplit(comma_separated_values, ',', absl::SkipEmpty())) {
+          absl::string_view target = absl::StripAsciiWhitespace(token);
+          if (target.empty()) {
+            continue;
+          }
+          debug_options->add_xla_gpu_hlo_custom_call_allowlist(
+              std::string(target));
+        }
+        return true;
+      };
+
   // Custom "sub-parser" lambda for xla_gpu_ptx_file.
   auto setter_for_xla_gpu_ptx_file = [debug_options](std::string value) {
     debug_options->add_xla_gpu_ptx_file(value);
@@ -1419,6 +1436,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_disable_hlo_passes", setter_for_xla_disable_hlo_passes, "",
       "Comma-separated list of hlo passes to be disabled. These names must "
       "exactly match the passes' names; no whitespace around commas."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_hlo_custom_call_allowlist",
+      setter_for_xla_gpu_hlo_custom_call_allowlist, "",
+      "Comma-separated allowlist of FFI custom-call target names permitted for "
+      "this module. When non-empty, creating an FFI CustomCallThunk for a "
+      "target that is not on this list fails compilation. Empty (the default) "
+      "disables the check. FFI-only: legacy custom calls and custom kernels "
+      "(e.g. PTX) are not gated. Surrounding whitespace around entries is "
+      "ignored."));
   flag_list->push_back(tsl::Flag(
       "xla_enable_hlo_passes_only", setter_for_xla_enable_hlo_passes_only, "",
       "Comma-separated list of hlo passes to be enabled. These names must "

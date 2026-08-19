@@ -578,6 +578,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/concurrency:future",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
