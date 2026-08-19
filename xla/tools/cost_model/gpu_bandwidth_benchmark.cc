@@ -15,12 +15,43 @@ limitations under the License.
 
 #include "xla/tools/cost_model/gpu_bandwidth_benchmark.h"
 
+#include <cstdint>
 #include <string>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla::gpu {
+
+absl::StatusOr<double> GetPeakBandwidthBytesPerSec(int device_id) {
+  absl::StatusOr<stream_executor::Platform*> platform =
+      stream_executor::PlatformManager::PlatformWithName(
+          stream_executor::GpuPlatformName());
+  if (!platform.ok()) {
+    return platform.status();
+  }
+  absl::StatusOr<stream_executor::StreamExecutor*> executor =
+      (*platform)->ExecutorForDevice(device_id);
+  if (!executor.ok()) {
+    return executor.status();
+  }
+  const int64_t bandwidth =
+      (*executor)->GetDeviceDescription().memory_bandwidth();
+  if (bandwidth <= 0) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to determine peak memory bandwidth for device %d: "
+        "memory_bandwidth is %v.",
+        device_id, bandwidth));
+  }
+  return static_cast<double>(bandwidth);
+}
 
 std::string FormatBandwidthTable(absl::Span<const BandwidthEntry> entries) {
   std::string result =
