@@ -1455,7 +1455,7 @@ cc_library(
         ":backend",
         ":compiler",
         ":computation_layout",
-        ":computation_placer_hdr",
+        ":device_assignment",
         ":executable",
         ":hlo_module_config",
         ":local_service_utils",
@@ -1557,7 +1557,7 @@ xla_cc_test(
     name = "latency_hiding_scheduler_test",
     srcs = ["latency_hiding_scheduler_test.cc"],
     deps = [
-        ":computation_placer_hdr",
+        ":device_assignment",
         ":hlo_cost_analysis",
         ":hlo_module_config",
         ":latency_hiding_scheduler",
@@ -3914,7 +3914,7 @@ xla_cc_test(
     deps = [
         ":buffer_value",
         ":compilation_environments",
-        ":computation_placer_hdr",
+        ":device_assignment",
         ":hlo_module_config",
         ":test_compilation_environment_proto_cc",
         "//xla:comparison_util",
@@ -5060,7 +5060,7 @@ cc_library(
     hdrs = ["hlo_runner.h"],
     deps = [
         ":computation_layout",
-        ":computation_placer_hdr",
+        ":device_assignment",
         ":hlo_runner_interface",
         "//xla:executable_run_options",
         "//xla:future",
@@ -5119,7 +5119,7 @@ xla_cc_test(
     name = "hlo_runner_test",
     srcs = ["hlo_runner_test.cc"],
     deps = [
-        ":computation_placer_hdr",
+        ":device_assignment",
         ":hlo_runner",
         ":hlo_runner_interface",
         ":test_compilation_environment_proto_cc",
