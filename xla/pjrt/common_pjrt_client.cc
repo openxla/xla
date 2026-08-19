@@ -1489,6 +1489,12 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
   for (int i = 0; i < output_leaf_shapes.size(); ++i) {
     std::optional<HloInputOutputAliasConfig::Alias> alias = get_alias(i);
     if (should_allocate_new_buffer(alias)) {
+      if (alias.has_value() && alias->must_alias()) {
+        return InvalidArgument(
+            "An input was configured to be must-alias at compile time but not "
+            "donated at runtime: %s",
+            alias->ToString());
+      }
       const Shape& leaf_shape = output_leaf_shapes[i];
       const auto& current_anno =
           tsl::profiler::ScopedMemoryDebugAnnotation::CurrentAnnotation();

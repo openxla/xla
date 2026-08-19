@@ -184,7 +184,7 @@ TEST(PjRtCpuClientTest, RuntimeDonationDenial) {
   static constexpr char kProgram[] =
       R"(
 HloModule RuntimeDonationDenial,
-          input_output_alias={ {}: (0, {}, must-alias) }
+          input_output_alias={ {}: (0, {}, may-alias) }
 
 ENTRY RuntimeDonationDenial() -> f32[2, 2] {
     ROOT %param = f32[2, 2] parameter(0)
