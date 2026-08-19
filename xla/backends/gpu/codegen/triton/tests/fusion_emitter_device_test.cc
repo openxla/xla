@@ -27,6 +27,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/random/uniform_int_distribution.h"
 #include "absl/status/status.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
@@ -65,6 +67,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/target_constants.h"
@@ -2641,7 +2644,12 @@ ENTRY e {
     constexpr int64_t m = 128;
     constexpr int64_t n = 128;
     constexpr int64_t k = 256;
-    const int64_t scale_k = k / (scale_type == F8E8M0FNU ? 32 : 16);
+    int block_size = 32;
+    if ((lhs_type == F4E2M1FN && rhs_type == F4E2M1FN) ||
+        scale_type == F8E4M3FN) {
+      block_size = 16;
+    }
+    const int64_t scale_k = k / block_size;
 
     const std::string lhs_shape =
         lhs_k_minor ? absl::StrCat(m, ",", k) : absl::StrCat(k, ",", m);
@@ -2653,6 +2661,17 @@ ENTRY e {
     const std::string rhs_scale_shape = rhs_k_minor
                                             ? absl::StrCat(n, ",", scale_k)
                                             : absl::StrCat(scale_k, ",", n);
+
+    LOG(INFO) << "TritonFp4ScaledDotTest Params:"
+              << "\n  LHS Type: "
+              << primitive_util::LowercasePrimitiveTypeName(lhs_type)
+              << "\n  RHS Type: "
+              << primitive_util::LowercasePrimitiveTypeName(rhs_type)
+              << "\n  Scale Type: "
+              << primitive_util::LowercasePrimitiveTypeName(scale_type)
+              << "\n  Block Size: " << block_size
+              << "\n  LHS K Minor: " << lhs_k_minor
+              << "\n  RHS K Minor: " << rhs_k_minor;
 
     std::string hlo = absl::StrReplaceAll(
         kHloTemplate,
@@ -3258,18 +3277,28 @@ class TritonScaledDotCoverageTest : public TritonScaledDotTestBase,
 };
 
 std::vector<ScaledDotCoverageTestCase> GetCoverageTestCases() {
-  std::vector<PrimitiveType> input_types = {F8E4M3FN, F8E5M2, F4E2M1FN};
-  std::vector<PrimitiveType> scale_types = {F8E8M0FNU};
+  std::vector<PrimitiveType> fp8_types = {F8E4M3FN, F8E5M2};
   std::vector<ScaledDotCoverageTestCase> cases;
 
-  for (auto lhs : input_types) {
-    for (auto rhs : input_types) {
-      for (auto scale : scale_types) {
-        int block_size = 32;
-        cases.push_back({lhs, rhs, scale, block_size});
-      }
+  // 1. Pure FP8 with E8M0 scales (Block 32)
+  for (auto lhs : fp8_types) {
+    for (auto rhs : fp8_types) {
+      cases.push_back({lhs, rhs, F8E8M0FNU, 32});
     }
   }
+
+  // 2. Mixed FP4/FP8 with E8M0 scales (Block 32)
+  for (auto fp8_type : fp8_types) {
+    cases.push_back({F4E2M1FN, fp8_type, F8E8M0FNU, 32});
+    cases.push_back({fp8_type, F4E2M1FN, F8E8M0FNU, 32});
+  }
+
+  // 3. Pure FP4 with E8M0 scales (Block 16)
+  cases.push_back({F4E2M1FN, F4E2M1FN, F8E8M0FNU, 16});
+
+  // 4. Pure FP4 with E4M3 scales (Block 16)
+  cases.push_back({F4E2M1FN, F4E2M1FN, F8E4M3FN, 16});
+
   return cases;
 }
 
@@ -3294,11 +3323,12 @@ TEST_P(TritonScaledDotCoverageTest, Executes) {
 
   const auto& [param, lhs_k_minor, rhs_k_minor, tiling_enabled] = GetParam();
 
-  // Blackboard doesn't support non-E8M0 scale in TMEM?
-  if (cc->IsAtLeastBlackwell() && param.scale_type != F8E8M0FNU) {
-    GTEST_SKIP() << "Blackwell TMEM scale expects E8M0 scale, skipping other "
-                    "scales for now.";
-  }
+  // We want to test all combinations.
+  // if (cc->IsAtLeastBlackwell() && param.scale_type != F8E8M0FNU) {
+  //   GTEST_SKIP() << "Blackwell TMEM scale expects E8M0 scale, skipping other
+  //   "
+  //                   "scales for now.";
+  // }
 
   constexpr absl::string_view kHloTemplate = R"hlo(
 HloModule m
@@ -3330,6 +3360,15 @@ ENTRY e {
                                           ? absl::StrCat(n, ",", scale_k)
                                           : absl::StrCat(scale_k, ",", n);
 
+  // 1: original dot types
+  std::string original_types = absl::StrCat(
+      "LHS: ", primitive_util::LowercasePrimitiveTypeName(param.lhs_type),
+      ", RHS: ", primitive_util::LowercasePrimitiveTypeName(param.rhs_type),
+      ", Scale: ", primitive_util::LowercasePrimitiveTypeName(param.scale_type),
+      ", Block Size: ", param.block_size);
+
+  std::string after_composite = "scaled-dot";
+
   std::string hlo = absl::StrReplaceAll(
       kHloTemplate,
       {{"$lhs_type",
@@ -3347,10 +3386,19 @@ ENTRY e {
        {"$rhs_contracting_dim", rhs_k_minor ? "1" : "0"}});
 
   ASSERT_OK_AND_ASSIGN(auto optimized_module, GetOptimizedModule(hlo));
-  LOG(INFO) << "Optimized HLO Module:\n" << optimized_module->ToString();
 
   HloComputation* scaled_dot_computation = GetFirstComputationWithInstruction(
       *optimized_module, HloOpcode::kScaledDot);
+
+  std::string optimized_dot_str = "N/A";
+  if (scaled_dot_computation) {
+    for (const auto* inst : scaled_dot_computation->instructions()) {
+      if (inst->opcode() == HloOpcode::kScaledDot) {
+        optimized_dot_str = inst->ToString();
+        break;
+      }
+    }
+  }
 
   ASSERT_NE(scaled_dot_computation, nullptr)
       << "Scaled dot instruction not found in optimized module.";
@@ -3367,9 +3415,78 @@ ENTRY e {
     EXPECT_FALSE(arguments[i].IsAll(0)) << "Argument " << i << " is all zeros";
   }
 
-  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(optimized_module),
-                                       LiteralUtil::MakePointers(arguments),
-                                       ErrorSpec{/*aabs=*/0.1, /*arel=*/0.1}));
+  GpuCompiler* gpu_compiler = dynamic_cast<GpuCompiler*>(compiler());
+  std::vector<std::string> ptx_instructions;
+  if (gpu_compiler) {
+    gpu_compiler->SetAsmHook([&](absl::string_view ptx) {
+      std::string ptx_str(ptx);
+      std::string line;
+      size_t pos = 0;
+      while ((pos = ptx_str.find('\n')) != std::string::npos) {
+        line = ptx_str.substr(0, pos);
+        // Trim leading whitespace
+        size_t first_non_space = line.find_first_not_of(" \t");
+        if (first_non_space != std::string::npos) {
+          line = line.substr(first_non_space);
+        }
+
+        // Split by space or semicolon to find tokens
+        std::vector<std::string> tokens =
+            absl::StrSplit(line, absl::ByAnyChar(" \t;"), absl::SkipEmpty());
+        if (!tokens.empty()) {
+          std::string inst = tokens[0];
+          // Skip predicate if present
+          if (inst.starts_with('@') && tokens.size() > 1) {
+            inst = tokens[1];
+          }
+
+          // Filter for MMA instructions specifically
+          if (absl::StrContains(inst, "mma") &&
+              (inst.starts_with("wgmma.mma") ||
+               inst.starts_with("tcgen05.mma"))) {
+            ptx_instructions.push_back(inst);
+          }
+        }
+        ptx_str.erase(0, pos + 1);
+      }
+    });
+  }
+
+  // Explicitly compile to trigger the hook and get PTX
+  auto cloned_module = optimized_module->Clone();
+  auto executable_or = CompileToExecutable(std::move(cloned_module),
+                                           /*run_optimization_passes=*/true);
+  if (!executable_or.ok()) {
+    LOG(ERROR) << "Explicit compilation failed: " << executable_or.status();
+  }
+  // Deduplicate PTX instructions
+  std::vector<std::string> unique_ptx;
+  for (const auto& inst : ptx_instructions) {
+    if (absl::c_find(unique_ptx, inst) == unique_ptx.end()) {
+      unique_ptx.push_back(inst);
+    }
+  }
+
+  LOG(ERROR) << "[SCALED_DOT_COVERAGE_SUMMARY]"
+             << "\n  1: Original Types: " << original_types
+             << "\n  2: After Composite: " << after_composite
+             << "\n  3: Optimized HLO Dot: " << optimized_dot_str
+             << "\n  4: Triton Dot: tt.dot_scaled"
+             << "\n  5: PTX Instructions:\n    "
+             << absl::StrJoin(unique_ptx, "\n    ");
+
+  bool run_status = RunAndCompareNoHloPasses(
+      std::move(optimized_module), LiteralUtil::MakePointers(arguments),
+      ErrorSpec{/*aabs=*/0.1, /*arel=*/0.1});
+
+  if (gpu_compiler) {
+    gpu_compiler->RemoveAsmHook();
+  }
+
+  LOG(ERROR) << "[SCALED_DOT_COVERAGE_STATUS] Execution Status: "
+             << (run_status ? "SUCCESS" : "FAILURE");
+
+  EXPECT_TRUE(run_status);
 }
 
 INSTANTIATE_TEST_SUITE_P(
