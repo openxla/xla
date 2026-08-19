@@ -300,6 +300,10 @@ class DistributedKeyValueStore : public KeyValueStoreInterface {
     return client_->KeyValueSet(absl::StrCat(prefix_, key), value);
   }
 
+  absl::Status Delete(absl::string_view key) override {
+    return client_->KeyValueDelete(absl::StrCat(prefix_, key));
+  }
+
   std::shared_ptr<tsl::CallOptions> AsyncGet(
       absl::string_view key,
       tsl::CoordinationServiceAgent::StatusOrValueCallback done) override {

@@ -312,5 +312,18 @@ TEST(InMemoryKeyValueStoreTest, ConcurrentOperations) {
   }
 }
 
+TEST(InMemoryKeyValueStoreTest, DeleteExistingKey) {
+  InMemoryKeyValueStore store;
+  TF_ASSERT_OK(store.Set("key1", "val1"));
+  EXPECT_THAT(store.TryGet("key1"), IsOkAndHolds("val1"));
+  TF_ASSERT_OK(store.Delete("key1"));
+  EXPECT_THAT(store.TryGet("key1"), StatusIs(absl::StatusCode::kNotFound));
+}
+
+TEST(InMemoryKeyValueStoreTest, DeleteMissingKeyIsOk) {
+  InMemoryKeyValueStore store;
+  TF_EXPECT_OK(store.Delete("missing_key"));
+}
+
 }  // namespace
 }  // namespace xla

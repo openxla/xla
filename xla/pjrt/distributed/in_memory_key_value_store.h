@@ -52,6 +52,8 @@ class InMemoryKeyValueStore : public KeyValueStoreInterface {
 
   absl::Status Set(absl::string_view key, absl::string_view value) override;
 
+  absl::Status Delete(absl::string_view key) override;
+
  private:
   KeyValueStore kv_store_;
   bool allow_overwrite_;

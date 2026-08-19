@@ -94,4 +94,9 @@ absl::Status InMemoryKeyValueStore::Set(absl::string_view key,
   return kv_store_.Put(key, value, allow_overwrite_);
 }
 
+absl::Status InMemoryKeyValueStore::Delete(absl::string_view key) {
+  kv_store_.Delete(key);
+  return absl::OkStatus();
+}
+
 }  // namespace xla

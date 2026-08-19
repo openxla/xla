@@ -395,6 +395,7 @@ class MockKeyValueStore : public KeyValueStoreInterface {
  public:
   MOCK_METHOD(absl::Status, Set,
               (absl::string_view key, absl::string_view value), (override));
+  MOCK_METHOD(absl::Status, Delete, (absl::string_view key), (override));
   MOCK_METHOD(absl::StatusOr<std::string>, Get,
               (absl::string_view key, absl::Duration timeout), (override));
   MOCK_METHOD(absl::StatusOr<std::string>, TryGet, (absl::string_view key),
