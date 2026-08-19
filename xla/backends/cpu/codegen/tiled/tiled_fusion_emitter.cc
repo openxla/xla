@@ -318,7 +318,6 @@ bool IsSupportedInstruction(const HloInstruction& inst,
             case HloOpcode::kImag:
             case HloOpcode::kReal:
             case HloOpcode::kSubtract:
-              return true;
             case HloOpcode::kMultiply:
             case HloOpcode::kDivide:
             case HloOpcode::kPower:
@@ -326,7 +325,7 @@ bool IsSupportedInstruction(const HloInstruction& inst,
             case HloOpcode::kNegate:
             case HloOpcode::kSelect:
             case HloOpcode::kCompare:
-              return !use_new_xtile_lowering;
+              return true;
             default:
               return false;
           }
@@ -456,8 +455,9 @@ absl::StatusOr<ge::TiledHloComputation> GetTiledHloComputation(
     auto padded_tile_sizes = xla::xtile::GetPaddedTileSizes(tile_sizes);
     // For the new tiling lowering, we skip large tiles, because we tile to the
     // vector level.
-    if (use_new_xtile_lowering && Product(padded_tile_sizes) > 512 &&
-        llvm::any_of(tile_sizes, [](int64_t size) { return size > 32; })) {
+    if (!block_level_parameters.has_value() && use_new_xtile_lowering &&
+        Product(padded_tile_sizes) > 512 &&
+        llvm::any_of(tile_sizes, [](int64_t size) { return size > 8; })) {
       continue;
     }
     int64_t cost =
