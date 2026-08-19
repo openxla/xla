@@ -3369,29 +3369,43 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
 absl::Status GpuCompiler::LoadAutotuneResultsFromFile(
     const DebugOptions& debug_options) {
   tsl::profiler::TraceMe traceme("LoadAutotuneResultsFromFile");
-  // We are doing this before the timer is started.
-  if (absl::string_view file_path =
-          debug_options.xla_gpu_load_autotune_results_from();
-      !file_path.empty()) {
+  std::string file_path = debug_options.xla_gpu_load_autotune_results_from();
+  if (!file_path.empty()) {
     bool use_new_format = debug_options.xla_gpu_use_new_autotune_cache_format();
     static absl::once_flag once;
     absl::Status status = absl::OkStatus();
     absl::call_once(once, [file_path, use_new_format, &status] {
+      std::string resolved_path;
+      if (!tsl::io::ResolveTestPrefixes(file_path, resolved_path)) {
+        status = absl::FailedPreconditionError(
+            absl::StrCat("File path can not be resolved: ", file_path));
+        return;
+      }
+      if (!tsl::Env::Default()->FileExists(resolved_path).ok()) {
+        status = absl::FailedPreconditionError(absl::StrCat(
+            "Autotune results file does not exist: ", resolved_path));
+        return;
+      }
+      // Allow fallback between the two formats to avoid error when flipping the
+      // xla_gpu_use_new_autotune_cache_format flag.
       if (use_new_format) {
-        std::string resolved_path;
-        if (!tsl::io::ResolveTestPrefixes(file_path, resolved_path)) {
-          status = absl::FailedPreconditionError(
-              absl::StrCat("File path can not be resolved: ", file_path));
-          return;
-        }
-        if (!tsl::Env::Default()->FileExists(resolved_path).ok()) {
-          status = absl::FailedPreconditionError(absl::StrCat(
-              "Autotune results file does not exist: ", resolved_path));
-          return;
-        }
         status = InMemoryStore::LoadFromFile(resolved_path);
+        if (!status.ok()) {
+          LOG(WARNING)
+              << "Failed to load autotune results using new format from "
+              << resolved_path << ": " << status
+              << ". Attempting fallback to legacy format.";
+          status = AutotunerCache::LoadAutotuneResultsFromFile(file_path);
+        }
       } else {
         status = AutotunerCache::LoadAutotuneResultsFromFile(file_path);
+        if (!status.ok()) {
+          LOG(WARNING)
+              << "Failed to load autotune results using legacy format from "
+              << resolved_path << ": " << status
+              << ". Attempting fallback to new format.";
+          status = InMemoryStore::LoadFromFile(resolved_path);
+        }
       }
     });
     ABSL_RETURN_IF_ERROR(status);
