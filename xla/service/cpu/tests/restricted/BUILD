@@ -173,28 +173,6 @@ onednn_cc_test(
     ],
 )
 
-onednn_cc_test(
-    name = "onednn_verbose_test",
-    srcs = ["onednn_verbose_test.cc"],
-    copts = tsl_copts(),
-    deps = [
-        "//xla:array2d",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:shape_util",
-        "//xla/backends/cpu/runtime:buffer_allocations",
-        "//xla/backends/cpu/runtime:thunk",
-        "//xla/backends/cpu/runtime:thunk_testlib",
-        "//xla/backends/cpu/runtime/onednn:onednn_op_thunk",
-        "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:env",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_macros",
-        "@com_google_googletest//:gtest_main",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
 xla_restricted_verify(allowed_targets = [
     xla_restricted_allow("cpu_aot_export_test"),
     xla_restricted_allow("onednn_convolution_test"),
@@ -202,5 +180,4 @@ xla_restricted_verify(allowed_targets = [
     xla_restricted_allow("onednn_layer_norm_test"),
     xla_restricted_allow("onednn_matmul_test"),
     xla_restricted_allow("onednn_softmax_test"),
-    xla_restricted_allow("onednn_verbose_test"),
 ])
