@@ -149,7 +149,6 @@ cc_library(
         "@highwayhash",
         "@highwayhash//:arch_specific",
         "@highwayhash//:hh_types",
-        "@llvm-project//llvm:Support",
     ],
 )
 
