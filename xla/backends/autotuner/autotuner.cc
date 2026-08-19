@@ -265,7 +265,9 @@ absl::Status Autotuner::DumpTuningLogs() {
   }
 
   std::string textproto;
-  if (!tsl::protobuf::TextFormat::PrintToString(logs_to_dump, &textproto)) {
+  tsl::protobuf::TextFormat::Printer printer;
+  printer.SetExpandAny(true);
+  if (!printer.PrintToString(logs_to_dump, &textproto)) {
     return absl::InternalError(
         "Failed to convert AutotuningLogs to textproto.");
   }
