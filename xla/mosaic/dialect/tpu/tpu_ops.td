@@ -69,7 +69,7 @@ def TPU_TiledLayoutAttr
     ArrayRefParameter<"int64_t", "">:$tile_strides
   );
   let extraClassDeclaration = [{
-    static ::llvm::SmallVector<int64_t> getDefaultTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
+    static ::llvm::SmallVector<int64_t> getContiguousTileStrides(::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
     static TiledLayoutAttr getContiguous(::mlir::MLIRContext* context, ::llvm::ArrayRef<::xla::Tile> tiles, ::llvm::ArrayRef<int64_t> shape);
 
     // Returns the number of trailing dimensions where tiles can be statically
