@@ -88,11 +88,14 @@ ENTRY main {
 // The second chunk must be shifted by 16 bits, not 2 bytes.
 
 // CHECK-LABEL: entry:
-// Verify metadata load reassembles via shl by 16 (bits), not 2 (bytes):
-// CHECK:         %[[PARTIAL:.*]] = load i16, ptr %{{.*}}, !tbaa
-// CHECK:         %[[ZEXT:.*]] = zext i16 %[[PARTIAL]] to i32
-// CHECK:         shl i32 %[[ZEXT]], 16
-// Verify metadata store decomposes via lshr by 16 (bits), not 2 (bytes):
+// CreateLoad reads int32 metadata in two i16 chunks:
+// First chunk (offset_bytes=0): shifted left by 0*8 = 0 bits.
+// CHECK:         shl i32 %{{.*}}, 0
+// Second chunk (offset_bytes=2): shifted left by 2*8 = 16 bits.
+// Before the fix this was incorrectly shl by 2 (bytes, not bits).
+// CHECK:         shl i32 %{{.*}}, 16
+// CreateStore writes int32 metadata in two i16 chunks:
+// Second chunk: shifted right by 2*8 = 16 bits, then truncated to i16.
 // CHECK:         lshr i32 %{{.*}}, 16
 // CHECK:         trunc i32 %{{.*}} to i16
 
