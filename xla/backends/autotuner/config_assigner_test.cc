@@ -150,8 +150,8 @@ absl::StatusOr<std::unique_ptr<ConfigAssigner>>
 SetupConfigAssignerWithExpectations(
     std::vector<HloOpcode> instrs_to_autotune,
     std::vector<std::pair<HloOpcode, int>> instrs_to_apply_config_and_count,
-    std::unique_ptr<MockAutotunerCache> cache = nullptr,
-    bool dump_hlos = false) {
+    std::unique_ptr<MockAutotunerCache> cache = nullptr, bool dump_hlos = false,
+    bool use_new_cache_format = false) {
   auto backend = std::make_unique<MockCodegenBackend>();
   auto profiler = std::make_unique<MockProfiler>();
   EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
@@ -185,6 +185,7 @@ SetupConfigAssignerWithExpectations(
   backends.push_back(std::move(backend));
   ConfigAssigner::Options config = GetTestConfigAssignerOptions();
   config.dump_hlos = dump_hlos;
+  config.use_new_cache_format = use_new_cache_format;
   return CreateConfigAssigner(std::move(backends), std::move(profiler), config,
                               std::move(cache));
 }
@@ -433,13 +434,21 @@ TEST_F(ConfigAssignerTest, ShardedAutotuning) {
       .WillOnce(Return(absl::OkStatus()));
   EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kAdd_autotune_result"));
   // Stores the serialized results to the KV store if it does not exist.
-  EXPECT_CALL(*kv_store, TryGet(testing::HasSubstr("_0")))
+  EXPECT_CALL(*kv_store,
+              TryGet(testing::AllOf(testing::StartsWith("autotune_results_"),
+                                    testing::HasSubstr("_0"))))
       .WillOnce(Return(absl::NotFoundError("not found")));
-  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kAdd_autotune_result"))
+  EXPECT_CALL(*kv_store,
+              Set(testing::AllOf(testing::StartsWith("autotune_results_"),
+                                 testing::HasSubstr("_0")),
+                  "kAdd_autotune_result"))
       .WillOnce(Return(absl::OkStatus()));
 
   // Shard 0 reads the KV store entry for shard 1 and updates the current cache.
-  EXPECT_CALL(*kv_store, Get(testing::HasSubstr("_1"), _))
+  EXPECT_CALL(*kv_store,
+              Get(testing::AllOf(testing::StartsWith("autotune_results_"),
+                                 testing::HasSubstr("_1")),
+                  _))
       .WillOnce(Return("kCopy_autotune_result"));
   EXPECT_CALL(*cache, Deserialize("kCopy_autotune_result"))
       .WillOnce(Return(absl::OkStatus()));
@@ -452,6 +461,63 @@ TEST_F(ConfigAssignerTest, ShardedAutotuning) {
           /*instrs_to_autotune=*/{HloOpcode::kAdd},
           /*instrs_to_apply_config_and_count=*/
           {{HloOpcode::kCopy, 1}, {HloOpcode::kAdd, 2}}, std::move(cache)));
+
+  MultiProcessKeyValueStore sharding_kv_store;
+  sharding_kv_store.key_value_store = kv_store;
+  sharding_kv_store.process_count = kShardCount;
+  sharding_kv_store.process_index = 0;
+  EXPECT_THAT(config_assigner->AssignConfigs(module.get(), should_autotune,
+                                             sharding_kv_store),
+              IsOk());
+}
+
+TEST_F(ConfigAssignerTest, ShardedAutotuningKeyFormatNewProto) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  constexpr int kShardCount = 2;
+  auto should_autotune = [](const HloInstruction& instruction) {
+    return instruction.opcode() == HloOpcode::kAdd ||
+           instruction.opcode() == HloOpcode::kCopy;
+  };
+  auto kv_store = std::make_shared<MockKeyValueStore>();
+  auto cache = std::make_unique<MockAutotunerCache>();
+
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
+      .WillOnce(Return(std::nullopt))
+      .WillOnce(Return(GetCacheConfig("best_config")));
+  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kAdd), _))
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kAdd_autotune_result"));
+
+  // Verifies that with new proto format, KV store keys start with
+  // "autotune_cache_".
+  EXPECT_CALL(*kv_store,
+              TryGet(testing::AllOf(testing::StartsWith("autotune_cache_"),
+                                    testing::HasSubstr("_0"))))
+      .WillOnce(Return(absl::NotFoundError("not found")));
+  EXPECT_CALL(*kv_store,
+              Set(testing::AllOf(testing::StartsWith("autotune_cache_"),
+                                 testing::HasSubstr("_0")),
+                  "kAdd_autotune_result"))
+      .WillOnce(Return(absl::OkStatus()));
+
+  EXPECT_CALL(*kv_store,
+              Get(testing::AllOf(testing::StartsWith("autotune_cache_"),
+                                 testing::HasSubstr("_1")),
+                  _))
+      .WillOnce(Return("kCopy_autotune_result"));
+  EXPECT_CALL(*cache, Deserialize("kCopy_autotune_result"))
+      .WillOnce(Return(absl::OkStatus()));
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy)))
+      .WillOnce(Return(GetCacheConfig("best_config")));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ConfigAssigner> config_assigner,
+      SetupConfigAssignerWithExpectations(
+          /*instrs_to_autotune=*/{HloOpcode::kAdd},
+          /*instrs_to_apply_config_and_count=*/
+          {{HloOpcode::kCopy, 1}, {HloOpcode::kAdd, 2}}, std::move(cache),
+          /*dump_hlos=*/false, /*use_new_cache_format=*/true));
 
   MultiProcessKeyValueStore sharding_kv_store;
   sharding_kv_store.key_value_store = kv_store;
@@ -613,12 +679,14 @@ TEST(ConfigAssignerOptionsTest, ToString) {
 
   config.select_first_config = true;
   config.dump_hlos = false;
+  config.use_new_cache_format = false;
 
   std::string expected =
       "{\n"
       "  \"expect_all_instructions_in_cache\": false,\n"
       "  \"select_first_config\": true,\n"
-      "  \"dump_hlos\": false\n"
+      "  \"dump_hlos\": false,\n"
+      "  \"use_new_cache_format\": false\n"
       "}";
   EXPECT_EQ(config.ToString(), expected);
 }
