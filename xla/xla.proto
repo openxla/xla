@@ -1089,6 +1089,11 @@ message DebugOptions {
   //   coll.2-done = collective(coll.2-start)
   optional int32 xla_gpu_experimental_parallel_collective_overlap_limit = 336;
 
+  // Controls how many scale-up-fabric collectives the latency-hiding scheduler
+  // can keep in flight. A value of 0 means unlimited.
+  optional int32
+      xla_gpu_experimental_parallel_scale_up_collective_overlap_limit = 538;
+
   optional PipelineParallelismOptLevel
       xla_gpu_experimental_pipeline_parallelism_opt_level = 351;
 

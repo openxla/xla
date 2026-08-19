@@ -120,7 +120,6 @@ cc_library(
     deps = [
         ":collective_domain",
         "//xla:side_effect_util",
-        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",

@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
 #include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -59,29 +58,6 @@ ParseDomainsToAssign(absl::string_view value) {
     }
   }
   return domains;
-}
-
-absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>>
-GetCollectiveParticipantGroups(const HloInstruction& collective,
-                               const DeviceAssignment& device_assignment) {
-  ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(&collective));
-
-  if (HloPredicateIsOp<HloOpcode::kCollectivePermute,
-                       HloOpcode::kCollectivePermuteStart>(&collective)) {
-    std::vector<ReplicaGroup> source_target_groups;
-    source_target_groups.reserve(collective.source_target_pairs().size());
-    for (const auto& [source, target] : collective.source_target_pairs()) {
-      ReplicaGroup& group = source_target_groups.emplace_back();
-      group.add_replica_ids(source);
-      group.add_replica_ids(target);
-    }
-    return GetParticipatingDevicesGroups(device_assignment,
-                                         source_target_groups, group_mode);
-  }
-
-  return GetParticipatingDevicesGroups(device_assignment,
-                                       collective.replica_groups(), group_mode);
 }
 
 bool IsWithinScaleUpFabricDomain(absl::Span<const GlobalDeviceId> group,
@@ -123,9 +99,11 @@ absl::StatusOr<bool> IsScaleUpFabricCollective(
   if (current_domain != kUnspecifiedCollectiveDomain) {
     return current_domain == kScaleUpFabricCollectiveDomain;
   }
-  ABSL_ASSIGN_OR_RETURN(auto participant_groups, GetCollectiveParticipantGroups(
-                                                collective, device_assignment));
-  return IsWithinScaleUpFabricDomain(participant_groups, scale_up_fabric_size);
+  ABSL_ASSIGN_OR_RETURN(
+      auto participating_device_groups,
+      GetParticipatingDevicesGroups(collective, device_assignment));
+  return IsWithinScaleUpFabricDomain(participating_device_groups,
+                                     scale_up_fabric_size);
 }
 
 absl::StatusOr<bool> IsScaleUpFabricEligible(
