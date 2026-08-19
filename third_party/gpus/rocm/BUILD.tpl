@@ -326,29 +326,32 @@ rocm_lib_import(
     ]),
     interface_library = "%{rocm_root}/lib/librccl.so",
     deps = [
+        ":amdsmi_libs",
         ":hip_runtime_libs",
         ":rocm_core_libs",
+        ":rocm_smi_libs",
         ":rocprofiler_register_libs",
         ":roctx_libs",
-        ":smi_libs",
     ],
 )
 
-# RCCL links librocm_smi64 below ROCm 7.13 and libamd_smi from 7.13 on. XLA
-# follows the same boundary so that only one SMI library is ever present in the
-# process. libamd_smi embeds a copy of rocm_smi and the two export hundreds of
-# identical amd::smi:: and rsmi_ symbols, so loading both lets the dynamic
-# loader interpose ABI incompatible definitions.
-# See RCCL change: https://github.com/ROCm/rocm-systems/commit/244047310e
-_use_amd_smi = rocm_version_number() >= 71300
+# Both SMI libraries are exposed here; consumers pick one. They must not be
+# mixed in a single process, see the :smi alias in
+# xla/stream_executor/rocm/BUILD.
+rocm_lib_import(
+    name = "amdsmi",
+    data = glob(["%{rocm_root}/lib/libamd_smi.so*"]),
+    interface_library = "%{rocm_root}/lib/libamd_smi.so",
+    deps = [
+        ":system_libs",
+    ],
+)
 
 rocm_lib_import(
-    name = "smi",
-    data = glob([
-        "%{rocm_root}/lib/libamd_smi.so*" if _use_amd_smi else "%{rocm_root}/lib/librocm_smi64.so*",
-    ]),
-    interface_library = "%{rocm_root}/lib/libamd_smi.so" if _use_amd_smi else "%{rocm_root}/lib/librocm_smi64.so",
-    deps = [":system_libs"] if _use_amd_smi else [],
+    name = "rocm_smi",
+    data = glob(["%{rocm_root}/lib/librocm_smi64.so*"]),
+    interface_library = "%{rocm_root}/lib/librocm_smi64.so",
+    deps = [],
 )
 
 bzl_library(

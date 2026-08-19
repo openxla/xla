@@ -23,7 +23,7 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 
 // The matching link time switch, and the rationale for the 7.13 boundary, live
-// in third_party/gpus/rocm/BUILD.tpl.
+// in the :smi alias in xla/stream_executor/rocm/BUILD.
 #if (TF_ROCM_VERSION >= 71300)
 #include "rocm/include/amd_smi/amdsmi.h"
 #else

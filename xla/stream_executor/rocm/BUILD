@@ -18,6 +18,7 @@
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "rocm_library",
+    "rocm_version_number",
 )
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/service/gpu:build_defs.bzl", "get_cub_sort_kernel_types")
@@ -372,6 +373,19 @@ cc_library(
     deps = ["//xla/stream_executor:platform_id"],
 )
 
+# The SMI library XLA queries devices with. RCCL links librocm_smi64 below
+# ROCm 7.13 and libamd_smi from 7.13 on, and XLA follows the same boundary so
+# that only one SMI library is ever present in the process: libamd_smi embeds a
+# copy of rocm_smi and the two export hundreds of identical amd::smi:: and
+# rsmi_ symbols, so loading both lets the dynamic loader interpose ABI
+# incompatible definitions. The matching source level switch is
+# #if (TF_ROCM_VERSION >= 71300) in rocm_smi_util.h and its users.
+# See RCCL change: https://github.com/ROCm/rocm-systems/commit/244047310e
+alias(
+    name = "smi",
+    actual = "@local_config_rocm//rocm:amdsmi" if rocm_version_number() >= 71300 else "@local_config_rocm//rocm:rocm_smi",
+)
+
 cc_library(
     name = "rocm_smi_util",
     srcs = ["rocm_smi_util.cc"],
@@ -381,12 +395,12 @@ cc_library(
         "rocm-only",
     ],
     deps = [
+        ":smi",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:smi",
     ],
 )
 
@@ -400,11 +414,11 @@ cc_library(
     ],
     deps = [
         ":rocm_smi_util",
+        ":smi",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:smi",
     ],
 )
 
@@ -431,11 +445,11 @@ cc_library(
     ],
     deps = [
         ":rocm_smi_util",
+        ":smi",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:smi",
     ],
 )
 
