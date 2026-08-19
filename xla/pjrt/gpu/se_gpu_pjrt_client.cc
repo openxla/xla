@@ -109,7 +109,6 @@ limitations under the License.
 #include "xla/runtime/process_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
-#include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"

@@ -906,7 +906,7 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:device_assignment",
         "//xla/stream_executor:device_address",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:statusor",
