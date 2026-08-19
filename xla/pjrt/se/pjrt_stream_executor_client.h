@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
@@ -89,8 +90,7 @@ namespace xla {
 
 class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
-  PjRtStreamExecutorDevice(int id,
-                           std::unique_ptr<LocalDeviceState> local_device_state,
+  PjRtStreamExecutorDevice(int id, LocalDeviceState* local_device_state,
                            int local_device_id, int process_index,
                            int process_index_in_partition, int partition_index,
                            std::string device_kind)
@@ -98,7 +98,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
         local_hardware_id_(local_device_state
                                ? local_device_state->local_hardware_id()
                                : LocalChipId(-1)),
-        local_device_state_(std::move(local_device_state)),
+        local_device_state_(local_device_state),
         description_(id, local_device_id_.value(), process_index,
                      process_index_in_partition, partition_index,
                      std::move(device_kind)) {
@@ -153,9 +153,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   // If this is a device local to this host, returns a LocalDeviceState object
   // that can be used to manipulate the device. Returns nullptr if the device is
   // not local to this host.
-  LocalDeviceState* local_device_state() const {
-    return local_device_state_.get();
-  }
+  LocalDeviceState* local_device_state() const { return local_device_state_; }
 
   // If this is a device local to this host, returns a LocalDeviceState object
   // that can be used to manipulate the device. Returns an error if the device
@@ -186,12 +184,10 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
     return nullptr;
   }
 
-  void ResetLocalDeviceState() { local_device_state_.reset(); }
-
  private:
   const LocalDeviceId local_device_id_;
   const LocalChipId local_hardware_id_;
-  std::unique_ptr<LocalDeviceState> local_device_state_;
+  LocalDeviceState* local_device_state_ = nullptr;
   PjRtStreamExecutorDeviceDescription description_;
   absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes_;
   PjRtClient* client_ = nullptr;
@@ -236,6 +232,7 @@ class PjRtStreamExecutorMemorySpace : public PjRtMemorySpace {
 class PjRtStreamExecutorRawClient : public PjRtRawClient {
  public:
   explicit PjRtStreamExecutorRawClient(
+      std::vector<std::unique_ptr<LocalDeviceState>> local_device_states,
       std::unique_ptr<se::DeviceAddressAllocator> allocator,
       LocalClient* client,
       std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
@@ -243,7 +240,12 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
       std::unique_ptr<AsyncWorkRunner> async_work_runner,
       se::StreamExecutor* executor = nullptr,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options = nullptr);
-  virtual ~PjRtStreamExecutorRawClient() = default;
+  ~PjRtStreamExecutorRawClient() override;
+
+  LocalDeviceState* device_state(LocalDeviceId local_device_id) const {
+    auto it = local_device_states_by_id_.find(local_device_id);
+    return it != local_device_states_by_id_.end() ? it->second : nullptr;
+  }
 
   gpu::GpuExecutableRunOptions* gpu_run_options() const {
     return gpu_run_options_.get();
@@ -389,11 +391,14 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   // transfer via pinned memory.
   bool should_stage_host_to_device_transfers_;
 
-  std::unique_ptr<AsyncWorkRunner> async_work_runner_;
   se::StreamExecutor* executor_;
   std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options_;
-
   tsl::thread::ThreadPool compile_thread_pool_;
+
+  std::vector<std::unique_ptr<LocalDeviceState>> local_device_states_;
+  absl::flat_hash_map<LocalDeviceId, LocalDeviceState*>
+      local_device_states_by_id_;
+  std::unique_ptr<AsyncWorkRunner> async_work_runner_;
 };
 
 class PjRtStreamExecutorExecutableLoadState : public PjRtExecutableLoadState {
@@ -423,7 +428,7 @@ class PjRtStreamExecutorExecutableLoadState : public PjRtExecutableLoadState {
 class PjRtStreamExecutorClient : public CommonPjRtClientImpl {
  public:
   using CommonPjRtClientImpl::CommonPjRtClientImpl;
-  ~PjRtStreamExecutorClient() override;
+  ~PjRtStreamExecutorClient() override = default;
 
   PjRtStreamExecutorRawClient* raw_client() const override {
     return absl::down_cast<PjRtStreamExecutorRawClient*>(
@@ -472,10 +477,11 @@ class PjRtStreamExecutorClient : public CommonPjRtClientImpl {
   bool IsHostMemoryPinned(const void* ptr, uint64_t size) const;
 
   LocalDeviceState& device_state(int device_ordinal) const {
-    return *absl::down_cast<PjRtStreamExecutorDevice*>(
-                LookupAddressableDevice(xla::LocalDeviceId(device_ordinal))
-                    .value())
-                ->local_device_state();
+    LocalDeviceState* state =
+        raw_client()->device_state(LocalDeviceId(device_ordinal));
+    CHECK(state != nullptr)
+        << "LocalDeviceState not found for device ordinal: " << device_ordinal;
+    return *state;
   }
   LocalClient* client() const { return raw_client()->client(); }
   se::DeviceAddressAllocator* allocator() const {

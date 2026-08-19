@@ -73,14 +73,10 @@ limitations under the License.
 #include "tsl/platform/numa.h"
 
 namespace xla {
-using DeviceTopologyPair =
-    std::pair<std::vector<std::unique_ptr<PjRtStreamExecutorDevice>>,
-              GpuTopologyProto>;
 
 class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
  public:
-  StreamExecutorGpuDevice(int id,
-                          std::unique_ptr<LocalDeviceState> local_device_state,
+  StreamExecutorGpuDevice(int id, LocalDeviceState* local_device_state,
                           std::string device_kind, std::string device_vendor,
                           std::string compute_capability, int core_count,
                           int64_t device_memory_bytes_limit,
@@ -108,6 +104,7 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
  public:
   StreamExecutorGpuRawClient(
       PjRtPlatformId platform_id,
+      std::vector<std::unique_ptr<LocalDeviceState>> local_device_states,
       std::unique_ptr<se::DeviceAddressAllocator> allocator,
       LocalClient* client,
       std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
@@ -121,7 +118,8 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       std::shared_ptr<gpu::AllocatorMemoryRegistration> memory_registration =
           nullptr)
       : PjRtStreamExecutorRawClient(
-            std::move(allocator), client, std::move(host_memory_allocator),
+            std::move(local_device_states), std::move(allocator), client,
+            std::move(host_memory_allocator),
             should_stage_host_to_device_transfers, std::move(async_work_runner),
             executor, std::move(gpu_run_options)),
         platform_id_(platform_id),

@@ -236,8 +236,8 @@ absl::string_view PjRtStreamExecutorDevice::platform_name() const {
 
 absl::StatusOr<LocalDeviceState*>
 PjRtStreamExecutorDevice::GetLocalDeviceState() const {
-  if (local_device_state_) {
-    return local_device_state_.get();
+  if (local_device_state_ != nullptr) {
+    return local_device_state_;
   }
   return InvalidArgument("Device %s is not a local device.", DebugString());
 }
@@ -293,6 +293,7 @@ class CpuAllocator : public tsl::Allocator {
 };
 
 PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
+    std::vector<std::unique_ptr<LocalDeviceState>> local_device_states,
     std::unique_ptr<se::DeviceAddressAllocator> allocator, LocalClient* client,
     std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
     bool should_stage_host_to_device_transfers,
@@ -307,12 +308,13 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
                                         nullptr),
       should_stage_host_to_device_transfers_(
           should_stage_host_to_device_transfers),
-      async_work_runner_(std::move(async_work_runner)),
       executor_(executor),
       gpu_run_options_(std::move(gpu_run_options)),
       compile_thread_pool_(
           tsl::Env::Default(), "pjrt_compile_thread_pool",
-          std::max<int>(DefaultThreadPoolSize(), client_->device_count())) {
+          std::max<int>(DefaultThreadPoolSize(), client_->device_count())),
+      local_device_states_(std::move(local_device_states)),
+      async_work_runner_(std::move(async_work_runner)) {
   if (owned_allocator_ != nullptr) {
     allocator_ = owned_allocator_.get();
   } else if (client_ != nullptr) {
@@ -326,25 +328,19 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
     async_work_runner_ = MakeUnboundedAsyncWorkRunner(
         "pjrt_async_work_runner", {/*stack_size=*/512 * 1024});
   }
+  for (const auto& state : local_device_states_) {
+    CHECK(state != nullptr);
+    local_device_states_by_id_[state->local_device_id()] = state.get();
+  }
 }
 
-PjRtStreamExecutorClient::~PjRtStreamExecutorClient() {
-  // Properly quiesce async_dispatch_thread.
-  for (auto* pjrt_device : devices()) {
-    auto* device = absl::down_cast<PjRtStreamExecutorDevice*>(pjrt_device);
-    if (device->local_device_state()) {
-      if (device->local_device_state()->async_dispatch_thread()) {
-        absl::Notification done;
-        device->local_device_state()->async_dispatch_thread()->Schedule(
-            [&]() { done.Notify(); });
-        done.WaitForNotification();
-      }
+PjRtStreamExecutorRawClient::~PjRtStreamExecutorRawClient() {
+  // Properly quiesce async_dispatch_thread on all local devices.
+  for (const auto& local_device_state : local_device_states_) {
+    if (local_device_state != nullptr &&
+        local_device_state->async_dispatch_thread() != nullptr) {
+      local_device_state->async_dispatch_thread()->Drain();
     }
-  }
-  raw_client()->Stop();
-  for (auto* pjrt_device : devices()) {
-    auto* device = absl::down_cast<PjRtStreamExecutorDevice*>(pjrt_device);
-    device->ResetLocalDeviceState();
   }
 }
 
