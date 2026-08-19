@@ -25,6 +25,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -914,22 +915,38 @@ namespace {
 // Keeps track of the state of an in-flight cross-host recv.
 class CrossHostRecvState {
  public:
-  CrossHostRecvState(std::vector<std::string> rendezvous_keys,
+  CrossHostRecvState(AsyncWorkRunner* async_work_runner,
+                     std::vector<std::string> rendezvous_keys,
                      std::shared_ptr<KeyValueStoreInterface> kv_store)
       : rendezvous_keys_(std::move(rendezvous_keys)),
-        kv_store_(std::move(kv_store)),
-        cancellation_statuses_(rendezvous_keys_.size()) {}
-
-  // Waits until all transfers in the batch are complete or cancelled. Returns
-  // a list of cancellations statuses, one for each buffer.
-  absl::StatusOr<std::vector<absl::Status>> Wait() {
-    for (const std::string& rendezvous_key : rendezvous_keys_) {
-      ABSL_RETURN_IF_ERROR(
-          kv_store_->Get(rendezvous_key, absl::InfiniteDuration()).status());
+        kv_store_(std::move(kv_store)) {
+    promises_.reserve(rendezvous_keys_.size());
+    futures_.reserve(rendezvous_keys_.size());
+    for (int i = 0; i < rendezvous_keys_.size(); ++i) {
+      std::tie(promises_.emplace_back(), futures_.emplace_back()) =
+          tsl::MakePromiseOnce();
     }
-    absl::MutexLock l(mu_);
-    return cancellation_statuses_;
+
+    for (int i = 0; i < rendezvous_keys_.size(); ++i) {
+      kv_store_->AsyncGet(
+          rendezvous_keys_[i],
+          [worker = async_work_runner, promise = promises_[i],
+           kv_store = kv_store_, key = rendezvous_keys_[i]](
+              const absl::StatusOr<std::string>& result) mutable {
+            worker->Execute(
+                [promise = std::move(promise), kv_store = std::move(kv_store),
+                 key = std::move(key), status = result.status()]() mutable {
+                  promise.Set(status);
+                  if (absl::Status s = kv_store->Delete(key); !s.ok()) {
+                    LOG(DFATAL) << "Failed to delete rendezvous key " << key
+                                << ": " << s;
+                  }
+                });
+          });
+    }
   }
+
+  const std::vector<Future<>>& futures() const { return futures_; }
 
   // Cancels the transfer associated with the given serialized descriptor. Per
   // the cross-host send/recv API contract, a given transfer must either
@@ -953,14 +970,9 @@ class CrossHostRecvState {
       if (desc.rendezvous_key().empty()) {
         return xla::Internal("Empty rendezvous key in serialized descriptor");
       }
-      {
-        absl::MutexLock l(mu_);
-        auto& status = cancellation_statuses_[desc.buffer_index()];
-        if (!status.ok()) {
-          return xla::Internal(
-              "Received multiple cancellations for the same cross-host recv");
-        }
-        status = reason;
+      if (!promises_[desc.buffer_index()].Set(reason)) {
+        return xla::Internal(
+            "Received multiple cancellations for the same cross-host recv");
       }
       ABSL_RETURN_IF_ERROR(kv_store_->Set(desc.rendezvous_key(), ""));
       VLOG(3) << "Received cancellation request for buffer "
@@ -974,12 +986,8 @@ class CrossHostRecvState {
  private:
   std::vector<std::string> rendezvous_keys_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
-
-  absl::Mutex mu_;
-
-  // Cancellation status of each buffer. `OkStatus` indicates that the buffer
-  // has not received a cancellation request.
-  std::vector<absl::Status> cancellation_statuses_ ABSL_GUARDED_BY(mu_);
+  std::vector<tsl::PromiseOnce<>> promises_;
+  std::vector<Future<>> futures_;
 };
 
 }  // namespace
@@ -1035,7 +1043,7 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
   auto recv = [this, raw_buffers = std::move(raw_buffers),
                buffer_sequencing_events, notifier = std::move(notifier),
                local_device, stream]() mutable {
-    auto results = [&]() -> absl::StatusOr<std::vector<absl::Status>> {
+    auto results = [&]() -> absl::StatusOr<std::vector<Future<>>> {
       auto* executor =
           absl::down_cast<se::gpu::GpuExecutor*>(local_device->executor());
 
@@ -1083,7 +1091,7 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
       }
 
       auto state = std::make_shared<CrossHostRecvState>(
-          std::move(rendezvous_keys), kv_store_);
+          async_work_runner(), std::move(rendezvous_keys), kv_store_);
 
       // Notify the receiver of the descriptors and cancellation callback. The
       // caller is responsible for sending the descriptors to the sender and/or
@@ -1096,8 +1104,7 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
           absl::bind_front(&CrossHostRecvState::NotifyCancellation, state),
       });
 
-      VLOG(3) << "Waiting for cross-host recv completion";
-      return state->Wait();
+      return state->futures();
     }();
     if (!results.ok()) {
       VLOG(2) << "CrossHostReceiveBuffersInto failed: " << results.status();
@@ -1107,18 +1114,21 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
       return;
     }
 
-    VLOG(3) << "Cross-host recv completed";
     CHECK_EQ(results->size(), buffer_sequencing_events.size());
     for (int i = 0; i < buffer_sequencing_events.size(); ++i) {
-      absl::Status status = (*results)[i];
-      if (status.ok()) {
-        status =
-            AllocateAndRecordEvent(buffer_sequencing_events[i], local_device,
-                                   stream, "CrossHostReceiveBuffersInto");
-      }
-      if (!status.ok()) {
-        SetEventAsError(buffer_sequencing_events[i], status);
-      }
+      (*results)[i].OnReady(
+          [this, local_device, stream,
+           event = buffer_sequencing_events[i]](const absl::Status& status) {
+            if (status.ok()) {
+              absl::Status s = AllocateAndRecordEvent(
+                  event, local_device, stream, "CrossHostReceiveBuffersInto");
+              if (!s.ok()) {
+                SetEventAsError(event, s);
+              }
+            } else {
+              SetEventAsError(event, status);
+            }
+          });
     }
   };
   async_work_runner()->Execute(std::move(recv));
