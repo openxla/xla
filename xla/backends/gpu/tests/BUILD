@@ -1425,7 +1425,9 @@ xla_test(
 
 xla_test(
     name = "collective_ops_ffi_test",
-    srcs = ["collective_ops_ffi_test.cc"],
+    srcs = ["collective_ops_ffi_test.cc"] + if_cuda_is_configured([
+        "collective_ops_ffi_communicator_cuda.cc",
+    ]),
     backend_tags = {
         "gpu": [
             "multi_gpu",
@@ -1473,7 +1475,6 @@ xla_test(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -1485,6 +1486,7 @@ xla_test(
         "@com_google_absl//absl/types:span",
     ] + if_cuda_is_configured([
         ":collective_ops_ffi_kernels_cuda",
+        "@com_google_absl//absl/base",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_nccl//:nccl",
     ]),

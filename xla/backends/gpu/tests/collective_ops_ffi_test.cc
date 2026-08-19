@@ -21,7 +21,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -67,13 +66,19 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
-#if GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/driver_types.h"
-#include "third_party/nccl/nccl.h"
-#endif  // GOOGLE_CUDA
-
 namespace xla::gpu {
 using ::testing::Values;
+
+#if GOOGLE_CUDA
+constexpr bool kHasNcclAllReduce = true;
+#else
+constexpr bool kHasNcclAllReduce = false;
+#endif
+
+absl::Status CommunicatorAllReduceU32(se::Stream* stream,
+                                      XLA_FFI_Communicator* communicator,
+                                      const void* send_buffer, void* recv_buffer,
+                                      int64_t count);
 
 struct SynchronizationSignals {
   absl::Mutex mutex;
@@ -347,8 +352,8 @@ static absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
 }
 
 // Execute handler: gets the XLA-owned communicator via the public collectives
-// FFI extension and runs an NCCL all-reduce on it (reinterpreting the opaque
-// handle as ncclComm_t).
+// FFI extension and runs an all-reduce on it via the platform collective
+// library (see CommunicatorAllReduceU32).
 static absl::Status PublicApiAllReduce(se::Stream* stream,
                                        ffi::BufferR0<U32> src,
                                        ffi::Result<ffi::BufferR0<U32>> dst,
@@ -359,22 +364,15 @@ static absl::Status PublicApiAllReduce(se::Stream* stream,
                                              /*communication_id=*/0));
   TF_RET_CHECK(communicator != nullptr);
 
-#if GOOGLE_CUDA
-  ncclComm_t nccl_comm = reinterpret_cast<ncclComm_t>(communicator);
-  cudaStream_t cuda_stream =
-      absl::bit_cast<cudaStream_t>(stream->platform_specific_handle().stream);
-
-  ncclResult_t result =
-      ncclAllReduce(src.device_memory().opaque(), dst->device_memory().opaque(),
-                    /*count=*/src.element_count(), ncclUint32, ncclSum,
-                    nccl_comm, cuda_stream);
-  TF_RET_CHECK(result == ncclSuccess)
-      << "ncclAllReduce failed: " << ncclGetErrorString(result);
-  return stream->BlockHostUntilDone();
-#else
-  return absl::UnimplementedError(
-      "Public GPU FFI communicator all-reduce test requires CUDA/NCCL");
-#endif  // GOOGLE_CUDA
+  if constexpr (kHasNcclAllReduce) {
+    return CommunicatorAllReduceU32(stream, communicator,
+                                    src.device_memory().opaque(),
+                                    dst->device_memory().opaque(),
+                                    src.element_count());
+  } else {
+    return absl::UnimplementedError(
+        "Communicator all-reduce is not implemented for this platform");
+  }
 }
 
 // FFI handler that uses XLA:GPU collectives API to perform an all reduce. This
@@ -1188,9 +1186,10 @@ TEST_F(CollectiveOpsTestFFI, AllReduce) {
 }
 
 TEST_F(CollectiveOpsTestFFI, PublicApiAllReduce) {
-#if !GOOGLE_CUDA
-  GTEST_SKIP() << "Public GPU FFI communicator all-reduce requires CUDA/NCCL";
-#else
+  if (!Capability().IsCuda()) {
+    GTEST_SKIP() << "Communicator all-reduce is not implemented for this "
+                    "platform";
+  }
   if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
                  << device_count() << " available)";
@@ -1225,7 +1224,6 @@ TEST_F(CollectiveOpsTestFFI, PublicApiAllReduce) {
   for (int i = 0; i < kNumReplicas; ++i) {
     LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
   }
-#endif  // GOOGLE_CUDA
 }
 
 class AllReduceTest : public CollectiveOpsTestFFI,

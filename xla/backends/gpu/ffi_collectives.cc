@@ -129,7 +129,7 @@ absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>> GetDeviceGroups(
   return device_groups;
 }
 
-GpuCollectivesState* GetState(const XLA_FFI_Collectives_Extension* self) {
+GpuCollectivesState* AsState(const XLA_FFI_Collectives_Extension* self) {
   if (self == nullptr) {
     return nullptr;
   }
@@ -148,7 +148,7 @@ absl::Status CommunicatorRequestImpl(const XLA_FFI_Collectives_Extension* self,
       "XLA_FFI_Communicator_Request_Args",
       XLA_FFI_Communicator_Request_Args_STRUCT_SIZE, args->struct_size));
 
-  GpuCollectivesState* state = GetState(self);
+  GpuCollectivesState* state = AsState(self);
   if (state == nullptr || state->collective_params == nullptr) {
     return InvalidArgument("Collective params are not available");
   }
@@ -182,7 +182,7 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
       "XLA_FFI_Communicator_Get_Args",
       XLA_FFI_Communicator_Get_Args_STRUCT_SIZE, args->struct_size));
 
-  GpuCollectivesState* state = GetState(self);
+  GpuCollectivesState* state = AsState(self);
   if (state == nullptr || state->collective_params == nullptr) {
     return InvalidArgument("Collective params are not available");
   }
