@@ -218,7 +218,15 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
             .debug_options()
             .xla_gpu_experimental_enable_conv_fusion()) {
       pipeline.AddPass<ConvKindAssignment>(gpu_version, dnn_version);
+      // If ConvKindAssignment fails, fall back to ConvRewriter.
+      // TODO(b/500281333): Remove ConvRewriter and CudnnFusedConvRewriter once
+      // F64 and highest precision F32 convolutions are supported by CuDNN
+      // frontend graphs.
+      pipeline.AddPass<ConvRewriter>(gpu_version, dnn_version);
+      pipeline.AddPass<CudnnFusedConvRewriter>(*cuda_compute_capability,
+                                               dnn_version, toolkit_version);
       pipeline.AddPass<ConvPaddingLegalization>();
+      pipeline.AddPass<CudnnPadForConvolutions>(*cuda_compute_capability);
     } else {
       // TODO(b/487265446): Remove ConvRewriter, CudnnFusedConvRewriter, and
       // ConvPaddingLegalization once ConvFusionRewriter is the default.
@@ -322,7 +330,8 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 
   pre_pipeline.AddPass<BlockScalingRewriter>(
       cuda_compute_capability->IsAtLeastBlackwell()
-          ? gpu_target_config.dnn_version_info
+          ? se::dnn::VersionInfo(
+                gpu_target_config.device_description.dnn_version())
           : se::dnn::VersionInfo{});
   pre_pipeline.AddPass<DotDimensionMerger>();
 
@@ -399,7 +408,8 @@ absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
   // Deviceless cuDNN compilation relies on DeviceProperties JSON
   // serialization, added in cuDNN 9.8.
   if (use_deviceless_cudnn &&
-      gpu_target_config.dnn_version_info < se::dnn::VersionInfo(9, 8, 0)) {
+      gpu_target_config.device_description.dnn_version() <
+          se::SemanticVersion(9, 8, 0)) {
     return absl::FailedPreconditionError(
         "Deviceless cuDNN compilation requires cuDNN >= 9.8.");
   }

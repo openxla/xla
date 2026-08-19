@@ -43,8 +43,8 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "xla/autotune_cache.pb.h"
 #include "xla/autotune_results.pb.h"
-#include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/gpu/ffi.h"
@@ -540,32 +540,28 @@ TEST_F(GpuCompilerTest, CollectivePipeliningModes) {
     absl::string_view name;
     DebugOptions::CollectivePipeliningMode mode;
     ExecutionOptions::EffortLevel optimization_level;
-    float exec_time_optimization_effort;
     absl::string_view frontend_attributes;
     bool expect_pipelined;
   };
 
   const std::vector<TestCase> test_cases = {
       {"default_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
-       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
-      {"default_at_o0_with_execution_effort",
-       DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
-       ExecutionOptions::EFFORT_O0, 0.2f, "", true},
+       ExecutionOptions::EFFORT_O0, "", false},
       {"default_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_DEFAULT,
-       ExecutionOptions::EFFORT_O1, 0.0f, "", true},
+       ExecutionOptions::EFFORT_O1, "", true},
       {"on_at_o0", DebugOptions::COLLECTIVE_PIPELINING_MODE_ON,
-       ExecutionOptions::EFFORT_O0, 0.0f, "", true},
+       ExecutionOptions::EFFORT_O0, "", true},
       {"explicit_marked_at_o0",
        DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
-       ExecutionOptions::EFFORT_O0, 0.0f, R"(is_pipelineable="1")", true},
+       ExecutionOptions::EFFORT_O0, R"(is_pipelineable="1")", true},
       {"explicit_unmarked_at_o0",
        DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
-       ExecutionOptions::EFFORT_O0, 0.0f, "", false},
+       ExecutionOptions::EFFORT_O0, "", false},
       {"explicit_unmarked_at_o1",
        DebugOptions::COLLECTIVE_PIPELINING_MODE_EXPLICIT,
-       ExecutionOptions::EFFORT_O1, 0.0f, "", false},
+       ExecutionOptions::EFFORT_O1, "", false},
       {"explicit_off_at_o1", DebugOptions::COLLECTIVE_PIPELINING_MODE_OFF,
-       ExecutionOptions::EFFORT_O1, 0.0f, R"(is_pipelineable="1")", false},
+       ExecutionOptions::EFFORT_O1, R"(is_pipelineable="1")", false},
   };
 
   for (const TestCase& test_case : test_cases) {
@@ -575,9 +571,6 @@ TEST_F(GpuCompilerTest, CollectivePipeliningModes) {
 
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_optimization_level(test_case.optimization_level);
-    config.set_exec_time_optimization_effort(
-        test_case.exec_time_optimization_effort);
-
     DebugOptions& debug_options = config.mutable_debug_options();
     debug_options.set_xla_gpu_pipeline_all_reduce(test_case.mode);
     debug_options.set_xla_gpu_all_reduce_combine_threshold_bytes(0);
@@ -1191,12 +1184,6 @@ class PassOrderTest : public GpuCompilerTest {
     CompileModule(config);
   }
 
-  void SetAndCompileEfficiencyEffort(float exec_effort) {
-    HloModuleConfig config = GetModuleConfigForTest();
-    config.set_exec_time_optimization_effort(exec_effort);
-    CompileModule(config);
-  }
-
   // Fails if any of the passes matching `other_pass_regex` runs before
   // the first occurrence of the pass matching `first_pass_regex`.
   void VerifyPassRunsAtLeastOnceBefore(absl::string_view first_pass_regex,
@@ -1378,7 +1365,7 @@ MATCHER_P(HasExpectedPasses, expected_pass_names, "") {
   return Matches(IsSupersetOf(expected_pass_names))(run_pass_names);
 }
 
-TEST_F(PassOrderTest, ExecEffortAt0point2RunsSpecifiedPasses) {
+TEST_F(PassOrderTest, OptimizationLevelO2RunsSpecifiedPasses) {
   HloModuleConfig config = GetModuleConfigForTest();
   CompileModule(config);
 
@@ -1393,7 +1380,7 @@ TEST_F(PassOrderTest, ExecEffortAt0point2RunsSpecifiedPasses) {
 
   // Make sure only after setting the correct optimization effort they are
   // enabled.
-  config.set_exec_time_optimization_effort(0.2);
+  config.set_optimization_level(ExecutionOptions::EFFORT_O2);
   CompileModule(config);
   EXPECT_THAT(optimized_module_, HasExpectedPasses(kExpectedPasses));
 }
@@ -1644,9 +1631,46 @@ ENTRY main {
   EXPECT_EQ(thunks[0]->kind(), Thunk::Kind::kCommandBuffer);
 }
 
+// A collective permute with no source-target pairs delivers no data to any
+// participant, so every participant's output is zeroed. The emitter must
+// produce a memzero rather than a collective thunk, which would pointlessly
+// acquire a communicator (and fail outright on builds without collectives
+// support).
+TEST_F(GpuCompilerTest, CollectivePermuteWithNoSourceTargetPairsEmitsMemzero) {
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p = u32[2] parameter(0)
+  ROOT permute = u32[2] collective-permute(p), source_target_pairs={}
+}
+)";
+
+  auto hlo_module = ParseAndReturnVerifiedModule(hlo_text).value();
+
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
+  compile_options.early_exit_with_layouts = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler()->RunBackend(std::move(hlo_module), /*executor=*/nullptr,
+                             compile_options));
+  GpuExecutable* gpu_exec = absl::down_cast<GpuExecutable*>(executable.get());
+  ASSERT_NE(gpu_exec, nullptr);
+
+  std::vector<Thunk::Kind> kinds;
+  kinds.reserve(gpu_exec->thunk_executor().thunks().size());
+  for (const auto& thunk : gpu_exec->thunk_executor().thunks()) {
+    kinds.push_back(thunk->kind());
+  }
+  using ::testing::ElementsAre;
+  EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kMemzero));
+}
+
 TEST_F(GpuCompilerTest, NoCudnnVectorizationOnHopperAndBeyond) {
-  if (gpu_target_config().dnn_version_info <
-          stream_executor::dnn::VersionInfo(9, 12, 0) &&
+  if (gpu_target_config().device_description.dnn_version() <
+          stream_executor::SemanticVersion(9, 12, 0) &&
       absl::StrContains(device_description().name(), "GB200")) {
     GTEST_SKIP()
         << "Skipping test as it requires cuDNN >= 9.12. on GB200. Otherwise, "

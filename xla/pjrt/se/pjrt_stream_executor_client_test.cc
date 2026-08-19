@@ -76,10 +76,53 @@ limitations under the License.
 
 namespace xla {
 
+class StreamExecutorCpuCompiler : public PjRtCompiler {
+ public:
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      CompileOptions options, const XlaComputation& computation,
+      const PjRtTopologyDescription& topology, PjRtClient* client) {
+    PjRtStreamExecutorRawClient* raw_client = nullptr;
+    if (auto* common_client = dynamic_cast<CommonPjRtClient*>(client)) {
+      raw_client = dynamic_cast<PjRtStreamExecutorRawClient*>(
+          common_client->raw_client());
+    }
+    if (raw_client == nullptr) {
+      return absl::InvalidArgumentError(
+          "StreamExecutorCpuCompiler::Compile requires a client");
+    }
+    ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* local_topology,
+                     client->GetTopologyDescription());
+    return raw_client->CrossCompile(
+        computation, std::move(options), client->process_index(),
+        client->key_value_store(), local_topology, topology);
+  }
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      CompileOptions options, MaybeOwningMlirModule module,
+      const PjRtTopologyDescription& topology, PjRtClient* client) {
+    PjRtStreamExecutorRawClient* raw_client = nullptr;
+    if (auto* common_client = dynamic_cast<CommonPjRtClient*>(client)) {
+      raw_client = dynamic_cast<PjRtStreamExecutorRawClient*>(
+          common_client->raw_client());
+    }
+    if (raw_client == nullptr) {
+      return absl::InvalidArgumentError(
+          "StreamExecutorCpuCompiler::Compile requires a client");
+    }
+    ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* local_topology,
+                     client->GetTopologyDescription());
+    return raw_client->CrossCompile(
+        std::move(module), std::move(options), client->process_index(),
+        client->key_value_store(), local_topology, topology);
+  }
+};
+
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(
     pjrt_register_se_cpu_platform_id_mapping, {
       CHECK_OK(StreamExecutorPlatformIdMapping::Global().AddMapping(
           stream_executor::host::kHostPlatformId, CpuPlatformId()));
+      PjRtRegisterDefaultCompiler(
+          "cpu", std::make_unique<StreamExecutorCpuCompiler>());
     });
 
 namespace {
@@ -126,10 +169,18 @@ MakeTestPjRtStreamExecutorClient(
       MakeUnboundedAsyncWorkRunner("pjrt_async_work_runner",
                                    {/*stack_size=*/512 * 1024}),
       first_executor, std::move(gpu_run_options));
-  return std::make_unique<PjRtStreamExecutorClient>(
-      std::move(platform_name), std::move(devices), process_index,
-      std::move(memory_spaces), std::move(topology), std::move(raw_client),
-      std::move(kv_store));
+  auto platform_id = tsl::Fingerprint64(platform_name);
+  auto result = std::make_unique<PjRtStreamExecutorClient>(
+      platform_id, std::move(platform_name), "<unknown>", process_index,
+      std::move(topology), std::move(raw_client), std::move(kv_store));
+  std::vector<std::unique_ptr<PjRtDevice>> devices_copy;
+  devices_copy.reserve(devices.size());
+  for (auto& device : devices) {
+    device->SetClient(result.get());
+    devices_copy.push_back(std::move(device));
+  }
+  result->AttachDevices(std::move(devices_copy), std::move(memory_spaces));
+  return result;
 }
 
 absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClient() {

@@ -230,6 +230,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_blas_max_algorithms(0);
   opts.set_xla_gpu_fusion_autotune_top_k_configs(1);
   opts.set_xla_cpu_multi_thread_eigen(true);
+  opts.set_xla_enable_hlo_modules_upload(true);
   opts.set_xla_gpu_cuda_data_dir("./cuda_sdk_lib");
   opts.set_xla_gpu_generate_debug_info(false);
   opts.set_xla_gpu_generate_line_info(false);
@@ -298,6 +299,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cublaslt(true);
   opts.set_xla_gpu_trace_annotation_level(0);
+  opts.set_xla_gpu_enable_cupti_multi_subscriber(true);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -512,6 +514,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_dot_merger_threshold_mb(64);
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
+  opts.set_xla_gpu_collective_domain_assignment("");
   opts.set_xla_gpu_experimental_collective_start_as_early_as_possible(false);
   opts.set_xla_gpu_experimental_enable_selective_memcpy_overlap(false);
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
@@ -2776,6 +2779,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "detailed HLO and collective metadata in XProf annotation names and "
       "structured payloads. NVTX names remain compact."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_cupti_multi_subscriber",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_cupti_multi_subscriber),
+      debug_options->xla_gpu_enable_cupti_multi_subscriber(),
+      "Enable CUPTI V2 multi-subscriber APIs for GPU profiling when "
+      "available."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_operand_bytes_threshold_for_windowed_einsum",
       int64_setter_for(
           &DebugOptions::
@@ -3158,6 +3167,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_parallel_collective_overlap_limit(),
       "This controls how many in-flight collectives "
       "latency hiding scheduler can schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_collective_domain_assignment",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_collective_domain_assignment),
+      debug_options->xla_gpu_collective_domain_assignment(),
+      "Comma-separated list of collective communication domains to assign "
+      "automatically."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_collective_start_as_early_as_possible",
       bool_setter_for(

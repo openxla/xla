@@ -481,6 +481,10 @@ cc_library(
     name = "launch_dim",
     srcs = ["launch_dim.cc"],
     hdrs = ["launch_dim.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
+    ]),
     deps = [
         ":launch_dim_proto_cc",
         "//xla/tsl/platform:statusor",
@@ -629,6 +633,7 @@ cc_library(
         ":device_description_proto_cc",
         ":engine_options",
         ":scratch_allocator",
+        ":semantic_version",
         ":stream",
         "//xla:util",
         "//xla/tsl/lib/strings:proto_serialization",
@@ -865,6 +870,10 @@ cc_library(
     name = "kernel_spec",
     srcs = ["kernel_spec.cc"],
     hdrs = ["kernel_spec.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
+    ]),
     deps = [
         ":kernel",
         ":kernel_args",
