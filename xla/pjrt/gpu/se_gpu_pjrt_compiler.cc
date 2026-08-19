@@ -454,6 +454,17 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
                  std::move(layout_callback));
 }
 
+absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>>
+StreamExecutorGpuCompiler::DeserializePjRtTopologyDescription(
+    const std::string& serialized_topology) {
+  xla::PjRtTopologyDescriptionProto proto;
+  if (!proto.ParseFromString(serialized_topology)) {
+    return absl::InvalidArgumentError(
+        "Failed to parse StreamExecutorGpuTopologyDescription from string.");
+  }
+  return StreamExecutorGpuTopologyDescription::FromProto(proto);
+}
+
 absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
 StreamExecutorGpuCompiler::GetTargetRuntimeAbiVersion() {
   ABSL_ASSIGN_OR_RETURN(Compiler * compiler, GetOrCreateCompiler());
