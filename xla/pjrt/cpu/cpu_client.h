@@ -116,7 +116,7 @@ class PjRtCpuRawClient : public PjRtRawClient {
 
   CpuDeviceMemory::Allocator* allocator() const { return allocator_.get(); }
 
-  ThreadPoolAsyncWorkRunner* async_work_runner() const {
+  ThreadPoolAsyncWorkRunner* async_work_runner() const override {
     return async_work_runner_.get();
   }
 
@@ -215,11 +215,14 @@ class PjRtCpuRawClient : public PjRtRawClient {
   std::unique_ptr<ThreadPoolAsyncWorkRunner> async_work_runner_;
 };
 
-class PjRtCpuClient final : public CommonPjRtClient {
+class PjRtCpuClient final : public CommonPjRtClientImpl {
  public:
   ~PjRtCpuClient() override;
 
-  PjRtCpuRawClient* raw_client() const override { return raw_client_.get(); }
+  PjRtCpuRawClient* raw_client() const override {
+    return absl::down_cast<PjRtCpuRawClient*>(
+        CommonPjRtClientImpl::raw_client());
+  }
 
   bool allow_fallback_for_donation() const override { return true; }
   // This is needed because CPU currently doesn't have per-device dispatching
@@ -227,38 +230,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
   bool supports_two_phase_launch() const override { return false; }
   // TODO(parkers): implement proper predetermined error support.
   bool supports_predetermined_error() const override { return false; }
-
-  int process_index() const override { return process_index_; }
-
-  int device_count() const override { return devices_.size(); }
-
-  int addressable_device_count() const override {
-    return addressable_devices_.size();
-  }
-
-  absl::Span<PjRtDevice* const> devices() const override { return devices_; }
-
-  absl::Span<PjRtDevice* const> addressable_devices() const override {
-    return addressable_devices_;
-  }
-
-  absl::StatusOr<PjRtDevice*> LookupDevice(
-      GlobalDeviceId global_device_id) const override;
-
-  absl::StatusOr<PjRtDevice*> LookupAddressableDevice(
-      LocalDeviceId local_device_id) const override;
-
-  absl::Span<PjRtMemorySpace* const> memory_spaces() const override;
-
-  PjRtPlatformId platform_id() const override { return xla::CpuPlatformId(); }
-
-  absl::string_view platform_name() const override {
-    return xla::CpuPlatformName();
-  }
-
-  absl::string_view platform_version() const override {
-    return xla::CpuPlatformVersion();
-  }
 
   PjRtDynamicShapeKind GetDynamicShapeKind(
       int memory_space_kind_id) const override {
@@ -313,22 +284,11 @@ class PjRtCpuClient final : public CommonPjRtClient {
                            std::optional<CompileOptions> options,
                            const LoadOptions& load_options) override;
 
-  AsyncWorkRunner* async_work_runner() const override {
-    return raw_client_->async_work_runner();
-  }
-
   bool IsOnCpu(PjRtMemorySpace* memory_space) override { return true; }
 
-  absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
-      const override {
-    return topology_.get();
-  }
-
-  absl::StatusOr<PjRtRawBufferRef> AllocateRawBufferForExecute(
-      PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
-      bool retry_on_oom) override {
-    return raw_client_->AllocateRawBufferForExecute(
-        memory_space, on_device_bytes_count, retry_on_oom);
+  const xla::CpuTopologyDescription& topology() const {
+    return *absl::down_cast<const CpuTopologyDescription*>(
+        &CommonPjRtClientImpl::topology());
   }
 
   absl::StatusOr<int> GetMemorySpaceKindForShape(
@@ -385,25 +345,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
   LoadSerializedExecutableInternal(google::protobuf::io::ZeroCopyInputStream* stream,
                                    std::optional<CompileOptions> options,
                                    const LoadOptions& load_options);
-
-  int process_index_;
-  // Includes all devices, including non-addressable devices.
-  std::vector<std::unique_ptr<PjRtCpuDevice>> owned_devices_;
-  // Pointers to `owned_devices_`.
-  std::vector<PjRtDevice*> devices_;
-  // Maps Device::id() to the corresponding Device. Includes all devices.
-  absl::flat_hash_map<GlobalDeviceId, PjRtCpuDevice*> id_to_device_;
-  // Addressable devices indexed by core_id.
-  std::vector<PjRtDevice*> addressable_devices_;
-
-  // Addressable memory spaces.
-  std::vector<std::unique_ptr<PjRtMemorySpace>> owned_memory_spaces_;
-  // Pointers to `owned_memory_spaces_`.
-  std::vector<PjRtMemorySpace*> memory_spaces_;
-
-  std::unique_ptr<xla::CpuTopologyDescription> topology_;
-
-  std::unique_ptr<PjRtCpuRawClient> raw_client_;
 };
 
 class PjRtCpuLoadedExecutable;
