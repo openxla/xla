@@ -688,7 +688,6 @@ cc_library(
         "//xla/python/ifrt:test_util",
         "//xla/python/ifrt/ir/support:module_parsing",
         "//xla/python/ifrt/ir/transforms:passes",
-        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
@@ -698,6 +697,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_for_library",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -875,10 +875,12 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_for_library",
         "@llvm-project//mlir:IR",
     ] + if_google(["//xla/python/ifrt/ir/google:tpu_transfer_size_util_impl"]),
+    alwayslink = True,
 )
 
 tf_proto_library(
