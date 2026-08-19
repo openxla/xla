@@ -273,7 +273,6 @@ ConfigAssigner::Options GetConfigAssignerOptions(
     const DebugOptions& debug_options, bool is_deviceless) {
   ConfigAssigner::Options options;
   options.select_first_config =
-      debug_options.xla_gpu_deterministic_ops() ||
       debug_options.xla_gpu_exclude_nondeterministic_ops() ||
       debug_options.xla_gpu_autotune_level() == 0 || is_deviceless;
 
@@ -350,7 +349,6 @@ InstructionFilterFn GetShouldAutotuneInstructionFn(
   bool enable_fusion_autotuner =
       debug_options.xla_gpu_autotune_level() != 0 &&
       !debug_options.xla_gpu_exclude_nondeterministic_ops() &&
-      !debug_options.xla_gpu_deterministic_ops() &&
       debug_options.xla_gpu_experimental_enable_fusion_autotuner();
 
   return [do_not_autotune_cublas, do_not_autotune_cudnn,
@@ -391,15 +389,13 @@ AutotunerPass::GetGpuAutotunerBackends(
 
   if (debug_options.xla_gpu_autotune_level() == 0 ||
       debug_options.xla_gpu_exclude_nondeterministic_ops() ||
-      debug_options.xla_gpu_deterministic_ops() ||
       !debug_options.xla_gpu_experimental_enable_fusion_autotuner()) {
     disabled_autotune_backends.push_back(autotuner::Backend::NATIVE_EMITTER);
     disabled_autotune_backends.push_back(
         autotuner::Backend::BLOCK_LEVEL_EMITTER);
   }
 
-  if (debug_options.xla_gpu_exclude_nondeterministic_ops() ||
-      debug_options.xla_gpu_deterministic_ops()) {
+  if (debug_options.xla_gpu_exclude_nondeterministic_ops()) {
     disabled_autotune_backends.push_back(autotuner::Backend::TRITON);
   }
 
