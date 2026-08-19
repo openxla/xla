@@ -2072,7 +2072,7 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
 
   bool is_error = false;
   ABSL_RETURN_IF_ERROR(CommonPjRtClient::PrepareArguments(
-      options, argument_handles, ParametersThatMustBeDonated(),
+      options, argument_handles, ParametersThatMayBeDonated(),
       launch_args.extra_deps, launch_args.control_deps,
       launch_args.input_buffers, launch_args.device_buffers, device, replica,
       partition, parameter_device_shapes_, is_error,
@@ -2102,9 +2102,9 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
   return absl::OkStatus();
 }
 
-absl::Span<int const> CommonPjRtLoadedExecutable::ParametersThatMustBeDonated()
+absl::Span<int const> CommonPjRtLoadedExecutable::ParametersThatMayBeDonated()
     const {
-  return parameters_that_must_be_donated_;
+  return parameters_that_may_be_donated_;
 }
 
 absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(

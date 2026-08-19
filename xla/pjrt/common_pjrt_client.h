@@ -535,7 +535,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     std::vector<PjRtDevice*> addressable_devices;
     std::vector<LogicalDeviceIds> addressable_device_logical_ids;
     std::shared_ptr<DeviceAssignment> device_assignment;
-    std::vector<int> parameters_that_must_be_donated;
+    std::vector<int> parameters_that_may_be_donated;
     std::vector<int64_t> input_buffer_sizes_in_bytes;
     // Executable shape information that is computable from the PjRtExecutable*.
     struct Extras {
@@ -566,8 +566,8 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
       DispatchInfo info, tsl::RCReference<PjRtExecutableLoadState> load_state)
       : client_(client),
         parameter_device_shapes_(std::move(info.parameter_device_shapes)),
-        parameters_that_must_be_donated_(
-            std::move(info.parameters_that_must_be_donated)),
+        parameters_that_may_be_donated_(
+            std::move(info.parameters_that_may_be_donated)),
         output_device_shape_(std::move(info.output_device_shape)),
         parameter_memory_space_kind_ids_(
             std::move(info.parameter_memory_space_kind_ids)),
@@ -655,7 +655,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
         addressable_devices_,
         addressable_device_logical_ids_,
         device_assignment_,
-        parameters_that_must_be_donated_,
+        parameters_that_may_be_donated_,
         input_buffer_sizes_in_bytes_,
     };
   }
@@ -776,9 +776,9 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
         std::move(device_and_assign), attempt);
   }
 
-  // Returns a sorted list of the parameters that must be donated as a
+  // Returns a sorted list of the parameters that may be donated as a
   // side-effect of the execution. Derived classes may use custom logic.
-  absl::Span<int const> ParametersThatMustBeDonated() const;
+  absl::Span<int const> ParametersThatMayBeDonated() const;
 
   virtual const HloInputOutputAliasConfig& input_output_alias_config()
       const = 0;
@@ -815,9 +815,9 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   CommonPjRtClient* client_;
   // Parameter shapes.
   std::vector<Shape> parameter_device_shapes_;
-  // A sorted vector of parameters that have any aliased buffers and thus must
+  // A sorted vector of parameters that have any aliased buffers and thus may
   // be donated when executing the computation.
-  std::vector<int> parameters_that_must_be_donated_;
+  std::vector<int> parameters_that_may_be_donated_;
   // Result layouts (device shapes).
   std::shared_ptr<const Shape> output_device_shape_;
   // memory_space()->kind_id() for each parameter buffer. May be empty for

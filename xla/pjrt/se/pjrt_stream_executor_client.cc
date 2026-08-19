@@ -2326,8 +2326,8 @@ PjRtStreamExecutorClient::LoadInternal(
   auto load_state =
       tsl::MakeRef<PjRtStreamExecutorExecutableLoadState>(raw_client());
   ABSL_ASSIGN_OR_RETURN(
-      auto parameters_that_must_be_donated,
-      ComputeParametersThatMustBeDonated(
+      auto parameters_that_may_be_donated,
+      ComputeParametersThatMayBeDonated(
           *tensorflow::down_cast<StreamExecutorExecutable*>(executable.get())
                ->hlo_module(),
           compile_options.parameter_is_tupled_arguments));
@@ -2395,7 +2395,7 @@ PjRtStreamExecutorClient::LoadInternal(
           std::move(addressable_devices),
           std::move(addressable_device_logical_ids),
           std::move(device_assignment),
-          std::move(parameters_that_must_be_donated),
+          std::move(parameters_that_may_be_donated),
           std::move(input_buffer_sizes_in_bytes),
           std::move(input_hlo_snapshot_bits),
       },
