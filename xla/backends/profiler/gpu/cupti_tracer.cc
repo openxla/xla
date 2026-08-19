@@ -1271,14 +1271,36 @@ void CuptiTracer::Disable() {
   }
 
   if (using_v2_subscriber_api_) {
-    // Take the end timestamp before teardown, which can disable CUPTI while
-    // the subscriber handle is still needed by the subsequent V2 calls.
+    // Preserve an end timestamp before a fatal CUPTI error can trigger the
+    // error manager's teardown.
     absl::StatusOr<uint64_t> tracing_end_time_ns = GetTimestampForSubscriber();
-    // The subsequent ActivityDisableV2 and ActivityGetNextRecordV2 calls still
-    // need the subscriber handle.
-    DisableApiTracing(/*unsubscribe=*/false).IgnoreError();
-    DisableActivityTracing().IgnoreError();
-    cupti_driver_api_hook_->SyncAndFlush().IgnoreError();
+
+    // Synchronize while the V2 subscriber and its registered CUPTI state are
+    // still live. This lets the final timestamp cover synchronized work.
+    if (!cupti_interface_->Disabled()) {
+      cupti_driver_api_hook_->SyncAndFlush().IgnoreError();
+    }
+
+    if (!cupti_interface_->Disabled()) {
+      // Prefer the post-synchronization timestamp, but retain the earlier
+      // valid value when the final V2 timestamp query fails.
+      absl::StatusOr<uint64_t> final_timestamp_ns = GetTimestampForSubscriber();
+      if (final_timestamp_ns.ok()) {
+        tracing_end_time_ns = *final_timestamp_ns;
+      } else {
+        LOG(WARNING) << "Unable to read final CUPTI V2 tracing end timestamp: "
+                     << final_timestamp_ns.status();
+      }
+    }
+
+    // A fatal final timestamp error makes CuptiErrorManager undo the
+    // registered CUPTI operations, including unsubscribe. Do not manually
+    // tear down those operations after that happens.
+    if (!cupti_interface_->Disabled()) {
+      DisableApiTracing(/*unsubscribe=*/false).IgnoreError();
+      DisableActivityTracing().IgnoreError();
+    }
+
     if (tracing_end_time_ns.ok()) {
       collector_->SetTracingEndTimeNs(*tracing_end_time_ns);
     } else {

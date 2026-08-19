@@ -192,7 +192,8 @@ void SimpleAddSubWithProfilerTest(bool enable_activity_hardware_tracing,
   EXPECT_THAT(vec, Each(DistanceFrom(0, Lt(0.001))));
 
   auto space = std::make_unique<tensorflow::profiler::XSpace>();
-  collector->Export(space.get(), collector->GetTracingEndTimeNs());
+  ASSERT_OK_AND_ASSIGN(uint64_t end_gpu_ns, collector->GetTracingEndTimeNs());
+  collector->Export(space.get(), end_gpu_ns);
   EXPECT_GE(space->planes_size(), 1);
 
   if (enable_pm_sampling) {

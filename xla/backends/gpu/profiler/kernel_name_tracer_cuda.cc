@@ -83,9 +83,14 @@ std::vector<std::string> KernelNameTracerCuda::stop() {
     return {};
   }
   cupti_tracer_->Disable();
-  uint64_t end_gpu_ns = cupti_collector_->GetTracingEndTimeNs();
+  auto end_gpu_ns = cupti_collector_->GetTracingEndTimeNs();
+  if (!end_gpu_ns.ok()) {
+    LOG(WARNING) << "Unable to export CUPTI kernel-name trace: "
+                 << end_gpu_ns.status();
+    return {};
+  }
   auto space = std::make_unique<tensorflow::profiler::XSpace>();
-  cupti_collector_->Export(space.get(), end_gpu_ns);
+  cupti_collector_->Export(space.get(), *end_gpu_ns);
   for (const auto& plane : space->planes()) {
     if (plane.name() == "/device:GPU:0") {
       std::vector<std::string> names;
