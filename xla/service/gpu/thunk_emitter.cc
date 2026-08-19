@@ -1319,18 +1319,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGenericCustomCall(
       }
       ABSL_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
     }
-    bool use_pdl = false;
-    static constexpr absl::string_view kUsesPdl = "uses_pdl";
-    if (ir_emitter_context_->debug_options().xla_gpu_enable_pdl()) {
-      if (auto it = attributes.find(kUsesPdl); it != attributes.end()) {
-        if (auto* scalar =
-                std::get_if<xla::ffi::Scalar>(&it->second.AsVariant())) {
-          if (auto* val = std::get_if<bool>(&scalar->AsVariant())) {
-            use_pdl = *val;
-          }
-        }
-      }
-    }
+    const bool enable_pdl =
+        IsPdlEnabled(ir_emitter_context_->debug_options(),
+                     ir_emitter_context_->gpu_compute_capability());
     auto released_lock_keeper = llvm_options_lock_->TemporarilyReleaseLock();
     return CustomCallThunk::Create(
         Thunk::ThunkInfo::WithProfileAnnotation(
@@ -1341,7 +1332,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGenericCustomCall(
         ir_emitter_context_->platform_name(),
         ir_emitter_context_->gpu_compute_capability(),
         /*execution_state=*/nullptr,
-        ir_emitter_context_->cpu_target_machine_options(), use_pdl);
+        ir_emitter_context_->cpu_target_machine_options(), enable_pdl);
   };
 
   auto legacy_thunk = [&]() -> absl::StatusOr<std::unique_ptr<Thunk>> {

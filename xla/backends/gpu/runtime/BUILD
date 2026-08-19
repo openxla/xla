@@ -5418,7 +5418,6 @@ xla_test(
         "//xla/ffi:invoke",
         "//xla/ffi:record_ffi",
         "//xla/ffi/api:c_api",
-        "//xla/ffi/api:record_api",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_spec",
