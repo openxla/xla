@@ -86,14 +86,14 @@ class PjRtCpuExecutable;
 
 // Client-less CPU compilation for XlaComputation.
 absl::StatusOr<std::unique_ptr<PjRtCpuExecutable>> CompileCpuExecutable(
-    const XlaComputation& computation, CompileOptions options,
+    const XlaComputation& computation, CompileOptions&& options,
     const CpuTopologyDescription& topology,
     std::function<void(HloModuleConfig&)> customize_hlo_module_config =
         nullptr);
 
 // Client-less CPU compilation for MLIR Module.
 absl::StatusOr<std::unique_ptr<PjRtCpuExecutable>> CompileCpuExecutable(
-    MaybeOwningMlirModule module, CompileOptions options,
+    MaybeOwningMlirModule module, CompileOptions&& options,
     const CpuTopologyDescription& topology,
     std::function<void(HloModuleConfig&)> customize_hlo_module_config =
         nullptr);
@@ -163,10 +163,35 @@ class PjRtCpuRawClient : public PjRtRawClient {
       absl::AnyInvocable<void() &&> on_delete_callback,
       bool is_mutable) override;
 
+  // TODO(b/403584258): PJRT wants to have just one simple Compile API. When the
+  // CPU runtime stops supporting the legacy runtime we will unify our compile
+  // paths better and this will be redundant.
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileAheadOfTime(
+      const XlaComputation& computation, CompileOptions options,
+      const CpuTopologyDescription& topology, int process_index,
+      const AotCompilationOptions& aot_options);
+
+  // TODO(parkers): These should be moved to be fully client independent in
+  // cpu_pjrt_compiler.cc.
+  absl::StatusOr<std::unique_ptr<PjRtCpuExecutable>> Compile(
+      const XlaComputation& computation, const CpuTopologyDescription& topology,
+      int process_index, CompileOptions&& options);
+  absl::StatusOr<std::unique_ptr<PjRtCpuExecutable>> Compile(
+      MaybeOwningMlirModule module, const CpuTopologyDescription& topology,
+      int process_index, CompileOptions&& options);
+
  private:
   friend class PjRtCpuClient;
   friend class CpuExecutableLoadState;
   friend class CpuPjRtRawLoadedExecutable;
+
+  absl::StatusOr<std::unique_ptr<PjRtCpuExecutable>> CompileInternal(
+      const XlaComputation& computation,
+      const std::vector<const Shape*>& argument_layout_pointers,
+      LayoutCanonicalizationCallback layout_canonicalization_callback,
+      CompileOptions&& options, const CpuTopologyDescription& topology,
+      int process_index,
+      const AotCompilationOptions* absl_nullable aot_options = nullptr);
 
   // A memory allocator used to allocate host memory for PjRtBuffers, and
   // temporary allocations passed to XLA:CPU executable.
@@ -239,26 +264,6 @@ class PjRtCpuClient final : public CommonPjRtClientImpl {
   absl::StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis()
       const override;
 
-  // TODO(parkers): These should be moved to be fully client independent in
-  // cpu_pjrt_compiler.cc.
-  absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
-                           std::shared_ptr<DeviceAssignment>>>
-  CompileAndAssignDevices(const XlaComputation& computation,
-                          CompileOptions options);
-  absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
-                           std::shared_ptr<DeviceAssignment>>>
-  CompileAndAssignDevices(MaybeOwningMlirModule module, CompileOptions options);
-
-  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      const XlaComputation& computation, CompileOptions options) override;
-  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      MaybeOwningMlirModule module, CompileOptions options) override;
-
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      const XlaComputation& computation, CompileOptions options) override;
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      MaybeOwningMlirModule module, CompileOptions options) override;
-
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
       std::shared_ptr<PjRtExecutable> executable,
       const LoadOptions& load_options) override;
@@ -327,15 +332,6 @@ class PjRtCpuClient final : public CommonPjRtClientImpl {
                 std::vector<std::unique_ptr<PjRtCpuDevice>> devices,
                 std::unique_ptr<PjRtCpuRawClient> raw_client,
                 std::unique_ptr<CpuTopologyDescription> topology);
-
-  absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
-                           std::shared_ptr<DeviceAssignment>>>
-  CompileInternal(
-      const XlaComputation& computation,
-      const std::vector<const Shape*>& argument_layout_pointers,
-      LayoutCanonicalizationCallback layout_canonicalization_callback,
-      CompileOptions options,
-      const AotCompilationOptions* absl_nullable aot_options = nullptr);
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
       std::shared_ptr<PjRtCpuExecutable> cpu_executable,
