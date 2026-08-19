@@ -181,3 +181,59 @@ xtile.entry_func @transpose(%arg0: memref<128x256xcomplex<f32>>,
 // CHECK: %[[LHS:.*]] = xtile.extract %[[ARG0]][%[[C0]], %[[C0]], %[[C0]]] [1, 4, 2] [1, 1, 1] : memref<128x256x2xf32> -> tensor<1x4x2xf32>
 // CHECK: %[[TRANSPOSE:.*]] = stablehlo.transpose %[[LHS]], dims = [1, 0, 2] : (tensor<1x4x2xf32>) -> tensor<4x1x2xf32>
 // CHECK: xtile.insert %[[TRANSPOSE]] into %[[ARG1]][%[[C0]], %[[C0]], %[[C0]]] [4, 1, 2] [1, 1, 1] : tensor<4x1x2xf32> -> memref<128x256x2xf32>
+
+// -----
+
+xtile.entry_func @convert_real_to_complex(%arg0: memref<1xi32>,
+    %arg1: memref<1xcomplex<f32>>,
+    %arg2: index) attributes {num_opaque_args = 0 : i32} {
+  %c0 = arith.constant 0 : index
+  %lhs = xtile.extract %arg0[%c0] [1] [1] : memref<1xi32> -> tensor<1xi32>
+  %conv = stablehlo.convert %lhs : (tensor<1xi32>) -> tensor<1xcomplex<f32>>
+  xtile.insert %conv into %arg1[%c0] [1] [1]
+    : tensor<1xcomplex<f32>> -> memref<1xcomplex<f32>>
+  xtile.return
+}
+
+// CHECK-LABEL: xtile.entry_func @convert_real_to_complex
+// CHECK-SAME:   (%[[ARG0:[a-zA-Z0-9_]*]]: memref<1xi32>,
+// CHECK-SAME:   %[[ARG1:[a-zA-Z0-9_]*]]: memref<1x2xf32>,
+// CHECK-SAME:   %[[ARG2:[a-zA-Z0-9_]*]]: index)
+
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant dense<0.000000e+00> : tensor<1xf32>
+
+// CHECK: %[[LHS:.*]] = xtile.extract %[[ARG0]][%[[C0]]] [1] [1] : memref<1xi32> -> tensor<1xi32>
+// CHECK: %[[REAL:.*]] = stablehlo.convert %[[LHS]] : (tensor<1xi32>) -> tensor<1xf32>
+
+// CHECK:      %[[R_RESHAPE:.*]] = stablehlo.reshape %[[REAL]]
+// CHECK-SAME:   : (tensor<1xf32>) -> tensor<1x1xf32>
+// CHECK:      %[[I_RESHAPE:.*]] = stablehlo.reshape %[[ZERO]]
+// CHECK-SAME:   : (tensor<1xf32>) -> tensor<1x1xf32>
+
+// CHECK: %[[COMB:.*]] = stablehlo.concatenate %[[R_RESHAPE]], %[[I_RESHAPE]], dim = 1 : (tensor<1x1xf32>, tensor<1x1xf32>) -> tensor<1x2xf32>
+// CHECK: xtile.insert %[[COMB]] into %[[ARG1]][%[[C0]], %[[C0]]] [1, 2] [1, 1] : tensor<1x2xf32> -> memref<1x2xf32>
+
+// -----
+
+xtile.entry_func @convert_complex_to_complex(%arg0: memref<1xcomplex<f32>>,
+      %arg1: memref<1xcomplex<f64>>,
+      %arg2: index) attributes {num_opaque_args = 0 : i32} {
+  %c0 = arith.constant 0 : index
+  %lhs = xtile.extract %arg0[%c0] [1] [1]
+    : memref<1xcomplex<f32>> -> tensor<1xcomplex<f32>>
+  %conv = stablehlo.convert %lhs
+    : (tensor<1xcomplex<f32>>) -> tensor<1xcomplex<f64>>
+  xtile.insert %conv into %arg1[%c0] [1] [1]
+    : tensor<1xcomplex<f64>> -> memref<1xcomplex<f64>>
+  xtile.return
+}
+// CHECK-LABEL: xtile.entry_func @convert_complex_to_complex
+// CHECK-SAME:   (%[[ARG0:[a-zA-Z0-9_]*]]: memref<1x2xf32>,
+// CHECK-SAME:   %[[ARG1:[a-zA-Z0-9_]*]]: memref<1x2xf64>,
+// CHECK-SAME:   %[[ARG2:[a-zA-Z0-9_]*]]: index)
+
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[LHS:.*]] = xtile.extract %[[ARG0]][%[[C0]], %[[C0]]] [1, 2] [1, 1] : memref<1x2xf32> -> tensor<1x2xf32>
+// CHECK: %[[CONV:.*]] = stablehlo.convert %[[LHS]] : (tensor<1x2xf32>) -> tensor<1x2xf64>
+// CHECK: xtile.insert %[[CONV]] into %[[ARG1]][%[[C0]], %[[C0]]] [1, 2] [1, 1] : tensor<1x2xf64> -> memref<1x2xf64>

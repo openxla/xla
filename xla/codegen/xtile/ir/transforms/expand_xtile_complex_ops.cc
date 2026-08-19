@@ -815,6 +815,58 @@ LogicalResult RewriteTransposeOp(shlo::TransposeOp op,
   return mlir::success();
 }
 
+LogicalResult RewriteConvertOp(shlo::ConvertOp op, PatternRewriter& rewriter) {
+  auto operand_type = op.getOperand().getType();
+  auto operand_tensor_type = mlir::dyn_cast<RankedTensorType>(operand_type);
+  if (!operand_tensor_type) {
+    return rewriter.notifyMatchFailure(op, "operand is not a ranked tensor");
+  }
+  auto result_type = op.getType();
+  auto res_tensor_type = mlir::dyn_cast<RankedTensorType>(result_type);
+  if (!res_tensor_type) {
+    return rewriter.notifyMatchFailure(op, "result is not a ranked tensor");
+  }
+  if (!HasComplex(operand_type) && !HasComplex(result_type)) {
+    return rewriter.notifyMatchFailure(op,
+                                       "neither operand nor result is complex");
+  }
+
+  auto loc = op.getLoc();
+  if (!HasComplex(operand_type) && HasComplex(result_type)) {
+    auto complex_type =
+        mlir::cast<ComplexType>(res_tensor_type.getElementType());
+    Type float_elem_type = complex_type.getElementType();
+    auto real_tensor_type =
+        RankedTensorType::get(res_tensor_type.getShape(), float_elem_type);
+
+    Value real = shlo::ConvertOp::create(rewriter, loc, real_tensor_type,
+                                         op.getOperand());
+    Value imag = GetConstant(rewriter, loc, real_tensor_type, 0.0);
+    Value combined = ConcatRealAndImag(real, imag, loc, rewriter);
+    auto cast_to_orig_type = UnrealizedConversionCastOp::create(
+        rewriter, loc, res_tensor_type, combined);
+    rewriter.replaceOp(op, cast_to_orig_type.getResult(0));
+    return mlir::success();
+  }
+
+  if (HasComplex(operand_type) && HasComplex(result_type)) {
+    Value operand = UnwrapCast(op.getOperand(), rewriter);
+    auto new_type = GetExpandedType(res_tensor_type);
+    Value converted = shlo::ConvertOp::create(rewriter, loc, new_type, operand);
+    auto cast_to_orig_type = UnrealizedConversionCastOp::create(
+        rewriter, loc, res_tensor_type, converted);
+    rewriter.replaceOp(op, cast_to_orig_type.getResult(0));
+    return mlir::success();
+  }
+
+  // Complex to real conversion
+  Value operand = UnwrapCast(op.getOperand(), rewriter);
+  Value real = ExtractReal(operand, loc, rewriter);
+  Value converted = shlo::ConvertOp::create(rewriter, loc, result_type, real);
+  rewriter.replaceOp(op, converted);
+  return mlir::success();
+}
+
 class ExpandXtileComplexOpsPass
     : public impl::ExpandXtileComplexOpsPassBase<ExpandXtileComplexOpsPass> {
  public:
@@ -830,6 +882,7 @@ class ExpandXtileComplexOpsPass
     patterns.add(RewriteCompareOp);
     patterns.add(RewriteComplexOp);
     patterns.add(RewriteConstantOp);
+    patterns.add(RewriteConvertOp);
     patterns.add(RewriteDivOp);
     patterns.add(RewriteExtractTileOp);
     patterns.add(RewriteFunctionSignatures);
