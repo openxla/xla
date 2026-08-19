@@ -77,8 +77,8 @@ constexpr bool kHasNcclAllReduce = false;
 
 absl::Status CommunicatorAllReduceU32(se::Stream* stream,
                                       XLA_FFI_Communicator* communicator,
-                                      const void* send_buffer, void* recv_buffer,
-                                      int64_t count);
+                                      const void* send_buffer,
+                                      void* recv_buffer, int64_t count);
 
 struct SynchronizationSignals {
   absl::Mutex mutex;
@@ -365,10 +365,9 @@ static absl::Status PublicApiAllReduce(se::Stream* stream,
   TF_RET_CHECK(communicator != nullptr);
 
   if constexpr (kHasNcclAllReduce) {
-    return CommunicatorAllReduceU32(stream, communicator,
-                                    src.device_memory().opaque(),
-                                    dst->device_memory().opaque(),
-                                    src.element_count());
+    return CommunicatorAllReduceU32(
+        stream, communicator, src.device_memory().opaque(),
+        dst->device_memory().opaque(), src.element_count());
   } else {
     return absl::UnimplementedError(
         "Communicator all-reduce is not implemented for this platform");

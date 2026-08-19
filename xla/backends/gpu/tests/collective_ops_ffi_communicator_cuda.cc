@@ -33,9 +33,9 @@ absl::Status CommunicatorAllReduceU32(stream_executor::Stream* stream,
   cudaStream_t cuda_stream =
       absl::bit_cast<cudaStream_t>(stream->platform_specific_handle().stream);
 
-  ncclResult_t result = ncclAllReduce(send_buffer, recv_buffer, count,
-                                      ncclUint32, ncclSum, nccl_comm,
-                                      cuda_stream);
+  ncclResult_t result =
+      ncclAllReduce(send_buffer, recv_buffer, count, ncclUint32, ncclSum,
+                    nccl_comm, cuda_stream);
   TF_RET_CHECK(result == ncclSuccess)
       << "ncclAllReduce failed: " << ncclGetErrorString(result);
   return stream->BlockHostUntilDone();
