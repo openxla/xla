@@ -99,7 +99,7 @@ cc_library(
         "//xla/hlo/utils:pointer_utils",
         "//xla/service:compilation_environments",
         "//xla/service:computation_layout",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:device_assignment",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:mapped_ptr_container_sorter",

@@ -2200,7 +2200,7 @@ xla_test(
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:verified_hlo_module",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:device_assignment",
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
         "//xla/stream_executor:device_description",

@@ -948,7 +948,7 @@ xla_cc_test(
         ":cuda_device_address_vmm_allocator",
         ":cuda_memory_reservation",
         ":cuda_platform",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:device_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_vmm_allocator",
         "//xla/stream_executor:memory_allocation",
