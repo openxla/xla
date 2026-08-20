@@ -336,6 +336,8 @@ Autotuner::Options GetAutotunerOptions(const DebugOptions& debug_options,
       debug_options.xla_gpu_crash_on_verification_failures();
   autotuner_options.dump_logs_to =
       debug_options.xla_gpu_dump_autotune_logs_to();
+  autotuner_options.use_new_logging_format =
+      debug_options.xla_gpu_use_new_autotune_cache_format();
   return autotuner_options;
 }
 
@@ -464,6 +466,8 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
           allocator);
       Autotuner::Options autotuner_options =
           GetAutotunerOptions(debug_options, is_buffer_check_supported);
+      autotuner_options.cache_context = AutotuneCacheContext::Create(
+          target_config->device_description, orchestrator->codegen_backends());
 
       std::vector<std::unique_ptr<Profiler>> profilers;
       profilers.push_back(std::move(profiler));

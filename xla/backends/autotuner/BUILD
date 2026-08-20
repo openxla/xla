@@ -175,6 +175,9 @@ cc_library(
     srcs = ["autotuner.cc"],
     hdrs = ["autotuner.h"],
     deps = [
+        ":autotune_fingerprint",
+        ":autotuner_cache_interface",
+        ":autotuning_proto_cc",
         ":codegen_orchestrator",
         ":config_runner",
         ":config_selector",
@@ -185,6 +188,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:env",
+        "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
@@ -198,6 +202,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:protobuf",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -281,6 +286,8 @@ xla_cc_test(
     srcs = ["autotuner_test.cc"],
     deps = [
         ":autotuner",
+        ":autotuner_cache_interface",
+        ":autotuning_proto_cc",
         ":backends_proto_cc",
         ":codegen_backend",
         ":codegen_orchestrator",
@@ -294,6 +301,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
+        "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/testing:temporary_directory",
@@ -486,9 +494,11 @@ cc_library(
     srcs = ["config_runner.cc"],
     hdrs = ["config_runner.h"],
     deps = [
+        ":autotuning_proto_cc",
         ":codegen_backend",
         ":codegen_orchestrator",
         ":profiler",
+        "//xla:autotune_cache_proto_cc",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:util",

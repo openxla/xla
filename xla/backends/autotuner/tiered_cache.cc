@@ -44,11 +44,6 @@ namespace xla {
 
 namespace {
 
-std::string ToString(tsl::Fprint128 fingerprint) {
-  return absl::StrCat(absl::Hex(fingerprint.high64, absl::kZeroPad16),
-                      absl::Hex(fingerprint.low64, absl::kZeroPad16));
-}
-
 // TODO(b/444398084): Use codegen options fingerprint when strict matching
 // is enabled. Ignoring it for now since the always changing debug options
 // make the cache useless in strict mode. We need to improve it to only use
@@ -95,7 +90,8 @@ autotuner::AutotuneTargetKey TieredCache::BuildTargetKey(
   autotuner::AutotuneTargetKey target_key;
   target_key.set_device(context_.device());
   target_key.set_explicit_version(context_.explicit_version());
-  target_key.set_hlo_fingerprint(ToString(GetHloFingerprint(instr)));
+  target_key.set_hlo_fingerprint(
+      xla::AutotuneFingerprintToString(GetHloFingerprint(instr)));
   return target_key;
 }
 
