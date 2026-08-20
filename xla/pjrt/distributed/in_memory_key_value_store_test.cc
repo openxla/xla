@@ -325,5 +325,30 @@ TEST(InMemoryKeyValueStoreTest, DeleteMissingKeyIsOk) {
   TF_EXPECT_OK(store.Delete("missing_key"));
 }
 
+TEST(InMemoryKeyValueStoreTest, DeleteDirectoryDeletesPrefix) {
+  InMemoryKeyValueStore store;
+  TF_ASSERT_OK(store.Set("test_dir", "val_dir"));
+  TF_ASSERT_OK(store.Set("test_dir/key1", "val1"));
+  TF_ASSERT_OK(store.Set("test_dir/subdir/key2", "val2"));
+  TF_ASSERT_OK(store.Set("test_dir_other/key", "val_other"));
+  TF_ASSERT_OK(store.Set("other_dir/key3", "val3"));
+
+  EXPECT_THAT(store.TryGet("test_dir"), IsOkAndHolds("val_dir"));
+  EXPECT_THAT(store.TryGet("test_dir/key1"), IsOkAndHolds("val1"));
+  EXPECT_THAT(store.TryGet("test_dir/subdir/key2"), IsOkAndHolds("val2"));
+  EXPECT_THAT(store.TryGet("test_dir_other/key"), IsOkAndHolds("val_other"));
+  EXPECT_THAT(store.TryGet("other_dir/key3"), IsOkAndHolds("val3"));
+
+  TF_ASSERT_OK(store.Delete("test_dir"));
+
+  EXPECT_THAT(store.TryGet("test_dir"), StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(store.TryGet("test_dir/key1"),
+              StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(store.TryGet("test_dir/subdir/key2"),
+              StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(store.TryGet("test_dir_other/key"), IsOkAndHolds("val_other"));
+  EXPECT_THAT(store.TryGet("other_dir/key3"), IsOkAndHolds("val3"));
+}
+
 }  // namespace
 }  // namespace xla

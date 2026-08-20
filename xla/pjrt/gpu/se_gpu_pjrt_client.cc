@@ -914,8 +914,7 @@ namespace {
 // Keeps track of the state of an in-flight cross-host recv.
 class CrossHostRecvState {
  public:
-  CrossHostRecvState(AsyncWorkRunner* async_work_runner,
-                     std::vector<std::string> rendezvous_keys,
+  CrossHostRecvState(std::vector<std::string> rendezvous_keys,
                      std::shared_ptr<KeyValueStoreInterface> kv_store)
       : rendezvous_keys_(std::move(rendezvous_keys)),
         kv_store_(std::move(kv_store)) {
@@ -929,18 +928,9 @@ class CrossHostRecvState {
     for (int i = 0; i < rendezvous_keys_.size(); ++i) {
       kv_store_->AsyncGet(
           rendezvous_keys_[i],
-          [worker = async_work_runner, promise = promises_[i],
-           kv_store = kv_store_, key = rendezvous_keys_[i]](
+          [promise = promises_[i]](
               const absl::StatusOr<std::string>& result) mutable {
-            worker->Execute(
-                [promise = std::move(promise), kv_store = std::move(kv_store),
-                 key = std::move(key), status = result.status()]() mutable {
-                  promise.Set(status);
-                  if (absl::Status s = kv_store->Delete(key); !s.ok()) {
-                    LOG(DFATAL) << "Failed to delete rendezvous key " << key
-                                << ": " << s;
-                  }
-                });
+            promise.Set(result.status());
           });
     }
   }
@@ -1042,11 +1032,13 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
   auto recv = [this, raw_buffers = std::move(raw_buffers),
                buffer_sequencing_events, notifier = std::move(notifier),
                local_device, stream]() mutable {
+    const uint64_t transfer_id = tsl::random::New64();
+    const std::string transfer_key =
+        absl::StrCat("pjrt_gpu_remote_recv_", transfer_id);
+
     auto results = [&]() -> absl::StatusOr<std::vector<Future<>>> {
       auto* executor =
           absl::down_cast<se::gpu::GpuExecutor*>(local_device->executor());
-
-      const uint64_t transfer_id = tsl::random::New64();
 
       StreamExecutorGpuCrossHostRecvDescriptor desc;
       std::vector<PjRtCrossHostRecvDescriptors> serialized_descriptors;
@@ -1065,8 +1057,7 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
         // Keep mem alive until the Recv has finished executing.
         buffer_sequencing_events[i].AndThen([mem]() {});
 
-        std::string rendezvous_key =
-            absl::StrCat("pjrt_gpu_remote_recv_", transfer_id, "_", i);
+        std::string rendezvous_key = absl::StrCat(transfer_key, "/", i);
         rendezvous_keys.push_back(rendezvous_key);
 
         // Export the buffer fabric handle and use it as a descriptor to be sent
@@ -1090,7 +1081,7 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
       }
 
       auto state = std::make_shared<CrossHostRecvState>(
-          async_work_runner(), std::move(rendezvous_keys), kv_store_);
+          std::move(rendezvous_keys), kv_store_);
 
       // Notify the receiver of the descriptors and cancellation callback. The
       // caller is responsible for sending the descriptors to the sender and/or
@@ -1129,6 +1120,15 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
             }
           });
     }
+
+    JoinFutures(*results).OnReady(
+        *async_work_runner(),
+        [kv_store = kv_store_, transfer_key](const absl::Status& /*status*/) {
+          if (absl::Status s = kv_store->Delete(transfer_key); !s.ok()) {
+            LOG(DFATAL) << "Failed to delete rendezvous keys for transfer "
+                        << transfer_key << ": " << s;
+          }
+        });
   };
   async_work_runner()->Execute(std::move(recv));
 

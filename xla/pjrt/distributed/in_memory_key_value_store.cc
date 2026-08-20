@@ -54,7 +54,8 @@ absl::StatusOr<std::string> InMemoryKeyValueStore::Get(absl::string_view key,
 
 absl::StatusOr<std::string> InMemoryKeyValueStore::TryGet(
     absl::string_view key) {
-  std::optional<std::string> val = kv_store_.Get(key);
+  std::optional<std::string> val =
+      kv_store_.Get(KeyValueStore::NormalizeKey(key));
   if (!val.has_value()) {
     return absl::NotFoundError(
         absl::StrCat(key, " is not found in the kv store."));
@@ -78,7 +79,8 @@ std::shared_ptr<tsl::CallOptions> InMemoryKeyValueStore::AsyncGet(
   });
 
   kv_store_.AddCallbackForKey(
-      key, [promise](const absl::StatusOr<absl::string_view>& res) mutable {
+      KeyValueStore::NormalizeKey(key),
+      [promise](const absl::StatusOr<absl::string_view>& res) mutable {
         if (res.ok()) {
           promise.Set(std::string(*res));
         } else {
@@ -91,11 +93,14 @@ std::shared_ptr<tsl::CallOptions> InMemoryKeyValueStore::AsyncGet(
 
 absl::Status InMemoryKeyValueStore::Set(absl::string_view key,
                                         absl::string_view value) {
-  return kv_store_.Put(key, value, allow_overwrite_);
+  return kv_store_.Put(KeyValueStore::NormalizeKey(key), value,
+                       allow_overwrite_);
 }
 
 absl::Status InMemoryKeyValueStore::Delete(absl::string_view key) {
-  kv_store_.Delete(key);
+  const std::string normalized = KeyValueStore::NormalizeKey(key);
+  kv_store_.Delete(normalized);
+  kv_store_.DeletePrefix(normalized + "/");
   return absl::OkStatus();
 }
 
