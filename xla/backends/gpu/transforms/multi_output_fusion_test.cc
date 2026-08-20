@@ -118,6 +118,34 @@ TEST_F(MultiOutputFusionTest, MultiOutputFusionSiblingReduceAndReduceFusion) {
               GmockMatch(m::Tuple(m::Reduce(), m::Reduce())));
 }
 
+TEST_F(MultiOutputFusionTest,
+       NoSiblingFusionOfColumnReductionAndElementwise) {
+  // A column (non-row) reduction and a plain element-wise root that share an
+  // input must not be sibling-fused: their read patterns conflict, making the
+  // combined kernel slower than the two separate kernels. Reducing the major
+  // dimension of [6272,768] and keeping the minor one is a column reduction.
+  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    fused_reduce {
+      p0.1 = f32[6272,768]{1,0} parameter(0)
+      const.1 = f32[] constant(0)
+      ROOT reduce = f32[768]{0} reduce(p0.1, const.1), dimensions={0}, to_apply=scalar_add_computation
+    }
+
+    fused_elementwise {
+      p0.2 = f32[6272,768]{1,0} parameter(0)
+      ROOT sqrt = f32[6272,768]{1,0} sqrt(p0.2)
+    }
+
+    ENTRY entry {
+      p0 = f32[6272,768]{1,0} parameter(0)
+      reduce_fusion = f32[768]{0} fusion(p0), kind=kInput, calls=fused_reduce
+      elementwise_fusion = f32[6272,768]{1,0} fusion(p0), kind=kLoop, calls=fused_elementwise
+      ROOT root = (f32[768]{0}, f32[6272,768]{1,0}) tuple(reduce_fusion, elementwise_fusion)
+    })"))
+                    .value();
+  ASSERT_FALSE(mof_.Run(module.get()).value());
+}
+
 TEST_F(MultiOutputFusionTest, MultiOutputFusionDifferentReduceInputShapes) {
   auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
     fused_computation_1 {

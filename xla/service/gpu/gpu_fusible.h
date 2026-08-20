@@ -160,6 +160,12 @@ FusionDecision FusionHeroesAreCompatible(
     const HloInstruction* hero1, const HloInstruction* hero2,
     const se::DeviceDescription& device_info);
 
+// Whether `hero` is a column (i.e. non-row) reduction. Column reductions use a
+// 2D-tiled read pattern that differs from the row-major element-wise loop
+// pattern.
+bool IsColumnReductionHero(const HloInstruction* hero,
+                           const se::DeviceDescription& device_info);
+
 // Whether instruction shapes are compatible for multi-output fusion, i.e.
 // whether the emitters support lowering the resulting fusion.
 // This function works for both, sibling and producer-consumer multi-output
