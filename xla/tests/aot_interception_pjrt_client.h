@@ -45,6 +45,11 @@ enum class AOTTestMode {
   kBackwardsCompatibility,
 };
 
+enum class AOTTestPlatform {
+  kGpu,
+  kCpu,
+};
+
 // A wrapper around an existing PjRtClient that intercepts compilation
 // and loading calls to enforce AOT compatibility verification.
 class AOTInterceptionPjrtClient : public PjRtClient {
@@ -59,9 +64,24 @@ class AOTInterceptionPjrtClient : public PjRtClient {
 
   absl::StatusOr<std::string> PackArtifactForInnerClient();
 
+  // cuda, rocm and gpu map to kGpu; everything else maps to kCpu.
+  static absl::StatusOr<AOTTestPlatform> PlatformFromName(
+      absl::string_view platform_name);
+
+  // Returns the on-disk executables subdirectory segment ("gpu" or "cpu") for a
+  // Platform.
+  static absl::string_view PlatformSubdir(AOTTestPlatform platform);
+
   static absl::Status CompareGPUExecutables(
       const HumanReadableAotExecutable& fresh,
       const HumanReadableAotExecutable& golden);
+  static absl::Status CompareGoldenCPUExecutable(
+      const HumanReadableAotExecutable& fresh,
+      const HumanReadableAotExecutable& golden);
+
+  // Unpacks a serialized PjRtExecutable into the human-readable proto form.
+  static absl::StatusOr<HumanReadableAotExecutable> DeserializeToHumanReadable(
+      absl::string_view serialized, AOTTestPlatform platform);
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;
 
@@ -140,10 +160,6 @@ class AOTInterceptionPjrtClient : public PjRtClient {
       const LoadOptions& load_options) override;
 
  private:
-  // Unpacks a serialized PjRtExecutable into a human-readable proto format
-  // which separates the options and the GPU executable bytes naturally.
-  static absl::StatusOr<HumanReadableAotExecutable> DeserializeToHumanReadable(
-      absl::string_view serialized);
   absl::Status VerifyAgainstGolden(const PjRtExecutable& fresh_executable);
 
   // Loads the artifact at artifact_path_ and parses it into its human-readable
