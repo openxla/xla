@@ -68,6 +68,7 @@ limitations under the License.
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"  // IWYU pragma: keep
 #include "xla/hlo/analysis/interval.h"
@@ -2045,7 +2046,7 @@ Value ApplyGroupSizeTileIdRemapping(ImplicitLocOpBuilder& b,
   if (!gpu_config.fusion_backend_config().has_block_level_fusion_config()) {
     return raw_tile_id;
   }
-  const xla::gpu::BlockLevelFusionConfig& blk_cfg =
+  const xla::xtile::BlockLevelFusionConfig& blk_cfg =
       gpu_config.fusion_backend_config().block_level_fusion_config();
   const int gs = std::max(1, blk_cfg.group_size());
   if (gs <= 1) {
