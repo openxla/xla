@@ -139,8 +139,7 @@ MemoryBandwidthSpec GetMemoryBandwidthSpec(
   constexpr double kH100L2CacheBandwidthBytesPerSec = 6.65 * 1e12;
   // Peak memory bandwidth of H100 SXM in bytes/s (3352.32 GB/s) from
   // xla/backends/gpu/target_config/specs/h100_sxm.txtpb:L26.
-  constexpr double kH100SxmPeakMemoryBandwidthBytesPerSec =
-      3352.32 * (1LL << 30);
+  constexpr double kH100SxmPeakMemoryBandwidthBytesPerSec = 3352.32 * 1e9;
   double bandwidth_scale = device_memory_bandwidth_bytes_per_sec /
                            kH100SxmPeakMemoryBandwidthBytesPerSec;
 
