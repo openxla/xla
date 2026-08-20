@@ -2522,7 +2522,9 @@ void HloInstruction::SetupDerivedInstruction(
     derived_instruction->set_sharding(*sharding_);
   }
 
-  derived_instruction->set_metadata(metadata());
+  if (has_metadata()) {
+    derived_instruction->set_metadata(metadata());
+  }
   if (has_rare()) {
     if (has_result_accuracy() &&
         IsUnaryOpWithResultAccuracy(derived_instruction->opcode())) {
