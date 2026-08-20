@@ -603,6 +603,15 @@ func.func @test_powf(%arg0: tensor<8xf32>, %arg1: tensor<8xf32>) -> tensor<8xf32
 
 // -----
 
+func.func @test_copysign(%arg0: tensor<8xf32>, %arg1: tensor<8xf32>) -> tensor<8xf32> {
+  %0 = math.copysign %arg0, %arg1 : tensor<8xf32>
+  return %0 : tensor<8xf32>
+}
+// CHECK-LABEL: @test_copysign
+// CHECK: math.copysign %{{.*}}, %{{.*}} : vector<8xf32>
+
+// -----
+
 func.func @test_ipowi(%arg0: tensor<8xi32>, %arg1: tensor<8xi32>) -> tensor<8xi32> {
   %0 = math.ipowi %arg0, %arg1 : tensor<8xi32>
   return %0 : tensor<8xi32>
