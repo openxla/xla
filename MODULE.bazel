@@ -133,6 +133,7 @@ use_repo(
     "nvshmem",
     "nvtx_archive",
     "oneccl",
+    "onedpl",
     "oneccl_v1",
     "onednn",
     "onednn_async",
