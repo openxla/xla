@@ -419,9 +419,8 @@ def TPU_VectorLoadIdxOp :TPU_Op<"vector_load_idx", [DefaultMemRead, AttrSizedOpe
 //   indices = [[idx0, idx1, ...], [idxn, idxn+1, ...]]
 // where [idx0, idxn] is the offset of the first vector element.
 //
-// When multiple vector elements have the same index to store to, the data from
-// the highest lane will be the one stored. If add is true, then the data will
-// be added from the lowest lane to the highest lane.
+// When multiple vector elements have the same index to store to, the order of
+// (read-modify-)writes is not guaranteed.
 //
 //  valueToStore: Vector to be stored.
 //  base        : Memref specifying the base address.
