@@ -532,10 +532,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClientImpl {
   void LaunchOnDevice(PjRtDevice* device,
                       absl::AnyInvocable<void()> execute_fn) const override;
 
-  absl::StatusOr<xla::Shape> GetCopyDestinationShape(
-      const xla::Shape& shape, PjRtMemorySpace* src_memory_space,
-      PjRtMemorySpace* dst_memory_space) override;
-
  protected:
   friend class PjRtStreamExecutorRawBuffer;
   friend class PjRtStreamExecutorRawLoadedExecutable;

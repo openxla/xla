@@ -203,6 +203,7 @@ cc_library(
         ":device_event",
         ":dynamic_shapes",
         ":host_callback",
+        ":host_memory_spaces",
         ":pjrt_client",
         ":pjrt_compiler",
         ":pjrt_executable",

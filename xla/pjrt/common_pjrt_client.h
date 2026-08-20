@@ -299,7 +299,7 @@ class CommonPjRtClient : public PjRtClient {
 
   // Returns the shape+layout that would result from copying a buffer of
   // shape+layout shape from src_memory_space to dst_memory_space.
-  virtual absl::StatusOr<xla::Shape> GetCopyDestinationShape(
+  absl::StatusOr<xla::Shape> GetCopyDestinationShape(
       const xla::Shape& shape, PjRtMemorySpace* src_memory_space,
       PjRtMemorySpace* dst_memory_space);
 

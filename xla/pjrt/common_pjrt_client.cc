@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/host_callback.h"
+#include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -669,6 +670,15 @@ absl::StatusOr<xla::Shape> CommonPjRtClient::GetCopyDestinationShape(
   }
   if (shape.IsToken()) {
     return shape;
+  }
+  if (this == dst_memory_space->client()) {
+    if (IsCpuId(platform_id()) ||
+        (src_memory_space->kind_id() == UnpinnedHostMemorySpace::kKindId) ==
+            (dst_memory_space->kind_id() == UnpinnedHostMemorySpace::kKindId)) {
+      return MakeDefaultShapeForMemorySpace(
+          dst_memory_space, shape,
+          shape.has_layout() ? &shape.layout() : nullptr);
+    }
   }
   return other_client->MakeDefaultShapeForMemorySpace(
       dst_memory_space,

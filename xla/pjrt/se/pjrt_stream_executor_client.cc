@@ -2466,19 +2466,6 @@ PjRtStreamExecutorClient::AllocateForDelinearizationAsync(
   return PjRtStagingBuffer::Create(span, [ptr]() { free(ptr); });
 }
 
-absl::StatusOr<xla::Shape> PjRtStreamExecutorClient::GetCopyDestinationShape(
-    const xla::Shape& shape, PjRtMemorySpace* src_memory_space,
-    PjRtMemorySpace* dst_memory_space) {
-  if (this != dst_memory_space->client() ||
-      IsMemorySpaceKind<UnpinnedHostMemorySpace>(src_memory_space) !=
-          IsMemorySpaceKind<UnpinnedHostMemorySpace>(dst_memory_space)) {
-    return CommonPjRtClient::GetCopyDestinationShape(shape, src_memory_space,
-                                                     dst_memory_space);
-  }
-  return MakeDefaultShapeForMemorySpace(
-      dst_memory_space, shape, shape.has_layout() ? &shape.layout() : nullptr);
-}
-
 void PjRtStreamExecutorRawClient::ScheduleRemoteSend(
     PjRtMemorySpace* memory_space, PjRtRawBufferRef raw_buffer,
     PjRtDeviceEventRefVector definition_events,
