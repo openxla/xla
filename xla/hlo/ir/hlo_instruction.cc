@@ -92,18 +92,6 @@ limitations under the License.
 
 namespace xla {
 
-namespace {
-HloInstruction* FindUpstreamAsyncProducer(HloInstruction* instr) {
-  while (instr != nullptr && !instr->IsAsyncProducer()) {
-    if (instr->operand_count() == 0) {
-      return nullptr;
-    }
-    instr = instr->mutable_operand(0);
-  }
-  return instr;
-}
-}  // namespace
-
 using absl::CEscape;
 using absl::StrAppend;
 using absl::StrCat;
@@ -446,22 +434,19 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       TF_RET_CHECK(proto.operand_ids_size() >= 1)
           << "Async update requires at least one operand";
       HloInstruction* prev_op = operands(0);
-      HloInstruction* async_op = prev_op->IsAsynchronous()
-                                     ? prev_op
-                                     : FindUpstreamAsyncProducer(prev_op);
-      if (async_op != nullptr) {
+      if (prev_op->IsAsynchronous()) {
         if (!proto.async_execution_thread().empty()) {
           TF_RET_CHECK(proto.async_execution_thread() ==
-                       async_op->async_execution_thread())
+                       prev_op->async_execution_thread())
               << "Async update should have "
-              << async_op->async_execution_thread()
+              << prev_op->async_execution_thread()
               << " async_execution_thread, but sees "
               << proto.async_execution_thread();
         }
         if (!proto.called_computation_ids().empty()) {
-          TF_RET_CHECK(computations(0) == async_op->async_wrapped_computation())
+          TF_RET_CHECK(computations(0) == prev_op->async_wrapped_computation())
               << "Async update should have "
-              << async_op->async_wrapped_computation()->name()
+              << prev_op->async_wrapped_computation()->name()
               << " async_wrapped_computation, but sees "
               << computations(0)->name();
         }
@@ -473,21 +458,18 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       TF_RET_CHECK(proto.operand_ids_size() == 1)
           << "Async done requires one singular operand";
       HloInstruction* prev_op = operands(0);
-      HloInstruction* async_op = prev_op->IsAsynchronous()
-                                     ? prev_op
-                                     : FindUpstreamAsyncProducer(prev_op);
-      if (async_op != nullptr) {
+      if (prev_op->IsAsynchronous()) {
         if (!proto.async_execution_thread().empty()) {
           TF_RET_CHECK(proto.async_execution_thread() ==
-                       async_op->async_execution_thread())
-              << "Async done should have " << async_op->async_execution_thread()
+                       prev_op->async_execution_thread())
+              << "Async done should have " << prev_op->async_execution_thread()
               << " async_execution_thread, but sees "
               << proto.async_execution_thread();
         }
         if (!proto.called_computation_ids().empty()) {
-          TF_RET_CHECK(computations(0) == async_op->async_wrapped_computation())
+          TF_RET_CHECK(computations(0) == prev_op->async_wrapped_computation())
               << "Async done should have "
-              << async_op->async_wrapped_computation()->name()
+              << prev_op->async_wrapped_computation()->name()
               << " async_wrapped_computation, but sees "
               << computations(0)->name();
         }
@@ -1710,14 +1692,8 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
   auto instruction = std::make_unique<HloAsyncUpdateInstruction>(
       shape, operands, async_wrapped_opcode);
 
-  HloComputation* upstream_comp = nullptr;
-  HloInstruction* prev_async = operands[0];
-  if (HloInstruction* producer = FindUpstreamAsyncProducer(prev_async)) {
-    if (auto* async_inst = DynCast<HloAsyncInstruction>(producer)) {
-      upstream_comp = async_inst->async_wrapped_computation();
-    }
-  }
-  if (async_computation != nullptr && async_computation != upstream_comp) {
+  if (async_computation != nullptr &&
+      async_computation != instruction->async_wrapped_computation()) {
     instruction->AppendComputation(async_computation);
   }
 
@@ -1728,16 +1704,11 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     const Shape& shape, HloInstruction* operand,
     std::optional<HloOpcode> async_wrapped_opcode,
     HloComputation* async_computation) {
-  HloComputation* upstream_comp = nullptr;
-  if (HloInstruction* producer = FindUpstreamAsyncProducer(operand)) {
-    if (auto* async_inst = DynCast<HloAsyncInstruction>(producer)) {
-      upstream_comp = async_inst->async_wrapped_computation();
-    }
-  }
   auto instruction = absl::WrapUnique(new HloAsyncInstruction(
       HloOpcode::kAsyncDone, shape,
       absl::Span<HloInstruction* const>({operand}), async_wrapped_opcode));
-  if (async_computation != nullptr && async_computation != upstream_comp) {
+  if (async_computation != nullptr &&
+      async_computation != instruction->async_wrapped_computation()) {
     instruction->AppendComputation(async_computation);
   }
   return instruction;
@@ -4105,20 +4076,10 @@ bool HloInstruction::IsCrossModuleAllReduce() const {
     return channel_id().has_value();
   }
   if (opcode() == HloOpcode::kAllReduceDone) {
-    if (operand_count() > 0 && operand(0) != nullptr) {
-      const HloInstruction* start = operand(0);
-      while (start != nullptr &&
-             start->opcode() != HloOpcode::kAllReduceStart) {
-        if (start->operand_count() == 0 || start->operand(0) == nullptr) {
-          return false;
-        }
-        start = start->operand(0);
-      }
-      if (start != nullptr && start->opcode() == HloOpcode::kAllReduceStart) {
-        return start->channel_id().has_value();
-      }
-    }
-    return false;
+    CHECK_EQ(operand_count(), 1);
+    const HloInstruction* operand = this->operand(0);
+    CHECK_EQ(operand->opcode(), HloOpcode::kAllReduceStart);
+    return operand->channel_id().has_value();
   }
   return false;
 }
@@ -4129,20 +4090,10 @@ bool HloInstruction::IsCrossReplicaAllReduce() const {
     return channel_id() == std::nullopt;
   }
   if (opcode() == HloOpcode::kAllReduceDone) {
-    if (operand_count() > 0 && operand(0) != nullptr) {
-      const HloInstruction* start = operand(0);
-      while (start != nullptr &&
-             start->opcode() != HloOpcode::kAllReduceStart) {
-        if (start->operand_count() == 0 || start->operand(0) == nullptr) {
-          return false;
-        }
-        start = start->operand(0);
-      }
-      if (start != nullptr && start->opcode() == HloOpcode::kAllReduceStart) {
-        return start->channel_id() == std::nullopt;
-      }
-    }
-    return false;
+    CHECK_EQ(operand_count(), 1);
+    const HloInstruction* operand = this->operand(0);
+    CHECK_EQ(operand->opcode(), HloOpcode::kAllReduceStart);
+    return operand->channel_id() == std::nullopt;
   }
   return false;
 }
@@ -4766,37 +4717,6 @@ bool HloInstruction::IsCustomCall(
     absl::Span<const absl::string_view> targets) const {
   return opcode() == HloOpcode::kCustomCall &&
          absl::c_linear_search(targets, custom_call_target());
-}
-
-bool HloInstruction::IsAllowedAsyncIntermediaryCustomCall() const {
-  static constexpr absl::string_view kMetadataTargets[] = {
-      "Sharding",
-      "LocalToGlobalShape",
-      "GlobalToLocalShape",
-      "xla.sdy.LocalToGlobalShape",
-      "xla.sdy.GlobalToLocalShape",
-      "xla.sdy.FuncResultSharding",
-  };
-  return IsCustomCall(kMetadataTargets);
-}
-
-bool HloInstruction::IsAllowedAsyncIntermediary() const {
-  switch (opcode()) {
-    case HloOpcode::kTuple:
-    case HloOpcode::kGetTupleElement:
-    case HloOpcode::kOptimizationBarrier:
-    case HloOpcode::kCopy:
-    case HloOpcode::kParameter:
-    case HloOpcode::kWhile: {
-      return true;
-    }
-    case HloOpcode::kCustomCall: {
-      return IsAllowedAsyncIntermediaryCustomCall();
-    }
-    default: {
-      return false;
-    }
-  }
 }
 
 bool HloInstruction::IsInputFusion() const {
@@ -6411,42 +6331,6 @@ void HloInstruction::set_called_computations_execution_thread(
     absl::string_view async_execution_thread) {
   Cast<HloCallableInstruction>(this)->RecursivelySetComputationsThreadName(
       async_execution_thread);
-}
-
-bool HloInstruction::IsAsyncStart() const {
-  switch (opcode()) {
-    case HloOpcode::kAsyncStart:
-    case HloOpcode::kAllGatherStart:
-    case HloOpcode::kAllReduceStart:
-    case HloOpcode::kCollectivePermuteStart: {
-      return true;
-    }
-    default: {
-      return false;
-    }
-  }
-}
-
-bool HloInstruction::IsAsyncDone() const {
-  switch (opcode()) {
-    case HloOpcode::kAsyncDone:
-    case HloOpcode::kAllGatherDone:
-    case HloOpcode::kAllReduceDone:
-    case HloOpcode::kCollectivePermuteDone: {
-      return true;
-    }
-    default: {
-      return false;
-    }
-  }
-}
-
-bool HloInstruction::IsAsyncProducer() const {
-  return opcode() == HloOpcode::kAsyncUpdate || IsAsyncStart();
-}
-
-bool HloInstruction::IsAsyncConsumer() const {
-  return opcode() == HloOpcode::kAsyncUpdate || IsAsyncDone();
 }
 
 std::optional<int> HloInstruction::cross_program_prefetch_index() const {
