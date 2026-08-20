@@ -126,6 +126,14 @@ int PjrtCApiTestBase::GetNumDevices() const {
   return GetClientDevices().size();
 }
 
+void PjrtCApiTestBase::SetUp() {
+  if (GetClientAddressableDevices().empty()) {
+    GTEST_SKIP()
+        << "Skipping test since no physical or virtual TPU devices were found. "
+           "Hardware is required to test Buffer capabilities.";
+  }
+}
+
 std::string PjrtCApiTestBase::BuildSingleDeviceCompileOptionStr() {
   xla::ExecutableBuildOptions build_options;
   build_options.set_device_ordinal(0);
