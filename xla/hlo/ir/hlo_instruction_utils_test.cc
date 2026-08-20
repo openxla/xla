@@ -731,26 +731,97 @@ TEST_F(HloInstructionUtilsTest, IsAllowedAsyncIntermediary) {
   auto* barrier = FindInstruction(m.get(), "barrier");
   auto* add = FindInstruction(m.get(), "add");
 
-  EXPECT_TRUE(sharding->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_TRUE(sharding->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(ltg->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_TRUE(ltg->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(gtl->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_TRUE(gtl->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(sdy_ltg->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_TRUE(sdy_ltg->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(sdy_gtl->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_TRUE(sdy_gtl->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(sdy_frs->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_TRUE(sdy_frs->IsAllowedAsyncIntermediary());
-  EXPECT_FALSE(other_cc->IsAllowedAsyncIntermediaryCustomCall());
-  EXPECT_FALSE(other_cc->IsAllowedAsyncIntermediary());
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediaryCustomCall(sharding));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(sharding));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediaryCustomCall(ltg));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(ltg));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediaryCustomCall(gtl));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(gtl));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediaryCustomCall(sdy_ltg));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(sdy_ltg));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediaryCustomCall(sdy_gtl));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(sdy_gtl));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediaryCustomCall(sdy_frs));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(sdy_frs));
+  EXPECT_FALSE(async::IsAllowedAsyncIntermediaryCustomCall(other_cc));
+  EXPECT_FALSE(async::IsAllowedAsyncIntermediary(other_cc));
 
-  EXPECT_TRUE(copy->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(tup->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(gte->IsAllowedAsyncIntermediary());
-  EXPECT_TRUE(barrier->IsAllowedAsyncIntermediary());
-  EXPECT_FALSE(add->IsAllowedAsyncIntermediary());
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(copy));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(tup));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(gte));
+  EXPECT_TRUE(async::IsAllowedAsyncIntermediary(barrier));
+  EXPECT_FALSE(async::IsAllowedAsyncIntermediary(add));
+}
+
+TEST_F(HloInstructionUtilsTest, AsyncPredicates) {
+  const char* const kHlo = R"(
+HloModule async_predicates_test
+
+async_comp {
+  p0 = f32[2,4] parameter(0)
+  p1 = f32[2,4] parameter(1)
+  ROOT add = f32[2,4] add(p0, p1)
+}
+
+ENTRY main {
+  p0 = f32[2,4] parameter(0)
+  p1 = f32[2,4] parameter(1)
+  start = ((f32[2,4]), (), s32[]) call-start(p0), to_apply=async_comp
+  update = ((f32[2,4], f32[2,4]), f32[2,4], ()) call-update(start, p1)
+  done = f32[2,4] call-done(update)
+  ag_start = (f32[2,4], f32[4,4]) all-gather-start(p0), dimensions={0}
+  ag_done = f32[4,4] all-gather-done(ag_start)
+  ROOT non_async = f32[2,4] copy(p0)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  HloInstruction* start = FindInstruction(module.get(), "start");
+  HloInstruction* update = FindInstruction(module.get(), "update");
+  HloInstruction* done = FindInstruction(module.get(), "done");
+  HloInstruction* ag_start = FindInstruction(module.get(), "ag_start");
+  HloInstruction* ag_done = FindInstruction(module.get(), "ag_done");
+  HloInstruction* non_async = FindInstruction(module.get(), "non_async");
+
+  struct ExpectedPredicates {
+    bool is_producer;
+    bool is_start;
+    bool is_done;
+    bool is_consumer;
+  };
+
+  const std::vector<std::pair<const HloInstruction*, ExpectedPredicates>>
+      tests = {
+          {start,
+           {/*is_producer=*/true, /*is_start=*/true, /*is_done=*/false,
+            /*is_consumer=*/false}},
+          {update,
+           {/*is_producer=*/true, /*is_start=*/false, /*is_done=*/false,
+            /*is_consumer=*/true}},
+          {done,
+           {/*is_producer=*/false, /*is_start=*/false, /*is_done=*/true,
+            /*is_consumer=*/true}},
+          {ag_start,
+           {/*is_producer=*/true, /*is_start=*/true, /*is_done=*/false,
+            /*is_consumer=*/false}},
+          {ag_done,
+           {/*is_producer=*/false, /*is_start=*/false, /*is_done=*/true,
+            /*is_consumer=*/true}},
+          {non_async,
+           {/*is_producer=*/false, /*is_start=*/false, /*is_done=*/false,
+            /*is_consumer=*/false}},
+      };
+
+  for (const auto& [instr, expected] : tests) {
+    EXPECT_EQ(async::IsAsyncProducer(instr), expected.is_producer)
+        << instr->ToString();
+    EXPECT_EQ(async::IsAsyncStart(instr), expected.is_start)
+        << instr->ToString();
+    EXPECT_EQ(async::IsAsyncDone(instr), expected.is_done) << instr->ToString();
+    EXPECT_EQ(async::IsAsyncConsumer(instr), expected.is_consumer)
+        << instr->ToString();
+  }
 }
 
 TEST_F(HloInstructionUtilsTest, TraceAndPropagateDataflow) {

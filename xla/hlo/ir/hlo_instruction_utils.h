@@ -57,6 +57,37 @@ bool IsTopKStable(const HloCustomCallInstruction* inst);
 
 namespace async {
 
+// Returns true if this instruction is an allowed async intermediary custom
+// call (e.g. Sharding, LocalToGlobalShape, GlobalToLocalShape, xla.sdy.*).
+bool IsAllowedAsyncIntermediaryCustomCall(const HloInstruction* instr);
+
+// Returns true if this instruction is an allowed async intermediary (e.g.
+// tuple, get-tuple-element, optimization barrier, copy, parameter, while,
+// or allowed async intermediary custom-call).
+bool IsAllowedAsyncIntermediary(const HloInstruction* instr);
+
+// Returns true if this instruction is an asynchronous producer
+// (AsyncStart, AsyncUpdate, AllGatherStart, AllReduceStart,
+// CollectivePermuteStart) - representing any op that produces an async
+// context.
+bool IsAsyncProducer(const HloInstruction* instr);
+
+// Returns true if this instruction is a root asynchronous start
+// (AsyncStart, AllGatherStart, AllReduceStart, CollectivePermuteStart) -
+// representing root async start ops.
+bool IsAsyncStart(const HloInstruction* instr);
+
+// Returns true if this instruction is a terminal asynchronous done op
+// (AsyncDone, AllGatherDone, AllReduceDone, CollectivePermuteDone) -
+// representing terminal async done ops.
+bool IsAsyncDone(const HloInstruction* instr);
+
+// Returns true if this instruction is an asynchronous consumer
+// (AsyncUpdate, AsyncDone, AllGatherDone, AllReduceDone,
+// CollectivePermuteDone) - representing any op that consumes an async
+// context.
+bool IsAsyncConsumer(const HloInstruction* instr);
+
 // Represents a step in the dataflow path.
 template <typename HloInstructionT>
 struct AsyncTraceStepT {
@@ -163,7 +194,7 @@ HloInstructionT* TraceAsyncDataflowImpl(
     case HloOpcode::kCopy:
     case HloOpcode::kCustomCall: {
       if (instr->opcode() == HloOpcode::kCustomCall &&
-          !instr->IsAllowedAsyncIntermediaryCustomCall()) {
+          !IsAllowedAsyncIntermediaryCustomCall(instr)) {
         revert_step();
         return nullptr;
       }
