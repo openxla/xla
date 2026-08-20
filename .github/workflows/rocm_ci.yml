@@ -180,7 +180,7 @@ jobs:
       ROCM_DISTRO_URL: ${{ needs.rocm-config.outputs.rocm-distro-url }}
       ROCM_DISTRO_HASH: ${{ needs.rocm-config.outputs.rocm-distro-hash }}
       EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}/build_tools/rocm/execute_ci_build_upstream.sh
-      GLOBAL_SYMBOL_VERSION_LDS_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/${{ inputs.rocm_xla_branch || 'rocm-dev-infra-714' }}/build_tools/rocm/global_symbol_version.lds
+      GLOBAL_SYMBOL_VERSION_LDS_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}/build_tools/rocm/global_symbol_version.lds
       # Unique per run so a crashed run cannot collide with this one on a pooled node.
       CONTAINER_NAME: xla-${{ github.run_id }}-${{ github.run_attempt }}
       # Stable label so leftover containers from crashed runs can be swept on a pooled node.
