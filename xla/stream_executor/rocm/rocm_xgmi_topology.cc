@@ -18,53 +18,10 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "rocm/rocm_config.h"
 #include "xla/stream_executor/rocm/rocm_smi_util.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace stream_executor::gpu {
-namespace {
-
-// Returns the xGMI hive ID of the device, or std::nullopt if the query fails
-// (typically because the device is not part of a hive).
-std::optional<uint64_t> QueryHiveId(SmiDeviceHandle device) {
-#if (TF_ROCM_VERSION >= 71300)
-  amdsmi_xgmi_info_t xgmi_info = {};
-  if (amdsmi_get_xgmi_info(device, &xgmi_info) != AMDSMI_STATUS_SUCCESS) {
-    return std::nullopt;
-  }
-  return xgmi_info.xgmi_hive_id;
-#else
-  uint64_t hive_id = 0;
-  if (rsmi_dev_xgmi_hive_id_get(device, &hive_id) != RSMI_STATUS_SUCCESS) {
-    return std::nullopt;
-  }
-  return hive_id;
-#endif  // TF_ROCM_VERSION >= 71300
-}
-
-// Returns true if src reaches dst over an xGMI link.
-bool IsXgmiPeer(SmiDeviceHandle src, SmiDeviceHandle dst) {
-  // Both APIs reject a null hops pointer; only the link type is used.
-  uint64_t hops = 0;
-#if (TF_ROCM_VERSION >= 71300)
-  amdsmi_link_type_t link_type = AMDSMI_LINK_TYPE_UNKNOWN;
-  if (amdsmi_topo_get_link_type(src, dst, &hops, &link_type) !=
-      AMDSMI_STATUS_SUCCESS) {
-    return false;
-  }
-  return link_type == AMDSMI_LINK_TYPE_XGMI;
-#else
-  RSMI_IO_LINK_TYPE link_type = RSMI_IOLINK_TYPE_UNDEFINED;
-  if (rsmi_topo_get_link_type(src, dst, &hops, &link_type) !=
-      RSMI_STATUS_SUCCESS) {
-    return false;
-  }
-  return link_type == RSMI_IOLINK_TYPE_XGMI;
-#endif  // TF_ROCM_VERSION >= 71300
-}
-
-}  // namespace
 
 XgmiTopologyInfo GetRocmXgmiTopology(absl::string_view pci_bus_id) {
   XgmiTopologyInfo info;
@@ -79,7 +36,7 @@ XgmiTopologyInfo GetRocmXgmiTopology(absl::string_view pci_bus_id) {
     return info;
   }
 
-  std::optional<SmiDeviceHandle> device = FindDeviceIndex(*bdf);
+  std::optional<SmiDeviceHandle> device = FindDevice(*bdf);
   if (!device.has_value()) {
     LOG(WARNING) << kSmiLibraryName << " could not find device for PCI bus ID "
                  << pci_bus_id << " (xGMI query)";

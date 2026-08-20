@@ -17,7 +17,6 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "rocm/rocm_config.h"
 #include "xla/stream_executor/rocm/rocm_smi_util.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -47,53 +46,6 @@ constexpr int64_t ComputePcieBandwidthFromSpeedAndWidth(
                               width / 8.0 * efficiency);
 }
 
-struct PcieLinkStatus {
-  uint32_t speed_mt_per_sec;
-  uint16_t width;
-};
-
-#if (TF_ROCM_VERSION >= 71300)
-
-std::optional<PcieLinkStatus> QueryPcieLinkStatus(
-    SmiDeviceHandle device, absl::string_view pci_bus_id) {
-  amdsmi_pcie_info_t pcie_info = {};
-  amdsmi_status_t status = amdsmi_get_pcie_info(device, &pcie_info);
-  if (status != AMDSMI_STATUS_SUCCESS) {
-    const char* err_str = nullptr;
-    amdsmi_status_code_to_string(status, &err_str);
-    LOG(WARNING) << "amdsmi_get_pcie_info failed for " << pci_bus_id << ": "
-                 << (err_str ? err_str : "unknown error");
-    return std::nullopt;
-  }
-
-  // amdsmi.h documents pcie_metric.pcie_speed as "current PCIe speed in
-  // MT/s", so no scaling here, unlike rocm_smi's 0.1 GT/s field below.
-  return PcieLinkStatus{pcie_info.pcie_metric.pcie_speed,
-                        pcie_info.pcie_metric.pcie_width};
-}
-
-#else
-
-std::optional<PcieLinkStatus> QueryPcieLinkStatus(
-    SmiDeviceHandle device, absl::string_view pci_bus_id) {
-  rsmi_gpu_metrics_t gpu_metrics = {};
-  rsmi_status_t status = rsmi_dev_gpu_metrics_info_get(device, &gpu_metrics);
-  if (status != RSMI_STATUS_SUCCESS) {
-    const char* err_str = nullptr;
-    rsmi_status_string(status, &err_str);
-    LOG(WARNING) << "rsmi_dev_gpu_metrics_info_get failed for " << pci_bus_id
-                 << ": " << (err_str ? err_str : "unknown error");
-    return std::nullopt;
-  }
-
-  // rocm_smi reports pcie_link_speed in units of 0.1 GT/s, so scale to MT/s.
-  return PcieLinkStatus{
-      static_cast<uint32_t>(gpu_metrics.pcie_link_speed) * 100,
-      gpu_metrics.pcie_link_width};
-}
-
-#endif  // TF_ROCM_VERSION >= 71300
-
 }  // namespace
 
 std::optional<int64_t> GetRocmPcieBandwidth(absl::string_view pci_bus_id) {
@@ -107,7 +59,7 @@ std::optional<int64_t> GetRocmPcieBandwidth(absl::string_view pci_bus_id) {
     return std::nullopt;
   }
 
-  std::optional<SmiDeviceHandle> device = FindDeviceIndex(*bdf);
+  std::optional<SmiDeviceHandle> device = FindDevice(*bdf);
   if (!device.has_value()) {
     LOG(WARNING) << kSmiLibraryName << " could not find device for PCI bus ID "
                  << pci_bus_id;

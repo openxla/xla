@@ -378,17 +378,22 @@ cc_library(
 # that only one SMI library is ever present in the process: libamd_smi embeds a
 # copy of rocm_smi and the two export hundreds of identical amd::smi:: and
 # rsmi_ symbols, so loading both lets the dynamic loader interpose ABI
-# incompatible definitions. The matching source level switch is
-# #if (TF_ROCM_VERSION >= 71300) in rocm_smi_util.h and its users.
+# incompatible definitions.
 # See RCCL change: https://github.com/ROCm/rocm-systems/commit/244047310e
+_USE_AMD_SMI = rocm_version_number() >= 71300
+
 alias(
     name = "smi",
-    actual = "@local_config_rocm//rocm:amdsmi" if rocm_version_number() >= 71300 else "@local_config_rocm//rocm:rocm_smi",
+    actual = "@local_config_rocm//rocm:amdsmi" if _USE_AMD_SMI else "@local_config_rocm//rocm:rocm_smi",
 )
+
+# Backend implementing the SMI queries declared in rocm_smi_util.h. Exactly one
+# is compiled in, matching the library :smi resolves to.
+_SMI_BACKEND_SRCS = ["rocm_smi_util_amd_smi.cc"] if _USE_AMD_SMI else ["rocm_smi_util_rocm_smi.cc"]
 
 cc_library(
     name = "rocm_smi_util",
-    srcs = ["rocm_smi_util.cc"],
+    srcs = ["rocm_smi_util.cc"] + _SMI_BACKEND_SRCS,
     hdrs = ["rocm_smi_util.h"],
     tags = [
         "gpu",
@@ -414,11 +419,9 @@ cc_library(
     ],
     deps = [
         ":rocm_smi_util",
-        ":smi",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
@@ -445,11 +448,9 @@ cc_library(
     ],
     deps = [
         ":rocm_smi_util",
-        ":smi",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
