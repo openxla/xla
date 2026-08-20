@@ -355,9 +355,9 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetRanks source_target,
       current_id, source_target.source ? *source_target.source : RankId{-1},
       source_target.target ? *source_target.target : RankId{-1});
 
-  absl::InlinedVector<RankId, 1> target_ranks;
+  std::vector<RankId> target_ranks;
   if (source_target.target) {
-    target_ranks.emplace_back(*source_target.target);
+    target_ranks.push_back(*source_target.target);
   }
 
   // GroupStart/End API is needed if we need to dispatch multiple NCCL kernels
