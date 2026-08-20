@@ -69,12 +69,8 @@ limitations under the License.
 namespace xla::gpu {
 using ::testing::Values;
 
-#if GOOGLE_CUDA
-constexpr bool kHasNcclAllReduce = true;
-#else
-constexpr bool kHasNcclAllReduce = false;
-#endif
-
+// Defined in `collective_ops_ffi_communicator_{cuda,default}.cc` and selected
+// at link time. The default translation unit returns Unimplemented.
 absl::Status CommunicatorAllReduceU32(se::Stream* stream,
                                       XLA_FFI_Communicator* communicator,
                                       const void* send_buffer,
@@ -334,7 +330,8 @@ static absl::Status PreparePeerAllReduce(
   return absl::OkStatus();
 }
 
-static std::vector<std::vector<int64_t>> PublicApiReplicaGroups() {
+namespace {
+std::vector<std::vector<int64_t>> PublicApiReplicaGroups() {
   std::vector<int64_t> ids;
   ids.reserve(kNumReplicas);
   for (int64_t i = 0; i < kNumReplicas; ++i) {
@@ -345,7 +342,7 @@ static std::vector<std::vector<int64_t>> PublicApiReplicaGroups() {
 
 // Prepare handler: requests the XLA-owned collective clique via the public
 // collectives FFI extension, using the C++ Communicator wrapper.
-static absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
+absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
   return comm.RequestCommunicator(ffi::GroupMode::kFlattenedId,
                                   PublicApiReplicaGroups(),
                                   /*communication_id=*/0);
@@ -354,25 +351,19 @@ static absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
 // Execute handler: gets the XLA-owned communicator via the public collectives
 // FFI extension and runs an all-reduce on it via the platform collective
 // library (see CommunicatorAllReduceU32).
-static absl::Status PublicApiAllReduce(se::Stream* stream,
-                                       ffi::BufferR0<U32> src,
-                                       ffi::Result<ffi::BufferR0<U32>> dst,
-                                       ffi::Communicator comm) {
+absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
+                                ffi::Result<ffi::BufferR0<U32>> dst,
+                                ffi::Communicator comm) {
   ABSL_ASSIGN_OR_RETURN(XLA_FFI_Communicator * communicator,
                         comm.GetCommunicator(ffi::GroupMode::kFlattenedId,
                                              PublicApiReplicaGroups(),
                                              /*communication_id=*/0));
   TF_RET_CHECK(communicator != nullptr);
-
-  if constexpr (kHasNcclAllReduce) {
-    return CommunicatorAllReduceU32(
-        stream, communicator, src.device_memory().opaque(),
-        dst->device_memory().opaque(), src.element_count());
-  } else {
-    return absl::UnimplementedError(
-        "Communicator all-reduce is not implemented for this platform");
-  }
+  return CommunicatorAllReduceU32(
+      stream, communicator, src.device_memory().opaque(),
+      dst->device_memory().opaque(), src.element_count());
 }
+}  // namespace
 
 // FFI handler that uses XLA:GPU collectives API to perform an all reduce. This
 // is just a test that demonstrates how to use XLA:GPU collectives API in an FFI
@@ -1194,25 +1185,23 @@ TEST_F(CollectiveOpsTestFFI, PublicApiAllReduce) {
                  << device_count() << " available)";
   }
 
-  constexpr absl::string_view hlo_string = R"(
+  constexpr absl::string_view hlo_string = R"hlo(
       HloModule m, replica_count=2
-
       ENTRY test_computation {
         id = u32[] replica-id()
         ROOT all-reduce = u32[] custom-call(id),
           custom_call_target="__xla_test$$public_api_all_reduce",
           api_version=API_VERSION_TYPED_FFI
       }
-    )";
+    )hlo";
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      ExecutionResult execution_result,
-      ExecuteReplicated(std::move(module),
-                        /*arguments=*/std::vector<Literal*>(),
-                        /*run_hlo_passes=*/false));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module),
+                                         /*arguments=*/std::vector<Literal*>(),
+                                         /*run_hlo_passes=*/false));
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);

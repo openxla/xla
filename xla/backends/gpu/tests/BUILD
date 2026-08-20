@@ -1407,9 +1407,10 @@ xla_test(
 
 xla_test(
     name = "collective_ops_ffi_test",
-    srcs = ["collective_ops_ffi_test.cc"] + if_cuda_is_configured([
-        "collective_ops_ffi_communicator_cuda.cc",
-    ]),
+    srcs = ["collective_ops_ffi_test.cc"] + if_cuda_is_configured(
+        ["collective_ops_ffi_communicator_cuda.cc"],
+        ["collective_ops_ffi_communicator_default.cc"],
+    ),
     backend_tags = {
         "gpu": [
             "multi_gpu",
