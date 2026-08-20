@@ -1,4 +1,4 @@
-load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_build_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -161,7 +161,12 @@ cc_library(
         "compilation_pipeline.cc",
         "compilation_pipeline_cuda.cc",
         "compilation_pipeline_rocm.cc",
-    ],
+        # SYCL uses XPU Triton instead of upstream Triton. Hence, the oneAPI
+        # pipeline must be guarded and a stub is needed for other backends.
+    ] + if_sycl_build_is_configured(
+        ["compilation_pipeline_oneapi.cc"],
+        ["compilation_pipeline_oneapi_stub.cc"],
+    ),
     hdrs = ["compilation_pipeline.h"],
     deps = [
         ":extern_function_helper",
@@ -174,8 +179,10 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -205,12 +212,16 @@ cc_library(
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:NVHopperTransforms",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
-    ] + if_sycl_is_configured([
-        "@triton//third_party/intel:TritonIntelGPUToLLVM",
-        "@triton//third_party/intel:TritonIntelTransforms",
-        "@triton//third_party/intel:TritonIntelGPUTransforms",
-        "@triton//third_party/intel:TritonAnnotateModule",
-    ]),
+    ] + if_sycl_build_is_configured(
+        [
+            "@llvm-project//mlir:ArithTransforms",
+            "@triton//third_party/intel:TritonIntelGPUToLLVM",
+            "@triton//third_party/intel:TritonIntelTransforms",
+            "@triton//third_party/intel:TritonIntelGPUTransforms",
+            "@triton//third_party/intel:TritonAnnotateModule",
+        ],
+        [],
+    ),
 )
 
 xla_cc_test(
@@ -219,7 +230,10 @@ xla_cc_test(
     tags = ["gpu"],
     deps = [
         ":compilation_pipeline",
+        "//xla/service:platform_util",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
