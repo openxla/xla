@@ -2354,6 +2354,7 @@ cc_library(
         "//xla/hlo/analysis:hlo_dfs_reachability",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_traversal",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:instruction_fusion",
@@ -3293,6 +3294,50 @@ xla_cc_test(
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "scan_rewriter_triton",
+    srcs = ["scan_rewriter_triton.cc"],
+    hdrs = ["scan_rewriter_triton.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/backends/gpu/codegen/triton:support",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:instruction_fusion",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu/model:fusion_analysis_cache",
+        "//xla/service/gpu/model:gpu_indexing_performance_model",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+xla_cc_test(
+    name = "scan_rewriter_triton_test",
+    srcs = ["scan_rewriter_triton_test.cc"],
+    deps = [
+        ":scan_rewriter_triton",
+        "//xla/hlo/analysis:symbolic_map",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
     ],
 )
 
