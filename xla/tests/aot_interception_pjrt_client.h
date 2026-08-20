@@ -33,7 +33,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/util/split_proto/human_readable_aot_executable.pb.h"
 #include "xla/xla_data.pb.h"
 

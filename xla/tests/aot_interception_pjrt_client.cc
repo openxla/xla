@@ -37,7 +37,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/kernel_spec.pb.h"
