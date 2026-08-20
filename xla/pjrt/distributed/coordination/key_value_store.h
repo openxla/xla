@@ -88,9 +88,8 @@ class KeyValueStore {
   static std::string NormalizeKey(absl::string_view key);
 
  private:
-  // Notifies all callbacks registered for the provided key.
-  void NotifyCallbacksForKey(absl::string_view key,
-                             const absl::StatusOr<absl::string_view>& value)
+  // Extracts and removes all callbacks registered for the provided key.
+  std::vector<Callback> ExtractCallbacksForKey(absl::string_view key)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   absl::Mutex mu_;
