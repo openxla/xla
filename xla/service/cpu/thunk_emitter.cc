@@ -1267,7 +1267,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceThunk(
 // Parse the sort comparator to determine the sort direction.
 std::optional<SortThunk::SortDirection> ThunkEmitter::MatchSortDirection(
     const HloComputation* hlo_comparator) const {
-  if (hlo_comparator->num_parameters() != 2) {
+  if (hlo_comparator->num_parameters() < 2 ||
+      hlo_comparator->num_parameters() % 2 != 0) {
     return std::nullopt;
   }
 
