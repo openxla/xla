@@ -578,8 +578,13 @@ struct CompilationPhaseFunctions {
   // `PjRtTopologyDescription` describing the target hardware. It transforms the
   // input programs based on the phase's logic and returns a vector of
   // `PjRtPartialProgramProto` or an error status if compilation fails.
+  //
+  // The inputs are taken as rvalue-ref to allow the `compiler` function to
+  // clear the inputs to reclaim memory. Typically, these inputs are
+  // transformed into a typed object and then no longer needed in their
+  // PjRtPartialProgramProto form.
   std::function<absl::StatusOr<std::vector<PjRtPartialProgramProto>>(
-      CompileOptions, const std::vector<PjRtPartialProgramProto>&,
+      CompileOptions, std::vector<PjRtPartialProgramProto>&&,
       const PjRtTopologyDescription&)>
       compiler;
 
@@ -615,7 +620,7 @@ class PjRtPhaseCompiler : public PjRtCompiler {
   // or an error status if any validation or compilation step fails.
   virtual absl::StatusOr<std::vector<PjRtPartialProgramProto>> RunPhases(
       CompileOptions options,
-      const std::vector<PjRtPartialProgramProto>& input_programs,
+      std::vector<PjRtPartialProgramProto>&& input_programs,
       const PjRtTopologyDescription& topology,
       const std::vector<std::string>& phases_to_run);
 
