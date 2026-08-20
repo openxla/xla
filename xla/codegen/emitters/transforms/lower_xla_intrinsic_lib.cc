@@ -244,6 +244,8 @@ class LowerXlaIntrinsicLibPass
     patterns.add(LowerIntrinsicPattern<ci::Rsqrt, mm::RsqrtOp>);
     patterns.add(LowerIntrinsicPattern<ci::Tanh, mm::TanhOp>);
     patterns.add(LowerIntrinsicPattern<ci::EigenAtan, mm::AtanOp>);
+    patterns.add(LowerIntrinsicPattern<ci::EigenSin, mm::SinOp>);
+    patterns.add(LowerIntrinsicPattern<ci::EigenCos, mm::CosOp>);
     patterns.add(LowerIntrinsicPattern<ci::FpTrunc, ma::TruncFOp>);
     patterns.add(LowerIntrinsicPattern<ci::Erf, mm::ErfOp>);
     if (mlir::failed(
