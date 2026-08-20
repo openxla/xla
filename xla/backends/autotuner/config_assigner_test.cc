@@ -691,5 +691,57 @@ TEST(ConfigAssignerOptionsTest, ToString) {
   EXPECT_EQ(config.ToString(), expected);
 }
 
+TEST_F(ConfigAssignerTest, GetSupportedConfigsWithEstimates) {
+  auto backend1 = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend1, name()).WillRepeatedly(Return("backend1"));
+  CodegenBackend* b1_ptr = backend1.get();
+  std::vector<CodegenBackend::EstimatedConfig> b1_res;
+  b1_res.push_back({GetTestConfig("best_config"), absl::Milliseconds(10)});
+  EXPECT_CALL(*backend1, GetSupportedConfigsWithEstimates)
+      .WillOnce(Return(std::move(b1_res)));
+
+  auto backend2 = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend2, name()).WillRepeatedly(Return("backend2"));
+  CodegenBackend* b2_ptr = backend2.get();
+  std::vector<CodegenBackend::EstimatedConfig> b2_res;
+  b2_res.push_back({GetTestConfig("another_config"), std::nullopt});
+  EXPECT_CALL(*backend2, GetSupportedConfigsWithEstimates)
+      .WillOnce(Return(std::move(b2_res)));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend1));
+  backends.push_back(std::move(backend2));
+  ASSERT_OK_AND_ASSIGN(auto orchestrator,
+                       CodegenOrchestrator::Create(std::move(backends), {}));
+
+  auto instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  ASSERT_OK_AND_ASSIGN(auto configs,
+                       orchestrator->GetSupportedConfigsWithEstimates(*instr));
+  ASSERT_EQ(configs.size(), 2);
+  EXPECT_EQ(configs[0].config.codegen_backend, b1_ptr);
+  EXPECT_EQ(configs[0].estimated_runtime, absl::Milliseconds(10));
+  EXPECT_EQ(configs[1].config.codegen_backend, b2_ptr);
+  EXPECT_EQ(configs[1].estimated_runtime, std::nullopt);
+}
+
+TEST_F(ConfigAssignerTest, GetSupportedConfigs) {
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
+  std::vector<std::unique_ptr<BackendConfig>> res;
+  res.push_back(GetTestConfig("only_config"));
+  EXPECT_CALL(*backend, GetSupportedConfigs).WillOnce(Return(std::move(res)));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+  ASSERT_OK_AND_ASSIGN(auto orchestrator,
+                       CodegenOrchestrator::Create(std::move(backends), {}));
+
+  auto instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  ASSERT_OK_AND_ASSIGN(auto configs, orchestrator->GetSupportedConfigs(*instr));
+  ASSERT_EQ(configs.size(), 1);
+  EXPECT_EQ(configs[0].backend_config->gemm().algorithm(),
+            GetAlgorithmId("only_config"));
+}
+
 }  // namespace
 }  // namespace xla
