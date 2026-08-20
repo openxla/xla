@@ -1151,13 +1151,14 @@ ENTRY main {
       LiteralUtil::CreateR1<int32_t>({2, 3, 4, -1, -1, -1, -1, -1});
   auto module = GetHloModule(hlo_text);
 
-  ASSERT_OK_AND_ASSIGN(Literal result,
-                       PadAndExecute(std::move(module), {&operand}));
+  ASSERT_OK_AND_ASSIGN(
+      Literal result, PadAndExecute(std::move(module), {&operand}, false));
+  result.SetDynamicSize(0, 3);
 
   // Cumulative products of the valid prefix {2, 3, 4}.
   Literal expected = LiteralUtil::CreateR1<int32_t>({2, 6, 24});
 
-  EXPECT_EQ(result.ToStatic(), expected);
+  EXPECT_EQ(result, expected);
 }
 
 TEST_F(ExecutionTest, DynamicConcat) {
