@@ -422,8 +422,7 @@ absl::Status MoriCommunicator::LaunchCollectivePermute(
   const int srcPe = source_rank ? static_cast<int>(source_rank->value()) : -1;
   return se::gpu::ToStatus(facade_->RunCollectivePermute(
       send_buffer.opaque(), recv_buffer.opaque(), ToMoriByteCount(dtype, count),
-      srcPe, dstPes.data(), static_cast<int>(dstPes.size()),
-      AsHipStream(stream)));
+      srcPe, dstPes, AsHipStream(stream)));
 }
 
 Future<> MoriCommunicator::GroupExecute(
