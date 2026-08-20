@@ -162,7 +162,7 @@ static bool ShouldEnableX86CpuFeature(absl::string_view feature,
       [[fallthrough]];
 
     case CPUFeature::AMX_FP16:
-      // Suppress DMR-and-newer additions over GNR: AVX10, remaining AMX
+      // Suppress DMR-and-newer additions over GNR: AVX10.2, remaining AMX
       // tiles, and APX extensions.
       if (feature == "amx-fp8" || feature == "amx-tf32" ||
           feature == "amx-avx512" || feature == "amx-movrs" ||
