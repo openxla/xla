@@ -17,10 +17,12 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_CODEGEN_TRITON_TRITON_WRAPPER_RESULT_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "llvm/IR/Metadata.h"
 #include "xla/codegen/llvm_kernel_source.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
 
@@ -32,6 +34,17 @@ struct TritonWrapperResult {
   stream_executor::gpu::TmaMetadata tma_metadata;
   stream_executor::ThreadDim thread_dims;
   bool use_pdl = false;
+
+  // The block-level parameters (tile sizes / num_warps / ...) that were
+  // actually used to compile the kernel. This can differ from the parameters
+  // requested by the fusion's backend config when the shared/tensor-memory
+  // fallback in `CompileTritonWithMemoryFallback` had to adjust the tiling to
+  // fit on-chip memory. It is `std::nullopt` for compilation paths that never
+  // adjust the tiling (e.g. raw Triton custom calls), in which case callers
+  // should use the requested configuration. Callers that compute launch
+  // dimensions from the tile sizes MUST prefer this value when present, so that
+  // the launch grid matches the tiling the kernel was actually compiled with.
+  std::optional<BlockLevelParameters> block_level_parameters;
 
   // The captured nvvm.annotations from the lowest level LLVM IR coming from
   // Triton. We need to propagate them because we later create the kernel and

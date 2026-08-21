@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -31,8 +32,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
@@ -496,6 +499,258 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
                              /*is_xla_fusion=*/true);
 }
 
+namespace {
+
+// Formats the output tile sizes of `params` as e.g. "[[32,16,128]]" for logs.
+std::string TileSizesToString(const BlockLevelParameters& params) {
+  std::string out = "[";
+  for (int i = 0; i < params.output_tile_sizes.size(); ++i) {
+    if (i != 0) {
+      absl::StrAppend(&out, ",");
+    }
+    absl::StrAppend(&out, "[", absl::StrJoin(params.output_tile_sizes[i], ","),
+                    "]");
+  }
+  absl::StrAppend(&out, "]");
+  return out;
+}
+
+// The kind of failure a compilation attempt produced, used to drive how the
+// next candidate tile is derived.
+enum class FailureKind {
+  // Not a failure we can address by changing the tile.
+  kUnrecoverable,
+  // On-chip memory (shared or Blackwell tensor memory) exhaustion: the tile is
+  // valid but too large. Reported by `CompileTritonToLLVM` as
+  // RESOURCE_EXHAUSTED.
+  kOnChipMemory,
+  // The tile does not satisfy the emitter's tiling constraints (e.g.
+  // divisibility / layout constraints for a transpose): the tile is the wrong
+  // shape, not necessarily too large. Reported by
+  // `SymbolicTileAnalysis::ComputeTiledComputation` as INVALID_ARGUMENT.
+  kInvalidTiling,
+};
+
+FailureKind ClassifyFailure(const absl::Status& status) {
+  const absl::string_view message = status.message();
+
+  // On-chip memory exhaustion: the tile is valid but too large.
+  if (status.code() == absl::StatusCode::kResourceExhausted &&
+      (absl::StrContains(message, "Shared memory size limit") ||
+       absl::StrContains(message, "Tensor memory size limit"))) {
+    return FailureKind::kOnChipMemory;
+  }
+
+  // Invalid tile shape: the tile does not satisfy the emitter's tiling
+  // constraints. This surfaces differently on the two tiling paths:
+  //   * Symbolic (legacy) path: INVALID_ARGUMENT "Tiling does not satisfy
+  //     constraints" from `SymbolicTileAnalysis::ComputeTiledComputation`.
+  //   * Experimental tiling-propagation path
+  //     (`xla_gpu_experimental_enable_tiling_propagation`): UNIMPLEMENTED from
+  //     `tile_propagation.cc` when a shrunk tile makes a reshape non-contiguous
+  //     or leaves multiple dimensions partially tiled, or INVALID_ARGUMENT
+  //     "Triton constraints violated during codegen" from
+  //     `VerifyTritonConstraints`.
+  // In all these cases a different tile shape may be emittable, so we treat
+  // them as recoverable by trying a different axis.
+  if (status.code() == absl::StatusCode::kInvalidArgument &&
+      (absl::StrContains(message, "Tiling does not satisfy") ||
+       absl::StrContains(message, "Triton constraints violated"))) {
+    return FailureKind::kInvalidTiling;
+  }
+  if (status.code() == absl::StatusCode::kUnimplemented &&
+      (absl::StrContains(message, "partially tiled") ||
+       absl::StrContains(message, "Reshape is non-contiguous") ||
+       absl::StrContains(message, "negative strides"))) {
+    return FailureKind::kInvalidTiling;
+  }
+
+  return FailureKind::kUnrecoverable;
+}
+
+// Returns the index of the largest dimension of `tile` that is > 1, or -1 if
+// every dimension is already 1.
+int LargestShrinkableDim(const std::vector<int64_t>& tile) {
+  int largest_index = -1;
+  int64_t largest_size = 1;
+  for (int i = 0; i < tile.size(); ++i) {
+    if (tile[i] > largest_size) {
+      largest_size = tile[i];
+      largest_index = i;
+    }
+  }
+  return largest_index;
+}
+
+// Halves (clamped to >= 1) the largest > 1 dimension of every output tile.
+// Shared/tensor memory usage scales with tile volume, so this reduces the
+// requested on-chip memory. Returns false (leaving `params` unchanged) if no
+// tile can be shrunk further.
+bool ShrinkLargestTileDim(BlockLevelParameters& params) {
+  bool shrunk_any = false;
+  for (std::vector<int64_t>& tile : params.output_tile_sizes) {
+    int index = LargestShrinkableDim(tile);
+    if (index >= 0) {
+      tile[index] = std::max<int64_t>(1, tile[index] / 2);
+      shrunk_any = true;
+    }
+  }
+  return shrunk_any;
+}
+
+// Halves (clamped to >= 1) the dimension at position `axis` of every output
+// tile whose `axis` dimension is > 1. Returns false (leaving `params`
+// unchanged) if no tile has a shrinkable dimension at `axis`. Used to explore a
+// different axis when the previous tile shape did not satisfy the emitter's
+// tiling constraints.
+bool ShrinkTileAxis(BlockLevelParameters& params, int axis) {
+  bool shrunk_any = false;
+  for (std::vector<int64_t>& tile : params.output_tile_sizes) {
+    if (axis < tile.size() && tile[axis] > 1) {
+      tile[axis] = std::max<int64_t>(1, tile[axis] / 2);
+      shrunk_any = true;
+    }
+  }
+  return shrunk_any;
+}
+
+// Halves `num_warps` (clamped to >= 1). Returns false if it is already 1.
+// Reducing the warp count does not change the staging-tile shared memory of a
+// transpose (that buffer is tile_volume * elem_size * num_stages, independent
+// of num_warps), but it can change Triton's layout/pipeline decisions and helps
+// with register pressure, so it is used as a last-resort lever.
+bool ShrinkNumWarps(BlockLevelParameters& params) {
+  if (params.num_warps <= 1) {
+    return false;
+  }
+  params.num_warps = std::max<int64_t>(1, params.num_warps / 2);
+  return true;
+}
+
+// Maximum number of retries before giving up and propagating the original
+// error.
+constexpr int kMaxShrinkAttempts = 12;
+
+}  // namespace
+
+absl::StatusOr<TritonWrapperResult> CompileTritonWithMemoryFallback(
+    absl::string_view fn_name, const HloFusionInstruction& fusion,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters,
+    const llvm::Triple& target_triple, const std::string& data_layout,
+    mlir::MLIRContext& mlir_context) {
+  // The initial (user-requested or default) configuration, kept for the
+  // summary warning emitted when we have to deviate from it.
+  const BlockLevelParameters initial = block_level_parameters;
+  // `params` is the last tile that fit in on-chip memory (or the initial one);
+  // it is the base we shrink from. When a memory-exhaustion shrink produces a
+  // tile that is invalid for the emitter, we revert to `params` and instead
+  // explore shrinking a different axis, rather than repeatedly halving an axis
+  // that does not resolve the shape problem.
+  BlockLevelParameters params = initial;
+  BlockLevelParameters candidate = params;
+  // The axis to try next when recovering from an invalid tiling. Cycles through
+  // the output tile dimensions.
+  int next_axis_to_try = 0;
+
+  for (int attempt = 0;; ++attempt) {
+    // Emit and compile with the current candidate tile sizes. Both stages
+    // depend on the tile sizes, so a retry re-runs both.
+    absl::StatusOr<TritonKernelSource> kernel_source = CreateTritonModule(
+        fn_name, fusion, device_info, candidate, mlir_context);
+    absl::StatusOr<TritonWrapperResult> result;
+    if (kernel_source.ok()) {
+      // Forward PDL launch annotation from HLO to MLIR.
+      if (DoesPdlLaunch(fusion)) {
+        kernel_source->module()->setAttr(kXlaPdlLaunch,
+                                         mlir::UnitAttr::get(&mlir_context));
+      }
+      result = CompileTritonToLLVM(fn_name, *fusion.GetModule(), device_info,
+                                   candidate, target_triple, data_layout,
+                                   std::move(*kernel_source), mlir_context,
+                                   /*is_xla_fusion=*/true);
+    } else {
+      result = kernel_source.status();
+    }
+
+    if (result.ok()) {
+      // If we had to deviate from the requested configuration, emit a single
+      // warning summarizing the change so the user knows the compiled kernel
+      // does not use their (or the default) tile configuration.
+      if (attempt > 0) {
+        LOG(WARNING)
+            << "Triton fusion " << fusion.name()
+            << ": the requested tile configuration could not be compiled and "
+               "was automatically adjusted. Initial configuration: tile sizes "
+            << TileSizesToString(initial) << ", num_warps " << initial.num_warps
+            << "; final configuration: tile sizes "
+            << TileSizesToString(candidate) << ", num_warps "
+            << candidate.num_warps << " (found after " << (attempt + 1)
+            << " tries).";
+      }
+      return result;
+    }
+
+    const FailureKind failure = ClassifyFailure(result.status());
+    if (failure == FailureKind::kUnrecoverable ||
+        attempt >= kMaxShrinkAttempts) {
+      return result.status();
+    }
+
+    BlockLevelParameters next;
+    if (failure == FailureKind::kOnChipMemory) {
+      // The candidate is valid but too large: commit it as the new base and
+      // shrink its largest dimension to reduce memory.
+      params = candidate;
+      next_axis_to_try = 0;
+      next = params;
+      if (!ShrinkLargestTileDim(next) && !ShrinkNumWarps(next)) {
+        // Nothing left to shrink.
+        return result.status();
+      }
+    } else {
+      // kInvalidTiling: the candidate shape is not emittable. Do not keep
+      // halving the same axis. Revert to the last-good base `params` and
+      // explore shrinking a different axis. If we run out of axes, fall back to
+      // reducing num_warps.
+      next = params;
+      bool made_progress = false;
+      const int num_axes =
+          params.output_tile_sizes.empty()
+              ? 0
+              : static_cast<int>(params.output_tile_sizes.front().size());
+      for (int tried = 0; tried < num_axes; ++tried) {
+        int axis = (next_axis_to_try + tried) % num_axes;
+        BlockLevelParameters attempt_params = params;
+        if (ShrinkTileAxis(attempt_params, axis)) {
+          next = std::move(attempt_params);
+          next_axis_to_try = (axis + 1) % num_axes;
+          made_progress = true;
+          break;
+        }
+      }
+      if (!made_progress) {
+        // No tile axis could be shrunk; try reducing num_warps as a last
+        // resort, otherwise give up.
+        next = params;
+        if (!ShrinkNumWarps(next)) {
+          return result.status();
+        }
+      }
+    }
+
+    // Keep the per-attempt detail at VLOG level for debugging; the user-facing
+    // summary is emitted once on success above.
+    VLOG(3) << "Triton fusion " << fusion.name()
+            << " could not be compiled with tile sizes "
+            << TileSizesToString(candidate) << " (num_warps "
+            << candidate.num_warps << "); retrying with tile sizes "
+            << TileSizesToString(next) << " (num_warps " << next.num_warps
+            << "). Error: " << result.status().message();
+    candidate = std::move(next);
+  }
+}
+
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     absl::string_view kernel_name, const HloModule& hlo_module,
     const se::DeviceDescription& device_info,
@@ -666,6 +921,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
       tma_metadata,
       thread_dims,
       enable_pdl,
+      block_level_parameters,
       captured_nvvm_annotations,
       LlvmKernelSource{std::move(llvm_context), std::move(ll_triton_module)}};
   return result;
