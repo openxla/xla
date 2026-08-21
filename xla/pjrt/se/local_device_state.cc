@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/bind_front.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -37,7 +38,7 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
-#include "xla/pjrt/worker_thread.h"
+#include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
@@ -146,16 +147,23 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
   }
   tsl::ThreadOptions thread_options;
   thread_options.numa_node = executor->numa_node();
-  execute_thread_ = std::make_unique<WorkerThread>(
-      tsl::Env::Default(), thread_options, "py_xla_execute");
+  execution_runner_ = MakeThreadPoolAsyncWorkRunner(
+      tsl::Env::Default(), "py_xla_execute", /*num_threads=*/1, thread_options);
   if (schedule_async) {
-    async_dispatch_thread_ = std::make_unique<WorkerThread>(
-        tsl::Env::Default(), thread_options, "py_xla_dispatch");
+    async_dispatch_runner_ =
+        MakeThreadPoolAsyncWorkRunner(tsl::Env::Default(), "py_xla_dispatch",
+                                      /*num_threads=*/1, thread_options);
   }
-  callback_thread_ = std::make_unique<WorkerThread>(
-      tsl::Env::Default(), thread_options, "py_xla_callback");
-  cleanup_thread_ = std::make_unique<WorkerThread>(
-      tsl::Env::Default(), thread_options, "py_xla_cleanup");
+  callback_runner_ =
+      MakeThreadPoolAsyncWorkRunner(tsl::Env::Default(), "py_xla_callback",
+                                    /*num_threads=*/1, thread_options);
+}
+
+void LocalDeviceState::QuiesceExecutionRunners() {
+  // Async dispatch can enqueue work on the execution runner, so quiesce it
+  // first.
+  async_dispatch_runner_.reset();
+  execution_runner_.reset();
 }
 
 LocalDeviceState::~LocalDeviceState() {
@@ -164,34 +172,14 @@ LocalDeviceState::~LocalDeviceState() {
     LOG(ERROR) << "Error when closing device: " << status;
   }
 
-  // 1. Join scheduling threads first to prevent any new work from being
-  // enqueued.
-  execute_thread_.reset();
-  async_dispatch_thread_.reset();
+  // 1. Quiesce launch runners first to prevent new work from being enqueued.
+  QuiesceExecutionRunners();
 
   // 2. Clear streams and stream pools to trigger all pending
   // callbacks/finalizations.
-  // Drain the callback thread before touching compute_events_.
-  //
-  // After SynchronizeAllActivity() above, all GPU host-callbacks registered
-  // via hipLaunchHostFunc / ThenExecuteCallback have been *invoked*, which
-  // means every callback_thread_->Schedule() call they contain has already
-  // been issued.  Those closures (e.g. the AndThen that calls
-  // compute_events_.pop_front()) may still be sitting in the queue or
-  // actively executing.
-  //
-  // Because compute_events_ is declared *after* callback_thread_ in the
-  // class, C++ destroys it *before* callback_thread_'s destructor joins the
-  // worker thread — creating a window where pop_front() runs on an
-  // already-destroyed deque (undefined behaviour / use-after-free).
-  //
-  // Draining the thread here closes that window: every closure enqueued
-  // before this point completes before we touch compute_events_.
-  callback_thread_->Drain();
 
   // Explicitly delete all the streams and events to ensure that their callbacks
-  // are executed before the destruction of the LocalDeviceState and its
-  // callback threads.
+  // are submitted before the destruction of the callback executor.
   external_ready_event_streams_.clear();
   fixed_size_pool_usage_streams_.clear();
   device_to_device_streams_.clear();
@@ -209,9 +197,10 @@ LocalDeviceState::~LocalDeviceState() {
   host_to_device_stream_.reset();
   compute_stream_.reset();
 
-  // 3. Join callback/cleanup threads to execute all pending tasks.
-  callback_thread_.reset();
-  cleanup_thread_.reset();
+  // 3. Destroying the thread-pool executor waits for all scheduled callbacks.
+  // This must happen before compute_events_ is cleared because callbacks can
+  // remove events from the deque.
+  callback_runner_.reset();
 
   // 4. Finally, clear compute events.
   compute_events_.clear();
@@ -278,16 +267,14 @@ absl::Status LocalDeviceState::ThenExecuteCallback(
     stream = callback_exec_stream;
   }
   if (error_cb) {
-    error_cb = [cb = std::move(error_cb),
-                worker = callback_thread_.get()](absl::Status status) mutable {
-      worker->Schedule(
-          [cb = std::move(cb), status]() mutable { std::move(cb)(status); });
+    error_cb = [runner = callback_runner_.get(),
+                cb = std::move(error_cb)](absl::Status status) mutable {
+      runner->Execute(absl::bind_front(std::move(cb), std::move(status)));
     };
   }
   return stream->DoHostCallback(
-      [worker = callback_thread_.get(),
-       callback{std::move(callback)}]() mutable {
-        worker->Schedule(std::move(callback));
+      [runner = callback_runner_.get(), cb = std::move(callback)]() mutable {
+        runner->Execute(std::move(cb));
       },
       std::move(error_cb));
 }
@@ -383,7 +370,6 @@ void LocalDeviceState::ReturnStreamToPool(std::unique_ptr<se::Stream> stream) {
   absl::MutexLock lock(stream_pool_mu_);
   usage_stream_pool_.push(std::move(stream));
 }
-
 
 absl::Status LocalDeviceState::AllocateAndRecordEvent(
     AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
