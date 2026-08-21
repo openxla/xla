@@ -45,14 +45,12 @@ absl::StatusOr<size_t> ComputeOneDnnScratchpadSize(
     const se::GpuComputeCapability& gpu_version) {
   ABSL_ASSIGN_OR_RETURN(GemmConfig gemm_config,
                         GemmConfig::For(matmul_instr, gpu_version));
-  ABSL_ASSIGN_OR_RETURN(
-      GpuBackendConfig gpu_config,
-      matmul_instr->backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                        matmul_instr->backend_config<GpuBackendConfig>());
   const GemmBackendConfig& config = gpu_config.gemm_backend_config();
   ABSL_ASSIGN_OR_RETURN(
-      auto prim_desc,
-      stream_executor::sycl::CreateMatMulPrimDescFromGemmConfig(
-          gemm_config, config.epilogue()));
+      auto prim_desc, stream_executor::sycl::CreateMatMulPrimDescFromGemmConfig(
+                          gemm_config, config.epilogue()));
   return prim_desc->scratchpad_desc().get_size();
 }
 
@@ -64,8 +62,7 @@ absl::StatusOr<bool> SyclGemmWorkspacePass::RunImpl(
   // Resizes the trailing S8 workspace element of the matmul custom call's
   // tuple shape in place. As the workspace is consumed only by the custom
   // call at runtime, downstream get-tuple-element users require no update.
-  auto resize_workspace = [](HloInstruction* matmul_instr,
-                             int64_t new_bytes) {
+  auto resize_workspace = [](HloInstruction* matmul_instr, int64_t new_bytes) {
     Shape* shape = matmul_instr->mutable_shape();
     *shape->mutable_tuple_shapes(shape->tuple_shapes().size() - 1) =
         ShapeUtil::MakeShape(S8, {new_bytes});
