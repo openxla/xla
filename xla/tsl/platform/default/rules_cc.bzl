@@ -54,6 +54,28 @@ def cc_library(name, deps = None, **kwargs):
         deps = deps + [Label("@tsl//:bazel_issue_21519")]  # buildifier: disable=list-append
     _cc_library(name = name, deps = deps, **kwargs)
 
+def cc_sandboxed_library(
+        name,
+        annotations = None,
+        default_sandboxed = True,
+        host_deps = None,
+        sandboxee_deps = None,
+        **kwargs):
+    """Fallback for cc_sandboxed_library in OSS."""
+    _ = (annotations, default_sandboxed, host_deps, sandboxee_deps)  # @unused
+    cc_library(name = name, **kwargs)
+
+def cc_sandboxed_library_test(name, lib, deps = None, **kwargs):
+    """Fallback for cc_sandboxed_library_test in OSS."""
+    if deps == None:
+        deps = []
+    cc_test(
+        # CC_TEST_OK=Fallback for OSS cc_sandboxed_library_test.
+        name = name,
+        deps = deps + [lib],
+        **kwargs
+    )
+
 # Match Google-internal rules_cc interfaces.
 def default_compatible_with():
     return []

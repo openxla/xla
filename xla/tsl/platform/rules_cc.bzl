@@ -25,6 +25,8 @@ load(
     _cc_binary = "cc_binary",
     _cc_import = "cc_import",
     _cc_library = "cc_library",
+    _cc_sandboxed_library = "cc_sandboxed_library",
+    _cc_sandboxed_library_test = "cc_sandboxed_library_test",
     _cc_shared_library = "cc_shared_library",
     _cc_test = "cc_test",
     _default_compatible_with = "default_compatible_with",
@@ -35,6 +37,8 @@ visibility(DEFAULT_LOAD_VISIBILITY + LEGACY_TSL_PLATFORM_RULES_CC_USERS)
 cc_binary = _cc_binary
 cc_import = _cc_import
 cc_library = _cc_library
+cc_sandboxed_library = _cc_sandboxed_library
+cc_sandboxed_library_test = _cc_sandboxed_library_test
 cc_shared_library = _cc_shared_library
 cc_test = _cc_test
 default_compatible_with = _default_compatible_with
