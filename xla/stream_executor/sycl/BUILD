@@ -591,6 +591,8 @@ cc_library(
         "oneapi-only",
     ],
     deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
