@@ -653,8 +653,8 @@ void CreateStore(llvm::Value* data, llvm::Value* address, int alignment_bytes,
     llvm::Value* offset_address = b->CreateConstInBoundsGEP1_32(
         b->getInt8Ty(), address, offset_bytes, "offset_address");
     llvm::Value* shifted_partial = b->CreateTrunc(
-        b->CreateLShr(data,
-                      llvm::ConstantInt::get(b->getInt32Ty(), offset_bytes * 8)),
+        b->CreateLShr(
+            data, llvm::ConstantInt::get(b->getInt32Ty(), offset_bytes * 8)),
         b->getIntNTy(alignment_bitwidth), "truncated_value");
     b->CreateStore(shifted_partial, offset_address);
   }
