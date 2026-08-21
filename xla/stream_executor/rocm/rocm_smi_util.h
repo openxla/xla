@@ -15,10 +15,18 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+
+// Backend independent view of the SMI queries XLA needs. Exactly one backend
+// implements them, rocm_smi_util_amd_smi.cc or rocm_smi_util_rocm_smi.cc, and
+// the BUILD file picks the source and the library to link against. Nothing
+// here exposes an SMI type, so callers never need to know which one they got.
+// The rationale for the ROCm 7.13 boundary lives next to that choice, in
+// xla/stream_executor/rocm/BUILD.
 
 namespace stream_executor::gpu {
 
@@ -29,22 +37,65 @@ struct BdfComponents {
   uint64_t function;
 };
 
-// Process-global lock serializing all rocm_smi (rsmi_*) access from XLA.
-// rocm_smi only guards state with a per-device mutex, but some of it is global
-// (e.g. the shared gpu_metrics object), so concurrent queries on different
-// devices race. Hold this across each full rsmi call sequence.
+// Opaque identifier of an SMI visible GPU. Only the backend interprets the
+// value: rocm_smi identifies a GPU by a dense monitor device index, amd_smi by
+// an opaque processor handle, and both fit in a uintptr_t.
+struct SmiDeviceHandle {
+  uintptr_t value;
+
+  friend bool operator==(SmiDeviceHandle lhs, SmiDeviceHandle rhs) {
+    return lhs.value == rhs.value;
+  }
+  friend bool operator!=(SmiDeviceHandle lhs, SmiDeviceHandle rhs) {
+    return !(lhs == rhs);
+  }
+};
+
+// Current PCIe link state of a device.
+struct PcieLinkStatus {
+  uint32_t speed_mt_per_sec;
+  uint16_t width;
+};
+
+// Name of the SMI library this build talks to, "amd_smi" or "rocm_smi".
+// Included in SMI log messages so it is obvious which backend produced them.
+ABSL_CONST_INIT extern const absl::string_view kSmiLibraryName;
+
+// Process-global lock serializing all SMI access from XLA. rocm_smi only
+// guards state with a per-device mutex, but some of it is global (e.g. the
+// shared gpu_metrics object), so concurrent queries on different devices race.
+// amd_smi embeds rocm_smi and inherits the same problem. Hold this across each
+// full SMI call sequence.
 ABSL_CONST_INIT extern absl::Mutex rocm_smi_mutex;
 
-// Returns true if rocm_smi was successfully initialized.
+// Returns true if the SMI library was successfully initialized.
 bool InitRocmSmi();
 
 // Parses a PCI bus ID string (e.g., "0000:41:00.0") into its BDF components.
 // Returns std::nullopt on parse failure.
 std::optional<BdfComponents> ParseBdf(absl::string_view pci_bus_id);
 
-// Finds the rocm_smi device index that matches the given PCI bus ID.
-// Returns std::nullopt if not found.
-std::optional<uint32_t> FindDeviceIndex(const BdfComponents& target_bdf);
+// Returns handles for every SMI visible GPU, in SMI enumeration order. Empty
+// on failure. Callers must hold rocm_smi_mutex.
+std::vector<SmiDeviceHandle> EnumerateDevices();
+
+// Finds the SMI device that matches the given PCI bus ID.
+// Returns std::nullopt if not found. Callers must hold rocm_smi_mutex.
+std::optional<SmiDeviceHandle> FindDevice(const BdfComponents& target_bdf);
+
+// Returns the current PCIe link speed and width of the device, or std::nullopt
+// if the query fails. Callers must hold rocm_smi_mutex.
+std::optional<PcieLinkStatus> QueryPcieLinkStatus(SmiDeviceHandle device,
+                                                  absl::string_view pci_bus_id);
+
+// Returns the xGMI hive ID of the device, or std::nullopt if the query fails
+// (typically because the device is not part of a hive). Callers must hold
+// rocm_smi_mutex.
+std::optional<uint64_t> QueryHiveId(SmiDeviceHandle device);
+
+// Returns true if src reaches dst over an xGMI link. Callers must hold
+// rocm_smi_mutex.
+bool IsXgmiPeer(SmiDeviceHandle src, SmiDeviceHandle dst);
 
 }  // namespace stream_executor::gpu
 

@@ -14,10 +14,10 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "rocm/include/rocm_smi/rocm_smi.h"
 #include "xla/stream_executor/rocm/rocm_smi_util.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -36,49 +36,38 @@ XgmiTopologyInfo GetRocmXgmiTopology(absl::string_view pci_bus_id) {
     return info;
   }
 
-  std::optional<uint32_t> dev_idx = FindDeviceIndex(*bdf);
-  if (!dev_idx.has_value()) {
-    LOG(WARNING) << "rocm_smi: could not find device for PCI bus ID "
+  std::optional<SmiDeviceHandle> device = FindDevice(*bdf);
+  if (!device.has_value()) {
+    LOG(WARNING) << kSmiLibraryName << " could not find device for PCI bus ID "
                  << pci_bus_id << " (xGMI query)";
     return info;
   }
 
-  // Query xGMI hive ID.
-  uint64_t hive_id = 0;
-  rsmi_status_t status = rsmi_dev_xgmi_hive_id_get(*dev_idx, &hive_id);
-  if (status == RSMI_STATUS_SUCCESS) {
-    info.hive_id = hive_id;
+  std::optional<uint64_t> hive_id = QueryHiveId(*device);
+  if (hive_id.has_value()) {
+    info.hive_id = *hive_id;
   } else {
-    VLOG(1) << "rsmi_dev_xgmi_hive_id_get failed for " << pci_bus_id
+    VLOG(1) << "xGMI hive ID query failed for " << pci_bus_id
             << "; device may not be in an xGMI hive.";
   }
 
-  // Count xGMI links by querying link type to every other device.
-  uint32_t num_devices = 0;
-  status = rsmi_num_monitor_devices(&num_devices);
-  if (status != RSMI_STATUS_SUCCESS || num_devices <= 1) {
-    return info;
-  }
+  // Count peers reachable over xGMI by querying the link type to every other
+  // device. This counts peer GPUs, not physical links.
+  std::vector<SmiDeviceHandle> devices = EnumerateDevices();
+  if (devices.size() <= 1) return info;
 
   int xgmi_links = 0;
-  for (uint32_t i = 0; i < num_devices; ++i) {
-    if (i == *dev_idx) continue;
-
-    uint64_t hops = 0;
-    RSMI_IO_LINK_TYPE link_type = RSMI_IOLINK_TYPE_UNDEFINED;
-    status = rsmi_topo_get_link_type(*dev_idx, i, &hops, &link_type);
-    if (status != RSMI_STATUS_SUCCESS) continue;
-
-    if (link_type == RSMI_IOLINK_TYPE_XGMI) {
-      ++xgmi_links;
-    }
+  for (SmiDeviceHandle peer : devices) {
+    if (peer == *device) continue;
+    if (IsXgmiPeer(*device, peer)) ++xgmi_links;
   }
 
   info.active_links = xgmi_links;
 
-  VLOG(1) << "xGMI topology for " << pci_bus_id << ": " << xgmi_links
-          << " active xGMI links"
-          << " (hive_id=" << hive_id << ", num_devices=" << num_devices << ")";
+  VLOG(1) << "xGMI topology for " << pci_bus_id << " via " << kSmiLibraryName
+          << ": " << xgmi_links << " active xGMI links"
+          << " (hive_id=" << info.hive_id << ", num_devices=" << devices.size()
+          << ")";
 
   return info;
 }
