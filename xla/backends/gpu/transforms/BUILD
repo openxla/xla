@@ -3704,8 +3704,8 @@ xla_cc_test(
     deps = [
         ":tree_reduction_rewriter",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:device_description_proto_cc",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
