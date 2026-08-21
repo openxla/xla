@@ -326,18 +326,40 @@ void RocmTracer::KernelEvent(const rocprofiler_record_header_t* hdr,
   trace_event->queue_id = kinfo.queue_id.handle;
   trace_event->kernel_info = KernelDetails{
       .private_segment_size = kinfo.private_segment_size,
+      // The dispatch record's group_segment_size is the total LDS per
+      // workgroup, static plus runtime. The symbol's static-only figure is
+      // filled in below.
       .group_segment_size = kinfo.group_segment_size,
+      .static_group_segment_size = 0,
       .workgroup_x = kinfo.workgroup_size.x,
       .workgroup_y = kinfo.workgroup_size.y,
       .workgroup_z = kinfo.workgroup_size.z,
       .grid_x = kinfo.grid_size.x,
       .grid_y = kinfo.grid_size.y,
       .grid_z = kinfo.grid_size.z,
-      .func_ptr = nullptr,
+      .arch_vgpr_count = 0,
+      .accum_vgpr_count = 0,
+      .sgpr_count = 0,
   };
 
-  auto it = kernel_info_.find(kinfo.kernel_id);
-  if (it != kernel_info_.end()) trace_event->name = it->second.name;
+  {
+    absl::MutexLock lock(kernel_lock_);
+    auto it = kernel_info_.find(kinfo.kernel_id);
+    if (it != kernel_info_.end()) {
+      const ProfilerKernelInfo& sym = it->second;
+      trace_event->name = sym.name;
+      trace_event->kernel_info.arch_vgpr_count = sym.arch_vgpr_count;
+      // The VGPR file is unified on gfx90a/94x/95x: AGPRs are charged against
+      // the same 512-entry budget as the architectural VGPRs. Dropping this
+      // over-reports occupancy on MFMA GEMM and flash-attention kernels by up
+      // to 4x -- which is to say, on exactly the kernels people profile an
+      // MI300X for.
+      trace_event->kernel_info.accum_vgpr_count = sym.accum_vgpr_count;
+      trace_event->kernel_info.sgpr_count = sym.sgpr_count;
+      trace_event->kernel_info.static_group_segment_size =
+          sym.group_segment_size;
+    }
+  }
 }
 
 void RocmTracer::TracingCallback(rocprofiler_context_id_t context,
@@ -404,14 +426,16 @@ void RocmTracer::CodeObjectCallback(
     auto* data = static_cast<kernel_symbol_data_t*>(record.payload);
     if (record.phase == ROCPROFILER_CALLBACK_PHASE_LOAD) {
       absl::MutexLock lock(kernel_lock_);
+      // Copy the scalars out rather than storing *data: its kernel_name is a
+      // const char* that rocprofiler frees when the code object unloads.
       kernel_info_.emplace(
           data->kernel_id,
-          ProfilerKernelInfo{tsl::port::MaybeAbiDemangle(data->kernel_name),
-                             *data});
-    } else if (record.phase == ROCPROFILER_CALLBACK_PHASE_UNLOAD) {
-      // FIXME: clear these?  At minimum need kernel names at shutdown, async
-      // completion We don't erase it just in case a buffer callback still needs
-      // this kernel_info_.erase(data->kernel_id);
+          ProfilerKernelInfo{
+              /*name=*/tsl::port::MaybeAbiDemangle(data->kernel_name),
+              /*arch_vgpr_count=*/data->arch_vgpr_count,
+              /*accum_vgpr_count=*/data->accum_vgpr_count,
+              /*sgpr_count=*/data->sgpr_count,
+              /*group_segment_size=*/data->group_segment_size});
     }
   }
 }
