@@ -301,6 +301,13 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     results.resize(found_algorithm_count);
   }  // end mutex block
 
+  // XLA persists an algorithm's position in this vector. Canonicalize the
+  // order because hipBLASLt can reorder equal-ranked results between processes.
+  std::sort(results.begin(), results.end(), [](auto lhs, auto rhs) {
+    return hipblaslt_ext::getIndexFromAlgo(lhs.algo) <
+           hipblaslt_ext::getIndexFromAlgo(rhs.algo);
+  });
+
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.reserve(results.size());
   for (const hipblasLtMatmulHeuristicResult_t& result : results) {
