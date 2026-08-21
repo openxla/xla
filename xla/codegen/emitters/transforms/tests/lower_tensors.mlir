@@ -48,6 +48,18 @@
 // RUN: -xla-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx942:sramecc+:xnack\"}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-GFX942-MI300
 
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx942:sramecc+:xnack\"}'" \
+// RUN: | FileCheck %s --check-prefix=CHECK-NT
+
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx1250\"}'" \
+// RUN: | FileCheck %s --check-prefix=CHECK-NT
+
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="gpu_device_info='cuda_compute_capability {major: 9}'" \
+// RUN: | FileCheck %s --check-prefix=CHECK-NT-CUDA
+
 module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
   func.func private @add(%arg0: f32, %arg1: f32) -> f32 {
     %sum = arith.addf %arg0, %arg1 : f32
@@ -103,6 +115,54 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>
 // CHECK-NEXT:      %[[PTR2:.*]] = llvm.getelementptr inbounds %[[ARG1]][0, 23]
 // CHECK-NEXT:      llvm.store %[[CST]], %[[PTR2]]
 // CHECK-NEXT:      return
+
+// -----
+
+// AMD non-temporal hints: a streamed-once invariant input load and a
+// root output store are marked non-temporal on a supported AMD arch.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_copy(%arg0: tensor<32xf32> {xla.invariant, xla.slice_index = 0},
+                     %arg1: tensor<32xf32> {xla.slice_index = 1}, %i: index)
+      -> tensor<32xf32> {
+    %v = tensor.extract %arg0[%i] : tensor<32xf32>
+    %out = tensor.insert %v into %arg1[%i] : tensor<32xf32>
+    func.return %out : tensor<32xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_copy
+// CHECK-NT:          llvm.load {{.*}}nontemporal
+// CHECK-NT:          llvm.store {{.*}}nontemporal
+
+// Non-AMD target: no non-temporal hints on unsupported (non-AMD) targets.
+// CHECK-NT-CUDA-LABEL: @nt_copy
+// CHECK-NT-CUDA-NOT:     nontemporal
+
+// -----
+
+// AMD non-temporal hints: an input read at multiple sites is conservatively
+// treated as reused/broadcast and is NOT marked non-temporal, while the root
+// output store still is.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_reused_input(
+      %arg0: tensor<32xf32> {xla.invariant, xla.slice_index = 0},
+      %arg1: tensor<32xf32> {xla.slice_index = 1}, %i: index, %j: index)
+      -> tensor<32xf32> {
+    %a = tensor.extract %arg0[%i] : tensor<32xf32>
+    %b = tensor.extract %arg0[%j] : tensor<32xf32>
+    %s = arith.addf %a, %b : f32
+    %out = tensor.insert %s into %arg1[%i] : tensor<32xf32>
+    func.return %out : tensor<32xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_reused_input
+// CHECK-NT:          llvm.load %{{.*}} invariant :
+// CHECK-NT:          llvm.load %{{.*}} invariant :
+// CHECK-NT:          llvm.store {{.*}}nontemporal
+
+// CHECK-NT-CUDA-LABEL: @nt_reused_input
+// CHECK-NT-CUDA-NOT:     nontemporal
 
 // -----
 
