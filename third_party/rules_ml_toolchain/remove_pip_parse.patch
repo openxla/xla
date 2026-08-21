@@ -1,0 +1,30 @@
+--- rules_ml_toolchain-73cb731fed3ccf7551beac710bf1c5dbeb8be298/MODULE.bazel.orig	2026-08-20 14:53:17.331459521 +0000
++++ rules_ml_toolchain-73cb731fed3ccf7551beac710bf1c5dbeb8be298/MODULE.bazel	2026-08-20 14:53:05.697865301 +0000
+@@ -55,27 +55,6 @@
+ python.toolchain(python_version = "3.13")
+ python.toolchain(python_version = "3.14")
+ 
+-### Pypi
+-pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+-
+-[pip.parse(
+-    extra_hub_aliases = {
+-        "numpy": ["numpy_headers"],
+-    },
+-    hub_name = "rules_ml_toolchain_pypi",
+-    python_version = python_version,
+-    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+-    whl_modifications = {
+-        "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
+-    },
+-) for python_version in [
+-    "3.11",
+-    "3.12",
+-    "3.13",
+-    "3.14",
+-]]
+-
+-use_repo(pip, pypi = "rules_ml_toolchain_pypi")
+ 
+ ### Pybind
+ pybind11_internal_configure = use_extension(
