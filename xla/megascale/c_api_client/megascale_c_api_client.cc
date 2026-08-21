@@ -64,7 +64,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/plugin_names.h"
-#include "xla/service/collective_ops_utils.h"
+#include "xla/service/collective_rendezvous.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
@@ -520,9 +520,9 @@ absl::StatusOr<std::unique_ptr<xla::MultiSliceConfig>> CreateAoTMegascaleConfig(
     const xla::PjRtTopologyDescription& topology_description, int num_slices) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
   ABSL_ASSIGN_OR_RETURN(PJRT_MultiSlice_Extension * multi_slice_extension,
-                   GetMultiSliceExtension(c_api));
+                        GetMultiSliceExtension(c_api));
 
   PJRT_Megascale_CreateAoTConfig_Args args;
   args.struct_size = PJRT_Megascale_CreateAoTConfig_Args_STRUCT_SIZE;
@@ -542,7 +542,7 @@ absl::StatusOr<std::shared_ptr<CApiMegascaleErrorAggregator>>
 CreateMegascaleErrorAggregator(absl::string_view app_type) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
 
   PJRT_Megascale_ErrorAggregator_Create_Args args{};
   args.struct_size = PJRT_Megascale_ErrorAggregator_Create_Args_STRUCT_SIZE;
@@ -563,7 +563,7 @@ CreateMultiSliceMegascaleConfig(
   const PJRT_Api* c_api = megascale_client_ctx->c_api();
   const PJRT_Megascale_Extension* extension = megascale_client_ctx->extension();
   ABSL_ASSIGN_OR_RETURN(PJRT_MultiSlice_Extension * multi_slice_extension,
-                   GetMultiSliceExtension(c_api));
+                        GetMultiSliceExtension(c_api));
 
   std::string endpoint_addresses_str = endpoint_addresses.SerializeAsString();
   std::string dcn_topology_str = dcn_topology.SerializeAsString();
@@ -617,7 +617,7 @@ absl::StatusOr<std::shared_ptr<CApiPjRtClientContext>>
 CreateDefaultMegaScaleClientContext() {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
 
   PJRT_Megascale_CreateDefaultClientContext_Args args;
   args.struct_size = PJRT_Megascale_CreateDefaultClientContext_Args_STRUCT_SIZE;
@@ -638,7 +638,7 @@ CreateMegascaleCollectives(
   const PJRT_Api* c_api = megascale_client_ctx.c_api();
   const PJRT_Megascale_Extension* extension = megascale_client_ctx.extension();
   ABSL_ASSIGN_OR_RETURN(PJRT_Collectives_Extension * collectives_extension,
-                   GetCollectivesExtension(c_api));
+                        GetCollectivesExtension(c_api));
 
   std::vector<const char*> addresses_ptrs;
   std::vector<size_t> address_sizes;
@@ -707,7 +707,7 @@ absl::Status RegisterMegascaleErrorHandler(absl::string_view handler_name,
                                            MegaScaleErrorHandler handler) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
 
   auto heap_handler =
       std::make_unique<MegaScaleErrorHandler>(std::move(handler));
@@ -739,7 +739,7 @@ absl::Status RegisterMegascaleErrorHandler(absl::string_view handler_name,
 absl::Status UnregisterMegascaleErrorHandler(absl::string_view handler_name) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
 
   PJRT_Megascale_UnregisterErrorHandler_Args args{};
   args.struct_size = PJRT_Megascale_UnregisterErrorHandler_Args_STRUCT_SIZE;
@@ -763,7 +763,7 @@ GetInterfaceAddressesHelper(absl::string_view megascale_port_name,
                             bool limit_to_process_numa_local_interfaces) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
 
   std::vector<const char*> prefixes_ptrs;
   std::vector<size_t> prefixes_sizes;
@@ -823,7 +823,7 @@ GetOrCreateRuntimeError(
         unrecoverable_error_type) {
   ABSL_ASSIGN_OR_RETURN(const PJRT_Api* c_api, pjrt::PjrtApi(kTpuPjrtName));
   ABSL_ASSIGN_OR_RETURN(PJRT_Megascale_Extension * extension,
-                   GetMegascaleExtension(c_api));
+                        GetMegascaleExtension(c_api));
 
   PJRT_Megascale_GetOrCreateRuntimeError_Args args{};
   args.struct_size = PJRT_Megascale_GetOrCreateRuntimeError_Args_STRUCT_SIZE;
