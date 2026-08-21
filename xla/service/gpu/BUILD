@@ -3875,7 +3875,7 @@ cc_library(
         ":target_constants",
         "//xla/backends/gpu/transforms:sycl_gemm_workspace_pass",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/service:dump",
         "//xla/service:gpu_topology",
         "//xla/service/gpu/llvm_gpu_backend:spirv_backend",
