@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/mori_communicator.h"
-#include "xla/backends/gpu/collectives/mori_stub.h"
+#include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
@@ -104,6 +104,8 @@ static absl::StatusOr<shmem::mori_shmem_uniqueid_t> AsMoriUniqueId(
 
 void MoriCollectives::Finalize() {
   VLOG(3) << "Finilizing MORI";
+  // Each MoriCommunicator owns its CollectivesFacade (unique_ptr) and frees its
+  // staging in its own destructor, so nothing facade-related to release here.
   shmem::ShmemFinalize();
 }
 
@@ -134,6 +136,7 @@ absl::StatusOr<void*> MoriCollectives::Allocate(uint64_t bytes) {
   VLOG(3) << absl::StreamFormat("Allocated %s (%llu bytes) for MORI: %p",
                                 tsl::strings::HumanReadableNumBytes(bytes),
                                 bytes, buffer);
+
   return buffer;
 }
 
@@ -185,8 +188,9 @@ MoriCollectives::CreateCommunicatorsWithCancel(
     // bypass InitializeTopology) we lazily initialize this PE here.
     auto activate_context = device->stream_executor()->Activate();
     if (!initialized_) {
-      ABSL_RETURN_IF_ERROR(InitPe(ranks[i].rank.value(), clique_key.num_devices(),
-                             clique_ids->at(0), device->stream_executor()));
+      ABSL_RETURN_IF_ERROR(InitPe(ranks[i].rank.value(),
+                                  clique_key.num_devices(), clique_ids->at(0),
+                                  device->stream_executor()));
     }
 
     // Map each collective rank to its global MORI PE. In the single-process
@@ -231,7 +235,7 @@ absl::Status MoriCollectives::EagerInitLocalPes(ProcessId process_id,
     return absl::OkStatus();
   }
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName("ROCM"));
+                        se::PlatformManager::PlatformWithName("ROCM"));
 
   // XLA:GPU assumes IOTA device assignment, so the global PE id of a local
   // device is `process_id * ndevs_per_process + dev_ord`.
