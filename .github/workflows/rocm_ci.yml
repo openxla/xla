@@ -166,7 +166,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
-            --bes_keywords=dpx
+            --bes_keywords=dpx --action_env=CACHEBUSTER=0
 
       - &cleanup_container
         name: Cleanup container
@@ -239,7 +239,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
-            --bes_keywords=dpx
+            --bes_keywords=dpx --action_env=CACHEBUSTER=0
 
       - name: Test XLA [rocm_cpu]
         timeout-minutes: 80
@@ -260,7 +260,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=cpu \
             --bes_keywords=pull_request \
-            --bes_keywords=dpx
+            --bes_keywords=dpx --action_env=CACHEBUSTER=0
 
 
       - *cleanup_container
