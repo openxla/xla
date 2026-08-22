@@ -49,7 +49,6 @@ load("//third_party/highway:workspace.bzl", highway = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
-load("//third_party/kleidiai:workspace.bzl", kleidiai = "repo")
 load("//third_party/libdrm:workspace.bzl", libdrm = "repo")
 load("//third_party/llvm:workspace.bzl", llvm = "repo")
 load("//third_party/llvm_openmp:workspace.bzl", llvm_openmp = "repo")
@@ -78,7 +77,6 @@ load("//third_party/rocm_device_libs:workspace.bzl", rocm_device_libs = "repo")
 load("//third_party/shardy:workspace.bzl", shardy = "repo")
 load("//third_party/slinky:workspace.bzl", slinky = "repo")
 load("//third_party/spdlog:workspace.bzl", spdlog = "repo")
-load("//third_party/sqlite:workspace.bzl", sqlite = "repo")
 load("//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
 load("//third_party/system_libpci:workspace.bzl", system_libpci = "repo")
 load("//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
@@ -117,7 +115,6 @@ def _initialize_third_party():
     highwayhash()
     hwloc()
     implib_so()
-    kleidiai()
     libdrm()
     llvm_openmp()
     ml_dtypes()
@@ -145,7 +142,6 @@ def _initialize_third_party():
     shardy()
     slinky()
     spdlog()
-    sqlite()
     stablehlo()
     tensorrt()
     transformer_engine()
@@ -170,10 +166,10 @@ def _tf_toolchains():
     cc_download_clang_toolchain(name = "local_config_download_clang")
     tensorrt_configure(name = "local_config_tensorrt")
     python_configure(name = "local_config_python")
-    rocm_configure(name = "local_config_rocm")
-    hipcc_configure(
-        name = "config_rocm_hipcc",
-        rocm_dist = "@local_config_rocm//rocm:toolchain_data",
+    hipcc_configure(name = "config_rocm_hipcc")  # Must be before rocm_configure.
+    rocm_configure(
+        name = "local_config_rocm",
+        rocm_dist = "@config_rocm_hipcc//rocm:rocm_dist",
     )
 
     local_clang_configure(name = "local_config_clang")
@@ -214,6 +210,13 @@ def _tf_repositories():
     # b) get the sha256 hash of the commit by running:
     #    curl -L <url> | sha256sum
     # and update the sha256 with the result.
+
+    tf_http_archive(
+        name = "KleidiAI",
+        sha256 = "9b8d0df9bab42d1d19acb571337cbaa527027cae0efd361d75dfb9b10fd7dc4e",
+        strip_prefix = "kleidiai-51f7190558e51b7415d9ba24994fb477d7371446",
+        urls = tf_mirror_urls("https://github.com/ARM-software/kleidiai/archive/51f7190558e51b7415d9ba24994fb477d7371446.zip"),
+    )
 
     compute_library()
 
@@ -260,13 +263,6 @@ def _tf_repositories():
         repo_mapping = {
             "@abseil-cpp": "@com_google_absl",
         },
-    )
-
-    tf_http_archive(
-        name = "rules_foreign_cc",
-        sha256 = "476303bd0f1b04cc311fc258f1708a5f6ef82d3091e53fd1977fa20383425a6a",
-        strip_prefix = "rules_foreign_cc-0.10.1",
-        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_foreign_cc/releases/download/0.10.1/rules_foreign_cc-0.10.1.tar.gz"),
     )
 
     tf_http_archive(
@@ -367,19 +363,16 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "//third_party:curl.BUILD",
-        sha256 = "264537d90e58d2b09dddc50944baf3c38e7089151c8986715e2aaeaaf2b8118f",
-        strip_prefix = "curl-8.11.0",
-        urls = tf_mirror_urls("https://curl.se/download/curl-8.11.0.tar.gz"),
+        sha256 = "d9b327997999045a24cda50f3983e69e51c516bd8be6ef9842fc7f99135e33bb",
+        strip_prefix = "curl-8.21.0",
+        urls = tf_mirror_urls("https://curl.se/download/curl-8.21.0.tar.gz"),
     )
 
     tf_http_archive(
-        name = "grpc",
+        name = "com_github_grpc_grpc",
         sha256 = "41b695614b26652ff9e97ce50cfd4a6c7a3d45a9fe598d1454407746499bbf2c",
         strip_prefix = "grpc-1.81.0",
         patch_file = ["//third_party/grpc:grpc.patch"],
-        repo_mapping = {
-            "@com_github_grpc_grpc": "@grpc",
-        },
         urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.81.0.tar.gz"),
     )
 
