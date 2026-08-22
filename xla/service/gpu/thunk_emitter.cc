@@ -214,6 +214,21 @@ bool IsHostExecuteCustomCall(const HloInstruction& hlo) {
                              // the TPU one
 }
 
+bool IsHostCallInstruction(const HloInstruction& hlo) {
+  if (hlo.opcode() == HloOpcode::kCall) {
+    if (hlo.parent()->execution_thread() == HloInstruction::kHostThread ||
+        hlo.to_apply()->execution_thread() == HloInstruction::kHostThread) {
+      return true;
+    }
+    auto it = hlo.frontend_attributes().map().find(kXlaComputeTypeAttr);
+    if (it != hlo.frontend_attributes().map().end() &&
+        it->second == kXlaComputeTypeHost) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool IsImplicitAsyncSendRecvStart(const HloInstruction* instr) {
   // A device send/recv outside an async computation implicitly acts as an
   // async-start even though its HLO opcode does not spell out "start". Inside
@@ -266,6 +281,12 @@ Future<ThunkSequence> ThunkEmitter::DispatchAsyncStart(
         call != nullptr && IsHostExecuteCustomCall(*call)) {
       return EmitHostExecuteStart(instr, call);
     }
+    if (auto* call = DynCast<HloCallInstruction>(wrapped);
+        call != nullptr &&
+        (instr->async_execution_thread() == HloInstruction::kHostThread ||
+         IsHostCallInstruction(*call))) {
+      return EmitHostExecuteStart(instr, call);
+    }
   }
   return EmitAsyncStart(instr);
 }
@@ -308,8 +329,15 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::DispatchAsyncDone(
 
     // Complete a fusion or call wrapped in generic async start/done.
     case HloOpcode::kFusion:
-    case HloOpcode::kCall:
       return EmitAsyncDone(instr, instr->operand(0));
+    case HloOpcode::kCall: {
+      auto* call = Cast<HloCallInstruction>(wrapped);
+      if (instr->async_execution_thread() == HloInstruction::kHostThread ||
+          IsHostCallInstruction(*call)) {
+        return EmitHostExecuteDone(instr, call);
+      }
+      return EmitAsyncDone(instr, instr->operand(0));
+    }
 
     // Select host or device completion for a wrapped recv.
     case HloOpcode::kRecv: {
@@ -2551,12 +2579,20 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostRecvDone(
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
-    const HloInstruction* async_start,
-    const HloCustomCallInstruction* host_execute) {
-  TF_RET_CHECK(IsHostExecuteCustomCall(*host_execute));
+    const HloInstruction* async_start, const HloInstruction* host_execute) {
+  const HloComputation* called_computation = nullptr;
+  if (auto* custom_call = DynCast<HloCustomCallInstruction>(host_execute)) {
+    TF_RET_CHECK(IsHostExecuteCustomCall(*custom_call));
+    called_computation = custom_call->called_computation();
+  } else if (auto* call = DynCast<HloCallInstruction>(host_execute)) {
+    called_computation = call->to_apply();
+  } else {
+    return Internal("Expected HostExecute CustomCall or Call instruction: %s",
+                    host_execute->ToString());
+  }
 
   std::unique_ptr<HloModule> hlo_module =
-      ExtractComputationIntoNewModule(*host_execute->called_computation());
+      ExtractComputationIntoNewModule(*called_computation);
 
   // All offloaded computations are marked as host computations from the
   // perspective of the GPU backend. Since these will execute on the main
@@ -2600,20 +2636,18 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
       host_execute, thunk->async_events());
   if (!inserted) {
     return Internal(
-        "Async events already exist for host offloading custom call %s.",
+        "Async events already exist for host offloading operation %s.",
         host_execute->ToString());
   }
   return ThunkSequence::Of(std::move(thunk));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteDone(
-    const HloInstruction* async_done,
-    const HloCustomCallInstruction* host_execute) {
-  TF_RET_CHECK(IsHostExecuteCustomCall(*host_execute));
-
+    const HloInstruction* async_done, const HloInstruction* host_execute) {
   auto it = GetInstructionToHostExecuteAsyncEvents().find(host_execute);
   TF_RET_CHECK(it != GetInstructionToHostExecuteAsyncEvents().end())
-      << "could not find async events for host execute operation";
+      << "could not find async events for host execute operation: "
+      << host_execute->ToString();
   return ThunkSequence::Of<HostExecuteDoneThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(
           async_done, ir_emitter_context_->GetNextThunkId()),
