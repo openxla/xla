@@ -453,6 +453,8 @@ common:win_clang_base --linkopt=/demangle:no --host_linkopt=/demangle:no
 common:win_clang_base --linkopt=/errorlimit:0 --host_linkopt=/errorlimit:0
 common:win_clang_base --copt=/clang:-Weverything
 common:win_clang_base --host_copt=/clang:-Weverything
+common:win_clang_base --copt=/D__PRFCHWINTRIN_H
+common:win_clang_base --host_copt=/D__PRFCHWINTRIN_H
 common:win_clang_base --compiler=clang-cl
 common:win_clang_base --linkopt=/FORCE:MULTIPLE
 common:win_clang_base --host_linkopt=/FORCE:MULTIPLE
