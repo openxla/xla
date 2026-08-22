@@ -185,7 +185,7 @@ absl::StatusOr<bool> CompositeRewriter::RewriteComputation(
       }
 
       auto is_supported_scale_type = [](PrimitiveType type) {
-        return type == F8E8M0FNU;
+        return type == F8E8M0FNU || type == F8E4M3FN;
       };
 
       if (!is_supported_scale_type(scale_type)) {

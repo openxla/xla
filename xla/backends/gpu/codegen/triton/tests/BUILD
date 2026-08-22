@@ -188,6 +188,7 @@ xla_test(
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:algorithm_util",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:target_constants",
         "//xla/stream_executor:device_description",
