@@ -161,10 +161,12 @@ jobs:
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --repo_env=SYSROOT_DIST=linux_glibc_2_31 \
+            --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=dpx_test_pool \
             --bes_keywords=jax \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
-            --bes_keywords=pull_request
+            --bes_keywords=pull_request \
+            --bes_keywords=dpx
 
       - &cleanup_container
         name: Cleanup container
@@ -237,6 +239,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
+            --bes_keywords=dpx
 
       - name: Test XLA [rocm_cpu]
         timeout-minutes: 80
@@ -256,6 +259,8 @@ jobs:
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=cpu \
-            --bes_keywords=pull_request
+            --bes_keywords=pull_request \
+            --bes_keywords=dpx
+
 
       - *cleanup_container
