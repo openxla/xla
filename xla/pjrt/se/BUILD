@@ -213,6 +213,7 @@ cc_library(
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:util",

@@ -112,6 +112,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/device_event.h"
@@ -875,12 +876,93 @@ bool IsAllZeros(const DeviceAssignment& assignment) {
       [](const DeviceAssignment::value_type& v) { return v == 0; });
 }
 
+// Dumps the optimized module plus argument and result literals as an
+// HloSnapshot proto. Mirrors MaybeDumpHloSnapshot in cpu_client.cc.
+void MaybeDumpHloSnapshot(
+    const HloModule& module, RunId run_id,
+    const std::vector<PjRtBuffer*>& arguments,
+    const std::vector<std::unique_ptr<PjRtBuffer>>& results) {
+  if (!DumpingEnabledForHloModule(module)) {
+    return;
+  }
+  if (!module.config().debug_options().xla_dump_hlo_snapshots()) {
+    return;
+  }
+  HloSnapshot hlo_snapshot;
+  *hlo_snapshot.mutable_hlo()->mutable_hlo_module() = module.ToProto();
+
+  for (PjRtBuffer* argument : arguments) {
+    auto literal_or = argument->ToLiteral().Await();
+    if (!literal_or.ok()) {
+      LOG(ERROR) << "Failed to get literal for argument: "
+                 << literal_or.status();
+      return;
+    }
+    *hlo_snapshot.add_arguments() = (*literal_or)->ToProto();
+  }
+
+  // If there are multiple results, wrap them in a tuple.
+  if (results.size() == 1) {
+    auto literal_or = results[0]->ToLiteral().Await();
+    if (!literal_or.ok()) {
+      LOG(ERROR) << "Failed to get literal for result: " << literal_or.status();
+      return;
+    }
+    *hlo_snapshot.mutable_result() = (*literal_or)->ToProto();
+  } else {
+    std::vector<Literal> result_literals;
+    result_literals.reserve(results.size());
+    for (const auto& result : results) {
+      auto literal_or = result->ToLiteral().Await();
+      if (!literal_or.ok()) {
+        LOG(ERROR) << "Failed to get literal for result: "
+                   << literal_or.status();
+        return;
+      }
+      result_literals.push_back(std::move(**literal_or));
+    }
+    *hlo_snapshot.mutable_result() =
+        LiteralUtil::MakeTupleOwned(std::move(result_literals)).ToProto();
+  }
+
+  DumpToFileInDir(module, "", absl::StrCat("snapshot.", run_id.ToInt(), ".pb"),
+                  hlo_snapshot.SerializeAsString());
+}
+
 }  // namespace
 
 const HloInputOutputAliasConfig&
 PjRtStreamExecutorLoadedExecutable::input_output_alias_config() const {
   auto se_exec = static_cast<StreamExecutorExecutable*>(GetExecutable());
   return se_exec->hlo_module()->input_output_alias_config();
+}
+
+absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
+PjRtStreamExecutorLoadedExecutable::Execute(
+    absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
+    const ExecuteOptions& options,
+    std::optional<std::vector<tsl::Future<void>>>& returned_futures) const {
+  const std::shared_ptr<HloModule>& module =
+      static_cast<StreamExecutorExecutable*>(GetExecutable())->hlo_module();
+  // Like the CPU client, snapshots are only dumped for single-device runs.
+  if (module == nullptr || addressable_devices().size() != 1 ||
+      argument_handles.size() != 1 ||
+      !module->config().debug_options().xla_dump_hlo_snapshots()) {
+    return CommonPjRtLoadedExecutable::Execute(argument_handles, options,
+                                               returned_futures);
+  }
+  // Only used in the file name; may differ from the RunId the base Execute
+  // generates when no launch_id is set.
+  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                        : RunId::CreateUniqueId();
+  // Dump once before running, in case there's a crash.
+  MaybeDumpHloSnapshot(*module, run_id, argument_handles[0], {});
+  auto results = CommonPjRtLoadedExecutable::Execute(argument_handles, options,
+                                                     returned_futures);
+  if (results.ok()) {
+    MaybeDumpHloSnapshot(*module, run_id, argument_handles[0], (*results)[0]);
+  }
+  return results;
 }
 
 template <typename T>
