@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla::gpu {
 
