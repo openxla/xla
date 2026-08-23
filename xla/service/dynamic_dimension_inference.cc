@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -238,6 +239,13 @@ class DynamicDimensionInferenceVisitor : public DfsHloRewriteVisitor {
 
   void SetDynamicSizes(HloInstruction* inst, const ShapeIndex& index,
                        absl::Span<HloInstruction* const> sizes);
+
+  // Canonicalizes a while whose loop state is a bare array into the
+  // equivalent single-element tuple form so the tuple-based while handling
+  // applies. Returns the get-tuple-element that took over the old while's
+  // uses.
+  absl::StatusOr<HloInstruction*> CanonicalizeNonTupleWhile(
+      HloInstruction* hlo);
 
   absl::Status HandleDynamicConvolutionForward(HloInstruction* hlo,
                                                int64_t operand_index,
@@ -2247,10 +2255,91 @@ absl::Status DynamicDimensionInferenceVisitor::HandleScatter(
       });
 }
 
+absl::StatusOr<HloInstruction*>
+DynamicDimensionInferenceVisitor::CanonicalizeNonTupleWhile(
+    HloInstruction* hlo) {
+  const Shape element_shape = hlo->shape();
+  const Shape tuple_shape = ShapeUtil::MakeTupleShape({element_shape});
+  HloModule* module = hlo->GetModule();
+
+  // Rebuild the condition and body to take a single-element tuple: the new
+  // parameter feeds the old parameter's uses through a get-tuple-element,
+  // and the body root is wrapped in a tuple. The computations are cloned
+  // rather than mutated because HLO allows them to be shared with other
+  // callers.
+  for (bool is_body : {false, true}) {
+    HloComputation* computation =
+        is_body ? hlo->while_body() : hlo->while_condition();
+    HloCloneContext context(module);
+    HloComputation* clone = module->AddEmbeddedComputation(
+        computation->Clone("non_tuple", &context));
+    absl::flat_hash_map<HloInstruction*, HloInstruction*> instruction_map;
+    instruction_map.reserve(context.cloned_instructions().size());
+    for (const auto& [old_inst, new_inst] : context.cloned_instructions()) {
+      instruction_map[const_cast<HloInstruction*>(old_inst)] = new_inst;
+    }
+    for (const auto& [old_inst, new_inst] : instruction_map) {
+      parent_->CopyMapping(old_inst, new_inst, &instruction_map);
+    }
+
+    HloInstruction* old_param = clone->parameter_instruction(0);
+    HloInstruction* new_param = clone->ReplaceParameter(
+        0, HloInstruction::CreateParameter(0, tuple_shape, old_param->name()));
+    HloInstruction* element = clone->AddInstruction(
+        HloInstruction::CreateGetTupleElement(element_shape, new_param, 0));
+    ABSL_RETURN_IF_ERROR(new_param->ReplaceAllUsesWithDifferentShape(element));
+    if (is_body) {
+      HloInstruction* old_root = clone->root_instruction();
+      HloInstruction* new_root =
+          clone->AddInstruction(HloInstruction::CreateTuple({old_root}));
+      ABSL_RETURN_IF_ERROR(ForEachDynamicDimension(
+          old_root,
+          [&](ShapeIndex index, int64_t dimension,
+              HloInstruction* dynamic_size) -> absl::Status {
+            SetDynamicSize(new_root, {0}, dimension, dynamic_size);
+            return absl::OkStatus();
+          }));
+      clone->set_root_instruction(new_root, /*accept_different_shape=*/true);
+      hlo->set_while_body(clone);
+    } else {
+      hlo->set_while_condition(clone);
+    }
+  }
+
+  // Wrap the init value and the while itself, and route the old uses
+  // through a get-tuple-element of the new tuple-shaped while.
+  HloInstruction* old_init = hlo->mutable_operand(0);
+  HloInstruction* new_init =
+      hlo->parent()->AddInstruction(HloInstruction::CreateTuple({old_init}));
+  ABSL_RETURN_IF_ERROR(ForEachDynamicDimension(
+      old_init,
+      [&](ShapeIndex index, int64_t dimension,
+          HloInstruction* dynamic_size) -> absl::Status {
+        SetDynamicSize(new_init, {0}, dimension, dynamic_size);
+        return absl::OkStatus();
+      }));
+  ABSL_RETURN_IF_ERROR(hlo->ReplaceOperandWithDifferentShape(0, new_init));
+  *hlo->mutable_shape() = tuple_shape;
+  HloInstruction* element = hlo->parent()->AddInstruction(
+      HloInstruction::CreateGetTupleElement(element_shape, hlo, 0));
+  ABSL_RETURN_IF_ERROR(hlo->ReplaceAllUsesWithDifferentShape(element));
+  MarkAsChanged();
+  return element;
+}
+
 absl::Status DynamicDimensionInferenceVisitor::HandleWhile(
     HloInstruction* hlo) {
   if (!CanInfer(hlo)) {
     return absl::OkStatus();
+  }
+  // The logic below (in particular WhileUtil::MakeInstructionsLiveIn)
+  // requires tuple-shaped while state; HLO also allows a bare array.
+  HloInstruction* array_state_replacement = nullptr;
+  if (!hlo->shape().IsTuple() &&
+      parent_->HasDynamicDimension(hlo->mutable_operand(0))) {
+    ABSL_ASSIGN_OR_RETURN(array_state_replacement,
+                          CanonicalizeNonTupleWhile(hlo));
+    hlo = array_state_replacement->mutable_operand(0);
   }
   // If the output of the kWhile contains dynamic dimension, we send
   // dynamic dimension size into the while body by adding additional root/body
@@ -2404,6 +2493,12 @@ absl::Status DynamicDimensionInferenceVisitor::HandleWhile(
               HloInstruction::CreateGetTupleElement(hlo, output_index));
           SetDynamicSize(result.replacement_instr, index, dimension,
                          dynamic_size);
+          if (array_state_replacement != nullptr) {
+            // The old array-shaped while's uses read the state through this
+            // get-tuple-element; record the same dynamic size for it.
+            SetDynamicSize(array_state_replacement, {}, dimension,
+                           dynamic_size);
+          }
           ShapeUtil::GetMutableSubshape(hlo->mutable_shape(), index)
               ->set_dynamic_dimension(dimension, false);
           TF_RET_CHECK(!index.empty());

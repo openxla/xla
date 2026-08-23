@@ -1836,6 +1836,62 @@ ENTRY entry {
   EXPECT_EQ(result, expected);
 }
 
+TEST_F(ExecutionTest, NonTupleWhileLoopStack) {
+  // Regression test for https://github.com/openxla/xla/issues/47375: same
+  // stack loop as WhileLoopStack, but the loop state is the bare array
+  // instead of a single-element tuple. This used to hit a CHECK in
+  // WhileUtil::MakeInstructionsLiveIn during DynamicDimensionInference.
+  const std::string hlo_text = R"(
+HloModule module
+
+update_s32 (lhs: s32[], rhs: s32[]) -> s32[] {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+body {
+  stack_buffer = s32[<=4, 2] parameter(0)
+  stack_size = s32[] get-dimension-size(stack_buffer), dimensions={0}
+  zero = s32[] constant(0)
+  one = s32[] constant(1)
+  // content of the stack is the stack index broadcasted.
+  new_data = s32[1, 2] broadcast(s32[] stack_size), dimensions={}
+  new_stack_size = s32[] add(stack_size, one)
+  new_stack_buffer = s32[<=4, 2] set-dimension-size(stack_buffer, new_stack_size), dimensions={0}
+  ROOT new_stack = s32[<=4, 2] dynamic-update-slice(new_stack_buffer, new_data, stack_size, zero)
+}
+
+condition {
+  stack_buffer = s32[<=4, 2] parameter(0)
+  stack_size = s32[] get-dimension-size(stack_buffer), dimensions={0}
+  three = s32[] constant(3)
+  ROOT less-than = pred[] compare(s32[] stack_size, s32[] three), direction=LT
+}
+
+ENTRY entry {
+  zero = s32[] constant(0)
+  pad = s32[] constant(-1)
+  stack_buffer_input = s32[4, 2] broadcast(s32[] pad), dimensions={}
+  stack_buffer_input_dynamic = s32[<=4, 2] set-dimension-size(stack_buffer_input, zero), dimensions={0}
+  while = s32[<=4, 2] while(stack_buffer_input_dynamic), body=body, condition=condition
+  ROOT reduce = s32[2] reduce(while, zero),
+    dimensions={0},
+    to_apply=update_s32
+}
+)";
+
+  auto module = GetHloModule(hlo_text);
+
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, PadAndExecute(std::move(module), {}));
+
+  // As in WhileLoopStack, three items are pushed before the loop exits, so
+  // reducing along the major dimension gives us [3, 3].
+  Literal expected = LiteralUtil::CreateR1<int32_t>({{3, 3}});
+
+  EXPECT_EQ(result, expected);
+}
+
 TEST_F(ExecutionTest, DynamicAddWithImplicitBroadcast) {
   const std::string hlo_text = R"(
 HloModule module
