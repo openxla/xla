@@ -613,6 +613,36 @@ TEST(PjRtCpuClientTest, AsyncTransferLiteralInt4) {
               ElementsAreArray(literal.data<s4>()));
 }
 
+TEST(PjRtCpuClientTest, LinearizeRejectsOutOfBoundDynamicSize) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  Shape shape = ShapeUtil::MakeShape(F32, {10}, {true});
+  std::vector<float> data(10, 0.0f);
+  // Enough room for the data plus the int32 size metadata; only the dynamic
+  // size itself is invalid.
+  std::vector<uint8_t> dest(44);
+  std::vector<uint32_t> oversize = {11};
+  EXPECT_THAT(common_client->Linearize(absl::MakeSpan(dest), data.data(),
+                                       /*byte_strides=*/{}, shape, oversize,
+                                       client->memory_spaces()[0]),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("exceeds its bound")));
+  // A size equal to the bound is valid.
+  std::vector<uint32_t> at_bound = {10};
+  TF_EXPECT_OK(common_client->Linearize(absl::MakeSpan(dest), data.data(),
+                                        /*byte_strides=*/{}, shape, at_bound,
+                                        client->memory_spaces()[0]));
+  // In a mixed shape, static dimensions carry their static size and must
+  // pass.
+  Shape mixed_shape = ShapeUtil::MakeShape(F32, {2, 5}, {false, true});
+  std::vector<uint8_t> mixed_dest(48);
+  std::vector<uint32_t> mixed_sizes = {2, 3};
+  TF_EXPECT_OK(common_client->Linearize(absl::MakeSpan(mixed_dest), data.data(),
+                                        /*byte_strides=*/{}, mixed_shape,
+                                        mixed_sizes,
+                                        client->memory_spaces()[0]));
+}
+
 TEST(PjRtCpuClientTest, ToLiteralWithLayout) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   Literal literal = LiteralUtil::CreateR2<int8_t>({{1, 2}, {3, 4}});

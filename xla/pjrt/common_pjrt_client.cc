@@ -202,6 +202,16 @@ absl::Status CommonPjRtClient::Linearize(
                           "when metadata is required",
                           dynamic_sizes.size(), dims.size()));
     }
+    for (int i = 0; i < dims.size(); ++i) {
+      // A size above the bound would make the transpose below write out of
+      // bounds of the array region.
+      if (dynamic_sizes[i] > dims[i]) {
+        return absl::InvalidArgumentError(
+            absl::StrFormat("Dynamic size %d of dimension %d exceeds its "
+                            "bound %d",
+                            dynamic_sizes[i], i, dims[i]));
+      }
+    }
     converted_dynamic_sizes.assign(dynamic_sizes.begin(), dynamic_sizes.end());
     dims = converted_dynamic_sizes;
 
