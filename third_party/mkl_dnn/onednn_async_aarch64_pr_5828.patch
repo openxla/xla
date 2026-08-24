@@ -1,0 +1,720 @@
+From d6ceb37cd59cafd9dde582b94171421999fbe899 Mon Sep 17 00:00:00 2001
+From: Siddhartha Menon <siddhartha.menon@arm.com>
+Date: Wed, 12 Aug 2026 16:17:27 +0100
+Subject: [PATCH 1/4] cpu: ref_fused_convolution: pass unique scale buffers to
+ conv impls
+
+When running under an async runtime, the primitives can have a data-race
+and clobber the shared pre-computed scales buffer. This change ensures
+each primitive gets its own scratch-space.
+
+Signed-off-by: Siddhartha Menon <siddhartha.menon@arm.com>
+---
+ src/cpu/ref_fused_convolution.hpp | 45 ++++++++++++++++++++-----------
+ 1 file changed, 30 insertions(+), 15 deletions(-)
+
+diff --git a/src/cpu/ref_fused_convolution.hpp b/src/cpu/ref_fused_convolution.hpp
+index b9a943f210..90781367c3 100644
+--- a/src/cpu/ref_fused_convolution.hpp
++++ b/src/cpu/ref_fused_convolution.hpp
+@@ -1,6 +1,6 @@
+ /*******************************************************************************
+ * Copyright 2020 Intel Corporation
+-* Copyright 2022 Arm Ltd. and affiliates
++* Copyright 2022, 2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -174,7 +174,8 @@ struct ref_fused_convolution_fwd_t : public primitive_t {
+             return convolution_fwd_pd_t::arg_usage(arg);
+         }
+ 
+-        size_t user_scratchpad_size_;
++        std::vector<size_t> op_scratchpad_offsets_;
++        std::vector<size_t> op_scratchpad_sizes_;
+         std::vector<std::shared_ptr<primitive_desc_t>> op_pds_;
+         std::vector<arg_cache_t> args_;
+ 
+@@ -203,15 +204,9 @@ struct ref_fused_convolution_fwd_t : public primitive_t {
+                 // Increment scratchpad offsets
+                 sp_begin = sp_end;
+                 sp_end += memory_desc_wrapper(to_md).size();
+-
+-                user_scratchpad_size_ = nstl::max<size_t>(user_scratchpad_size_,
+-                        op_pds_.back()->scratchpad_size(
+-                                attr()->scratchpad_mode_));
+             }
+ 
+             op_pds_.emplace_back(std::move(op_pd));
+-            user_scratchpad_size_ = nstl::max<size_t>(user_scratchpad_size_,
+-                    op_pds_.back()->scratchpad_size(attr()->scratchpad_mode_));
+             return status::success;
+         }
+ 
+@@ -244,8 +239,6 @@ struct ref_fused_convolution_fwd_t : public primitive_t {
+             // computation can be avoided during execution.
+             size_t inout_sp_offset_begin = 0;
+             size_t inout_sp_offset_end = 0;
+-            user_scratchpad_size_
+-                    = root_pd->scratchpad_size(attr()->scratchpad_mode_);
+ 
+             // Create arg cache for the root pd
+             {
+@@ -367,9 +360,22 @@ struct ref_fused_convolution_fwd_t : public primitive_t {
+ 
+             scratchpad.book(memory_tracking::names::key_fusion_inout_buffer,
+                     inout_buffer_size, 1, 16);
++            size_t forward_scratchpad_size = 0;
++            const size_t nested_scratchpad_alignment
++                    = memory_tracking::default_alignment;
++            op_scratchpad_offsets_.resize(op_pds_.size());
++            op_scratchpad_sizes_.resize(op_pds_.size());
++            for (size_t i = 0; i < op_pds_.size(); ++i) {
++                forward_scratchpad_size = utils::rnd_up(
++                        forward_scratchpad_size, nested_scratchpad_alignment);
++                op_scratchpad_offsets_[i] = forward_scratchpad_size;
++                op_scratchpad_sizes_[i]
++                        = op_pds_[i]->scratchpad_size(attr()->scratchpad_mode_);
++                forward_scratchpad_size += op_scratchpad_sizes_[i];
++            }
+             scratchpad.book(
+                     memory_tracking::names::key_fusion_forward_scratchpad,
+-                    user_scratchpad_size_, 1, 16);
++                    forward_scratchpad_size, 1, nested_scratchpad_alignment);
+             return status::success;
+         }
+ 
+@@ -409,6 +415,8 @@ struct ref_fused_convolution_fwd_t : public primitive_t {
+ 
+         const auto inout_buffer = scratchpad.get_memory_storage(
+                 memory_tracking::names::key_fusion_inout_buffer);
++        const auto forward_scratchpad = scratchpad.get_memory_storage(
++                memory_tracking::names::key_fusion_forward_scratchpad);
+ 
+         const auto &ctx_args = ctx.args();
+         const auto op_count = primitives_.size();
+@@ -434,10 +442,17 @@ struct ref_fused_convolution_fwd_t : public primitive_t {
+ 
+             exec_ctx_t op_ctx(ctx, std::move(exec_args));
+ 
+-            auto *nested_grantor = create_nested_grantor(
+-                    ctx.get_scratchpad_grantor(),
+-                    memory_tracking::names::key_fusion_forward_scratchpad,
+-                    op->pd()->scratchpad_registry());
++            std::unique_ptr<memory_storage_t> op_scratchpad;
++            if (forward_scratchpad && pd()->op_scratchpad_sizes_[i] > 0) {
++                op_scratchpad = forward_scratchpad->get_sub_storage(
++                        pd()->op_scratchpad_offsets_[i],
++                        pd()->op_scratchpad_sizes_[i]);
++            }
++            auto *nested_grantor = new memory_tracking::grantor_t(
++                    op->pd()->scratchpad_registry(), op_scratchpad.release(),
++                    ctx.get_scratchpad_grantor()
++                            .get_base_mem_storage_host_ptr(),
++                    /* take_storage_ownership = */ true);
+             op_ctx.set_scratchpad_grantor(nested_grantor);
+             CHECK(op->execute(op_ctx));
+         }
+-- 
+2.43.0
+
+
+From 29d400cc98f62ad7e1e6f60bd81fd53be37baf86 Mon Sep 17 00:00:00 2001
+From: Siddhartha Menon <siddhartha.menon@arm.com>
+Date: Tue, 11 Aug 2026 14:50:53 +0100
+Subject: [PATCH 2/4] cpu: aarch64: make brgemm-based convolutions async
+ compatible
+
+Signed-off-by: Siddhartha Menon <siddhartha.menon@arm.com>
+---
+ src/cpu/aarch64/jit_brdgmm_dw_conv.cpp  |  5 +++--
+ src/cpu/aarch64/jit_brgemm_1x1_conv.cpp |  8 +++++---
+ src/cpu/aarch64/jit_brgemm_conv.cpp     | 10 ++++++----
+ 3 files changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/src/cpu/aarch64/jit_brdgmm_dw_conv.cpp b/src/cpu/aarch64/jit_brdgmm_dw_conv.cpp
+index 7e8dd5c6f1..fe20fea28c 100644
+--- a/src/cpu/aarch64/jit_brdgmm_dw_conv.cpp
++++ b/src/cpu/aarch64/jit_brdgmm_dw_conv.cpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2021 Intel Corporation
+ * Copyright 2024-2026 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -16,6 +16,7 @@
+ * limitations under the License.
+ *******************************************************************************/
+ 
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/memory_tracking.hpp"
+ #include "common/utils.hpp"
+@@ -553,7 +554,7 @@ status_t brdgmm_dw_convolution_fwd_t<isa>::execute(
+     const int n_rpad_blks
+             = 1 + div_up(nstl::max(0, jcp.r_pad - (rpad_1 - w_shift)), w_shift);
+ 
+-    parallel(jcp.nthr, [&](const int ithr, const int nthr) {
++    parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0};
+         balance211(work_amount, nthr, ithr, start, end);
+         int n {0}, chb {0}, od {0}, oh {0}, owb {0};
+diff --git a/src/cpu/aarch64/jit_brgemm_1x1_conv.cpp b/src/cpu/aarch64/jit_brgemm_1x1_conv.cpp
+index 81411a6823..c090019a49 100644
+--- a/src/cpu/aarch64/jit_brgemm_1x1_conv.cpp
++++ b/src/cpu/aarch64/jit_brgemm_1x1_conv.cpp
+@@ -17,6 +17,7 @@
+ *******************************************************************************/
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/nstl.hpp"
+ #include "common/type_helpers.hpp"
+@@ -25,7 +26,6 @@
+ #include "cpu/cpu_primitive.hpp"
+ #include "cpu/scale_utils.hpp"
+ 
+-#include "cpu/aarch64/injectors/jit_uni_binary_injector.hpp"
+ #include "cpu/aarch64/jit_brgemm_1x1_conv.hpp"
+ 
+ namespace dnnl {
+@@ -484,7 +484,8 @@ status_t brgemm_1x1_convolution_fwd_t<isa>::execute_forward_all(
+         const int work_amount = jcp.mb * jcp.ngroups * jcp.nb_oc * os_chunks;
+ 
+ #define BRGC_WO(...) \
+-    parallel(pd()->jcp_.nthr, [&](const int ithr, const int nthr) { \
++    parallel(pd()->jcp_.nthr, \
++            [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) { \
+         if (ithr >= work_amount) return; \
+         brgemm_batch_element_t *const brg_batch \
+                 = brg_batch_global + (size_t)ithr * jcp.adjusted_batch_size; \
+@@ -549,7 +550,8 @@ status_t brgemm_1x1_convolution_fwd_t<isa>::execute_forward_all(
+                 = jcp.mb * jcp.ngroups * jcp.nb_oc * OD * OH * jcp.nb_ow;
+ 
+ #define BRGC_WO(...) \
+-    parallel(pd()->jcp_.nthr, [&](const int ithr, const int nthr) { \
++    parallel(pd()->jcp_.nthr, \
++            [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) { \
+         if (ithr >= work_amount) return; \
+         brgemm_batch_element_t *const brg_batch \
+                 = brg_batch_global + (size_t)ithr * jcp.adjusted_batch_size; \
+diff --git a/src/cpu/aarch64/jit_brgemm_conv.cpp b/src/cpu/aarch64/jit_brgemm_conv.cpp
+index 42f5c53b9c..b403025bea 100644
+--- a/src/cpu/aarch64/jit_brgemm_conv.cpp
++++ b/src/cpu/aarch64/jit_brgemm_conv.cpp
+@@ -19,9 +19,11 @@
+ #include <cassert>
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/type_helpers.hpp"
+ #include "common/utils.hpp"
++
+ #include "cpu/aarch64/cpu_isa_traits.hpp"
+ #include "cpu/aarch64/jit_brgemm_conv.hpp"
+ #include "cpu/aarch64/jit_brgemm_conv_comp_pad_kernel.hpp"
+@@ -1061,7 +1063,7 @@ status_t brgemm_convolution_fwd_t<isa>::init(engine_t *engine) {
+ }
+ template <cpu_isa_t isa>
+ struct brgemm_convolution_fwd_t<isa>::brgemm_thread_ctx_t {
+-    brgemm_thread_ctx_t(brgemm_exec_ctx_t &brgemm_ctx_, int ithr_,
++    brgemm_thread_ctx_t(const brgemm_exec_ctx_t &brgemm_ctx_, int ithr_,
+             brgemm_batch_element_t *__restrict brg_batch_, char *c_buffer_,
+             char *wsp_tile_)
+         : brgemm_ctx(brgemm_ctx_)
+@@ -1070,7 +1072,7 @@ struct brgemm_convolution_fwd_t<isa>::brgemm_thread_ctx_t {
+         , c_buffer(c_buffer_)
+         , wsp_tile(wsp_tile_) {}
+ 
+-    brgemm_exec_ctx_t &brgemm_ctx;
++    const brgemm_exec_ctx_t &brgemm_ctx;
+     int ithr {0};
+     brgemm_batch_element_t *__restrict brg_batch {nullptr};
+     char *c_buffer {nullptr};
+@@ -1163,7 +1165,7 @@ status_t brgemm_convolution_fwd_t<isa>::execute(const exec_ctx_t &ctx) const {
+     // or made ic_chunks = 1 if use_buffer
+     // or (looks more general) increase buffer size to store several rows
+ 
+-    parallel(jcp.nthr, [&](const int ithr, const int nthr) {
++    parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         if (ithr >= work_amount) return;
+ 
+         brgemm_batch_element_t *const __restrict brg_batch = brg_batch_global
+@@ -1292,7 +1294,7 @@ status_t brgemm_convolution_fwd_t<isa>::cal_compensation(
+                     <= platform::get_per_core_cache_size(1));
+     const int nthr = is_small_shape ? 1 : jcp.nthr;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         if (ithr >= work_amount) return;
+ 
+         dim_t start {0}, end {0};
+-- 
+2.43.0
+
+
+From d18faf779b5d9576e6f2f0303e217724c29779b2 Mon Sep 17 00:00:00 2001
+From: Siddhartha Menon <siddhartha.menon@arm.com>
+Date: Wed, 12 Aug 2026 15:25:35 +0100
+Subject: [PATCH 3/4] cpu: aarch64: reduce stack use in 1x1 conv
+
+port of c6f57ba4eb0d2378b314b814c8db6a20c2eeaee4 to cpu/aarch64
+
+Signed-off-by: Siddhartha Menon <siddhartha.menon@arm.com>
+---
+ src/cpu/aarch64/jit_sve_1x1_conv_kernel.cpp |  8 ++++++--
+ src/cpu/aarch64/jit_sve_1x1_convolution.cpp | 11 +++++++----
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/src/cpu/aarch64/jit_sve_1x1_conv_kernel.cpp b/src/cpu/aarch64/jit_sve_1x1_conv_kernel.cpp
+index b18b567481..ca1c0ecc80 100644
+--- a/src/cpu/aarch64/jit_sve_1x1_conv_kernel.cpp
++++ b/src/cpu/aarch64/jit_sve_1x1_conv_kernel.cpp
+@@ -15,8 +15,7 @@
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *******************************************************************************/
+-#include <assert.h>
+-#include <float.h>
++#include <cassert>
+ 
+ #include "common/c_types_map.hpp"
+ #include "common/memory_tracking.hpp"
+@@ -25,6 +24,7 @@
+ 
+ #include "cpu/platform.hpp"
+ 
++#include "cpu/aarch64/cpu_barrier.hpp"
+ #include "cpu/aarch64/injectors/injector_utils.hpp"
+ #include "cpu/aarch64/injectors/jit_uni_binary_injector.hpp"
+ #include "cpu/aarch64/injectors/jit_uni_postops_injector.hpp"
+@@ -1362,6 +1362,10 @@ void jit_sve_1x1_conv_kernel_t<isa>::init_scratchpad(
+         scratchpad.book(key_conv_wei_reduction, wei_size * (jcp.nthr_mb - 1),
+                 jcp.typesize_out);
+     }
++
++    if (dnnl_thr_syncable() && jcp.nthr_mb > 1) {
++        scratchpad.book<simple_barrier::ctx_t>(key_conv_wei_reduction_bctx, 1);
++    }
+ }
+ 
+ /* BWD W*/
+diff --git a/src/cpu/aarch64/jit_sve_1x1_convolution.cpp b/src/cpu/aarch64/jit_sve_1x1_convolution.cpp
+index a962e0cf75..d0fdf1148a 100644
+--- a/src/cpu/aarch64/jit_sve_1x1_convolution.cpp
++++ b/src/cpu/aarch64/jit_sve_1x1_convolution.cpp
+@@ -22,7 +22,6 @@
+ #include "common/utils.hpp"
+ 
+ #include "cpu/aarch64/jit_generator.hpp"
+-
+ #include "cpu/aarch64/jit_sve_1x1_convolution.hpp"
+ 
+ namespace dnnl {
+@@ -658,8 +657,12 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+     const int wei_size = jcp.ngroups * rnd_up(jcp.oc, jcp.oc_block)
+             * rnd_up(jcp.ic, jcp.ic_block);
+ 
+-    simple_barrier::ctx_t reduction_barrier;
+-    simple_barrier::ctx_init(&reduction_barrier);
++    simple_barrier::ctx_t *reduction_barrier
++            = scratchpad.template get<simple_barrier::ctx_t>(
++                    key_conv_wei_reduction_bctx);
++    if (dnnl_thr_syncable() && jcp.nthr_mb > 1) {
++        simple_barrier::ctx_init(reduction_barrier);
++    }
+ 
+     memory_tracking::grantor_t reducer_bia_scratchpad(
+             scratchpad, prefix_reducer_bia);
+@@ -866,7 +869,7 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+ 
+         /* diff_weights[:] += sum(wei_reduction[thr_mb][:]) */
+         if (dnnl_thr_syncable() && jcp.nthr_mb > 1) {
+-            simple_barrier::barrier(&reduction_barrier, jcp.nthr);
++            simple_barrier::barrier(reduction_barrier, jcp.nthr);
+             const int work = g_work * oc_b_work * ic_b_work;
+             int start {0}, end {0};
+             balance211(work, jcp.nthr_mb, ithr_mb, start, end);
+-- 
+2.43.0
+
+
+From a24b00545fa8e9221a7521164c3875df6c9bca61 Mon Sep 17 00:00:00 2001
+From: Siddhartha Menon <siddhartha.menon@arm.com>
+Date: Tue, 11 Aug 2026 16:03:22 +0100
+Subject: [PATCH 4/4] cpu: aarch64: make non-brgemm jit convolutions async
+ compatible
+
+Signed-off-by: Siddhartha Menon <siddhartha.menon@arm.com>
+---
+ src/cpu/aarch64/jit_sve_1x1_convolution.cpp | 45 +++++++++++---------
+ src/cpu/aarch64/jit_sve_convolution.cpp     | 47 +++++++++++----------
+ src/cpu/aarch64/jit_uni_dw_convolution.cpp  | 24 +++++++----
+ src/cpu/aarch64/jit_uni_dw_convolution.hpp  | 10 ++---
+ 4 files changed, 69 insertions(+), 57 deletions(-)
+
+diff --git a/src/cpu/aarch64/jit_sve_1x1_convolution.cpp b/src/cpu/aarch64/jit_sve_1x1_convolution.cpp
+index d0fdf1148a..6df70858c1 100644
+--- a/src/cpu/aarch64/jit_sve_1x1_convolution.cpp
++++ b/src/cpu/aarch64/jit_sve_1x1_convolution.cpp
+@@ -17,6 +17,7 @@
+ *******************************************************************************/
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/type_helpers.hpp"
+ #include "common/utils.hpp"
+@@ -71,7 +72,7 @@ void jit_sve_1x1_convolution_fwd_t<src_type, wei_type, dst_type,
+         bias = padded_bias;
+     }
+ 
+-    parallel(jcp.nthr, [&](const int ithr, const int nthr) {
++    parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         execute_forward_thr(ithr, nthr, src, weights, bias, weights_dw, bias_dw,
+                 dst, scratchpad, post_ops_binary_rhs_arg_vec.data(),
+                 post_ops_binary_rhs_arg_vec_dw.data());
+@@ -485,7 +486,7 @@ void jit_sve_1x1_convolution_bwd_data_t<diff_dst_type, wei_type, diff_src_type,
+         return remaining < tail_step ? remaining : default_step;
+     };
+ 
+-    parallel(jcp.nthr, [&](const int ithr, const int nthr) {
++    parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         auto p = jit_1x1_conv_args_t();
+         auto rp = typename rtus_driver_t<isa_>::call_params_t();
+ 
+@@ -695,8 +696,9 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+     const bool is_ddst_layout_nxc = utils::one_of(
+             jcp.dst_tag, format_tag::nwc, format_tag::nhwc, format_tag::ndhwc);
+ 
+-    auto maybe_zero_icpad = [&](const int g_start, const int g_end,
+-                                    const int ocb_start, const int ocb_end) {
++    auto maybe_zero_icpad
++            = [= COMPAT_THIS_CAPTURE](const int g_start, const int g_end,
++                      const int ocb_start, const int ocb_end) {
+         // write zeros to IC padded region.
+         const int ic_tail = jcp.ic_without_padding % jcp.ic_block;
+         if (is_ddst_layout_nxc && ic_tail != 0) {
+@@ -717,7 +719,7 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+         }
+     };
+ 
+-    auto ker = [&](const int ithr, const int nthr) {
++    auto ker = [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         assert(nthr == jcp.nthr);
+ 
+         const int ithr_ic_b = ithr % jcp.nthr_ic_b;
+@@ -907,7 +909,7 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+         }
+     };
+ 
+-    auto ker_bias = [&](int ithr, int nthr) {
++    auto ker_bias = [= COMPAT_THIS_CAPTURE](int ithr, int nthr) {
+         assert(nthr == rb->balancer().nthr_);
+ 
+         const int b_job_start = rb->balancer().ithr_job_off(ithr);
+@@ -962,14 +964,15 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+     };
+ 
+     if (dnnl_thr_syncable()) {
+-        parallel(jcp.nthr, [&](const int ithr, const int nthr) {
++        parallel(jcp.nthr,
++                [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+             ker(ithr, jcp.nthr);
+             if (pd()->with_bias()) ker_bias(ithr, jcp.nthr);
+         });
+     } else {
+-        parallel(jcp.nthr, [&](int ithr, int nthr) { ker(ithr, nthr); });
++        parallel(jcp.nthr, [=](int ithr, int nthr) { ker(ithr, nthr); });
+         if (jcp.nthr_mb > 1)
+-            parallel(jcp.nthr, [&](int ithr, int nthr) {
++            parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](int ithr, int nthr) {
+                 assert(nthr == jcp.nthr);
+ 
+                 const int ithr_ic_b = ithr % jcp.nthr_ic_b;
+@@ -1032,8 +1035,8 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+             });
+         if (pd()->with_bias()) {
+             parallel(jcp.nthr,
+-                    [&](int ithr, int nthr) { ker_bias(ithr, nthr); });
+-            parallel(jcp.nthr, [&](int ithr, int nthr) {
++                    [=](int ithr, int nthr) { ker_bias(ithr, nthr); });
++            parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](int ithr, int nthr) {
+                 assert(nthr == rb->balancer().nthr_);
+                 MAYBE_UNUSED(nthr);
+                 if (rb->balancer().ithr_njobs(ithr) == 0) return;
+@@ -1042,16 +1045,18 @@ void jit_sve_1x1_convolution_bwd_weights_t<diff_dst_type, wei_type,
+         }
+     }
+ 
+-    /* TODO: put this in ker_bias */
+-    if (is_bias_padded) {
+-        assert(IMPLICATION(!is_ddst_layout_nxc, jcp.ngroups == 1));
+-        const int padded_stride = rnd_up(jcp.oc, jcp.oc_block);
+-        const int stride = jcp.oc_without_padding;
+-        for (int g = 0; g < jcp.ngroups; ++g) {
+-            utils::array_copy(diff_bias_in + g * stride,
+-                    diff_bias + g * padded_stride, stride);
++    parallel(1, [=](const int, const int) {
++        /* TODO: put this in ker_bias */
++        if (is_bias_padded) {
++            assert(IMPLICATION(!is_ddst_layout_nxc, jcp.ngroups == 1));
++            const int padded_stride = rnd_up(jcp.oc, jcp.oc_block);
++            const int stride = jcp.oc_without_padding;
++            for (int g = 0; g < jcp.ngroups; ++g) {
++                utils::array_copy(diff_bias_in + g * stride,
++                        diff_bias + g * padded_stride, stride);
++            }
+         }
+-    }
++    });
+ }
+ 
+ // SVE128 BWD_W is currently not selected due to observed 1x1
+diff --git a/src/cpu/aarch64/jit_sve_convolution.cpp b/src/cpu/aarch64/jit_sve_convolution.cpp
+index e454daad88..9cf5f54d89 100644
+--- a/src/cpu/aarch64/jit_sve_convolution.cpp
++++ b/src/cpu/aarch64/jit_sve_convolution.cpp
+@@ -17,6 +17,7 @@
+ *******************************************************************************/
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/type_helpers.hpp"
+ #include "common/utils.hpp"
+@@ -203,7 +204,7 @@ void jit_sve_convolution_fwd_t<src_type, wei_type, dst_type,
+     int work_amount = jcp.mb * nb_groups * oc_chunks * jcp.nb_ow;
+     int nthr = jcp.aligned_threads;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0}, start_copy;
+         balance211(work_amount, nthr, ithr, start, end);
+         start_copy = start;
+@@ -328,7 +329,7 @@ void jit_sve_convolution_fwd_t<src_type, wei_type, dst_type,
+     int work_amount = jcp.mb * nb_groups * oc_chunks * jcp.oh * jcp.nb_ow;
+     int nthr = jcp.aligned_threads;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0}, start_copy;
+         balance211(work_amount, nthr, ithr, start, end);
+         start_copy = start;
+@@ -489,7 +490,7 @@ void jit_sve_convolution_fwd_t<src_type, wei_type, dst_type,
+             = jcp.mb * nb_groups * oc_chunks * jcp.od * jcp.oh * jcp.nb_ow;
+     int nthr = jcp.nthr;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0}, start_copy;
+         balance211(work_amount, nthr, ithr, start, end);
+         start_copy = start;
+@@ -656,7 +657,7 @@ void jit_sve_convolution_bwd_data_t<diff_dst_type, wei_type, diff_src_type,
+     int work_amount = nb_groups * jcp.mb * ic_chunks * jcp.nb_iw;
+     int nthr = jcp.nthr;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0}, start_copy;
+         balance211(work_amount, nthr, ithr, start, end);
+         start_copy = start;
+@@ -772,7 +773,7 @@ void jit_sve_convolution_bwd_data_t<diff_dst_type, wei_type, diff_src_type,
+     int work_amount = nb_groups * jcp.mb * ic_chunks * jcp.ih * jcp.nb_iw;
+     int nthr = jcp.nthr;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0}, start_copy;
+         balance211(work_amount, nthr, ithr, start, end);
+         start_copy = start;
+@@ -940,7 +941,7 @@ void jit_sve_convolution_bwd_data_t<diff_dst_type, wei_type, diff_src_type,
+     int work_amount = nb_groups * jcp.mb * ic_chunks * jcp.id * jcp.ih;
+     int nthr = jcp.nthr;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0}, start_copy;
+         balance211(work_amount, nthr, ithr, start, end);
+         start_copy = start;
+@@ -1793,7 +1794,7 @@ void jit_sve_convolution_bwd_weights_t<src_type, diff_dst_type,
+         }
+     });
+ #else
+-    parallel(nthr_, [&](const int ithr, const int nthr) {
++    parallel(nthr_, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         thread_info_t thread_info(this, ctx, ithr);
+         switch (pd()->jcp_.harness) {
+             case harness_2d_reduction:
+@@ -1810,7 +1811,7 @@ void jit_sve_convolution_bwd_weights_t<src_type, diff_dst_type,
+         }
+     });
+ 
+-    parallel(nthr_, [&](const int ithr, const int nthr) {
++    parallel(nthr_, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         thread_info_t thread_info(this, ctx, ithr);
+         if (nthr_mb_ > 1) {
+             switch (pd()->jcp_.harness) {
+@@ -1847,21 +1848,23 @@ void jit_sve_convolution_bwd_weights_t<src_type, diff_dst_type,
+     });
+ #endif
+ 
+-    /* TODO: put that into compute_diff_bias() */
+-    auto &jcp = pd()->jcp_;
+-    if (pd()->with_bias() && jcp.oc_without_padding % jcp.oc_block != 0) {
+-        auto diff_bias = ctx.get_scratchpad_grantor()
+-                                 .template get<const diff_weights_data_t>(
+-                                         key_conv_padded_bias);
+-        auto diff_bias_in
+-                = CTX_OUT_MEM(diff_weights_data_t *, DNNL_ARG_DIFF_BIAS);
+-        const int padded_stride = rnd_up(jcp.oc, jcp.oc_block);
+-        const int stride = jcp.oc_without_padding;
+-        for (int g = 0; g < jcp.ngroups; ++g) {
+-            utils::array_copy(diff_bias_in + g * stride,
+-                    diff_bias + g * padded_stride, stride);
++    parallel(1, [=](int, int) {
++        /* TODO: put that into compute_diff_bias() */
++        auto &jcp = pd()->jcp_;
++        if (pd()->with_bias() && jcp.oc_without_padding % jcp.oc_block != 0) {
++            auto diff_bias = ctx.get_scratchpad_grantor()
++                                     .template get<const diff_weights_data_t>(
++                                             key_conv_padded_bias);
++            auto diff_bias_in
++                    = CTX_OUT_MEM(diff_weights_data_t *, DNNL_ARG_DIFF_BIAS);
++            const int padded_stride = rnd_up(jcp.oc, jcp.oc_block);
++            const int stride = jcp.oc_without_padding;
++            for (int g = 0; g < jcp.ngroups; ++g) {
++                utils::array_copy(diff_bias_in + g * stride,
++                        diff_bias + g * padded_stride, stride);
++            }
+         }
+-    }
++    });
+ }
+ 
+ template struct jit_sve_convolution_bwd_weights_t<data_type::f32,
+diff --git a/src/cpu/aarch64/jit_uni_dw_convolution.cpp b/src/cpu/aarch64/jit_uni_dw_convolution.cpp
+index d0d22e66a7..770926d561 100644
+--- a/src/cpu/aarch64/jit_uni_dw_convolution.cpp
++++ b/src/cpu/aarch64/jit_uni_dw_convolution.cpp
+@@ -17,6 +17,7 @@
+ *******************************************************************************/
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/memory_tracking.hpp"
+ 
+@@ -82,7 +83,7 @@ void jit_uni_dw_convolution_fwd_t<isa, src_type, dst_type>::execute_forward(
+     const int work_amount = jcp.mb * chb_work * jcp.oh;
+     const auto nthr = jcp.nthr;
+ 
+-    parallel(nthr, [&](const int ithr, const int nthr) {
++    parallel(nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         int start {0}, end {0};
+         balance211(work_amount, nthr, ithr, start, end);
+ 
+@@ -180,7 +181,7 @@ void jit_uni_dw_convolution_bwd_data_t<isa, diff_dst_type,
+ 
+     const auto &jcp = pd()->jcp_;
+ 
+-    auto kernel_params = [&](int ur_str_w, int iw, int oh, int ih,
++    auto kernel_params = [=](int ur_str_w, int iw, int oh, int ih,
+                                  int i_t_overflow, int i_b_overflow,
+                                  int stride_off_h, int ch, int ch_num, int n) {
+         auto par_conv = jit_conv_args_t();
+@@ -219,7 +220,8 @@ void jit_uni_dw_convolution_bwd_data_t<isa, diff_dst_type,
+     const int aux_w
+             = nstl::min(jcp.iw, jcp.iw - ext_kw + jcp.r_pad + jcp.stride_w);
+     const int chb_work = utils::div_up(jcp.nb_ch, jcp.nb_ch_blocking);
+-    parallel_nd(jcp.mb, chb_work, jcp.ih, [&](int n, int chb, int ih) {
++    parallel_nd(jcp.mb, chb_work, jcp.ih,
++            [= COMPAT_THIS_CAPTURE](int n, int chb, int ih) {
+         int ch = chb * jcp.nb_ch_blocking;
+         int ch_num = jcp.nb_ch_blocking;
+ 
+@@ -283,9 +285,9 @@ jit_uni_dw_convolution_bwd_weights_t<isa, src_type, diff_weights_type>::
+     : primitive_t(apd), acc_ker_(nullptr), kernel_(nullptr) {}
+ 
+ template <cpu_isa_t isa, data_type_t src_type, data_type_t diff_weights_type>
+-void jit_uni_dw_convolution_bwd_weights_t<isa, src_type,
+-        diff_weights_type>::execute_backward_weights(const exec_ctx_t &ctx)
+-        const {
++status_t
++jit_uni_dw_convolution_bwd_weights_t<isa, src_type, diff_weights_type>::execute(
++        const exec_ctx_t &ctx) const {
+     auto diff_dst = CTX_IN_MEM(const diff_dst_data_t *, DNNL_ARG_DIFF_DST);
+     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
+     auto diff_weights
+@@ -314,7 +316,7 @@ void jit_uni_dw_convolution_bwd_weights_t<isa, src_type,
+     const int ch_block = jcp.ch_block;
+ 
+     auto set_kernel_params
+-            = [&](jit_dw_conv_args_t *conv_params, const int batch,
++            = [=](jit_dw_conv_args_t *conv_params, const int batch,
+                       const int group, const int oh_start, const int work_size,
+                       const unsigned char exec_flag, const size_t kh_padding,
+                       const size_t filter_off) {
+@@ -345,7 +347,7 @@ void jit_uni_dw_convolution_bwd_weights_t<isa, src_type,
+         conv_params->input = &src[src_off * ch_block];
+     };
+ 
+-    parallel(jcp.nthr, [&](const int ithr, const int nthr) {
++    parallel(jcp.nthr, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         assert(nthr == jcp.nthr);
+ 
+         auto conv_params = jit_dw_conv_args_t();
+@@ -408,6 +410,12 @@ void jit_uni_dw_convolution_bwd_weights_t<isa, src_type,
+             }
+         }
+     });
++
++    // The single-thread parallel region is to ensure ordering between the
++    // backward pass and reduction under async-runtimes
++    parallel(1, [= COMPAT_THIS_CAPTURE](int, int) { execute_reduction(ctx); });
++
++    return status::success;
+ }
+ 
+ /* TODO: Performing a Parallel Reduction could potentially improve performance;
+diff --git a/src/cpu/aarch64/jit_uni_dw_convolution.hpp b/src/cpu/aarch64/jit_uni_dw_convolution.hpp
+index f099157218..a3899155fd 100644
+--- a/src/cpu/aarch64/jit_uni_dw_convolution.hpp
++++ b/src/cpu/aarch64/jit_uni_dw_convolution.hpp
+@@ -20,10 +20,11 @@
+ #define CPU_AARCH64_JIT_UNI_DW_CONVOLUTION_HPP
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
++#include "common/dnnl_thread.hpp"
+ #include "common/memory_tracking.hpp"
+ #include "common/primitive.hpp"
+ 
+-#include "cpu/aarch64/cpu_barrier.hpp"
+ #include "cpu/aarch64/cpu_reducer.hpp"
+ #include "cpu/cpu_convolution_pd.hpp"
+ 
+@@ -279,14 +280,9 @@ struct jit_uni_dw_convolution_bwd_weights_t : public primitive_t {
+         return status::success;
+     }
+ 
+-    status_t execute(const exec_ctx_t &ctx) const override {
+-        execute_backward_weights(ctx);
+-        execute_reduction(ctx);
+-        return status::success;
+-    }
++    status_t execute(const exec_ctx_t &ctx) const override;
+ 
+ private:
+-    void execute_backward_weights(const exec_ctx_t &ctx) const;
+     void execute_reduction(const exec_ctx_t &ctx) const;
+     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
+ 
+-- 
+2.43.0
+

@@ -42,6 +42,23 @@ def repo():
     )
 
     tf_http_archive(
+        name = "onednn_async_aarch64",
+        build_file = "//third_party/mkl_dnn:mkldnn_v1_async_aarch64.BUILD",
+        # Rename the gtest module in oneDNN's third_party to avoid
+        # conflict with Google's gtest module
+        patch_file = [
+            "//third_party/mkl_dnn:setting_init.patch",
+            "//third_party/mkl_dnn:onednn_async_aarch64_pr_5789.patch",
+            "//third_party/mkl_dnn:onednn_async_aarch64_pr_5790.patch",
+            "//third_party/mkl_dnn:onednn_async_aarch64_pr_5813.patch",
+            "//third_party/mkl_dnn:onednn_async_aarch64_pr_5828.patch",
+        ],
+        sha256 = "b3e841bec4be91a63a5f11fac027cc8c002c234c3028675aa5179bbc3d9528b6",
+        strip_prefix = "oneDNN-e0d8b940aba7ece3d4374f80e508bbcdb8f141db",
+        urls = tf_mirror_urls("https://github.com/uxlfoundation/oneDNN/archive/e0d8b940aba7ece3d4374f80e508bbcdb8f141db.tar.gz"),
+    )
+
+    tf_http_archive(
         name = "mkl_dnn_acl_compatible",
         build_file = "//third_party/mkl_dnn:mkldnn_acl.BUILD",
         patch_file = [
