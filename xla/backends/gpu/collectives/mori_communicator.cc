@@ -112,7 +112,7 @@ absl::StatusOr<::mori::collective::ReduceOpKind> ToMoriReduceOp(
 
 absl::StatusOr<se::Stream*> ToStream(const Communicator::Executor& executor) {
   if (auto* gpu_executor =
-          tsl::down_cast<const GpuCollectives::Executor*>(&executor)) {
+          absl::down_cast<const GpuCollectives::Executor*>(&executor)) {
     return gpu_executor->stream();
   }
   return InvalidArgument("Communicator executor is not a GPU executor");
