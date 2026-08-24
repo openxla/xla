@@ -15,12 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -30,6 +29,8 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/service/gpu/llvm_gpu_backend/ptx_version_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -40,6 +41,17 @@ namespace xla {
 namespace gpu {
 namespace {
 namespace se = ::stream_executor;
+
+TEST(UtilsTest, LlvmSupportsMinimumPtxVersionForSm107a) {
+  LLVMInitializeNVPTXTargetInfo();
+  LLVMInitializeNVPTXTargetMC();
+
+  auto max_ptx_version = nvptx::GetMaxPtxVersionSupportedByLlvm(
+      llvm::Triple("nvptx64-unknown-unknown"));
+
+  ASSERT_TRUE(max_ptx_version.ok()) << max_ptx_version.status();
+  EXPECT_GE(*max_ptx_version, 94);
+}
 
 TEST(UtilsTest, TestGetSmName) {
   using FeatureExtension = se::CudaComputeCapability::FeatureExtension;
