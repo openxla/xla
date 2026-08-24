@@ -75,6 +75,10 @@ absl::StatusOr<bool> SyclGemmWorkspacePass::RunImpl(
       if (!IsCublasLtMatmul(*matmul_instr)) {
         continue;
       }
+      const Shape& matmul_shape = matmul_instr->shape();
+      if (!matmul_shape.IsTuple() || matmul_shape.tuple_shapes().size() != 2) {
+        continue;
+      }
       // oneDNN's matmul primitive does not support complex element types.
       if (primitive_util::IsComplexType(
               matmul_instr->shape().tuple_shapes(0).element_type())) {
