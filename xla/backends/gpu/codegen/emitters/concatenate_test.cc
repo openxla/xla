@@ -15,8 +15,9 @@
  */
 #include "xla/backends/gpu/codegen/emitters/concatenate.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/status/status_matchers.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -53,6 +54,7 @@ TEST_F(ConcatenateFusionTest, PropagatesUnrollFactorToCompilationPipeline) {
   ConcatenateFusion concatenate_fusion(analysis);
   const MlirKernelEmitter& compilation_pipeline_emitter = concatenate_fusion;
 
+  // Blackwell with CUDA 12.9 vectorizes up to 256 bits, or 16 BF16 elements.
   EXPECT_EQ(compilation_pipeline_emitter.unroll_factor(), 16);
 }
 

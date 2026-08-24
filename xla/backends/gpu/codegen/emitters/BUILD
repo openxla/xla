@@ -63,6 +63,7 @@ xla_cc_test(
     tags = ["gpu"],
     deps = [
         ":concatenate",
+        ":mlir_kernel_emitter",
         "//xla:debug_options_flags",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -72,7 +73,6 @@ xla_cc_test(
         "//xla/stream_executor:semantic_version",
         "//xla/tests:xla_internal_test_main",
         "//xla:xla_proto_cc",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
     ],
 )
