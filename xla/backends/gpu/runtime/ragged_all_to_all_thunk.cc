@@ -447,11 +447,20 @@ absl::Status RunNcclFallbackRaggedAllToAll(
     int64_t element_byte_width = primitive_util::ByteWidth(element_type);
     se::DeviceAddressBase input_buffer = buffers[0].source_buffer;
 
+    // Track the actual number of puts issued per peer so we can pass the
+    // correct op_cnt to WaitSignal below. Skipping zero-size puts saves
+    // ~12 us of NCCL overhead per skipped slot (see issue #46982).
+    std::vector<int> puts_per_peer(num_ranks, 0);
+
     Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
       for (int peer = 0; peer < num_ranks; ++peer) {
         for (int64_t i = 0; i < num_updates_per_replica; ++i) {
           const int64_t idx = peer * num_updates_per_replica + i;
           const int64_t send_count = send_sizes[idx] * ragged_row_element_size;
+
+          // Skip zero-size sends: NCCL still pays ~12 us per LaunchPut even
+          // at count=0, causing O(n_devices) cost for sparse neighbor patterns.
+          if (send_count == 0) continue;
 
           const se::DeviceAddressBase send_slice = GpuCollectives::Slice(
               input_buffer, element_type,
@@ -466,6 +475,7 @@ absl::Status RunNcclFallbackRaggedAllToAll(
           ABSL_RETURN_IF_ERROR(gpu_comm->LaunchPut(
               send_slice, output_symmetric_memory, byte_offset, byte_count,
               RankId(peer), GpuCollectives::On(stream)));
+          ++puts_per_peer[peer];
         }
       }
       return absl::OkStatus();
@@ -474,8 +484,11 @@ absl::Status RunNcclFallbackRaggedAllToAll(
 
     GpuSignalDesc signal_desc(/*sig_idx=*/0, /*ctx=*/0);
     for (int peer = 0; peer < num_ranks; ++peer) {
+      // Wait only for the puts we actually issued to this peer. If we issued
+      // zero puts (all slots were zero-size), WaitSignal is skipped entirely.
+      if (puts_per_peer[peer] == 0) continue;
       ABSL_RETURN_IF_ERROR(comm.WaitSignal(RankId(peer),
-                                      /*op_cnt=*/num_updates_per_replica,
+                                      /*op_cnt=*/puts_per_peer[peer],
                                       signal_desc, GpuCollectives::On(stream))
                           .Await());
     }
@@ -496,6 +509,15 @@ absl::Status RunNcclFallbackRaggedAllToAll(
     for (int64_t i = 0; i < num_updates_per_replica; ++i) {
       for (int peer = 0; peer < num_ranks; ++peer) {
         int64_t idx = peer * num_updates_per_replica + i;
+
+        // Skip zero-size peer slots. NCCL pays ~12 us overhead per
+        // LaunchSend/LaunchRecv even at count=0, causing O(n_devices) cost
+        // for sparse neighbor patterns (issue #46982). Both sides apply the
+        // same condition using their local metadata so sends and recvs remain
+        // paired: if send_size[idx]==0 here, the matching recv_size on the
+        // remote rank for the same slot is also 0 by RaggedAllToAll semantics.
+        if (send_sizes[idx] == 0 && recv_sizes[idx] == 0) continue;
+
         se::DeviceAddressBase send_slice =
             GpuCollectives::Slice(input_buffer, element_type,
                                   input_offsets[idx] * ragged_row_element_size,
