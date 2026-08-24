@@ -50,8 +50,8 @@ jobs:
         run: |
           {
             echo "docker-image=ghcr.io/rocm/jax-build-ubu24.rocmless@sha256:68854ed30b800d3e8c390f6e651721e2bead58830da1c59e1b828354eb8f077f"
-            echo "rocm-distro-url=https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-linux-multiarch-7.14.0.tar.gz"
-            echo "rocm-distro-hash=baadd54cff7a064b3b0ae51c19606ee4bced0f4215a21c89f616cf9c01ea4b47"
+            echo "rocm-distro-url=https://rocm.prereleases.amd.com/tarball-multi-arch/therock-dist-linux-multiarch-10.0.0rc4.tar.gz"
+            echo "rocm-distro-hash=1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6"
           } >> "$GITHUB_OUTPUT"
 
   jax:
