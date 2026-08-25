@@ -20,6 +20,7 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/sycl/onemkl_util.h"
 #include "xla/stream_executor/sycl/sycl_matmul_utils.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 
