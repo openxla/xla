@@ -3791,6 +3791,33 @@ TEST_F(LiteralUtilTest, CopyFromProtoDynamicShapeMismatch) {
   EXPECT_FALSE(Literal::CreateFromProto(proto).ok());
 }
 
+TEST_F(LiteralUtilTest, MakeFakeLiteralInitializesDynamicSizes) {
+  std::minstd_rand0 engine(42);
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 10}, {false, true});
+  ASSERT_OK_AND_ASSIGN(
+      Literal literal,
+      MakeFakeLiteral(shape, &engine, /*limit=*/std::nullopt,
+                      /*is_sorted=*/false, /*no_duplicates=*/false,
+                      /*use_large_range=*/false,
+                      /*max_bits_of_precision=*/std::nullopt,
+                      /*index_alignment=*/std::nullopt,
+                      /*index_known_zeroes=*/std::nullopt,
+                      /*float_generator=*/nullptr, /*interval=*/std::nullopt));
+  EXPECT_EQ(literal.GetDynamicSize(1), 10);
+
+  ASSERT_OK_AND_ASSIGN(Literal no_engine_literal,
+                       MakeFakeLiteral(shape, /*pseudo_random=*/false,
+                                       /*use_large_range=*/false));
+  EXPECT_EQ(no_engine_literal.GetDynamicSize(1), 10);
+
+  // Non-array shapes must pass through untouched.
+  ASSERT_OK_AND_ASSIGN(Literal token_literal,
+                       MakeFakeLiteral(ShapeUtil::MakeTokenShape(),
+                                       /*pseudo_random=*/false,
+                                       /*use_large_range=*/false));
+  EXPECT_TRUE(token_literal.shape().IsToken());
+}
+
 template <typename FloatT>
 void VerifyMakeFakeLiteralInterval(const ConstraintInterval& interval,
                                    double expected_min, double expected_max,

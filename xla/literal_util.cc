@@ -907,8 +907,23 @@ absl::StatusOr<Literal> MakeFakeLiteral(
     }
     return LiteralUtil::MakeTupleOwned(std::move(elements));
   }
+  // Literal construction leaves dynamic dimension sizes uninitialized;
+  // default them to their bounds so generated literals are well-formed.
+  auto set_dynamic_sizes_to_bounds = [](Literal& literal) {
+    if (!literal.shape().IsArray()) {
+      return;
+    }
+    const int64_t rank = literal.shape().dimensions().size();
+    for (int64_t i = 0; i < rank; ++i) {
+      if (literal.shape().is_dynamic_dimension(i)) {
+        literal.SetDynamicSize(i, literal.shape().dimensions(i));
+      }
+    }
+  };
   if (engine == nullptr) {
-    return Literal::CreateFromShape(shape);
+    Literal literal = Literal::CreateFromShape(shape);
+    set_dynamic_sizes_to_bounds(literal);
+    return literal;
   }
   // Clear tiles/element size in shape's layout before using it for creating
   // literal.
@@ -917,6 +932,7 @@ absl::StatusOr<Literal> MakeFakeLiteral(
   new_shape.mutable_layout()->set_tail_padding_alignment_in_elements(1);
   new_shape.mutable_layout()->set_element_size_in_bits(0);
   Literal literal(new_shape);
+  set_dynamic_sizes_to_bounds(literal);
 
   ABSL_RETURN_IF_ERROR(primitive_util::PrimitiveTypeSwitch<absl::Status>(
       [&](auto primitive_type_constant) -> absl::Status {
