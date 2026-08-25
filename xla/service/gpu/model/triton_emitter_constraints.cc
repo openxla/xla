@@ -83,7 +83,6 @@ int64_t GetPaddedTileSizeInBytes(absl::Span<const int64_t> tile_sizes,
                                  int64_t element_byte_size) {
   int64_t padded_tile_elements = 1;
   for (int64_t size : tile_sizes) {
-    CHECK_GT(size, 0) << "Encountered non-positive tile size " << size;
     padded_tile_elements *= llvm::PowerOf2Ceil(size);
   }
   return padded_tile_elements * element_byte_size;
