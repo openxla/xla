@@ -37,13 +37,18 @@ __device__ void WaitSignalFlag(uint32_t* addr, uint32_t expected);
 
 // Generic Barrier across blocks.
 // MaxPeers is templated to allow reuse between different kernels.
+//
+// Each thread of the block strides over the peer ranks starting from
+// `threadIdx.x` with a step of `blockDim.x`. This lets the caller synchronize
+// with `num_ranks` peers using any number of threads (including fewer threads
+// than peers), as long as `num_ranks <= MaxPeers`.
 template <PlatformType T, int64_t MaxPeers>
 __device__ __forceinline__ void SyncRemoteBlocks(
     // Use raw pointer with __restrict__ directly here
     std::array<uint32_t* __restrict__, MaxPeers> signal_pad_ptrs, int64_t rank,
     int64_t num_ranks, uint32_t signal_value) {
-  if (threadIdx.x < num_ranks) {
-    auto target_rank = threadIdx.x;
+  for (int64_t target_rank = threadIdx.x; target_rank < num_ranks;
+       target_rank += blockDim.x) {
     PutSignalFlag<T>(
         signal_pad_ptrs[target_rank] + blockIdx.x * num_ranks + rank,
         signal_value);
