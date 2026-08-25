@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
 #define XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_set.h"
 #include "absl/status/status.h"
@@ -99,9 +100,20 @@ class RocmTracer {
   using kernel_symbol_data_t =
       rocprofiler_callback_tracing_code_object_kernel_symbol_register_data_t;
 
+  // Scalars copied out of the SDK's kernel-symbol record, plus the demangled
+  // name.
+  //
+  // Deliberately not the kernel_symbol_data_t itself. That struct holds a
+  // `const char* kernel_name` owned by rocprofiler, which frees it when the
+  // code object unloads -- storing the struct for the lifetime of the process
+  // leaves a dangling pointer behind for whoever reads it next. Copying the
+  // scalars keeps this a POD with no borrowed storage.
   struct ProfilerKernelInfo {
     std::string name;
-    kernel_symbol_data_t data;
+    uint32_t arch_vgpr_count = 0;
+    uint32_t accum_vgpr_count = 0;
+    uint32_t sgpr_count = 0;
+    uint32_t group_segment_size = 0;  // static LDS declared by the symbol
   };
 
   using kernel_info_map_t =
@@ -123,8 +135,10 @@ class RocmTracer {
   rocprofiler_context_id_t hip_stream_ctx_{};
 
   // Maps & misc -------------------------------------------------------
-  kernel_info_map_t kernel_info_{};
   absl::Mutex kernel_lock_;
+  // One entry per kernel symbol, for the lifetime of the process. Unbounded
+  // by construction: long JAX runs add an entry per JIT recompile.
+  kernel_info_map_t kernel_info_ ABSL_GUARDED_BY(kernel_lock_){};
 
   callback_name_info name_info_;
   agent_info_map_t agents_;

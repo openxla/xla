@@ -20,11 +20,10 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
-#include <tuple>
 #include <vector>
 
-#include "rocprofiler-sdk/agent.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
@@ -32,6 +31,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "rocprofiler-sdk/agent.h"
+#include "xla/backends/profiler/gpu/rocm_occupancy.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
@@ -39,8 +40,33 @@ limitations under the License.
 namespace xla {
 namespace profiler {
 
+// `regs_per_thread` is the UNIFIED arch+accum VGPR charge from
+// UnifiedVgprCount(), not kernel_info.arch_vgpr_count. Reporting the arch
+// count alone next to occ_pct would show an MFMA kernel holding 5 registers
+// and running at 37.5%, which reads as a bug in the occupancy number.
+//
+// Token names and order follow the CUDA collector's kernel-details string
+// (cupti_buffer_events.h ToXStat) wherever the concept exists on both
+// vendors, so one XProf tooltip parses both: `regs:`, `static_shared:`,
+// `dynamic_shared:`, `grid:`, `block:`, `occ_pct:`. The single ROCm-only
+// token is `private_mem:` (scratch per work-item), which has no CUPTI
+// counterpart. The former `group_mem:` was the static+dynamic total; it is
+// split here rather than reported alongside, because the sum carries no
+// information the two parts do not and a third LDS number in the same string
+// invites misreading.
+//
+// `occupancy_pct` is optional because GetOccupancy() is: nullopt means the
+// model declined to answer (unrecognised target, missing symbol data, a
+// geometry the hardware could not have made resident). In that case the
+// `occ_pct:` token is omitted entirely rather than written as 0. Emitting a
+// zero here would be read downstream as a measured 0% -- XProf's kernel-stats
+// table parses this very string (kernel_stats_utils.cc) and sets
+// occupancy_pct only when it finds the key -- and it would contradict
+// rocm_occupancy.h's contract that a caller "must then emit no occupancy
+// stats, NOT zero ones". A genuine modelled 0.0 is still written.
 inline std::string ToXStat(const KernelDetails& kernel_info,
-                           double occupancy_pct) {
+                           uint32_t regs_per_thread,
+                           std::optional<double> occupancy_pct) {
   uint32_t grid_x = kernel_info.workgroup_x != 0
                         ? kernel_info.grid_x / kernel_info.workgroup_x
                         : 0,
@@ -51,78 +77,31 @@ inline std::string ToXStat(const KernelDetails& kernel_info,
                         ? kernel_info.grid_z / kernel_info.workgroup_z
                         : 0;
 
-  return absl::StrCat(" grid:", grid_x, ",", grid_y, ",", grid_z,
-                      " block:", kernel_info.workgroup_x, ",",
-                      kernel_info.workgroup_y, ",", kernel_info.workgroup_z,
-                      " private_mem:", kernel_info.private_segment_size,
-                      " group_mem:", kernel_info.group_segment_size,
-                      " occ_pct:", occupancy_pct);
+  // The dispatch record carries the total LDS per workgroup; the code-object
+  // symbol carries the static half. A zero static figure means the symbol
+  // lookup missed, in which case attributing the whole total to `dynamic` is
+  // the honest reading -- we know what was allocated, not how it was declared.
+  const uint32_t static_shared = kernel_info.static_group_segment_size;
+  const uint32_t dynamic_shared =
+      kernel_info.group_segment_size > static_shared
+          ? kernel_info.group_segment_size - static_shared
+          : 0;
+
+  std::string stat =
+      absl::StrCat("regs:", regs_per_thread, " static_shared:", static_shared,
+                   " dynamic_shared:", dynamic_shared, " grid:", grid_x, ",",
+                   grid_y, ",", grid_z, " block:", kernel_info.workgroup_x, ",",
+                   kernel_info.workgroup_y, ",", kernel_info.workgroup_z,
+                   " private_mem:", kernel_info.private_segment_size);
+  if (occupancy_pct.has_value()) {
+    absl::StrAppend(&stat, " occ_pct:", *occupancy_pct);
+  }
+  return stat;
 }
 
-struct RocmDeviceOccupancyParams {
-  hipFuncAttributes attributes = {};
-  int block_size = 0;
-  size_t dynamic_smem_size = 0;
-  void* func_ptr;
-  uint32_t max_waves_per_cu = 0;
-  uint32_t wave_front_size = 0;
-
-  friend bool operator==(const RocmDeviceOccupancyParams& a,
-                         const RocmDeviceOccupancyParams& b) noexcept {
-    // Compare only the fields that affect occupancy decisions.
-    return std::tuple{a.attributes.binaryVersion,
-                      a.attributes.cacheModeCA,
-                      a.attributes.constSizeBytes,
-                      a.attributes.localSizeBytes,
-                      a.attributes.maxDynamicSharedSizeBytes,
-                      a.attributes.maxThreadsPerBlock,
-                      a.attributes.numRegs,
-                      a.attributes.preferredShmemCarveout,
-                      a.attributes.ptxVersion,
-                      a.block_size,
-                      a.dynamic_smem_size,
-                      a.func_ptr,
-                      a.max_waves_per_cu,
-                      a.wave_front_size} ==
-           std::tuple{b.attributes.binaryVersion,
-                      b.attributes.cacheModeCA,
-                      b.attributes.constSizeBytes,
-                      b.attributes.localSizeBytes,
-                      b.attributes.maxDynamicSharedSizeBytes,
-                      b.attributes.maxThreadsPerBlock,
-                      b.attributes.numRegs,
-                      b.attributes.preferredShmemCarveout,
-                      b.attributes.ptxVersion,
-                      b.block_size,
-                      b.dynamic_smem_size,
-                      b.func_ptr,
-                      b.max_waves_per_cu,
-                      b.wave_front_size};
-  }
-
-  friend bool operator!=(const RocmDeviceOccupancyParams& a,
-                         const RocmDeviceOccupancyParams& b) noexcept {
-    return !(a == b);
-  }
-
-  template <typename H>
-  friend H AbslHashValue(H hash_state,
-                         const RocmDeviceOccupancyParams& params) {
-    return H::combine(
-        std::move(hash_state), params.attributes.maxThreadsPerBlock,
-        params.attributes.numRegs, params.attributes.sharedSizeBytes,
-        params.attributes.maxDynamicSharedSizeBytes, params.block_size,
-        params.dynamic_smem_size, params.func_ptr, params.max_waves_per_cu,
-        params.wave_front_size);
-  }
-};
-
-// FIXME: rocprofiler-sdk does not have this one yet
-struct OccupancyStats {
-  double occupancy_pct = 0.0;
-  int min_grid_size = 0;
-  int suggested_block_size = 0;
-};
+// RocmDeviceOccupancyParams, OccupancyStats, OccupancyLimiter and
+// GetOccupancy() live in rocm_occupancy.h, which has no ROCm includes so that
+// the model can be unit-tested on a CPU-only host.
 
 class RocmTraceCollector {
  public:
@@ -163,7 +142,6 @@ class PerDeviceCollector {
                              tsl::profiler::XPlaneBuilder* device_plane);
 
  private:
-  OccupancyStats GetOccupancy(const RocmDeviceOccupancyParams& params) const;
   void CreateXEvent(const RocmTracerEvent& event,
                     tsl::profiler::XPlaneBuilder* plane, uint64_t start_gpu_ns,
                     uint64_t end_gpu_ns, tsl::profiler::XLineBuilder* line);
@@ -173,8 +151,25 @@ class PerDeviceCollector {
  private:
   absl::Mutex events_mutex_;
   std::vector<RocmTracerEvent> events_ ABSL_GUARDED_BY(events_mutex_);
-  absl::flat_hash_map<RocmDeviceOccupancyParams, OccupancyStats>
+  // The fields below are written once in GetDeviceCapabilities() and read in
+  // CreateXEvent(), both called sequentially from Export() after Flush().
+  // No concurrent access, so no mutex guard is needed.
+  //
+  // A nullopt mapped value means "we tried and this launch cannot be modelled",
+  // NOT "not computed yet" -- membership in the map is what says "computed".
+  // Using the optional itself as the not-yet-computed sentinel would make every
+  // unmodelable kernel recompute on every event, which is the cost this cache
+  // exists to avoid.
+  absl::flat_hash_map<RocmDeviceOccupancyParams, std::optional<OccupancyStats>>
       occupancy_cache_;
+  // Kept only so the occupancy model can be keyed and the agent values
+  // cross-checked against the per-target table; see GetDeviceCapabilities().
+  uint32_t gfx_target_version_ = 0;
+  uint32_t cu_count_ = 0;
+  // Resolved once from gfx_target_version_, alongside the cross-check that
+  // needs it anyway. nullopt means "target we cannot model" -- gfx10+, where
+  // ToXStat falls back to a non-unified register count.
+  std::optional<AmdGpuTargetConstants> target_constants_;
 };  // PerDeviceCollector
 
 class RocmTraceCollectorImpl : public RocmTraceCollector {

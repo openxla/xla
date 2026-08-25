@@ -61,8 +61,12 @@ struct KernelDetails {
   // The amount of private memory used by kernel,
   // number of register per thread (register spillage if > 0)
   uint32_t private_segment_size;
-  // The amount of shared memory (SMEM)
+  // The amount of shared memory (SMEM). From the *dispatch* record, this is
+  // the TOTAL LDS per workgroup: static plus any runtime addition.
   uint32_t group_segment_size;
+  // From the kernel symbol: the statically declared LDS only. The difference
+  // against group_segment_size is the dynamic part.
+  uint32_t static_group_segment_size;
   // X-dimension of a workgroup (grid.x*block.x)
   uint32_t workgroup_x;
   // Y-dimension of a workgroup (grid.x*block.x)
@@ -76,8 +80,27 @@ struct KernelDetails {
   // Z-dimension of a grid.
   uint32_t grid_z;
 
-  // kernel address. Used for calculating core occupancy
-  void* func_ptr;
+  // From the kernel symbol data (code-object callback). Used for occupancy.
+  // No in-class initializers: KernelDetails lives in a union inside
+  // RocmTracerEvent, so a non-trivial default constructor would delete
+  // RocmTracerEvent's default constructor. Callers zero these explicitly.
+  //
+  // Architectural VGPRs allocated per thread. Deliberately NOT named
+  // `num_regs`: on gfx90a/94x/95x this is only part of what the hardware
+  // charges a wave, and a name that implies otherwise is how the AGPR bug
+  // comes back in eighteen months. Use UnifiedVgprCount() to get the number
+  // the hardware actually allocates.
+  uint32_t arch_vgpr_count;
+  // Accumulation VGPRs (AGPRs). On the unified-register-file targets
+  // gfx90a/94x/95x these share the same 512-entry budget as the arch VGPRs,
+  // so dropping them over-reports MFMA kernels by up to 4x.
+  //
+  // A zero here does NOT generically mean "no AGPRs": rocprofiler-sdk returns
+  // 0 for targets it does not recognise, and on gfx908 it returns
+  // arch_vgpr_count instead. Both traps are handled in UnifiedVgprCount().
+  uint32_t accum_vgpr_count;
+  // Scalar registers, already rounded to the 16-register granule by the SDK.
+  uint32_t sgpr_count;
 };
 
 enum class RocmTracerEventType {

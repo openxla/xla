@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -35,6 +36,7 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/rocprofiler.h"
+#include "xla/backends/profiler/gpu/rocm_occupancy.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/utils/parse_annotation.h"
@@ -148,40 +150,6 @@ uint64_t get_timestamp() {
 }
 }  // namespace
 
-OccupancyStats PerDeviceCollector::GetOccupancy(
-    const RocmDeviceOccupancyParams& params) const {
-  // TODO(rocm-profiler): hipOccupancyMaxActiveBlocksPerMultiprocessor only
-  // return hipSuccess for HIP_API_ID_hipLaunchKernel
-  OccupancyStats stats;
-  int number_of_active_blocks;
-  hipError_t err = hipOccupancyMaxActiveBlocksPerMultiprocessor(
-      &number_of_active_blocks, params.func_ptr, params.block_size,
-      params.dynamic_smem_size);
-
-  if (err != hipError_t::hipSuccess) {
-    return {};
-  }
-
-  stats.occupancy_pct = number_of_active_blocks * params.block_size * 100;
-  // TODO(ROCm): GetOccupancy is currently dead code -- no callers populate
-  // max_waves_per_cu / wave_front_size, so occupancy_pct stays zero.
-  // Wire up agent data when occupancy reporting is enabled.
-  auto max_threads = params.max_waves_per_cu * params.wave_front_size;
-  if (max_threads > 0) {
-    stats.occupancy_pct /= max_threads;
-  }
-
-  err = hipOccupancyMaxPotentialBlockSize(
-      &stats.min_grid_size, &stats.suggested_block_size,
-      static_cast<const void*>(params.func_ptr), params.dynamic_smem_size, 0);
-
-  if (err != hipError_t::hipSuccess) {
-    return {};
-  }
-
-  return stats;
-}
-
 void PerDeviceCollector::CreateXEvent(const RocmTracerEvent& event,
                                       XPlaneBuilder* plane,
                                       uint64_t start_gpu_ns,
@@ -229,11 +197,79 @@ void PerDeviceCollector::CreateXEvent(const RocmTracerEvent& event,
 
   if (event.type == RocmTracerEventType::Kernel &&
       event.source == RocmTracerEventSource::Activity) {
+    std::optional<double> occupancy_pct;
+    if (gfx_target_version_ != 0 && (event.kernel_info.arch_vgpr_count > 0 ||
+                                     event.kernel_info.accum_vgpr_count > 0)) {
+      // Unused y/z dimensions arrive as 0 and mean 1, so default them -- but
+      // only them. A zero x-dimension is not an unused dimension, it is a
+      // dispatch record that carried no launch geometry at all (SDK skew, a
+      // truncated record, the graph-replay path). Defaulting x too would turn
+      // that into a fabricated one-thread workgroup, which GetOccupancy()
+      // would then model at a confident 1.5625% -- non-zero, so nothing
+      // downstream filters it, and flatly contradicted by the `block:0,0,0`
+      // in the same event's kKernelDetails. Leaving block_size at 0 is what
+      // lets the guard in GetOccupancy() decline instead.
+      const uint32_t block_size =
+          event.kernel_info.workgroup_x == 0
+              ? 0
+              : event.kernel_info.workgroup_x *
+                    std::max(event.kernel_info.workgroup_y, 1u) *
+                    std::max(event.kernel_info.workgroup_z, 1u);
+
+      RocmDeviceOccupancyParams params{};
+      params.arch_vgpr_count = event.kernel_info.arch_vgpr_count;
+      params.accum_vgpr_count = event.kernel_info.accum_vgpr_count;
+      params.sgpr_count = event.kernel_info.sgpr_count;
+      params.block_size = block_size;
+      // group_segment_size from the dispatch record is already the total LDS
+      // per workgroup (static + runtime). Use it directly; do not add the
+      // symbol's static_group_segment_size on top (that would double-count).
+      params.smem_bytes = event.kernel_info.group_segment_size;
+      params.gfx_target_version = gfx_target_version_;
+
+      // Membership means computed; a nullopt mapped value means "modelled and
+      // came back unmodelable". Do not use has_value() as the miss test, or
+      // unmodelable launches recompute on every single event.
+      auto [it, inserted] = occupancy_cache_.try_emplace(params);
+      if (inserted) {
+        it->second = GetOccupancy(params, cu_count_);
+      }
+      const std::optional<OccupancyStats>& occ = it->second;
+
+      if (occ.has_value()) {
+        occupancy_pct = occ->occupancy_pct;
+        // Emitted unconditionally on a successful model, including a genuine
+        // 0.0 -- CUPTI does the same, and suppressing it makes "the kernel
+        // occupies nothing" indistinguishable from "we never looked". The
+        // converse case, a model that declined, leaves occupancy_pct empty so
+        // that neither this stat nor ToXStat's occ_pct token is written.
+        xevent.AddStatValue(*plane->GetOrCreateStatMetadata(GetStatTypeStr(
+                                StatType::kTheoreticalOccupancyPct)),
+                            occ->occupancy_pct);
+        if (occ->min_grid_size > 0) {
+          xevent.AddStatValue(*plane->GetOrCreateStatMetadata(GetStatTypeStr(
+                                  StatType::kOccupancyMinGridSize)),
+                              static_cast<int32_t>(occ->min_grid_size));
+        }
+      }
+    }
+    // The register count that goes next to occ_pct has to be the same charge
+    // the occupancy model used, or the two numbers contradict each other in
+    // the tooltip. Without a known target we cannot say how the arch and
+    // accum files combine, so fall back to the non-unified max() -- which is
+    // also what UnifiedVgprCount would return for such a target.
+    const uint32_t regs_per_thread =
+        target_constants_.has_value()
+            ? UnifiedVgprCount(*target_constants_,
+                               event.kernel_info.arch_vgpr_count,
+                               event.kernel_info.accum_vgpr_count)
+            : std::max(event.kernel_info.arch_vgpr_count,
+                       event.kernel_info.accum_vgpr_count);
     xevent.AddStatValue(
         *plane->GetOrCreateStatMetadata(
             GetStatTypeStr(StatType::kKernelDetails)),
-        *plane->GetOrCreateStatMetadata(ToXStat(event.kernel_info,
-                                                /*occupancy_pct*/ 0)));
+        *plane->GetOrCreateStatMetadata(
+            ToXStat(event.kernel_info, regs_per_thread, occupancy_pct)));
   } else if (event.type == RocmTracerEventType::MemcpyH2D ||
              event.type == RocmTracerEventType::MemcpyD2H ||
              event.type == RocmTracerEventType::MemcpyD2D ||
@@ -363,7 +399,6 @@ void PerDeviceCollector::Export(uint64_t start_walltime_ns,
                                 uint64_t end_gputime_ns,
                                 XPlaneBuilder* device_plane,
                                 XPlaneBuilder* host_plane) {
-  int host_ev_cnt = 0, dev_ev_cnt = 0;
   absl::MutexLock lock(events_mutex_);
   // Tracking event types per line.
   absl::flat_hash_map<int64_t, absl::flat_hash_set<RocmTracerEventType> >
@@ -394,19 +429,14 @@ void PerDeviceCollector::Export(uint64_t start_walltime_ns,
       }
     }
 
-    if (is_host_event) {
-      host_ev_cnt++;
-    } else {
-      dev_ev_cnt++;
-    }
-
     if (line_id == RocmTracerEvent::kInvalidThreadId ||
         line_id == RocmTracerEvent::kInvalidStreamId) {
       VLOG(3) << "Ignoring event, type=" << static_cast<int>(event.type);
       continue;
     }
     auto* plane = is_host_event ? host_plane : device_plane;
-    VLOG(9) << "Event" << " type=" << static_cast<int>(event.type)
+    VLOG(9) << "Event"
+            << " type=" << static_cast<int>(event.type)
             << " line_id=" << line_id
             << (is_host_event ? " host plane=" : " device plane=")
             << plane->Name();
@@ -494,8 +524,9 @@ void PerDeviceCollector::GetDeviceCapabilities(
     }
   }
 
-  // gfx_target_version encodes: major=((value/10000)%100),
-  // minor=((value/100)%100), patch=(value%100)
+  // gfx_target_version encodes, all in decimal: major=((value/10000)%100),
+  // minor=((value/100)%100), step=(value%100). The step renders in hex in the
+  // agent *name* only, which is why gfx90a is 90010 and not 9010a.
   auto gfx_ver = agent.gfx_target_version;
   if (gfx_ver) {
     auto compute_capability_major = (gfx_ver / 10000) % 100;
@@ -505,12 +536,53 @@ void PerDeviceCollector::GetDeviceCapabilities(
               GetStatTypeStr(StatType::kDevCapComputeCapMajor)),
           compute_capability_major);
     }
+    // Emitted unguarded: 0 is a real minor version. The old `if (minor)` guard
+    // meant every gfx90x part -- gfx900, gfx906, gfx90a -- published a major
+    // with no minor at all. The stepping has no home in this CUDA-shaped
+    // schema (it renders as a hex digit in the target name, so gfx90a is
+    // major 9, minor 0, step 0xa); occupancy therefore keys off the raw
+    // gfx_target_version below, never off these two stats.
     auto compute_capability_minor = (gfx_ver / 100) % 100;
-    if (compute_capability_minor) {
-      device_plane->AddStatValue(
-          *device_plane->GetOrCreateStatMetadata(
-              GetStatTypeStr(StatType::kDevCapComputeCapMinor)),
-          compute_capability_minor);
+    device_plane->AddStatValue(
+        *device_plane->GetOrCreateStatMetadata(
+            GetStatTypeStr(StatType::kDevCapComputeCapMinor)),
+        compute_capability_minor);
+  }
+
+  gfx_target_version_ = agent.gfx_target_version;
+  cu_count_ = agent.cu_count;
+
+  // Cross-check the per-target table against what the runtime reports. The
+  // table is the source of truth for occupancy (the agent does not expose
+  // register-file size or granules at all), so a mismatch here means the table
+  // needs a new entry -- e.g. a stale ROCr claiming max_waves_per_simd 10 on
+  // gfx90a, or silicon disagreeing with LLVM about gfx950's LDS.
+  target_constants_ = LookupTargetConstants(gfx_target_version_);
+  if (target_constants_.has_value() && target_constants_->exact) {
+    const AmdGpuTargetConstants& tc = *target_constants_;
+    // lds_size_in_kb is the LDS capacity per CU in KiB.
+    const uint32_t agent_lds_bytes = agent.lds_size_in_kb * 1024;
+    if (agent_lds_bytes != 0 && agent_lds_bytes != tc.lds_per_cu) {
+      LOG_FIRST_N(WARNING, 1)
+          << "Occupancy target table disagrees with the runtime for " << tc.name
+          << ": table lds_per_cu=" << tc.lds_per_cu << ", agent reports "
+          << agent_lds_bytes << " bytes. Occupancy will use the table value.";
+    }
+    if (agent.max_waves_per_simd != 0 &&
+        agent.max_waves_per_simd != tc.max_waves_per_simd) {
+      LOG_FIRST_N(WARNING, 1)
+          << "Occupancy target table disagrees with the runtime for " << tc.name
+          << ": table max_waves_per_simd=" << tc.max_waves_per_simd
+          << ", agent reports " << agent.max_waves_per_simd
+          << ". Occupancy will use the table value.";
+    }
+    if (agent.wave_front_size != 0 &&
+        agent.wave_front_size != tc.wave_front_size) {
+      LOG_FIRST_N(WARNING, 1)
+          << "Occupancy target table disagrees with the runtime for " << tc.name
+          << ": table wave_front_size=" << tc.wave_front_size
+          << ", agent reports " << agent.wave_front_size
+          << ". Occupancy will use the table value.";
     }
   }
 
@@ -632,6 +704,15 @@ void RocmTraceCollectorImpl::Export(XSpace* space) {
     if (id < static_cast<int>(gpu_agents_.size())) {
       per_device_collector_[id].GetDeviceCapabilities(gpu_agents_[id],
                                                       &device_plane);
+    } else {
+      // Without capabilities this device has no gfx_target_version, so every
+      // kernel on it silently loses its occupancy stats. Say so once rather
+      // than leaving a plane that is quietly missing a column.
+      LOG_FIRST_N(WARNING, 1)
+          << "No rocprofiler agent for device " << id << " (only "
+          << gpu_agents_.size()
+          << " GPU agents were enumerated); device capabilities and "
+             "theoretical occupancy will be missing for this plane.";
     }
     per_device_collector_[id].Export(start_walltime_ns_, start_gputime_ns_,
                                      end_gputime_ns, &device_plane,
@@ -697,7 +778,7 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
                         "Type="
                      << GetRocmTracerEventTypeName(api_event.type);
     }  // switch
-  }  // for
+  }    // for
 
   // Make sure for all activity events we have API callback events.
   //
@@ -733,7 +814,22 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
     for (auto& activity_event : activity_iter.second) {
       switch (activity_event.type) {
         case RocmTracerEventType::Kernel:
-          activity_event.kernel_info = api_event->kernel_info;
+          // Deliberately does NOT copy kernel_info from the API event. The
+          // dispatch record is the sole authoritative source: KernelEvent()
+          // builds KernelDetails per dispatch (rocm_tracer.cc), while the API
+          // callback path zeroes it. Copying api->activity here corrupted two
+          // cases:
+          //   * N dispatches under one correlation_id (a hipGraphLaunch
+          //     replay) all received dispatch #1's registers and LDS, because
+          //     the loop above seeds api_event from `.front()`. A 5-VGPR
+          //     elementwise kernel and a 416-VGPR flash-attention kernel in
+          //     one graph reported identical occupancy.
+          //   * A correlation_id present only in auxiliary_api_events_map_
+          //     (never visited by the loop above) wiped kernel_info to zero
+          //     for every one of its dispatches, suppressing occupancy
+          //     entirely.
+          // The memset/memcpy cases below still need their api->activity copy;
+          // only kernel_info flows the other way.
           PrintRocmTracerEvent(activity_event,
                                ". activity event from api_event.");
           aggregated_events.push_back(activity_event);
@@ -770,8 +866,8 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
                           "Type="
                        << GetRocmTracerEventTypeName(activity_event.type);
       }  // switch
-    }  // for activity_event
-  }  // for activity_iter
+    }    // for activity_event
+  }      // for activity_iter
 
   return aggregated_events;
 }
