@@ -110,8 +110,17 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
           return m::CMP_LT;
       }
       break;
-    case HloOpcode::kConvert:
+    case HloOpcode::kConvert: {
+      // cuDNN saturates NaN to INT8_MIN (-128) when converting float → s8,
+      // but XLA expects 0. Skip so these fall back to the XLA implementation.
+      const PrimitiveType from_type =
+          instruction.operand(0)->shape().element_type();
+      if (primitive_util::IsFloatingPointType(from_type) &&
+          instruction.shape().element_type() == S8) {
+        return std::nullopt;
+      }
       return m::IDENTITY;
+    }
     case HloOpcode::kCos:
       return m::COS;
     case HloOpcode::kDivide:
@@ -130,6 +139,18 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::MUL;
     case HloOpcode::kNegate:
       return m::NEG;
+    case HloOpcode::kNot:
+      // Skip bitwise not
+      if (instruction.shape().element_type() == PRED) return m::LOGICAL_NOT;
+      return std::nullopt;
+    case HloOpcode::kOr:
+      // Skip bitwise or
+      if (instruction.shape().element_type() == PRED) return m::LOGICAL_OR;
+      return std::nullopt;
+    case HloOpcode::kAnd:
+      // Skip bitwise and
+      if (instruction.shape().element_type() == PRED) return m::LOGICAL_AND;
+      return std::nullopt;
     case HloOpcode::kPower:
       return m::POW;
     case HloOpcode::kRsqrt:
@@ -153,7 +174,39 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
   }
 }
 
+// Extracts dimensions and strides from HLO tensors in the format expected by
+// cuDNN.
+struct CudnnTensorLayout {
+  std::vector<int64_t> sizes;
+  std::vector<int64_t> strides;
+  std::optional<std::vector<std::pair<int64_t, int64_t>>> slices;
+};
+
+std::vector<int64_t> Strides(const Shape& shape) {
+  std::vector<int64_t> result;
+  result.resize(shape.dimensions_size());
+  int64_t accumulator = 1;
+  for (int i = 0; i < shape.dimensions_size(); ++i) {
+    int logical_dim_idx = shape.layout().minor_to_major()[i];
+    result[logical_dim_idx] = accumulator;
+    accumulator *= shape.dimensions(logical_dim_idx);
+  }
+  return result;
+}
+
+CudnnTensorLayout DimensionsAndStrides(const Shape& shape) {
+  if (ShapeUtil::IsScalar(shape)) {
+    // cuDNN requires non-empty dim/stride; use [1] for scalar tensors.
+    return CudnnTensorLayout{{1}, {1}};
+  }
+  return CudnnTensorLayout{std::vector<int64_t>(shape.dimensions().cbegin(),
+                                                shape.dimensions().cend()),
+                           Strides(shape)};
+}
+
 inline std::optional<fe::DataType_t> ToCudnnDataType(const PrimitiveType type) {
+  // Supported types must exist in cudnn frontend DataType_t
+  // (see e.g. /opt/cudnn_frontend/include/cudnn_frontend_utils.h).
   using t = fe::DataType_t;
   switch (type) {
     case PrimitiveType::F64:
@@ -187,6 +240,16 @@ inline std::optional<fe::DataType_t> ToCudnnDataType(const PrimitiveType type) {
   }
 }
 
+// Returns the element type that should drive the cuDNN compute_data_type for
+// an elementwise op. For kCompare the output is PRED but arithmetic is in the
+// input type, so use the first operand's type instead.
+PrimitiveType ComputeElementType(const HloInstruction& hlo) {
+  if (hlo.opcode() == HloOpcode::kCompare && !hlo.operands().empty()) {
+    return hlo.operand(0)->shape().element_type();
+  }
+  return hlo.shape().element_type();
+}
+
 inline std::optional<fe::DataType_t> GetComputeDataType(
     const PrimitiveType type) {
   fe::DataType_t compute_dtype = fe::DataType_t::FLOAT;
@@ -204,14 +267,6 @@ inline std::optional<fe::DataType_t> GetComputeDataType(
   }
   return compute_dtype;
 }
-
-// Extracts dimensions and strides from HLO tensors in the format expected by
-// cuDNN.
-struct Result {
-  std::vector<int64_t> sizes;
-  std::vector<int64_t> strides;
-  std::optional<std::vector<std::pair<int64_t, int64_t>>> slices;
-};
 
 class RaggedDotDimensionAdapter {
   explicit RaggedDotDimensionAdapter(const HloInstruction& ragged_dot,
@@ -239,7 +294,8 @@ class RaggedDotDimensionAdapter {
     return RaggedDotDimensionAdapter{*maybe_ragged_dot, dnums};
   }
 
-  std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
+  std::optional<CudnnTensorLayout> DimensionsAndStrides(
+      const HloInstruction& hlo) {
     // placeholder FP32 data type here, it is not used
     auto desc = se::dnn::TensorDescriptor::For(
         se::dnn::DataType::kFloat, hlo.shape().dimensions(),
@@ -281,7 +337,7 @@ class RaggedDotDimensionAdapter {
       return std::nullopt;
     }
 
-    Result result;
+    CudnnTensorLayout result;
     result.sizes = fixed_dims;
     result.strides = fixed_strides;
     return result;
@@ -325,7 +381,7 @@ class GemmDimensionAdapter {
     return GemmDimensionAdapter{*dot, std::move(analysis)};
   }
 
-  std::optional<Result> DimensionsAndStrides(
+  std::optional<CudnnTensorLayout> DimensionsAndStrides(
       const HloInstruction& hlo, const TritonFusionAnalysis::Scope scope) {
     const DotDimensionNumbers& dims = dot_.dot_dimension_numbers();
     // GEMM fusions require a specific canonical order of dimensions.
@@ -365,7 +421,7 @@ class GemmDimensionAdapter {
         break;
     }
 
-    Result result;
+    CudnnTensorLayout result;
     result.sizes.reserve(dim_indices.size());
     result.strides.reserve(dim_indices.size());
     result.slices = std::vector<std::pair<int64_t, int64_t>>{};
@@ -529,13 +585,14 @@ class ConvDimensionAdapter {
     return -1;
   }
 
-  std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
+  std::optional<CudnnTensorLayout> DimensionsAndStrides(
+      const HloInstruction& hlo) {
     int64_t spatial_dims =
         std::max<int64_t>(2, dums_.input_spatial_dimensions_size());
     int64_t cudnn_rank = spatial_dims + 2;
 
     if (ShapeUtil::IsScalar(hlo.shape())) {
-      Result result;
+      CudnnTensorLayout result;
       result.sizes = std::vector<int64_t>(cudnn_rank, 1);
       result.strides = std::vector<int64_t>(cudnn_rank, 1);
       return result;
@@ -543,7 +600,7 @@ class ConvDimensionAdapter {
 
     int64_t conv_hlo_rank = dums_.input_spatial_dimensions_size() + 2;
     if (hlo.shape().dimensions().size() < conv_hlo_rank) {
-      Result result;
+      CudnnTensorLayout result;
       result.sizes = std::vector<int64_t>(cudnn_rank, 1);
       result.strides = std::vector<int64_t>(cudnn_rank, 0);
 
@@ -580,7 +637,7 @@ class ConvDimensionAdapter {
     // We shouldn't need to know if this hlo is LHS, RHS or Output,
     // they should have same layout after layout assignment. Use input dums
     // here.
-    Result result;
+    CudnnTensorLayout result;
     result.sizes.push_back(logical_dims[dums_.input_batch_dimension()]);
     result.sizes.push_back(logical_dims[dums_.input_feature_dimension()]);
     result.strides.push_back(logical_strides[dums_.input_batch_dimension()]);
@@ -610,19 +667,28 @@ class ConvDimensionAdapter {
 
 template <PrimitiveType XlaT, typename T>
 std::shared_ptr<graph::Tensor_attributes> LiteralToCudnnTensor(
-    const HloInstruction& hlo, graph::Graph& graph, int64_t rank) {
+    const HloInstruction& hlo, graph::Graph& graph, int64_t rank,
+    bool is_gemm_or_conv) {
   using NativeT = typename primitive_util::PrimitiveTypeToNative<XlaT>::type;
-  auto tensor = graph.tensor(T(hlo.literal().GetFirstElement<NativeT>()));
-  tensor->set_dim(std::vector<int64_t>(rank, 1))
-      .set_stride(std::vector<int64_t>(rank, 1));
+  T value = T(hlo.literal().GetFirstElement<NativeT>());
+  std::shared_ptr<graph::Tensor_attributes> tensor =
+      is_gemm_or_conv
+          ? graph.tensor(value)
+          : graph.tensor(value, graph::ScalarType::COMPILE_TIME_CONST);
+  if (is_gemm_or_conv) {
+    tensor->set_dim(std::vector<int64_t>(rank, 1))
+        .set_stride(std::vector<int64_t>(rank, 1));
+  }
+  tensor->set_name(std::string(hlo.name()));
   return tensor;
 }
 
 absl::StatusOr<std::shared_ptr<graph::Tensor_attributes>>
 HandleConstantHloToCudnnGraph(const HloInstruction& hlo, graph::Graph& graph,
-                              int64_t rank = 3) {
+                              int64_t rank = 3, bool is_gemm_or_conv = true) {
   CHECK(hlo.IsConstant()) << "HLO is not a constant: " << hlo.ToShortString();
-  if (!ShapeUtil::IsScalar(hlo.shape())) {
+  // Support scalar and single-element constants (e.g. s32[1], f32[1,1]).
+  if (ShapeUtil::ElementsIn(hlo.shape()) != 1) {
     return absl::UnimplementedError(
         absl::StrCat("Currently only support fusing scalar in the graph, got: ",
                      hlo.ToString()));
@@ -630,19 +696,25 @@ HandleConstantHloToCudnnGraph(const HloInstruction& hlo, graph::Graph& graph,
   PrimitiveType constant_type = hlo.shape().element_type();
   switch (constant_type) {
     case F16:
-      return LiteralToCudnnTensor<F16, __half>(hlo, graph, rank);
+      return LiteralToCudnnTensor<F16, __half>(hlo, graph, rank,
+                                               is_gemm_or_conv);
     case BF16:
-      return LiteralToCudnnTensor<BF16, __nv_bfloat16>(hlo, graph, rank);
+      return LiteralToCudnnTensor<BF16, __nv_bfloat16>(hlo, graph, rank,
+                                                       is_gemm_or_conv);
     case F32:
-      return LiteralToCudnnTensor<F32, float>(hlo, graph, rank);
+      return LiteralToCudnnTensor<F32, float>(hlo, graph, rank,
+                                              is_gemm_or_conv);
 #if CUDNN_FRONTEND_VERSION >= 12300
     case F64:
-      return LiteralToCudnnTensor<F64, double>(hlo, graph, rank);
+      return LiteralToCudnnTensor<F64, double>(hlo, graph, rank,
+                                               is_gemm_or_conv);
 #endif
     case S32:
-      return LiteralToCudnnTensor<S32, int>(hlo, graph, rank);
+      return LiteralToCudnnTensor<S32, int32_t>(hlo, graph, rank,
+                                                is_gemm_or_conv);
     case S8:
-      return LiteralToCudnnTensor<S8, int8_t>(hlo, graph, rank);
+      return LiteralToCudnnTensor<S8, int8_t>(hlo, graph, rank,
+                                              is_gemm_or_conv);
     default:
       return absl::UnimplementedError(absl::StrCat(
           "Unsupported constant type: ", PrimitiveType_Name(constant_type),
@@ -661,12 +733,14 @@ HandleClampToCudnnGraph(
       << "HLO is not a clamp: " << hlo.ToShortString();
   CHECK(hlo.operands().size() == 3)
       << "Clamp requires to have 3 operands: " << hlo.ToShortString();
-  // clamp = max(lower, min(value, upper));
-  const auto min_attrs = graph::Pointwise_attributes()
-                             .set_mode(fe::PointwiseMode_t::MIN)
+  // XLA defines clamp(min, value, max) = min(max(value, lower), upper), i.e.
+  // the lower bound is applied first. This ordering matters when lower > upper:
+  // it returns the upper bound (not the lower one).
+  const auto max_attrs = graph::Pointwise_attributes()
+                             .set_mode(fe::PointwiseMode_t::MAX)
                              .set_compute_data_type(compute_dtype);
-  std::shared_ptr<graph::Tensor_attributes> min_tensor = graph.pointwise(
-      hlo_to_cudnn[hlo.operand(1)], hlo_to_cudnn[hlo.operand(2)], min_attrs);
+  std::shared_ptr<graph::Tensor_attributes> max_tensor = graph.pointwise(
+      hlo_to_cudnn[hlo.operand(1)], hlo_to_cudnn[hlo.operand(0)], max_attrs);
   const std::optional<fe::DataType_t> data_type =
       ToCudnnDataType(hlo.shape().element_type());
   if (!data_type.has_value()) {
@@ -675,11 +749,11 @@ HandleClampToCudnnGraph(
                      PrimitiveType_Name(hlo.shape().element_type()),
                      " in instruction: ", hlo.ToString()));
   }
-  min_tensor->set_data_type(*data_type).set_name(std::string(hlo.name()));
-  const auto max_attrs = graph::Pointwise_attributes()
-                             .set_mode(fe::PointwiseMode_t::MAX)
+  max_tensor->set_data_type(*data_type).set_name(std::string(hlo.name()));
+  const auto min_attrs = graph::Pointwise_attributes()
+                             .set_mode(fe::PointwiseMode_t::MIN)
                              .set_compute_data_type(compute_dtype);
-  return graph.pointwise(min_tensor, hlo_to_cudnn[hlo.operand(0)], max_attrs);
+  return graph.pointwise(max_tensor, hlo_to_cudnn[hlo.operand(2)], min_attrs);
 }
 
 absl::StatusOr<std::shared_ptr<graph::Tensor_attributes>>
@@ -735,14 +809,16 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
                    ConvDimensionAdapter::Create(fusion, computation));
   ABSL_ASSIGN_OR_RETURN(std::optional<RaggedDotDimensionAdapter> ragged_dot_adapter,
                    RaggedDotDimensionAdapter::Create(fusion, computation));
-  if (!gemm_adapter.has_value() && !conv_adapter.has_value() &&
-      !ragged_dot_adapter.has_value()) {
-    return absl::UnimplementedError(
-        "No dot or conv or ragged_dot found inside cudnn fusion.");
+
+  const bool is_gemm_or_conv = gemm_adapter.has_value() ||
+                               conv_adapter.has_value() ||
+                               ragged_dot_adapter.has_value();
+  if (!is_gemm_or_conv) {
+    VLOG(4) << "No dot or conv or ragged_dot found inside cudnn fusion.";
   }
 
   auto add_parameter = [&](const HloInstruction& parameter,
-                           const Result& dims) -> absl::Status {
+                           const CudnnTensorLayout& dims) -> absl::Status {
     const std::optional<fe::DataType_t> data_type =
         ToCudnnDataType(parameter.shape().element_type());
     if (!data_type.has_value()) {
@@ -771,7 +847,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
          computation.parameter_instructions()) {
       // for now, we assume all parameters have same layout even if they are not
       // inputs to conv, for example, bias add after conv.
-      const std::optional<Result> dims =
+      const std::optional<CudnnTensorLayout> dims =
           conv_adapter->DimensionsAndStrides(*parameter);
       VLOG(3) << "parameter: " << parameter->ToString() << "\n";
       if (!dims.has_value()) {
@@ -783,7 +859,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
   } else if (ragged_dot_adapter.has_value()) {
     for (const HloInstruction* parameter :
          computation.parameter_instructions()) {
-      const std::optional<Result> dims =
+      const std::optional<CudnnTensorLayout> dims =
           ragged_dot_adapter->DimensionsAndStrides(*parameter);
       VLOG(3) << "parameter: " << parameter->ToString() << "\n";
       if (!dims.has_value()) {
@@ -792,8 +868,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
       }
       ABSL_RETURN_IF_ERROR(add_parameter(*parameter, *dims));
     }
-  } else {
-    // dot and scale dot
+  } else if (gemm_adapter.has_value()) {
     for (const TritonFusionAnalysis::Scope scope :
          {TritonFusionAnalysis::Scope::LHS,
           TritonFusionAnalysis::Scope::LHS_SCALE,
@@ -807,15 +882,20 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
       }
       for (const HloInstruction* parameter :
            gemm_adapter->analysis_.ScopeParameters(scope)) {
-        const std::optional<Result> dims =
+        const std::optional<CudnnTensorLayout> dims =
             gemm_adapter->DimensionsAndStrides(*parameter, scope);
-        VLOG(3) << "parameter: " << parameter->ToString() << "\n";
         if (!dims.has_value()) {
           return absl::UnimplementedError(absl::StrCat(
               "Unsupported dimensions for parameter: ", parameter->ToString()));
         }
         ABSL_RETURN_IF_ERROR(add_parameter(*parameter, *dims));
       }
+    }
+  } else {
+    for (const HloInstruction* parameter :
+         computation.parameter_instructions()) {
+      const CudnnTensorLayout dims = DimensionsAndStrides(parameter->shape());
+      ABSL_RETURN_IF_ERROR(add_parameter(*parameter, dims));
     }
   }
 
@@ -852,25 +932,93 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
       }
       continue;
     } else if (HloPredicateIsOp<HloOpcode::kConstant>(hlo)) {
-      ABSL_ASSIGN_OR_RETURN(hlo_to_cudnn[hlo],
-                       HandleConstantHloToCudnnGraph(*hlo, graph));
-    } else if (HloPredicateIsOp<HloOpcode::kReshape, HloOpcode::kBitcast,
-                                HloOpcode::kTranspose, HloOpcode::kCopy,
-                                HloOpcode::kSlice>(hlo)) {
-      // All these are accounted for separately as transformations of strides.
-      hlo_to_cudnn[hlo] = operand(0);
+      ABSL_ASSIGN_OR_RETURN(
+          hlo_to_cudnn[hlo],
+          HandleConstantHloToCudnnGraph(*hlo, graph,
+                                        /*rank=*/3,
+                                        /*is_gemm_or_conv=*/is_gemm_or_conv));
     } else if (HloPredicateIsOp<HloOpcode::kBroadcast>(hlo)) {
-      if (hlo->operand(0)->opcode() == HloOpcode::kConstant) {
-        ABSL_ASSIGN_OR_RETURN(
-            hlo_to_cudnn[hlo],
-            HandleConstantHloToCudnnGraph(*hlo->operand(0), graph,
-                                          hlo->shape().dimensions().size()));
+      if (HloPredicateIsOp<HloOpcode::kConstant>(hlo->operand(0))) {
+        ABSL_ASSIGN_OR_RETURN(hlo_to_cudnn[hlo],
+                              HandleConstantHloToCudnnGraph(
+                                  *hlo->operand(0), graph,
+                                  /*rank=*/hlo->shape().dimensions().size(),
+                                  /*is_gemm_or_conv=*/is_gemm_or_conv));
+        if (!ShapeUtil::IsScalar(hlo->shape())) {
+          std::vector<int64_t> broadcast_dims(hlo->shape().dimensions_size(),
+                                              1);
+          std::vector<int64_t> broadcast_strides(hlo->shape().dimensions_size(),
+                                                 1);
+          hlo_to_cudnn[hlo]
+              ->set_dim(broadcast_dims)
+              .set_stride(broadcast_strides);
+        }
+      } else if (!ShapeUtil::EqualIgnoringElementType(
+                     hlo->shape(), hlo->operand(0)->shape()) &&
+                 !is_gemm_or_conv) {
+        // Pointwise and concatenate require same-rank inputs. Represent the
+        // broadcast as a size-1 logical reshape followed by pointwise identity
+        // so cuDNN materializes a full-shape virtual tensor for downstream ops.
+        const Shape& result_shape = hlo->shape();
+        const Shape& source_shape = hlo->operand(0)->shape();
+        const int64_t result_rank = result_shape.dimensions_size();
+        std::vector<int64_t> expanded_dims(result_rank, 1);
+        for (int64_t j = 0; j < hlo->dimensions().size(); ++j) {
+          const int64_t result_dim = hlo->dimensions()[j];
+          expanded_dims[result_dim] = source_shape.dimensions(j);
+        }
+        std::vector<int64_t> source_strides = Strides(source_shape);
+        std::vector<int64_t> broadcast_strides(result_rank, 0);
+        for (int64_t j = 0; j < hlo->dimensions().size(); ++j) {
+          const int64_t result_dim = hlo->dimensions()[j];
+          broadcast_strides[result_dim] = source_strides[j];
+        }
+        const auto attrs = graph::Reshape_attributes().set_reshape_mode(
+            fe::ReshapeMode_t::LOGICAL);
+        std::shared_ptr<graph::Tensor_attributes> broadcast_input =
+            graph.reshape(operand(0), attrs);
+        const std::optional<fe::DataType_t> data_type =
+            ToCudnnDataType(hlo->shape().element_type());
+        if (!data_type.has_value()) {
+          return absl::UnimplementedError(
+              absl::StrCat("Unimplemented data type: ",
+                           PrimitiveType_Name(hlo->shape().element_type()),
+                           " in instruction: ", hlo->ToString()));
+        }
+        broadcast_input->set_dim(expanded_dims)
+            .set_stride(broadcast_strides)
+            .set_data_type(*data_type);
+        const std::optional<fe::DataType_t> compute_dtype =
+            GetComputeDataType(hlo->shape().element_type());
+        if (!compute_dtype.has_value()) {
+          return absl::UnimplementedError(
+              absl::StrCat("Unsupported compute data type for: ",
+                           PrimitiveType_Name(hlo->shape().element_type()),
+                           " in instruction: ", hlo->ToString()));
+        }
+        const auto identity_attrs = graph::Pointwise_attributes()
+                                        .set_mode(fe::PointwiseMode_t::IDENTITY)
+                                        .set_compute_data_type(*compute_dtype);
+        hlo_to_cudnn[hlo] = graph.pointwise(broadcast_input, identity_attrs);
+        std::vector<int64_t> result_dims(result_shape.dimensions().cbegin(),
+                                         result_shape.dimensions().cend());
+        hlo_to_cudnn[hlo]->set_dim(result_dims);
       } else {
         hlo_to_cudnn[hlo] = operand(0);
       }
+    } else if (is_gemm_or_conv &&
+               HloPredicateIsOp<HloOpcode::kReshape, HloOpcode::kBitcast,
+                                HloOpcode::kTranspose, HloOpcode::kSlice>(
+                   hlo)) {
+      // All these are accounted for separately as transformations of strides.
+      hlo_to_cudnn[hlo] = operand(0);
+    } else if (HloPredicateIsOp<HloOpcode::kCopy>(hlo)) {
+      hlo_to_cudnn[hlo] = operand(0);
     } else if (hlo->IsElementwise()) {
-      const auto compute_dtype =
-          GetComputeDataType(hlo->shape().element_type());
+      const PrimitiveType compute_element_type = ComputeElementType(*hlo);
+      const std::optional<fe::DataType_t> compute_dtype =
+          is_gemm_or_conv ? GetComputeDataType(compute_element_type)
+                          : ToCudnnDataType(compute_element_type);
       if (!compute_dtype.has_value()) {
         return absl::UnimplementedError(
             absl::StrCat("Unsupported compute data type for: ",
@@ -908,7 +1056,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
               LOG(FATAL) << "No scope for instruction: "
                          << hlo->ToShortString();
             }
-            const std::optional<Result> dims =
+            const std::optional<CudnnTensorLayout> dims =
                 gemm_adapter->DimensionsAndStrides(*hlo, *scope);
             if (!dims.has_value()) {
               VLOG(3) << "Unsupported hlo for querying dimensions: "
@@ -1052,7 +1200,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
       }
       // cuDNN requires output dims to be set for conv dgrad and wgrad, it is
       // not required for fprop but we do it anyway for simplicity
-      const std::optional<Result> dims =
+      const std::optional<CudnnTensorLayout> dims =
           conv_adapter->DimensionsAndStrides(*hlo);
       hlo_to_cudnn[hlo]->set_dim(dims->sizes);
     } else if (HloPredicateIsOp<HloOpcode::kRaggedDot>(hlo)) {
@@ -1073,10 +1221,109 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
           graph.moe_grouped_matmul(operand(0), operand(1), operand(2), nullptr,
                                    nullptr, moe_grouped_matmul_attr);
     } else if (HloPredicateIsOp<HloOpcode::kReduce>(hlo)) {
+      if (hlo->shape().IsTuple()) {
+        return absl::UnimplementedError(absl::StrCat(
+            "cuDNN fusion compiler does not support variadic reduce "
+            "(tuple-shaped output) in instruction: ",
+            hlo->ToString()));
+      }
+      if (!is_gemm_or_conv) {
+        return absl::UnimplementedError(
+            absl::StrCat("Reduce is not supported for cudnn non gemm fusion: ",
+                         hlo->ToShortString()));
+      }
       hlo_to_cudnn[hlo] = graph.reduction(
           operand(0), graph::Reduction_attributes()
                           .set_mode(fe::ReductionMode_t::AMAX)
                           .set_compute_data_type(fe::DataType_t::FLOAT));
+    } else if (HloPredicateIsOp<HloOpcode::kConcatenate>(hlo)) {
+      const auto attrs = graph::Concatenate_attributes().set_axis(
+          hlo->concatenate_dimension());
+      std::vector<std::shared_ptr<graph::Tensor_attributes>> inputs;
+      for (int i = 0; i < hlo->operand_count(); ++i) {
+        inputs.push_back(operand(i));
+      }
+      hlo_to_cudnn[hlo] = graph.concatenate(inputs, attrs);
+    } else if (HloPredicateIsOp<HloOpcode::kSlice>(hlo)) {
+      std::vector<std::pair<int64_t, int64_t>> slices;
+      std::vector<int64_t> strides;
+      for (int64_t i = 0; i < hlo->shape().dimensions_size(); ++i) {
+        slices.push_back({hlo->slice_starts(i), hlo->slice_limits(i)});
+        strides.push_back(hlo->slice_strides(i));
+      }
+      const auto attrs =
+          graph::Slice_attributes().set_slices(slices).set_strides(strides);
+      hlo_to_cudnn[hlo] = graph.slice(operand(0), attrs);
+    } else if (HloPredicateIsOp<HloOpcode::kReshape>(hlo)) {
+      std::vector<int64_t> output_dims(hlo->shape().dimensions().cbegin(),
+                                       hlo->shape().dimensions().cend());
+      // Strides must be set explicitly from the HLO layout. Otherwise cuDNN's
+      // reshape node defaults to NHWC stride order for rank >= 2, which does
+      // not match XLA's row-major ({rank-1,...,1,0}) layout and would yield
+      // incorrect strides (e.g. (32768, 1, 8) instead of (32768, 4096, 1) for
+      // a [1,8,4096]{2,1,0} tensor).
+      std::vector<int64_t> output_strides = Strides(hlo->shape());
+      const auto attrs = graph::Reshape_attributes().set_reshape_mode(
+          fe::ReshapeMode_t::LOGICAL);
+      hlo_to_cudnn[hlo] = graph.reshape(operand(0), attrs);
+      if (output_dims.size() == 0 && output_strides.size() == 0) {
+        hlo_to_cudnn[hlo]->set_dim({1}).set_stride({1});
+      } else {
+        hlo_to_cudnn[hlo]->set_dim(output_dims).set_stride(output_strides);
+      }
+    } else if (HloPredicateIsOp<HloOpcode::kBitcast>(hlo)) {
+      std::vector<int64_t> output_dims(hlo->shape().dimensions().cbegin(),
+                                       hlo->shape().dimensions().cend());
+      std::vector<int64_t> output_strides = Strides(hlo->shape());
+      if (LayoutUtil::IsMonotonicWithDim0Major(
+              hlo->operand(0)->shape().layout())) {
+        // Bitcast on a default (row-major) layout operand: emit a reshape
+        // node, whether the operand is a parameter or an intermediate tensor.
+        const auto attrs = graph::Reshape_attributes().set_reshape_mode(
+            fe::ReshapeMode_t::LOGICAL);
+        hlo_to_cudnn[hlo] = graph.reshape(operand(0), attrs);
+        if (output_dims.empty()) {
+          hlo_to_cudnn[hlo]->set_dim({1}).set_stride({1});
+        } else {
+          hlo_to_cudnn[hlo]->set_dim(output_dims).set_stride(output_strides);
+        }
+      } else if (HloPredicateIsOp<HloOpcode::kParameter>(hlo->operand(0))) {
+        // Reject if the parameter has another bitcast user — two bitcasts on
+        // the same parameter would compete to set its dims/strides.
+        if (absl::c_any_of(hlo->operand(0)->users(),
+                           [hlo](const HloInstruction* user) {
+                             return user != hlo &&
+                                    HloPredicateIsOp<HloOpcode::kBitcast>(user);
+                           })) {
+          return absl::UnimplementedError(absl::StrCat(
+              "Parameter has multiple bitcast users, not supported: ",
+              hlo->operand(0)->ToShortString()));
+        }
+        // Bitcast directly on a non-default-layout parameter: nop at the
+        // graph level. Update the parameter tensor's dims/strides to reflect
+        // the bitcast output layout and reuse the same tensor.
+        if (output_dims.empty()) {
+          hlo_to_cudnn[hlo->operand(0)]->set_dim({1}).set_stride({1});
+        } else {
+          hlo_to_cudnn[hlo->operand(0)]
+              ->set_dim(output_dims)
+              .set_stride(output_strides);
+        }
+        hlo_to_cudnn[hlo] = operand(0);
+      } else {
+        // Bitcast on a non-default-layout intermediate tensor is not
+        // supported.
+        return absl::UnimplementedError(
+            absl::StrCat("Bitcast on non-default-layout intermediate tensor is "
+                         "not supported: ",
+                         hlo->ToShortString()));
+      }
+    } else if (HloPredicateIsOp<HloOpcode::kTranspose>(hlo)) {
+      std::vector<int64_t> permutation(hlo->dimensions().begin(),
+                                       hlo->dimensions().end());
+      const auto transpose_attrs =
+          graph::Transpose_attributes().set_permutation(permutation);
+      hlo_to_cudnn[hlo] = graph.transpose(operand(0), transpose_attrs);
     } else {
       return absl::UnimplementedError(
           absl::StrCat("Unimplemented operation: ", hlo->ToString()));
@@ -1096,6 +1343,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
     hlo_to_cudnn[hlo]
         ->set_data_type(data_type.value())
         .set_name(std::string(hlo->name()));
+    if (!is_gemm_or_conv) {
+      const CudnnTensorLayout dims = DimensionsAndStrides(hlo->shape());
+      hlo_to_cudnn[hlo]->set_dim(dims.sizes).set_stride(dims.strides);
+    }
   }
 
   std::vector<HloInstruction*> outputs;
@@ -1111,14 +1362,19 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
 
   for (int i = 0; i < outputs.size(); ++i) {
     HloInstruction* output = outputs[i];
-    std::optional<Result> dims = std::nullopt;
+    std::optional<CudnnTensorLayout> dims = std::nullopt;
     if (conv_adapter.has_value()) {
       dims = conv_adapter->DimensionsAndStrides(*output);
     } else if (ragged_dot_adapter.has_value()) {
       dims = ragged_dot_adapter->DimensionsAndStrides(*output);
-    } else {
+    } else if (gemm_adapter.has_value()) {
       dims = gemm_adapter->DimensionsAndStrides(
           *output, TritonFusionAnalysis::Scope::OUTPUT);
+    } else {
+      // Pin non-specialized graph outputs to the HLO shape so cuDNN does not
+      // infer dims/strides from upstream tensors with a different logical rank
+      // or layout.
+      dims = DimensionsAndStrides(output->shape());
     }
     if (!dims.has_value()) {
       return absl::UnimplementedError(absl::StrCat(
@@ -1145,6 +1401,21 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
   return se::gpu::CudnnGraph(std::move(graph));
 }
 
+// Returns true when the fusion computation contains no GEMM-like hero
+// (dot / scaled dot / convolution), i.e. it is a pure non-GEMM (mem-bound)
+// cuDNN fusion.
+bool IsNonGemmFusion(const HloFusionInstruction& hlo) {
+  const HloComputation* computation = hlo.fused_instructions_computation();
+  return !hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                   HloOpcode::kDot) &&
+         !hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                   HloOpcode::kRaggedDot) &&
+         !hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                   HloOpcode::kScaledDot) &&
+         !hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                   HloOpcode::kConvolution);
+}
+
 // Creates a cuDNN graph, queries cuDNN whether it is supported.
 absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
     se::dnn::DnnSupport* dnn_support,
@@ -1168,12 +1439,17 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
       absl::c_all_of(precision_config.operand_precision(), [](int precision) {
         return precision <= PrecisionConfig::HIGH;
       });
-
+  // For non-GEMM (mem-bound) fusions, restrict the fallback engines to the
+  // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE. GEMM fusions keep the full
+  // set of engines (incl. the CUTLASS tensor-core fallbacks).
+  const bool restrict_fallback = IsNonGemmFusion(hlo);
   ABSL_RETURN_IF_ERROR(graph.Prepare(
       dnn_support, gpu_device_info,
       se::EngineOptions{RequireDeterminism(hlo.GetModule()->config()),
                         allow_tf32,
-                        /*require_command_buffer=*/false}));
+                        /*require_command_buffer=*/false,
+                        /*restrict_fallback_to_membound_tensor_ir_engine=*/
+                        restrict_fallback}));
   return graph;
 }
 

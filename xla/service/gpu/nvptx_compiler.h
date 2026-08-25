@@ -91,6 +91,12 @@ class NVPTXCompiler : public GpuCompiler {
       HloCostAnalysis::ShapeSizeFunction shape_size_fn,
       const MultiProcessKeyValueStore& key_value_store) override;
 
+  absl::Status RunCudnnNonGemmFusionRewriterPass(
+      HloModule* module, se::StreamExecutor* stream_exec,
+      const se::DeviceDescription& device_description,
+      CompilationStats* compilation_stats) override;
+
+  // Runs cuDNN fusion and custom call compiler passes.
   absl::Status RunCudnnCompilerPasses(HloModule* module,
                                       se::StreamExecutor* stream_exec,
                                       const GpuTargetConfig& gpu_target_config,

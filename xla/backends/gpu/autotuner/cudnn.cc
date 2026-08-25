@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape.h"
@@ -123,7 +124,10 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
                      HloOpcode::kScaledDot, HloOpcode::kRaggedDot});
   if (hero == nullptr) {
     VLOG(1) << "Fusion does not contain a dot or convolution.";
-    return false;
+    // Only supported when non-gemm cuDNN fusion autotuning is enabled and the
+    // fusion is already marked as a cuDNN fusion.
+    return IsGpuFusionKind(instr, kCuDnnFusionKind) &&
+           debug_options.xla_gpu_cudnn_non_gemm_fusion_level() >= 1;
   }
 
   PrecisionConfig::Algorithm algorithm = PrecisionConfig::ALG_UNSET;

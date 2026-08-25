@@ -75,6 +75,7 @@ xla_test(
     name = "cudnn_test",
     srcs = ["cudnn_test.cc"],
     backends = ["gpu"],
+    shard_count = 4,
     tags = ["cuda-only"],
     deps = [
         "//xla:comparison_util",

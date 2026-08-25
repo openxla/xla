@@ -54,15 +54,20 @@ limitations under the License.
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
-#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/autotuner/block_level_emitter.h"
+#include "xla/backends/gpu/autotuner/cudnn.h"
+#include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
@@ -232,6 +237,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/all_reduce_promotion.h"
@@ -342,18 +348,13 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/maybe_owning.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -1953,6 +1954,10 @@ absl::Status GpuCompiler::OptimizeHloModule(
   ABSL_RETURN_IF_ERROR(RunPostFusionVerificationPasses(
       hlo_module, stream_exec, options, gpu_topology.gpu_target_config(),
       alias_info, mlir_context, compilation_stats));
+
+  ABSL_RETURN_IF_ERROR(RunCudnnNonGemmFusionRewriterPass(
+      hlo_module, stream_exec,
+      gpu_topology.gpu_target_config().device_description, compilation_stats));
 
   ABSL_RETURN_IF_ERROR(RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec,
                                                         compilation_stats));

@@ -22,15 +22,19 @@ namespace stream_executor {
 // operations like matrix multiplications and convolutions.
 struct EngineOptions {
   EngineOptions(bool require_determinism, bool allow_tf32,
-                bool require_command_buffer)
+                bool require_command_buffer,
+                bool restrict_fallback_to_membound_tensor_ir_engine = false)
       : require_determinism(require_determinism),
         allow_tf32(allow_tf32),
-        require_command_buffer(require_command_buffer) {}
+        require_command_buffer(require_command_buffer),
+        restrict_fallback_to_membound_tensor_ir_engine(
+            restrict_fallback_to_membound_tensor_ir_engine) {}
 
   EngineOptions()
       : require_determinism(false),
         allow_tf32(true),
-        require_command_buffer(false) {}
+        require_command_buffer(false),
+        restrict_fallback_to_membound_tensor_ir_engine(false) {}
 
   // If true, the op must be deterministic
   bool require_determinism;
@@ -39,6 +43,11 @@ struct EngineOptions {
   // If true, the execution plan selected must support command buffer
   // construction.
   bool require_command_buffer;
+  // If true, after FALLBACK heuristics deselect engines that report
+  // NUMERICAL_NOTE_TENSOR_CORE so only
+  // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE (eng3) remains for non-GEMM
+  // pointwise fusions.
+  bool restrict_fallback_to_membound_tensor_ir_engine;
 };
 
 }  // namespace stream_executor

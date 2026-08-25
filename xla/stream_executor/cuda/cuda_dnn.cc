@@ -6882,6 +6882,13 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
       graph_.select_behavior_notes(
           {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
     }
+    if (engine_options.restrict_fallback_to_membound_tensor_ir_engine) {
+      // CUTLASS FALLBACK engines (eng0..eng2) report
+      // NUMERICAL_NOTE_TENSOR_CORE;
+      // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE (eng3) does not.
+      graph_.deselect_numeric_notes(
+          {cudnn_frontend::NumericalNote_t::TENSOR_CORE});
+    }
     return absl::OkStatus();
   };
 
@@ -6898,7 +6905,7 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
     // Deviceless mode. No cuDNN version guard needed: DeviceProperties
     // deserialization inside BuildDeviceProperties rejects runtimes < 9.8.
     ABSL_ASSIGN_OR_RETURN(auto device_props,
-                     xla::gpu::BuildDeviceProperties(gpu_device_info));
+                          xla::gpu::BuildDeviceProperties(gpu_device_info));
     graph_.set_device_properties(device_props);
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph());
@@ -6915,7 +6922,7 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
     ABSL_ASSIGN_OR_RETURN(auto cudnn_handle,
-                     cudnn_support.cudnn_->GetCompilationHandle());
+                          cudnn_support.cudnn_->GetCompilationHandle());
     if (plan_id.has_value()) {
       RETURN_CUDNN_FRONTEND_STATUS(
           graph_.build_plan_at_index(cudnn_handle, *plan_id));

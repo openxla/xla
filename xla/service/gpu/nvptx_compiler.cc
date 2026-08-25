@@ -42,6 +42,9 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
@@ -52,9 +55,11 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_custom_call_compiler.h"
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
+#include "xla/backends/gpu/transforms/cudnn_non_gemm_fusion_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/backends/gpu/transforms/cudnn_simplify_padding.h"
+#include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -105,14 +110,12 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -373,6 +376,20 @@ absl::Status NVPTXCompiler::AddConfigAssignerPass(
   return GpuCompiler::AddConfigAssignerPass(
       pipeline, hlo_module, gpu_version, options, thread_pool, stream_executor,
       target_config, alias_info, mlir_context, shape_size_fn, key_value_store);
+}
+
+absl::Status NVPTXCompiler::RunCudnnNonGemmFusionRewriterPass(
+    HloModule* module, se::StreamExecutor* stream_exec,
+    const se::DeviceDescription& device_description,
+    CompilationStats* compilation_stats) {
+  if (module->config().debug_options().xla_gpu_cudnn_non_gemm_fusion_level() <
+      1) {
+    return absl::OkStatus();
+  }
+
+  TF_RETURN_IF_ERROR(FusionWrapper(device_description).Run(module).status());
+  CudnnNonGemmFusionRewriter rewriter(stream_exec, device_description);
+  return rewriter.Run(module).status();
 }
 
 absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
