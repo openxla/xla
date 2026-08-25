@@ -6,7 +6,7 @@ common --incompatible_disallow_empty_glob=false
 
 # Enable legacy external runfiles
 # This is false in Bazel 8, but broke some tests.
-common --legacy_external_runfiles=true
+common --legacy_external_runfiles=false
 
 common:bzlmod --enable_bzlmod --noenable_workspace
 
