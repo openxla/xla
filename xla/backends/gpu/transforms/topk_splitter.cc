@@ -56,7 +56,10 @@ class TopkSplitterVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleCustomCall(HloInstruction* inst) override {
     HloCustomCallInstruction* topk = DynCast<HloCustomCallInstruction>(inst);
-    if (topk == nullptr || topk->custom_call_target() != "TopK") {
+    // Only split "TopK" custom calls created by TopkRewriter, which always
+    // attach a comparator computation. Skip foreign ones without it.
+    if (topk == nullptr || topk->custom_call_target() != "TopK" ||
+        !topk->has_to_apply()) {
       return absl::OkStatus();
     }
     HloComputation* comp = inst->parent();

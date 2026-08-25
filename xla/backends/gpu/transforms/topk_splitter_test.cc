@@ -160,6 +160,23 @@ ENTRY cluster {
               absl_testing::IsOkAndHolds(false));
 }
 
+TEST_F(HardwareIndependentTopkSplitterTest, IgnoresTopKWithoutComparator) {
+  // A foreign "TopK" custom call carries no comparator computation; the
+  // splitter must leave it alone instead of CHECK-crashing (issue #47365).
+  const std::string hlo_string = R"(
+HloModule module
+ENTRY cluster {
+  %arg.1 = f32[1,2097152] parameter(0)
+  ROOT %cc.2 = (f32[1,16], s32[1,16]) custom-call(%arg.1), custom_call_target="TopK"
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_THAT(RunHloPass(TopKSplitter(), module.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_TRUE(Match(module->entry_computation()->root_instruction(),
+                    m::CustomCall(m::Parameter(0))));
+}
+
 TEST_F(TopkSplitterTest, Equivalent) {
   const std::string hlo_string = absl::Substitute(R"(
 HloModule module

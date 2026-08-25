@@ -855,6 +855,48 @@ ENTRY cluster {
                           m::Slice(m::GetTupleElement(sort_matcher, 1)))));
 }
 
+TEST_F(TopkRewriterTest, TopKCustomCallWithoutComparatorIsNotDecomposed) {
+  // A foreign "TopK" custom call carries no comparator computation; the
+  // decomposer must leave it alone instead of CHECK-crashing (issue #47365).
+  const std::string hlo_string = R"(
+HloModule module
+ENTRY cluster {
+  %arg = f32[8,5] parameter(0)
+  ROOT %cc = (f32[8,5], s32[8,5]) custom-call(%arg), custom_call_target="TopK"
+})";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool decomposer_changed,
+                       TopkDecomposer().Run(module.get()));
+  EXPECT_FALSE(decomposer_changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::CustomCall(m::Parameter(0))));
+}
+
+TEST_F(TopkRewriterTest, TopKCustomCallWithTwoComputationsIsNotDecomposed) {
+  // to_apply() also CHECK-fails on custom calls with more than one called
+  // computation; the decomposer must skip those too (issue #47365).
+  const std::string hlo_string = R"(
+HloModule module
+%c1 (p0: f32[]) -> f32[] {
+  ROOT %p0 = f32[] parameter(0)
+}
+%c2 (p1: f32[]) -> f32[] {
+  ROOT %p1 = f32[] parameter(0)
+}
+ENTRY cluster {
+  %arg = f32[8,5] parameter(0)
+  ROOT %cc = (f32[8,5], s32[8,5]) custom-call(%arg), custom_call_target="TopK", called_computations={%c1, %c2}
+})";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool decomposer_changed,
+                       TopkDecomposer().Run(module.get()));
+  EXPECT_FALSE(decomposer_changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::CustomCall(m::Parameter(0))));
+}
+
 TEST_F(TopkRewriterTest, TopKCustomCallUnstableConfig) {
   const std::string hlo_string = R"(
 HloModule module

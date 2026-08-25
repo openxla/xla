@@ -477,7 +477,10 @@ class TopkDecomposerVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
     HloCustomCallInstruction* call = DynCast<HloCustomCallInstruction>(inst);
-    if (call == nullptr || call->custom_call_target() != "TopK") {
+    // Only decompose "TopK" custom calls created by TopkRewriter, which always
+    // attach a comparator computation. Skip foreign ones without it.
+    if (call == nullptr || call->custom_call_target() != "TopK" ||
+        !call->has_to_apply()) {
       return absl::OkStatus();
     }
     HloComputation* comparator = call->to_apply();

@@ -125,8 +125,10 @@ class SpecializeTopkVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleCustomCall(HloInstruction* inst) override {
     HloCustomCallInstruction* topk = DynCast<HloCustomCallInstruction>(inst);
+    // Only specialize "TopK" custom calls created by TopkRewriter, which
+    // always attach a comparator computation. Skip foreign ones without it.
     if (topk == nullptr || topk->custom_call_target() != "TopK" ||
-        compute_capability_.IsOneAPI()) {
+        !topk->has_to_apply() || compute_capability_.IsOneAPI()) {
       return absl::OkStatus();
     }
     TF_RET_CHECK(topk->operand_count() == 1);

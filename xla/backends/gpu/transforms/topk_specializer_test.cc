@@ -207,5 +207,24 @@ TEST_F(TopkTest, PreservesBackendConfig) {
   EXPECT_EQ(custom_call->raw_backend_config_string(), "{is_stable = false}");
 }
 
+TEST_F(TopkTest, IgnoresTopKWithoutComparator) {
+  // A foreign "TopK" custom call carries no comparator computation; the
+  // specializer must leave it alone instead of CHECK-crashing (issue #47365).
+  constexpr absl::string_view hlo = R"(
+    ENTRY top_k {
+      arg = f32[1,1025] parameter(0)
+      ROOT result = (f32[1,4], s32[1,4]) custom-call(arg), custom_call_target="TopK"
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      TopkSpecializer(device_description().gpu_compute_capability())
+          .Run(module.get()));
+  EXPECT_FALSE(changed);
+}
+
 }  // namespace
 }  // namespace xla::gpu
