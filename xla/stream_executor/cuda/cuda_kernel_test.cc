@@ -13,15 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
+#include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -46,6 +47,29 @@ TEST(CudaKernelTest, GetMaxOccupiedBlocksPerCore) {
   EXPECT_THAT(cuda_kernel->GetMaxOccupiedBlocksPerCore(
                   ThreadDim(1, 1, 1), /*dynamic_shared_memory_bytes=*/0),
               absl_testing::IsOkAndHolds(Ge(1)));
+}
+
+// The driver rejects a malformed attribute, so a successful launch is the
+// check.
+TEST(CudaKernelTest, LaunchWithCompletionEvent) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto add, LoadAddI32TestKernel(executor));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Event> event, executor->CreateEvent());
+
+  constexpr int64_t kLength = 4;
+  DeviceAddress<int32_t> buffer =
+      executor->AllocateArray<int32_t>(kLength, /*memory_space=*/0);
+  ASSERT_OK(stream->MemZero(&buffer, kLength * sizeof(int32_t)));
+
+  ASSERT_OK(add.LaunchWithCompletionEvent(ThreadDim(), BlockDim(kLength),
+                                          stream.get(), event.get(), buffer,
+                                          buffer, buffer));
+  ASSERT_OK(stream->BlockHostUntilDone());
 }
 
 TEST(CudaKernelTest, DynamicSharedMemoryOptIn) {

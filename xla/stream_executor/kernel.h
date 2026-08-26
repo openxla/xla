@@ -151,10 +151,12 @@ class Kernel {
                       Stream* stream, const KernelArgs& args);
 
   // Helper method to launch a kernel with optional cluster dimensions.
+  // `launch_completion_event` fires at last-block dispatch, not completion.
   virtual absl::Status Launch(const ThreadDim& thread_dims,
                               const BlockDim& block_dims,
                               const std::optional<ClusterDim>& cluster_dims,
-                              Stream* stream, const KernelArgs& args) = 0;
+                              Stream* stream, const KernelArgs& args,
+                              Event* launch_completion_event = nullptr) = 0;
 
   void set_use_pdl(bool use_pdl) { use_pdl_ = use_pdl; }
   bool use_pdl() const { return use_pdl_; }
@@ -222,6 +224,18 @@ class TypedKernel {
                              Stream* stream, Args... args) {
     auto kernel_args = PackKernelArgs(*this, args...);
     return kernel_->Launch(thread_dims, block_dims, stream, *kernel_args);
+  }
+
+  // As above, with an event recorded at last-block dispatch.
+  template <typename... Args>
+  inline absl::Status LaunchWithCompletionEvent(ThreadDim thread_dims,
+                                                BlockDim block_dims,
+                                                Stream* stream,
+                                                Event* launch_completion_event,
+                                                Args... args) {
+    auto kernel_args = PackKernelArgs(*this, args...);
+    return kernel_->Launch(thread_dims, block_dims, std::nullopt, stream,
+                           *kernel_args, launch_completion_event);
   }
 
   template <typename... Args>

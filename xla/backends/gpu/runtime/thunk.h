@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -52,6 +53,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/future.h"
@@ -90,6 +92,57 @@ namespace xla::gpu {
 // different devices (stream executors). For partitioned XLA programs the
 // expectation is that all local participants execute simultaneously on
 // different threads and coordinate resource acquisition via rendezvous.
+class Thunk;
+
+// Which thunks record a launch-completion event, and which wait on it.
+class LaunchDependencyMap {
+ public:
+  // Index into an execution's event array.
+  using SlotId = size_t;
+
+  explicit LaunchDependencyMap(
+      absl::Span<const Thunk* const> execution_order = {});
+
+  std::optional<SlotId> RecordSlot(const Thunk* thunk) const {
+    auto it = recorded_slot_.find(thunk);
+    return it == recorded_slot_.end() ? std::nullopt
+                                      : std::make_optional(it->second);
+  }
+
+  // Slot of the last producer ahead of `thunk`, if any.
+  std::optional<SlotId> LastProducerSlot(const Thunk* thunk) const {
+    auto it = last_producer_.find(thunk);
+    return it == last_producer_.end() ? std::nullopt
+                                      : std::make_optional(it->second);
+  }
+
+  size_t num_slots() const { return num_slots_; }
+
+ private:
+  absl::flat_hash_map<const Thunk*, SlotId> recorded_slot_;
+  absl::flat_hash_map<const Thunk*, SlotId> last_producer_;
+  size_t num_slots_ = 0;
+};
+
+// Concurrent executions share the map but not events, so binding happens here.
+struct LaunchOrdering {
+  const LaunchDependencyMap& map;
+  absl::Span<const EventPool::Event> events;
+
+  // Orders `thunk` after every producer ahead of it.
+  absl::Status WaitForProducers(const Thunk* thunk,
+                                stream_executor::Stream* stream) const;
+
+  // Binds `slot`, and rewinds streams that already waited past it.
+  void ClaimSlot(LaunchDependencyMap::SlotId slot) const;
+
+  // Per stream: slots below this value have already been waited on.
+  mutable absl::flat_hash_map<stream_executor::Stream*, size_t> waited;
+
+  // Slots whose producer took its event. Nothing waits on the rest.
+  mutable std::vector<bool> event_bound = std::vector<bool>(map.num_slots());
+};
+
 class Thunk {
  public:
   using BufferUses = absl::InlinedVector<BufferUse, 4>;
@@ -305,7 +358,8 @@ class Thunk {
         std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr,
         std::optional<absl::Span<const BufferAllocation::Index>>
-            persistent_alloc_indices = std::nullopt);
+            persistent_alloc_indices = std::nullopt,
+        const LaunchOrdering* launch_ordering = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -353,6 +407,10 @@ class Thunk {
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
+
+    const LaunchOrdering* launch_ordering = nullptr;
+
+    stream_executor::Event* TakeLaunchEvent(const Thunk* thunk) const;
 
     bool mock_collectives = false;
     int64_t execution_id = 0;
@@ -461,6 +519,8 @@ class Thunk {
 
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
+
+  virtual bool RecordsLaunchCompletion() const { return false; }
 
   // Return type for `Walk` callbacks. All callbacks must return `void` or all
   // must return `absl::Status`.

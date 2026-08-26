@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/runtime/process_id.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
@@ -97,14 +98,27 @@ class GpuCollectives : public Collectives {
   // GPU collectives executor is just a wrapper around the Stream.
   class Executor : public Communicator::Executor {
    public:
-    explicit Executor(stream_executor::Stream* stream);
+    explicit Executor(stream_executor::Stream* stream,
+                      stream_executor::Event* launch_event = nullptr);
     stream_executor::Stream* stream() const;
+    stream_executor::Event* launch_event() const { return launch_event_; }
 
    private:
     stream_executor::Stream* stream_;
+    stream_executor::Event* launch_event_ = nullptr;
   };
 
-  static Executor On(se::Stream& stream) { return Executor(&stream); }
+  static Executor On(se::Stream& stream,
+                     stream_executor::Event* launch_event = nullptr) {
+    return Executor(&stream, launch_event);
+  }
+
+  // NCCL takes one launch event per group, so only the last call carries it.
+  static Executor OnGroupMember(se::Stream& stream,
+                                stream_executor::Event* launch_event,
+                                bool is_last) {
+    return Executor(&stream, is_last ? launch_event : nullptr);
+  }
 
   // GPU communicator configuration.
   //

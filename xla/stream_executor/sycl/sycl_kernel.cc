@@ -47,7 +47,8 @@ absl::StatusOr<KernelMetadata> SyclKernel::GetKernelMetadata() {
 absl::Status SyclKernel::Launch(const ThreadDim& thread_dims,
                                 const BlockDim& block_dims,
                                 const std::optional<ClusterDim>& cluster_dims,
-                                Stream* stream, const KernelArgs& args) {
+                                Stream* stream, const KernelArgs& args,
+                                Event* launch_completion_event) {
   VLOG(2) << thread_dims.ToString() << ", " << block_dims.ToString() << ", "
           << (cluster_dims.has_value() ? cluster_dims.value().ToString()
                                        : "ClusterDim{std::nullopt}");
