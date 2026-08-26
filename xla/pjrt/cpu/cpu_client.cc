@@ -1109,6 +1109,12 @@ absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeInto(
   if (device_shape.IsToken()) {
     return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
   }
+  // CopyFromLiteral does not write runtime shape metadata; delegate dynamic
+  // shapes to the base implementation, which does.
+  if (RequiresRuntimeShapeMetadata(device_shape, raw_buffer->memory_space())) {
+    return CommonPjRtClient::LinearizeInto(literal, device_shape,
+                                           host_buffer_semantics, raw_buffer);
+  }
   auto* cpp_buf = raw_buffer->down_cast<CpuRawBuffer>();
   if (cpp_buf == nullptr) {
     return absl::InvalidArgumentError("Not a CPU raw buffer");

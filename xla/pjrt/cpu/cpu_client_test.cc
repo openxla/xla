@@ -613,6 +613,34 @@ TEST(PjRtCpuClientTest, AsyncTransferLiteralInt4) {
               ElementsAreArray(literal.data<s4>()));
 }
 
+TEST(PjRtCpuClientTest, BufferFromHostLiteralDynamicShape) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  Literal literal(ShapeUtil::MakeShape(F32, {10}, {true}));
+  absl::Span<float> data = literal.data<float>();
+  std::iota(data.begin(), data.end(), 0.0f);
+  literal.SetDynamicSize(0, 3);
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0]));
+  TF_ASSERT_OK_AND_ASSIGN(auto received, buffer->ToLiteral().Await());
+  EXPECT_EQ(received->GetDynamicSize(0), 3);
+  EXPECT_THAT(received->data<float>().subspan(0, 3), ElementsAre(0, 1, 2));
+}
+
+TEST(PjRtCpuClientTest, BufferFromHostLiteralDynamicShapeMixedDims) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  Literal literal(ShapeUtil::MakeShape(F32, {2, 3}, {false, true}));
+  absl::Span<float> data = literal.data<float>();
+  std::iota(data.begin(), data.end(), 0.0f);
+  literal.SetDynamicSize(1, 2);
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0]));
+  TF_ASSERT_OK_AND_ASSIGN(auto received, buffer->ToLiteral().Await());
+  EXPECT_EQ(received->shape().dimensions(1), 2);
+  EXPECT_THAT(received->data<float>(), ElementsAre(0, 1, 3, 4));
+}
+
 TEST(PjRtCpuClientTest, ToLiteralWithLayout) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   Literal literal = LiteralUtil::CreateR2<int8_t>({{1, 2}, {3, 4}});
