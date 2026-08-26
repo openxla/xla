@@ -63,7 +63,7 @@ Use `bant` to generate buildozer commands to remove unused deps:
 bant dwyu //xla/core/collectives:symmetric_memory
 ```
 
-if you feel lucky, you can execute them directly:
+If you feel lucky, you can execute them directly:
 
 ```
 . <(bant dwyu //xla/core/collectives:symmetric_memory)
