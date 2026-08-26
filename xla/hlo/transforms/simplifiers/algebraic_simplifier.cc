@@ -5879,7 +5879,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleConvert(
 
 absl::Status AlgebraicSimplifierVisitor::HandleCustomCall(
     HloInstruction* custom_call) {
-  // Remove redundant slice to dynamic of pad to static. The dynamic padder
+  // Remove redundant SliceToDynamic of PadToStatic. The dynamic padder
   // wraps the size operand in clamp(0, size, bound); looking through it is
   // value-preserving since PadToStatic sizes are within bounds.
   HloInstruction *pad_to_static0, *pad_to_static1, *pad_to_static_operand;
