@@ -67,7 +67,6 @@ limitations under the License.
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
-#include "xla/backends/gpu/autotuner/cudnn.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"

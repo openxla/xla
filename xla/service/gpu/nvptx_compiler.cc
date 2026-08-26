@@ -387,7 +387,7 @@ absl::Status NVPTXCompiler::RunCudnnNonGemmFusionRewriterPass(
     return absl::OkStatus();
   }
 
-  TF_RETURN_IF_ERROR(FusionWrapper(device_description).Run(module).status());
+  ABSL_RETURN_IF_ERROR(FusionWrapper(device_description).Run(module).status());
   CudnnNonGemmFusionRewriter rewriter(stream_exec, device_description);
   return rewriter.Run(module).status();
 }

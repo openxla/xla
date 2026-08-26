@@ -1810,7 +1810,6 @@ cc_library(
         "//xla/backends/cpu/nanort:nanort_client",
         "//xla/backends/cpu/nanort:nanort_executable",
         "//xla/backends/gpu/autotuner:block_level_emitter",
-        "//xla/backends/gpu/autotuner:cudnn",
         "//xla/backends/gpu/autotuner:factory",
         "//xla/backends/gpu/autotuner:native_emitter",
         "//xla/backends/gpu/codegen:cubin_custom_kernel_compiler",

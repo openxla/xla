@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_non_gemm_fusion_rewriter.h"
 
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
@@ -103,7 +103,7 @@ absl::Status CudnnNonGemmFusionRewriterVisitor::HandleFusion(
   FusionBackendConfig& fusion_backend_config =
       *gpu_backend_config.mutable_fusion_backend_config();
   fusion_backend_config.set_kind(std::string(kCuDnnFusionKind));
-  TF_RETURN_IF_ERROR(fusion_instr->set_backend_config(gpu_backend_config));
+  ABSL_RETURN_IF_ERROR(fusion_instr->set_backend_config(gpu_backend_config));
 
   MarkAsChanged();
   return absl::OkStatus();
