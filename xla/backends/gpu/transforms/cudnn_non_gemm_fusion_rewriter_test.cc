@@ -15,21 +15,35 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/cudnn_non_gemm_fusion_rewriter.h"
 
-#include <gtest/gtest.h>
-
 #include <memory>
 
-#include "xla/backends/gpu/tests/gpu_codegen_test.h"
+#include <gtest/gtest.h>
+#include "absl/log/check.h"
+#include "absl/status/statusor.h"
+#include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
 namespace {
 
-using CudnnNonGemmFusionRewriterTest = GpuCodegenTest;
+class CudnnNonGemmFusionRewriterTest : public HloPjRtGpuTestBase {
+ protected:
+  se::StreamExecutor* stream_executor() const {
+    auto platform =
+        se::PlatformManager::PlatformWithId(stream_executor_platform_id());
+    CHECK_OK(platform);
+    absl::StatusOr<se::StreamExecutor*> executor =
+        (*platform)->ExecutorForDevice(0);
+    CHECK_OK(executor);
+    return *executor;
+  }
+};
 
 // Baseline: a fusion containing a "well-behaved" concatenate (all operands have
 // the same size along the concat dimension and all operands are used
@@ -53,9 +67,7 @@ ENTRY e {
                           ParseAndReturnVerifiedModule(kHlo));
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      CudnnNonGemmFusionRewriter(
-          backend().default_stream_executor(),
-          backend().default_stream_executor()->GetDeviceDescription())
+      CudnnNonGemmFusionRewriter(stream_executor(), device_description())
           .Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_TRUE(IsGpuFusionKind(*module->entry_computation()->root_instruction(),
@@ -85,9 +97,7 @@ ENTRY e {
                           ParseAndReturnVerifiedModule(kHlo));
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      CudnnNonGemmFusionRewriter(
-          backend().default_stream_executor(),
-          backend().default_stream_executor()->GetDeviceDescription())
+      CudnnNonGemmFusionRewriter(stream_executor(), device_description())
           .Run(module.get()));
   EXPECT_FALSE(changed);
   EXPECT_FALSE(IsGpuFusionKind(*module->entry_computation()->root_instruction(),
@@ -124,9 +134,7 @@ ENTRY e {
                           ParseAndReturnVerifiedModule(kHlo));
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      CudnnNonGemmFusionRewriter(
-          backend().default_stream_executor(),
-          backend().default_stream_executor()->GetDeviceDescription())
+      CudnnNonGemmFusionRewriter(stream_executor(), device_description())
           .Run(module.get()));
   EXPECT_FALSE(changed);
   EXPECT_FALSE(IsGpuFusionKind(*module->entry_computation()->root_instruction(),

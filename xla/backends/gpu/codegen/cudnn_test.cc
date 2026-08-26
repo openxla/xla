@@ -138,7 +138,7 @@ class CuDnnFusionFileCheckTest : public CuDnnFusionTest {
   absl::StatusOr<bool> RunCuDnnFileCheck(absl::string_view hlo,
                                          absl::string_view pattern) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo));
+                          ParseAndReturnVerifiedModule(hlo));
     const std::string root_name(
         module->entry_computation()->root_instruction()->name());
     BinaryMap dnn_compiled_graphs;

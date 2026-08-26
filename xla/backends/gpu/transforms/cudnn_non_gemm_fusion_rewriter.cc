@@ -18,7 +18,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/errors.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -32,6 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
