@@ -305,6 +305,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::DispatchAsyncDone(
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kCollectiveBroadcast:
     case HloOpcode::kCollectivePermute:
+    case HloOpcode::kCollectiveReduce:
       return EmitAsyncDone(instr, instr->operand(0));
 
     // Complete a fusion or call wrapped in generic async start/done.
@@ -2093,6 +2094,15 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
           Thunk::kCollectiveBroadcast,
           Cast<HloCollectiveBroadcastInstruction>(collective), std::nullopt);
 
+    case HloOpcode::kCollectiveReduce: {
+      auto* collective_reduce =
+          Cast<HloCollectiveReduceInstruction>(collective);
+      return EmitCollective<CollectiveReduceThunk,
+                            HloCollectiveReduceInstruction>(
+          Thunk::kCollectiveReduce, collective_reduce,
+          collective_reduce->use_global_device_ids());
+    }
+
     default:
       return Internal("Unsupported collective instruction: %s",
                       collective->ToString());
@@ -2224,7 +2234,7 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
     // CollectiveReduceThunk needs the dynamic-root flag so it can treat the
     // trailing root-rank buffer specially at run time.
     thunks = ThunkSequence::Of<CollectiveThunkType>(
-        thunk_info, inst, /*buffers=*/std::move(buffers),
+        info, inst, /*buffers=*/std::move(buffers),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
         has_dynamic_root);
   } else if constexpr (std::is_constructible_v<

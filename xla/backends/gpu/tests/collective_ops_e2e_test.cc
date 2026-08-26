@@ -576,13 +576,17 @@ TEST_P(AsyncCollectiveOps, AsyncCollectiveReduce) {
                           ExecuteReplicated(std::move(module)));
 
   const HloModule* hlo_module = execution_result.optimized_module;
-  const HloInstruction* cr_start =
-      FindCollectiveStart(hlo_module, HloOpcode::kCollectiveReduce);
-  const HloInstruction* cr_done =
-      FindCollectiveDone(hlo_module, HloOpcode::kCollectiveReduce);
-  ASSERT_THAT(cr_start, NotNull());
-  ASSERT_THAT(cr_done, NotNull());
-  EXPECT_EQ(IsAsync(cr_start), enable_async_);
+  if (enable_async_) {
+    const HloInstruction* cr_start =
+        FindCollectiveStart(hlo_module, HloOpcode::kCollectiveReduce);
+    const HloInstruction* cr_done =
+        FindCollectiveDone(hlo_module, HloOpcode::kCollectiveReduce);
+    EXPECT_THAT(cr_start, NotNull());
+    EXPECT_THAT(cr_done, NotNull());
+  } else {
+    EXPECT_THAT(FindInstruction(hlo_module, HloOpcode::kCollectiveReduce),
+                NotNull());
+  }
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
@@ -624,12 +628,24 @@ TEST_P(AsyncCollectiveOps, AsyncCollectiveReduceDynamicRoot) {
                           ExecuteReplicated(std::move(module)));
 
   const HloModule* hlo_module = execution_result.optimized_module;
-  const HloInstruction* cr_start =
-      FindCollectiveStart(hlo_module, HloOpcode::kCollectiveReduce);
-  ASSERT_THAT(cr_start, NotNull());
-  EXPECT_TRUE(Cast<HloCollectiveReduceInstruction>(
-                  cr_start->async_wrapped_instruction())
-                  ->has_dynamic_root());
+  if (enable_async_) {
+    const HloInstruction* cr_start =
+        FindCollectiveStart(hlo_module, HloOpcode::kCollectiveReduce);
+    EXPECT_THAT(cr_start, NotNull());
+    if (cr_start != nullptr) {
+      EXPECT_TRUE(Cast<HloCollectiveReduceInstruction>(
+                      cr_start->async_wrapped_instruction())
+                      ->has_dynamic_root());
+    }
+  } else {
+    const HloInstruction* cr_sync =
+        FindInstruction(hlo_module, HloOpcode::kCollectiveReduce);
+    EXPECT_THAT(cr_sync, NotNull());
+    if (cr_sync != nullptr) {
+      EXPECT_TRUE(
+          Cast<HloCollectiveReduceInstruction>(cr_sync)->has_dynamic_root());
+    }
+  }
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
