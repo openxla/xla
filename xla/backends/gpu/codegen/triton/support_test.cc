@@ -1713,7 +1713,6 @@ constexpr std::array kTestedOpsCollectives = {
     HloOpcode::kAsyncStart,
     HloOpcode::kAsyncUpdate,
     HloOpcode::kCollectiveBroadcast,
-    HloOpcode::kCollectiveReduce,
     HloOpcode::kCollectivePermute,
     HloOpcode::kCollectivePermuteDone,
     HloOpcode::kCollectivePermuteStart,

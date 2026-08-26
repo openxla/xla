@@ -22,11 +22,11 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -79,7 +79,7 @@ CollectiveReduceThunk::CollectiveReduceThunk(
                                     ? inst->operand_count() - 1
                                     : inst->operand_count();
     for (int64_t i = 0; i < num_data_operands; ++i) {
-      RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           IsValidOperand(inst->operand(i)->shape(), Thunk::kCollectiveReduce));
     }
     if (!MatchReductionComputation(inst->called_computations().front())
@@ -113,7 +113,7 @@ absl::Status CollectiveReduceThunk::InitializeCollective(
     // The last buffer holds the runtime-selected root ranks (one S32 per
     // reduce); all other buffers are the data being reduced.
     metadata->num_roots = buffers().size() - 1;
-    ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<se::MemoryAllocation> alloc,
         executor->HostMemoryAllocate(metadata->num_roots * sizeof(int32_t)));
     metadata->reduce_roots = std::move(alloc);
@@ -124,9 +124,10 @@ absl::Status CollectiveReduceThunk::InitializeCollective(
 absl::Status CollectiveReduceThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
-  ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
   CollectiveReduceMetadata* metadata = nullptr;
   {
     absl::MutexLock lock(mutex_);
@@ -143,7 +144,7 @@ CollectiveReduceThunk::FromProto(
   std::vector<CollectiveThunk::Buffer> buffers;
   buffers.reserve(thunk_proto.buffers_size());
   for (const CollectiveBufferProto& proto : thunk_proto.buffers()) {
-    ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         CollectiveThunk::Buffer buffer,
         CollectiveThunk::Buffer::FromProto(proto, buffer_allocations));
     buffers.push_back(buffer);
@@ -152,8 +153,8 @@ CollectiveReduceThunk::FromProto(
   CollectiveConfig config =
       CollectiveConfig::FromProto(thunk_proto.collective_config());
 
-  ASSIGN_OR_RETURN(ReductionKind reduction_kind,
-                   FromReductionKindProto(thunk_proto.reduction_kind()));
+  ABSL_ASSIGN_OR_RETURN(ReductionKind reduction_kind,
+                        FromReductionKindProto(thunk_proto.reduction_kind()));
 
   return std::make_unique<CollectiveReduceThunk>(
       std::move(thunk_info), AllReduceConfig{config, reduction_kind},
@@ -168,7 +169,7 @@ absl::StatusOr<ThunkProto> CollectiveReduceThunk::ToProto() const {
       proto.mutable_collective_reduce_thunk();
 
   for (const Buffer& buffer : buffers()) {
-    ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
+    ABSL_ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
   }
 
   *thunk_proto->mutable_collective_config() = config_.config.ToProto();
@@ -191,9 +192,10 @@ absl::Status RunCollectiveReduce(ReductionKind reduction_kind,
     // per reduce below.
     DeviceBufferPair& roots_device_buffer = buffers.back();
     CHECK(metadata->reduce_roots != nullptr);
-    RETURN_IF_ERROR(stream.Memcpy(metadata->reduce_roots->address().opaque(),
-                                  roots_device_buffer.source_buffer,
-                                  roots_device_buffer.source_buffer.size()));
+    ABSL_RETURN_IF_ERROR(
+        stream.Memcpy(metadata->reduce_roots->address().opaque(),
+                      roots_device_buffer.source_buffer,
+                      roots_device_buffer.source_buffer.size()));
     if (absl::Status blocked = stream.BlockHostUntilDone(); !blocked.ok()) {
       return absl::InternalError(
           absl::StrFormat("Failed to copy dynamic roots on stream %p: %s",
@@ -208,7 +210,7 @@ absl::Status RunCollectiveReduce(ReductionKind reduction_kind,
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
 
   if (has_dynamic_root && metadata) {
-    ASSIGN_OR_RETURN(size_t num_ranks, comm.NumRanks());
+    ABSL_ASSIGN_OR_RETURN(size_t num_ranks, comm.NumRanks());
     int32_t* roots_ptr =
         reinterpret_cast<int32_t*>(metadata->reduce_roots->address().opaque());
     for (int64_t i = 0; i < num_reduces; ++i) {
@@ -230,14 +232,14 @@ absl::Status RunCollectiveReduce(ReductionKind reduction_kind,
             metadata->reduce_roots->address().opaque());
         root = RankId(roots_ptr[i]);
       }
-      RETURN_IF_ERROR(gpu_comm->LaunchReduce(
+      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchReduce(
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
           buffer.element_count, reduction_kind, root,
           GpuCollectives::On(stream)));
     }
     return absl::OkStatus();
   });
-  RETURN_IF_ERROR(future.Await());
+  ABSL_RETURN_IF_ERROR(future.Await());
   XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing collective-reduce";
   return absl::OkStatus();
 }

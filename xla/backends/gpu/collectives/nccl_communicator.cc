@@ -648,19 +648,19 @@ absl::Status NcclCommunicator::LaunchReduce(se::DeviceAddressBase send_buffer,
                primitive_util::LowercasePrimitiveTypeName(dtype), count,
                reduction_kind, root.value(), comm_->comm, stream);
 
-    ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
-                     ToNcclDataType(dtype, /*is_reduction_op=*/true,
-                                    stream->parent()
-                                        ->GetDeviceDescription()
-                                        .cuda_compute_capability()));
+    ABSL_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype,
+                          ToNcclDataType(dtype, /*is_reduction_op=*/true,
+                                         stream->parent()
+                                             ->GetDeviceDescription()
+                                             .cuda_compute_capability()));
 
-    RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduce(
+    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduce(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
         nccl_dtype, ToNcclReduction(reduction_kind), root.value(), comm_->comm,
         AsCudaStream(stream))));
   }
   if (!IsInsideNcclGroupLaunch()) {
-    RETURN_IF_ERROR(PollUntilDone());
+    ABSL_RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
 }

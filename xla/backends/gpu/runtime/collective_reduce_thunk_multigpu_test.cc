@@ -22,9 +22,9 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -119,8 +119,8 @@ static std::vector<float> ExpectedSum() {
 static absl::Status VerifyRootOutput(se::Stream& stream,
                                      se::DeviceAddressBase dst,
                                      int device_ordinal) {
-  ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadDeviceBuffer(stream, dst, kNumElements));
+  ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
+                        ReadDeviceBuffer(stream, dst, kNumElements));
   std::vector<float> expected = ExpectedSum();
   for (int i = 0; i < kNumElements; ++i) {
     if (output[i] != expected[i]) {
@@ -144,30 +144,30 @@ static absl::Status RunReduce(std::vector<DeviceTestSlot>& slots,
         if (root_buffer_size > 0) {
           buffer_sizes.push_back(root_buffer_size);
         }
-        RETURN_IF_ERROR(SetupCollectiveThunkDevice(
+        ABSL_RETURN_IF_ERROR(SetupCollectiveThunkDevice(
             d, kNumDevices, buffer_sizes, thunk, device_assignment, slots[d]));
 
         DeviceTestSlot& slot = slots[d];
-        RETURN_IF_ERROR(FillDeviceBuffer(*slot.stream, slot.create_buffers[0],
-                                         SourceValues(d)));
-        RETURN_IF_ERROR(
+        ABSL_RETURN_IF_ERROR(FillDeviceBuffer(
+            *slot.stream, slot.create_buffers[0], SourceValues(d)));
+        ABSL_RETURN_IF_ERROR(
             FillDeviceBuffer(*slot.stream, slot.create_buffers[1],
                              std::vector<float>(kNumElements, -1.0f)));
         int32_t root_value = static_cast<int32_t>(root_rank);
         if (root_buffer_size > 0) {
           se::DeviceAddressBase root_buf = slot.create_buffers[2];
-          RETURN_IF_ERROR(
+          ABSL_RETURN_IF_ERROR(
               slot.stream->Memcpy(&root_buf, &root_value, sizeof(int32_t)));
           // Block so `root_value` outlives the asynchronous host-to-device
           // copy.
-          RETURN_IF_ERROR(slot.stream->BlockHostUntilDone());
+          ABSL_RETURN_IF_ERROR(slot.stream->BlockHostUntilDone());
         }
 
         BufferAllocations allocations =
             MakeBufferAllocations(slot, slot.create_buffers);
         Thunk::ExecuteParams execute_params =
             MakeExecuteParams(slot, allocations);
-        RETURN_IF_ERROR(ExecuteOnStreamAndBlock(thunk, execute_params));
+        ABSL_RETURN_IF_ERROR(ExecuteOnStreamAndBlock(thunk, execute_params));
 
         // The reduce writes the result only to the root rank; other ranks'
         // destination buffers are left undefined.
