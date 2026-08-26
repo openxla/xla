@@ -288,9 +288,9 @@ ENTRY main {
   //  OpWithDynamicLowering (custom_call_2)
   //     |
   //  PadToStatic
-  //     |
-  //   Negate
-  //     |
+  //     |     \
+  //   Negate  Clamp(0, size, bound)
+  //      \     /
   //   SliceToDynamic // Root require dynamic form tensor.
   auto custom_call_1 =
       module_->entry_computation()->GetInstructionWithName("custom-call.1");
@@ -348,9 +348,9 @@ ENTRY main {
   //   GTE
   //     |
   //  PadToStatic
-  //     |
-  //   Negate
-  //     |
+  //     |     \
+  //   Negate  Clamp(0, size, bound)
+  //      \     /
   //   SliceToDynamic // Root require dynamic form tensor.
 
   auto* root = module_->entry_computation()->root_instruction();
