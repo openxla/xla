@@ -1186,7 +1186,7 @@ ENTRY main {
   EXPECT_EQ(result, expected);
 }
 
-TEST_F(ExecutionTest, OversizeDynamicDimensionSizeClamped) {
+TEST_F(ExecutionTest, OutOfBoundsDynamicDimensionSizeClamped) {
   // Regression test for https://github.com/openxla/xla/issues/44940: a
   // runtime size beyond the dimension bound used to become an unchecked
   // copy bound in SliceToDynamic, corrupting memory.
