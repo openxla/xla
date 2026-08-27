@@ -701,7 +701,6 @@ cc_library(
     hdrs = ["ir_emitter.h"],
     copts = tsl_copts(),
     deps = [
-        ":backend_config_proto_cc",
         ":cpu_instruction_fusion",
         ":cpu_options",
         ":cpu_runtime",
@@ -773,14 +772,12 @@ cc_library(
     srcs = ["ir_function.cc"],
     hdrs = ["ir_function.h"],
     deps = [
-        ":cpu_runtime",
         ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:llvm_util",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
