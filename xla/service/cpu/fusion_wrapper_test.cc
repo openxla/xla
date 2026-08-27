@@ -75,8 +75,6 @@ TEST_F(FusionWrapperTest, Scatter) {
 }
 
 TEST_F(FusionWrapperTest, TransposeWrappedWithNewFusionEmitters) {
-  // Standalone transposes route to ElementalKernelEmitter when unwrapped.
-  // Wrap them when the new fusion emitters are enabled.
   static constexpr absl::string_view hlo_string = R"(
   HloModule m
     ENTRY e {
