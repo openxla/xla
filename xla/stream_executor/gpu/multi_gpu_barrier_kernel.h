@@ -46,18 +46,9 @@ namespace stream_executor::gpu {
 //   * Logic: The kernel uses a pre-increment scheme (syncs on value + 1).
 //     Zero-initialized memory correctly sets up the wait condition for the
 //     first barrier launch.
-//
-// Launch configuration:
-//   * The kernel MUST be launched with a single block of `kNumThreads`
-//     threads (one warp). Peer synchronization is striped across the warp:
-//     each thread handles up to `ceil(num_ranks / kNumThreads)` peer ranks
-//     in a loop. A single-warp launch keeps the read and write of
-//     `sync_counter` warp-synchronous and avoids the cross-warp race that
-//     would otherwise appear when `kMaxPeers > 32`.
-//   * `kMaxPeers` bounds the signal-buffer and pointer-array sizes, not the
-//     number of threads launched.
 struct MultiGpuBarrierKernel {
-  static constexpr int64_t kNumThreads = 32;
+  // Maximum number of peers supported by the barrier.
+  // Can be extended to support larger GPU clusters in the future.
   static constexpr int64_t kMaxPeers = 128;
 
   using KernelType =
@@ -73,7 +64,8 @@ struct MultiGpuBarrierKernel {
 //  pointer storage symmetric memory at rank's location. This replaces the need
 //  to do host-side rendezvous to exchange pointers.
 struct MultiGpuBarrierWithNcclKernel {
-  static constexpr int64_t kNumThreads = MultiGpuBarrierKernel::kNumThreads;
+  // Maximum number of peers supported by the barrier.
+  // Can be extended to support larger GPU clusters in the future.
   static constexpr int64_t kMaxPeers = MultiGpuBarrierKernel::kMaxPeers;
 
   using KernelType = stream_executor::TypedKernel<

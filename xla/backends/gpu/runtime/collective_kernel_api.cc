@@ -110,11 +110,13 @@ absl::Status LaunchMultiGpuBarrier(
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);
 
-  return kernel->Launch(
-      stream_executor::ThreadDim(MultiGpuBarrierKernel::kNumThreads, 1, 1),
-      stream_executor::BlockDim(1, 1, 1), stream,
-      static_cast<int64_t>(rank.value()), static_cast<int64_t>(num_devices),
-      signal_buffers, typed_sync_counter);
+  const int64_t threads_per_warp =
+      stream->parent()->GetDeviceDescription().threads_per_warp();
+  return kernel->Launch(stream_executor::ThreadDim(threads_per_warp, 1, 1),
+                        stream_executor::BlockDim(1, 1, 1), stream,
+                        static_cast<int64_t>(rank.value()),
+                        static_cast<int64_t>(num_devices), signal_buffers,
+                        typed_sync_counter);
 }
 
 // See MultiGpuBarrierWithNcclKernel for more details.
@@ -137,8 +139,9 @@ absl::Status LaunchMultiGpuBarrierWithNccl(
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);
 
-  return kernel->Launch(stream_executor::ThreadDim(
-                            MultiGpuBarrierWithNcclKernel::kNumThreads, 1, 1),
+  const int64_t threads_per_warp =
+      stream->parent()->GetDeviceDescription().threads_per_warp();
+  return kernel->Launch(stream_executor::ThreadDim(threads_per_warp, 1, 1),
                         stream_executor::BlockDim(1, 1, 1), stream,
                         static_cast<int64_t>(rank.value()),
                         static_cast<int64_t>(num_devices), symmetric_memory,

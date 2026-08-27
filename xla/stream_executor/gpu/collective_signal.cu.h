@@ -42,6 +42,10 @@ __device__ void WaitSignalFlag(uint32_t* addr, uint32_t expected);
 // `threadIdx.x` with a step of `blockDim.x`. This lets the caller synchronize
 // with `num_ranks` peers using any number of threads (including fewer threads
 // than peers), as long as `num_ranks <= MaxPeers`.
+//
+// Puts and waits run in two separate phases (all puts, then all waits) so
+// that peers observe this rank's signals as early as possible, instead of
+// serializing each put/wait pair.
 template <PlatformType T, int64_t MaxPeers>
 __device__ __forceinline__ void SyncRemoteBlocks(
     // Use raw pointer with __restrict__ directly here
@@ -52,6 +56,9 @@ __device__ __forceinline__ void SyncRemoteBlocks(
     PutSignalFlag<T>(
         signal_pad_ptrs[target_rank] + blockIdx.x * num_ranks + rank,
         signal_value);
+  }
+  for (int64_t target_rank = threadIdx.x; target_rank < num_ranks;
+       target_rank += blockDim.x) {
     WaitSignalFlag<T>(
         signal_pad_ptrs[rank] + blockIdx.x * num_ranks + target_rank,
         signal_value);

@@ -188,9 +188,11 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
           auto kernel, (GpuKernelRegistry::GetGlobalRegistry()
                             .LoadKernel<MultiGpuBarrierKernel>(executors_[i])));
 
+      const int64_t threads_per_warp =
+          executors_[i]->GetDeviceDescription().threads_per_warp();
       ASSERT_OK(kernel.Launch(
-          ThreadDim(MultiGpuBarrierKernel::kNumThreads, 1, 1),
-          BlockDim(1, 1, 1), streams_[i].get(), static_cast<int64_t>(i),
+          ThreadDim(threads_per_warp, 1, 1), BlockDim(1, 1, 1),
+          streams_[i].get(), static_cast<int64_t>(i),
           static_cast<int64_t>(num_devices_), kernel_arg_ptrs, counters[i]));
     }
   }
@@ -270,12 +272,14 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronizationWithNccl) {
           (GpuKernelRegistry::GetGlobalRegistry()
                .LoadKernel<MultiGpuBarrierWithNcclKernel>(executors_[i])));
 
-      ASSERT_OK(kernel.Launch(
-          ThreadDim(MultiGpuBarrierWithNcclKernel::kNumThreads, 1, 1),
-          BlockDim(1, 1, 1), streams_[i].get(), static_cast<int64_t>(i),
-          static_cast<int64_t>(num_devices_),
-          signal_buffer_symmetric_memory[i].get(),
-          DeviceAddress<uint32_t>(counters[i]->address())));
+      const int64_t threads_per_warp =
+          executors_[i]->GetDeviceDescription().threads_per_warp();
+      ASSERT_OK(kernel.Launch(ThreadDim(threads_per_warp, 1, 1),
+                              BlockDim(1, 1, 1), streams_[i].get(),
+                              static_cast<int64_t>(i),
+                              static_cast<int64_t>(num_devices_),
+                              signal_buffer_symmetric_memory[i].get(),
+                              DeviceAddress<uint32_t>(counters[i]->address())));
     }
   }
 
