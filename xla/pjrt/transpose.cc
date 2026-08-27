@@ -480,11 +480,11 @@ void TransposePlan::ExecuteTyped(const char* a, char* b,
   tsl::profiler::TraceMe traceme([&]() {
     return tsl::profiler::TraceMeEncode(
         "TransposePlan::ExecuteTyped",
-        {{"inner_kernel_is_memcpy", inner_kernel_is_memcpy_},
+        {{"inner_kernel_is_memcpy", inner_kernel_is_memcpy()},
          {"inner_block_elems", inner_block_elems_}});
   });
 
-  CHECK(!inner_kernel_is_memcpy_);
+  CHECK(!inner_kernel_is_memcpy());
   std::unique_ptr<char[]> scratch;
   if (scratch_size_ > 0) {
     scratch.reset(new char[scratch_size_]);
@@ -587,7 +587,7 @@ void TransposePlan::ExecuteChunk(int chunk_id, const void* a, void* b,
     }
   }
 
-  if (inner_kernel_is_memcpy_) {
+  if (inner_kernel_is_memcpy()) {
     CHECK(transformation_ == Transformation::kNone);
     // Memcpy-based plans all assume element size 1 (i.e., bytes).
     TransposeConstStride1(ac, bc, nodes.data());
@@ -817,14 +817,14 @@ void TransposePlan::BuildPlanNodes(int chunk_id,
       // We've reached the end of the loop nest.
       // Transpose loops have a sentinel node, indicated by a negative `inc`
       // value, that describes the striding of the inner transpose kernel.
-      if (!inner_kernel_is_memcpy_) {
+      if (!inner_kernel_is_memcpy()) {
         Node node;
         node.end = node.inc = -1;
         node.lda = sentinel_lda_;
         node.ldb = sentinel_ldb_;
         nodes.push_back(node);
       }
-      DCHECK(!(inner_kernel_is_memcpy_ && agendum.parent_node_id >= 0));
+      DCHECK(!(inner_kernel_is_memcpy() && agendum.parent_node_id >= 0));
       continue;
     }
 
@@ -847,12 +847,12 @@ void TransposePlan::BuildPlanNodes(int chunk_id,
       int64_t actual_end = std::min<int64_t>(size, loop.end);
       node.end = std::max<int64_t>(0, actual_end - actual_start);
 
-      if (node.is_inner_dim_in_a && inner_kernel_is_memcpy_) {
+      if (node.is_inner_dim_in_a && inner_kernel_is_memcpy()) {
         node.end *= elem_size_in_bytes_;
       }
 
       if (!loop_has_trivial_iteration_space(node) ||
-          (inner_kernel_is_memcpy_ && node.is_inner_dim_in_a)) {
+          (inner_kernel_is_memcpy() && node.is_inner_dim_in_a)) {
         nodes.push_back(node);
       }
       Agendum new_agendum;
@@ -894,13 +894,13 @@ void TransposePlan::BuildPlanNodes(int chunk_id,
       node.end = std::max<int64_t>(
           0, std::min<int64_t>(num_tiles, loop.end) - loop.start);
 
-      if (node.is_inner_dim_in_a && inner_kernel_is_memcpy_) {
+      if (node.is_inner_dim_in_a && inner_kernel_is_memcpy()) {
         node.end *= elem_size_in_bytes_;
       }
 
       // If this loop has a trivial iteration space, drop it.
       if (!loop_has_trivial_iteration_space(node) ||
-          (inner_kernel_is_memcpy_ && node.is_inner_dim_in_a) ||
+          (inner_kernel_is_memcpy() && node.is_inner_dim_in_a) ||
           has_trailing_plan_node) {
         nodes.push_back(node);
       }
@@ -1186,13 +1186,13 @@ absl::Status TransposePlan::Initialize() {
   int64_t stride_pos1b =
       inner_stride(pos_stride1b_in_b, ldb_, ldb_tile_, b_tiling_);
 
-  inner_kernel_is_memcpy_ = (pos_stride1b_in_a == pos_stride1a_in_a) &&
-                            (stride_pos1a == elem_size_in_bytes_) &&
-                            (stride_pos1b == elem_size_in_bytes_);
-  inner_kernel_kind_ = inner_kernel_is_memcpy_ ? InnerKernelKind::kMemcpy
-                                               : InnerKernelKind::kDefault;
+  inner_kernel_kind_ = (pos_stride1b_in_a == pos_stride1a_in_a) &&
+                               (stride_pos1a == elem_size_in_bytes_) &&
+                               (stride_pos1b == elem_size_in_bytes_)
+                           ? InnerKernelKind::kMemcpy
+                           : InnerKernelKind::kDefault;
 
-  if (inner_kernel_is_memcpy_ && transformation_ != Transformation::kNone) {
+  if (inner_kernel_is_memcpy() && transformation_ != Transformation::kNone) {
     if (transformation_ == Transformation::kPackSubbyte) {
       transformation_ = Transformation::kNone;
       use_fallback_pack_ = true;
@@ -1203,7 +1203,7 @@ absl::Status TransposePlan::Initialize() {
   }
 
   // Calculate sentinel strides.
-  if (!inner_kernel_is_memcpy_) {
+  if (!inner_kernel_is_memcpy()) {
     int pos_stride1a_in_b = inverse_permutation[pos_stride1a_in_a];
     sentinel_lda_ = inner_stride(pos_stride1b_in_a, lda_, lda_tile_, a_tiling_);
     sentinel_ldb_ = inner_stride(pos_stride1a_in_b, ldb_, ldb_tile_, b_tiling_);
@@ -1290,7 +1290,7 @@ absl::Status TransposePlan::Initialize() {
   }
 
   int small_dim_in_a = -1;
-  if (!inner_kernel_is_memcpy_ && transformation_ == Transformation::kNone &&
+  if (!inner_kernel_is_memcpy() && transformation_ == Transformation::kNone &&
       !a_is_tiled_ && !b_is_tiled_ && original_a_strides_.empty() &&
       (elem_size_in_bytes_ == 1 || elem_size_in_bytes_ == 2 ||
        elem_size_in_bytes_ == 4 || elem_size_in_bytes_ == 8)) {
@@ -1306,7 +1306,7 @@ absl::Status TransposePlan::Initialize() {
   }
 
   constexpr int kMaxOuterBlockElems = 16;
-  if (inner_kernel_is_memcpy_) {
+  if (inner_kernel_is_memcpy()) {
     inner_block_elems_ = -1;
     outer_block_elems_a_ = -1;
     outer_block_elems_b_ = -1;
@@ -1371,7 +1371,7 @@ absl::Status TransposePlan::Initialize() {
   ChooseLoopOrder(loop_order);
 
   for (Loop& loop : loop_order) {
-    if (!inner_kernel_is_memcpy_ &&
+    if (!inner_kernel_is_memcpy() &&
         (loop.tile_interior || loop.tile_size == 1)) {
       if (small_dim_in_a >= 0 && loop.dim_in_a == small_dim_in_a) {
         loop.inc = loop.dim_size;
@@ -1389,7 +1389,7 @@ absl::Status TransposePlan::Initialize() {
   // both input and output.
 
   // The stride-1 loop must be innermost for a memcpy loop.
-  DCHECK(!inner_kernel_is_memcpy_ || loop_order.back().is_inner_dim_in_a)
+  DCHECK(!inner_kernel_is_memcpy() || loop_order.back().is_inner_dim_in_a)
       << ToString();
 
   int num_chunks = ChooseParallelizationStrategy(loop_order);
@@ -1412,13 +1412,13 @@ absl::Status TransposePlan::Initialize() {
     case Transformation::kF64ToEf57:
       scratch_size_ = sizeof(float) * inner_block_elems_ * inner_block_elems_ *
                       outer_block_elems_a_ * outer_block_elems_b_;
-      DCHECK(!inner_kernel_is_memcpy_);
+      DCHECK(!inner_kernel_is_memcpy());
       break;
     case Transformation::kPackSubbyte:
       scratch_size_ = sizeof(uint8_t) * inner_block_elems_ *
                       inner_block_elems_ * outer_block_elems_a_ *
                       outer_block_elems_b_;
-      DCHECK(!inner_kernel_is_memcpy_);
+      DCHECK(!inner_kernel_is_memcpy());
       break;
   }
 
@@ -1439,11 +1439,11 @@ void TransposePlan::ChooseLoopOrder(std::vector<Loop>& loop_order) const {
 
   auto soft_cost = [&](const Loop& l) {
     int64_t a_stride = std::abs(l.lda);
-    if (!inner_kernel_is_memcpy_ && l.is_inner_dim_in_a) {
+    if (!inner_kernel_is_memcpy() && l.is_inner_dim_in_a) {
       a_stride *= inner_block_elems_ * outer_block_elems_a_;
     }
     int64_t b_stride = std::abs(l.ldb);
-    if (!inner_kernel_is_memcpy_ && l.is_inner_dim_in_b) {
+    if (!inner_kernel_is_memcpy() && l.is_inner_dim_in_b) {
       b_stride *= inner_block_elems_ * outer_block_elems_b_;
     }
 
@@ -1471,7 +1471,7 @@ void TransposePlan::ChooseLoopOrder(std::vector<Loop>& loop_order) const {
       const Loop& l = remaining[i];
 
       // Hard constraint 1: memcpy kernel requirement.
-      if (inner_kernel_is_memcpy_ && l.is_inner_dim_in_a &&
+      if (inner_kernel_is_memcpy() && l.is_inner_dim_in_a &&
           remaining.size() > 1) {
         continue;
       }
@@ -1515,7 +1515,7 @@ int TransposePlan::ChooseParallelizationStrategy(
   // Estimate the number of bytes each iteration of each loop processes.
   absl::InlinedVector<int64_t, 4> work_in_bytes(loop_order.size());
   int64_t acc = elem_size_in_bytes_;
-  if (!inner_kernel_is_memcpy_) {
+  if (!inner_kernel_is_memcpy()) {
     acc *= inner_block_elems_ * inner_block_elems_ * outer_block_elems_a_ *
            outer_block_elems_b_;
   }
@@ -1558,7 +1558,7 @@ int TransposePlan::ChooseParallelizationStrategy(
       continue;
     }
 
-    int kMinBytesPerThread = inner_kernel_is_memcpy_ ? (1 << 20) : (1 << 26);
+    int kMinBytesPerThread = inner_kernel_is_memcpy() ? (1 << 20) : (1 << 26);
     int64_t min_iterations_per_thread =
         CeilOfRatio<int64_t>(kMinBytesPerThread, work_in_bytes[i]);
     int64_t parallel_work = CeilOfRatio(iterations, min_iterations_per_thread);
