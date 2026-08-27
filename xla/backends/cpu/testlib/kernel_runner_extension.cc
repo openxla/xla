@@ -273,7 +273,6 @@ NB_MODULE(_extension, kernel_runner_module) {
       [](std::unique_ptr<HloModule, nb::deleter<HloModule>> hlo_module,
          const TargetMachineFeatures* target_machine_features) {
         FusionWrapper fusion_wrapper(
-            /*using_new_fusion_emitter=*/true,
             /*use_tiled_emitter=*/true, target_machine_features);
         absl::StatusOr<bool> result = fusion_wrapper.Run(hlo_module.get());
         if (!result.ok()) {

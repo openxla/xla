@@ -276,8 +276,7 @@ class ThunkEmitter {
   ParallelFusionEmitter parallel_fusion_emitter_;
 };
 
-bool FusionRoutesToMlirEmitter(const HloModuleConfig& config,
-                               const HloFusionInstruction* fusion);
+bool FusionRoutesToMlirEmitter(const HloFusionInstruction* fusion);
 
 }  // namespace xla::cpu
 

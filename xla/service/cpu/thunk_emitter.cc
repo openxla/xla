@@ -806,7 +806,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
     const HloInstruction* instruction) {
   auto* fusion = Cast<HloFusionInstruction>(instruction);
 
-  if (FusionRoutesToMlirEmitter(hlo_module_config_, fusion)) {
+  if (FusionRoutesToMlirEmitter(fusion)) {
     ABSL_ASSIGN_OR_RETURN(std::string fingerprint,
                      GetFusionFingerprint(*fusion, buffer_assignment_,
                                           GetDefaultBufferAlignment()));
@@ -840,13 +840,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
                                  /*min_alignment=*/MinAlign());
 }
 
-bool FusionRoutesToMlirEmitter(const HloModuleConfig& config,
-                               const HloFusionInstruction* fusion) {
+bool FusionRoutesToMlirEmitter(const HloFusionInstruction* fusion) {
   if (fusion->fused_expression_root()->opcode() == HloOpcode::kScatter) {
     return true;
   }
-  return options::UseExperimentalLoopFusion(config) &&
-         fusion->fusion_kind() == HloFusionInstruction::FusionKind::kLoop;
+  return fusion->fusion_kind() == HloFusionInstruction::FusionKind::kLoop;
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReductionKernelThunk(
