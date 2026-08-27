@@ -97,6 +97,13 @@ class TransposePlan {
     kPackSubbyte = 2,
   };
 
+  enum class InnerKernelKind {
+    kDefault,
+    kMemcpy,
+    kInterleave,
+    kDeinterleave,
+  };
+
   // Requested contiguity of chunks.
   enum class ChunkContiguity {
     // We don't care about contiguity (default).
@@ -383,6 +390,8 @@ class TransposePlan {
   // Are the innermost (stride-1) dimensions the same dimension? This determines
   // whether the inner kernel is a transpose or a memcpy.
   bool inner_kernel_is_memcpy_ = false;
+
+  InnerKernelKind inner_kernel_kind_ = InnerKernelKind::kDefault;
 
   // Size of the inner (microkernel) block size. This is the unit of work for
   // our vectorized kernels.

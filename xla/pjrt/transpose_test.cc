@@ -682,7 +682,14 @@ std::vector<TransposeTestCase> GetTransposeTestCases() {
       TransposeTestCase(/*dims=*/{52, 44, 45, 96, 1, 5},
                         /*permutation=*/{5, 4, 2, 3, 1, 0},
                         /*input_tiling=*/{}, /*output_tiling=*/{},
-                        /*input_striding=*/{})};
+                        /*input_striding=*/{}),
+
+      // Small stride-1 dim of size 3 (SoA<->AoS interleave/deinterleave).
+      TransposeTestCase(/*dims=*/{3, 256, 256}, /*permutation=*/{1, 2, 0}),
+      TransposeTestCase(/*dims=*/{256, 256, 3}, /*permutation=*/{2, 0, 1}),
+      TransposeTestCase(/*dims=*/{256, 3}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 257, 255}, /*permutation=*/{1, 2, 0}),
+      TransposeTestCase(/*dims=*/{5, 3, 64, 64}, /*permutation=*/{2, 3, 0, 1})};
   return cases;
 }
 
@@ -1113,6 +1120,12 @@ static std::vector<TransposeTestCase> BenchmarkCases() {
                         /*permutation=*/{1, 2, 3, 0}),
       TransposeTestCase(/*dims=*/{256, 64, 64, 3},
                         /*permutation=*/{1, 3, 2, 0}),
+      TransposeTestCase(/*dims=*/{256, 3},
+                        /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 256, 256},
+                        /*permutation=*/{1, 2, 0}),
+      TransposeTestCase(/*dims=*/{256, 256, 3},
+                        /*permutation=*/{2, 0, 1}),
   };
 }
 

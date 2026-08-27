@@ -722,6 +722,30 @@ struct TransposeMicroKernel {
   }
 };
 
+template <typename T, int K>
+void InterleaveKernel(const char* __restrict a, int64_t lda, char* __restrict b,
+                      int64_t n) {
+  for (int64_t i = 0; i < n; ++i) {
+    for (int k = 0; k < K; ++k) {
+      T v;
+      std::memcpy(&v, a + k * lda + i * sizeof(T), sizeof(T));
+      std::memcpy(b + (i * K + k) * sizeof(T), &v, sizeof(T));
+    }
+  }
+}
+
+template <typename T, int K>
+void DeinterleaveKernel(const char* __restrict a, char* __restrict b,
+                        int64_t ldb, int64_t n) {
+  for (int64_t i = 0; i < n; ++i) {
+    for (int k = 0; k < K; ++k) {
+      T v;
+      std::memcpy(&v, a + (i * K + k) * sizeof(T), sizeof(T));
+      std::memcpy(b + k * ldb + i * sizeof(T), &v, sizeof(T));
+    }
+  }
+}
+
 }  // namespace xla
 
 #endif  // XLA_PJRT_TRANSPOSE_KERNELS_H_
