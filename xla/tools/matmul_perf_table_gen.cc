@@ -384,11 +384,20 @@ internal::KernelExecutionTimer::KernelExecutionTimer(
 uint64_t internal::KernelExecutionTimer::MeasureRepeated(
     int num_executions,
     absl::FunctionRef<absl::Status(int execution)> execute) {
-  std::unique_ptr<HloOpProfiler::KernelTracer> tracer = tracer_factory_();
+  std::vector<uint64_t> execution_times_ns;
+  execution_times_ns.reserve(num_executions);
   for (int execution = 0; execution < num_executions; ++execution) {
+    std::unique_ptr<HloOpProfiler::KernelTracer> tracer = tracer_factory_();
     CHECK_OK(execute(execution));
+    execution_times_ns.push_back(std::move(*tracer).getSumKernelTimeNs());
   }
-  return std::move(*tracer).getMedianKernelTimeNs();
+
+  std::sort(execution_times_ns.begin(), execution_times_ns.end());
+  size_t i = execution_times_ns.size() / 2;
+  if (execution_times_ns.size() % 2 != 0) {
+    return execution_times_ns[i];
+  }
+  return (execution_times_ns[i - 1] + execution_times_ns[i] + 1) / 2;
 }
 
 std::unique_ptr<OpaqueExecutable> MatmulPerfTableGen::Compile(

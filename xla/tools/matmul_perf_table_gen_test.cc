@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -49,6 +50,11 @@ class FakeKernelTracer final : public HloOpProfiler::KernelTracer {
       return kernel_times_ns_[i];
     }
     return (kernel_times_ns_[i - 1] + kernel_times_ns_[i] + 1) / 2;
+  }
+
+  uint64_t getSumKernelTimeNs() && override {
+    return std::accumulate(kernel_times_ns_.begin(), kernel_times_ns_.end(),
+                           uint64_t{0});
   }
 
  private:
