@@ -583,7 +583,7 @@ TEST(PjRtStreamExecutorClientTest, TwoPhaseExecutePrepareFailureSkipsLaunch) {
   ASSERT_EQ(executable->addressable_devices().size(), kNumDevices);
 
   std::atomic<int> launch_calls{0};
-  tensorflow::down_cast<CommonPjRtLoadedExecutable*>(executable.get())
+  absl::down_cast<CommonPjRtLoadedExecutable*>(executable.get())
       ->SetExecuteLaunchHookForTesting([&](PjRtDevice*) {
         launch_calls.fetch_add(1, std::memory_order_relaxed);
       });
