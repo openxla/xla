@@ -8194,6 +8194,16 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
               inner_index,
               dus_update->shape().dimensions(i - 2) -
                   dus_update->operand(1)->shape().dimensions(i - 2))));
+      // Clamp the outer index too: the inner ds(a, id) and the outer
+      // dus(..., id) both clamp id to [0, dim(a) - inner_update_size]. The
+      // composed start must clamp each index with its own bound before adding,
+      // otherwise an out-of-range (but valid, clamped) outer index writes the
+      // update at the wrong location.
+      index = index->AddInstruction(HloInstruction::CreateTernary(
+          index->shape(), HloOpcode::kClamp, MakeScalarLike(index, 0), index,
+          MakeScalarLike(index,
+                         dynamic_update_slice->shape().dimensions(i - 2) -
+                             dus_update->shape().dimensions(i - 2))));
       if (inner_index->shape().element_type() !=
           index->shape().element_type()) {
         inner_index = inner_index->AddInstruction(

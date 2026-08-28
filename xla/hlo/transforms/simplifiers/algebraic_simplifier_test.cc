@@ -8172,6 +8172,40 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfDynamicSliceClampsBothIndices) {
                  m::Clamp(m::Constant(), m::Parameter(1), m::Constant())))));
 }
 
+// dus(a, dus(ds(a, id){ds}, c, inner_id), id) folds to a single dus(a, c, ...).
+// Both start indices must be clamped to their own ranges before being added:
+// clamp(id, 0, dim - ds) + clamp(inner_id, 0, ds - c). Regression for a case
+// where the outer index `id` was added unclamped, writing the update at the
+// wrong location for out-of-range (but valid, clamped) indices.
+TEST_F(AlgebraicSimplifierTest,
+       DynamicUpdateSliceOfDynamicUpdateSliceClampsBothIndices) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    ENTRY test {
+      p = f32[10] parameter(0)
+      c = f32[2] parameter(1)
+      id = s32[] parameter(2)
+      inner_id = s32[] parameter(3)
+      ds = f32[4] dynamic-slice(p, id), dynamic_slice_sizes={4}
+      inner = f32[4] dynamic-update-slice(ds, c, inner_id)
+      ROOT dus = f32[10] dynamic-update-slice(p, inner, id)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_THAT(simplifier.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root,
+      GmockMatch(m::DynamicUpdateSlice(
+          m::Parameter(0), m::Parameter(1),
+          m::Add(m::Clamp(m::Constant(), m::Parameter(2), m::Constant()),
+                 m::Clamp(m::Constant(), m::Parameter(3), m::Constant())))));
+}
+
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTrivialReshape) {
   constexpr absl::string_view hlo_string = R"(
     HloModule module
