@@ -485,6 +485,67 @@ void MemRefSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
   results.add<MemRefSliceFoldConstantDynamicDim>(context);
 }
 
+LogicalResult SharedMemRefSliceOp::verify() {
+  CoreType core_type = GetCoreTypeOfParentOp(**this);
+  if (core_type != CoreType::kScVectorSubcore) {
+    return emitOpError("Unsupported core type: ") << core_type;
+  }
+
+  auto source_type = getMemRef().getType();
+  auto target_type = getType();
+  auto source_memory_space = source_type.getMemorySpace();
+  auto target_memory_space = target_type.getMemorySpace();
+
+  if (auto tpu_src_space =
+          dyn_cast_or_null<tpu::MemorySpaceAttr>(source_memory_space)) {
+    if (tpu_src_space.getValue() != tpu::MemorySpace::kVmemShared) {
+      return emitOpError("Source memref must have kVmemShared memory space.");
+    }
+  }
+  if (auto tpu_tgt_space =
+          dyn_cast_or_null<tpu::MemorySpaceAttr>(target_memory_space)) {
+    if (tpu_tgt_space.getValue() != tpu::MemorySpace::kVmem) {
+      return emitOpError("Target memref must have kVmem memory space.");
+    }
+    if (tpu_tgt_space.getCoreType().has_value() &&
+        *tpu_tgt_space.getCoreType() != CoreType::kScVectorSubcore) {
+      return emitOpError("Target memref must have kScVectorSubcore core type.");
+    }
+  }
+  if (source_type.getElementType() != target_type.getElementType()) {
+    return emitOpError("Source and target element types must match.");
+  }
+
+  ArrayRef<int64_t> source_shape = source_type.getShape();
+  ArrayRef<int64_t> target_shape = target_type.getShape();
+  if (source_shape.size() != target_shape.size()) {
+    return emitOpError("Target shape rank must match source shape rank.");
+  }
+  if (source_shape.empty()) {
+    return emitOpError("Source and target memrefs must be at least rank 1.");
+  }
+  if (source_shape.drop_back() != target_shape.drop_back()) {
+    return emitOpError(
+        "Target shape must match source shape for all dimensions except the "
+        "last.");
+  }
+  if (source_shape.back() == 0 || target_shape.back() == 0) {
+    return emitOpError(
+        "Source and target minormost dimension must be greater than 0.");
+  }
+  if (ShapedType::isDynamic(source_shape.back()) ||
+      ShapedType::isDynamic(target_shape.back())) {
+    return emitOpError(
+        "Source and target minormost dimension cannot be dynamic.");
+  }
+  if (source_shape.back() % target_shape.back() != 0) {
+    return emitOpError(
+        "Source shape's minormost dimension must be divisible by target "
+        "shape's minormost dimension.");
+  }
+  return success();
+}
+
 LogicalResult MemRefSqueezeOp::verify() {
   MemRefType source_type = getInput().getType();
   MemRefType target_type = getType();
