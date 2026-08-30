@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -160,7 +160,7 @@ void Shape::SaveToEmptyProto(ShapeProto& proto) const {
     for (const bool dynamic : state->dynamic_dimensions) {
       proto.add_is_dynamic_dimension(dynamic);
     }
-    if (state->layout.has_value()) {
+    if (state->layout != nullptr) {
       state->layout->ToProto(*proto.mutable_layout());
     }
   } else if (const auto* const state = if_tuple_state()) {
@@ -341,7 +341,7 @@ void Shape::CheckStateIsEmpty() const {
     const auto& state = array_state_maybe_underneath_buffer();
     CHECK(state.dimensions.empty()) << ToString();
     CHECK(state.dynamic_dimensions.empty()) << ToString();
-    CHECK(!state.layout.has_value()) << ToString();
+    CHECK(state.layout == nullptr) << ToString();
   } else if (const auto* const state = if_tuple_state()) {
     CHECK(state->tuple_shapes.empty()) << ToString();
   }

@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/primitive_util.h"
@@ -388,7 +389,7 @@ class Shape {
       return false;
     }
     const ArrayState& state = array_state_maybe_underneath_buffer();
-    return state.layout.has_value();
+    return state.layout != nullptr;
   }
 
   // Returns the layout of the shape.
@@ -405,17 +406,15 @@ class Shape {
   // by this shape.
   Layout* mutable_layout() {
     ArrayState& state = array_state_maybe_underneath_buffer();
-    if (!state.layout.has_value()) {
-      state.layout.emplace();
+    if (state.layout == nullptr) {
+      state.layout = std::make_unique<Layout>();
     }
-    return &(*state.layout);
+    return state.layout.get();
   }
 
   // Removes the layout of the shape, if any.
   // Precondition: this is an array shape.
-  void clear_layout() {
-    array_state_maybe_underneath_buffer().layout = std::nullopt;
-  }
+  void clear_layout() { array_state_maybe_underneath_buffer().layout.reset(); }
 
   // Recursively clear all dynamic dimension of a shape, including bounded and
   // unbounded dynamic dimensions. Clearing a dynamic dimension means
@@ -540,7 +539,11 @@ class Shape {
       h = H::combine(std::move(h), s.element_type_, state->dimensions,
                      state->dynamic_dimensions);
       if (kIsLayoutSensitive) {
-        h = H::combine(std::move(h), state->layout);
+        if (state->layout != nullptr) {
+          h = H::combine(std::move(h), true, *state->layout);
+        } else {
+          h = H::combine(std::move(h), false);
+        }
       }
       return h;
     }
@@ -589,7 +592,25 @@ class Shape {
     absl::InlinedVector<bool, InlineRank()> dynamic_dimensions;
 
     // The layout of the shape.
-    std::optional<Layout> layout;
+    std::unique_ptr<Layout> layout;
+
+    ArrayState() = default;
+    ArrayState(const ArrayState& other)
+        : dimensions(other.dimensions),
+          dynamic_dimensions(other.dynamic_dimensions),
+          layout(other.layout ? std::make_unique<Layout>(*other.layout)
+                              : nullptr) {}
+    ArrayState& operator=(const ArrayState& other) {
+      if (this != &other) {
+        dimensions = other.dimensions;
+        dynamic_dimensions = other.dynamic_dimensions;
+        layout =
+            other.layout ? std::make_unique<Layout>(*other.layout) : nullptr;
+      }
+      return *this;
+    }
+    ArrayState(ArrayState&&) noexcept = default;
+    ArrayState& operator=(ArrayState&&) noexcept = default;
   };
   struct TupleState {
     // The tuple element subshapes.
