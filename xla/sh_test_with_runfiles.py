@@ -29,25 +29,27 @@ class ShTestWithRunfiles(lit.formats.ShTest):
     if runfiles_env:
       rf_path = pathlib.Path(runfiles_env)
 
-      runfiles_external = None
-      for candidate in [
-          rf_path / "_main" / "external",
-          rf_path / "external",
-      ]:
-        if candidate and candidate.is_dir():
-          runfiles_external = candidate
-          break
+      test_exec_dir = pathlib.Path(test.getExecPath()).parent
+      test_exec_dir.mkdir(parents=True, exist_ok=True)
 
-      if runfiles_external:
-        # Create symlink at the directory where the test actually executes
-        test_exec_dir = pathlib.Path(test.getExecPath()).parent
-        test_exec_external = test_exec_dir / "external"
-        test_exec_dir.mkdir(parents=True, exist_ok=True)
-        if not test_exec_external.exists():
-          test_exec_external.symlink_to(runfiles_external, target_is_directory=True)
-          created_symlinks.append(test_exec_external)
-      else:
-        print("DEBUG: Could not find external directory in runfiles")
+      # Map: runfiles path to check -> symlink name to create
+      # RUNPATH has "../+rocm_configure_ext+local_config_rocm/..." so symlink at parent
+      candidates = {
+          "+rocm_configure_ext+local_config_rocm": "+rocm_configure_ext+local_config_rocm",
+          "_main/external/+rocm_configure_ext+local_config_rocm": "+rocm_configure_ext+local_config_rocm",
+          "external/+rocm_configure_ext+local_config_rocm": "+rocm_configure_ext+local_config_rocm",
+          "+llvm_extension+llvm-project": "+llvm_extension+llvm-project",
+          "_main/external/+llvm_extension+llvm-project": "+llvm_extension+llvm-project",
+          "external/+llvm_extension+llvm-project": "+llvm_extension+llvm-project",
+      }
+
+      for runfiles_path, symlink_name in candidates.items():
+        if (rf_path / runfiles_path).is_dir():
+          # RUNPATH has "../..." so create symlink at parent level
+          test_exec_symlink = test_exec_dir.parent / symlink_name
+          if not test_exec_symlink.exists():
+            test_exec_symlink.symlink_to(rf_path / runfiles_path, target_is_directory=True)
+            created_symlinks.append(test_exec_symlink)
 
 
       # Dynamically resolve hermetic cuda_nvcc in runfiles if present.
