@@ -97,6 +97,13 @@ class TransposePlan {
     kPackSubbyte = 2,
   };
 
+  enum class InnerKernelKind {
+    kDefault,
+    kMemcpy,
+    kInterleave,
+    kDeinterleave,
+  };
+
   // Requested contiguity of chunks.
   enum class ChunkContiguity {
     // We don't care about contiguity (default).
@@ -200,7 +207,9 @@ class TransposePlan {
   // Returns the number of items of parallel work in the plan.
   int Parallelism() const { return nodes_.size(); }
 
-  bool inner_kernel_is_memcpy() const { return inner_kernel_is_memcpy_; }
+  bool inner_kernel_is_memcpy() const {
+    return inner_kernel_kind_ == InnerKernelKind::kMemcpy;
+  }
 
   struct Node;
 
@@ -275,7 +284,8 @@ class TransposePlan {
   void ChooseLoopOrder(std::vector<Loop>& loop_order) const;
 
   void set_inner_kernel_is_memcpy(bool is_memcpy) {
-    inner_kernel_is_memcpy_ = is_memcpy;
+    inner_kernel_kind_ =
+        is_memcpy ? InnerKernelKind::kMemcpy : InnerKernelKind::kDefault;
   }
 
  private:
@@ -380,9 +390,7 @@ class TransposePlan {
   // nest. The outer vector is indexed on the thread ID.
   absl::InlinedVector<std::vector<Node>, 1> nodes_;
 
-  // Are the innermost (stride-1) dimensions the same dimension? This determines
-  // whether the inner kernel is a transpose or a memcpy.
-  bool inner_kernel_is_memcpy_ = false;
+  InnerKernelKind inner_kernel_kind_ = InnerKernelKind::kDefault;
 
   // Size of the inner (microkernel) block size. This is the unit of work for
   // our vectorized kernels.
