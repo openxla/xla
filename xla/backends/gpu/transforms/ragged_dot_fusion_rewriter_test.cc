@@ -24,6 +24,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -244,8 +245,8 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
   std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
   EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_with_new_type));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
   DebugOptions debug_opts = module->config().debug_options();
   debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   module->mutable_config().set_debug_options(debug_opts);
@@ -279,9 +280,18 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgradUnalignedKN) {
                           {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
   std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
   EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+  // K (510) and N (254) are not 16-byte aligned for bf16/f16 (need a
+  // multiple of 8 elements). Verify XLA actually pads them at compile time
+  // to 512/256 rather than silently skipping the padding -- RunAndCompare
+  // below would still pass numerically even if the padding step were
+  // skipped and cuDNN just tolerated the misalignment, so that alone isn't
+  // enough to catch a regression here.
+  EXPECT_THAT(optimized_hlo_string, HasSubstr("pad("));
+  EXPECT_THAT(optimized_hlo_string, HasSubstr("512"));
+  EXPECT_THAT(optimized_hlo_string, HasSubstr("256"));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_with_new_type));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
   DebugOptions debug_opts = module->config().debug_options();
   debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   module->mutable_config().set_debug_options(debug_opts);
@@ -319,8 +329,8 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest,
   std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
   EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_with_new_type));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
   DebugOptions debug_opts = module->config().debug_options();
   debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   module->mutable_config().set_debug_options(debug_opts);

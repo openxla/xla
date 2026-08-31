@@ -270,19 +270,30 @@ class RaggedDotDimensionAdapter {
     }
 
     if (IsWgrad()) {
-      // Wgrad (kRaggedContracting): operand(0)=input/token [M,K],
-      // operand(1)=doutput [M,N], operand(2)=first_token_offset [G],
+      // Wgrad (kRaggedContracting): operand(0)=input [M,K],
+      // operand(1)=doutput [M,N], operand(2)=group_offset [G],
       // output=dweight [G,K,N].
       if (is_output) {
         // dweight [G, K, N]
         fixed_dims = dims;
         fixed_strides = strides;
       } else if (operand_idx == 0 || operand_idx == 1) {
-        // input [M, K] or doutput [M, N] → [1, M, K_or_N]
-        fixed_dims = {1, dims[0], dims[1]};
-        fixed_strides = {dims[0] * strides[0], strides[0], strides[1]};
+        // input [M, K] or doutput [M, N] → [1, M, K_or_N]. M isn't
+        // guaranteed to be dim 0: PadWgradForCuDNNAlignment (in
+        // ragged_dot_rewriter.cc) may transpose an operand so that M ends
+        // up at dim 1 instead, so locate it via dnums rather than assuming
+        // a fixed position.
+        int m_dim = operand_idx == 0 ? dnums_.lhs_ragged_dimensions()[0]
+                                     : dnums_.dot_dimension_numbers()
+                                           .rhs_contracting_dimensions()[0];
+        int other_dim = 1 - m_dim;
+        fixed_dims = {1, dims[m_dim], dims[other_dim]};
+        fixed_strides = {strides[m_dim] > strides[other_dim]
+                             ? dims[m_dim] * strides[m_dim]
+                             : dims[other_dim] * strides[other_dim],
+                         strides[m_dim], strides[other_dim]};
       } else if (operand_idx == 2) {
-        // group size [G] → [G, 1, 1]
+        // group_offset [G] → [G, 1, 1]
         fixed_dims = {dims[0], 1, 1};
         fixed_strides = {1, 1, 1};
       } else {
@@ -290,28 +301,31 @@ class RaggedDotDimensionAdapter {
       }
     } else {
       // Forward (kRaggedNonContracting): operand(0)=input [M,K],
-      // operand(1)=weight [G,K,N], operand(2)=first_token_offset [G],
-      // output=result [M,N].
+      // operand(1)=weight [G,K,N], operand(2)=group_offset [G],
+      // output [M,N].
       if (is_output || operand_idx == 0) {
         // input [M, K] & output [M, N]  → [1, M, K_or_N]
-        fixed_dims = {1, dims[0], dims[1]};
-        fixed_strides = {dims[0] * strides[0], strides[0], strides[1]};
+        int m_dim = operand_idx == 0 ? dnums_.lhs_ragged_dimensions()[0] : 0;
+        int other_dim = 1 - m_dim;
+        fixed_dims = {1, dims[m_dim], dims[other_dim]};
+        fixed_strides = {strides[m_dim] > strides[other_dim]
+                             ? dims[m_dim] * strides[m_dim]
+                             : dims[other_dim] * strides[other_dim],
+                         strides[m_dim], strides[other_dim]};
       } else if (operand_idx == 1) {
         // weight [G, K, N]
         const auto& dot_dims = dnums_.dot_dimension_numbers();
-        const int rhs_contracting_dim =
-            dot_dims.rhs_contracting_dimensions()[0];
-        const int rhs_non_contracting_dim =
+        const int g_dim = dnums_.rhs_group_dimensions()[0];
+        const int k_dim = dot_dims.rhs_contracting_dimensions()[0];
+        const int n_dim =
             GetNonContractingDims(ragged_dot_.operand(1)->shape(),
                                   dnums_.rhs_group_dimensions(),
                                   dot_dims.rhs_contracting_dimensions())
                 .value()[0];
-        fixed_dims = {dims[0], dims[rhs_contracting_dim],
-                      dims[rhs_non_contracting_dim]};
-        fixed_strides = {strides[0], strides[rhs_contracting_dim],
-                         strides[rhs_non_contracting_dim]};
+        fixed_dims = {dims[g_dim], dims[k_dim], dims[n_dim]};
+        fixed_strides = {strides[g_dim], strides[k_dim], strides[n_dim]};
       } else if (operand_idx == 2) {
-        // group size [G] → [G, 1, 1]
+        // group_offset [G] → [G, 1, 1]
         fixed_dims = {dims[0], 1, 1};
         fixed_strides = {1, 1, 1};
       } else {
