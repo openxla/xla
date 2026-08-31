@@ -253,6 +253,81 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
       << optimized_hlo_string;
 }
 
+// Wgrad with K and N sizes that are not 16-byte aligned (not a multiple of 8
+// elements for bf16/f16). cuDNN's wgrad path lowers to a cuBLASLt grouped
+// GEMM, which relies on TMA and requires 16B alignment on the contiguous
+// (K/N) dimensions of each matrix; since K and N are static shapes, XLA is
+// expected to pad them at compile time rather than fail or require runtime
+// padding based on group_sizes.
+TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgradUnalignedKN) {
+  if (GetDnnVersion() < se::dnn::VersionInfo{9, 22, 0}) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.22+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[128,510]{1,0} parameter(0)
+      doutput = TYPE[128,254]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,510,254]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
+// Wgrad where M (the ragged/contracting dimension) is the leading
+// (fastest-moving/minor) dimension of the lhs/rhs operands instead of K/N,
+// e.g. input[K,M] instead of input[M,K]. Since M's per-group sizes are only
+// known at runtime, XLA is expected to transpose such operands so that K/N
+// becomes the leading dimension instead, and then pad K/N (which are static
+// and thus safe to pad at compile time) up to the required alignment. K and
+// N are also chosen to be unaligned here to exercise both the transpose and
+// the padding together.
+TEST_P(RaggedDotFusionRewriterIntegrationTest,
+       TestRaggedDotWgradTransposeMLeadingDim) {
+  if (GetDnnVersion() < se::dnn::VersionInfo{9, 22, 0}) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.22+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[510,128]{1,0} parameter(0)
+      doutput = TYPE[254,128]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,510,254]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={1}, rhs_contracting_dims={1}, lhs_ragged_dims={1}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
 INSTANTIATE_TEST_SUITE_P(AllTypes, RaggedDotFusionRewriterIntegrationTest,
                          ::testing::Combine(::testing::ValuesIn(kbf16f16),
                                             ::testing::ValuesIn(ks32s64)));

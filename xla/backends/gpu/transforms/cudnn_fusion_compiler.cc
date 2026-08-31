@@ -215,8 +215,8 @@ struct Result {
 
 class RaggedDotDimensionAdapter {
   explicit RaggedDotDimensionAdapter(const HloInstruction& ragged_dot,
-                                     RaggedDotDimensionNumbers dums)
-      : ragged_dot_(ragged_dot), dums_(dums) {}
+                                     RaggedDotDimensionNumbers dnums)
+      : ragged_dot_(ragged_dot), dnums_(dnums) {}
 
  public:
   const HloInstruction& ragged_dot_;
@@ -240,13 +240,15 @@ class RaggedDotDimensionAdapter {
   }
 
   // Returns true if this is a weight gradient (wgrad) ragged dot, i.e. the
-  // ragged dimension is also a contracting dimension (kRaggedContracting mode).
+  // ragged dimension is also the contracting dimension (kRaggedContracting
+  // mode). Dots reaching this adapter are canonicalized to a single
+  // contracting dimension, matching the assumption made by the rest of this
+  // file, so only lhs_contracting_dimensions()[0] needs to be checked.
   bool IsWgrad() const {
-    const int lhs_ragged_dim = dums_.lhs_ragged_dimensions()[0];
-    const auto& contracting_dims =
-        dums_.dot_dimension_numbers().lhs_contracting_dimensions();
-    return absl::c_any_of(contracting_dims,
-                          [&](int d) { return d == lhs_ragged_dim; });
+    const int lhs_ragged_dim = dnums_.lhs_ragged_dimensions()[0];
+    const int lhs_contracting_dim =
+        dnums_.dot_dimension_numbers().lhs_contracting_dimensions()[0];
+    return lhs_ragged_dim == lhs_contracting_dim;
   }
 
   std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
@@ -273,14 +275,14 @@ class RaggedDotDimensionAdapter {
       // output=dweight [G,K,N].
       if (is_output) {
         // dweight [G, K, N]
-        fixed_dims = {dims[0], dims[1], dims[2]};
-        fixed_strides = {strides[0], strides[1], strides[2]};
+        fixed_dims = dims;
+        fixed_strides = strides;
       } else if (operand_idx == 0 || operand_idx == 1) {
-        // input/token [M, K] or doutput [M, N] → cuDNN [1, M, K_or_N]
+        // input [M, K] or doutput [M, N] → [1, M, K_or_N]
         fixed_dims = {1, dims[0], dims[1]};
         fixed_strides = {dims[0] * strides[0], strides[0], strides[1]};
       } else if (operand_idx == 2) {
-        // first_token_offset [G] → [G, 1, 1]
+        // group size [G] → [G, 1, 1]
         fixed_dims = {dims[0], 1, 1};
         fixed_strides = {1, 1, 1};
       } else {
@@ -291,17 +293,17 @@ class RaggedDotDimensionAdapter {
       // operand(1)=weight [G,K,N], operand(2)=first_token_offset [G],
       // output=result [M,N].
       if (is_output || operand_idx == 0) {
-        // input & output
+        // input [M, K] & output [M, N]  → [1, M, K_or_N]
         fixed_dims = {1, dims[0], dims[1]};
         fixed_strides = {dims[0] * strides[0], strides[0], strides[1]};
       } else if (operand_idx == 1) {
-        // weight
-        const auto& dot_dims = dums_.dot_dimension_numbers();
+        // weight [G, K, N]
+        const auto& dot_dims = dnums_.dot_dimension_numbers();
         const int rhs_contracting_dim =
             dot_dims.rhs_contracting_dimensions()[0];
         const int rhs_non_contracting_dim =
             GetNonContractingDims(ragged_dot_.operand(1)->shape(),
-                                  dums_.rhs_group_dimensions(),
+                                  dnums_.rhs_group_dimensions(),
                                   dot_dims.rhs_contracting_dimensions())
                 .value()[0];
         fixed_dims = {dims[0], dims[rhs_contracting_dim],
@@ -309,7 +311,7 @@ class RaggedDotDimensionAdapter {
         fixed_strides = {strides[0], strides[rhs_contracting_dim],
                          strides[rhs_non_contracting_dim]};
       } else if (operand_idx == 2) {
-        // group size
+        // group size [G] → [G, 1, 1]
         fixed_dims = {dims[0], 1, 1};
         fixed_strides = {1, 1, 1};
       } else {
@@ -324,7 +326,7 @@ class RaggedDotDimensionAdapter {
   }
 
  private:
-  RaggedDotDimensionNumbers dums_;
+  RaggedDotDimensionNumbers dnums_;
 };
 
 class GemmDimensionAdapter {
