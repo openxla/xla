@@ -954,6 +954,51 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cudnn_non_gemm_fusion_rewriter",
+    srcs = ["cudnn_non_gemm_fusion_rewriter.cc"],
+    hdrs = ["cudnn_non_gemm_fusion_rewriter.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cudnn_fusion_compiler",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "cudnn_non_gemm_fusion_rewriter_test",
+    srcs = ["cudnn_non_gemm_fusion_rewriter_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cudnn_non_gemm_fusion_rewriter",
+        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "cudnn_fused_conv_rewriter",
     srcs = ["cudnn_fused_conv_rewriter.cc"],
     hdrs = ["cudnn_fused_conv_rewriter.h"],

@@ -286,7 +286,7 @@ absl::Status RunFusionPipeline(
 
   return FusionPipeline(module->config().debug_options(), shape_size,
                         alias_info, /*thread_pool=*/nullptr, device_info,
-                        mlir_context)
+                        mlir_context, /*stream_exec=*/nullptr)
       .Run(module)
       .status();
 }

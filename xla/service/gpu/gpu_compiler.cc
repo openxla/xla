@@ -54,15 +54,19 @@ limitations under the License.
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
-#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/autotuner/block_level_emitter.h"
+#include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
@@ -232,6 +236,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/all_reduce_promotion.h"
@@ -351,9 +356,6 @@ limitations under the License.
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -1397,6 +1399,7 @@ absl::Status RunLayoutAssignmentPasses(
 }
 
 absl::Status RunFusionPasses(HloModule* hlo_module,
+                             se::StreamExecutor* stream_exec,
                              const GpuTargetConfig& gpu_target_config,
                              tsl::thread::ThreadPool* thread_pool,
                              HloCostAnalysis::ShapeSizeFunction shape_size_fn,
@@ -1412,7 +1415,7 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
 
   ABSL_RETURN_IF_ERROR(FusionPipeline(hlo_module->config().debug_options(),
                                  shape_size_fn, alias_info, thread_pool,
-                                 gpu_device_info, mlir_context)
+                                 gpu_device_info, mlir_context, stream_exec)
                       .Run(hlo_module, {HloInstruction::kMainExecutionThread})
                       .status());
 
@@ -1936,8 +1939,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
       hlo_module, /*platform_id=*/PlatformId(), compilation_stats));
 
   ABSL_RETURN_IF_ERROR(RunFusionPasses(
-      hlo_module, gpu_topology.gpu_target_config(), thread_pool.get_mutable(),
-      ShapeSizeBytesFunction(), alias_info, mlir_context, compilation_stats));
+      hlo_module, stream_exec, gpu_topology.gpu_target_config(),
+      thread_pool.get_mutable(), ShapeSizeBytesFunction(), alias_info,
+      mlir_context, compilation_stats));
   ABSL_RETURN_IF_ERROR(RunPostFusionPasses(
       hlo_module, device_description, alias_info, pointer_size_, options,
       gpu_topology, mlir_context, compilation_stats));

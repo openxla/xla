@@ -21,6 +21,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/transforms/conv_canonicalizer.h"
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/cudnn_non_gemm_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/multi_output_fusion.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/backends/gpu/transforms/ragged_dot_fusion_rewriter.h"
@@ -38,6 +40,7 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/threadpool.h"
@@ -50,7 +53,7 @@ HloPassPipeline FusionPipeline(
     HloCostAnalysis::ShapeSizeFunction shape_size_bytes_function,
     const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
     const se::DeviceDescription& gpu_device_info,
-    mlir::MLIRContext* mlir_context) {
+    mlir::MLIRContext* mlir_context, se::StreamExecutor* stream_exec) {
   HloPassPipeline fusion("fusion");
   // We try to split variadic ops with many parameters into several such ops
   // to avoid exceeding the parameter space.
@@ -92,6 +95,12 @@ HloPassPipeline FusionPipeline(
       /*is_layout_sensitive=*/true, /*ignore_control_dependencies=*/false,
       /*should_eliminate_computation=*/&HloComputation::IsFusionComputation);
   fusion.AddPass<HloDCE>();
+
+  // Mark cuDNN-supported non-GEMM fusions as kCuDnnFusionKind.
+  if (debug_options.xla_gpu_cudnn_non_gemm_fusion_level() >= 1) {
+    fusion.AddPass<FusionWrapper>(gpu_device_info);
+    fusion.AddPass<CudnnNonGemmFusionRewriter>(stream_exec, gpu_device_info);
+  }
 
   return fusion;
 }

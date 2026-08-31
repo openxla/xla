@@ -241,6 +241,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:gpu_conv_runner",
+        "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:device_address",
