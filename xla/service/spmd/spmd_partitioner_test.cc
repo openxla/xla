@@ -12241,6 +12241,33 @@ ENTRY entry {
   EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kDynamicSlice), nullptr);
 }
 
+TEST_P(SpmdPartitioningTest,
+       PartitionConvWithFeatureGroupCountBatchSharded01oiKernel) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[128,32,32,32] parameter(0), sharding={devices=[8,1,1,1]<=[8]}
+  %rhs = f32[3,3,32,16] parameter(1), sharding={replicated}
+  ROOT %conv = f32[128,32,32,32] convolution(%lhs, %rhs),
+    dim_labels=b01f_01oi->b01f, feature_group_count=2,
+    window={size=3x3 pad=1_1x1_1},
+    sharding={devices=[8,1,1,1]<=[8]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  VLOG(1) << module->ToString();
+  // Same as PartitionConvWithFeatureGroupCountBatchSharded, but with the
+  // kernel output feature dimension before the input feature dimension.
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::Convolution(op::Parameter(0), op::Parameter(1)),
+                          op::Shape("f32[16,32,32,32]")));
+  EXPECT_EQ(root->feature_group_count(), 2);
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllGather), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kDynamicSlice), nullptr);
+}
+
 TEST_P(SpmdPartitioningTest, PartitionConvWithFeatureGroupCount2) {
   absl::string_view hlo_string = R"(
 HloModule module
