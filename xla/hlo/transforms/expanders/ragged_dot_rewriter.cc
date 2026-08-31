@@ -606,12 +606,12 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
   }
 
   for (auto* ragged_dot : cudnn_fusion_dots) {
-    ASSIGN_OR_RETURN(HloInstruction * replacement,
-                     PadWgradForCuDNNAlignment(ragged_dot));
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * replacement,
+                          PadWgradForCuDNNAlignment(ragged_dot));
     if (replacement == nullptr) {
       continue;
     }
-    RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         ragged_dot->parent()->ReplaceInstruction(ragged_dot, replacement));
     changed = true;
   }
