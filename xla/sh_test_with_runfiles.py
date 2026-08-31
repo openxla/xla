@@ -25,20 +25,26 @@ class ShTestWithRunfiles(lit.formats.ShTest):
   def execute(self, test, lit_config):
     runfiles_env = os.environ.get("RUNFILES_DIR")
     created_symlinks = []
+
     if runfiles_env:
       rf_path = pathlib.Path(runfiles_env)
 
       test_exec_dir = pathlib.Path(test.getExecPath()).parent
       test_exec_dir.mkdir(parents=True, exist_ok=True)
 
-      # Symlink all directories from runfiles root to test_exec_dir.parent
-      # RUNPATH has "../+rocm_configure_ext+local_config_rocm/..." patterns
+      # Symlink the entire runfiles structure to match what RUNPATH expects
+      # Binaries have RUNPATH like $ORIGIN/../../../../../_solib_x86_64/...
+      # They execute from lit_bin which is at runfiles/_main/xla/.../lit_bin/
+      # So we need _main accessible from there
+      # Symlink to test_exec_dir.parent to match RUNPATH patterns
       for item in rf_path.iterdir():
         if item.is_dir():
           test_exec_symlink = test_exec_dir.parent / item.name
           if not test_exec_symlink.exists():
             try:
-              test_exec_symlink.symlink_to(item, target_is_directory=True)
+              # Use relative symlinks for portability between local and RBE
+              relative_target = os.path.relpath(item, test_exec_dir.parent)
+              test_exec_symlink.symlink_to(relative_target, target_is_directory=True)
               created_symlinks.append(test_exec_symlink)
             except FileExistsError:
               pass
@@ -73,6 +79,23 @@ class ShTestWithRunfiles(lit.formats.ShTest):
           test.config.environment["XLA_FLAGS"] = (
               f"{existing_flags} {flag}".strip()
           )
+
+      # For --dynamic_mode=fully, set LD_LIBRARY_PATH to point to library directories
+      # Support both bzlmod and workspace mode layouts
+      lib_dirs = []
+
+      # Check all possible _solib_x86_64 locations
+      solib_paths = [
+        rf_path / "_main" / "_solib_x86_64",  # bzlmod
+        rf_path / "xla" / "_solib_x86_64",    # workspace with legacy_external_runfiles
+      ]
+      for solib in solib_paths:
+        if solib.is_dir():
+          lib_dirs.append(str(solib))
+
+      if lib_dirs:
+        ld_library_path = ":".join(lib_dirs)
+        test.config.environment["LD_LIBRARY_PATH"] = ld_library_path
 
     result = super().execute(test, lit_config)
 
