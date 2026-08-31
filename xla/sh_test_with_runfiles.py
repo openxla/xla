@@ -32,23 +32,13 @@ class ShTestWithRunfiles(lit.formats.ShTest):
       test_exec_dir = pathlib.Path(test.getExecPath()).parent
       test_exec_dir.mkdir(parents=True, exist_ok=True)
 
-      # Map: runfiles path to check -> symlink name to create
-      # RUNPATH has "../+rocm_configure_ext+local_config_rocm/..." so symlink at parent
-      candidates = {
-          "+rocm_configure_ext+local_config_rocm": "+rocm_configure_ext+local_config_rocm",
-          "_main/external/+rocm_configure_ext+local_config_rocm": "+rocm_configure_ext+local_config_rocm",
-          "external/+rocm_configure_ext+local_config_rocm": "+rocm_configure_ext+local_config_rocm",
-          "+llvm_extension+llvm-project": "+llvm_extension+llvm-project",
-          "_main/external/+llvm_extension+llvm-project": "+llvm_extension+llvm-project",
-          "external/+llvm_extension+llvm-project": "+llvm_extension+llvm-project",
-      }
-
-      for runfiles_path, symlink_name in candidates.items():
-        if (rf_path / runfiles_path).is_dir():
-          # RUNPATH has "../..." so create symlink at parent level
-          test_exec_symlink = test_exec_dir.parent / symlink_name
+      # Symlink all directories from runfiles root to test_exec_dir.parent
+      # RUNPATH has "../+rocm_configure_ext+local_config_rocm/..." patterns
+      for item in rf_path.iterdir():
+        if item.is_dir():
+          test_exec_symlink = test_exec_dir.parent / item.name
           if not test_exec_symlink.exists():
-            test_exec_symlink.symlink_to(rf_path / runfiles_path, target_is_directory=True)
+            test_exec_symlink.symlink_to(item, target_is_directory=True)
             created_symlinks.append(test_exec_symlink)
 
 
