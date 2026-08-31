@@ -17,7 +17,6 @@ import os
 import pathlib
 
 import lit.formats
-import subprocess
 
 
 class ShTestWithRunfiles(lit.formats.ShTest):
