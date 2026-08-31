@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
@@ -268,10 +268,10 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
     const se::GpuComputeCapability& gpu_version) {
   const bool is_supported_rocm =
       gpu_version.IsRocm() &&
-      gpu_version.rocm_compute_capability()->gfx9_mi350();
+      gpu_version.rocm_compute_capability()->gfx9_mi300_series();
   if (!gpu_version.IsCuda() && !is_supported_rocm) {
     return absl::FailedPreconditionError(
-        "Only CUDA and ROCm gfx950 (MI350) are supported.");
+        "Only CUDA and ROCm gfx942 (MI300) and gfx950 (MI350) are supported.");
   }
 
   if (const auto* collective = DynCast<HloCollectiveInstruction>(&instr)) {

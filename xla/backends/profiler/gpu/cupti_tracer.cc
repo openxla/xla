@@ -47,7 +47,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/backends/profiler/gpu/cuda_version_variants.h"
@@ -1018,8 +1017,11 @@ absl::Status AddDriverApiCallbackEvent(
     return absl::OkStatus();
   }
   tracer->IncCallbackEventCount();
-  absl::Span<const int64_t> range_ids = AnnotationStack::GetScopeRangeIds();
-  guarded_annotations_and_events.AddScopeRangeIdSequence(range_ids);
+  absl::Span<const int64_t> range_ids;
+  if (tracer->IsScopeRangeTrackingEnabled()) {
+    range_ids = AnnotationStack::GetScopeRangeIds();
+    guarded_annotations_and_events.AddScopeRangeIdSequence(range_ids);
+  }
   CuptiTracerEvent event{};
   event.correlation_id = cbdata->correlationId;
   event.annotation = annotation;

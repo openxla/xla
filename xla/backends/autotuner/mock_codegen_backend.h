@@ -56,6 +56,9 @@ class MockCodegenBackend : public CodegenBackend {
   MOCK_METHOD(std::string, version, (), (const, override));
   MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>,
               GetSupportedConfigs, (const HloInstruction& instr), (override));
+  MOCK_METHOD(absl::StatusOr<std::vector<EstimatedConfig>>,
+              GetSupportedConfigsWithEstimates, (const HloInstruction& instr),
+              (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<BackendConfig>>, GetDefaultConfig,
               (const HloInstruction& instr), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<Executable>>, Compile,

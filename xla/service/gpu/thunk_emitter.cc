@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_kernel_source.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/core/host_offloading/host_offloading_executable.pb.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/future.h"
@@ -151,7 +152,6 @@ limitations under the License.
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/triton_call.h"
 #include "xla/service/gpu_topology.h"
@@ -177,6 +177,8 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+using ::xla::xtile::BlockLevelParameters;
 
 absl::StatusOr<TritonKernelSource> EmitTritonFrom(
     const TritonCall& call, const std::string& kernel_name,
@@ -2563,7 +2565,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
     computation->SetExecutionThread(HloInstruction::kMainExecutionThread);
   }
 
-  absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4> operand_slices;
+  absl::InlinedVector<ShapedSlice, 4> operand_slices;
   for (HloInstruction* operand : host_execute->operands()) {
     for (auto& indexed : ShapeUtil::GetLeafShapes(operand->shape())) {
       ABSL_ASSIGN_OR_RETURN(auto slice,
@@ -2573,7 +2575,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
     }
   }
 
-  absl::InlinedVector<HostExecuteStartThunk::SliceAndShape, 4> result_slices;
+  absl::InlinedVector<ShapedSlice, 4> result_slices;
   for (auto& indexed : ShapeUtil::GetLeafShapes(host_execute->shape())) {
     ABSL_ASSIGN_OR_RETURN(auto slice,
                      ir_emitter_context_->buffer_assignment().GetUniqueSlice(

@@ -458,15 +458,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kConvolution:
       return EmitConvolutionThunk(instruction);
 
-    case HloOpcode::kCopy: {
-      // The copy thunk does not support sub-byte data types.
-      bool has_byte_strides =
-          ShapeUtil::ByteStrides(instruction->shape()).has_value();
-      if (!has_byte_strides || options_.compile_copy_as_llvm_kernel) {
-        return EmitElementalKernelThunk(instruction);
-      }
+    case HloOpcode::kCopy:
       return EmitCopyThunk(instruction);
-    }
 
     case HloOpcode::kDot:
       return EmitDotThunk(instruction);
@@ -1267,7 +1260,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceThunk(
 // Parse the sort comparator to determine the sort direction.
 std::optional<SortThunk::SortDirection> ThunkEmitter::MatchSortDirection(
     const HloComputation* hlo_comparator) const {
-  if (hlo_comparator->num_parameters() != 2) {
+  if (hlo_comparator->num_parameters() < 2 ||
+      hlo_comparator->num_parameters() % 2 != 0) {
     return std::nullopt;
   }
 

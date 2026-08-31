@@ -33,6 +33,8 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
@@ -46,9 +48,9 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
@@ -496,6 +498,81 @@ TEST_F(AutotunerTest, DumpLogsToFile) {
   EXPECT_THAT(actual_logs, EqualsProto(expected_logs));
 }
 
+TEST_F(AutotunerTest, DumpLogsToFileNewFormat) {
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory temp_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  options_.dump_logs_to = tsl::io::JoinPath(temp_dir.path(), "dump.log");
+  options_.use_new_logging_format = true;
+  options_.correctness_check_options.enable_correctness_check = false;
+
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  configs.push_back(GetTestConfig("test_config_1"));
+  configs.push_back(GetTestConfig("test_config_failure"));
+  configs.push_back(GetTestConfig("test_config_2"));
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
+  EXPECT_CALL(*backend, backend())
+      .WillRepeatedly(Return(autotuner::Backend::TRITON));
+  EXPECT_CALL(*backend, version()).WillRepeatedly(Return("1.0"));
+  EXPECT_CALL(*backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs)));
+  EXPECT_CALL(*backend, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()))
+      .WillOnce(Return(absl::InternalError("failed to compile")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2),
+                                      /*output_buffer=*/std::nullopt,
+                                      /*scratch_bytes=*/100})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+  ASSERT_OK_AND_ASSIGN(auto orchestrator,
+                       CodegenOrchestrator::Create(std::move(backends), {}));
+
+  std::vector<std::unique_ptr<Profiler>> profilers;
+  profilers.push_back(std::move(profiler));
+  ASSERT_OK_AND_ASSIGN(auto autotuner,
+                       Autotuner::Create(std::move(orchestrator),
+                                         std::move(profilers), options_));
+
+  constexpr absl::string_view kHlo = R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[] parameter(0)
+      ROOT copy = f32[] copy(p0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto results,
+      autotuner->TuneConfigs(*module, [](const HloInstruction& instr) {
+        return instr.opcode() == HloOpcode::kCopy;
+      }));
+  EXPECT_FALSE(results.empty());
+  EXPECT_OK(autotuner->DumpTuningLogs());
+
+  std::string content;
+  EXPECT_THAT(tsl::ReadFileToString(tsl::Env::Default(), options_.dump_logs_to,
+                                    &content),
+              IsOk());
+  autotuner::AllRawConfigProfiles actual_profiles;
+  EXPECT_TRUE(
+      tsl::protobuf::TextFormat::ParseFromString(content, &actual_profiles));
+
+  EXPECT_EQ(actual_profiles.instruction_profiles_size(), 1);
+  EXPECT_EQ(actual_profiles.instruction_profiles(0).config_profiles_size(), 2);
+  EXPECT_EQ(actual_profiles.instruction_profiles(0).failed_configs_size(), 1);
+}
+
 TEST_F(AutotunerTest, AutotuneCompileErrorWithNoSupportedConfigs) {
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
@@ -655,6 +732,86 @@ TEST_F(AutotunerTest, AutotuneMultipleDevicesRoundRobin) {
         return instr.opcode() == HloOpcode::kCopy;
       }));
   EXPECT_EQ(results.size(), 2);
+}
+
+TEST_F(AutotunerTest, DumpLogsWithCacheContext) {
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory temp_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  Autotuner::Options options;
+  options.dump_logs_to = tsl::io::JoinPath(temp_dir.path(), "dump.log");
+  options.use_new_logging_format = true;
+  options.correctness_check_options.enable_correctness_check = false;
+
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  configs.push_back(GetTestConfig("best_config"));
+  configs.push_back(GetTestConfig("other_config"));
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
+  EXPECT_CALL(*backend, backend())
+      .WillRepeatedly(Return(autotuner::Backend::TRITON));
+  EXPECT_CALL(*backend, version()).WillRepeatedly(Return("1.0"));
+  EXPECT_CALL(*backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs)));
+  EXPECT_CALL(*backend, Compile(_, _)).WillRepeatedly([] {
+    return std::unique_ptr<Executable>();
+  });
+
+  auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Microseconds(100)})))
+      .WillOnce(Return(ProfileResult({absl::Microseconds(200)})));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  stream_executor::DeviceDescription device_description;
+  device_description.set_name("TestGPU");
+  options.cache_context =
+      AutotuneCacheContext::Create(device_description, backends, "exp_v1");
+
+  ASSERT_OK_AND_ASSIGN(auto orchestrator,
+                       CodegenOrchestrator::Create(std::move(backends), {}));
+
+  std::vector<std::unique_ptr<Profiler>> profilers;
+  profilers.push_back(std::move(profiler));
+
+  ASSERT_OK_AND_ASSIGN(auto autotuner,
+                       Autotuner::Create(std::move(orchestrator),
+                                         std::move(profilers), options));
+
+  constexpr absl::string_view kHlo = R"(
+    HloModule test_module
+    ENTRY main {
+      p0 = f32[] parameter(0)
+      ROOT copy = f32[] copy(p0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto results,
+      autotuner->TuneConfigs(*module, [](const HloInstruction& instr) {
+        return instr.opcode() == HloOpcode::kCopy;
+      }));
+  EXPECT_FALSE(results.empty());
+
+  EXPECT_THAT(autotuner->DumpTuningLogs(), absl_testing::IsOk());
+
+  std::string content;
+  EXPECT_THAT(tsl::ReadFileToString(tsl::Env::Default(), options.dump_logs_to,
+                                    &content),
+              absl_testing::IsOk());
+  autotuner::AllRawConfigProfiles actual_profiles;
+  EXPECT_TRUE(
+      tsl::protobuf::TextFormat::ParseFromString(content, &actual_profiles));
+
+  EXPECT_EQ(actual_profiles.explicit_version(), "exp_v1");
+  EXPECT_EQ(actual_profiles.per_backend_versions().at("TRITON"), "1.0");
+  EXPECT_EQ(actual_profiles.instruction_profiles_size(), 1);
 }
 
 }  // namespace

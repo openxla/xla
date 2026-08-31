@@ -22,6 +22,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/service/cpu/executable.pb.h"
 #include "xla/tests/aot_interception_pjrt_client.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
@@ -196,6 +198,69 @@ TEST(TestLibTest, CompareGPUExecutables_FailsOnGenuineDifferences) {
                AllOf(HasSubstr("Golden Proto structural comparison failed"),
                      HasSubstr("module_name"), HasSubstr("test_module"),
                      HasSubstr("different_module"))));
+}
+
+// The CPU comparator must ignore both copies of debug_options as well as the
+// compiled machine-code fields (object_files, target_machine_options,
+// data_layout). See b/528258781.
+TEST(TestLibTest, CompareGoldenCPUExecutable_IgnoresDebugOptionsAndReturnsOk) {
+  HumanReadableAotExecutable golden;
+  golden.mutable_cpu_executable()->set_entry_function_name("main");
+  golden.mutable_cpu_executable()
+      ->mutable_hlo_module()
+      ->mutable_config()
+      ->mutable_debug_options()
+      ->set_xla_dump_to("/tmp/golden_dir");
+  golden.mutable_cpu_executable()->set_data_layout("golden_layout");
+
+  HumanReadableAotExecutable fresh;
+  fresh.mutable_cpu_executable()->set_entry_function_name("main");
+  fresh.mutable_cpu_executable()
+      ->mutable_hlo_module()
+      ->mutable_config()
+      ->mutable_debug_options()
+      ->set_xla_dump_to("/tmp/fresh_dir");
+  fresh.mutable_cpu_executable()->set_data_layout("fresh_layout_ignored");
+
+  EXPECT_OK(
+      AOTInterceptionPjrtClient::CompareGoldenCPUExecutable(fresh, golden));
+}
+
+TEST(TestLibTest, CompareGoldenCPUExecutable_FailsOnGenuineDifferences) {
+  HumanReadableAotExecutable golden;
+  golden.mutable_cpu_executable()->set_entry_function_name("main");
+
+  HumanReadableAotExecutable fresh;
+  fresh.mutable_cpu_executable()->set_entry_function_name("different_entry");
+
+  EXPECT_THAT(
+      AOTInterceptionPjrtClient::CompareGoldenCPUExecutable(fresh, golden),
+      StatusIs(absl::StatusCode::kInternal,
+               AllOf(HasSubstr("Golden Proto structural comparison failed"),
+                     HasSubstr("entry_function_name"),
+                     HasSubstr("different_entry"))));
+}
+
+// CPU artifacts are plain (non-split) protos: an ExecutableAndOptionsProto
+// whose serialized_executable holds a serialized cpu::CompilationResultProto.
+// The CPU deserializer must unpack the inner proto and clear
+// serialized_executable.
+TEST(TestLibTest, DeserializeToHumanReadable_CpuUnpacksPlainProto) {
+  cpu::CompilationResultProto cpu_proto;
+  cpu_proto.set_entry_function_name("main");
+
+  ExecutableAndOptionsProto outer;
+  outer.set_serialized_executable(cpu_proto.SerializeAsString());
+  std::string serialized;
+  ASSERT_TRUE(outer.SerializeToString(&serialized));
+
+  ASSERT_OK_AND_ASSIGN(HumanReadableAotExecutable unpacked,
+                       AOTInterceptionPjrtClient::DeserializeToHumanReadable(
+                           serialized, AOTTestPlatform::kCpu));
+  EXPECT_TRUE(unpacked.has_cpu_executable());
+  EXPECT_EQ(unpacked.cpu_executable().entry_function_name(), "main");
+  EXPECT_TRUE(
+      unpacked.executable_and_options().serialized_executable().empty());
 }
 
 }  // namespace

@@ -109,10 +109,16 @@ struct TranscendentalBF16ToAMDGPU : public mlir::ConvertOpToLLVMPattern<OpTy> {
   llvm::StringRef intrinsic;
 };
 
-// Lowers a scalar bf16 `math.log` to the native gfx1250 `v_log_bf16`
-// instruction by rewriting log(x) = log2(x) * ln(2) and emitting the
-// `llvm.amdgcn.log` intrinsic. See TranscendentalBF16ToAMDGPU for the
-// rationale.
+// Lowers a scalar bf16 `math.log` on gfx1250 by rewriting
+// log(x) = log2(x) * ln(2) and computing log2 with the native `v_log_f32`
+// transcendental (the `llvm.amdgcn.log` intrinsic) in f32.
+//
+// Everything is computed in f32 and rounded to bf16 only once, at the end.
+// Using f32 log2 rather than the native bf16 `v_log_bf16` (which only has
+// bf16 mantissa precision) makes the result correctly-rounded, for one extra
+// input widening. The input `fpext` is exact (a bit
+// shift) and the trailing `fmul` + `fptrunc` fuse into one `v_fma_mixlo_bf16`,
+// so this lowers to `v_lshlrev_b32` + `v_log_f32` + `v_fma_mixlo_bf16`.
 struct LogBF16ToAMDGPU
     : public mlir::ConvertOpToLLVMPattern<mlir::math::LogOp> {
   using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
@@ -126,15 +132,19 @@ struct LogBF16ToAMDGPU
     mlir::Location loc = op.getLoc();
     mlir::Value operand = adaptor.getOperands().front();
     mlir::Type bf16 = operand.getType();
-    mlir::Value log2x = rewriter
-                            .create<mlir::LLVM::CallIntrinsicOp>(
-                                loc, /*resultType=*/bf16,
-                                rewriter.getStringAttr("llvm.amdgcn.log"),
-                                mlir::ValueRange{operand})
-                            .getResults();
-    mlir::Value ln2 = rewriter.create<mlir::LLVM::ConstantOp>(
-        loc, bf16, rewriter.getFloatAttr(bf16, kLn2));
-    rewriter.replaceOpWithNewOp<mlir::LLVM::FMulOp>(op, log2x, ln2);
+    mlir::Type f32 = rewriter.getF32Type();
+    mlir::Value x_f32 =
+        mlir::LLVM::FPExtOp::create(rewriter, loc, f32, operand);
+    mlir::Value log2x =
+        mlir::LLVM::CallIntrinsicOp::create(
+            rewriter, loc, /*resultType=*/f32,
+            rewriter.getStringAttr("llvm.amdgcn.log"), mlir::ValueRange{x_f32})
+            .getResults();
+    mlir::Value ln2_f32 = mlir::LLVM::ConstantOp::create(
+        rewriter, loc, f32, rewriter.getFloatAttr(f32, kLn2));
+    mlir::Value logx_f32 =
+        mlir::LLVM::FMulOp::create(rewriter, loc, log2x, ln2_f32);
+    rewriter.replaceOpWithNewOp<mlir::LLVM::FPTruncOp>(op, bf16, logx_f32);
     return mlir::success();
   }
 };

@@ -364,5 +364,71 @@ ENTRY main {
             std::make_pair(int64_t{-1}, int64_t{-1}));
 }
 
+TEST_F(SortUtilsTest, MatchSimpleSortComparatorKeyValue) {
+  constexpr char kHlo[] = R"(
+HloModule test_module
+
+compare {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  ROOT cmp = pred[] compare(p0, p1), direction=LT
+}
+
+ENTRY main {
+  k = f32[10] parameter(0)
+  v = s32[10] parameter(1)
+  ROOT sort = (f32[10], s32[10]) sort(k, v), dimensions={0}, to_apply=compare
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const auto* compare = Cast<HloCompareInstruction>(
+      module->GetComputationWithName("compare")->root_instruction());
+
+  EXPECT_EQ(MatchSimpleSortComparator(compare),
+            std::make_pair(int64_t{0}, int64_t{1}));
+}
+
+TEST_F(SortUtilsTest, MatchNumpySortComparatorKeyValue) {
+  constexpr char kHlo[] = R"(
+HloModule test_module
+
+compare {
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  p0 = bf16[] parameter(0)
+  p0_ne = pred[] compare(p0, p0), direction=NE
+  c_nan = bf16[] constant(nan)
+  c_zero = bf16[] constant(0)
+  p0_eq_zero = pred[] compare(p0, c_zero), direction=EQ
+  p0_zero_sel = bf16[] select(p0_eq_zero, c_zero, p0)
+  p0_canon = bf16[] select(p0_ne, c_nan, p0_zero_sel)
+
+  p1 = bf16[] parameter(1)
+  p1_ne = pred[] compare(p1, p1), direction=NE
+  p1_eq_zero = pred[] compare(p1, c_zero), direction=EQ
+  p1_zero_sel = bf16[] select(p1_eq_zero, c_zero, p1)
+  p1_canon = bf16[] select(p1_ne, c_nan, p1_zero_sel)
+
+  ROOT cmp = pred[] compare(p0_canon, p1_canon), direction=LT, type=TOTALORDER
+}
+
+ENTRY main {
+  k = bf16[10] parameter(0)
+  v = s32[10] parameter(1)
+  ROOT sort = (bf16[10], s32[10]) sort(k, v), dimensions={0}, to_apply=compare
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const auto* compare = Cast<HloCompareInstruction>(
+      module->GetComputationWithName("compare")->root_instruction());
+
+  EXPECT_EQ(MatchNumpySortComparator(compare),
+            std::make_pair(int64_t{0}, int64_t{1}));
+}
+
 }  // namespace
 }  // namespace xla

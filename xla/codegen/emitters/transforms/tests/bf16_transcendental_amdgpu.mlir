@@ -115,7 +115,11 @@ module {
 // -----
 
 // A plain bf16 log is rewritten to log2(x) * ln(2) on gfx1250 so it also uses
-// the native instruction.
+// the native transcendental. The whole computation is done in f32: the bf16
+// input is widened to f32, log2 is evaluated with the native f32 instruction,
+// multiplied by an f32 ln(2), then rounded once back to bf16. Using the f32
+// log2 (rather than the lower-precision native bf16 log2) keeps the result
+// close to correctly-rounded.
 module {
   func.func @log_bf16(%arg0: bf16) -> bf16 {
     %0 = math.log %arg0 : bf16
@@ -124,6 +128,8 @@ module {
 }
 
 // CHECK-LABEL: llvm.func @log_bf16
-// CHECK: llvm.call_intrinsic "llvm.amdgcn.log"({{.*}}) : (bf16) -> bf16
-// CHECK: llvm.fmul
+// CHECK: llvm.fpext {{.*}} : bf16 to f32
+// CHECK: llvm.call_intrinsic "llvm.amdgcn.log"({{.*}}) : (f32) -> f32
+// CHECK: llvm.fmul {{.*}} : f32
+// CHECK: llvm.fptrunc {{.*}} : f32 to bf16
 // CHECK-NOT: __ocml

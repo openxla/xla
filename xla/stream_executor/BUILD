@@ -368,7 +368,7 @@ cc_library(
         ":platform",
         ":stream",
         ":stream_executor_h",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:device_assignment",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",

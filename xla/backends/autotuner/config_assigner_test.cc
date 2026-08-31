@@ -143,7 +143,8 @@ absl::StatusOr<std::unique_ptr<ConfigAssigner>> CreateConfigAssigner(
   }
 
   return ConfigAssigner::Create(assigner_options, std::move(cache),
-                                std::move(orchestrator), std::move(autotuner));
+                                std::move(orchestrator), std::move(autotuner),
+                                thread_pool);
 }
 
 absl::StatusOr<std::unique_ptr<ConfigAssigner>>
@@ -216,7 +217,6 @@ TEST_F(ConfigAssignerTest, NoCacheManager) {
   EXPECT_THAT(config_assigner, IsOk());
 }
 
-
 TEST_F(ConfigAssignerTest, CacheHit) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
   AutotunerCacheInterface::Config config;
@@ -264,8 +264,8 @@ TEST_F(ConfigAssignerTest, ExpectAllInstructionsInCache) {
               StatusIs(absl::StatusCode::kNotFound));
 }
 
-TEST_F(ConfigAssignerTest, SelectFirstConfig) {
-  config_.select_first_config = true;
+TEST_F(ConfigAssignerTest, AutotuningDisabledSelectsFirstConfig) {
+  config_.allow_autotuning = false;
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
@@ -294,8 +294,8 @@ TEST_F(ConfigAssignerTest, SelectFirstConfig) {
   EXPECT_THAT(config_assigner->AssignConfig(dummy_instr), absl_testing::IsOk());
 }
 
-TEST_F(ConfigAssignerTest, SelectFirstConfigPicksFirstCompilable) {
-  config_.select_first_config = true;
+TEST_F(ConfigAssignerTest, AutotuningDisabledPicksFirstCompilable) {
+  config_.allow_autotuning = false;
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
@@ -328,8 +328,8 @@ TEST_F(ConfigAssignerTest, SelectFirstConfigPicksFirstCompilable) {
 }
 
 TEST_F(ConfigAssignerTest,
-       SelectFirstConfigFallsBackToDefaultIfNoSupportedConfigCompiles) {
-  config_.select_first_config = true;
+       AutotuningDisabledFallsBackToDefaultIfNoSupportedConfigCompiles) {
+  config_.allow_autotuning = false;
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
@@ -364,8 +364,8 @@ TEST_F(ConfigAssignerTest,
 }
 
 TEST_F(ConfigAssignerTest,
-       SelectFirstConfigFailsWhenNothingCompilesAndNoDefault) {
-  config_.select_first_config = true;
+       AutotuningDisabledFailsWhenNothingCompilesAndNoDefault) {
+  config_.allow_autotuning = false;
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
@@ -390,6 +390,44 @@ TEST_F(ConfigAssignerTest,
   auto dummy_instr = module->entry_computation()->root_instruction();
   EXPECT_THAT(config_assigner->AssignConfig(dummy_instr),
               StatusIs(absl::StatusCode::kInternal));
+}
+
+TEST_F(ConfigAssignerTest, AutotuningDisabledCompilesAllSupportedConfigs) {
+  config_.allow_autotuning = false;
+  config_.compile_all_supported_configs = true;
+
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  configs.push_back(GetTestConfig("test_config_1"));
+  configs.push_back(GetTestConfig("test_config_2"));
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigs(_))
+      .WillOnce(Return(std::move(configs)));
+
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(absl::InternalError("test error")));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  auto profiler = std::make_unique<MockProfiler>();
+
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test_pool", 2);
+
+  ASSERT_OK_AND_ASSIGN(
+      auto config_assigner,
+      CreateConfigAssigner(std::move(backends), std::move(profiler), config_,
+                           nullptr, std::nullopt, &thread_pool));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  auto dummy_instr = module->entry_computation()->root_instruction();
+  EXPECT_THAT(config_assigner->AssignConfig(dummy_instr), absl_testing::IsOk());
 }
 
 class MockKeyValueStore : public KeyValueStoreInterface {
@@ -673,22 +711,299 @@ TEST_F(ConfigAssignerTest, DumpHlos) {
               ".*\\.test_module\\.autotuner_1\\.copy\\.before\\.txt")));
 }
 
+TEST_F(ConfigAssignerTest, SelectFirstConfigWithEstimatesPicksLowestEstimate) {
+  config_.allow_autotuning = false;
+  config_.prefer_estimated_configs = true;
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigsWithEstimates(_))
+      .WillOnce([](const HloInstruction&) {
+        std::vector<CodegenBackend::EstimatedConfig> configs;
+        configs.push_back({GetTestConfig("only_config"), std::nullopt});
+        configs.push_back(
+            {GetTestConfig("test_config_1"), absl::Milliseconds(100)});
+        configs.push_back(
+            {GetTestConfig("test_config_2"), absl::Milliseconds(10)});
+        return configs;
+      });
+
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  auto cache = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache, Insert(_, _)).Times(0);
+
+  ASSERT_OK_AND_ASSIGN(auto config_assigner,
+                       CreateConfigAssigner(std::move(backends), nullptr,
+                                            config_, std::move(cache)));
+
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(config_assigner->AssignConfig(dummy_instr.get()), IsOk());
+}
+
+TEST_F(ConfigAssignerTest,
+       SelectFirstConfigWithEstimatesFallsBackThroughEstimatesAndUnestimated) {
+  config_.allow_autotuning = false;
+  config_.prefer_estimated_configs = true;
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigsWithEstimates(_))
+      .WillOnce([](const HloInstruction&) {
+        std::vector<CodegenBackend::EstimatedConfig> configs;
+        configs.push_back(
+            {GetTestConfig("test_config_1"), absl::Milliseconds(10)});
+        configs.push_back(
+            {GetTestConfig("test_config_2"), absl::Milliseconds(100)});
+        configs.push_back({GetTestConfig("only_config"), std::nullopt});
+        return configs;
+      });
+
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(absl::InternalError("compilation failed")));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(absl::InternalError("compilation failed")));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("only_config")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("only_config")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto config_assigner,
+      CreateConfigAssigner(std::move(backends), nullptr, config_, nullptr));
+
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(config_assigner->AssignConfig(dummy_instr.get()), IsOk());
+}
+
+TEST_F(ConfigAssignerTest,
+       AutotuningWithEstimatesAppliesLowestEstimateWithoutProfilingAndCaches) {
+  config_.allow_autotuning = true;
+  config_.prefer_estimated_configs = true;
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigsWithEstimates(_))
+      .WillOnce([](const HloInstruction&) {
+        std::vector<CodegenBackend::EstimatedConfig> configs;
+        configs.push_back({GetTestConfig("only_config"), std::nullopt});
+        configs.push_back(
+            {GetTestConfig("test_config_1"), absl::Milliseconds(50)});
+        configs.push_back(
+            {GetTestConfig("test_config_2"), absl::Milliseconds(5)});
+        return configs;
+      });
+
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, Profile(_, _)).Times(0);
+
+  auto cache = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
+
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto config_assigner,
+      CreateConfigAssigner(std::move(backends), std::move(profiler), config_,
+                           std::move(cache)));
+
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(config_assigner->AssignConfig(dummy_instr.get()), IsOk());
+}
+
+TEST_F(ConfigAssignerTest,
+       AutotuningWithEstimatesFallsBackToTuningWhenNoEstimatesCompile) {
+  config_.allow_autotuning = true;
+  config_.prefer_estimated_configs = true;
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigsWithEstimates(_))
+      .WillOnce([](const HloInstruction&) {
+        std::vector<CodegenBackend::EstimatedConfig> configs;
+        configs.push_back(
+            {GetTestConfig("test_config_1"), absl::Milliseconds(5)});
+        configs.push_back({GetTestConfig("test_config_2"), std::nullopt});
+        configs.push_back({GetTestConfig("test_config_3"), std::nullopt});
+        return configs;
+      });
+  EXPECT_CALL(*backend, GetSupportedConfigs(_))
+      .WillOnce([](const HloInstruction&) {
+        std::vector<std::unique_ptr<BackendConfig>> configs;
+        configs.push_back(GetTestConfig("test_config_1"));
+        configs.push_back(GetTestConfig("test_config_2"));
+        configs.push_back(GetTestConfig("test_config_3"));
+        return configs;
+      });
+
+  // test_config_1 fails compilation during estimate check and during
+  // autotuning.
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(absl::InternalError("compilation failed")))
+      .WillOnce(Return(absl::InternalError("compilation failed")));
+
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_3")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})));
+
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  auto cache = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto config_assigner,
+      CreateConfigAssigner(std::move(backends), std::move(profiler), config_,
+                           std::move(cache)));
+
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(config_assigner->AssignConfig(dummy_instr.get()), IsOk());
+}
+
+TEST_F(ConfigAssignerTest,
+       AutotuningWithEstimatesFallsBackToTuningWhenEstimationFails) {
+  config_.allow_autotuning = true;
+  config_.prefer_estimated_configs = true;
+
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, GetSupportedConfigsWithEstimates(_))
+      .WillOnce(Return(absl::InternalError("estimation failed")));
+  EXPECT_CALL(*backend, GetSupportedConfigs(_))
+      .WillOnce([](const HloInstruction&) {
+        std::vector<std::unique_ptr<BackendConfig>> configs;
+        configs.push_back(GetTestConfig("test_config_1"));
+        configs.push_back(GetTestConfig("test_config_2"));
+        return configs;
+      });
+
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_, _))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})));
+
+  EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+
+  auto cache = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto config_assigner,
+      CreateConfigAssigner(std::move(backends), std::move(profiler), config_,
+                           std::move(cache)));
+
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(config_assigner->AssignConfig(dummy_instr.get()), IsOk());
+}
+
 TEST(ConfigAssignerOptionsTest, ToString) {
   ConfigAssigner::Options config;
   config.expect_all_instructions_in_cache = false;
-
-  config.select_first_config = true;
+  config.allow_autotuning = false;
+  config.prefer_estimated_configs = true;
   config.dump_hlos = false;
   config.use_new_cache_format = false;
 
   std::string expected =
       "{\n"
       "  \"expect_all_instructions_in_cache\": false,\n"
-      "  \"select_first_config\": true,\n"
+      "  \"allow_autotuning\": false,\n"
+      "  \"prefer_estimated_configs\": true,\n"
       "  \"dump_hlos\": false,\n"
-      "  \"use_new_cache_format\": false\n"
+      "  \"use_new_cache_format\": false,\n"
+      "  \"compile_all_supported_configs\": false\n"
       "}";
   EXPECT_EQ(config.ToString(), expected);
+}
+
+TEST_F(ConfigAssignerTest, GetSupportedConfigsWithEstimates) {
+  auto backend1 = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend1, name()).WillRepeatedly(Return("backend1"));
+  CodegenBackend* b1_ptr = backend1.get();
+  std::vector<CodegenBackend::EstimatedConfig> b1_res;
+  b1_res.push_back({GetTestConfig("best_config"), absl::Milliseconds(10)});
+  EXPECT_CALL(*backend1, GetSupportedConfigsWithEstimates)
+      .WillOnce(Return(std::move(b1_res)));
+
+  auto backend2 = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend2, name()).WillRepeatedly(Return("backend2"));
+  CodegenBackend* b2_ptr = backend2.get();
+  std::vector<CodegenBackend::EstimatedConfig> b2_res;
+  b2_res.push_back({GetTestConfig("another_config"), std::nullopt});
+  EXPECT_CALL(*backend2, GetSupportedConfigsWithEstimates)
+      .WillOnce(Return(std::move(b2_res)));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend1));
+  backends.push_back(std::move(backend2));
+  ASSERT_OK_AND_ASSIGN(auto orchestrator,
+                       CodegenOrchestrator::Create(std::move(backends), {}));
+
+  auto instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  ASSERT_OK_AND_ASSIGN(auto configs,
+                       orchestrator->GetSupportedConfigsWithEstimates(*instr));
+  ASSERT_EQ(configs.size(), 2);
+  EXPECT_EQ(configs[0].config.codegen_backend, b1_ptr);
+  EXPECT_EQ(configs[0].estimated_runtime, absl::Milliseconds(10));
+  EXPECT_EQ(configs[1].config.codegen_backend, b2_ptr);
+  EXPECT_EQ(configs[1].estimated_runtime, std::nullopt);
+}
+
+TEST_F(ConfigAssignerTest, GetSupportedConfigs) {
+  auto backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
+  std::vector<std::unique_ptr<BackendConfig>> res;
+  res.push_back(GetTestConfig("only_config"));
+  EXPECT_CALL(*backend, GetSupportedConfigs).WillOnce(Return(std::move(res)));
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(backend));
+  ASSERT_OK_AND_ASSIGN(auto orchestrator,
+                       CodegenOrchestrator::Create(std::move(backends), {}));
+
+  auto instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  ASSERT_OK_AND_ASSIGN(auto configs, orchestrator->GetSupportedConfigs(*instr));
+  ASSERT_EQ(configs.size(), 1);
+  EXPECT_EQ(configs[0].backend_config->gemm().algorithm(),
+            GetAlgorithmId("only_config"));
 }
 
 }  // namespace
