@@ -80,7 +80,8 @@ dnnl::memory CreateDnnlMemory(const dnnl::memory::desc& md,
   }
 }
 
-dnnl::memory::data_type ToOneDnnDataType(xla::PrimitiveType xla_type) {
+absl::StatusOr<dnnl::memory::data_type> ToOneDnnDataType(
+    xla::PrimitiveType xla_type) {
   switch (xla_type) {
     case xla::PrimitiveType::F16:
       return dnnl::memory::data_type::f16;
@@ -97,8 +98,9 @@ dnnl::memory::data_type ToOneDnnDataType(xla::PrimitiveType xla_type) {
     case xla::PrimitiveType::S32:
       return dnnl::memory::data_type::s32;
     default:
-      LOG(FATAL) << "Unsupported element type: "
-                 << xla::primitive_util::LowercasePrimitiveTypeName(xla_type);
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Unsupported element type: ",
+          xla::primitive_util::LowercasePrimitiveTypeName(xla_type)));
   }
 }
 

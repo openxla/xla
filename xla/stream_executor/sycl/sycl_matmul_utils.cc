@@ -324,36 +324,12 @@ absl::StatusOr<dnnl::memory::desc> ShapeToMemDesc(const xla::Shape& shape) {
   if (dims.empty()) {
     return dnnl::memory::desc{};
   }
-  dnnl::memory::data_type dtype;
-  switch (shape.element_type()) {
-    case xla::PrimitiveType::F16:
-      dtype = dnnl::memory::data_type::f16;
-      break;
-    case xla::PrimitiveType::BF16:
-      dtype = dnnl::memory::data_type::bf16;
-      break;
-    case xla::PrimitiveType::F32:
-      dtype = dnnl::memory::data_type::f32;
-      break;
-    case xla::PrimitiveType::S8:
-      dtype = dnnl::memory::data_type::s8;
-      break;
-    case xla::PrimitiveType::U8:
-      dtype = dnnl::memory::data_type::u8;
-      break;
-    case xla::PrimitiveType::S32:
-      dtype = dnnl::memory::data_type::s32;
-      break;
-    case xla::PrimitiveType::F64:
-      dtype = dnnl::memory::data_type::f64;
-      break;
-    default:
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Unsupported element type: %s",
-                          xla::primitive_util::LowercasePrimitiveTypeName(
-                              shape.element_type())));
+  absl::StatusOr<dnnl::memory::data_type> dtype_or =
+      sycl::ToOneDnnDataType(shape.element_type());
+  if (!dtype_or.ok()) {
+    return dtype_or.status();
   }
-  return dnnl::memory::desc(dims, dtype, strides);
+  return dnnl::memory::desc(dims, *dtype_or, strides);
 }
 
 void TransposeMatrixDesc(MatrixDescriptor& matrix_desc) {
@@ -426,10 +402,24 @@ CreateMatMulPrimDescFromGemmConfig(
   }
 
   // Get OneDNN data type from layout
-  dnnl::memory::data_type lhs_dtype, rhs_dtype, output_dtype;
-  lhs_dtype = sycl::ToOneDnnDataType(lhs_layout.dtype);
-  rhs_dtype = sycl::ToOneDnnDataType(rhs_layout.dtype);
-  output_dtype = sycl::ToOneDnnDataType(output_layout.dtype);
+  absl::StatusOr<dnnl::memory::data_type> lhs_dtype_or =
+      sycl::ToOneDnnDataType(lhs_layout.dtype);
+  absl::StatusOr<dnnl::memory::data_type> rhs_dtype_or =
+      sycl::ToOneDnnDataType(rhs_layout.dtype);
+  absl::StatusOr<dnnl::memory::data_type> output_dtype_or =
+      sycl::ToOneDnnDataType(output_layout.dtype);
+  if (!lhs_dtype_or.ok()) {
+    return lhs_dtype_or.status();
+  }
+  if (!rhs_dtype_or.ok()) {
+    return rhs_dtype_or.status();
+  }
+  if (!output_dtype_or.ok()) {
+    return output_dtype_or.status();
+  }
+  dnnl::memory::data_type lhs_dtype = *lhs_dtype_or;
+  dnnl::memory::data_type rhs_dtype = *rhs_dtype_or;
+  dnnl::memory::data_type output_dtype = *output_dtype_or;
 
   auto lhs_md = dnnl::memory::desc(lhs_dims, lhs_dtype, lhs_strides);
   auto rhs_md = dnnl::memory::desc(rhs_dims, rhs_dtype, rhs_strides);
@@ -441,7 +431,7 @@ CreateMatMulPrimDescFromGemmConfig(
   // Set up post-ops based on epilogue
   dnnl::post_ops post_ops;
   ABSL_ASSIGN_OR_RETURN(sycl_gemm::GemmBackendEpilogue sycl_epilogue,
-                   sycl_gemm::AsSYCLEpilogue(epilogue));
+                        sycl_gemm::AsSYCLEpilogue(epilogue));
 
   switch (sycl_epilogue) {
     case sycl_gemm::GemmBackendEpilogue::RELU:
@@ -555,7 +545,7 @@ absl::Status DoOnednnGemm(int64_t batch_size, const MatrixDescriptor& lhs,
   if (scratchpad_size > 0) {
     if (scratch_allocator != nullptr) {
       ABSL_ASSIGN_OR_RETURN(stream_executor::DeviceAddress<uint8_t> alloc,
-                       scratch_allocator->AllocateBytes(scratchpad_size));
+                            scratch_allocator->AllocateBytes(scratchpad_size));
       workspace_addr = alloc.opaque();
     } else {
       workspace_addr = workspace.opaque();

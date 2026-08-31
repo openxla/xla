@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_SYCL_ONEDNN_UTIL_H_
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
@@ -46,7 +47,8 @@ dnnl::memory CreateDnnlMemory(const dnnl::memory::desc& md,
                               void* data_handle = nullptr);
 
 // Converts XLA primitive type to oneDNN data type.
-dnnl::memory::data_type ToOneDnnDataType(xla::PrimitiveType xla_type);
+absl::StatusOr<dnnl::memory::data_type> ToOneDnnDataType(
+    xla::PrimitiveType xla_type);
 }  // namespace sycl
 }  // namespace stream_executor
 #endif  // XLA_STREAM_EXECUTOR_SYCL_ONEDNN_UTIL_H_
