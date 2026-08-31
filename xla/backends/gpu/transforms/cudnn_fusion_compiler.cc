@@ -185,9 +185,15 @@ struct CudnnTensorLayout {
 std::vector<int64_t> Strides(const Shape& shape) {
   std::vector<int64_t> result;
   result.resize(shape.dimensions_size());
+  // Instructions internal to a fusion (not the fusion's parameters or root)
+  // are not guaranteed to carry a layout. Assume the default (descending
+  // minor-to-major / row-major) layout in that case.
+  const Layout layout = shape.has_layout()
+                            ? shape.layout()
+                            : LayoutUtil::GetDefaultLayoutForShape(shape);
   int64_t accumulator = 1;
   for (int i = 0; i < shape.dimensions_size(); ++i) {
-    int logical_dim_idx = shape.layout().minor_to_major()[i];
+    int logical_dim_idx = layout.minor_to_major()[i];
     result[logical_dim_idx] = accumulator;
     accumulator *= shape.dimensions(logical_dim_idx);
   }
