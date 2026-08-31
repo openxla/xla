@@ -17,6 +17,7 @@ import os
 import pathlib
 
 import lit.formats
+import subprocess
 
 
 class ShTestWithRunfiles(lit.formats.ShTest):
@@ -27,17 +28,27 @@ class ShTestWithRunfiles(lit.formats.ShTest):
     created_symlinks = []
     if runfiles_env:
       rf_path = pathlib.Path(runfiles_env)
-      runfiles_dir = rf_path / "xla"
-      if runfiles_dir.is_dir():
-        dst = pathlib.Path(test.getExecPath()).parent
-        dst.mkdir(parents=True, exist_ok=True)
-        for item in runfiles_dir.iterdir():
-          target = dst / item.name
-          try:
-            target.symlink_to(item, target_is_directory=item.is_dir())
-            created_symlinks.append(target)
-          except FileExistsError:
-            pass
+
+      runfiles_external = None
+      for candidate in [
+          rf_path / "_main" / "external",
+          rf_path / "external",
+      ]:
+        if candidate and candidate.is_dir():
+          runfiles_external = candidate
+          break
+
+      if runfiles_external:
+        # Create symlink at the directory where the test actually executes
+        test_exec_dir = pathlib.Path(test.getExecPath()).parent
+        test_exec_external = test_exec_dir / "external"
+        test_exec_dir.mkdir(parents=True, exist_ok=True)
+        if not test_exec_external.exists():
+          test_exec_external.symlink_to(runfiles_external, target_is_directory=True)
+          created_symlinks.append(test_exec_external)
+      else:
+        print("DEBUG: Could not find external directory in runfiles")
+
 
       # Dynamically resolve hermetic cuda_nvcc in runfiles if present.
       # Static relative paths (e.g. %S/../../..) break for deeply nested targets
@@ -71,6 +82,9 @@ class ShTestWithRunfiles(lit.formats.ShTest):
           )
 
     result = super().execute(test, lit_config)
+
+    # Clean up created symlinks
     for target in created_symlinks:
       target.unlink()
+
     return result
