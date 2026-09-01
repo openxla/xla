@@ -60,10 +60,11 @@ absl::StatusOr<int64_t> PjRtGetOnDeviceBytesCount(const xla::Shape& shape,
 PjRtShapeAndMetadataTransferRequirements
 PjRtShapeAndMetadataTransferRequirements::Get(const xla::Shape& shape,
                                               PjRtDynamicShapeKind kind) {
+  constexpr size_t kMinDmaAlignment = 32;
   PjRtShapeAndMetadataTransferRequirements requirements;
   int64_t array_size = shape.IsToken() ? 0 : xla::ShapeUtil::ArraySize(shape);
   requirements.size = array_size;
-  requirements.metadata_alignment = sizeof(int32_t);
+  requirements.metadata_alignment = kMinDmaAlignment;
   requirements.array_offset = 0;
   requirements.array_size = array_size;
 
@@ -78,7 +79,7 @@ PjRtShapeAndMetadataTransferRequirements::Get(const xla::Shape& shape,
         metadata_size = shape.layout().dynamic_shape_metadata_prefix_bytes();
       }
       requirements.size = array_size + metadata_size;
-      requirements.metadata_alignment = sizeof(int32_t);
+      requirements.metadata_alignment = kMinDmaAlignment;
       requirements.metadata_offset = 0;
       requirements.metadata_size = metadata_size;
       requirements.array_offset = metadata_size;
@@ -178,16 +179,21 @@ void ReadDynamicShape(PjRtRawBufferRef raw_buffer,
     return;
   }
 
+  constexpr size_t kMinDmaAlignment = 32;
+  size_t alignment =
+      std::max(requirements.metadata_alignment, kMinDmaAlignment);
+  size_t transfer_size = (requirements.metadata_size + kMinDmaAlignment - 1) &
+                         ~(kMinDmaAlignment - 1);
+
   void* scratch = tsl::port::AlignedMalloc(
-      requirements.metadata_size,
-      static_cast<std::align_val_t>(requirements.metadata_alignment));
+      transfer_size, static_cast<std::align_val_t>(alignment));
   if (scratch == nullptr) {
     output_shape.SetError(absl::ResourceExhaustedError("AlignedMalloc failed"));
     return;
   }
 
   auto future = raw_buffer->CopyRawDeviceToHost(
-      scratch, requirements.metadata_offset, requirements.metadata_size);
+      scratch, requirements.metadata_offset, transfer_size);
 
   future.OnReady(
       [scratch, output_shape, shape, kind,
