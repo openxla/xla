@@ -21,6 +21,7 @@ limitations under the License.
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/threadpool.h"
 
@@ -28,13 +29,14 @@ namespace xla {
 namespace gpu {
 
 // Function wrapper around the (non-horizontal) XLA GPU fusion pipeline.
-// Thread pool may be nullptr.
+// Thread pool may be nullptr. stream_exec may be null for deviceless
+// compilation.
 HloPassPipeline FusionPipeline(
     const DebugOptions& debug_options,
     HloCostAnalysis::ShapeSizeFunction shape_size_bytes_function,
     const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
     const se::DeviceDescription& gpu_device_info,
-    mlir::MLIRContext* mlir_context);
+    mlir::MLIRContext* mlir_context, se::StreamExecutor* stream_exec);
 
 }  // namespace gpu
 }  // namespace xla

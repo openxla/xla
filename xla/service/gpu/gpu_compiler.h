@@ -200,14 +200,7 @@ class GpuCompiler : public LLVMCompiler {
       mlir::MLIRContext* mlir_context,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn,
       const MultiProcessKeyValueStore& key_value_store);
-  // Runs a pass which marks cuDNN-supported non-GEMM fusions as
-  // kCuDnnFusionKind on NVIDIA GPUs.
-  virtual absl::Status RunCudnnNonGemmFusionRewriterPass(
-      HloModule* module, se::StreamExecutor* stream_exec,
-      const se::DeviceDescription& device_description,
-      CompilationStats* compilation_stats) {
-    return absl::OkStatus();
-  }
+
   // Runs cuDNN fusion and custom call compiler passes.
   virtual absl::Status RunCudnnCompilerPasses(
       HloModule* module, se::StreamExecutor* stream_exec,

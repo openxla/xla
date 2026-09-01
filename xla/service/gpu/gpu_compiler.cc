@@ -1399,6 +1399,7 @@ absl::Status RunLayoutAssignmentPasses(
 }
 
 absl::Status RunFusionPasses(HloModule* hlo_module,
+                             se::StreamExecutor* stream_exec,
                              const GpuTargetConfig& gpu_target_config,
                              tsl::thread::ThreadPool* thread_pool,
                              HloCostAnalysis::ShapeSizeFunction shape_size_fn,
@@ -1414,7 +1415,7 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
 
   ABSL_RETURN_IF_ERROR(FusionPipeline(hlo_module->config().debug_options(),
                                  shape_size_fn, alias_info, thread_pool,
-                                 gpu_device_info, mlir_context)
+                                 gpu_device_info, mlir_context, stream_exec)
                       .Run(hlo_module, {HloInstruction::kMainExecutionThread})
                       .status());
 
@@ -1938,8 +1939,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
       hlo_module, /*platform_id=*/PlatformId(), compilation_stats));
 
   ABSL_RETURN_IF_ERROR(RunFusionPasses(
-      hlo_module, gpu_topology.gpu_target_config(), thread_pool.get_mutable(),
-      ShapeSizeBytesFunction(), alias_info, mlir_context, compilation_stats));
+      hlo_module, stream_exec, gpu_topology.gpu_target_config(),
+      thread_pool.get_mutable(), ShapeSizeBytesFunction(), alias_info,
+      mlir_context, compilation_stats));
   ABSL_RETURN_IF_ERROR(RunPostFusionPasses(
       hlo_module, device_description, alias_info, pointer_size_, options,
       gpu_topology, mlir_context, compilation_stats));
@@ -1955,10 +1957,6 @@ absl::Status GpuCompiler::OptimizeHloModule(
   ABSL_RETURN_IF_ERROR(RunPostFusionVerificationPasses(
       hlo_module, stream_exec, options, gpu_topology.gpu_target_config(),
       alias_info, mlir_context, compilation_stats));
-
-  ABSL_RETURN_IF_ERROR(RunCudnnNonGemmFusionRewriterPass(
-      hlo_module, stream_exec,
-      gpu_topology.gpu_target_config().device_description, compilation_stats));
 
   ABSL_RETURN_IF_ERROR(RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec,
                                                         compilation_stats));

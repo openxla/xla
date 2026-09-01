@@ -76,7 +76,8 @@ absl::Status CudnnNonGemmFusionRewriterVisitor::HandleFusion(
   if (num_concatenates > 1) {
     VLOG(3) << "cudnn_non_gemm_fusion_rewriter: not rewriting "
             << fusion_instr->name() << " to cuDNN fusion: fusion contains "
-            << num_concatenates << " concatenate instructions";
+            << num_concatenates << " concatenate instructions\n"
+            << fused->ToString();
     return absl::OkStatus();
   }
   // If cuDNN cannot produce any execution plans for this fusion, treat it as
@@ -89,12 +90,15 @@ absl::Status CudnnNonGemmFusionRewriterVisitor::HandleFusion(
     VLOG(3) << "cudnn_non_gemm_fusion_rewriter: not rewriting "
             << fusion_instr->name() << " to cuDNN fusion: "
             << (!plan_count_or.ok() ? plan_count_or.status().message()
-                                    : "no available execution plans");
+                                     : "no available execution plans")
+            << "\n"
+            << fused->ToString();
     return absl::OkStatus();
   } else {
     VLOG(3) << "cudnn_non_gemm_fusion_rewriter: rewriting "
             << fusion_instr->name() << " to cuDNN fusion: " << *plan_count_or
-            << " execution plans";
+            << " execution plans\n"
+            << fused->ToString();
   }
   fusion_instr->set_fusion_kind(HloInstruction::FusionKind::kCustom);
 

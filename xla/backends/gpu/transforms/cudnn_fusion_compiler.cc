@@ -1454,8 +1454,7 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
       se::EngineOptions{RequireDeterminism(hlo.GetModule()->config()),
                         allow_tf32,
                         /*require_command_buffer=*/false,
-                        /*restrict_fallback_to_membound_tensor_ir_engine=*/
-                        restrict_fallback}));
+                        /*force_tensor_ir=*/restrict_fallback}));
   return graph;
 }
 

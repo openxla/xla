@@ -6882,7 +6882,7 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
       graph_.select_behavior_notes(
           {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
     }
-    if (engine_options.restrict_fallback_to_membound_tensor_ir_engine) {
+    if (engine_options.force_tensor_ir) {
       // CUTLASS FALLBACK engines (eng0..eng2) report
       // NUMERICAL_NOTE_TENSOR_CORE;
       // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE (eng3) does not.
