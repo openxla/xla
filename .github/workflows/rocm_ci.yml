@@ -204,7 +204,7 @@ jobs:
           # Workaround for the symbol clash with ROCm's libLLVM.so
           {
             echo "LLVM_SYMBOL_CLASH_WAR<<EOF"
-            echo "--dynamic_mode=default"
+            echo "--dynamic_mode=fully"
             echo "--linkopt=-Wl,--version-script,/work/build_tools/rocm/global_symbol_version.lds"
             echo "--sandbox_add_mount_pair=/work/build_tools/rocm/global_symbol_version.lds"
             echo "--action_env=global_symbol_version_lds_CACHEBUSTER=${LDS_SHA}"
