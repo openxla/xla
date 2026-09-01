@@ -652,10 +652,26 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "triton_temporary_memory_estimator",
+    srcs = ["triton_temporary_memory_estimator.cc"],
+    hdrs = ["triton_temporary_memory_estimator.h"],
+    deps = [
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "triton_emitter_constraints",
     srcs = ["triton_emitter_constraints.cc"],
     hdrs = ["triton_emitter_constraints.h"],
     deps = [
+        ":block_level_parameters",
+        ":triton_temporary_memory_estimator",
         "//xla:shape_util",
         "//xla:util",
         "//xla/codegen/tiling:constraint_expression",
@@ -688,6 +704,7 @@ xla_cc_test(
     srcs = ["triton_emitter_constraints_test.cc"],
     deps = [
         ":triton_emitter_constraints",
+        ":triton_temporary_memory_estimator",
         "//xla/codegen/tiling:symbolic_tile_analysis",
         "//xla/codegen/tiling:tiling_specification",
         "//xla/codegen/tiling/experimental:tile",
@@ -701,6 +718,7 @@ xla_cc_test(
         "//xla/service:instruction_fusion",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",

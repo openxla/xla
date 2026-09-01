@@ -29,7 +29,6 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "cub/version.cuh"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/casts.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
+#include "cub/version.cuh"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
@@ -1828,6 +1828,13 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       GetMaxSharedMemoryPerBlockOptin(device).value());
   desc.set_reserved_shared_memory_per_block(
       GetReservedSharedMemoryPerBlock(device).value());
+  if (cc.HasTcgen05()) {
+    // NVIDIA Blackwell (tcgen05) exposes dedicated tensor memory organized as
+    // 128 lanes (rows) x 512 columns of 32-bit each.
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory
+    desc.set_tensor_memory_lanes(128);
+    desc.set_tensor_memory_columns(512);
+  }
   desc.set_max_blocks_per_multiprocessor(
       GetMaxBlocksPerMultiprocessor(device).value());
   int core_count = GetMultiprocessorCount(device).value();
