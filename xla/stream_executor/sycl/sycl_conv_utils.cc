@@ -341,8 +341,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     ABSL_ASSIGN_OR_RETURN(weight_fmt, ToOneDnnFilterFormatTag(
                                           filter_dl, is_conv3d, is_group_conv));
     ABSL_ASSIGN_OR_RETURN(dst_fmt, ToOneDnnDataFormatTag(output_dl, is_conv3d));
-
-    dnnl::memory::data_type data_type = ToOneDnnDataType(input_type);
+    ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type data_type,
+                          ToOneDnnDataType(input_type));
 
     dnnl::memory::desc src_md =
         dnnl::memory::desc({src_dims}, data_type, src_fmt);
