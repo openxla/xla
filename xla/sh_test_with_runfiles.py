@@ -17,7 +17,6 @@ import os
 import pathlib
 
 import lit.formats
-import subprocess
 
 
 class ShTestWithRunfiles(lit.formats.ShTest):
@@ -38,8 +37,11 @@ class ShTestWithRunfiles(lit.formats.ShTest):
         if item.is_dir():
           test_exec_symlink = test_exec_dir.parent / item.name
           if not test_exec_symlink.exists():
-            test_exec_symlink.symlink_to(item, target_is_directory=True)
-            created_symlinks.append(test_exec_symlink)
+            try:
+              test_exec_symlink.symlink_to(item, target_is_directory=True)
+              created_symlinks.append(test_exec_symlink)
+            except FileExistsError:
+              pass
 
 
       # Dynamically resolve hermetic cuda_nvcc in runfiles if present.
@@ -77,6 +79,9 @@ class ShTestWithRunfiles(lit.formats.ShTest):
 
     # Clean up created symlinks
     for target in created_symlinks:
-      target.unlink()
+      try:
+        target.unlink()
+      except FileNotFoundError:
+        pass
 
     return result
