@@ -30,6 +30,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/base/config.h"  // IWYU pragma: keep
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -265,7 +266,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_use_acl(true);
 #endif
   opts.set_xla_cpu_use_xnnpack(true);
-  opts.set_xla_cpu_use_new_xtile_lowering(false);
+  opts.set_xla_cpu_use_new_xtile_lowering(true);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
   opts.add_xla_cpu_experimental_ynn_fusion_type(
@@ -479,7 +480,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
 
-  opts.set_xla_gpu_use_new_autotune_cache_format(false);
+  opts.set_xla_gpu_use_new_autotune_cache_format(true);
 
   opts.set_xla_compile_all_supported_configs(false);
 
@@ -564,9 +565,19 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
 
-  opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
-  opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
-  opts.set_xla_cpu_collective_timeout_seconds(30 * 60);
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER) ||   \
+    defined(ABSL_HAVE_HWADDRESS_SANITIZER) || \
+    defined(ABSL_HAVE_MEMORY_SANITIZER) || defined(ABSL_HAVE_THREAD_SANITIZER)
+  constexpr int kSanitizerMultiplier = 10;
+#else
+  constexpr int kSanitizerMultiplier = 1;
+#endif
+
+  opts.set_xla_cpu_collective_call_warn_stuck_seconds(20 *
+                                                      kSanitizerMultiplier);
+  opts.set_xla_cpu_collective_call_terminate_timeout_seconds(
+      40 * kSanitizerMultiplier);
+  opts.set_xla_cpu_collective_timeout_seconds(30 * 60 * kSanitizerMultiplier);
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_enable_hlo_sharding_v3(false);
