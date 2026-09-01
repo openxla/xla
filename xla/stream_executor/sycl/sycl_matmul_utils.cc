@@ -324,12 +324,9 @@ absl::StatusOr<dnnl::memory::desc> ShapeToMemDesc(const xla::Shape& shape) {
   if (dims.empty()) {
     return dnnl::memory::desc{};
   }
-  absl::StatusOr<dnnl::memory::data_type> dtype_or =
-      sycl::ToOneDnnDataType(shape.element_type());
-  if (!dtype_or.ok()) {
-    return dtype_or.status();
-  }
-  return dnnl::memory::desc(dims, *dtype_or, strides);
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type dtype,
+                        sycl::ToOneDnnDataType(shape.element_type()));
+  return dnnl::memory::desc(dims, dtype, strides);
 }
 
 void TransposeMatrixDesc(MatrixDescriptor& matrix_desc) {
@@ -402,24 +399,12 @@ CreateMatMulPrimDescFromGemmConfig(
   }
 
   // Get OneDNN data type from layout
-  absl::StatusOr<dnnl::memory::data_type> lhs_dtype_or =
-      sycl::ToOneDnnDataType(lhs_layout.dtype);
-  absl::StatusOr<dnnl::memory::data_type> rhs_dtype_or =
-      sycl::ToOneDnnDataType(rhs_layout.dtype);
-  absl::StatusOr<dnnl::memory::data_type> output_dtype_or =
-      sycl::ToOneDnnDataType(output_layout.dtype);
-  if (!lhs_dtype_or.ok()) {
-    return lhs_dtype_or.status();
-  }
-  if (!rhs_dtype_or.ok()) {
-    return rhs_dtype_or.status();
-  }
-  if (!output_dtype_or.ok()) {
-    return output_dtype_or.status();
-  }
-  dnnl::memory::data_type lhs_dtype = *lhs_dtype_or;
-  dnnl::memory::data_type rhs_dtype = *rhs_dtype_or;
-  dnnl::memory::data_type output_dtype = *output_dtype_or;
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type lhs_dtype,
+                        sycl::ToOneDnnDataType(lhs_layout.dtype));
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type rhs_dtype,
+                        sycl::ToOneDnnDataType(rhs_layout.dtype));
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type output_dtype,
+                        sycl::ToOneDnnDataType(output_layout.dtype));
 
   auto lhs_md = dnnl::memory::desc(lhs_dims, lhs_dtype, lhs_strides);
   auto rhs_md = dnnl::memory::desc(rhs_dims, rhs_dtype, rhs_strides);
