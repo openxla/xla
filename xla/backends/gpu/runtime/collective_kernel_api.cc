@@ -103,17 +103,20 @@ absl::Status LaunchMultiGpuBarrier(
     signal_buffers[peer] = barrier_addresses[peer].opaque();
   }
 
-  ABSL_ASSIGN_OR_RETURN(MultiGpuBarrierKernel::KernelType * kernel,
-                   GetCachedKernel<MultiGpuBarrierKernel>(stream->parent()));
+  ABSL_ASSIGN_OR_RETURN(
+      MultiGpuBarrierKernel::KernelType * kernel,
+      GetCachedKernel<MultiGpuBarrierKernel>(stream->parent()));
 
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);
 
-  return kernel->Launch(
-      stream_executor::ThreadDim(MultiGpuBarrierKernel::kMaxPeers, 1, 1),
-      stream_executor::BlockDim(1, 1, 1), stream,
-      static_cast<int64_t>(rank.value()), static_cast<int64_t>(num_devices),
-      signal_buffers, typed_sync_counter);
+  const int64_t threads_per_warp =
+      stream->parent()->GetDeviceDescription().threads_per_warp();
+  return kernel->Launch(stream_executor::ThreadDim(threads_per_warp, 1, 1),
+                        stream_executor::BlockDim(1, 1, 1), stream,
+                        static_cast<int64_t>(rank.value()),
+                        static_cast<int64_t>(num_devices), signal_buffers,
+                        typed_sync_counter);
 }
 
 // See MultiGpuBarrierWithNcclKernel for more details.
@@ -125,6 +128,9 @@ absl::Status LaunchMultiGpuBarrierWithNccl(
       stream_executor::gpu::MultiGpuBarrierWithNcclKernel;
 
   TF_RET_CHECK(symmetric_memory != nullptr) << "Symmetric memory is required";
+  TF_RET_CHECK(num_devices <= MultiGpuBarrierWithNcclKernel::kMaxPeers)
+      << "Number of participants exceeds "
+         "MultiGpuBarrierWithNcclKernel::kMaxPeers";
 
   ABSL_ASSIGN_OR_RETURN(
       MultiGpuBarrierWithNcclKernel::KernelType * kernel,
@@ -133,8 +139,9 @@ absl::Status LaunchMultiGpuBarrierWithNccl(
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);
 
-  return kernel->Launch(stream_executor::ThreadDim(
-                            MultiGpuBarrierWithNcclKernel::kMaxPeers, 1, 1),
+  const int64_t threads_per_warp =
+      stream->parent()->GetDeviceDescription().threads_per_warp();
+  return kernel->Launch(stream_executor::ThreadDim(threads_per_warp, 1, 1),
                         stream_executor::BlockDim(1, 1, 1), stream,
                         static_cast<int64_t>(rank.value()),
                         static_cast<int64_t>(num_devices), symmetric_memory,
@@ -170,7 +177,7 @@ absl::StatusOr<std::vector<void*>> CollectParamToPeers(
 
   for (auto peer = RankId(0); peer < RankId(clique_key.num_devices()); ++peer) {
     ABSL_ASSIGN_OR_RETURN(const DeviceParameters& peer_parameters,
-                     device_parameters->at<DeviceParameters>(peer));
+                          device_parameters->at<DeviceParameters>(peer));
     peer_to_parameters[peer.value()] = std::move(peer_parameters);
   }
 

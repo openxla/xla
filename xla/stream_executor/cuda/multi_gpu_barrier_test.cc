@@ -62,7 +62,7 @@ class MultiGpuBarrierTest : public ::testing::Test {
                    << visible_device_count;
     }
 
-    // Limit to MultiGpuBarrierKernel::kMaxPeers (32)
+    // Limit to MultiGpuBarrierKernel::kMaxPeers
     num_devices_ =
         std::min<int>(visible_device_count, MultiGpuBarrierKernel::kMaxPeers);
 
@@ -110,7 +110,7 @@ absl::StatusOr<std::vector<std::unique_ptr<MemoryAllocation>>> AllocateBuffers(
   buffers.reserve(num_devices);
   for (int i = 0; i < num_devices; ++i) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MemoryAllocation> buffer,
-                     allocators[i]->Allocate(buffer_size));
+                          allocators[i]->Allocate(buffer_size));
     buffers.push_back(std::move(buffer));
   }
   return buffers;
@@ -135,7 +135,8 @@ CreateSymmetricMemory(
 
   std::vector<std::unique_ptr<xla::SymmetricMemory>> symmetric_memory;
   for (int i = 0; i < num_devices; ++i) {
-    ABSL_ASSIGN_OR_RETURN(auto mem, std::move(symmetric_memory_futures[i]).Await());
+    ABSL_ASSIGN_OR_RETURN(auto mem,
+                          std::move(symmetric_memory_futures[i]).Await());
     symmetric_memory.push_back(std::move(mem));
   }
   return symmetric_memory;
@@ -147,7 +148,7 @@ absl::StatusOr<std::vector<T>> CopyToHost(Stream* stream,
                                           int64_t num_elements) {
   std::vector<T> host_buffer(num_elements);
   ABSL_RETURN_IF_ERROR(stream->Memcpy(host_buffer.data(), device_address,
-                                 num_elements * sizeof(T)));
+                                      num_elements * sizeof(T)));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   return host_buffer;
 }
@@ -187,10 +188,12 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
           auto kernel, (GpuKernelRegistry::GetGlobalRegistry()
                             .LoadKernel<MultiGpuBarrierKernel>(executors_[i])));
 
-      ASSERT_OK(kernel.Launch(ThreadDim(num_devices_, 1, 1), BlockDim(1, 1, 1),
-                              streams_[i].get(), static_cast<int64_t>(i),
-                              static_cast<int64_t>(num_devices_),
-                              kernel_arg_ptrs, counters[i]));
+      const int64_t threads_per_warp =
+          executors_[i]->GetDeviceDescription().threads_per_warp();
+      ASSERT_OK(kernel.Launch(
+          ThreadDim(threads_per_warp, 1, 1), BlockDim(1, 1, 1),
+          streams_[i].get(), static_cast<int64_t>(i),
+          static_cast<int64_t>(num_devices_), kernel_arg_ptrs, counters[i]));
     }
   }
 
@@ -269,8 +272,11 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronizationWithNccl) {
           (GpuKernelRegistry::GetGlobalRegistry()
                .LoadKernel<MultiGpuBarrierWithNcclKernel>(executors_[i])));
 
-      ASSERT_OK(kernel.Launch(ThreadDim(num_devices_, 1, 1), BlockDim(1, 1, 1),
-                              streams_[i].get(), static_cast<int64_t>(i),
+      const int64_t threads_per_warp =
+          executors_[i]->GetDeviceDescription().threads_per_warp();
+      ASSERT_OK(kernel.Launch(ThreadDim(threads_per_warp, 1, 1),
+                              BlockDim(1, 1, 1), streams_[i].get(),
+                              static_cast<int64_t>(i),
                               static_cast<int64_t>(num_devices_),
                               signal_buffer_symmetric_memory[i].get(),
                               DeviceAddress<uint32_t>(counters[i]->address())));
