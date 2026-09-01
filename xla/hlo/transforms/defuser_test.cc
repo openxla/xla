@@ -18,6 +18,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -255,6 +257,70 @@ TEST_F(DefuserTest, DefuseScopedByExecutionThread) {
   EXPECT_EQ(1, FusionCount(m.get()));
   EXPECT_THAT(entry_comp->root_instruction(), op::Fusion());
   EXPECT_THAT(sub_comp->root_instruction(), op::Negate());
+}
+
+TEST_F(DefuserTest, DefuseEliminatesCompatibleBitcast) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+
+    fused_computation {
+      p0 = f32[2,2]{1,0} parameter(0)
+      neg = f32[2,2]{1,0} negate(p0)
+      ROOT bitcast = f32[2,2]{1,0} bitcast(neg)
+    }
+
+    ENTRY main {
+      p0 = f32[2,2]{1,0} parameter(0)
+      ROOT fusion = f32[2,2]{1,0} fusion(p0), kind=kLoop, calls=fused_computation
+    }
+  )"));
+
+  EXPECT_THAT(defuser_.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_EQ(0, FusionCount(m.get()));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              op::Negate(op::Parameter()));
+}
+
+TEST_F(DefuserTest, DefuseReplacesBitcastWithBitcastConvert) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+
+    fused_computation {
+      p0 = f32[2,2]{1,0} parameter(0)
+      ROOT bitcast = s32[2,2]{1,0} bitcast(p0)
+    }
+
+    ENTRY main {
+      p0 = f32[2,2]{1,0} parameter(0)
+      ROOT fusion = s32[2,2]{1,0} fusion(p0), kind=kLoop, calls=fused_computation
+    }
+  )"));
+
+  EXPECT_THAT(defuser_.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_EQ(0, FusionCount(m.get()));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              op::BitcastConvert(op::Parameter()));
+}
+
+TEST_F(DefuserTest, DefuseReplacesBitcastWithReshape) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+
+    fused_computation {
+      p0 = f32[2,2]{1,0} parameter(0)
+      ROOT bitcast = f32[4]{0} bitcast(p0)
+    }
+
+    ENTRY main {
+      p0 = f32[2,2]{1,0} parameter(0)
+      ROOT fusion = f32[4]{0} fusion(p0), kind=kLoop, calls=fused_computation
+    }
+  )"));
+
+  EXPECT_THAT(defuser_.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_EQ(0, FusionCount(m.get()));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              op::Reshape(op::Parameter()));
 }
 
 }  // namespace
