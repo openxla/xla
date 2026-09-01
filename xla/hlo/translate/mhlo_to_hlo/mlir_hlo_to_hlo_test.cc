@@ -102,6 +102,74 @@ func.func @main(%arg0: tensor<3x3x3x3xf32>, %arg1: tensor<3x3x3x3xf32>) -> tenso
 
   TF_ASSERT_OK(ConvertMlirHloToHloModule(*module));
 }
+
+TEST(ConvertMlirHloToHloModuleTest, ConvertsWhileWithCallInCondition) {
+  const std::string mlir_source = R"mlir(
+module @DependentTupleElements_OneReadOnly attributes {mhlo.cross_program_prefetches = [], mhlo.input_output_alias = [], mhlo.is_dynamic = false, mhlo.use_auto_spmd_partitioning = false} {
+  func.func private @DependentTupleElements_OneReadOnly.Body(%arg0: tensor<i32>, %arg1: tensor<8xf32>) -> (tensor<i32>, tensor<8xf32>) {
+    %0 = stablehlo.convert %arg0 : (tensor<i32>) -> tensor<f32>
+    %1 = stablehlo.broadcast_in_dim %0, dims = [] : (tensor<f32>) -> tensor<8xf32>
+    %2 = stablehlo.add %arg1, %1 : tensor<8xf32>
+    return %arg0, %2 : tensor<i32>, tensor<8xf32>
+  }
+  func.func private @DependentTupleElements_OneReadOnly.Condition(%arg0: tensor<i32>, %arg1: tensor<8xf32>) -> tensor<i1> {
+    %c = stablehlo.constant dense<10> : tensor<i32>
+    %0 = stablehlo.compare  LT, %arg0, %c : (tensor<i32>, tensor<i32>) -> tensor<i1>
+    return %0 : tensor<i1>
+  }
+  func.func @main() -> (tensor<i32>, tensor<8xf32>) {
+    %c = stablehlo.constant dense<0> : tensor<i32>
+    %cst = stablehlo.constant dense<0.000000e+00> : tensor<8xf32>
+    %0:2 = stablehlo.while(%iterArg = %c, %iterArg_0 = %cst) : tensor<i32>, tensor<8xf32>
+    cond {
+      %c_1 = stablehlo.constant dense<10> : tensor<i32>
+      %1 = func.call @wrapped_27649(%iterArg) : (tensor<i32>) -> tensor<2x3xf32>
+      %2 = stablehlo.compare  LT, %iterArg, %c_1 : (tensor<i32>, tensor<i32>) -> tensor<i1>
+      %3 = stablehlo.convert %1 : (tensor<2x3xf32>) -> tensor<2x3xi1>
+      %4 = stablehlo.reshape %3 : (tensor<2x3xi1>) -> tensor<6xi1>
+      %5 = stablehlo.slice %4 [0:1] : (tensor<6xi1>) -> tensor<1xi1>
+      %6 = stablehlo.reshape %5 : (tensor<1xi1>) -> tensor<i1>
+      %7 = stablehlo.xor %2, %6 : tensor<i1>
+      stablehlo.return %7 : tensor<i1>
+    } do {
+      %1 = stablehlo.convert %iterArg : (tensor<i32>) -> tensor<f32>
+      %2 = stablehlo.broadcast_in_dim %1, dims = [] : (tensor<f32>) -> tensor<8xf32>
+      %3 = stablehlo.add %iterArg_0, %2 : tensor<8xf32>
+      stablehlo.return %iterArg, %3 : tensor<i32>, tensor<8xf32>
+    }
+    return %0#0, %0#1 : tensor<i32>, tensor<8xf32>
+  }
+  func.func private @wrapped_27649(%arg0: tensor<i32>) -> tensor<2x3xf32> {
+    %cst = stablehlo.constant dense<[[1.000000e+00, 2.000000e+00, 3.000000e+00], [4.000000e+00, 5.000000e+00, 6.000000e+00]]> : tensor<2x3xf32>
+    %cst_0 = stablehlo.constant dense<[[7.000000e+00, 8.000000e+00, 9.000000e+00], [1.000000e+01, 1.100000e+01, 1.200000e+01]]> : tensor<2x3xf32>
+    %cst_1 = stablehlo.constant dense<[[1.300000e+01, 1.400000e+01, 1.500000e+01], [1.600000e+01, 1.700000e+01, 1.800000e+01]]> : tensor<2x3xf32>
+    %0 = "stablehlo.case"(%arg0) ({
+      stablehlo.return %cst : tensor<2x3xf32>
+    }, {
+      stablehlo.return %cst_0 : tensor<2x3xf32>
+    }, {
+      stablehlo.return %cst_1 : tensor<2x3xf32>
+    }) : (tensor<i32>) -> tensor<2x3xf32>
+    return %0 : tensor<2x3xf32>
+  }
+}
+)mlir";
+
+  mlir::DialectRegistry registry;
+  xla::RegisterMlirToHloDependentDialects(registry);
+  mlir::MLIRContext context(registry);
+  mlir::OwningOpRef<mlir::ModuleOp> module;
+  {
+    mlir::BaseScopedDiagnosticHandler handler(&context);
+    module = mlir::parseSourceString<mlir::ModuleOp>(mlir_source, &context);
+    TF_ASSERT_OK(handler.ConsumeStatus());
+  }
+
+  MlirToHloConversionOptions options;
+  options.direct_stablehlo_to_hlo = true;
+  TF_ASSERT_OK(ConvertMlirHloToHloModule(*module, options));
+}
+
 TEST(ConvertMlirHloToHloModuleTest, ConvertsReplicaGroupMeshAxes) {
   const std::string kMlirModule = R"mlir(
     module @main {
