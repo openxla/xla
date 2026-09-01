@@ -26,18 +26,23 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
 #include "xla/ffi/ffi_interop.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -104,7 +109,7 @@ absl::StatusOr<GpuCliqueKey> GetCliqueKey(
     return InvalidArgument("communication_id must be non-negative");
   }
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
-                   ToCollectiveOpGroupMode(group_mode));
+                        ToCollectiveOpGroupMode(group_mode));
   return GetGpuCliqueKey(params, replica_groups, mode,
                          CommunicationId(communication_id));
 }
@@ -116,7 +121,7 @@ absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>> GetDeviceGroups(
       << "Device assignment is required for GPU communicator FFI calls";
 
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
-                   ToCollectiveOpGroupMode(group_mode));
+                        ToCollectiveOpGroupMode(group_mode));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<std::vector<GlobalDeviceId>> device_groups,
@@ -158,13 +163,14 @@ absl::Status CommunicatorRequestImpl(const XLA_FFI_Collectives_Extension* self,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                   ToReplicaGroups(args->groups, args->num_groups));
-  ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                   GetCliqueKey(*state->collective_params, args->group_mode,
-                                replica_groups, args->communication_id));
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
   ABSL_ASSIGN_OR_RETURN(std::vector<std::vector<GlobalDeviceId>> device_groups,
-                   GetDeviceGroups(*state->collective_params, args->group_mode,
-                                   replica_groups));
+                        GetDeviceGroups(*state->collective_params,
+                                        args->group_mode, replica_groups));
   return state->collective_clique_requests->RequestClique(clique_key,
                                                           device_groups);
 }
@@ -191,13 +197,15 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                   ToReplicaGroups(args->groups, args->num_groups));
-  ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                   GetCliqueKey(*state->collective_params, args->group_mode,
-                                replica_groups, args->communication_id));
-  ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
-                   state->collective_cliques->GetComm(
-                       clique_key, state->collective_params->global_device_id));
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCommunicator * comm,
+      state->collective_cliques->GetComm(
+          clique_key, state->collective_params->global_device_id));
 
   PlatformCommunicatorHandle platform_comm = comm->platform_comm();
   if (platform_comm.handle == nullptr) {
@@ -219,6 +227,98 @@ XLA_FFI_Error* CommunicatorGet(const XLA_FFI_Collectives_Extension* self,
   return ffi::CreateError(CommunicatorGetImpl(self, args));
 }
 
+absl::Status WindowRegisterImpl(const XLA_FFI_Collectives_Extension* self,
+                                XLA_FFI_Window_Register_Args* args) {
+  if (self == nullptr) {
+    return InvalidArgument("Collectives extension is not available");
+  }
+  if (args == nullptr) {
+    return InvalidArgument("XLA_FFI_Window_Register_Args is null");
+  }
+  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Window_Register_Args", XLA_FFI_Window_Register_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  GpuCollectivesState* state = AsState(self);
+  if (state == nullptr || state->collective_params == nullptr) {
+    return InvalidArgument("Collective params are not available");
+  }
+  if (state->collective_memory_requests == nullptr) {
+    return FailedPrecondition(
+        "Collective memory registration is only available during the prepare "
+        "stage");
+  }
+  if (args->regions == nullptr && args->num_regions != 0) {
+    return InvalidArgument("regions must be set when num_regions is non-zero");
+  }
+
+  ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
+
+  std::vector<se::DeviceAddressBase> addrs;
+  addrs.reserve(args->num_regions);
+  for (size_t i = 0; i < args->num_regions; ++i) {
+    addrs.emplace_back(const_cast<void*>(args->regions[i].buffer),
+                       args->regions[i].byte_size);
+  }
+  return state->collective_memory_requests->RequestSymmetricAddresses(
+      clique_key, absl::MakeConstSpan(addrs));
+}
+
+absl::Status WindowGetImpl(const XLA_FFI_Collectives_Extension* self,
+                           XLA_FFI_Window_Get_Args* args) {
+  if (self == nullptr) {
+    return InvalidArgument("Collectives extension is not available");
+  }
+  if (args == nullptr) {
+    return InvalidArgument("XLA_FFI_Window_Get_Args is null");
+  }
+  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Window_Get_Args", XLA_FFI_Window_Get_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  GpuCollectivesState* state = AsState(self);
+  if (state == nullptr || state->collective_params == nullptr) {
+    return InvalidArgument("Collective params are not available");
+  }
+  if (state->collective_memory == nullptr) {
+    return FailedPrecondition(
+        "Collective memory window get is only available after collective "
+        "memory is acquired");
+  }
+
+  ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
+
+  se::DeviceAddressBase addr(const_cast<void*>(args->buffer), 0);
+  auto [sym_mem, _] =
+      state->collective_memory->FindSymmetricMemory(clique_key, addr);
+  if (sym_mem == nullptr) {
+    return NotFound(
+        "No symmetric memory registered for the given buffer address");
+  }
+  args->window = reinterpret_cast<XLA_FFI_Window*>(sym_mem->PackKernelArg());
+  return absl::OkStatus();
+}
+
+XLA_FFI_Error* WindowRegister(const XLA_FFI_Collectives_Extension* self,
+                              XLA_FFI_Window_Register_Args* args) {
+  return ffi::CreateError(WindowRegisterImpl(self, args));
+}
+
+XLA_FFI_Error* WindowGet(const XLA_FFI_Collectives_Extension* self,
+                         XLA_FFI_Window_Get_Args* args) {
+  return ffi::CreateError(WindowGetImpl(self, args));
+}
+
 }  // namespace
 
 XLA_FFI_Collectives_Extension MakeCollectivesExtension(
@@ -236,6 +336,8 @@ XLA_FFI_Collectives_Extension MakeCollectivesExtension(
   ext.state = reinterpret_cast<XLA_FFI_CollectivesState*>(state);
   ext.request_communicator = CommunicatorRequest;
   ext.get_communicator = CommunicatorGet;
+  ext.register_window = WindowRegister;
+  ext.get_window = WindowGet;
   return ext;
 }
 
