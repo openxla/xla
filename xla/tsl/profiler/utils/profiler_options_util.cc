@@ -20,6 +20,8 @@ limitations under the License.
 #include <string>
 #include <variant>
 
+#include "absl/strings/string_view.h"
+
 namespace tsl {
 namespace profiler {
 
@@ -41,6 +43,14 @@ std::optional<std::variant<std::string, bool, int64_t>> GetConfigValue(
   }
 
   return std::nullopt;
+}
+
+absl::string_view SuppliedConfigValueTypeName(
+    const tensorflow::ProfileOptions& options, const std::string& key) {
+  const std::optional<std::variant<std::string, bool, int64_t>> value =
+      GetConfigValue(options, key);
+  if (!value.has_value()) return "unset";
+  return ConfigValueTypeName(*value);
 }
 }  // namespace profiler
 }  // namespace tsl
