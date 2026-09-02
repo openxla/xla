@@ -1382,8 +1382,16 @@ message DebugOptions {
   // multi-thread mode.
   optional bool xla_gpu_require_exclusive_lock = 347;
 
-  // Maximum number of trace events for ROCm GPU profiling. Limits memory
-  // usage during profiling on AMD GPUs.
+  // Deprecated: use the gpu_max_callback_api_events key of
+  // ProfileOptions.advanced_configuration instead. Remote capture does not
+  // forward gpu_* keys yet, so it still needs this flag.
+  //
+  // Default for the ROCm profiler's callback event limit (HIP API calls and
+  // ROCTX markers), up to 1e9; 0 or less means the built-in 4M. GPU activity
+  // launched by a dropped call is dropped too, so this bounds the whole GPU
+  // trace. It is also the default for the activity event limit, which ROCm
+  // does not enforce yet. Each gpu_max_*_api_events key overrides only its
+  // own limit.
   optional int64 xla_gpu_rocm_max_trace_events = 449;
 
   optional ShapeChecks xla_gpu_shape_checks = 170;
