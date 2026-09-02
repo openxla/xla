@@ -129,6 +129,8 @@ class RemapPlan {
                                    std::move(output_specs),
                                    std::move(input_devices_for_output_map))) {}
 
+  ABSL_DEPRECATED(
+      "Use the constructor that takes `input_devices_for_output_map` instead.")
   RemapPlan(std::vector<ArraySpec> input_specs,
             std::vector<ArraySpec> output_specs, std::vector<Mapping> mappings)
       : rep_(std::make_shared<Rep>(std::move(input_specs),
@@ -147,8 +149,9 @@ class RemapPlan {
                                    std::move(input_devices_for_output_map))) {}
 
   // A convenience method that calculates `input_devices_for_output_map`,
-  // creates a `RemapPlan`, and validates it. Users who create remap plans with
-  // mappings once and reuse them should prefer this over constructors.
+  // creates a `RemapPlan`, and validates it.
+  ABSL_DEPRECATED(
+      "Use the constructor that takes `input_devices_for_output_map` instead.")
   static absl::StatusOr<RemapPlan> CreateOptimized(
       Client* client, std::vector<ArraySpec> input_specs,
       std::vector<ArraySpec> output_specs, std::vector<Mapping> mappings);
@@ -159,6 +162,7 @@ class RemapPlan {
     return rep_->output_specs;
   }
 
+  ABSL_DEPRECATED("Use `input_devices_for_output_map()` instead.")
   absl::Span<const Mapping> mappings() const { return rep_->mappings; }
 
   const absl::flat_hash_map<int, std::vector<InputDeviceRange>>&
@@ -233,13 +237,10 @@ class RemapPlan {
     // and for each input array I a device list containing all of the devices
     // that hold shards coming from I.
     //
-    // If `mappings` is not empty, information must be consistent with the
-    // information in `mappings`, i.e., `input_devices_for_output_map` must
-    // duplicate, not replace, information in `mappings`.
-    //
-    // Entries in `input_devices_for_output_map` are strictly optional, but
-    // their presence may allow some implementations to be more efficient since
-    // the implementation need not construct the device lists at execution time.
+    // Only one of `input_devices_for_output_map` or `mappings` needs to be
+    // populated. `mappings` is now deprecated. If both are populated, the
+    // information in `input_devices_for_output_map` must be consistent with the
+    // information in `mappings`.
     absl::flat_hash_map<int, std::vector<InputDeviceRange>>
         input_devices_for_output_map;
 
