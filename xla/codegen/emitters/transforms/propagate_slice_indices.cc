@@ -62,6 +62,9 @@ void PropagateSliceIndicesPass::runOnOperation() {
         if (auto invariant = entry.getArgAttr(i, "xla.invariant")) {
           func.setArgAttr(i, "xla.invariant", invariant);
         }
+        if (auto streamed_once = entry.getArgAttr(i, "xla.streamed_once")) {
+          func.setArgAttr(i, "xla.streamed_once", streamed_once);
+        }
       } else {
         break;
       }

@@ -78,6 +78,13 @@ std::optional<xla::BackendKind> GetBackendKind(mlir::func::FuncOp fn);
 void SetBackendKind(mlir::MLIRContext* context, mlir::func::FuncOp fn,
                     xla::BackendKind backend_kind);
 
+// Marks an entry function whose outputs are written contiguously (one write per
+// output element), as produced by the loop/concatenate/DUS emitters. Consumers
+// (e.g. the AMD non-temporal hint pass) use this to distinguish full-cache-line
+// stores from partial-line writes (reductions, transposes, scatters).
+void SetContiguousOutput(mlir::MLIRContext* context, mlir::func::FuncOp fn);
+bool HasContiguousOutput(mlir::func::FuncOp fn);
+
 }  // namespace xla
 
 #endif  // XLA_CODEGEN_EMITTERS_IR_XLA_OPS_H_
