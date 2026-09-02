@@ -35,8 +35,6 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/rocprofiler.h"
-#include "tsl/platform/abi.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/utils/parse_annotation.h"
@@ -44,6 +42,9 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/abi.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -568,14 +569,14 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
   // Disable(), so without this guard a long capture retains every marker for
   // the whole session and can exhaust memory in the process being profiled.
   // Counting them in num_callback_events_ also keeps the VLOG(3) summary and
-  // the documented XLA_FLAGS=--xla_gpu_rocm_max_trace_events knob honest;
-  // both silently ignored this path before.
+  // the gpu_max_callback_api_events limit honest.
   if (event.type == RocmTracerEventType::Generic) {
     if (num_callback_events_ >= options_.max_callback_api_events) {
+      num_dropped_callback_events_++;
       OnEventsDropped(
           "ROCTX marker event dropped: max_callback_api_events "
-          "reached. To collect more, set "
-          "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=X",
+          "reached. To collect more, raise the gpu_max_callback_api_events "
+          "key of ProfileOptions.advanced_configuration.",
           event.correlation_id);
       return;
     }
@@ -587,12 +588,7 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
   if (event.source == RocmTracerEventSource::ApiCallback) {
     if (!is_auxiliary) {
       if (num_callback_events_ >= options_.max_callback_api_events) {
-        LOG(WARNING)
-            << "!!! Number of callback events = " << num_callback_events_
-            << " is greater than/equal to the max callback api events = "
-            << options_.max_callback_api_events
-            << ". To collect more GPU events, please set "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=X ";
+        num_dropped_callback_events_++;
         return;
       }
       num_callback_events_++;
@@ -609,13 +605,7 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
     if (event.domain == RocmTracerEventDomain::HIP_API) {
       // we do not count HIP_OPS activities.
       if (num_activity_events_ >= options_.max_activity_api_events) {
-        LOG_FIRST_N(WARNING, 1)
-            << "Number of activity events (" << num_activity_events_
-            << ") has reached the configured limit "
-               "(xla_gpu_rocm_max_trace_events="
-            << options_.max_activity_api_events
-            << "). To collect more GPU events, increase "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=<value>.";
+        num_dropped_activity_events_++;
         return;
       }
 
@@ -696,7 +686,35 @@ void RocmTraceCollectorImpl::ExportScopeRangeIdTree(XSpace* space) {
   }
 }
 
+// Reported once per session, as the CUPTI collector does. The log line matters
+// under the PJRT plugin, which does not pass XSpace.warnings on.
+std::string RocmTraceCollectorImpl::DroppedEventsMessage() const {
+  std::vector<std::string> drops;
+  if (uint64_t dropped = num_dropped_callback_events_; dropped > 0) {
+    drops.push_back(absl::StrCat(
+        "dropped ", dropped,
+        " HIP API and ROCTX events (and the GPU activity they launched) at "
+        "gpu_max_callback_api_events = ",
+        options_.max_callback_api_events));
+  }
+  if (uint64_t dropped = num_dropped_activity_events_; dropped > 0) {
+    drops.push_back(absl::StrCat("dropped ", dropped,
+                                 " activity events at "
+                                 "gpu_max_activity_api_events = ",
+                                 options_.max_activity_api_events));
+  }
+  if (drops.empty()) return "";
+  return absl::StrCat("GPU events dropped on ", tsl::port::Hostname(),
+                      ": the profiler ", absl::StrJoin(drops, "; "),
+                      ". To collect more, raise the limit in "
+                      "ProfileOptions.advanced_configuration.");
+}
+
 void RocmTraceCollectorImpl::Export(XSpace* space) {
+  if (std::string dropped = DroppedEventsMessage(); !dropped.empty()) {
+    LOG(WARNING) << dropped;
+    space->add_warnings(dropped);
+  }
   uint64_t end_gputime_ns = get_timestamp();
   XPlaneBuilder host_plane(FindOrAddMutablePlaneWithName(
       space, tsl::profiler::kRoctracerApiPlaneName));

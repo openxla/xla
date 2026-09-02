@@ -35,6 +35,7 @@ namespace profiler {
 namespace test {
 
 using tsl::profiler::FindOrAddMutablePlaneWithName;
+using tsl::profiler::FindPlaneWithName;
 using tsl::profiler::XSpace;
 
 TEST(RocmCollectorTest, ToXStatDecomposesDispatchGroupMemory) {
@@ -123,6 +124,7 @@ TEST(RocmCollectorTest, TestAddKernelEventAndExport) {
   EXPECT_EQ(event.duration_ps(), (kEndTimeNs - kStartTimeNs) * 1000);
   EXPECT_EQ(gpu_plane->event_metadata().at(event.metadata_id()).name(),
             "test_rocm_kernel");
+  EXPECT_TRUE(space.warnings().empty());
 }
 
 // Regression test for the .front()-only iteration bug in
@@ -298,6 +300,13 @@ TEST(RocmCollectorTest, MarkerEventsRespectMaxCallbackApiEvents) {
   }
   EXPECT_EQ(marker_events, static_cast<int>(options.max_callback_api_events))
       << "the cap must bound what is retained, not just what is reported";
+
+  ASSERT_EQ(space.warnings_size(), 1);
+  EXPECT_TRUE(absl::StrContains(
+      space.warnings(0),
+      absl::StrCat("dropped ", kEmitted - options.max_callback_api_events,
+                   " ")))
+      << space.warnings(0);
 }
 
 // Flush() buckets standalone events into per_device_collector_[0], but
@@ -397,6 +406,111 @@ TEST(RocmCollectorTest, MarkerAndApiEventsOnSameThreadGetSeparateLines) {
   EXPECT_TRUE(found_marker_line) << "marker must get its own /ROCTX line";
   EXPECT_TRUE(found_plain_host_line)
       << "the API event must stay on the plain host-thread line";
+}
+
+// MarkerEventsRespectMaxCallbackApiEvents covers ROCTX markers; this covers
+// HIP API callbacks, which reach the limit through a different branch.
+namespace {
+
+// Offers `count` kernel launches, each an API callback and its activity record,
+// as in TestAddKernelEventAndExport.
+void OfferKernelLaunches(RocmTraceCollectorImpl& collector, int count) {
+  constexpr uint32_t kDeviceId = 100;
+  constexpr uint64_t kStreamId = 123;
+  for (int i = 0; i < count; ++i) {
+    const uint32_t correlation_id = 500 + i;
+
+    RocmTracerEvent api_event;
+    api_event.type = RocmTracerEventType::Kernel;
+    api_event.source = RocmTracerEventSource::ApiCallback;
+    api_event.domain = RocmTracerEventDomain::HIP_API;
+    api_event.name = "capped_kernel";
+    api_event.correlation_id = correlation_id;
+    api_event.thread_id = 999;
+    api_event.kernel_info = KernelDetails{};
+    api_event.kernel_info.func_ptr = reinterpret_cast<void*>(0xdeadbeef);
+    collector.AddEvent(std::move(api_event), /*is_auxiliary=*/false);
+
+    RocmTracerEvent activity;
+    activity.type = RocmTracerEventType::Kernel;
+    activity.source = RocmTracerEventSource::Activity;
+    activity.domain = RocmTracerEventDomain::HIP_OPS;
+    activity.name = "capped_kernel";
+    activity.correlation_id = correlation_id;
+    activity.start_time_ns = 3000 + i * 100;
+    activity.end_time_ns = 3050 + i * 100;
+    activity.device_id = kDeviceId;
+    activity.stream_id = kStreamId;
+    collector.AddEvent(std::move(activity), /*is_auxiliary=*/false);
+  }
+}
+
+}  // namespace
+
+TEST(RocmCollectorTest, CallbackCapDropsEventsBeyondLimit) {
+  constexpr uint64_t kMaxCallbackEvents = 3;
+  constexpr int kEventsOffered = 5;
+
+  RocmTraceCollectorOptions options;
+  options.max_callback_api_events = kMaxCallbackEvents;
+  options.max_activity_api_events = 100;
+  options.num_gpus = 1;
+
+  RocmTraceCollectorImpl collector(options, /*start_walltime_ns=*/1000,
+                                   /*start_gputime_ns=*/2000);
+  // The limit applies only to non-auxiliary ApiCallback events.
+  OfferKernelLaunches(collector, kEventsOffered);
+
+  collector.Flush();
+  XSpace space;
+  collector.Export(&space);
+
+  const auto* gpu_plane = FindPlaneWithName(space, "/device:GPU:0");
+  ASSERT_NE(gpu_plane, nullptr);
+
+  // Export() renumbers streams, so select stream lines by name.
+  size_t exported = 0;
+  for (const auto& line : gpu_plane->lines()) {
+    if (!absl::StartsWith(line.name(), "Stream #")) {
+      continue;
+    }
+    exported += line.events_size();
+  }
+
+  // Activity records whose API callback was refused are dropped as well.
+  EXPECT_EQ(exported, kMaxCallbackEvents)
+      << "offered " << kEventsOffered << " events";
+
+  ASSERT_EQ(space.warnings_size(), 1);
+  EXPECT_TRUE(absl::StrContains(
+      space.warnings(0),
+      absl::StrCat("dropped ", kEventsOffered - kMaxCallbackEvents, " ")))
+      << space.warnings(0);
+  EXPECT_TRUE(
+      absl::StrContains(space.warnings(0), "gpu_max_callback_api_events"))
+      << space.warnings(0);
+}
+
+// Each session has its own collector, so every session that reaches the limit
+// reports its drops, not only the first one in the process.
+TEST(RocmCollectorTest, CallbackCapDropsAreReportedInEverySession) {
+  RocmTraceCollectorOptions options;
+  options.max_callback_api_events = 1;
+  options.max_activity_api_events = 100;
+  options.num_gpus = 1;
+
+  for (int session = 0; session < 2; ++session) {
+    RocmTraceCollectorImpl collector(options, /*start_walltime_ns=*/1000,
+                                     /*start_gputime_ns=*/2000);
+    OfferKernelLaunches(collector, /*count=*/3);
+    collector.Flush();
+    XSpace space;
+    collector.Export(&space);
+
+    ASSERT_EQ(space.warnings_size(), 1) << "session " << session;
+    EXPECT_TRUE(absl::StrContains(space.warnings(0), "dropped 2 "))
+        << space.warnings(0);
+  }
 }
 
 }  // namespace test
