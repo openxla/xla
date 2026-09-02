@@ -148,7 +148,19 @@ INSTANTIATE_TEST_SUITE_P(
         TC{"ByteStrideOverflowMultiDim",
            kS32,
            {5, 3},
-           Strides({INT64_C(4611686018427387904), 4})}),
+           Strides({INT64_C(4611686018427387904), 4})},
+        // byte_size * num_elements() overflows int64_t when byte_strides is
+        // not supplied. shape.num_elements() alone (2^61, from dims
+        // {2^31, 2^30}) is well within int64_t range on its own and would
+        // be accepted by Shape::FromProto's own overflow check, which
+        // validates only the element count -- multiplying by an 8-byte
+        // dtype's byte_size is a separate place this can overflow, and
+        // before this fix it wrapped to exactly zero, which would have
+        // bypassed the size check in FromMinimalMemRegion entirely.
+        TC{"DefaultStridesByteSizeOverflow",
+           kF64,
+           {2147483648LL, 1073741824LL},  // 2^31 * 2^30 = 2^61 elements
+           std::nullopt}),
     testing::PrintToStringParamName());
 TEST_P(ArrayMemRegionFailure, TestCase) {
   const TC tc = GetParam();
