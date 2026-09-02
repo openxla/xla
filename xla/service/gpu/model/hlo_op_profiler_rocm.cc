@@ -65,7 +65,6 @@ class RocmKernelTracer : public HloOpProfiler::KernelTracer,
     profiler::RocmTraceCollectorOptions options;
     options.max_callback_api_events = 2 * 1024 * 1024;
     options.max_activity_api_events = 2 * 1024 * 1024;
-    options.max_annotation_strings = 1024 * 1024;
     options.num_gpus = num_gpus;
     return options;
   }

@@ -902,7 +902,6 @@ cc_library(
         "//xla/backends/profiler/gpu:rocm_collector",
         "//xla/backends/profiler/gpu:rocm_tracer",
         "//xla/hlo/ir:hlo",
-        "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_verifier",
