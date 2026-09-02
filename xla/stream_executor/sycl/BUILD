@@ -679,8 +679,8 @@ sycl_library(
         "oneapi-only",
     ],
     deps = [
+        "//xla:status_macros",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
         "@onedpl//:onedpl",
     ],
     alwayslink = 1,

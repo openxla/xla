@@ -22,8 +22,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 
-namespace stream_executor {
-namespace sycl {
+namespace stream_executor::sycl {
 
 // Sorts `num_items` keys, split into `batch_size` equally sized contiguous
 // segments. A null `d_keys_in` and `d_keys_out` is a request for the required
@@ -115,7 +114,6 @@ XLA_CUB_EXTERN_SORT_PAIRS(float, uint64_t);
 #undef XLA_CUB_EXTERN_SORT_KEYS
 #undef XLA_CUB_EXTERN_SORT_PAIRS
 
-}  // namespace sycl
-}  // namespace stream_executor
+}  // namespace stream_executor::sycl
 
 #endif  // XLA_STREAM_EXECUTOR_SYCL_CUB_SORT_KERNEL_SYCL_H_
