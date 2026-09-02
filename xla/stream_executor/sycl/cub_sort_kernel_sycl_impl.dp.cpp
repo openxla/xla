@@ -20,11 +20,10 @@ limitations under the License.
 #include <oneapi/dpl/experimental/kernel_templates>
 
 #include "absl/status/status.h"
-#include "absl/strings/str_cat.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/sycl/cub_sort_kernel_sycl.h"
 
-namespace stream_executor {
-namespace sycl {
+namespace stream_executor::sycl {
 
 template <typename KeyT>
 absl::Status CubSortKeys(void* d_temp_storage, size_t& temp_bytes,
@@ -38,20 +37,12 @@ absl::Status CubSortKeys(void* d_temp_storage, size_t& temp_bytes,
     return absl::OkStatus();
   }
 
-  if (stream == nullptr) {
-    return absl::InvalidArgumentError("SYCL queue is null");
-  }
-  if (num_items == 0) {
-    return absl::InvalidArgumentError("num_items must be > 0");
-  }
-  if (batch_size == 0) {
-    return absl::InvalidArgumentError("batch_size must be > 0");
-  }
-  if (num_items % batch_size != 0) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "num_items (", num_items, ") must be divisible by batch_size (",
-        batch_size, ")"));
-  }
+  TF_RET_CHECK(stream != nullptr) << "SYCL queue cannot be null";
+  TF_RET_CHECK(num_items > 0) << "num_items must be > 0";
+  TF_RET_CHECK(batch_size > 0) << "batch_size must be > 0";
+  TF_RET_CHECK(num_items % batch_size == 0)
+      << "num_items (" << num_items << ") must be divisible by batch_size ("
+      << batch_size << ")";
 
   // TODO(intel-tf): sort the segments with oneDPL's radix sort.
   return absl::UnimplementedError(
@@ -71,20 +62,12 @@ absl::Status CubSortPairs(void* d_temp_storage, size_t& temp_bytes,
     return absl::OkStatus();
   }
 
-  if (stream == nullptr) {
-    return absl::InvalidArgumentError("SYCL queue is null");
-  }
-  if (num_items == 0) {
-    return absl::InvalidArgumentError("num_items must be > 0");
-  }
-  if (batch_size == 0) {
-    return absl::InvalidArgumentError("batch_size must be > 0");
-  }
-  if (num_items % batch_size != 0) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "num_items (", num_items, ") must be divisible by batch_size (",
-        batch_size, ")"));
-  }
+  TF_RET_CHECK(stream != nullptr) << "SYCL queue cannot be null";
+  TF_RET_CHECK(num_items > 0) << "num_items must be > 0";
+  TF_RET_CHECK(batch_size > 0) << "batch_size must be > 0";
+  TF_RET_CHECK(num_items % batch_size == 0)
+      << "num_items (" << num_items << ") must be divisible by batch_size ("
+      << batch_size << ")";
 
   // TODO(intel-tf): sort the segments with oneDPL's radix sort by key.
   return absl::UnimplementedError(
@@ -161,5 +144,4 @@ XLA_CUB_INSTANTIATE_SORT_PAIRS(float, uint64_t);
 #undef XLA_CUB_INSTANTIATE_SORT_KEYS
 #undef XLA_CUB_INSTANTIATE_SORT_PAIRS
 
-}  // namespace sycl
-}  // namespace stream_executor
+}  // namespace stream_executor::sycl
