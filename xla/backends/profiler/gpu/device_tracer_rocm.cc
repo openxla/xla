@@ -89,8 +89,8 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
   if (max_events <= 0) {
     max_events = 4 * 1024 * 1024;
   }
-  if (max_events > 1'000'000'000LL) {
-    max_events = 1'000'000'000LL;
+  if (max_events > kMaxRocmTraceEvents) {
+    max_events = kMaxRocmTraceEvents;
   }
   VLOG(3) << "maximum number of events to be traced = " << max_events;
 

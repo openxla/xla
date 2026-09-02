@@ -196,14 +196,22 @@ struct RocmTracerOptions {
   std::optional<uint64_t> max_annotation_strings;
 };
 
+// Upper bound for the event caps below, and the value
+// --xla_gpu_rocm_max_trace_events is clamped to. It must stay below INT32_MAX:
+// the collector counts events in std::atomic<int>, which would overflow before
+// reaching a larger cap.
+inline constexpr int64_t kMaxRocmTraceEvents = 1'000'000'000;
+
 // Callers set every field. The defaults only keep a forgotten field from being
 // indeterminate.
 struct RocmTraceCollectorOptions {
-  // Maximum number of events to collect from callback API; if -1, no limit.
-  // if 0, the callback API is enabled to build a correlation map, but no
-  // events are collected.
+  // Maximum number of events to collect from the callback API, at most
+  // kMaxRocmTraceEvents. There is no "no limit" value. 0 empties the whole
+  // trace, because activity events are dropped unless they match a recorded
+  // API event.
   uint64_t max_callback_api_events = 0;
-  // Maximum number of events to collect from activity API; if -1, no limit.
+  // Maximum number of events to collect from the activity API, at most
+  // kMaxRocmTraceEvents.
   uint64_t max_activity_api_events = 0;
   // Number of GPUs involved. 0 silently produces an empty profile
   // (RocmTraceCollectorImpl drops every event when num_gpus_==0).
