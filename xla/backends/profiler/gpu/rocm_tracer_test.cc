@@ -85,7 +85,6 @@ std::unique_ptr<TestRocmTraceCollector> CreateTestCollector() {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 2 * 1024 * 1024;
   options.max_activity_api_events = 2 * 1024 * 1024;
-  options.max_annotation_strings = 1024 * 1024;
   options.num_gpus = 1;
 
   uint64_t walltime_ns = RocmTracer::GetTimestamp();
@@ -151,7 +150,8 @@ TEST(RocmTracerTest, EnableAndDisableLifecycle) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
   auto collector = CreateTestCollector();
 
-  RocmTracerOptions tracer_options{/*max_annotation_strings=*/128};
+  RocmTracerOptions tracer_options;
+  tracer_options.max_annotation_strings = 128;
   TF_ASSERT_OK(tracer.Enable(tracer_options, collector.get()));
 
   EXPECT_FALSE(tracer.IsAvailable())
@@ -171,6 +171,7 @@ TEST(RocmTracerTest, AnnotationMapWorks) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
   AnnotationMap* map = tracer.annotation_map();
   ASSERT_NE(map, nullptr);
+  map->Reset(1024);  // no Enable() in this test, so set the capacity here
 
   uint64_t id = 42;
   std::string annotation = "matmul_fused_op";
@@ -184,13 +185,14 @@ TEST(RocmTracerTest, AnnotationMapClear) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
   AnnotationMap* map = tracer.annotation_map();
   ASSERT_NE(map, nullptr);
+  map->Reset(1024);  // no Enable() in this test, so set the capacity here
 
   map->Add(100, "op_a");
   map->Add(101, "op_b");
   EXPECT_EQ(map->LookUp(100), "op_a");
   EXPECT_EQ(map->LookUp(101), "op_b");
 
-  map->Clear();
+  map->Reset(1024);
 
   EXPECT_TRUE(map->LookUp(100).empty());
   EXPECT_TRUE(map->LookUp(101).empty());
@@ -217,7 +219,6 @@ class EventCapturingCollector : public RocmTraceCollector {
     RocmTraceCollectorOptions options;
     options.max_callback_api_events = 2 * 1024 * 1024;
     options.max_activity_api_events = 2 * 1024 * 1024;
-    options.max_annotation_strings = 1024 * 1024;
     options.num_gpus = RocmTracer::GetRocmTracerSingleton().NumGpus();
     return options;
   }
@@ -239,7 +240,8 @@ TEST(RocmTracerTest, CapturesHipEvents) {
   EventCapturingCollector* collector_ptr = collector.get();
 
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
-  RocmTracerOptions tracer_options{/*max_annotation_strings=*/1024 * 1024};
+  RocmTracerOptions tracer_options;
+  tracer_options.max_annotation_strings = 1024 * 1024;
   TF_ASSERT_OK(tracer.Enable(tracer_options, collector.get()));
 
   constexpr size_t kNumFloats = 1024;
@@ -272,7 +274,8 @@ TEST(RocmTracerTest, DisableStopsRocprofilerContext) {
   ASSERT_TRUE(tracer.IsAvailable());
 
   auto collector = CreateTestCollector();
-  RocmTracerOptions tracer_options{/*max_annotation_strings=*/128};
+  RocmTracerOptions tracer_options;
+  tracer_options.max_annotation_strings = 128;
   TF_ASSERT_OK(tracer.Enable(tracer_options, collector.get()));
 
   int active = -1;
@@ -297,7 +300,8 @@ TEST(RocmTracerTest, DisableIsolatesNextSession) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
   ASSERT_TRUE(tracer.IsAvailable());
 
-  RocmTracerOptions tracer_options{/*max_annotation_strings=*/1024 * 1024};
+  RocmTracerOptions tracer_options;
+  tracer_options.max_annotation_strings = 1024 * 1024;
   constexpr size_t kNumFloats = 1024;
   constexpr size_t kSize = kNumFloats * sizeof(float);
   std::vector<float> host_data(kNumFloats, 1.0f);
@@ -374,7 +378,6 @@ class MarkerCapturingCollector : public RocmTraceCollector {
     RocmTraceCollectorOptions o;
     o.max_callback_api_events = 1024;
     o.max_activity_api_events = 1024;
-    o.max_annotation_strings = 1024;
     o.num_gpus = 1;
     return o;
   }
@@ -405,7 +408,8 @@ TEST(RocmTracerTest, MarkerCallbackPushPopEmitsRoctxRange) {
   auto collector = std::make_unique<MarkerCapturingCollector>();
   MarkerCapturingCollector* cptr = collector.get();
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, cptr));
 
   const uint64_t tid = 12345;
@@ -459,7 +463,8 @@ TEST(RocmTracerTest, MarkerCallbackMarkEmitsInstantaneousEvent) {
   auto collector = std::make_unique<MarkerCapturingCollector>();
   MarkerCapturingCollector* cptr = collector.get();
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, cptr));
 
   const uint64_t tid = 77777;
@@ -493,7 +498,8 @@ TEST(RocmTracerTest, MarkerCallbackUnmatchedPopIsIgnored) {
   auto collector = std::make_unique<MarkerCapturingCollector>();
   MarkerCapturingCollector* cptr = collector.get();
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, cptr));
 
   // Pop without any preceding Push — must not crash, must not emit any event.
@@ -516,7 +522,8 @@ TEST(RocmTracerTest, MarkerCallbackNullLabelRangeIsDroppedNotEmitted) {
   auto collector = std::make_unique<MarkerCapturingCollector>();
   MarkerCapturingCollector* cptr = collector.get();
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, cptr));
 
   const uint64_t tid = 2222;
@@ -556,7 +563,8 @@ TEST(RocmTracerTest, MarkerCallbackNullLabelRangeKeepsStackBalanced) {
   auto collector = std::make_unique<MarkerCapturingCollector>();
   MarkerCapturingCollector* cptr = collector.get();
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, cptr));
 
   const uint64_t tid = 2223;
@@ -601,7 +609,6 @@ TEST(RocmTracerTest, MarkerEventAppearsInExportedXSpace) {
   RocmTraceCollectorOptions col_opts;
   col_opts.max_callback_api_events = 1024;
   col_opts.max_activity_api_events = 1024;
-  col_opts.max_annotation_strings = 1024;
   col_opts.num_gpus = tracer.NumGpus() > 0 ? tracer.NumGpus() : 1;
 
   uint64_t start_gpu = RocmTracer::GetTimestamp();
@@ -610,7 +617,8 @@ TEST(RocmTracerTest, MarkerEventAppearsInExportedXSpace) {
       std::make_unique<RocmTraceCollectorImpl>(col_opts, start_wall, start_gpu);
   collector->SetGpuAgents(tracer.GpuAgents());
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, collector.get()));
 
   const uint64_t tid = 4242;
@@ -716,7 +724,6 @@ TEST(RocmTracerTest, RealRoctxCallsProduceNvtxRangeInXSpace) {
   RocmTraceCollectorOptions col_opts;
   col_opts.max_callback_api_events = 1024;
   col_opts.max_activity_api_events = 1024;
-  col_opts.max_annotation_strings = 1024;
   col_opts.num_gpus = tracer.NumGpus() > 0 ? tracer.NumGpus() : 1;
 
   uint64_t start_gpu = RocmTracer::GetTimestamp();
@@ -725,7 +732,8 @@ TEST(RocmTracerTest, RealRoctxCallsProduceNvtxRangeInXSpace) {
       std::make_unique<RocmTraceCollectorImpl>(col_opts, start_wall, start_gpu);
   collector->SetGpuAgents(tracer.GpuAgents());
 
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, collector.get()));
 
   // Emit real ROCTX ranges — rocprofiler-sdk intercepts these and fires
@@ -812,7 +820,8 @@ TEST(RocmTracerTest, GetCurrentRoctxLabelReturnsTopOfStack) {
   ASSERT_TRUE(tracer.IsAvailable());
 
   auto collector = std::make_unique<MarkerCapturingCollector>();
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, collector.get()));
 
   const uint64_t tid = 55555;
@@ -840,7 +849,8 @@ TEST(RocmTracerTest, GetCurrentRoctxLabelEmptyAfterPop) {
   ASSERT_TRUE(tracer.IsAvailable());
 
   auto collector = std::make_unique<MarkerCapturingCollector>();
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, collector.get()));
 
   const uint64_t tid = 55556;
@@ -862,19 +872,21 @@ TEST(RocmTracerTest, GetCurrentRoctxLabelEmptyAfterPop) {
 }
 
 TEST(RocmTracerTest, AnnotationMapStoresRoctxRange) {
-  AnnotationMap map(1024);
+  AnnotationMap map;
+  map.Reset(1024);
   map.Add(99, "my_annotation", "my_roctx_label", {});
   EXPECT_EQ(map.LookUp(99), "my_annotation");
   EXPECT_EQ(map.LookUpRoctxRange(99), "my_roctx_label");
 
   EXPECT_EQ(map.LookUpRoctxRange(100), "");
 
-  map.Clear();
+  map.Reset(1024);
   EXPECT_EQ(map.LookUpRoctxRange(99), "");
 }
 
 TEST(RocmTracerTest, AnnotationMapRoctxRangeEmptyWhenNotProvided) {
-  AnnotationMap map(1024);
+  AnnotationMap map;
+  map.Reset(1024);
   map.Add(42, "some_op", {}, {});
   EXPECT_EQ(map.LookUp(42), "some_op");
   EXPECT_EQ(map.LookUpRoctxRange(42), "");
@@ -884,7 +896,8 @@ TEST(RocmTracerTest, AnnotationMapRoctxRangeEmptyWhenNotProvided) {
 // so that standalone ROCTX annotations (no XLA AnnotationStack text) still
 // produce kNVTXRange on kernel events.
 TEST(RocmTracerTest, AnnotationMapStoresRoctxRangeWhenAnnotationEmpty) {
-  AnnotationMap map(1024);
+  AnnotationMap map;
+  map.Reset(1024);
   // annotation is empty, roctx_range is not.
   map.Add(77, /*annotation=*/"", "roctx_only_label", {});
   EXPECT_EQ(map.LookUp(77), "")
@@ -905,7 +918,8 @@ TEST(RocmTracerTest, GetCurrentRoctxLabelViewIsValidUntilNextRoctxCall) {
   ASSERT_TRUE(tracer.IsAvailable());
 
   auto collector = std::make_unique<MarkerCapturingCollector>();
-  RocmTracerOptions opts{/*max_annotation_strings=*/1024};
+  RocmTracerOptions opts;
+  opts.max_annotation_strings = 1024;
   TF_ASSERT_OK(tracer.Enable(opts, collector.get()));
 
   const uint64_t tid = 66666;
