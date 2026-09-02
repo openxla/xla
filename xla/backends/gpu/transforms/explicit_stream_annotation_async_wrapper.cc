@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -98,13 +99,13 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * done,
       computation->CreateAsyncInstructions(
-          instr, {}, ExplicitStreamAnnotationAsyncWrapper::kMainExecutionThread,
+          instr, {}, StreamAttributeAsyncWrapper::kParallelExecutionThread,
           /*replace=*/true));
   // Replace the original attributes after creating the async pair.
   done->set_frontend_attributes(original_attributes);
   done->mutable_operand(0)->set_frontend_attributes(original_attributes);
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   done->backend_config<GpuBackendConfig>());
+                        done->backend_config<GpuBackendConfig>());
   // Set earliest schedule of done op to be false so it can be scheduled
   // far apart from start.
   gpu_config.set_force_earliest_schedule(false);
