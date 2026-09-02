@@ -281,240 +281,6 @@ std::unique_ptr<HloInstruction> HloFftInstruction::CloneWithNewOperandsImpl(
                                              fft_length_);
 }
 
-namespace {
-
-HloAsyncInstruction* FindAsyncChainDataflow(
-    HloInstruction* instr,
-    absl::FunctionRef<bool(const HloInstruction*)> is_target, ShapeIndex index,
-    absl::flat_hash_set<const HloInstruction*>& visited) {
-  if (instr == nullptr || !visited.insert(instr).second) {
-    return nullptr;
-  }
-
-  if (is_target(instr)) {
-    if (HloAsyncInstruction::ClassOf(instr)) {
-      return Cast<HloAsyncInstruction>(instr);
-    }
-    return nullptr;
-  }
-
-  auto revert_step = [&]() { visited.erase(instr); };
-
-  switch (instr->opcode()) {
-    case HloOpcode::kGetTupleElement: {
-      index.push_back(instr->tuple_index());
-      HloAsyncInstruction* res = FindAsyncChainDataflow(
-          instr->mutable_operand(0), is_target, index, visited);
-      if (res != nullptr) {
-        return res;
-      }
-      revert_step();
-      return nullptr;
-    }
-    case HloOpcode::kTuple:
-    case HloOpcode::kOptimizationBarrier: {
-      if (instr->opcode() == HloOpcode::kOptimizationBarrier &&
-          instr->operand_count() == 1) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(0), is_target, index, visited);
-        if (res != nullptr) {
-          return res;
-        }
-        revert_step();
-        return nullptr;
-      }
-      if (index.empty()) {
-        for (int64_t idx = 0; idx < instr->operand_count(); ++idx) {
-          HloAsyncInstruction* res = FindAsyncChainDataflow(
-              instr->mutable_operand(idx), is_target, index, visited);
-          if (res != nullptr) {
-            return res;
-          }
-        }
-        revert_step();
-        return nullptr;
-      }
-      int64_t idx = index.back();
-      index.pop_back();
-      if (idx >= 0 && idx < instr->operand_count()) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(idx), is_target, index, visited);
-        if (res != nullptr) {
-          return res;
-        }
-      }
-      revert_step();
-      return nullptr;
-    }
-    case HloOpcode::kCopy:
-    case HloOpcode::kCustomCall: {
-      if (instr->opcode() == HloOpcode::kCustomCall &&
-          !instr->IsAllowedAsyncIntermediaryCustomCall()) {
-        revert_step();
-        return nullptr;
-      }
-      if (instr->operand_count() > 0) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(0), is_target, index, visited);
-        if (res != nullptr) {
-          return res;
-        }
-      }
-      revert_step();
-      return nullptr;
-    }
-    case HloOpcode::kParameter: {
-      auto* comp = instr->parent();
-      if (comp != nullptr) {
-        auto callers = comp->caller_instructions(HloOpcode::kWhile);
-        if (callers.size() == 1) {
-          auto* while_op = callers.front();
-          if (while_op->while_body() == comp) {
-            HloAsyncInstruction* res = FindAsyncChainDataflow(
-                while_op->mutable_operand(0), is_target, index, visited);
-            if (res != nullptr) {
-              return res;
-            }
-            if (comp->root_instruction() != nullptr) {
-              HloAsyncInstruction* root_res = FindAsyncChainDataflow(
-                  comp->root_instruction(), is_target, index, visited);
-              if (root_res != nullptr) {
-                return root_res;
-              }
-            }
-          }
-        }
-      }
-      revert_step();
-      return nullptr;
-    }
-    case HloOpcode::kWhile: {
-      if (instr->while_body() != nullptr &&
-          instr->while_body()->root_instruction() != nullptr) {
-        HloAsyncInstruction* root_res = FindAsyncChainDataflow(
-            instr->while_body()->root_instruction(), is_target, index, visited);
-        if (root_res != nullptr) {
-          return root_res;
-        }
-      }
-      if (instr->operand_count() > 0) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(0), is_target, index, visited);
-        if (res != nullptr) {
-          return res;
-        }
-      }
-      revert_step();
-      return nullptr;
-    }
-    default: {
-      revert_step();
-      return nullptr;
-    }
-  }
-}
-
-HloAsyncInstruction* FindAsyncChainProducer(HloInstruction* instr) {
-  if (instr == nullptr) {
-    return nullptr;
-  }
-  if (instr->IsAsyncProducer() && HloAsyncInstruction::ClassOf(instr)) {
-    return Cast<HloAsyncInstruction>(instr);
-  }
-  ShapeIndex index;
-  absl::flat_hash_set<const HloInstruction*> visited;
-  return FindAsyncChainDataflow(
-      instr, [](const HloInstruction* node) { return node->IsAsyncProducer(); },
-      index, visited);
-}
-
-HloAsyncInstruction* FindAsyncChainStart(HloInstruction* instr) {
-  if (instr == nullptr) {
-    return nullptr;
-  }
-  if (instr->opcode() == HloOpcode::kAsyncStart &&
-      HloAsyncInstruction::ClassOf(instr)) {
-    return Cast<HloAsyncInstruction>(instr);
-  }
-  if (instr->opcode() == HloOpcode::kAsyncDone) {
-    if (instr->operand_count() == 0 || instr->operand(0) == nullptr) {
-      return nullptr;
-    }
-    instr = instr->mutable_operand(0);
-  }
-  HloAsyncInstruction* producer = FindAsyncChainProducer(instr);
-  while (producer != nullptr && producer->opcode() == HloOpcode::kAsyncUpdate) {
-    if (producer->operand_count() == 0 || producer->operand(0) == nullptr) {
-      return nullptr;
-    }
-    producer = FindAsyncChainProducer(producer->mutable_operand(0));
-  }
-  return producer;
-}
-
-HloAsyncInstruction* FindAsyncChainNext(HloInstruction* instr) {
-  if (instr == nullptr || instr->opcode() == HloOpcode::kAsyncDone) {
-    return nullptr;
-  }
-  for (HloInstruction* user : instr->users()) {
-    if (HloAsyncInstruction::ClassOf(user) && user->operand_count() > 0 &&
-        user->operand(0) == instr) {
-      return Cast<HloAsyncInstruction>(user);
-    }
-  }
-  HloInstruction* root_producer = FindAsyncChainProducer(instr);
-  if (root_producer == nullptr) {
-    return nullptr;
-  }
-  absl::InlinedVector<HloInstruction*, 8> stack;
-  absl::flat_hash_set<const HloInstruction*> visited;
-  for (HloInstruction* user : instr->users()) {
-    stack.push_back(user);
-  }
-  while (!stack.empty()) {
-    HloInstruction* curr = stack.back();
-    stack.pop_back();
-    if (curr == nullptr || !visited.insert(curr).second) {
-      continue;
-    }
-    if (HloAsyncInstruction::ClassOf(curr)) {
-      if (curr->operand_count() > 0 &&
-          FindAsyncChainProducer(curr->mutable_operand(0)) == root_producer) {
-        return Cast<HloAsyncInstruction>(curr);
-      }
-      continue;
-    }
-    if (curr->IsAllowedAsyncIntermediary() ||
-        curr->opcode() == HloOpcode::kGetTupleElement ||
-        curr->opcode() == HloOpcode::kTuple ||
-        curr->opcode() == HloOpcode::kOptimizationBarrier ||
-        curr->opcode() == HloOpcode::kCopy ||
-        (curr->opcode() == HloOpcode::kCustomCall &&
-         curr->IsAllowedAsyncIntermediaryCustomCall())) {
-      for (HloInstruction* user : curr->users()) {
-        stack.push_back(user);
-      }
-    }
-  }
-  return nullptr;
-}
-
-HloAsyncInstruction* FindAsyncChainDone(HloInstruction* instr) {
-  if (instr == nullptr) {
-    return nullptr;
-  }
-  if (instr->opcode() == HloOpcode::kAsyncDone) {
-    return Cast<HloAsyncInstruction>(instr);
-  }
-  HloAsyncInstruction* consumer = FindAsyncChainNext(instr);
-  while (consumer != nullptr && consumer->opcode() == HloOpcode::kAsyncUpdate) {
-    consumer = FindAsyncChainNext(consumer);
-  }
-  return consumer;
-}
-
-}  // namespace
-
 HloAsyncInstruction::HloAsyncInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
@@ -530,27 +296,20 @@ HloAsyncInstruction::HloAsyncInstruction(
     AppendOperand(operand);
   }
 
-  HloAsyncInstruction* prev = nullptr;
   if (opcode == HloOpcode::kAsyncUpdate || opcode == HloOpcode::kAsyncDone) {
     if (!operands.empty() && operands[0] != nullptr) {
-      prev = FindAsyncChainProducer(operands[0]);
-      if (prev != nullptr) {
+      if (HloAsyncInstruction::ClassOf(operands[0])) {
+        HloAsyncInstruction* prev = Cast<HloAsyncInstruction>(operands[0]);
         prev->async_chain_next_ = this;
       }
     }
   }
 
   // Drop 'async' from async-{start/update/done} to get the suffix.
-  if (!async_wrapped_opcode.has_value()) {
-    if (prev != nullptr) {
-      async_wrapped_opcode = prev->async_wrapped_opcode();
-    } else {
-      async_wrapped_opcode = opcode;
-    }
-  }
   absl::string_view suffix = HloOpcodeString(opcode).substr(5);
-  absl::string_view wrapped_name = HloOpcodeString(*async_wrapped_opcode);
-  if (async_wrapped_opcode == opcode) {
+  HloOpcode wrapped_opcode = async_wrapped_opcode.value_or(opcode);
+  absl::string_view wrapped_name = HloOpcodeString(wrapped_opcode);
+  if (wrapped_opcode == opcode) {
     SetAndSanitizeName(wrapped_name);
   } else {
     SetAndSanitizeName(absl::StrCat(wrapped_name, suffix));
@@ -562,27 +321,13 @@ HloComputation* HloAsyncInstruction::async_wrapped_computation() const {
     return called_computations().front();
   }
   auto* start = async_chain_start();
-  if (start != nullptr && !start->called_computations().empty()) {
-    return start->called_computations().front();
-  }
-  // If there is no async-start (e.g. across a loop boundary), look upstream for
-  // the nearest async op with a wrapped computation.
-  if (operands().empty() || operand(0) == nullptr) {
+  if (start == nullptr) {
     return nullptr;
   }
-  HloAsyncInstruction* producer =
-      FindAsyncChainProducer(const_cast<HloInstruction*>(operand(0)));
-  while (producer != nullptr) {
-    if (!producer->called_computations().empty()) {
-      return producer->called_computations().front();
-    }
-    if (producer->operands().empty() || producer->operand(0) == nullptr) {
-      break;
-    }
-    producer = FindAsyncChainProducer(
-        const_cast<HloInstruction*>(producer->operand(0)));
+  if (start->called_computations().empty()) {
+    return nullptr;
   }
-  return nullptr;
+  return start->called_computations().front();
 }
 
 HloInstruction* HloAsyncInstruction::async_wrapped_instruction() const {
@@ -603,16 +348,10 @@ HloOpcode HloAsyncInstruction::async_wrapped_opcode() const {
 
 absl::string_view HloAsyncInstruction::async_execution_thread() const {
   auto* start = async_chain_start();
-  if (start != nullptr) {
-    return start->async_execution_thread();
+  if (start == nullptr) {
+    return kMainExecutionThread;
   }
-  if (!called_computations().empty()) {
-    return called_computations().front()->execution_thread();
-  }
-  if (HloComputation* comp = async_wrapped_computation()) {
-    return comp->execution_thread();
-  }
-  return kMainExecutionThread;
+  return start->async_execution_thread();
 }
 
 HloAsyncInstruction* HloAsyncInstruction::async_chain_start() const {
@@ -623,14 +362,21 @@ HloAsyncInstruction* HloAsyncInstruction::async_chain_start() const {
   if (operands().empty() || operands()[0] == nullptr) {
     return nullptr;
   }
-  return FindAsyncChainStart(const_cast<HloAsyncInstruction*>(this));
-}
-
-HloAsyncInstruction* HloAsyncInstruction::async_chain_next() const {
-  if (opcode() == HloOpcode::kAsyncDone) {
-    return nullptr;
+  HloInstruction* prev = operands()[0];
+  while (prev != nullptr) {
+    if (prev->opcode() == HloOpcode::kAsyncStart) {
+      return Cast<HloAsyncInstruction>(prev);
+    }
+    if (prev->opcode() == HloOpcode::kAsyncUpdate) {
+      if (prev->operands().empty() || prev->operands()[0] == nullptr) {
+        return nullptr;
+      }
+      prev = prev->operands()[0];
+      continue;
+    }
+    break;
   }
-  return FindAsyncChainNext(const_cast<HloAsyncInstruction*>(this));
+  return nullptr;
 }
 
 HloAsyncInstruction* HloAsyncInstruction::async_chain_done() const {
@@ -638,7 +384,50 @@ HloAsyncInstruction* HloAsyncInstruction::async_chain_done() const {
     return const_cast<HloAsyncInstruction*>(this);
   }
 
-  return FindAsyncChainDone(const_cast<HloAsyncInstruction*>(this));
+  HloAsyncInstruction* next = async_chain_next_;
+  while (next != nullptr && next->opcode() != HloOpcode::kAsyncDone) {
+    // If the next op in the chain isn't async-done, it must be async-update.
+    if (next->opcode() != HloOpcode::kAsyncUpdate) {
+      return nullptr;
+    }
+    next = next->async_chain_next_;
+  }
+  return next;
+}
+
+void HloAsyncInstruction::UpdateAsyncChain() {
+  auto update_chain = [this]() {
+    if (this->users().size() == 1) {
+      // If this instruction has more than one user, assuming async_chain_next_
+      // is already pointing to the correct user and the other users are
+      // transient.
+      if (this->users()[0]->opcode() == HloOpcode::kAsyncUpdate ||
+          this->users()[0]->opcode() == HloOpcode::kAsyncDone) {
+        Cast<HloAsyncInstruction>(this)->async_chain_next_ =
+            Cast<HloAsyncInstruction>(this->users()[0]);
+      }
+    }
+  };
+  auto update_operand_chain = [this]() {
+    if (this->operands().empty() || this->operand(0) == nullptr) {
+      return;
+    }
+    if (this->operand(0)->opcode() == HloOpcode::kAsyncStart ||
+        this->operand(0)->opcode() == HloOpcode::kAsyncUpdate) {
+      Cast<HloAsyncInstruction>(this->mutable_operand(0))->async_chain_next_ =
+          this;
+    }
+  };
+  if (this->opcode() == HloOpcode::kAsyncStart) {
+    update_chain();
+  }
+  if (this->opcode() == HloOpcode::kAsyncUpdate) {
+    update_operand_chain();
+    update_chain();
+  }
+  if (this->opcode() == HloOpcode::kAsyncDone) {
+    update_operand_chain();
+  }
 }
 
 std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
@@ -649,34 +438,27 @@ std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
     if (current->opcode() == HloOpcode::kAsyncDone) {
       break;
     }
-    current = current->async_chain_next();
+    current = current->async_chain_next_;
   }
   return chain;
 }
 
 void HloAsyncInstruction::UpdateChainShapes() {
-  if (opcode() == HloOpcode::kAsyncDone) {
-    return;
-  }
+  CHECK_EQ(opcode(), HloOpcode::kAsyncStart);
 
   const Shape& async_update_shape = shape();
   const Shape& async_done_shape = shape().tuple_shapes(1);
-  HloAsyncInstruction* current = async_chain_next();
-  while (current != nullptr) {
+  for (HloAsyncInstruction* current = async_chain_next_; current != nullptr;
+       current = current->async_chain_next_) {
     switch (current->opcode()) {
-      case HloOpcode::kAsyncUpdate: {
+      case HloOpcode::kAsyncUpdate:
         *current->mutable_shape() = async_update_shape;
-        current = current->async_chain_next();
         break;
-      }
-      case HloOpcode::kAsyncDone: {
+      case HloOpcode::kAsyncDone:
         *current->mutable_shape() = async_done_shape;
-        current = nullptr;
         break;
-      }
-      default: {
+      default:
         LOG(FATAL) << "Unexpected async opcode: " << current->opcode();
-      }
     }
   }
 }

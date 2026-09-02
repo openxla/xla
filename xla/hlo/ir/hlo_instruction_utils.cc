@@ -106,6 +106,92 @@ bool IsTopKStable(const HloCustomCallInstruction* inst) {
 }
 
 namespace async {
+
+bool IsAllowedAsyncIntermediaryCustomCall(const HloInstruction* instr) {
+  if (instr == nullptr || instr->opcode() != HloOpcode::kCustomCall) {
+    return false;
+  }
+  static constexpr absl::string_view kMetadataTargets[] = {
+      "Sharding",
+      "LocalToGlobalShape",
+      "GlobalToLocalShape",
+      "xla.sdy.LocalToGlobalShape",
+      "xla.sdy.GlobalToLocalShape",
+      "xla.sdy.FuncResultSharding",
+  };
+  return instr->IsCustomCall(kMetadataTargets);
+}
+
+bool IsAllowedAsyncIntermediary(const HloInstruction* instr) {
+  if (instr == nullptr) {
+    return false;
+  }
+  switch (instr->opcode()) {
+    case HloOpcode::kTuple:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kOptimizationBarrier:
+    case HloOpcode::kCopy:
+    case HloOpcode::kParameter:
+    case HloOpcode::kWhile: {
+      return true;
+    }
+    case HloOpcode::kCustomCall: {
+      return IsAllowedAsyncIntermediaryCustomCall(instr);
+    }
+    default: {
+      return false;
+    }
+  }
+}
+
+bool IsAsyncStart(const HloInstruction* instr) {
+  if (instr == nullptr) {
+    return false;
+  }
+  switch (instr->opcode()) {
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kCollectivePermuteStart: {
+      return true;
+    }
+    default: {
+      return false;
+    }
+  }
+}
+
+bool IsAsyncDone(const HloInstruction* instr) {
+  if (instr == nullptr) {
+    return false;
+  }
+  switch (instr->opcode()) {
+    case HloOpcode::kAsyncDone:
+    case HloOpcode::kAllGatherDone:
+    case HloOpcode::kAllReduceDone:
+    case HloOpcode::kCollectivePermuteDone: {
+      return true;
+    }
+    default: {
+      return false;
+    }
+  }
+}
+
+bool IsAsyncProducer(const HloInstruction* instr) {
+  if (instr == nullptr) {
+    return false;
+  }
+  return instr->opcode() == HloOpcode::kAsyncUpdate || IsAsyncStart(instr);
+}
+
+bool IsAsyncConsumer(const HloInstruction* instr) {
+  if (instr == nullptr) {
+    return false;
+  }
+  return instr->opcode() == HloOpcode::kAsyncUpdate || IsAsyncDone(instr);
+}
+
 namespace {
 
 using async_detail::GetHloOperand;
@@ -115,7 +201,7 @@ HloInstructionT* FindAsyncStartImpl(HloInstructionT* instr) {
   if (instr == nullptr) {
     return nullptr;
   }
-  if (instr->IsAsyncDone()) {
+  if (IsAsyncDone(instr)) {
     if (instr->operand_count() == 0 || GetHloOperand(instr, 0) == nullptr) {
       return nullptr;
     }
@@ -134,12 +220,12 @@ HloInstructionT* FindAsyncStartImpl(HloInstructionT* instr) {
 
 template <typename HloInstructionT>
 HloInstructionT* FindAsyncConsumerImpl(HloInstructionT* instr) {
-  if (instr == nullptr || instr->IsAsyncDone()) {
+  if (instr == nullptr || IsAsyncDone(instr)) {
     return nullptr;
   }
 
   for (auto* user : instr->users()) {
-    if (user->IsAsyncConsumer() && user->operand_count() > 0 &&
+    if (IsAsyncConsumer(user) && user->operand_count() > 0 &&
         GetHloOperand(user, 0) == instr) {
       return user;
     }
@@ -147,7 +233,7 @@ HloInstructionT* FindAsyncConsumerImpl(HloInstructionT* instr) {
 
   // Identify canonical root producer for backward verification.
   const HloInstruction* root_producer =
-      instr->IsAsyncProducer() ? instr : FindAsyncProducer(instr);
+      IsAsyncProducer(instr) ? instr : FindAsyncProducer(instr);
   if (root_producer == nullptr) {
     return nullptr;
   }
@@ -168,7 +254,7 @@ HloInstructionT* FindAsyncConsumerImpl(HloInstructionT* instr) {
     }
     visited.push_back(current);
 
-    if (current->IsAsyncConsumer()) {
+    if (IsAsyncConsumer(current)) {
       if (current->operand_count() > 0 &&
           FindAsyncProducer(GetHloOperand(current, 0)) == root_producer) {
         return current;
@@ -176,7 +262,7 @@ HloInstructionT* FindAsyncConsumerImpl(HloInstructionT* instr) {
       continue;
     }
 
-    if (current->IsAllowedAsyncIntermediary()) {
+    if (IsAllowedAsyncIntermediary(current)) {
       for (auto* user : current->users()) {
         stack.push_back(user);
       }
@@ -190,7 +276,7 @@ HloInstructionT* FindAsyncDoneImpl(HloInstructionT* instr) {
   if (instr == nullptr) {
     return nullptr;
   }
-  if (instr->IsAsyncDone()) {
+  if (IsAsyncDone(instr)) {
     return instr;
   }
   HloInstructionT* consumer = FindAsyncConsumerImpl(instr);
@@ -259,15 +345,13 @@ absl::StatusOr<bool> AreOperandsAndOutputFullyBoundImpl(
 }  // namespace
 
 const HloInstruction* FindAsyncProducer(const HloInstruction* instr) {
-  return TraceAsyncDataflow(instr, [](const HloInstruction* node) {
-    return node->IsAsyncProducer();
-  });
+  return TraceAsyncDataflow(
+      instr, [](const HloInstruction* node) { return IsAsyncProducer(node); });
 }
 
 HloInstruction* FindAsyncProducer(HloInstruction* instr) {
-  return TraceAsyncDataflow(instr, [](const HloInstruction* node) {
-    return node->IsAsyncProducer();
-  });
+  return TraceAsyncDataflow(
+      instr, [](const HloInstruction* node) { return IsAsyncProducer(node); });
 }
 
 const HloInstruction* FindAsyncStart(const HloInstruction* instr) {

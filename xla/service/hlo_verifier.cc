@@ -2214,26 +2214,28 @@ absl::Status ShapeVerifier::CheckAsyncUpdateOperands(
         async_producer != nullptr ? HloOpcodeString(async_producer->opcode())
                                   : HloOpcodeString(operand0->opcode()));
   }
-  HloComputation* op_comp = async_update->async_wrapped_computation();
   HloComputation* prod_comp = async_producer->async_wrapped_computation();
-  if (op_comp == nullptr || prod_comp == nullptr || *op_comp != *prod_comp) {
-    return Internal(
-        "The %s expects its wrapped async computation to be identical to its "
-        "operand's wrapped async computation (%s vs %s), thread name (%s vs "
-        "%s).",
-        HloOpcodeString(async_update->opcode()),
-        async_update->async_wrapped_instruction() != nullptr
-            ? async_update->async_wrapped_instruction()->ToString()
-            : "null",
-        async_producer->async_wrapped_instruction() != nullptr
-            ? async_producer->async_wrapped_instruction()->ToString()
-            : "null",
-        async_update->async_wrapped_computation() != nullptr
-            ? async_update->async_wrapped_computation()->execution_thread()
-            : "null",
-        async_producer->async_wrapped_computation() != nullptr
-            ? async_producer->async_wrapped_computation()->execution_thread()
-            : "null");
+  if (!async_update->called_computations().empty()) {
+    HloComputation* op_comp = async_update->called_computations().front();
+    if (op_comp == nullptr || prod_comp == nullptr || *op_comp != *prod_comp) {
+      return Internal(
+          "The %s expects its wrapped async computation to be identical to its "
+          "operand's wrapped async computation (%s vs %s), thread name (%s vs "
+          "%s).",
+          HloOpcodeString(async_update->opcode()),
+          async_update->async_wrapped_instruction() != nullptr
+              ? async_update->async_wrapped_instruction()->ToString()
+              : "null",
+          async_producer->async_wrapped_instruction() != nullptr
+              ? async_producer->async_wrapped_instruction()->ToString()
+              : "null",
+          async_update->async_wrapped_computation() != nullptr
+              ? async_update->async_wrapped_computation()->execution_thread()
+              : "null",
+          async_producer->async_wrapped_computation() != nullptr
+              ? async_producer->async_wrapped_computation()->execution_thread()
+              : "null");
+    }
   }
 
   const Shape& shape0 = operand0->shape();
@@ -2311,26 +2313,28 @@ absl::Status ShapeVerifier::CheckAsyncDoneOperands(
         async_producer != nullptr ? HloOpcodeString(async_producer->opcode())
                                   : HloOpcodeString(operand0->opcode()));
   }
-  HloComputation* op_comp = async_done->async_wrapped_computation();
   HloComputation* prod_comp = async_producer->async_wrapped_computation();
-  if (op_comp == nullptr || prod_comp == nullptr || *op_comp != *prod_comp) {
-    return Internal(
-        "The %s expects its wrapped async computation to be identical to its "
-        "operand's wrapped async computation (%s vs %s), thread name (%s vs "
-        "%s).",
-        HloOpcodeString(async_done->opcode()),
-        async_done->async_wrapped_instruction() != nullptr
-            ? async_done->async_wrapped_instruction()->ToString()
-            : "null",
-        async_producer->async_wrapped_instruction() != nullptr
-            ? async_producer->async_wrapped_instruction()->ToString()
-            : "null",
-        async_done->async_wrapped_computation() != nullptr
-            ? async_done->async_wrapped_computation()->execution_thread()
-            : "null",
-        async_producer->async_wrapped_computation() != nullptr
-            ? async_producer->async_wrapped_computation()->execution_thread()
-            : "null");
+  if (!async_done->called_computations().empty()) {
+    HloComputation* op_comp = async_done->called_computations().front();
+    if (op_comp == nullptr || prod_comp == nullptr || *op_comp != *prod_comp) {
+      return Internal(
+          "The %s expects its wrapped async computation to be identical to its "
+          "operand's wrapped async computation (%s vs %s), thread name (%s vs "
+          "%s).",
+          HloOpcodeString(async_done->opcode()),
+          async_done->async_wrapped_instruction() != nullptr
+              ? async_done->async_wrapped_instruction()->ToString()
+              : "null",
+          async_producer->async_wrapped_instruction() != nullptr
+              ? async_producer->async_wrapped_instruction()->ToString()
+              : "null",
+          async_done->async_wrapped_computation() != nullptr
+              ? async_done->async_wrapped_computation()->execution_thread()
+              : "null",
+          async_producer->async_wrapped_computation() != nullptr
+              ? async_producer->async_wrapped_computation()->execution_thread()
+              : "null");
+    }
   }
 
   if (!hlo_instruction_utils::async::AreOperandsAndOutputFullyBound(
@@ -3026,7 +3030,7 @@ absl::Status VerifySingleUser(
 
   const HloInstruction* user = real_users.front();
   TF_RET_CHECK(expected_users.contains(user->opcode()) ||
-               user->IsAllowedAsyncIntermediary())
+               hlo_instruction_utils::async::IsAllowedAsyncIntermediary(user))
       << "The consumer of a " << instruction->opcode()
       << " instruction needs to be one of ("
       << absl::StrJoin(expected_users, ", ",
@@ -3126,7 +3130,8 @@ absl::Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
                      instruction->opcode() != HloOpcode::kConditional &&
                      instruction->opcode() != HloOpcode::kOptimizationBarrier &&
                      instruction->opcode() != HloOpcode::kDomain &&
-                     !instruction->IsAllowedAsyncIntermediary()) {
+                     !hlo_instruction_utils::async::IsAllowedAsyncIntermediary(
+                         instruction)) {
             return Internal(
                 "Async instruction %s used as operand %d of %s. "
                 "Async instructions can only be used as operands of "

@@ -286,7 +286,7 @@ class HloAsyncInstruction : public HloInstruction {
   HloAsyncInstruction* async_chain_done() const;
   // Returns the next async instruction in the async chain, or nullptr if this
   // is async-done.
-  HloAsyncInstruction* async_chain_next() const;
+  HloAsyncInstruction* async_chain_next() const { return async_chain_next_; }
   // Returns the chain of async op referencing this computation,
   // where GetAsyncChain().front() is the async-start op and
   // GetAsyncChain().back() is the async-done op.
@@ -299,6 +299,9 @@ class HloAsyncInstruction : public HloInstruction {
   // Updates all future instructions in the async chain to match the shape of
   // the current instruction.
   void UpdateChainShapes();
+
+  // Updates the async chain next pointer when operands or users change.
+  void UpdateAsyncChain();
 
  protected:
   // Helper to constructs async-{start,update,done}.
