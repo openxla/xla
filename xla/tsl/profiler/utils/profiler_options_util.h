@@ -20,6 +20,8 @@ limitations under the License.
 #include <functional>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
 #include "absl/container/flat_hash_set.h"
@@ -35,6 +37,44 @@ namespace profiler {
 std::optional<std::variant<std::string, bool, int64_t>> GetConfigValue(
     const tensorflow::ProfileOptions& options, const std::string& key);
 
+// The name of the AdvancedConfigValue oneof case that T corresponds to.
+//
+// Lives here rather than in any one backend because a type mismatch is
+// reported the same way everywhere: the caller knows T, GetConfigValue knows
+// what was actually supplied, and the user needs both halves to fix the
+// config. A backend that composes its own message can reuse these instead of
+// re-deriving the mapping.
+template <typename T>
+constexpr absl::string_view ConfigValueTypeName() {
+  static_assert(std::is_same_v<T, std::string> || std::is_same_v<T, bool> ||
+                    std::is_same_v<T, int64_t>,
+                "advanced_configuration values are string, bool or int64");
+  if constexpr (std::is_same_v<T, std::string>) {
+    return "string";
+  } else if constexpr (std::is_same_v<T, bool>) {
+    return "bool";
+  } else {
+    return "int64";
+  }
+}
+
+// The name of the type a value actually holds.
+inline absl::string_view ConfigValueTypeName(
+    const std::variant<std::string, bool, int64_t>& value) {
+  return std::visit(
+      [](const auto& alternative) -> absl::string_view {
+        return ConfigValueTypeName<std::decay_t<decltype(alternative)>>();
+      },
+      value);
+}
+
+// The name of the type `key` holds in `options`, or "unset" when the key is
+// absent or carries an AdvancedConfigValue with no oneof case set. The two are
+// deliberately not distinguished: GetConfigValue collapses them, and a caller
+// that needs to tell them apart already has to look at the map itself.
+absl::string_view SuppliedConfigValueTypeName(
+    const tensorflow::ProfileOptions& options, const std::string& key);
+
 template <typename T>
 absl::Status SetValue(const tensorflow::ProfileOptions& options,
                       const std::string& key,
@@ -47,7 +87,9 @@ absl::Status SetValue(const tensorflow::ProfileOptions& options,
   }
   if (!std::holds_alternative<T>(*value)) {
     return absl::InvalidArgumentError(absl::StrCat(
-        "Invalid value type for key: ", key, ". Expected a different type."));
+        "Invalid value type for key: ", key, ". Expected ",
+        ConfigValueTypeName<T>(), ", but a ", ConfigValueTypeName(*value),
+        " was supplied."));
   }
   input_keys.erase(key);
   setter(std::get<T>(*value));
@@ -66,7 +108,9 @@ absl::Status SetValueWithStatus(
   }
   if (!std::holds_alternative<T>(*value)) {
     return absl::InvalidArgumentError(absl::StrCat(
-        "Invalid value type for key: ", key, ". Expected a different type."));
+        "Invalid value type for key: ", key, ". Expected ",
+        ConfigValueTypeName<T>(), ", but a ", ConfigValueTypeName(*value),
+        " was supplied."));
   }
   input_keys.erase(key);
   absl::Status status = setter(std::get<T>(*value));
