@@ -33,11 +33,10 @@ namespace profiler {
 // forward declare (interface)
 class RocmTraceCollector;
 
-struct RocmTracerOptions {
-  // maximum number of annotation strings that AnnotationMap in RocmTracer can
-  // store. e.g. 1M
-  uint64_t max_annotation_strings;
-};
+// NOTE: RocmTracerOptions lives in rocm_tracer_utils.h, next to
+// RocmTraceCollectorOptions, so that code which only needs to manipulate the
+// option structs does not have to depend on rocprofiler-sdk headers. It is
+// reachable from here through the include above.
 
 // The class use to enable rocprofiler-sdk buffered callback/activity tracing
 // and forward the collected trace events to RocmTraceCollector. There should be
@@ -121,7 +120,7 @@ class RocmTracer {
   bool api_tracing_enabled_{false};
   bool activity_tracing_enabled_{false};
 
-  AnnotationMap annotation_map_{/* default size, e.g. */ 1024 * 1024};
+  AnnotationMap annotation_map_{kDefaultMaxAnnotationStrings};
 
   // ROCTX range state lives in a thread_local stack in rocm_tracer.cc, not
   // here. roctx pushes and pops are thread-local by definition and the

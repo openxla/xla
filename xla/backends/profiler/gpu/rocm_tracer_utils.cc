@@ -158,6 +158,11 @@ ScopeRangeIdTree AnnotationMap::TakeScopeRangeIdTree() {
   return std::move(map_.scope_range_id_tree);
 }
 
+void AnnotationMap::SetMaxSize(uint64_t max_size) {
+  absl::MutexLock lock(map_.mutex);
+  max_size_ = max_size;
+}
+
 void AnnotationMap::Clear() {
   absl::MutexLock lock(map_.mutex);
   map_.correlation_map.clear();

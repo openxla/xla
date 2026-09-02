@@ -188,16 +188,39 @@ struct RoctxFrame {
   uint64_t generation;
 };
 
+// The annotation-string capacity used when nobody says otherwise. Named so the
+// tracer's AnnotationMap member, the default below and GpuTracer::BuildOptions
+// all refer to one value instead of three literals that can drift apart.
+inline constexpr uint64_t kDefaultMaxAnnotationStrings = 4 * 1024 * 1024;
+
+// The capacity fields below carry the same defaults as their CUPTI equivalents
+// in cupti_collector.h. Every caller in the tree assigns them explicitly today,
+// so these are defence in depth rather than a fix for a live bug: nothing in
+// the type system enforces the assignment, and RocmTracer::Enable now *reads*
+// max_annotation_strings, so a future caller that forgets it would otherwise
+// install an annotation cap from an indeterminate value.
+//
+// num_gpus deliberately has no default, matching CUPTI. There is no safe value:
+// 0 is not "all GPUs" to the collector -- RocmTraceCollectorImpl drops every
+// event whose device index fails `id < num_gpus_` and exports no device planes
+// at all, so defaulting it would turn a forgotten assignment into a silently
+// empty profile instead of something a sanitiser can catch.
+struct RocmTracerOptions {
+  // maximum number of annotation strings that AnnotationMap in RocmTracer can
+  // store.
+  uint64_t max_annotation_strings = kDefaultMaxAnnotationStrings;
+};
+
 struct RocmTraceCollectorOptions {
   // Maximum number of events to collect from callback API; if -1, no limit.
   // if 0, the callback API is enabled to build a correlation map, but no
   // events are collected.
-  uint64_t max_callback_api_events;
+  uint64_t max_callback_api_events = 2 * 1024 * 1024;
   // Maximum number of events to collect from activity API; if -1, no limit.
-  uint64_t max_activity_api_events;
+  uint64_t max_activity_api_events = 2 * 1024 * 1024;
   // Maximum number of annotation strings that we can accommodate.
-  uint64_t max_annotation_strings;
-  // Number of GPUs involved.
+  uint64_t max_annotation_strings = 1024 * 1024;
+  // Number of GPUs involved. Intentionally undefaulted; see above.
   uint32_t num_gpus;
 };
 
@@ -212,6 +235,11 @@ class AnnotationMap {
   int64_t LookUpScopeRangeId(uint64_t correlation_id);
   ScopeRangeIdTree TakeScopeRangeIdTree();
   void Clear();
+
+  // Sets the maximum number of distinct annotation strings retained. Intended
+  // to be called between profiling sessions, while the map is empty; entries
+  // already present are not evicted if the new size is smaller.
+  void SetMaxSize(uint64_t max_size);
 
  private:
   struct AnnotationMapImpl {
@@ -231,8 +259,8 @@ class AnnotationMap {
         ABSL_GUARDED_BY(mutex);
     ScopeRangeIdTree scope_range_id_tree ABSL_GUARDED_BY(mutex);
   };
-  const uint64_t max_size_;
   AnnotationMapImpl map_;
+  uint64_t max_size_ ABSL_GUARDED_BY(map_.mutex);
 
  public:
   // Disable copy and move.
