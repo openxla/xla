@@ -2397,6 +2397,22 @@ xla_test(
 )
 
 xla_test(
+    name = "ieee_f32_division_test",
+    srcs = ["ieee_f32_division_test.cc"],
+    deps = [
+        ":client_library_test_runner_mixin",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
+        ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/service",
+        "//xla/tsl/platform:test",
+    ],
+)
+
+xla_test(
     name = "log_test",
     srcs = ["log_test.cc"],
     deps = [
