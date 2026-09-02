@@ -1176,8 +1176,8 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
             graph::Moe_grouped_matmul_bwd_attributes().set_compute_data_type(
                 compute_dtype.value()));
 #else
-        VLOG(3) << "moe_grouped_matmul_bwd requires cuDNN 9.22+.";
-        return std::nullopt;
+        return absl::UnimplementedError(
+            "moe_grouped_matmul_bwd requires cuDNN 9.22+.");
 #endif  // CUDNN_VERSION >= 92200
       } else {
         auto moe_grouped_matmul_attr =
