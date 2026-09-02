@@ -3859,10 +3859,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enable autotuning between the native & triton fusion emitters."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_rocm_max_trace_events",
-      int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
+      [](int64_t) {
+        LOG(WARNING) << "--xla_gpu_rocm_max_trace_events is deprecated and "
+                        "has no effect. Use the gpu_max_callback_api_events "
+                        "and gpu_max_activity_api_events keys of "
+                        "ProfileOptions.advanced_configuration instead.";
+        return true;
+      },
       debug_options->xla_gpu_rocm_max_trace_events(),
-      "Maximum number of ROCm trace events (applies to callback/activity/"
-      "annotation). Set as high as memory allows; up to 1e9."));
+      "[Deprecated, do not use]. Use the gpu_max_callback_api_events and "
+      "gpu_max_activity_api_events keys of "
+      "ProfileOptions.advanced_configuration instead."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_tiling_propagation",
       bool_setter_for(

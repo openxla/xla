@@ -196,8 +196,7 @@ struct RocmTracerOptions {
   std::optional<uint64_t> max_annotation_strings;
 };
 
-// Upper bound for the event caps below, and the value
-// --xla_gpu_rocm_max_trace_events is clamped to. It must stay below INT32_MAX:
+// Upper bound for the event caps below. It must stay below INT32_MAX:
 // the collector counts events in std::atomic<int>, which would overflow before
 // reaching a larger cap.
 inline constexpr int64_t kMaxRocmTraceEvents = 1'000'000'000;

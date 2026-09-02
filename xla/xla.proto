@@ -1356,9 +1356,9 @@ message DebugOptions {
   // multi-thread mode.
   optional bool xla_gpu_require_exclusive_lock = 347;
 
-  // Maximum number of trace events for ROCm GPU profiling. Limits memory
-  // usage during profiling on AMD GPUs.
-  optional int64 xla_gpu_rocm_max_trace_events = 449;
+  // Deprecated and has no effect. Use the gpu_max_callback_api_events and
+  // gpu_max_activity_api_events keys of ProfileOptions.advanced_configuration.
+  optional int64 xla_gpu_rocm_max_trace_events = 449 [deprecated = true];
 
   optional ShapeChecks xla_gpu_shape_checks = 170;
 
