@@ -3740,8 +3740,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_rocm_max_trace_events",
       int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
       debug_options->xla_gpu_rocm_max_trace_events(),
-      "Maximum number of ROCm trace events (applies to callback/activity/"
-      "annotation). Set as high as memory allows; up to 1e9."));
+      "Default maximum number of ROCm trace events, used to seed the "
+      "callback- and activity-event limits. Those are overridden by the "
+      "gpu_max_callback_api_events and gpu_max_activity_api_events keys of "
+      "ProfileOptions.advanced_configuration, which take precedence. This flag "
+      "does not affect the annotation-string cache; use the "
+      "gpu_max_annotation_strings key for that. Set as high as memory allows; "
+      "up to 1e9."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_tiling_propagation",
       bool_setter_for(

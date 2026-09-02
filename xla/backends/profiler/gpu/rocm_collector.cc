@@ -591,8 +591,11 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
             << "!!! Number of callback events = " << num_callback_events_
             << " is greater than/equal to the max callback api events = "
             << options_.max_callback_api_events
-            << ". To collect more GPU events, please set "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=X ";
+            << ". To collect more GPU events, raise the "
+               "gpu_max_callback_api_events key of "
+               "ProfileOptions.advanced_configuration, or "
+               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events if that key is not "
+               "set -- the key takes precedence over the flag.";
         return;
       }
       num_callback_events_++;
@@ -611,11 +614,13 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
       if (num_activity_events_ >= options_.max_activity_api_events) {
         LOG_FIRST_N(WARNING, 1)
             << "Number of activity events (" << num_activity_events_
-            << ") has reached the configured limit "
-               "(xla_gpu_rocm_max_trace_events="
+            << ") has reached the configured limit ("
             << options_.max_activity_api_events
-            << "). To collect more GPU events, increase "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=<value>.";
+            << "). To collect more GPU events, raise the "
+               "gpu_max_activity_api_events key of "
+               "ProfileOptions.advanced_configuration, or "
+               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events if that key is not "
+               "set -- the key takes precedence over the flag.";
         return;
       }
 
