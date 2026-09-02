@@ -158,13 +158,14 @@ ScopeRangeIdTree AnnotationMap::TakeScopeRangeIdTree() {
   return std::move(map_.scope_range_id_tree);
 }
 
-void AnnotationMap::Clear() {
+void AnnotationMap::Reset(uint64_t max_size) {
   absl::MutexLock lock(map_.mutex);
   map_.correlation_map.clear();
   map_.roctx_range_map.clear();
   map_.scope_range_id_map.clear();
   map_.scope_range_id_tree.clear();
   map_.annotations.clear();
+  max_size_ = max_size;
 }
 
 }  // namespace profiler
