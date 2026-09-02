@@ -300,7 +300,9 @@ struct VectorizeLoad : mlir::OpRewritePattern<mlir::tensor::ExtractOp> {
     llvm::DenseSet<mlir::Operation*> visited;
     std::function<bool(mlir::Operation*)> has_sub_byte_trunc_user =
         [&](mlir::Operation* op) {
-          if (!visited.insert(op).second) return false;
+          if (!visited.insert(op).second) {
+            return false;
+          }
           return absl::c_any_of(op->getUsers(), [&](mlir::Operation* user) {
             auto trunc = mlir::dyn_cast<mlir::arith::TruncIOp>(user);
             if (trunc && IsSubByteIntOrFloatType(trunc.getResult().getType()))
