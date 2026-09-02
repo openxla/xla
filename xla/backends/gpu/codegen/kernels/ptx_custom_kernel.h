@@ -17,7 +17,9 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_CODEGEN_KERNELS_PTX_CUSTOM_KERNEL_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -44,7 +46,12 @@ absl::StatusOr<CustomKernel> GetOwnedPtxCustomKernel(
     size_t shared_memory_bytes = 0);
 
 absl::StatusOr<CustomKernel> CreateOwnedCubinCustomKernel(
-    std::string kernel_name, std::vector<uint8_t> cubin, int num_args,
+    std::string kernel_name, std::vector<uint8_t>&& cubin, int num_args,
+    se::BlockDim block_dim, se::ThreadDim thread_dim,
+    size_t shared_memory_bytes);
+
+absl::StatusOr<CustomKernel> CreateOwnedCubinCustomKernel(
+    std::string kernel_name, const std::vector<uint8_t>& cubin, int num_args,
     se::BlockDim block_dim, se::ThreadDim thread_dim,
     size_t shared_memory_bytes);
 
