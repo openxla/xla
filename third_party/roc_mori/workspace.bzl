@@ -14,8 +14,8 @@ To update to a new commit:
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 # Vendored from mori:main on 13-August-2026
-_MORI_COMMIT = "9e6ca3817f16a83ea50bd0e935e2c56e092bf77f"
-_MORI_SHA256 = "f2eb8f59511867834749f8791af935cdf93460d4eb961641fdcd11f4eb42055d"
+_MORI_COMMIT = "62dd4595421663fb040f742dd04f7992f485008c"
+_MORI_SHA256 = "f7158b2f75907f99e547d7c08fd596a70cfb84a9adad0246e17b0831863ac8db"
 
 def xla_repo():
     """Registers @roc_mori, fetched from GitHub and overlaid with our BUILD files."""
@@ -38,8 +38,7 @@ def xla_repo():
         # Adding a new sub-library (e.g. src/application) is a single extra
         # entry here plus a sibling BUILD.<name> file in this directory.
         link_files = {
-            "//third_party/roc_mori:src_shmem.BUILD": "src/shmem/BUILD.bazel",
             "//third_party/roc_mori:src_application.BUILD": "src/application/BUILD.bazel",
-            "//third_party/roc_mori:src_collective.BUILD": "src/collective/BUILD.bazel",
+            "//third_party/roc_mori:src_cco.BUILD": "src/cco/BUILD.bazel",
         },
     )
