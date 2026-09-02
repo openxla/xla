@@ -349,6 +349,14 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   return fused_expression_root->operands()[0];
 }
 
+bool IsColumnReductionHero(const HloInstruction* hero,
+                           const se::DeviceDescription& device_info) {
+  if (!IsReductionFromOrToContiguousDimensions(*hero, device_info)) {
+    return false;
+  }
+  return !GetReductionKindAndContiguousComponents(*hero).is_row_reduction;
+}
+
 FusionDecision FusionHeroesAreCompatible(
     const HloInstruction* hero1, const HloInstruction* hero2,
     const se::DeviceDescription& device_info) {
