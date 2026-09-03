@@ -84,18 +84,18 @@ class ShTestWithRunfiles(lit.formats.ShTest):
       # Support both bzlmod and workspace mode layouts
       lib_dirs = []
 
-      # Check all possible _solib_x86_64 locations
-      solib_paths = [
-        rf_path / "_main" / "_solib_x86_64",  # bzlmod
-        rf_path / "xla" / "_solib_x86_64",    # workspace with legacy_external_runfiles
-      ]
-      for solib in solib_paths:
-        if solib.is_dir():
-          lib_dirs.append(str(solib))
+      for candidate_root in [rf_path / "_main", rf_path / "xla", rf_path]:
+        if candidate_root.is_dir():
+          for solib in candidate_root.glob("_solib_*"):
+            if solib.is_dir():
+              lib_dirs.append(str(solib))
 
       if lib_dirs:
-        ld_library_path = ":".join(lib_dirs)
-        test.config.environment["LD_LIBRARY_PATH"] = ld_library_path
+        existing_ld_path = test.config.environment.get("LD_LIBRARY_PATH", "")
+        new_ld_path = ":".join(lib_dirs)
+        if existing_ld_path:
+          new_ld_path = f"{new_ld_path}:{existing_ld_path}"
+        test.config.environment["LD_LIBRARY_PATH"] = new_ld_path
 
     result = super().execute(test, lit_config)
 
