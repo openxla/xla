@@ -8005,12 +8005,26 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
     for (int64_t i = 1; i < dynamic_slice->operand_count(); ++i) {
       HloInstruction* index = dynamic_slice->mutable_operand(i);
       HloInstruction* inner_index = operand->mutable_operand(i);
+      const int64_t operand_dim =
+          operand->operand(0)->shape().dimensions(i - 1);
+      const int64_t inner_slice_size = operand->dynamic_slice_sizes()[i - 1];
+      const int64_t outer_slice_size =
+          dynamic_slice->dynamic_slice_sizes()[i - 1];
+      // The inner dynamic-slice clamps its start index to
+      // [0, operand_dim - inner_slice_size]; the outer one then clamps its own
+      // start, within the inner slice, to [0, inner_slice_size -
+      // outer_slice_size]. The start into the original operand is the sum of
+      // those two clamped values, so both indices must be clamped with their
+      // own bounds before adding. (Previously the inner index was clamped with
+      // the outer slice size and the outer index was added unclamped, which
+      // sliced the wrong elements for out-of-range but valid indices.)
       inner_index = inner_index->AddInstruction(HloInstruction::CreateTernary(
           inner_index->shape(), HloOpcode::kClamp,
           MakeScalarLike(inner_index, 0), inner_index,
-          MakeScalarLike(inner_index,
-                         operand->operand(0)->shape().dimensions(i - 1) -
-                             dynamic_slice->dynamic_slice_sizes()[i - 1])));
+          MakeScalarLike(inner_index, operand_dim - inner_slice_size)));
+      index = index->AddInstruction(HloInstruction::CreateTernary(
+          index->shape(), HloOpcode::kClamp, MakeScalarLike(index, 0), index,
+          MakeScalarLike(index, inner_slice_size - outer_slice_size)));
       if (inner_index->shape().element_type() !=
           index->shape().element_type()) {
         inner_index = inner_index->AddInstruction(
@@ -8192,6 +8206,16 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
               inner_index,
               dus_update->shape().dimensions(i - 2) -
                   dus_update->operand(1)->shape().dimensions(i - 2))));
+      // Clamp the outer index too: the inner ds(a, id) and the outer
+      // dus(..., id) both clamp id to [0, dim(a) - inner_update_size]. The
+      // composed start must clamp each index with its own bound before adding,
+      // otherwise an out-of-range (but valid, clamped) outer index writes the
+      // update at the wrong location.
+      index = index->AddInstruction(HloInstruction::CreateTernary(
+          index->shape(), HloOpcode::kClamp, MakeScalarLike(index, 0), index,
+          MakeScalarLike(index,
+                         dynamic_update_slice->shape().dimensions(i - 2) -
+                             dus_update->shape().dimensions(i - 2))));
       if (inner_index->shape().element_type() !=
           index->shape().element_type()) {
         inner_index = inner_index->AddInstruction(
