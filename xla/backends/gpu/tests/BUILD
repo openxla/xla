@@ -792,10 +792,10 @@ lit_test_suite_for_gpus(
         "a100_pcie_80",
         "a6000",
         "b200",
-        "mi450",
         "h100_sxm",
         "mi200",
         "mi350",
+        "mi450",
     ],
     tags = ["no-oneapi"],
     tools = [
