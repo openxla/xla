@@ -455,10 +455,23 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllReduceKernelSpec(
           : SymmetricMemoryType::kXlaRendezvous;
 
   CollectiveKernelSpec kernel_spec = {
-      /* .input_buffer_specs= */ {
-          {/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
-      /* .output_buffer_specs= */
-      {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
+      /* .codegen_config= */ {
+          /* .copy_input_to_scratch= */ false,
+          /* .emit_entry_barrier= */ false,
+          /* .input_buffer_specs= */
+          {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
+          /* .output_buffer_specs= */
+          {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
+          /* .argument_descriptors= */
+          {{KernelArgType::kInputBuffer,
+            /*index=*/0},  // buffers[0].source_buffer
+           {KernelArgType::kOutputBuffer,
+            /*index=*/0},  // buffers[0].dst_buffer
+           {KernelArgType::kRuntimeRank},
+           {KernelArgType::kInvocationCount},
+           {KernelArgType::kScratchBuffer, /*index=*/0},   // signal buffers
+           {KernelArgType::kScratchBuffer, /*index=*/1}},  // scratch buffers
+          /* .sync_count_increment = */ 1 + static_cast<uint32_t>(strategy)},
       /* .scratch_buffers= */
       {{signal_size, /*requires_multimem=*/false,  // Signal buffers
         sym_mem_type,
@@ -467,15 +480,7 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllReduceKernelSpec(
        {remote_size, /*requires_multimem=*/false,  // Remote buffers
         sym_mem_type,
         /*should_memzero=*/false,
-        /*should_double_buffer=*/true}},
-      /* .argument_descriptors= */
-      {{KernelArgType::kInputBuffer, /*index=*/0},   // buffers[0].source_buffer
-       {KernelArgType::kOutputBuffer, /*index=*/0},  // buffers[0].dst_buffer
-       {KernelArgType::kRuntimeRank},
-       {KernelArgType::kInvocationCount},
-       {KernelArgType::kScratchBuffer, /*index=*/0},   // signal buffers
-       {KernelArgType::kScratchBuffer, /*index=*/1}},  // scratch buffers
-      /* .sync_count_increment = */ 1 + static_cast<uint32_t>(strategy)};
+        /*should_double_buffer=*/true}}};
   return kernel_spec;
 }
 
