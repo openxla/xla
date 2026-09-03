@@ -14,10 +14,10 @@
 // =============================================================================
 
 // RUN: emitters_opt %s -split-input-file \
-// RUN:   -xla-lower-to-llvm-gpu="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx1250\"}'" \
+// RUN:   -xla-lower-to-llvm-gpu="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"mi450\"}'" \
 // RUN:   | FileCheck %s
 
-// gfx1250 has a native bf16 exp2 instruction (v_exp_bf16), reached via the
+// mi450 has a native bf16 exp2 instruction (v_exp_bf16), reached via the
 // llvm.amdgcn.exp2 intrinsic, instead of upcasting to f32 and calling
 // __ocml_exp2_f32.
 module {
@@ -34,7 +34,7 @@ module {
 // -----
 
 // A plain bf16 exp is rewritten to exp2(x * log2(e)) computed in f32 on
-// gfx1250: the input is widened to f32, scaled by an f32 log2(e), passed to the
+// mi450: the input is widened to f32, scaled by an f32 log2(e), passed to the
 // native f32 exp2 (llvm.amdgcn.exp2), then rounded back to bf16. Computing in
 // f32 avoids rounding the scaled exponent to bf16, which loses accuracy and can
 // overflow to inf (why the native bf16 exp path is not used).
@@ -54,7 +54,7 @@ module {
 
 // -----
 
-// gfx1250 has a native bf16 sqrt instruction (v_sqrt_bf16), reached via the
+// mi450 has a native bf16 sqrt instruction (v_sqrt_bf16), reached via the
 // llvm.amdgcn.sqrt intrinsic.
 module {
   func.func @sqrt_bf16(%arg0: bf16) -> bf16 {
@@ -69,7 +69,7 @@ module {
 
 // -----
 
-// gfx1250 has a native bf16 rsqrt instruction (v_rsq_bf16), reached via the
+// mi450 has a native bf16 rsqrt instruction (v_rsq_bf16), reached via the
 // llvm.amdgcn.rsq intrinsic.
 module {
   func.func @rsqrt_bf16(%arg0: bf16) -> bf16 {
@@ -84,7 +84,7 @@ module {
 
 // -----
 
-// gfx1250 has a native bf16 tanh instruction (v_tanh_bf16), reached via the
+// mi450 has a native bf16 tanh instruction (v_tanh_bf16), reached via the
 // llvm.amdgcn.tanh intrinsic.
 module {
   func.func @tanh_bf16(%arg0: bf16) -> bf16 {
@@ -99,7 +99,7 @@ module {
 
 // -----
 
-// gfx1250 has a native bf16 log2 instruction (v_log_bf16), reached via the
+// mi450 has a native bf16 log2 instruction (v_log_bf16), reached via the
 // llvm.amdgcn.log intrinsic.
 module {
   func.func @log2_bf16(%arg0: bf16) -> bf16 {
@@ -114,7 +114,7 @@ module {
 
 // -----
 
-// A plain bf16 log is rewritten to log2(x) * ln(2) on gfx1250 so it also uses
+// A plain bf16 log is rewritten to log2(x) * ln(2) on mi450 so it also uses
 // the native transcendental. The whole computation is done in f32: the bf16
 // input is widened to f32, log2 is evaluated with the native f32 instruction,
 // multiplied by an f32 ln(2), then rounded once back to bf16. Using the f32

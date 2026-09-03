@@ -48,7 +48,7 @@ NVIDIA_GPU_DEFAULT_BACKENDS = [
     "vr200",
 ] + if_google([], ["rtx6000pro"])
 
-AMD_GPU_DEFAULT_BACKENDS = ["amdgpu_any"]
+AMD_GPU_DEFAULT_BACKENDS = ["amdgpu_any", "mi450"]
 
 INTEL_GPU_DEFAULT_BACKENDS = ["intelgpu_any"]
 

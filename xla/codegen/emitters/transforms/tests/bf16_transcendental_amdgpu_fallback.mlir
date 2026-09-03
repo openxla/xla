@@ -18,7 +18,7 @@
 // RUN:   | FileCheck %s
 
 // On architectures without native bf16 transcendentals (e.g. gfx942), bf16
-// exp2 is upcast to f32 and lowered to __ocml_exp2_f32 rather than the gfx1250
+// exp2 is upcast to f32 and lowered to __ocml_exp2_f32 rather than the mi450
 // v_exp_bf16 / llvm.amdgcn.exp2 path.
 module {
   func.func @exp2_bf16(%arg0: bf16) -> bf16 {
@@ -34,7 +34,7 @@ module {
 // -----
 
 // sqrt has a generic bf16 lowering (llvm.intr.sqrt) on gfx942, so it does not
-// use the native gfx1250 llvm.amdgcn.sqrt path.
+// use the native mi450 llvm.amdgcn.sqrt path.
 module {
   func.func @sqrt_bf16(%arg0: bf16) -> bf16 {
     %0 = math.sqrt %arg0 : bf16
