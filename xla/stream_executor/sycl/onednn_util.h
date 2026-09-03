@@ -16,14 +16,12 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_SYCL_ONEDNN_UTIL_H_
 #define XLA_STREAM_EXECUTOR_SYCL_ONEDNN_UTIL_H_
 
-#include "absl/status/statusor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
 #include "xla/tsl/util/env_var.h"
-#include "xla/xla_data.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/str_util.h"
 

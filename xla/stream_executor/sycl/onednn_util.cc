@@ -22,7 +22,6 @@ limitations under the License.
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
 #include "xla/primitive_util.h"
-#include "xla/primitive_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/env_var.h"

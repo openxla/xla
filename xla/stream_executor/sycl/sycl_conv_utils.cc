@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/shape.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor {
 namespace sycl {
@@ -210,9 +210,8 @@ absl::StatusOr<ConvOp> BuildConvOp(
     const Pd& pd, dnnl::memory src, int src_arg_key, dnnl::memory filter,
     int weights_arg_key, dnnl::memory dst, int dst_arg_key,
     const dnnl::memory::desc& filter_md,
-    const dnnl::memory::desc& weights_target_desc,
-    bool prepack_filter, const dnnl::engine& engine,
-    ScratchAllocator* scratch_allocator,
+    const dnnl::memory::desc& weights_target_desc, bool prepack_filter,
+    const dnnl::engine& engine, ScratchAllocator* scratch_allocator,
     std::optional<ReorderOp>* out_filter_reorder) {
   ConvOp op;
   op.src = std::move(src);
@@ -249,7 +248,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
   ::sycl::queue* sycl_queue =
       absl::bit_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
   onednn_conv_primitive.engine = FindOrCreateEngine(sycl_queue);
-  onednn_conv_primitive.stream = dnnl::sycl_interop::make_stream(onednn_conv_primitive.engine, *sycl_queue);
+  onednn_conv_primitive.stream = dnnl::sycl_interop::make_stream(
+      onednn_conv_primitive.engine, *sycl_queue);
 
   DataLayout input_dl = config.input_descriptor.layout();
   FilterLayout filter_dl = config.filter_descriptor.layout();
@@ -352,8 +352,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         dnnl::memory::desc({dst_dims}, data_type, dst_fmt);
 
     bool use_plain_weight = false;
-    ABSL_RETURN_IF_ERROR(
-        tsl::ReadBoolFromEnvVar("ONEDNN_PLAIN_WEIGHT", false, &use_plain_weight));
+    ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar("ONEDNN_PLAIN_WEIGHT", false,
+                                                 &use_plain_weight));
     dnnl::memory::desc filter_md_prefer = dnnl::memory::desc(
         {filter_dims}, data_type, dnnl::memory::format_tag::any);
     if (use_plain_weight) {
@@ -373,8 +373,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     // create a reorder that copies it into dst before each conv execute.
     dnnl::memory side_input_memory;
     if (side_input_data && !side_input_scale_zero) {
-      side_input_memory =
-          CreateDnnlMemory(dst_md, onednn_conv_primitive.engine, side_input_data);
+      side_input_memory = CreateDnnlMemory(dst_md, onednn_conv_primitive.engine,
+                                           side_input_data);
       onednn_conv_primitive.side_input_reorder =
           CreateReorderOp(side_input_memory, dst_memory);
     }
@@ -410,8 +410,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
       auto bias_post_md =
           dnnl::memory::desc(bias_dims, data_type, dnnl::memory::format_tag::x);
       po.append_binary(dnnl::algorithm::binary_add, bias_post_md);
-      post_op_bias_memory =
-          CreateDnnlMemory(bias_post_md, onednn_conv_primitive.engine, bias_data);
+      post_op_bias_memory = CreateDnnlMemory(
+          bias_post_md, onednn_conv_primitive.engine, bias_data);
       post_op_bias_arg_key =
           DNNL_ARG_ATTR_MULTIPLE_POST_OP(po.len() - 1) | DNNL_ARG_SRC_1;
       has_post_op_bias = true;
@@ -462,26 +462,27 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         }
         // Create the convolution forward primitive descriptor with the
         // appropriate bias memory descriptor.
-        ConvFwdPd fwd_pd =
-            CreateConvFwdPd(onednn_conv_primitive.engine, src_md, filter_md_prefer, bias_md,
-                            dst_md, stride_dims, dilation_dims, padding_dims_l,
-                            padding_dims_r, post_ops_attr);
+        ConvFwdPd fwd_pd = CreateConvFwdPd(
+            onednn_conv_primitive.engine, src_md, filter_md_prefer, bias_md,
+            dst_md, stride_dims, dilation_dims, padding_dims_l, padding_dims_r,
+            post_ops_attr);
 
         // Build a convolution primitive
         ConvFwd fwd;
         ABSL_ASSIGN_OR_RETURN(
-            fwd, (BuildConvOp<ConvFwdPd, dnnl::convolution_forward, ConvFwd>(
-                     fwd_pd, std::move(src_memory), DNNL_ARG_SRC,
-                     std::move(filter_memory), DNNL_ARG_WEIGHTS,
-                     std::move(dst_memory), DNNL_ARG_DST, filter_md,
-                     fwd_pd.weights_desc(),
-                     /*prepack_filter=*/true, onednn_conv_primitive.engine,
-                     scratch_allocator, &onednn_conv_primitive.filter_reorder)));
+            fwd,
+            (BuildConvOp<ConvFwdPd, dnnl::convolution_forward, ConvFwd>(
+                fwd_pd, std::move(src_memory), DNNL_ARG_SRC,
+                std::move(filter_memory), DNNL_ARG_WEIGHTS,
+                std::move(dst_memory), DNNL_ARG_DST, filter_md,
+                fwd_pd.weights_desc(),
+                /*prepack_filter=*/true, onednn_conv_primitive.engine,
+                scratch_allocator, &onednn_conv_primitive.filter_reorder)));
 
         fwd.side_input = std::move(side_input_memory);
         if (bias_md.has_value()) {
-          fwd.bias =
-              CreateDnnlMemory(bias_md.value(), onednn_conv_primitive.engine, bias_data);
+          fwd.bias = CreateDnnlMemory(bias_md.value(),
+                                      onednn_conv_primitive.engine, bias_data);
           fwd.args.insert({DNNL_ARG_BIAS, fwd.bias});
         }
         if (has_post_op_bias) {
@@ -501,20 +502,21 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         dnnl::primitive_attr attr;
         attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
         ConvBwdInputPd bwd_input_pd = ConvBwdInputPd(
-            onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct, src_md,
-            filter_md_prefer, dst_md, stride_dims, dilation_dims,
+            onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct,
+            src_md, filter_md_prefer, dst_md, stride_dims, dilation_dims,
             padding_dims_l, padding_dims_r, fwd_pd, attr);
 
         ConvBwdData bwd;
         ABSL_ASSIGN_OR_RETURN(
-            bwd, (BuildConvOp<ConvBwdInputPd, dnnl::convolution_backward_data,
-                              ConvBwdData>(
-                     bwd_input_pd, std::move(src_memory), DNNL_ARG_DIFF_SRC,
-                     std::move(filter_memory), DNNL_ARG_WEIGHTS,
-                     std::move(dst_memory), DNNL_ARG_DIFF_DST, filter_md,
-                     bwd_input_pd.weights_desc(),
-                     /*prepack_filter=*/true, onednn_conv_primitive.engine,
-                     scratch_allocator, &onednn_conv_primitive.filter_reorder)));
+            bwd,
+            (BuildConvOp<ConvBwdInputPd, dnnl::convolution_backward_data,
+                         ConvBwdData>(
+                bwd_input_pd, std::move(src_memory), DNNL_ARG_DIFF_SRC,
+                std::move(filter_memory), DNNL_ARG_WEIGHTS,
+                std::move(dst_memory), DNNL_ARG_DIFF_DST, filter_md,
+                bwd_input_pd.weights_desc(),
+                /*prepack_filter=*/true, onednn_conv_primitive.engine,
+                scratch_allocator, &onednn_conv_primitive.filter_reorder)));
 
         onednn_conv_primitive.op = std::move(bwd);
         break;
@@ -530,8 +532,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         dnnl::primitive_attr attr;
         attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
         ConvBwdFilterPd bwd_filter_pd = ConvBwdFilterPd(
-            onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct, src_md,
-            filter_md_prefer, dst_md, stride_dims, dilation_dims,
+            onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct,
+            src_md, filter_md_prefer, dst_md, stride_dims, dilation_dims,
             padding_dims_l, padding_dims_r, fwd_pd, attr);
         ConvBwdWeights bwd;
         ABSL_ASSIGN_OR_RETURN(
