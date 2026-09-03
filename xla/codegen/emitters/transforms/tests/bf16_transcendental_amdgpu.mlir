@@ -14,7 +14,7 @@
 // =============================================================================
 
 // RUN: emitters_opt %s -split-input-file \
-// RUN:   -xla-lower-to-llvm-gpu="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"mi450\"}'" \
+// RUN:   -xla-lower-to-llvm-gpu="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx1250\"}'" \
 // RUN:   | FileCheck %s
 
 // mi450 has a native bf16 exp2 instruction (v_exp_bf16), reached via the

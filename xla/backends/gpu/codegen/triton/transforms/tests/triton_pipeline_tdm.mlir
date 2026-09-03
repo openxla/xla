@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ==============================================================================
-// RUN: xla-opt %s -split-input-file --triton-xla-pipeline='target=mi450' \
+// RUN: xla-opt %s -split-input-file --triton-xla-pipeline='target=gfx1250' \
 // RUN:   | FileCheck %s --check-prefix=CHECK-TDM
 //
 // RUN: xla-opt %s -split-input-file --triton-xla-pipeline='target=gfx950' \

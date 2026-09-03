@@ -32,7 +32,7 @@ gpu_device_info {
   clock_rate_ghz: 2.4
   device_memory_size: 17179869184
   rocm_compute_capability {
-    gcn_arch_name: "mi450"
+    gcn_arch_name: "gfx1250"
   }
 }
 platform_name: "ROCM"
