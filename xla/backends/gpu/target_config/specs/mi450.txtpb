@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Values are placeholders copied from existing gfx1201.
-# TODO: reconfirm and fix them once real gfx1250 hardware or its published
+# Values are placeholders copied from existing mi401.
+# TODO: reconfirm and fix them once real mi450 hardware or its published
 # spec is available.
 gpu_device_info {
   threads_per_block_limit: 1024
@@ -32,7 +32,7 @@ gpu_device_info {
   clock_rate_ghz: 2.4
   device_memory_size: 17179869184
   rocm_compute_capability {
-    gcn_arch_name: "gfx1250"
+    gcn_arch_name: "mi450"
   }
 }
 platform_name: "ROCM"

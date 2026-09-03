@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ==============================================================================
-// RUN: xla-opt %s -split-input-file --triton-xla-pipeline='target=gfx1250' \
+// RUN: xla-opt %s -split-input-file --triton-xla-pipeline='target=mi450' \
 // RUN:   | FileCheck %s --check-prefix=CHECK-TDM
 //
 // RUN: xla-opt %s -split-input-file --triton-xla-pipeline='target=gfx950' \
 // RUN:   | FileCheck %s --check-prefix=CHECK-NOTDM
 
 // Verifies that the full Triton XLA + AMD lowering pipeline emits TDM
-// intrinsics on gfx1250 and pointer-arithmetic buffer ops on non-TDM arches.
+// intrinsics on mi450 and pointer-arithmetic buffer ops on non-TDM arches.
 
 func.func @lower_extract_insert(%arg0: !tt.ptr<bf16>, %arg1: !tt.ptr<bf16>) {
   %extracted_tensor = triton_xla.extract from %arg0

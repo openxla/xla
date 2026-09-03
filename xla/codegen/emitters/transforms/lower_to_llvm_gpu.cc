@@ -77,7 +77,7 @@ constexpr double kLn2 = 0.6931471805599453;
 // log2(e), used to express exp(x) = exp2(x * log2(e)).
 constexpr double kLog2e = 1.4426950408889634;
 
-// Lowers a scalar bf16 unary `math` op to the matching native gfx1250 bf16
+// Lowers a scalar bf16 unary `math` op to the matching native mi450 bf16
 // transcendental instruction (v_exp_bf16, v_sqrt_bf16, v_rsq_bf16, v_tanh_bf16,
 // v_log_bf16, ...) via its `llvm.amdgcn.*` intrinsic, when the op maps 1:1 to
 // the instruction. Without this, the default MathToROCDL lowering upcasts bf16
@@ -109,7 +109,7 @@ struct TranscendentalBF16ToAMDGPU : public mlir::ConvertOpToLLVMPattern<OpTy> {
   llvm::StringRef intrinsic;
 };
 
-// Lowers a scalar bf16 `math.log` on gfx1250 by rewriting
+// Lowers a scalar bf16 `math.log` on mi450 by rewriting
 // log(x) = log2(x) * ln(2) and computing log2 with the native `v_log_f32`
 // transcendental (the `llvm.amdgcn.log` intrinsic) in f32.
 //
@@ -149,7 +149,7 @@ struct LogBF16ToAMDGPU
   }
 };
 
-// Lowers a scalar bf16 `math.exp` on gfx1250 by rewriting
+// Lowers a scalar bf16 `math.exp` on mi450 by rewriting
 // exp(x) = 2^(x * log2(e)) and computing exp2 with the native `v_exp_f32`
 // transcendental (the `llvm.amdgcn.exp2` intrinsic) in f32.
 //
@@ -233,7 +233,7 @@ class LowerToLLVMGPUPass
         mlir::configureGpuToROCDLConversionLegality(target);
         mlir::populateAMDGPUToROCDLConversionPatterns(converter, patterns,
                                                       *maybeChipset);
-        // On gfx1250 emit native bf16 transcendentals (v_exp_bf16, v_sqrt_bf16,
+        // On mi450 emit native bf16 transcendentals (v_exp_bf16, v_sqrt_bf16,
         // v_rsq_bf16, v_tanh_bf16, v_log_bf16, ...) instead of upcasting to f32
         // and calling __ocml_*_f32. Higher benefit than the default MathToROCDL
         // patterns so it wins for scalar bf16 ops.

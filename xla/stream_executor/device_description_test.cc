@@ -74,7 +74,7 @@ TEST(RocmComputeCapability, IsSupportedGfxVersion) {
   ASSERT_FALSE(RocmComputeCapability{"gfx906"}.is_supported_gfx_version());
   ASSERT_TRUE(RocmComputeCapability{"gfx1201"}.is_supported_gfx_version());
   ASSERT_TRUE(RocmComputeCapability{"gfx942"}.is_supported_gfx_version());
-  ASSERT_TRUE(RocmComputeCapability{"gfx1250"}.is_supported_gfx_version());
+  ASSERT_TRUE(RocmComputeCapability{"mi450"}.is_supported_gfx_version());
   ASSERT_FALSE(RocmComputeCapability{"some_string"}.is_supported_gfx_version());
 }
 
@@ -123,19 +123,19 @@ TEST(RocmComputeCapability, Accessors) {
   EXPECT_TRUE(RocmComputeCapability{"gfx1200"}.has_hipblaslt());
   EXPECT_TRUE(RocmComputeCapability{"gfx1100"}.has_hipblaslt());
   EXPECT_TRUE(RocmComputeCapability{"gfx1103"}.has_hipblaslt());
-  EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_hipblaslt());
+  EXPECT_TRUE(RocmComputeCapability{"mi450"}.has_hipblaslt());
 
-  EXPECT_FALSE(RocmComputeCapability{"gfx1250"}.has_nhwc_layout_support());
-  EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_fast_fp16_support());
-  EXPECT_FALSE(RocmComputeCapability{"gfx1250"}.has_mfma_instr_support());
+  EXPECT_FALSE(RocmComputeCapability{"mi450"}.has_nhwc_layout_support());
+  EXPECT_TRUE(RocmComputeCapability{"mi450"}.has_fast_fp16_support());
+  EXPECT_FALSE(RocmComputeCapability{"mi450"}.has_mfma_instr_support());
   EXPECT_TRUE(
-      RocmComputeCapability{"gfx1250"}.has_packed_fp16_atomics_support());
+      RocmComputeCapability{"mi450"}.has_packed_fp16_atomics_support());
   EXPECT_TRUE(
-      RocmComputeCapability{"gfx1250"}.has_packed_bf16_atomics_support());
-  EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_ocp_fp8_support());
-  EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_mx_type_support());
+      RocmComputeCapability{"mi450"}.has_packed_bf16_atomics_support());
+  EXPECT_TRUE(RocmComputeCapability{"mi450"}.has_ocp_fp8_support());
+  EXPECT_TRUE(RocmComputeCapability{"mi450"}.has_mx_type_support());
 
-  EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_tdm_support());
+  EXPECT_TRUE(RocmComputeCapability{"mi450"}.has_tdm_support());
   EXPECT_FALSE(RocmComputeCapability{"gfx942"}.has_tdm_support());
   EXPECT_FALSE(RocmComputeCapability{"gfx1201"}.has_tdm_support());
 }
