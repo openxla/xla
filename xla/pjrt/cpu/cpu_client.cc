@@ -108,6 +108,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
+#include "xla/service/cpu/cpu_xfeed.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/dump.h"
@@ -367,19 +368,19 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetPjRtCpuClient(
     }
   }
 
+  auto raw_client = std::make_unique<PjRtCpuRawClient>(
+      std::move(allocator), std::move(options.collectives), num_threads,
+      options.asynchronous, options.max_transpose_threads,
+      std::move(options.customize_hlo_module_config), cpu_device_count,
+      options.max_inflight_computations_per_device);
+
   std::vector<std::unique_ptr<PjRtCpuDevice>> devices;
   devices.reserve(topology->cpu_topology().number_of_devices());
   for (const auto& topology_device : topology->cpu_topology().devices()) {
     auto device = std::make_unique<PjRtCpuDevice>(
-        topology_device.process_id, topology_device.local_device_id,
-        options.max_inflight_computations_per_device);
+        topology_device.process_id, topology_device.local_device_id);
     devices.push_back(std::move(device));
   }
-
-  auto raw_client = std::make_unique<PjRtCpuRawClient>(
-      std::move(allocator), std::move(options.collectives), num_threads,
-      options.asynchronous, options.max_transpose_threads,
-      std::move(options.customize_hlo_module_config));
 
   return std::unique_ptr<PjRtClient>(
       new PjRtCpuClient(options.process_id, std::move(devices),
@@ -401,12 +402,58 @@ static tsl::ThreadOptions GetThreadOptions() {
   return thread_options;
 }
 
+absl::StatusOr<bool> PjRtCpuRawClient::PoisonExecution(
+    LocalDeviceId local_device_id, int32_t launch_id, absl::Status error) {
+  if (!(local_device_id >= 0 &&
+        local_device_id < local_device_states_.size())) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "PjRtCpuRawClient: ", local_device_id, " is out of range: [0, ",
+        local_device_states_.size(), ") for local devices"));
+  }
+  return local_device_states_[local_device_id.value()]
+      ->async_execution_tracker()
+      ->SetError(launch_id, std::move(error));
+}
+
+absl::Status PjRtCpuRawClient::TransferToInfeed(LocalDeviceId local_device_id,
+                                                const LiteralSlice& literal) {
+  return TransferLiteralToInfeedOnCpu(local_device_id.value(), literal);
+}
+
+absl::Status PjRtCpuRawClient::TransferFromOutfeed(
+    LocalDeviceId local_device_id, MutableBorrowingLiteral literal) {
+  return TransferLiteralFromOutfeedOnCpu(local_device_id.value(), literal);
+}
+
+PjRtCpuRawClient::LocalDeviceState* PjRtCpuRawClient::GetLocalDeviceState(
+    LocalDeviceId local_device_id) {
+  CHECK((local_device_id.value() < local_device_states_.size()) &&
+        (local_device_id.value() >= 0))
+      << "Local device id " << local_device_id << " not in range: [0, "
+      << local_device_states_.size() << ")";
+  return local_device_states_[local_device_id.value()].get();
+}
+
+static std::vector<std::unique_ptr<PjRtCpuRawClient::LocalDeviceState>>
+MakeLocalDeviceStates(int cpu_device_count, int max_inflight_computations) {
+  std::vector<std::unique_ptr<PjRtCpuRawClient::LocalDeviceState>> results;
+  results.reserve(cpu_device_count);
+  for (size_t i = 0; i < cpu_device_count; ++i) {
+    results.push_back(std::make_unique<PjRtCpuRawClient::LocalDeviceState>(
+        max_inflight_computations));
+  }
+  return results;
+}
+
 PjRtCpuRawClient::PjRtCpuRawClient(
     std::shared_ptr<CpuDeviceMemory::Allocator> allocator,
     std::shared_ptr<cpu::CpuCollectives> collectives, size_t num_threads,
     bool asynchronous, int max_transpose_threads,
-    std::function<void(HloModuleConfig&)> customize_hlo_module_config)
-    : allocator_(std::move(allocator)),
+    std::function<void(HloModuleConfig&)> customize_hlo_module_config,
+    int cpu_device_count, int max_inflight_computations)
+    : local_device_states_(
+          MakeLocalDeviceStates(cpu_device_count, max_inflight_computations)),
+      allocator_(std::move(allocator)),
       collectives_(std::move(collectives)),
       asynchronous_(asynchronous),
       max_transpose_threads_(max_transpose_threads),
@@ -1313,10 +1360,10 @@ CpuExecutableLoadState::LoadRawExecutable(
     DeviceAndAssignment device_and_assign, int attempt) {
   auto result = std::make_unique<CpuPjRtRawLoadedExecutable>(run_id);
   result->executable_ = absl::down_cast<PjRtCpuExecutable*>(&executable.get());
-  result->device_ = absl::down_cast<PjRtCpuDevice*>(device_and_assign.device);
-  auto* client = result->device_->client();
-  result->raw_client_ = absl::down_cast<PjRtCpuRawClient*>(
-      absl::down_cast<CommonPjRtClient*>(client)->raw_client());
+  auto* client =
+      absl::down_cast<CommonPjRtClient*>(device_and_assign.device->client());
+  result->raw_client_ =
+      absl::down_cast<PjRtCpuRawClient*>(client->raw_client());
   int num_addressable_devices = 0;
   if (device_and_assign.device_assignment != nullptr) {
     for (int r = 0; r < device_and_assign.device_assignment->replica_count();
@@ -1332,6 +1379,8 @@ CpuExecutableLoadState::LoadRawExecutable(
   }
   result->num_addressable_devices_ = num_addressable_devices;
   result->device_assignment_ = std::move(device_and_assign.device_assignment);
+  result->local_device_id_ = device_and_assign.device->local_device_id();
+  result->global_device_id_ = device_and_assign.device->global_device_id();
   return result;
 }
 
@@ -1370,6 +1419,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     absl::Span<const PjRtRawBufferRef> output_leaf_buffers,
     PjRtDeviceEventRefVector extra_deps, PjRtDeviceEventRefVector control_deps,
     bool is_predetermined_error, bool fill_future) && {
+  auto* local_device_state = raw_client_->GetLocalDeviceState(local_device_id_);
   PjRtRawLoadedExecutable::RawExecuteResult result;
   // `returned_future_can_be_set_event` indicates when `returned_future` can be
   // set using `execute_event`. This is necessary to delay setting the
@@ -1448,7 +1498,8 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   // allows the inputs for the next executable to be fetched even if the
   // launch is delayed.
   auto compute_reservation = std::make_unique<Semaphore::ScopedReservation>(
-      device_->max_inflight_computations_semaphore().ScopedAcquire(1));
+      local_device_state->max_inflight_computations_semaphore().ScopedAcquire(
+          1));
 
   ExecutableRunOptions run_options;
   run_options.set_run_id(run_id_);
@@ -1468,10 +1519,10 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       cpu_execute_context->process_index().has_value()) {
     run_options.set_device_ordinal(
         PackCpuDeviceId(*cpu_execute_context->process_index(),
-                        UnpackCpuLocalDeviceId(device_->global_device_id()))
+                        UnpackCpuLocalDeviceId(global_device_id_))
             .value());
   } else {
-    run_options.set_device_ordinal(device_->global_device_id().value());
+    run_options.set_device_ordinal(global_device_id_.value());
   }
   if (cpu_execute_context != nullptr &&
       cpu_execute_context->collectives() != nullptr) {
@@ -1495,8 +1546,9 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   } else {
     // This is a non-parallel computation. Add the last enqueue event as a
     // dependency with any error cleared.
-    auto last_enqueue_event = device_->stream_event_map()->GetLastEnqueueEvent(
-        options.execution_stream_id);
+    auto last_enqueue_event =
+        local_device_state->stream_event_map()->GetLastEnqueueEvent(
+            options.execution_stream_id);
     if (!last_enqueue_event.IsAvailable()) {
       auto last_enqueue_done_event =
           tsl::MakeUnconstructedAsyncValueRef<CpuEvent>();
@@ -1624,7 +1676,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     if (!is_a_collective_launch) {
       // This is a non-parallel computation. Set the execute event as the new
       // last enqueue event.
-      auto* stream_event_map = device_->stream_event_map();
+      auto* stream_event_map = local_device_state->stream_event_map();
       stream_event_map->SetLastEnqueueEvent(options.execution_stream_id,
                                             execute_event.CopyRef());
       execute_event.AndThen([stream_event_map,
@@ -1634,7 +1686,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       });
     }
     CpuScopedAsyncExecution scoped_async_execution =
-        device_->async_execution_tracker()->NewAsyncExecution(
+        local_device_state->async_execution_tracker()->NewAsyncExecution(
             run_id_.ToInt(), std::move(ready_on_exit).Release());
     PjRtDeviceEventSpan events_ref(input_deps);
     xla::ExecuteWhenReady(
