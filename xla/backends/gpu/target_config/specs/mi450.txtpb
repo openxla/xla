@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Values are placeholders copied from existing mi401.
+# Values are placeholders copied from existing gfx1201.
 # TODO: reconfirm and fix them once real mi450 hardware or its published
 # spec is available.
 gpu_device_info {
