@@ -161,6 +161,10 @@ struct PrimitiveTypeToNative<xla::F32> {
   using type = float;
 };
 template <>
+struct PrimitiveTypeToNative<xla::F64> {
+  using type = double;
+};
+template <>
 struct PrimitiveTypeToNative<xla::F16> {
   using type = ::sycl::half;
 };
@@ -321,7 +325,7 @@ absl::StatusOr<dnnl::memory::desc> ShapeToMemDesc(const xla::Shape& shape) {
     return dnnl::memory::desc{};
   }
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type dtype,
-                        sycl::ToOneDnnDataType(shape.element_type()));
+                   sycl::ToOneDnnDataType(shape.element_type()));
   return dnnl::memory::desc(dims, dtype, strides);
 }
 
@@ -396,11 +400,11 @@ CreateMatMulPrimDescFromGemmConfig(
 
   // Get OneDNN data type from layout
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type lhs_dtype,
-                        sycl::ToOneDnnDataType(lhs_layout.dtype));
+                   sycl::ToOneDnnDataType(lhs_layout.dtype));
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type rhs_dtype,
-                        sycl::ToOneDnnDataType(rhs_layout.dtype));
+                   sycl::ToOneDnnDataType(rhs_layout.dtype));
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type output_dtype,
-                        sycl::ToOneDnnDataType(output_layout.dtype));
+                   sycl::ToOneDnnDataType(output_layout.dtype));
 
   auto lhs_md = dnnl::memory::desc(lhs_dims, lhs_dtype, lhs_strides);
   auto rhs_md = dnnl::memory::desc(rhs_dims, rhs_dtype, rhs_strides);
@@ -632,6 +636,7 @@ absl::Status RunGemm(const gpu::GemmConfig& config,
   TYPED_GEMM(xla::BF16, xla::BF16, xla::F32)
   TYPED_GEMM(xla::F16, xla::F16, xla::F16)
   TYPED_GEMM(xla::F16, xla::F16, xla::F32)
+  TYPED_GEMM(xla::F64, xla::F64, xla::F64)
   TYPED_GEMM(xla::S8, xla::S8, xla::S32)
   // TODO (intel-tf): Add support for more combinations of input/output types
 
