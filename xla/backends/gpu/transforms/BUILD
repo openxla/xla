@@ -3636,6 +3636,8 @@ cc_library(
     srcs = ["topk_specializer.cc"],
     hdrs = ["topk_specializer.h"],
     deps = [
+        "//xla:comparison_util",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -3651,6 +3653,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
@@ -3659,6 +3662,9 @@ cc_library(
 xla_test(
     name = "topk_specializer_test",
     srcs = ["topk_specializer_test.cc"],
+    backend_tags = {
+        "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
+    },
     backends = ["gpu"],
     shard_count = 10,
     deps = [
@@ -3667,6 +3673,7 @@ xla_test(
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/testlib:filecheck",
         "//xla/service:topk_rewriter",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
