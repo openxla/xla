@@ -30,6 +30,16 @@ class GpuDeviceCommunicator;
 
 namespace stream_executor::gpu {
 
+// Launch shape of the device kernel. The thunk sizes its grid at one CTA per
+// SM (see RaggedAllToAllThunk::DeviceKernelCtaCount), and the in-kernel
+// cross-rank barriers deadlock unless the whole grid is resident at once.
+// The kernel's __launch_bounds__ passes kRaggedAllToAllDeviceKernelCtasPerSm
+// as minBlocksPerMultiprocessor, holding register allocation at 64
+// registers/thread on a 64K-register SM, well inside the launched grid's
+// residency requirement.
+inline constexpr int kRaggedAllToAllDeviceKernelThreadsPerCta = 128;
+inline constexpr int kRaggedAllToAllDeviceKernelCtasPerSm = 8;
+
 template <int64_t kVectorSize>
 struct RaggedAllToAllDeviceKernel {
   using KernelType = stream_executor::TypedKernel<

@@ -964,11 +964,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
 
         const int64_t num_updates_per_replica =
             config_.num_total_updates / num_ranks;
-        // Remote peers are reached via GIN puts; local peers via LSA copies.
-        const int64_t num_active_updates =
-            (gin ? num_ranks : lsa_size) * num_updates_per_replica;
-        const int32_t cta_count =
-            DeviceKernelLaunchCtaCount(core_count, num_active_updates);
+        const int32_t cta_count = DeviceKernelCtaCount(core_count);
         const PrimitiveType element_type = device_buffers[0].element_type;
 
         XLA_VLOG_DEVICE(3, state->device_ordinal)
