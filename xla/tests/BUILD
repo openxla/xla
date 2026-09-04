@@ -905,9 +905,12 @@ xla_test(
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
+        ":xla_test_backend_predicates",
         "//xla:error_spec",
+        "//xla:fp_util",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder/lib:math",
