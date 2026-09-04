@@ -19,7 +19,7 @@
 // RUN:   | FileCheck %s --check-prefix=CHECK-NOTDM
 
 // Verifies that the full Triton XLA + AMD lowering pipeline emits TDM
-// intrinsics on gfx1250 and pointer-arithmetic buffer ops on non-TDM arches.
+// intrinsics on mi450 and pointer-arithmetic buffer ops on non-TDM arches.
 
 func.func @lower_extract_insert(%arg0: !tt.ptr<bf16>, %arg1: !tt.ptr<bf16>) {
   %extracted_tensor = triton_xla.extract from %arg0
