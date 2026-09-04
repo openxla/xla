@@ -164,7 +164,16 @@ jobs:
             --bes_keywords=jax \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
-            --bes_keywords=pull_request
+            --bes_keywords=pull_request \
+            --build_event_json_file=/work/jax_build_events.json
+
+      - name: Upload JAX BEP File
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: jax-bep
+          path: jax_build_events.json
+          if-no-files-found: warn
 
       - &cleanup_container
         name: Cleanup container
@@ -222,6 +231,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
+            --build_event_json_file=/work/xla_single_gpu_build_events.json \
 
       - name: Test XLA [rocm_cpu]
         timeout-minutes: 80
@@ -239,6 +249,84 @@ jobs:
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=cpu \
-            --bes_keywords=pull_request
+            --bes_keywords=pull_request \
+            --build_event_json_file=/work/xla_rocm_cpu_build_events.json
+
+      - name: Upload XLA BEP Files
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: xla-bep
+          path: |
+            xla_single_gpu_build_events.json
+            xla_rocm_cpu_build_events.json
+          if-no-files-found: warn
 
       - *cleanup_container
+
+  notify-infra-errors:
+    name: Check and Notify Infrastructure Errors
+    needs: [jax, xla]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout for analysis script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openxla/xla
+          persist-credentials: false
+
+      - name: Download JAX BEP artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        continue-on-error: true
+        with:
+          name: jax-bep
+          path: ./bep-files
+
+      - name: Download XLA BEP artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        continue-on-error: true
+        with:
+          name: xla-bep
+          path: ./bep-files
+
+      - name: Analyze BEP Files for Infrastructure Errors
+        id: analyze_bep
+        run: |
+          # JAX BEP
+          if [ -f "bep-files/jax_build_events.json" ]; then
+            echo "========== jax_build_events.json =========="
+            cat "bep-files/jax_build_events.json"
+            echo "==========================================="
+            python3 build_tools/rocm/analyze_bep_infra_errors.py "bep-files/jax_build_events.json" || echo "has_errors=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # XLA single_gpu BEP
+          if [ -f "bep-files/xla_single_gpu_build_events.json" ]; then
+            echo "========== xla_single_gpu_build_events.json =========="
+            cat "bep-files/xla_single_gpu_build_events.json"
+            echo "======================================================"
+            python3 build_tools/rocm/analyze_bep_infra_errors.py "bep-files/xla_single_gpu_build_events.json" || echo "has_errors=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # XLA rocm_cpu BEP
+          if [ -f "bep-files/xla_rocm_cpu_build_events.json" ]; then
+            echo "========== xla_rocm_cpu_build_events.json =========="
+            cat "bep-files/xla_rocm_cpu_build_events.json"
+            echo "===================================================="
+            python3 build_tools/rocm/analyze_bep_infra_errors.py "bep-files/xla_rocm_cpu_build_events.json" || echo "has_errors=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Email Notification
+        if: steps.analyze_bep.outputs.has_errors == 'true'
+        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "ROCm CI Infrastructure Error - Run #${{ github.run_id }}"
+          to: ${{ secrets.INFRA_ERROR_EMAIL_RECIPIENTS }}
+          from: ROCm CI Bot <${{ secrets.MAIL_FROM }}>
+          body: "Infrastructure errors detected in ROCm CI workflow. View details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          convert_markdown: false
