@@ -52,6 +52,13 @@ for env in [
     "LLVM_COVERAGE_FILE",
     "GCOV_PREFIX",
     "GCOV_PREFIX_STRIP",
+    # ROCm related env variables
+    "HSA_MODEL_TOPOLOGY",
+    "HSA_MODEL_LIB",
+    "HSA_KMT_MODEL_GPUVM_BASE",
+    "HSA_ENABLE_SDMA",
+    "HSA_ENABLE_INTERRUPT",
+    "LD_LIBRARY_PATH",
 ] + extra_env_flags:
   value = os.environ.get(env)
   if value:
