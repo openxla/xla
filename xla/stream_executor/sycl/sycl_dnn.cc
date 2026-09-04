@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace sycl {
@@ -53,8 +54,12 @@ absl::Status OnednnSupport::DoConvolveWithGpuConfig(
     Stream* stream, const xla::gpu::GpuConvConfig& config,
     absl::Span<const DeviceMemoryBase> operand_se_buffers,
     DeviceMemoryBase result_se_buffer, ScratchAllocator* scratch_allocator) {
-  return absl::UnimplementedError(
-      "DoConvolveWithGpuConfig is not implemented for SYCL oneDNN");
+  ABSL_ASSIGN_OR_RETURN(
+      auto onednn_primitive,
+      CreateOneDnnConvPrimitive(config, operand_se_buffers, result_se_buffer,
+                                stream, scratch_allocator));
+  ABSL_RETURN_IF_ERROR(DoOnednnConv(onednn_primitive));
+  return absl::OkStatus();
 }
 
 void initialize_onednn() {
