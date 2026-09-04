@@ -314,6 +314,7 @@ CodegenOrchestrator::Options GetCodegenOrchestratorOptions(
     options.allow_reg_spills_fn = [](const HloInstruction&,
                                      autotuner::Backend) { return false; };
   }
+  options.candidate_configs_file = debug_options.xla_candidate_configs_file();
   return options;
 }
 

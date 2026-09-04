@@ -1841,7 +1841,11 @@ message DebugOptions {
   // cache and autotuning. Accepts textproto of autotuner.Config.
   optional string xla_force_config = 543;
 
-  // Next id: 544
+  // File containing a list of serialized configs to override candidate configs
+  // for all instructions. Accepts textproto of autotuner.CandidateConfigs.
+  optional string xla_candidate_configs_file = 544;
+
+  // Next id: 545
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

@@ -1015,6 +1015,14 @@ TEST_F(ConfigAssignerPassTest, ForceConfigPropagatesToConfigAssignerOptions) {
   EXPECT_EQ(options.force_config, forced_config);
 }
 
+TEST_F(ConfigAssignerPassTest,
+       CandidateConfigsFilePropagatesToCodegenOrchestratorOptions) {
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_candidate_configs_file("/tmp/candidates.pbtxt");
+  auto options = GetCodegenOrchestratorOptions(debug_options);
+  EXPECT_EQ(options.candidate_configs_file, "/tmp/candidates.pbtxt");
+}
+
 TEST_F(ConfigAssignerPassTest, CustomFusionForbidsSpills) {
   auto options = GetCodegenOrchestratorOptions(GetDebugOptionsForTest());
 
