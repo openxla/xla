@@ -220,11 +220,12 @@ absl::StatusOr<bool> RunScheduler(
       /*convert_all_reduce=*/HloPredicateTrue,
       /*convert_all_gather=*/HloPredicateTrue,
       /*convert_collective_broadcast=*/HloPredicateTrue,
+      /*convert_collective_reduce=*/HloPredicateFalse,
       /*convert_collective_permute=*/HloPredicateTrue};
   bool value = false;
   if (!skip_async_collective_creator) {
-    ABSL_ASSIGN_OR_RETURN(value,
-                     AsyncCollectiveCreator(std::move(config)).Run(module));
+    ABSL_ASSIGN_OR_RETURN(
+        value, AsyncCollectiveCreator(std::move(config)).Run(module));
   }
   if (!legalizer_config) {
     legalizer_config =
@@ -258,8 +259,8 @@ absl::StatusOr<bool> RunScheduler(
   auto scheduler_core =
       std::make_unique<DefaultSchedulerCore>(scheduling_context, sched_config);
   ABSL_ASSIGN_OR_RETURN(value, LatencyHidingScheduler(scheduling_context,
-                                                 std::move(scheduler_core))
-                              .Run(module));
+                                                      std::move(scheduler_core))
+                                   .Run(module));
 
   return value;
 }
@@ -300,11 +301,11 @@ class LatencyHidingSchedulerTest : public HloHardwareIndependentTestBase {
         /*convert_all_gather=*/HloPredicateTrue,
         /*convert_collective_broadcast=*/HloPredicateTrue,
         /*convert_collective_permute=*/HloPredicateTrue};
-    ABSL_ASSIGN_OR_RETURN(bool value,
-                     AsyncCollectiveCreator(std::move(config)).Run(module));
+    ABSL_ASSIGN_OR_RETURN(
+        bool value, AsyncCollectiveCreator(std::move(config)).Run(module));
     ABSL_ASSIGN_OR_RETURN(value, LegalizeSchedulingAnnotations(
-                                LegalizeSchedulingAnnotations::Config())
-                                .Run(module));
+                                     LegalizeSchedulingAnnotations::Config())
+                                     .Run(module));
 
     if (!async_tracker) {
       async_tracker = std::make_unique<AsyncTracker>(sched_config);
