@@ -2162,7 +2162,7 @@ class ReadySetLt {
       DefaultSchedulerCore::ScheduleCandidate& b, const char** reason) const;
 
   static std::optional<bool> InvokeTargetSchedulingFunction(
-      DefaultSchedulerCore::TargetSchedulingRule func,
+      const DefaultSchedulerCore::TargetSchedulingRule& func,
       DefaultSchedulerCore::ScheduleCandidate& a,
       DefaultSchedulerCore::ScheduleCandidate& b, const char** reason);
 
