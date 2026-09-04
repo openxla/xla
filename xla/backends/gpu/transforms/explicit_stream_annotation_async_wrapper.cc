@@ -96,11 +96,10 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   }
   ClearSchedulingAnnotations(instr);
 
-  ABSL_ASSIGN_OR_RETURN(
-      HloInstruction * done,
-      computation->CreateAsyncInstructions(
-          instr, {}, StreamAttributeAsyncWrapper::kParallelExecutionThread,
-          /*replace=*/true));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * done,
+                        computation->CreateAsyncInstructions(
+                            instr, {}, HloInstruction::kParallelExecutionThread,
+                            /*replace=*/true));
   // Replace the original attributes after creating the async pair.
   done->set_frontend_attributes(original_attributes);
   done->mutable_operand(0)->set_frontend_attributes(original_attributes);

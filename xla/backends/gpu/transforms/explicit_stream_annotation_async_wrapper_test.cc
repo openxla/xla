@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -474,13 +475,12 @@ TEST_F(ExplicitStreamAnnotationAsyncWrapperTest,
   const HloInstruction* call_start =
       FindInstruction(module.get(), "call-start");
   ASSERT_NE(call_start, nullptr);
-  const auto* async_start =
-      dynamic_cast<const HloAsyncStartInstruction*>(call_start);
+  const auto* async_start = DynCast<HloAsyncStartInstruction>(call_start);
   ASSERT_NE(async_start, nullptr);
   EXPECT_EQ(async_start->async_execution_thread(),
-            StreamAttributeAsyncWrapper::kParallelExecutionThread);
+            HloInstruction::kParallelExecutionThread);
   EXPECT_EQ(async_start->async_wrapped_computation()->execution_thread(),
-            StreamAttributeAsyncWrapper::kParallelExecutionThread);
+            HloInstruction::kParallelExecutionThread);
 }
 
 }  // namespace
