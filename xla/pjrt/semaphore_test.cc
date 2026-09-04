@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/semaphore.h"
 
+#include <utility>
+
 #include <gtest/gtest.h>
 #include "absl/synchronization/notification.h"
 #include "xla/hlo/testlib/test.h"
@@ -78,6 +80,39 @@ TEST(SemaphoreTest, ConcurrentTest) {
   EXPECT_FALSE(a_done.HasBeenNotified());
   semaphore.Release(1);
   a_done.WaitForNotification();
+}
+
+TEST(SemaphoreTest, ScopedReservationMoveAssignment) {
+  Semaphore semaphore(10);
+  ASSERT_EQ(semaphore.value(), 10);
+
+  {
+    auto r1 = semaphore.ScopedAcquire(5);
+    ASSERT_EQ(semaphore.value(), 5);
+    auto r2 = semaphore.ScopedAcquire(3);
+    ASSERT_EQ(semaphore.value(), 2);
+
+    r1 = std::move(r2);
+    ASSERT_EQ(semaphore.value(), 7);
+    ASSERT_EQ(r1.amount(), 3);
+  }
+  ASSERT_EQ(semaphore.value(), 10);
+}
+
+TEST(SemaphoreTest, ScopedReservationSelfMoveAssignment) {
+  Semaphore semaphore(10);
+  ASSERT_EQ(semaphore.value(), 10);
+
+  {
+    auto r1 = semaphore.ScopedAcquire(5);
+    ASSERT_EQ(semaphore.value(), 5);
+
+    auto& r1_ref = r1;
+    r1 = std::move(r1_ref);
+    ASSERT_EQ(semaphore.value(), 5);
+    ASSERT_EQ(r1.amount(), 5);
+  }
+  ASSERT_EQ(semaphore.value(), 10);
 }
 
 }  // namespace
