@@ -223,7 +223,7 @@ TEST_F(TopkTest, RewriteStableTopKF32ToUint64) {
       p.1.rhs = s32[] parameter(3)
       p.0.lhs = f32[] parameter(0)
       p.0.rhs = f32[] parameter(1)
-      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, type=TOTALORDER
+      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, order=TOTAL
     }
 
     ENTRY top_k {
@@ -298,7 +298,7 @@ TEST_F(TopkTest, RewriteStableTopKBF16ToUint64) {
       p.1.rhs = s32[] parameter(3)
       p.0.lhs = bf16[] parameter(0)
       p.0.rhs = bf16[] parameter(1)
-      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, type=TOTALORDER
+      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, order=TOTAL
     }
 
     ENTRY top_k {
