@@ -864,6 +864,48 @@ module {
                                                   std::move(device_list1)));
 }
 
+TEST_F(IfrtIrLoadedExecutableTest, RemapSliceArray) {
+  if (GetNumDevices() < 2) {
+    GTEST_SKIP() << "Insufficient devices to run this test.";
+  }
+  std::string source = R"(
+!array = !ifrt.array<tensor<2x2xi32>,
+                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
+!array0 = !ifrt.array<tensor<1x2xi32>,
+                      #ifrt.sharding_param<1x1 to [0] on 1>, [1]>
+module {
+  func.func @main(%arg0: !array) -> !array0
+      attributes {ifrt.function} {
+    %0, %ctrl_0 = ifrt.RemapArrays(%arg0)
+      mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[1:2:1] to [0:1:1]>]>]
+      : (!array) -> !array0
+    return %0 : !array0
+  }
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
+  ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
+                       CompileProgram(source, devices));
+
+  std::vector<int> data_shard0 = {0, 1};
+  std::vector<int> data_shard1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
+  ASSERT_OK_AND_ASSIGN(ArrayRef input,
+                       CreateArray({data_shard0.data(), data_shard1.data()},
+                                   Shape({2, 2}), shard_shape, dtype, devices));
+
+  ASSERT_OK_AND_ASSIGN(
+      LoadedExecutable::ExecuteResult result,
+      Execute(loaded_exec, absl::MakeSpan(&input, 1), devices));
+  ASSERT_OK(result.status.Await());
+  ASSERT_EQ(result.outputs.size(), 1);
+  ASSERT_OK_AND_ASSIGN(DeviceListRef out_devices,
+                       client_->MakeDeviceList({devices->devices()[1]}));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{2, 3}}, std::move(out_devices)));
+}
+
 TEST_F(IfrtIrLoadedExecutableTest, LoadedExecBinding) {
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   std::string mhlo_source = R"(
