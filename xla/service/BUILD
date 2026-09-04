@@ -4738,6 +4738,9 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    disabled_backends = [
+        "gb300",  # LLVM compilation fails due to PTX < 8.8
+    ],
     tags = [
         "no_windows",  # TODO(b/152037541)
     ],
