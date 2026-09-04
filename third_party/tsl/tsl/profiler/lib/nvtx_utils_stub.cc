@@ -26,8 +26,8 @@ void NameStream(StreamHandle, const std::string&) {}
 void RangePop(ProfilerDomainHandle) {}
 void RangePush(ProfilerDomainHandle, const char*) {}
 namespace detail {
-void RangePush(ProfilerDomainHandle, StringHandle, uint64_t, const void*,
-               size_t) {}
+void RangePush(ProfilerDomainHandle, StringHandle, const char*, uint64_t,
+               const void*, size_t) {}
 }  // namespace detail
 uint64_t RegisterSchema(ProfilerDomainHandle, const void*) { return 0; }
 StringHandle RegisterString(ProfilerDomainHandle, const std::string&) {
