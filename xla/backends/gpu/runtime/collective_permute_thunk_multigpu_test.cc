@@ -17,12 +17,11 @@ limitations under the License.
 // at least kNumDevices GPUs. Command-buffer tests additionally require CUDA
 // 12.9+ driver/toolkit for CreateChildCommand / UpdateChildCommand support.
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"

@@ -17,12 +17,11 @@ limitations under the License.
 // Requires two GPUs. Command-buffer tests also require CUDA 12.9+ for child
 // command create/update support.
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
@@ -126,9 +125,8 @@ static absl::Status PreparePhaseInputs(
 static absl::Status VerifyRecvOutput(DeviceTestSlot& slot, int device_ordinal,
                                      int phase,
                                      se::DeviceAddressBase recv_dst) {
-  ABSL_ASSIGN_OR_RETURN(
-      std::vector<float> output,
-      ReadDeviceBuffer(*slot.stream, recv_dst, kNumElements));
+  ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
+                        ReadDeviceBuffer(*slot.stream, recv_dst, kNumElements));
   std::vector<float> expected = ExpectedRecvValues(device_ordinal, phase);
   for (int i = 0; i < kNumElements; ++i) {
     if (output[i] != expected[i]) {

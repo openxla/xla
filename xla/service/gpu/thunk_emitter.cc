@@ -57,8 +57,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "tsl/platform/human_readable_json.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
@@ -177,6 +175,8 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/human_readable_json.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla::gpu {
 namespace {
@@ -1670,7 +1670,7 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
       [info = std::move(info), kernel_arguments = std::move(kernel_arguments),
        call_zeroed_outputs = std::move(call_zeroed_outputs)](
           const KernelReuseCache::Entry& entry) mutable
-          -> absl::StatusOr<ThunkSequence> {
+      -> absl::StatusOr<ThunkSequence> {
         ABSL_ASSIGN_OR_RETURN(
             CustomKernel custom_kernel,
             kernel::CreateSharedCubinCustomKernel(

@@ -18,13 +18,12 @@ limitations under the License.
 // Requires exactly kNumDevices GPUs (>= 2) and CUDA 12.9+ driver/toolkit for
 // CreateChildCommand / UpdateChildCommand support.
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
