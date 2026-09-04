@@ -75,7 +75,7 @@ class TopkTest : public HloPjRtGpuTestBase, public ParameterizedInterface {
         %broadcast.40631 = pred[] broadcast(pred[] %constant.40630), dimensions={}
         %p.0.lhs.40626 = $3[] parameter(0)
         %p.0.rhs.40627 = $3[] parameter(1)
-        %compare.40632 = pred[] compare($3[] %p.0.lhs.40626, $3[] %p.0.rhs.40627), direction=GT, type=TOTALORDER
+        %compare.40632 = pred[] compare($3[] %p.0.lhs.40626, $3[] %p.0.rhs.40627), direction=GT, order=TOTAL
         ROOT %select.40633 = pred[] select(pred[] %broadcast.40631, pred[] %compare.40632, pred[] %broadcast.40631)
       }
 
@@ -182,7 +182,7 @@ TEST_F(TopkTest, PreservesBackendConfig) {
       p.1.rhs = s32[] parameter(3)
       p.0.lhs = f32[] parameter(0)
       p.0.rhs = f32[] parameter(1)
-      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, type=TOTALORDER
+      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, order=TOTAL
     }
 
     ENTRY top_k {
