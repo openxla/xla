@@ -162,8 +162,9 @@ static absl::Status VerifyOutput(se::Stream& stream,
   for (int source_rank = 0; source_rank < kNumBuffers; ++source_rank) {
     float expected =
         SourceValue(source_rank, /*target_rank=*/device_ordinal, phase);
-    ASSIGN_OR_RETURN(std::vector<float> output,
-                     ReadDeviceBuffer(stream, dst[source_rank], kNumElements));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<float> output,
+        ReadDeviceBuffer(stream, dst[source_rank], kNumElements));
     for (int i = 0; i < kNumElements; ++i) {
       if (output[i] != expected) {
         return absl::InternalError(absl::StrFormat(

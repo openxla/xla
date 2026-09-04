@@ -125,8 +125,8 @@ static absl::Status PreparePhaseInputs(
 static absl::Status VerifyRecvOutput(DeviceTestSlot& slot, int device_ordinal,
                                      int phase,
                                      se::DeviceAddressBase recv_dst) {
-  ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadDeviceBuffer(*slot.stream, recv_dst, kNumElements));
+  ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
+                        ReadDeviceBuffer(*slot.stream, recv_dst, kNumElements));
   std::vector<float> expected = ExpectedRecvValues(device_ordinal, phase);
   for (int i = 0; i < kNumElements; ++i) {
     if (output[i] != expected[i]) {

@@ -131,8 +131,8 @@ static absl::Status PrepareInputs(
 
 static absl::Status VerifyOutput(se::Stream& stream, se::DeviceAddressBase dst,
                                  int device_ordinal, int phase) {
-  ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadDeviceBuffer(stream, dst, kNumElements));
+  ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
+                        ReadDeviceBuffer(stream, dst, kNumElements));
   std::vector<float> expected = SourceValues(/*device_ordinal=*/0, phase);
   for (int i = 0; i < kNumElements; ++i) {
     if (output[i] != expected[i]) {
