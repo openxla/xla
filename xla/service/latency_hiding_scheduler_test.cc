@@ -219,6 +219,7 @@ absl::StatusOr<bool> RunScheduler(
       /*convert_all_reduce=*/HloPredicateTrue,
       /*convert_all_gather=*/HloPredicateTrue,
       /*convert_collective_broadcast=*/HloPredicateTrue,
+      /*convert_collective_reduce=*/HloPredicateFalse,
       /*convert_collective_permute=*/HloPredicateTrue};
   bool value = false;
   if (!skip_async_collective_creator) {
