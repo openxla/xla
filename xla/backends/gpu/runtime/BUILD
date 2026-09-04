@@ -2667,7 +2667,7 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/core/collectives:reduction_kind",
         "//xla/service:buffer_assignment",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:computation_placer",
         "//xla/service:shaped_slice",
         "//xla/service/gpu:buffer_allocations",
         "//xla/stream_executor:device_address",
