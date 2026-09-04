@@ -127,7 +127,8 @@ absl::Status HloLiveRange::FlattenSchedule(
           instruction->opcode() == HloOpcode::kConditional) {
         for (const HloComputation* called_computation :
              instruction->called_computations()) {
-          ABSL_RETURN_IF_ERROR(FlattenSchedule(*called_computation, async_context));
+          ABSL_RETURN_IF_ERROR(
+              FlattenSchedule(*called_computation, async_context));
         }
       } else if (instruction->IsAsynchronous()) {
         // For async operations, the async wrapped computation is flattened
@@ -254,7 +255,15 @@ void HloLiveRange::CalculateBufferStartEndMap() {
                              : entry.second;
 
     // If the instruction is in an asynchronous context, extend the live range
-    // until the end of the async-done instruction.
+    // to cover the full async window: from the start of the outer computation
+    // to the end of the async-done instruction.
+    //
+    // The start is extended backward because LHS-style schedulers can fire
+    // async-start as an independent source node, meaning the inner computation
+    // runs concurrently with instructions that precede the async-start in the
+    // sequential HLO schedule. Treating inner buffers as live from the outer
+    // computation's start prevents the heap simulator from aliasing them with
+    // buffers from those earlier outer instructions.
     auto async_context_it = computations_in_async_context_.find(computation);
     if (async_context_it != computations_in_async_context_.end()) {
       const HloComputation* async_context = async_context_it->second;
@@ -282,10 +291,19 @@ void HloLiveRange::CalculateBufferStartEndMap() {
             definition_end_time = std::max(
                 definition_end_time, computation_span_times_[computation].end);
           }
+          // Extend start_time backward to the outer computation's start so
+          // that inner async buffers cannot be aliased with buffers from
+          // instructions that precede the async-start in the outer schedule.
+          auto outer_span_it = computation_span_times_.find(caller->parent());
+          if (outer_span_it != computation_span_times_.end()) {
+            start_time = std::min(start_time, outer_span_it->second.start);
+          }
         }
       }
       VLOG(2) << "Setting the definition end time for op in async context: "
               << definition_end_time;
+      VLOG(2) << "Setting the definition start time for op in async context: "
+              << start_time;
     }
 
     const InstructionValueSet& value_set_tree =
