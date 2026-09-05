@@ -898,6 +898,7 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
   config.convert_all_reduce = HloPredicateTrue;
   config.convert_all_to_all = HloPredicateTrue;
   config.convert_collective_broadcast = HloPredicateTrue;
+  config.convert_collective_reduce = HloPredicateTrue;
   config.convert_collective_permute = HloPredicateTrue;
   config.convert_ragged_all_to_all = HloPredicateTrue;
   config.convert_reduce_scatter = HloPredicateTrue;
@@ -944,6 +945,8 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
           case HloOpcode::kCollectiveBroadcast:
             return !disabled_async_ops.contains(
                 DebugOptions::COLLECTIVEBROADCAST);
+          case HloOpcode::kCollectiveReduce:
+            return !disabled_async_ops.contains(DebugOptions::ALLREDUCE);
           case HloOpcode::kReduceScatter:
             return !disabled_async_ops.contains(DebugOptions::REDUCESCATTER);
           case HloOpcode::kAllToAll:
@@ -993,9 +996,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // See `xla::LatencyHidingScheduler::Run`.
   ABSL_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
-                   ScheduleGpuModuleWithMemoryScheduler(
-                       module, alias_info, pointer_size, &peak_memory_bytes));
+  ABSL_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
+                                           &peak_memory_bytes));
   ABSL_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =

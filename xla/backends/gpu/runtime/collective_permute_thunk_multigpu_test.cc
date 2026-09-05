@@ -45,8 +45,6 @@ namespace xla::gpu {
 namespace {
 
 static constexpr int kNumDevices = 2;
-static constexpr int64_t kLength = 4;
-static constexpr int64_t kByteLength = sizeof(float) * kLength;
 
 static P2PConfig MakeCollectivePermuteConfig() {
   P2PConfig config;
@@ -69,11 +67,13 @@ static P2PConfig MakeCollectivePermuteConfig() {
 
 static CollectivePermuteThunk MakeThunk(const BufferAllocation& alloc_src,
                                         const BufferAllocation& alloc_dst) {
-  ShapedSlice src_slice{BufferAllocation::Slice(&alloc_src, 0, kByteLength),
-                        ShapeUtil::MakeShape(F32, {kLength})};
-  ShapedSlice dst_slice{BufferAllocation::Slice(&alloc_dst, 0, kByteLength),
-                        ShapeUtil::MakeShape(F32, {kLength})};
-  CollectiveThunk::Buffer buffer{.element_count = kLength,
+  ShapedSlice src_slice{
+      BufferAllocation::Slice(&alloc_src, 0, kFloatByteLength),
+      ShapeUtil::MakeShape(F32, {kNumElements})};
+  ShapedSlice dst_slice{
+      BufferAllocation::Slice(&alloc_dst, 0, kFloatByteLength),
+      ShapeUtil::MakeShape(F32, {kNumElements})};
+  CollectiveThunk::Buffer buffer{.element_count = kNumElements,
                                  .source_buffer = src_slice,
                                  .destination_buffer = dst_slice,
                                  .source_memory_space = 0,
@@ -87,12 +87,12 @@ static CollectivePermuteThunk MakeThunk(const BufferAllocation& alloc_src,
 using DeviceTestSlot = CollectiveThunkMultiGpuTestState;
 
 static std::vector<int64_t> DeviceBufferSizes() {
-  return {kByteLength, kByteLength};
+  return {kFloatByteLength, kFloatByteLength};
 }
 
 static std::vector<float> SourceValues(int source_rank, int phase) {
-  std::vector<float> values(kLength);
-  for (int i = 0; i < kLength; ++i) {
+  std::vector<float> values(kNumElements);
+  for (int i = 0; i < kNumElements; ++i) {
     values[i] = static_cast<float>(phase * 100 + source_rank * 10 + i);
   }
   return values;
@@ -107,23 +107,25 @@ static absl::Status FillSourceBuffer(se::Stream& stream,
 static absl::Status FillDestinationBuffer(se::Stream& stream,
                                           se::DeviceAddressBase buffer,
                                           float value) {
-  return FillDeviceBuffer(stream, buffer, std::vector<float>(kLength, value));
+  return FillDeviceBuffer(stream, buffer,
+                          std::vector<float>(kNumElements, value));
 }
 
 static absl::Status PrepareInputs(
     se::Stream& stream, absl::Span<const se::DeviceAddressBase> buffers,
     int device_ordinal, int phase) {
-  ABSL_RETURN_IF_ERROR(FillSourceBuffer(stream, buffers[0], device_ordinal, phase));
+  ABSL_RETURN_IF_ERROR(
+      FillSourceBuffer(stream, buffers[0], device_ordinal, phase));
   return FillDestinationBuffer(stream, buffers[1], -1.0f);
 }
 
 static absl::Status VerifyOutput(se::Stream& stream, se::DeviceAddressBase dst,
                                  int device_ordinal, int phase) {
   ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadDeviceBuffer(stream, dst, kLength));
+                        ReadDeviceBuffer(stream, dst, kNumElements));
   int expected_source_rank = 1 - device_ordinal;
   std::vector<float> expected = SourceValues(expected_source_rank, phase);
-  for (int i = 0; i < kLength; ++i) {
+  for (int i = 0; i < kNumElements; ++i) {
     if (output[i] != expected[i]) {
       return absl::InternalError(
           absl::StrFormat("device %d output[%d] = %g, expected %g",
@@ -201,14 +203,15 @@ TEST(CollectivePermuteThunkMultiGpuTest, ExecuteOnStream) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
-  BufferAllocation alloc_dst(/*index=*/1, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kFloatByteLength, /*color=*/0);
   CollectivePermuteThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_permute_execute", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunExecuteOnStreamPhase(slots[d], thunk, d, /*phase=*/1);
       }));
 }
@@ -222,14 +225,15 @@ TEST(CollectivePermuteThunkMultiGpuTest, RecordCommandBufferCreate) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
-  BufferAllocation alloc_dst(/*index=*/1, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kFloatByteLength, /*color=*/0);
   CollectivePermuteThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_permute_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
 }
@@ -243,14 +247,15 @@ TEST(CollectivePermuteThunkMultiGpuTest, RecordCommandBufferUpdate) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
-  BufferAllocation alloc_dst(/*index=*/1, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kFloatByteLength, /*color=*/0);
   CollectivePermuteThunk thunk = MakeThunk(alloc_src, alloc_dst);
   std::vector<DeviceTestSlot> slots(kNumDevices);
 
   ASSERT_OK(RunOnDevices(
       kNumDevices, "collective_permute_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d, /*phase=*/2);
       }));
 
