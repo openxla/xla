@@ -30,7 +30,7 @@ on:
       runner_label:
         description: 'Runner label for GPU jobs'
         required: false
-        default: 'amd-do-linux-xla-gpu-gfx950-1'
+        default: 'amd-do-linux-xla-gpu-gfx950-1-test'
         type: string
 
 concurrency:
@@ -58,7 +58,7 @@ jobs:
     needs: rocm-config
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
     name: JAX Linux x86 AMD Instinct GPU
-    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1' }}
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1-test' }}
     timeout-minutes: 80
     # Remove this once the JAX CI is stable.
     continue-on-error: true
@@ -173,7 +173,7 @@ jobs:
   xla:
     needs: rocm-config
     name: XLA Linux x86 AMD Instinct GPU
-    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1' }}
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1-test' }}
     timeout-minutes: 220
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
