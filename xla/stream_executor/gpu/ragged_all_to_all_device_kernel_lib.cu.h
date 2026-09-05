@@ -167,9 +167,10 @@ __device__ void RaggedAllToAllCopy(
   }
 }
 
+// The minimum is given so the compiler spends registers on the thread rather
+// than on occupancy; one CTA per SM is all the grid needs.
 template <int64_t kVectorSize>
-__global__ void __launch_bounds__(kRaggedAllToAllDeviceKernelThreadsPerCta,
-                                  kRaggedAllToAllDeviceKernelMinBlocksPerSm)
+__global__ void __launch_bounds__(kRaggedAllToAllDeviceKernelThreadsPerCta, 1)
     RaggedAllToAllDeviceKernelImpl(
     struct ncclDevComm dev_comm, ncclWindow_t send_win, ncclWindow_t recv_win,
     const int64_t* __restrict__ input_offsets_ptr,
