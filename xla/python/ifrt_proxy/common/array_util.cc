@@ -83,7 +83,22 @@ absl::StatusOr<ArrayMemRegion> ArrayMemRegion::FromZerothElementPointer(
 
   if (!byte_strides.has_value() ||
       (byte_strides->empty() && shape.dims().empty())) {
-    return ArrayMemRegion(mem_region_start, byte_size * shape.num_elements());
+    // `shape.num_elements()` is itself overflow-checked at Shape
+    // construction time (see Shape::FromProto), but that check validates
+    // only the element count, independent of `byte_size` -- a shape with
+    // e.g. 2^61 elements passes it cleanly, and 2^61 is well within
+    // int64_t range on its own. Multiplying by byte_size (8 for a real,
+    // existing IFRT dtype such as float64/int64/complex64) is a second,
+    // separate place this can overflow, and nothing upstream of this line
+    // has checked it.
+    int64_t total_bytes;
+    if (__builtin_mul_overflow(byte_size, shape.num_elements(),
+                                &total_bytes)) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("byte_size * num_elements overflows: byte_size=",
+                       byte_size, " num_elements=", shape.num_elements()));
+    }
+    return ArrayMemRegion(mem_region_start, total_bytes);
   }
   if (shape.num_elements() == 0) {
     return ArrayMemRegion(mem_region_start, 0);
