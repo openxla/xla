@@ -290,6 +290,8 @@ xla_cc_test(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
     ],
 )
 
