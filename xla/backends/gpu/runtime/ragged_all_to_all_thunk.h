@@ -181,41 +181,30 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     return config_.use_device_kernel && config_.config.use_symmetric_buffer;
   }
 
-  // Number of per-CTA barrier/signal slots reserved when creating the device
-  // communicator. The kernel indexes its cooperative barrier by blockIdx.x, so
-  // registration must cover the largest grid we might launch, which is
-  // bounded by the executor's SM count. Callers pass the SM count from
-  // se::DeviceDescription::core_count(); all participating ranks are expected
-  // to be homogeneous so every rank arrives at the same value.
-  static int32_t device_kernel_barrier_count(int core_count) {
+  // One CTA per SM. Drives both the launch grid and the barrier registration:
+  // the kernel indexes its barriers by blockIdx.x, so the slots reserved when
+  // creating the device communicator must cover the launched grid. The copies
+  // are link-bound at these message sizes, so a wider grid buys little
+  // transport latency, and the kernel holds its CTAs for the whole transport
+  // including the barrier spins, which starves compute scheduled against it.
+  // Callers pass the SM count from se::DeviceDescription::core_count(); all
+  // participating ranks are expected to be homogeneous so every rank arrives
+  // at the same value.
+  static int32_t DeviceKernelCtaCount(int core_count) {
     return std::max<int32_t>(core_count, kMinDeviceKernelCtaCount);
-  }
-
-  // Launch grid for the device kernel. Sized to saturate the SMs (grid =
-  // ctas_per_update * num_active_updates, chosen so grid <= sm_cap and evenly
-  // divides `total_lsa_updates` in RaggedAllToAllCopy). All ranks launch the
-  // same grid, which the cross-rank cooperative barriers require.
-  static int32_t DeviceKernelLaunchCtaCount(int core_count,
-                                            int64_t num_active_updates) {
-    const int64_t sm_cap = std::max<int64_t>(1, core_count);
-    const int64_t updates = std::max<int64_t>(1, num_active_updates);
-    const int64_t ctas_per_update = std::max<int64_t>(1, sm_cap / updates);
-    const int64_t grid = ctas_per_update * updates;
-    return static_cast<int32_t>(
-        std::clamp<int64_t>(grid, kMinDeviceKernelCtaCount, sm_cap));
   }
 
   GpuDeviceCommunicator::Requirements DeviceKernelLsaDevCommRequirements(
       int core_count) const {
     GpuDeviceCommunicator::Requirements requirements;
-    requirements.lsa_barrier_count = device_kernel_barrier_count(core_count);
+    requirements.lsa_barrier_count = DeviceKernelCtaCount(core_count);
     return requirements;
   }
 
   GpuDeviceCommunicator::Requirements DeviceKernelDevCommRequirements(
       int core_count) const {
     GpuDeviceCommunicator::Requirements requirements;
-    const int32_t c = device_kernel_barrier_count(core_count);
+    const int32_t c = DeviceKernelCtaCount(core_count);
     requirements.barrier_count = c;
     requirements.lsa_barrier_count = c;
     requirements.rail_gin_barrier_count = c;
@@ -252,9 +241,9 @@ class RaggedAllToAllThunk : public CollectiveThunk {
 
   const RaggedAllToAllConfig config_;
 
-  // Floor on the launch grid so small shapes still get some parallelism.
-  // The upper bound is derived from the executor's SM count at Prepare /
-  // Initialize / Run time via device_kernel_barrier_count().
+  // Floor on the launch grid; it only binds on a device with fewer SMs than
+  // this. The grid is otherwise the executor's SM count, via
+  // DeviceKernelCtaCount() at Prepare / Initialize / Run time.
   static constexpr int32_t kMinDeviceKernelCtaCount = 8;
 
   mutable absl::Mutex mutex_;
