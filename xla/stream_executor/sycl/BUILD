@@ -103,6 +103,7 @@ cc_library(
     copts = tsl_copts(),
     visibility = ["//visibility:public"],
     deps = if_sycl_is_configured([
+        ":cub_sort_kernel_sycl_impl",
         ":sycl_platform",
         ":sycl_blas_lt_plugin",
         ":sycl_dnn",
@@ -670,4 +671,20 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
     ],
+)
+
+sycl_library(
+    name = "cub_sort_kernel_sycl_impl",
+    srcs = ["cub_sort_kernel_sycl_impl.dp.cpp"],
+    hdrs = ["cub_sort_kernel_sycl.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "//xla:status_macros",
+        "@com_google_absl//absl/status",
+        "@onedpl//:onedpl",
+    ],
+    alwayslink = 1,
 )
