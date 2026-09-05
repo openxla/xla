@@ -43,6 +43,7 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -220,12 +221,33 @@ bool IsCustomCallToMosaicGpu(const HloInstruction& hlo) {
           hlo.custom_call_target() == "mosaic_gpu_v2");
 }
 
+const HloInstruction& UnwrapDynamicSliceFusion(const HloInstruction& instr) {
+  if (instr.opcode() == HloOpcode::kFusion) {
+    std::optional<std::string> custom_fusion_name =
+        GetCustomFusionConfigName(&instr);
+    if (custom_fusion_name.has_value() &&
+        *custom_fusion_name == kDynamicSliceFusionConfigName) {
+      if (const HloInstruction* hero = DynamicSliceFusion::FindHero(
+              instr.fused_instructions_computation());
+          hero != nullptr) {
+        return *hero;
+      }
+    }
+  }
+  return instr;
+}
+
 bool IsMosaicWithSymmetricParameter(const HloInstruction& hlo) {
-  if (!IsCustomCallToMosaicGpu(hlo)) {
+  // A dynamic-slice fusion may wrap a Mosaic GPU collective kernel together
+  // with its sliced operands. The fusion boundary hides the wrapped custom
+  // call from the collective memory analysis, so look through it to find the
+  // hero instruction.
+  const HloInstruction& unwrapped = UnwrapDynamicSliceFusion(hlo);
+  if (!IsCustomCallToMosaicGpu(unwrapped)) {
     return false;
   }
 
-  const std::string& backend_config = hlo.raw_backend_config_string();
+  const std::string& backend_config = unwrapped.raw_backend_config_string();
   // TODO(b/546817872): Remove multimem_parameters check once backward
   // compatibility period is over.
   return absl::StrContains(backend_config, "symmetric_memory_parameters") ||
