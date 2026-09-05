@@ -42,7 +42,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/command_buffer.h"
-#include "xla/stream_executor/gpu/ragged_all_to_all_device_kernel.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -182,15 +181,15 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     return config_.use_device_kernel && config_.config.use_symmetric_buffer;
   }
 
-  // Launch grid for the device kernel, and the number of per-CTA
-  // barrier/signal slots reserved when creating the device communicator (the
-  // kernel indexes its barriers by blockIdx.x, so registration must cover the
-  // launched grid). One CTA per SM: the copies are link-bound at these message
-  // sizes, so a wider grid buys little transport latency, and the kernel holds
-  // its CTAs for the whole transport including the barrier spins, which starves
-  // compute scheduled against it. Callers pass the SM count from
-  // se::DeviceDescription::core_count(); all participating ranks are expected
-  // to be homogeneous so every rank arrives at the same value.
+  // One CTA per SM. Drives both the launch grid and the barrier registration:
+  // the kernel indexes its barriers by blockIdx.x, so the slots reserved when
+  // creating the device communicator must cover the launched grid. The copies
+  // are link-bound at these message sizes, so a wider grid buys little
+  // transport latency, and the kernel holds its CTAs for the whole transport
+  // including the barrier spins, which starves compute scheduled against it.
+  // Callers pass the SM count from se::DeviceDescription::core_count(); all
+  // participating ranks are expected to be homogeneous so every rank arrives
+  // at the same value.
   static int32_t DeviceKernelCtaCount(int core_count) {
     return std::max<int32_t>(core_count, kMinDeviceKernelCtaCount);
   }
@@ -242,9 +241,9 @@ class RaggedAllToAllThunk : public CollectiveThunk {
 
   const RaggedAllToAllConfig config_;
 
-  // Floor on the launch grid so small shapes still get some parallelism.
-  // The upper bound is derived from the executor's SM count at Prepare /
-  // Initialize / Run time via DeviceKernelCtaCount().
+  // Floor on the launch grid; it only binds on a device with fewer SMs than
+  // this. The grid is otherwise the executor's SM count, via
+  // DeviceKernelCtaCount() at Prepare / Initialize / Run time.
   static constexpr int32_t kMinDeviceKernelCtaCount = 8;
 
   mutable absl::Mutex mutex_;

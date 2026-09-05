@@ -249,9 +249,7 @@ absl::Status RunDeviceRaggedAllToAllKernel(
     int64_t cta_count, int64_t input_buffer_offset_bytes,
     int64_t output_buffer_offset_bytes) {
   se::StreamExecutor* executor = stream->parent();
-  // The copies are latency-bound peer stores, so throughput scales with
-  // concurrent CTAs rather than threads per CTA: small CTAs on the one-per-SM
-  // grid that RaggedAllToAllThunk sizes.
+  // Must match the kernel's __launch_bounds__.
   static constexpr size_t kThreadsPerCta =
       se::gpu::kRaggedAllToAllDeviceKernelThreadsPerCta;
 
