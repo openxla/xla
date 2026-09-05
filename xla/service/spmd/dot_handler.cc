@@ -3843,6 +3843,19 @@ absl::StatusOr<std::optional<HloInstruction*>> PartitionConv(
     if (original_hlo->feature_group_count() > 1 &&
         rhs.hlo()->shape().dimensions(dnums.kernel_input_feature_dimension()) >
             1) {
+      // If no group-relevant feature dimension is partitioned, the grouping
+      // is transparent to the generic dot partitioning, e.g. plain batch
+      // sharding. Fall through to it instead of giving up.
+      if (ShardCountAtDim(lhs.sharding(), dnums.input_feature_dimension()) ==
+              1 &&
+          ShardCountAtDim(rhs.sharding(),
+                          dnums.kernel_input_feature_dimension()) == 1 &&
+          ShardCountAtDim(rhs.sharding(),
+                          dnums.kernel_output_feature_dimension()) == 1 &&
+          ShardCountAtDim(output_sharding, dnums.output_feature_dimension()) ==
+              1) {
+        return std::nullopt;
+      }
       return nullptr;
     }
 
