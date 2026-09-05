@@ -1829,8 +1829,8 @@ xla_cc_test(
     name = "host_cross_compilation_test",
     srcs = ["host_cross_compilation_test.cc"],
     tags = [
-        "cuda-only",
         "gpu",
+        "no-oneapi",
     ],
     deps = [
         "//xla:xla_data_proto_cc",
