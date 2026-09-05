@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_executor.h"
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -38,6 +40,17 @@ namespace stream_executor::gpu {
 namespace {
 using testing::IsEmpty;
 using testing::Not;
+
+TEST(RocmExecutorTest, ModuleHandleUsesContent) {
+  std::vector<uint8_t> first = {1, 2, 3, 4};
+  std::vector<uint8_t> same = first;
+  std::vector<uint8_t> different = {4, 3, 2, 1};
+
+  EXPECT_EQ(internal::ModuleHandleFromImage(first),
+            internal::ModuleHandleFromImage(same));
+  EXPECT_NE(internal::ModuleHandleFromImage(first),
+            internal::ModuleHandleFromImage(different));
+}
 
 TEST(RocmExecutorTest, CreateDeviceDescription) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DeviceDescription> result,
