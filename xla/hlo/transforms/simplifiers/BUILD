@@ -1215,7 +1215,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -1223,6 +1222,7 @@ xla_cc_test(
     name = "hlo_constant_folding_test",
     srcs = ["hlo_constant_folding_test.cc"],
     deps = [
+        ":flatten_call_graph",
         ":hlo_constant_folding",
         "//xla:literal",
         "//xla:literal_util",
