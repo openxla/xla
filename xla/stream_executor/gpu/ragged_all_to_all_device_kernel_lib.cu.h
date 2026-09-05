@@ -169,7 +169,7 @@ __device__ void RaggedAllToAllCopy(
 
 template <int64_t kVectorSize>
 __global__ void __launch_bounds__(kRaggedAllToAllDeviceKernelThreadsPerCta,
-                                  kRaggedAllToAllDeviceKernelCtasPerSm)
+                                  kRaggedAllToAllDeviceKernelMinBlocksPerSm)
     RaggedAllToAllDeviceKernelImpl(
     struct ncclDevComm dev_comm, ncclWindow_t send_win, ncclWindow_t recv_win,
     const int64_t* __restrict__ input_offsets_ptr,

@@ -30,15 +30,17 @@ class GpuDeviceCommunicator;
 
 namespace stream_executor::gpu {
 
-// Launch shape of the device kernel. The thunk sizes its grid at one CTA per
-// SM (see RaggedAllToAllThunk::DeviceKernelCtaCount), and the in-kernel
-// cross-rank barriers deadlock unless the whole grid is resident at once.
-// The kernel's __launch_bounds__ passes kRaggedAllToAllDeviceKernelCtasPerSm
-// as minBlocksPerMultiprocessor, holding register allocation at 64
-// registers/thread on a 64K-register SM, well inside the launched grid's
-// residency requirement.
+// CTA width of the device kernel and the resident CTAs per SM its launch
+// bounds promise. The thunk launches one CTA per SM (see
+// RaggedAllToAllThunk::DeviceKernelCtaCount): the copies are link-bound at
+// these message sizes, so a narrow CTA sustains the transport and leaves the
+// SM to compute scheduled against the kernel. The grid must be co-resident,
+// since CTA k on every rank spins in a cross-rank barrier for CTA k on every
+// other, and one CTA per SM is resident under any register allocation. The
+// minimum is passed explicitly: omitting it makes nvcc cap registers for
+// occupancy and spill (64 with spills against 86 without, nvcc 12.9, sm_100).
 inline constexpr int kRaggedAllToAllDeviceKernelThreadsPerCta = 128;
-inline constexpr int kRaggedAllToAllDeviceKernelCtasPerSm = 8;
+inline constexpr int kRaggedAllToAllDeviceKernelMinBlocksPerSm = 1;
 
 template <int64_t kVectorSize>
 struct RaggedAllToAllDeviceKernel {
