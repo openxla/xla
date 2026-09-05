@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -71,7 +72,7 @@ TEST(DenseDataIntermediateTest, LiteralToAttrToXlaFormat) {
 }
 
 TEST(DenseDataIntermediateTest, OwnedDataToProto) {
-  const std::vector<uint8_t> data = {1, 2, 3, 4};
+  const std::string data = "\x01\x02\x03\x04";
   DenseDataIntermediate constant = DenseDataIntermediate::Own(data);
 
   DenseDataIntermediateProto proto = constant.ToProto();
