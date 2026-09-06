@@ -17396,7 +17396,7 @@ region_695.22546 {
   Arg_3.22550 = s32[] parameter(3)
   Arg_0.22547 = bf16[] parameter(0)
   Arg_1.22548 = bf16[] parameter(1)
-  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, type=TOTALORDER
+  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, order=TOTAL
 }
 
 ENTRY %entry {
@@ -17427,7 +17427,7 @@ region_695.22546 {
   Arg_3.22550 = s32[] parameter(3)
   Arg_0.22547 = bf16[] parameter(0)
   Arg_1.22548 = bf16[] parameter(1)
-  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, type=TOTALORDER
+  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, order=TOTAL
 }
 
 ENTRY %entry {
@@ -17461,7 +17461,7 @@ region_695.22546 {
   Arg_3.22550 = s32[] parameter(3)
   Arg_0.22547 = bf16[] parameter(0)
   Arg_1.22548 = bf16[] parameter(1)
-  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, type=TOTALORDER
+  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, order=TOTAL
 }
 
 ENTRY %entry {
@@ -17493,7 +17493,7 @@ region_695.22546 {
   Arg_3.22550 = s32[] parameter(3)
   Arg_0.22547 = bf16[] parameter(0)
   Arg_1.22548 = bf16[] parameter(1)
-  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, type=TOTALORDER
+  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, order=TOTAL
 }
 
 ENTRY %entry {
@@ -17524,7 +17524,7 @@ region {
   Arg_3.22550 = s32[] parameter(3)
   Arg_0.22547 = bf16[] parameter(0)
   Arg_1.22548 = bf16[] parameter(1)
-  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, type=TOTALORDER
+  ROOT compare.22551 = pred[] compare(Arg_0.22547, Arg_1.22548), direction=GT, order=TOTAL
 }
 
 ENTRY %entry {
