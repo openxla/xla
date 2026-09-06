@@ -375,18 +375,20 @@ std::optional<TritonFusion::LaunchConfig> TritonFusion::GetLaunchConfig(
              num_blocks);
   }
 
+  const int64_t total_ctas = num_blocks * block_level_parameters.num_ctas;
+
   LaunchConfig launch_config;
   // TODO(b/451901200): We eventually also want to be able to predict this
   // value without compiling so the cost model can rely on it. Currently, we
   // need the override for auto warp specialization.
   if (thread_dims_override) {
     launch_config.launch_dimensions = LaunchDimensions{
-        se::BlockDim(num_blocks), thread_dims_override.value()};
+        se::BlockDim(total_ctas), thread_dims_override.value()};
   } else {
     int64_t estimated_threads_per_block =
         block_level_parameters.num_warps * WarpSize(analysis->device_info());
     launch_config.launch_dimensions =
-        LaunchDimensions{static_cast<uint64_t>(num_blocks),
+        LaunchDimensions{static_cast<uint64_t>(total_ctas),
                          static_cast<uint64_t>(estimated_threads_per_block)};
   }
 

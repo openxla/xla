@@ -137,6 +137,7 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
   if (stream_executor::gpu::IsTmaAvailableForDevice(device_description_)) {
     ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddTmaParameter);
   }
+  ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddClusterSizeParameter);
   if (autotune_warp_specialization) {
     ExtendConfigs(configs,
                   &TritonDotFusionSearchSpace::AddWarpSpecializationParameter);
@@ -148,10 +149,7 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
   std::vector<TritonGemmConfig> result;
   result.reserve(configs.size());
   for (ConfigWithNotes& config_with_notes : configs) {
-    TritonGemmConfig& config = config_with_notes.config;
-    // TODO: b/408386169 - Implement CTA cluster support.
-    config.num_ctas = 1;
-    result.push_back(config);
+    result.push_back(config_with_notes.config);
   }
   return result;
 }
@@ -545,6 +543,24 @@ void TritonDotFusionSearchSpace::AddTmaParameter(
 
   if (exhaustive_tiling_search_ || IsTmaRecommended(config.config)) {
     new_config.config.is_tma_allowed = true;
+    updated_configs.push_back(new_config);
+  }
+}
+
+void TritonDotFusionSearchSpace::AddClusterSizeParameter(
+    const ConfigWithNotes& config,
+    std::vector<ConfigWithNotes>& updated_configs) const {
+  ConfigWithNotes new_config = config;
+  new_config.config.num_ctas = 1;
+  updated_configs.push_back(new_config);
+  // Two CTAs per cluster: TMA multicast on Hopper, tcgen05 cta_group::2 on
+  // Blackwell.
+  constexpr int kClusterSize = 2;
+  if (exhaustive_tiling_search_ &&
+      device_description_.cuda_compute_capability().IsAtLeastHopper()) {
+    new_config.config.num_ctas = kClusterSize;
+    VLOG(10) << "Adding cluster size parameter: config = "
+             << new_config.ToString();
     updated_configs.push_back(new_config);
   }
 }
