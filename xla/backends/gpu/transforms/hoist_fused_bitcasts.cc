@@ -434,6 +434,10 @@ absl::StatusOr<bool> MaybeInsertRootBitcast(
         HloInstruction::CreateBitcast(caller->shape(), caller));
     ABSL_RETURN_IF_ERROR(caller->ReplaceAllUsesWith(new_bitcast));
     *caller->mutable_shape() = root_shape;
+    // Clear the caller's sharding annotation since its new shape might be
+    // incompatible with it. We no longer need the sharding metadata since we
+    // have already finished SPMD partitioning.
+    caller->clear_sharding();
   }
 
   return true;

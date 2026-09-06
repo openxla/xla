@@ -131,6 +131,44 @@ ENTRY main (p0: f8e4m3fn[32,5120], p1: f8e4m3fn[5120,5120], p2: f8e4m3fn[5120,51
   std::unique_ptr<VerifiedHloModule> module = RunHoistFusedBitcasts(hlo);
 }
 
+// Test that callers of fusion computations have their sharding annotations
+// cleared to avoid them being assigned a sharding incompatible with their new
+// shape.
+TEST_P(HoistFusedBitcastsReshapeTest,
+       ShardingIsNotPreservedForFusionInstruction) {
+  HloOpcode opcode = GetParam();
+  absl::string_view hlo = R"(
+dot {
+  lhs = f32[4,8]{0,1} parameter(0)
+  rhs = f32[8,4]{0,1} parameter(1)
+  dot = f32[4,4]{0,1} dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT output = f32[1,4,4]{0,1,2} $0(dot)
+}
+
+ENTRY entry {
+  p0 = f32[4,8]{0,1} parameter(0)
+  p1 = f32[8,4]{0,1} parameter(1)
+  ROOT fusion = f32[1,4,4] fusion(p0, p1),
+    kind=kCustom, calls=dot,
+    sharding={devices=[1,2,1]<=[2]},
+    backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm",  "triton_gemm_config": {
+          "block_m":"32", "block_n":"64", "block_k":"16",
+          "split_k":"1", "num_stages":"1", "num_warps":"1", "num_ctas":"1"
+        }
+      }
+    }
+}
+)";
+
+  // HLO Verifier will throw an error if the fusion instruction has an
+  // incompatible sharding attached to it.
+  std::unique_ptr<VerifiedHloModule> module =
+      RunHoistFusedBitcasts(absl::Substitute(hlo, HloOpcodeString(opcode)));
+}
+
 // Tests hoisting of bitcasts which would otherwise trigger unsatisfiable
 // constraints during symbolic tile analysis.
 TEST_P(HoistFusedBitcastsReshapeTest, BitcastsAreHoistedOutOfGemmFusions) {
