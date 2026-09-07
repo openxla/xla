@@ -326,6 +326,25 @@ TEST(ParsingDebugOptionsTest, DefaultCollectivePipeliningModes) {
             DebugOptions::COLLECTIVE_PIPELINING_MODE_ON);
 }
 
+TEST(ParsingDebugOptionsTest, RocmTritonUseAsyncCopyIsTriState) {
+  DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(debug_options.has_xla_gpu_rocm_triton_use_async_copy());
+
+  std::vector<tsl::Flag> flag_objects;
+  MakeDebugOptionsFlags(&flag_objects, &debug_options);
+
+  SetXlaFlagsEnvVar("--xla_gpu_rocm_triton_use_async_copy=true");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  ASSERT_TRUE(debug_options.has_xla_gpu_rocm_triton_use_async_copy());
+  EXPECT_TRUE(debug_options.xla_gpu_rocm_triton_use_async_copy());
+
+  debug_options.clear_xla_gpu_rocm_triton_use_async_copy();
+  SetXlaFlagsEnvVar("--xla_gpu_rocm_triton_use_async_copy=false");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  ASSERT_TRUE(debug_options.has_xla_gpu_rocm_triton_use_async_copy());
+  EXPECT_FALSE(debug_options.xla_gpu_rocm_triton_use_async_copy());
+}
+
 TEST(ParsingDebugOptionsTest, EnvOverwritesDebugOptionsFile) {
   DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
   debug_options.set_xla_dump_to("/path/from/debug/options/file");

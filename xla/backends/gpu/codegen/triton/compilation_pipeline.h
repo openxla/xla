@@ -16,10 +16,22 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_CODEGEN_TRITON_COMPILATION_PIPELINE_H_
 #define XLA_BACKENDS_GPU_CODEGEN_TRITON_COMPILATION_PIPELINE_H_
 
+#include <optional>
+
 #include "mlir/Pass/PassManager.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
+
+// Backend-specific options for the Triton compilation pipeline.
+struct TritonPipelineOptions {
+  struct RocmOptions {
+    // If unset, use Triton's architecture-specific default.
+    std::optional<bool> use_async_copy = std::nullopt;
+  };
+
+  RocmOptions rocm;
+};
 
 // Adds TritonXLA passes to the pipeline.
 void CreateTritonXlaPipeline(
@@ -31,7 +43,8 @@ void CreateTritonXlaPipeline(
 // Creates a Triton compilation pipeline.
 void CreateTritonPipeline(mlir::OpPassManager* pm,
                           const stream_executor::GpuComputeCapability& gpu_cc,
-                          int num_warps, int num_ctas, int num_stages);
+                          int num_warps, int num_ctas, int num_stages,
+                          const TritonPipelineOptions& options);
 
 // Returns the default PTX version for a given CUDA compute capability.
 int GetDefaultPtxVersion(const stream_executor::CudaComputeCapability& cuda_cc);

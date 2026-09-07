@@ -1466,6 +1466,11 @@ message DebugOptions {
   // the results of regular emitters.
   optional bool xla_gpu_verify_triton_fusion_numerics = 291;
 
+  // Controls async copies from global memory to LDS in the ROCm Triton
+  // pipeline. If unset, follows Triton's architecture-specific default;
+  // otherwise, forces async copy on or off.
+  optional bool xla_gpu_rocm_triton_use_async_copy = 556;
+
   //--------------------------------------------------------------------------//
   // XLA:TPU options.
   //--------------------------------------------------------------------------//
@@ -1931,7 +1936,7 @@ message DebugOptions {
   // Enables Raft for stable TopK.
   optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
 
-  // Next id: 556
+  // Next id: 557
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

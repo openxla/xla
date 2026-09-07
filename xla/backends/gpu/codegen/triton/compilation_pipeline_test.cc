@@ -74,7 +74,8 @@ TEST(CompilationPipelineTest, OneApiPipelineDispatchesCorrectly) {
   CreateTritonPipeline(&pm,
                        stream_executor::GpuComputeCapability(
                            stream_executor::OneAPIComputeCapability::BMG()),
-                       /*num_warps=*/4, /*num_ctas=*/1, /*num_stages=*/2);
+                       /*num_warps=*/4, /*num_ctas=*/1, /*num_stages=*/2,
+                       TritonPipelineOptions{});
 
   std::vector<std::string> pass_names = GetPassNames(pm);
   if (absl::AsciiStrToUpper(
