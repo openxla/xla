@@ -2707,6 +2707,7 @@ xla_test(
     deps = [
         ":gpu_executable_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:in_memory_store",
         "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiled_module",
