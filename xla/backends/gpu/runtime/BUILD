@@ -1956,6 +1956,51 @@ xla_test(
     ],
 )
 
+# ROCm-only integration coverage for the grouped multi-buffer AllGather shape
+# that exposed an RCCL WarpSpeed bug. This target is manual because it requires
+# eight gfx950 GPUs and a WarpSpeed-enabled RCCL; a dedicated CI lane must invoke it.
+# RCCL_WARP_SPEED_AUTO=0 can be supplied externally as a diagnostic control.
+xla_test(
+    name = "rccl_warpspeed_grouped_all_gather_test",
+    srcs = ["rccl_warpspeed_grouped_all_gather_test.cc"],
+    backend_tags = {
+        "gpu": ["multi_gpu"],
+    },
+    backends = ["gpu"],
+    env = {
+        "HSA_NO_SCRATCH_RECLAIM": "1",
+        "RCCL_WARP_SPEED_AG_THRESHOLD": "1048576",
+    },
+    size = "large",
+    tags = [
+        "manual",
+        "rocm-only",
+    ],
+    timeout = "moderate",
+    deps = [
+        ":all_gather_thunk",
+        ":collective_thunk",
+        ":collective_thunk_multigpu_test_utils",
+        ":thunk",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/service:device_assignment",
+        "//xla/service:shaped_slice",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "collective_kernel_thunk",
     srcs = ["collective_kernel_thunk.cc"],
