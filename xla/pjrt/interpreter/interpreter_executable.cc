@@ -162,7 +162,7 @@ InterpreterExecutable::Deserialize(
     std::optional<InterpreterTopologyDescription> topology,
     std::optional<CompileOptions> options) {
   ExecutableAndOptionsProto proto;
-  if (!proto.ParseFromArray(serialized.data(), serialized.size())) {
+  if (!proto.ParseFromString(serialized)) {
     return absl::InvalidArgumentError(
         "Failed to parse ExecutableAndOptionsProto from serialized executable");
   }
