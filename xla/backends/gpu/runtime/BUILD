@@ -1956,7 +1956,6 @@ xla_test(
     ],
 )
 
-
 cc_library(
     name = "collective_kernel_thunk",
     srcs = ["collective_kernel_thunk.cc"],
