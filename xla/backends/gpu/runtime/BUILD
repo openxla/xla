@@ -4160,6 +4160,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
