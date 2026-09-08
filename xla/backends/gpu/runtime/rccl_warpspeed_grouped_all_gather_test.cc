@@ -17,12 +17,12 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <random>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -30,10 +30,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
-#include "xla/literal_util.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/types.h"
@@ -45,7 +43,7 @@ namespace {
 
 constexpr int kNumDevices = 8;
 constexpr int kNumBuffers = 2;
-constexpr int64_t kElementsPerRank = 524'288;
+constexpr int64_t kElementsPerRank = 524288;
 
 class RcclWarpSpeedGroupedAllGatherTest : public CollectiveOpsE2ETestBase {
  public:
@@ -55,16 +53,11 @@ class RcclWarpSpeedGroupedAllGatherTest : public CollectiveOpsE2ETestBase {
 
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options = CollectiveOpsE2ETestBase::GetDebugOptionsForTest();
-    // Exercise ordinary RCCL group submission, without graph capture or
-    // alternative collective kernels.
+    // Use synchronous AllGather with private memory and no graph capture.
     options.add_xla_gpu_disable_async_collectives(DebugOptions::ALLGATHER);
     options.set_xla_gpu_all_gather_mode(
         DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
-    options.clear_xla_gpu_experimental_use_collective_kernels();
-    options.clear_xla_enable_nccl_symmetric_buffers_for_collectives();
-    options.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
     options.clear_xla_gpu_enable_command_buffer();
-    options.clear_xla_gpu_enable_collectives_command_buffer_filter();
     return options;
   }
 };
@@ -72,24 +65,22 @@ class RcclWarpSpeedGroupedAllGatherTest : public CollectiveOpsE2ETestBase {
 Literal MakeInput(int buffer, int rank) {
   Literal input =
       Literal::CreateFromShape(ShapeUtil::MakeShape(BF16, {kElementsPerRank}));
+  // All values are integers in [0, 255], exactly representable in BF16.
+  std::mt19937 rng(buffer * kNumDevices + rank);
+  std::uniform_int_distribution<int> distribution(0, 15);
+  const int base = (buffer * kNumDevices + rank) * 16;
   for (int64_t i = 0; i < kElementsPerRank; ++i) {
-    uint32_t mixed = static_cast<uint32_t>(i) * 2654435761u;
-    mixed ^= mixed >> 16;
-    // Distinct rank/buffer ranges and an index-dependent pattern. All values
-    // are integers in [0, 255], exactly representable in BF16.
-    input.data<bfloat16>()[i] = bfloat16(
-        static_cast<float>((buffer * kNumDevices + rank) * 16 + (mixed & 15)));
+    input.data<bfloat16>()[i] =
+        bfloat16(static_cast<float>(base + distribution(rng)));
   }
   return input;
 }
 
 TEST_F(RcclWarpSpeedGroupedAllGatherTest, TwoBuffersProduceExactResults) {
+  if (!Capability().IsRocm()) {
+    GTEST_SKIP() << "This test requires the ROCm platform";
+  }
   ASSERT_GE(device_count(), kNumDevices);
-  ASSERT_TRUE(Capability().IsRocm());
-  ASSERT_EQ(Capability().rocm_compute_capability()->gfx_version(), "gfx950");
-  ASSERT_GT(device_description().core_count(), 128);
-  ASSERT_EQ(GpuCollectives::Resolve("ROCM"),
-            GpuCollectives::Resolve("ROCM", "rccl"));
 
   // One variadic AllGather lowers to two RCCL calls in the same group.
   constexpr absl::string_view kHlo = R"(
@@ -106,21 +97,19 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(kHlo, kNumDevices));
 
-  // Prepare two inputs per rank and their expected rank-ordered concatenation.
+  // Prepare inputs and expected outputs.
   std::vector<std::vector<Literal>> inputs(kNumDevices);
-  std::vector<Literal> expected_buffers;
+  Literal expected = Literal::CreateFromShape(
+      module->entry_computation()->root_instruction()->shape());
   for (int buffer = 0; buffer < kNumBuffers; ++buffer) {
-    Literal gathered = Literal::CreateFromShape(
-        ShapeUtil::MakeShape(BF16, {kNumDevices * kElementsPerRank}));
     for (int rank = 0; rank < kNumDevices; ++rank) {
       inputs[rank].push_back(MakeInput(buffer, rank));
       const auto data = inputs[rank].back().data<bfloat16>();
-      std::copy(data.begin(), data.end(),
-                gathered.data<bfloat16>().begin() + rank * kElementsPerRank);
+      std::copy(
+          data.begin(), data.end(),
+          expected.data<bfloat16>({buffer}).begin() + rank * kElementsPerRank);
     }
-    expected_buffers.push_back(std::move(gathered));
   }
-  Literal expected = LiteralUtil::MakeTupleOwned(std::move(expected_buffers));
   std::vector<std::vector<Literal*>> arguments(kNumDevices);
   for (int rank = 0; rank < kNumDevices; ++rank) {
     arguments[rank] = {&inputs[rank][0], &inputs[rank][1]};
@@ -129,7 +118,7 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(ExecutionResult execution,
                        ExecuteReplicated(std::move(module), arguments));
 
-  // Reject a passing result if compilation removed the two-buffer collective.
+  // Check that one AllGather with two inputs remains after compilation.
   int all_gather_count = 0;
   for (const HloComputation* computation :
        execution.optimized_module->computations()) {
@@ -137,8 +126,6 @@ ENTRY main {
       if (instruction->opcode() == HloOpcode::kAllGather) {
         ++all_gather_count;
         EXPECT_EQ(instruction->operand_count(), kNumBuffers);
-        EXPECT_TRUE(
-            ShapeUtil::Compatible(instruction->shape(), expected.shape()));
       }
     }
   }

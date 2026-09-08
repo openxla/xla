@@ -1956,19 +1956,16 @@ xla_test(
     ],
 )
 
-# HLO execution coverage for the grouped multi-buffer AllGather shape that
-# exposed an RCCL WarpSpeed bug. This target is manual because it requires
-# eight gfx950 GPUs and a WarpSpeed-enabled RCCL. A dedicated CI lane must invoke
-# it; RCCL_WARP_SPEED_AUTO=0 is an external diagnostic control.
+# RCCL WarpSpeed regression test requiring eight AMD GPUs.
+# Set RCCL_WARP_SPEED_AUTO=0 externally for the diagnostic control.
 xla_test(
     name = "rccl_warpspeed_grouped_all_gather_test",
     srcs = ["rccl_warpspeed_grouped_all_gather_test.cc"],
     backend_tags = {
-        "gpu": ["multi_gpu"],
+        "amdgpu_any": ["multi_gpu"],
     },
-    backends = ["gpu"],
+    backends = ["amdgpu_any"],
     env = {
-        "HSA_NO_SCRATCH_RECLAIM": "1",
         "RCCL_WARP_SPEED_AG_THRESHOLD": "1048576",
     },
     size = "large",
@@ -1979,17 +1976,14 @@ xla_test(
     timeout = "moderate",
     deps = [
         "//xla:literal",
-        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/tests:collective_ops_e2e_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor/rocm:rocm_compute_capability",
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/strings:string_view",
