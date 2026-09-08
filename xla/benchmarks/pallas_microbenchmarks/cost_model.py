@@ -77,9 +77,7 @@ def _vmem_usage_bytes(
     rhs_sp_indices_vmem_usage = _vmem_for_operand(
         k, n, block_k, block_n, jnp.int2
     )
-    rhs_vmem_usage = (
-        (rhs_vmem_usage + rhs_sp_indices_vmem_usage) * sp_n // sp_m
-    )
+    rhs_vmem_usage = (rhs_vmem_usage + rhs_sp_indices_vmem_usage) * sp_n // sp_m
   return (
       _vmem_for_operand(m, k, block_m, block_k, lhs_dtype)
       + rhs_vmem_usage
@@ -218,6 +216,7 @@ class CostModel:
       window selection unless the TPU generation does not natively support the
       LHS dtype, in which case it will be used to determine the additional VMEM
       usage that may be used for the converted LHS operand.
+    sparse_lhs: Whether the LHS operand is sparse.
     sparse_rhs: Whether the RHS operand is sparse.
     sp_n: The N value of the N:M sparsity pattern.
     sp_m: The M value of the N:M sparsity pattern.
@@ -239,6 +238,7 @@ class CostModel:
       acc_dtype: jnp.dtype,
       *,
       subblock_m: int | None = None,
+      sparse_lhs: bool = False,
       sparse_rhs: bool = False,
       sp_n: int = 1,
       sp_m: int = 1,
@@ -249,7 +249,7 @@ class CostModel:
     )
     sublane_count, _ = self._platform_info.vreg_size
     mxu_contracting_dim, mxu_non_contracting_dim = (
-        self._platform_info.mxu_size_by_dtype(lhs_dtype)
+        self._platform_info.mxu_size_by_dtype(lhs_dtype, is_sparse=sparse_lhs)
     )
 
     # Window sizes must be multiples of sublane and lane counts, but we use
@@ -297,6 +297,7 @@ class CostModel:
     self.rhs_dtype = rhs_dtype
     self.out_dtype = out_dtype
     self.acc_dtype = acc_dtype
+    self.sparse_lhs = sparse_lhs
     self.sparse_rhs = sparse_rhs
     self.sp_n = sp_n
     self.sp_m = sp_m
@@ -384,11 +385,13 @@ class CostModel:
     num_mxus = self._platform_info.num_mxus
     sublane_count, _ = self._platform_info.vreg_size
     mxu_contracting_dim, mxu_non_contracting_dim = (
-        self._platform_info.mxu_size_by_dtype(self.lhs_dtype)
+        self._platform_info.mxu_size_by_dtype(
+            self.lhs_dtype, is_sparse=self.sparse_lhs
+        )
     )
     clock_speed_ghz = self._platform_info.clock_speed_ghz_by_p_state[p_state]
     matmul_cadence_cycles = self._platform_info.get_matmul_cadence_cycles(
-        self.lhs_dtype
+        self.lhs_dtype, is_sparse=self.sparse_lhs
     )
     mxu_blocks_contracting_dim = self._block_k // mxu_contracting_dim
     mxu_blocks_non_contracting_dim = self._block_n // mxu_non_contracting_dim
@@ -456,9 +459,7 @@ class CostModel:
     dma_latencies_in = [hbm_to_vmem_latency_ns, hbm_to_vmem_latency_ns]
     if self.sparse_rhs:
       dma_sizes_in.append(
-          np.broadcast_to(
-              self._rhs_sp_indices_size_bytes, self._grid_shape
-          )
+          np.broadcast_to(self._rhs_sp_indices_size_bytes, self._grid_shape)
       )
       dma_latencies_in.append(hbm_to_vmem_latency_ns)
     dma_sizes_in = np.stack(dma_sizes_in, axis=-1)

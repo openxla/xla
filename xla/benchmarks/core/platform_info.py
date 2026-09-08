@@ -35,6 +35,9 @@ class PlatformInfo:
       bytes for Pallas kernels.
     matmul_cadence_cycles_by_dtype: A mapping from dtype to the number of cycles
       between each matmul operation for a given MXU.
+    sparse_matmul_cadence_cycles_by_dtype: A mapping from dtype to the number of
+      cycles between each sparse matmul operation for a given MXU, or None if
+      sparse matmul is not supported.
     latch_cadence_cycles_by_dtype: A mapping from dtype to the number of cycles
       between each latch operation for a given MXU.
     clock_speed_ghz_by_p_state: A mapping from P-state to clock speed in GHz.
@@ -52,7 +55,7 @@ class PlatformInfo:
 
   chip_version: pltpu.ChipVersion
   default_internal_scratch_bytes: int
-  matmul_cadence_cycles_by_dtype: immutabledict[jnp.dtype, int]
+  matmul_cadence_cycles_by_dtype: immutabledict[jnp.dtype, int | float]
   latch_cadence_cycles_by_dtype: immutabledict[jnp.dtype, int]
   clock_speed_ghz_by_p_state: immutabledict[int | None, float]
   hbm_to_vmem_bandwidth_gb_per_sec: int
@@ -61,6 +64,9 @@ class PlatformInfo:
   matmul_latency_cycles_by_dtype: immutabledict[jnp.dtype, int]
   default_p_state: int | None
   default_vmem_limit_kib: int
+  sparse_matmul_cadence_cycles_by_dtype: (
+      immutabledict[jnp.dtype, int | float] | None
+  ) = None
   _tpu_info: pltpu.TpuInfo = dataclasses.field(init=False, repr=False)
 
   def __post_init__(self):
@@ -98,7 +104,7 @@ class PlatformInfo:
     return self._tpu_info.num_accumulators
 
   def get_emulated_dtype(
-      self, dtype: jnp.dtype, supported_dtypes: Mapping[jnp.dtype, int]
+      self, dtype: jnp.dtype, supported_dtypes: Mapping[jnp.dtype, int | float]
   ) -> jnp.dtype:
     """Returns the emulated dtype for the given dtype."""
     if dtype in supported_dtypes:
@@ -111,25 +117,53 @@ class PlatformInfo:
     else:
       return jnp.float32
 
-  def get_matmul_cadence_cycles(self, lhs_dtype: jnp.dtype) -> int:
+  def get_matmul_cadence_cycles(
+      self, lhs_dtype: jnp.dtype, is_sparse: bool = False
+  ) -> int | float:
     """Returns the number of cycles between each matmul on a single MXU.
 
     Args:
       lhs_dtype: The dtype of the LHS operand.
+      is_sparse: Whether the matmul operation is sparse.
+
     Returns:
       The number of cycles between each matmul on a single MXU, taking into
       account the actual matmul type on the hardware.
     """
+    if is_sparse:
+      return self.get_sparse_matmul_cadence_cycles(lhs_dtype)
     emulated_dtype = self.get_emulated_dtype(
         lhs_dtype, self.matmul_cadence_cycles_by_dtype
     )
     return self.matmul_cadence_cycles_by_dtype[emulated_dtype]
+
+  def get_sparse_matmul_cadence_cycles(
+      self, lhs_dtype: jnp.dtype
+  ) -> int | float:
+    """Returns the number of cycles between each sparse matmul on a single MXU.
+
+    Args:
+      lhs_dtype: The dtype of the LHS operand.
+
+    Returns:
+      The number of cycles between each sparse matmul on a single MXU, taking
+      into account the actual matmul type on the hardware.
+    """
+    if self.sparse_matmul_cadence_cycles_by_dtype is None:
+      raise ValueError(
+          f"Sparse matmul is not supported on chip version {self.chip_version}."
+      )
+    emulated_dtype = self.get_emulated_dtype(
+        lhs_dtype, self.sparse_matmul_cadence_cycles_by_dtype
+    )
+    return self.sparse_matmul_cadence_cycles_by_dtype[emulated_dtype]
 
   def get_matmul_latency_cycles(self, lhs_dtype: jnp.dtype) -> int:
     """Returns the number of cycles of matmul latency for the given LHS dtype.
 
     Args:
       lhs_dtype: The dtype of the LHS operand.
+
     Returns:
       The number of cycles of matmul latency for the given LHS dtype, taking
       into account the actual matmul type on the hardware.
@@ -144,6 +178,7 @@ class PlatformInfo:
 
     Args:
       rhs_dtype: The dtype of the RHS operand.
+
     Returns:
       The number of cycles between each latch operation, taking into account
       the actual latch type on the hardware.
@@ -153,8 +188,16 @@ class PlatformInfo:
     )
     return self.latch_cadence_cycles_by_dtype[emulated_dtype]
 
-  def mxu_size_by_dtype(self, lhs_dtype: jnp.dtype) -> tuple[int, int]:
+  def mxu_size_by_dtype(
+      self, lhs_dtype: jnp.dtype, is_sparse: bool = False
+  ) -> tuple[int, int]:
     """Returns the MXU size for the given LHS dtype."""
+    if is_sparse:
+      if self.chip_version == pltpu.ChipVersion.TPU_8T:
+        return 4 * self.mxu_size[0], self.mxu_size[1]
+      raise ValueError(
+          f"Sparse matmul is not supported on chip version {self.chip_version}."
+      )
     if (
         jax.dtypes.itemsize_bits(lhs_dtype) < 8
         and lhs_dtype in self.matmul_cadence_cycles_by_dtype
@@ -410,6 +453,12 @@ _PLATFORM_INFOS = (
         }),
         default_p_state=1,
         default_vmem_limit_kib=32 * 1024,
+        sparse_matmul_cadence_cycles_by_dtype=immutabledict({
+            jnp.float8_e4m3fn: 64 / 10,
+            jnp.float8_e5m2: 64 / 10,
+            jnp.bfloat16: 16,
+            jnp.float32: 8,
+        }),
     ),
 )
 
