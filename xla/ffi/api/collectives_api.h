@@ -39,6 +39,11 @@ struct CollectiveMemoryRegion {
   size_t byte_size;
 };
 
+struct WindowLookup {
+  XLA_FFI_Window* window;
+  size_t offset;
+};
+
 namespace internal {
 
 // C++ wrapper for the XLA FFI Collectives extension API.
@@ -129,7 +134,7 @@ class CommunicatorContextBase {
     return ErrorPolicy::Ok();
   }
 
-  StatusOr<XLA_FFI_Window*> GetWindow(
+  StatusOr<WindowLookup> GetWindow(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id, const void* buffer) {
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
@@ -142,10 +147,11 @@ class CommunicatorContextBase {
     args.communication_id = communication_id;
     args.buffer = buffer;
     args.window = nullptr;
+    args.window_offset = 0;
     if (XLA_FFI_Error* err = ext_->get_window(ext_, &args)) {
-      return StatusOr<XLA_FFI_Window*>(ErrorPolicy::TakeError(api_, err));
+      return StatusOr<WindowLookup>(ErrorPolicy::TakeError(api_, err));
     }
-    return args.window;
+    return WindowLookup{args.window, args.window_offset};
   }
 
  private:

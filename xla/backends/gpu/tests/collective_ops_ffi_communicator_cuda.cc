@@ -53,17 +53,20 @@ absl::Status CommunicatorAllReduceU32(stream_executor::Stream* stream,
 }
 
 absl::Status WindowPeerAllReduceU32(stream_executor::Stream* stream,
-                                    XLA_FFI_Window* window, void* recv_buffer,
+                                    XLA_FFI_Window* window,
+                                    size_t window_offset, void* recv_buffer,
                                     int64_t count) {
 #if (NCCL_VERSION_CODE >= 22902) || defined(USE_NCCL_HOST_API)
   ncclWindow_t nccl_win = reinterpret_cast<ncclWindow_t>(window);
 
   void* src0 = nullptr;
   void* src1 = nullptr;
-  ncclResult_t r0 = ncclGetPeerDevicePointer(nccl_win, 0, /*peer=*/0, &src0);
+  ncclResult_t r0 =
+      ncclGetPeerDevicePointer(nccl_win, window_offset, /*peer=*/0, &src0);
   TF_RET_CHECK(r0 == ncclSuccess)
       << "ncclGetPeerDevicePointer(rank=0) failed: " << ncclGetErrorString(r0);
-  ncclResult_t r1 = ncclGetPeerDevicePointer(nccl_win, 0, /*peer=*/1, &src1);
+  ncclResult_t r1 =
+      ncclGetPeerDevicePointer(nccl_win, window_offset, /*peer=*/1, &src1);
   TF_RET_CHECK(r1 == ncclSuccess)
       << "ncclGetPeerDevicePointer(rank=1) failed: " << ncclGetErrorString(r1);
   TF_RET_CHECK(src0 != nullptr && src1 != nullptr);

@@ -299,13 +299,14 @@ absl::Status WindowGetImpl(const XLA_FFI_Collectives_Extension* self,
                    args->communication_id));
 
   se::DeviceAddressBase addr(const_cast<void*>(args->buffer), 0);
-  auto [sym_mem, _] =
+  auto [sym_mem, offset] =
       state->collective_memory->FindSymmetricMemory(clique_key, addr);
   if (sym_mem == nullptr) {
     return NotFound(
         "No symmetric memory registered for the given buffer address");
   }
   args->window = reinterpret_cast<XLA_FFI_Window*>(sym_mem->PackKernelArg());
+  args->window_offset = offset;
   return absl::OkStatus();
 }
 

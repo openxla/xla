@@ -163,13 +163,14 @@ typedef struct XLA_FFI_Window_Get_Args {
 
   const void* buffer;      // registered address (in)
   XLA_FFI_Window* window;  // out
+  size_t window_offset;    // byte offset of `buffer` within `window` (out)
 } XLA_FFI_Window_Get_Args;
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Window_Get_Args, window);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Window_Get_Args, window_offset);
 
 // Returns the non-owning collective memory window handle for a previously-
-// registered buffer. Valid once collective memory is acquired
-// (Initialize/Execute stages).
+// registered buffer, along with the byte offset of `buffer` within that
+// window. Valid once collective memory is acquired (Initialize/Execute stages).
 typedef XLA_FFI_Error* XLA_FFI_Window_Get(
     const XLA_FFI_Collectives_Extension* self, XLA_FFI_Window_Get_Args* args);
 

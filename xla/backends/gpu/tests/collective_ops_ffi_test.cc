@@ -81,7 +81,8 @@ absl::Status CommunicatorAllReduceU32(se::Stream* stream,
 // via `ncclGetPeerDevicePointer` and launches `Peer2AllReduce`. The default
 // translation unit returns Unimplemented.
 absl::Status WindowPeerAllReduceU32(se::Stream* stream, XLA_FFI_Window* window,
-                                    void* recv_buffer, int64_t count);
+                                    size_t window_offset, void* recv_buffer,
+                                    int64_t count);
 
 struct SynchronizationSignals {
   absl::Mutex mutex;
@@ -388,11 +389,15 @@ absl::Status PublicApiWindow(se::Stream* stream, ffi::BufferR0<U32> src,
                              ffi::Result<ffi::BufferR0<U32>> dst,
                              ffi::Communicator comm) {
   ABSL_ASSIGN_OR_RETURN(
-      XLA_FFI_Window * window,
+      ffi::WindowLookup lookup,
       comm.GetWindow(ffi::GroupMode::kFlattenedId, PublicApiReplicaGroups(),
                      /*communication_id=*/0, src.device_memory().opaque()));
-  TF_RET_CHECK(window != nullptr);
-  return WindowPeerAllReduceU32(stream, window, dst->device_memory().opaque(),
+  TF_RET_CHECK(lookup.window != nullptr);
+  TF_RET_CHECK(lookup.offset == 0)
+      << "Expected offset 0 for a registered base pointer, got "
+      << lookup.offset;
+  return WindowPeerAllReduceU32(stream, lookup.window, lookup.offset,
+                                dst->device_memory().opaque(),
                                 src.element_count());
 }
 }  // namespace

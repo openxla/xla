@@ -32,7 +32,7 @@ absl::Status CommunicatorAllReduceU32(stream_executor::Stream*,
 }
 
 absl::Status WindowPeerAllReduceU32(stream_executor::Stream*, XLA_FFI_Window*,
-                                    void*, int64_t) {
+                                    size_t, void*, int64_t) {
   return absl::UnimplementedError(
       "Window peer all-reduce is not implemented for this platform");
 }
