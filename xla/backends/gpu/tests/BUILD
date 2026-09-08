@@ -794,6 +794,7 @@ lit_test_suite_for_gpus(
         "b200",
         "h100_sxm",
         "mi200",
+        "mi300",
         "mi350",
         "mi450",
     ],
