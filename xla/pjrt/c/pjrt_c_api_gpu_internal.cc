@@ -85,9 +85,9 @@ namespace gpu_plugin {
 
 #if TENSORFLOW_USE_ROCM
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "ROCM"
-//TODO(Intel-tf)  this will be changed to ONEAPI
-//when the SYCL backend has been renamed to ONEAPI.
 #elif TENSORFLOW_USE_SYCL
+// TODO(Intel-tf)  this will be changed to ONEAPI
+// when the SYCL backend has been renamed to ONEAPI.
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "SYCL"
 #else
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "CUDA"
