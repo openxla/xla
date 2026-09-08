@@ -79,12 +79,14 @@ cc_library(
 cc_library(
     name = "pjrt_c_api_callback_extension_hdrs",
     hdrs = ["pjrt_c_api_callback_extension.h"],
+    visibility = ["//visibility:public"],
     deps = [":pjrt_c_api_hdrs"],
 )
 
 cc_library(
     name = "pjrt_c_api_tpu_topology_extension_hdrs",
     hdrs = ["pjrt_c_api_tpu_topology_extension.h"],
+    visibility = ["//visibility:public"],
     deps = [":pjrt_c_api_hdrs"],
 )
 
