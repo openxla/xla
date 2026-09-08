@@ -30,18 +30,12 @@ limitations under the License.
 
 namespace stream_executor {
 namespace sycl {
-using dnn::AlgorithmConfig;
-using dnn::BatchDescriptor;
-using dnn::ConvolutionDescriptor;
 using dnn::DataLayout;
-using dnn::DimIndex;
 using dnn::FilterDescriptor;
 using dnn::FilterLayout;
-using dnn::ProfileResult;
 using ConvFwdPd = dnnl::convolution_forward::primitive_desc;
 using ConvBwdInputPd = dnnl::convolution_backward_data::primitive_desc;
 using ConvBwdFilterPd = dnnl::convolution_backward_weights::primitive_desc;
-using ConvBwdFilterPrimitive = dnnl::convolution_backward_weights;
 
 namespace {
 
@@ -256,7 +250,6 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
   DataLayout output_dl = config.output_descriptor.layout();
 
   xla::PrimitiveType input_type;
-  xla::Shape input_shape, filter_shape, output_shape;
   void* input_data;
   void* filter_data;
   void* output_data;
@@ -265,9 +258,6 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
 
   float alpha = config.conv_result_scale;
   bool alpha_is_one = (fabs(alpha - 1.0f) < 1e-6);
-  input_shape = config.input_shape;
-  filter_shape = config.filter_shape;
-  output_shape = config.output_shape;
   xla::gpu::CudnnConvKind conv_kind = config.kind;
 
   // Get input type based on convolution kind
@@ -292,8 +282,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
   filter_data = buffers.filter_data;
   output_data = buffers.output_data;
 
-  float side_input_scale;
-  bool side_input_scale_zero;
+  float side_input_scale = 0.0f;
+  bool side_input_scale_zero = true;
   if (conv_kind == xla::gpu::CudnnConvKind::kForwardActivation) {
     bias_data = const_cast<void*>(operand_buffers[2].opaque());
     if (operand_buffers.size() >= 4) {
@@ -407,8 +397,9 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     // bias_md) only when alpha == 1. Otherwise, it's applied as
     // a post-op.
     if (!alpha_is_one && bias_data) {
-      auto bias_post_md =
-          dnnl::memory::desc(bias_dims, data_type, dnnl::memory::format_tag::x);
+      dnnl::memory::dims bias_post_dims(dst_dims.size(), 1);
+      bias_post_dims[1] = bias_dims[0];  // Logical dimension 1 is always channels (C) in oneDNN
+      auto bias_post_md = dnnl::memory::desc(bias_post_dims, data_type, dst_fmt);
       po.append_binary(dnnl::algorithm::binary_add, bias_post_md);
       post_op_bias_memory = CreateDnnlMemory(
           bias_post_md, onednn_conv_primitive.engine, bias_data);
@@ -500,6 +491,9 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
             /*bias_md=*/std::nullopt, dst_md, stride_dims, dilation_dims,
             padding_dims_l, padding_dims_r, post_ops_attr);
         dnnl::primitive_attr attr;
+        if (input_type == xla::F32) {
+          attr.set_fpmath_mode(fp32_math_mode);
+        }
         attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
         ConvBwdInputPd bwd_input_pd = ConvBwdInputPd(
             onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct,
@@ -530,6 +524,9 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
             padding_dims_l, padding_dims_r, post_ops_attr);
 
         dnnl::primitive_attr attr;
+        if (input_type == xla::F32) {
+          attr.set_fpmath_mode(fp32_math_mode);
+        }
         attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
         ConvBwdFilterPd bwd_filter_pd = ConvBwdFilterPd(
             onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct,
@@ -551,7 +548,7 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         break;
       }
       default:
-        return xla::Internal("Unkown convolutuion kind");
+        return xla::Internal("Unknown convolution kind");
     }
   } catch (dnnl::error& e) {
     return xla::Internal("OneDNN Conv error: %s", e.message);
