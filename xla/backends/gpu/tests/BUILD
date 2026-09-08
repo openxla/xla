@@ -1329,6 +1329,41 @@ xla_test(
     ],
 )
 
+# RCCL WarpSpeed regression test requiring eight AMD GPUs.
+# Set RCCL_WARP_SPEED_AUTO=0 externally for the diagnostic control.
+xla_test(
+    name = "rccl_warpspeed_grouped_all_gather_test",
+    srcs = ["rccl_warpspeed_grouped_all_gather_test.cc"],
+    backend_tags = {
+        "amdgpu_any": ["multi_gpu"],
+    },
+    backends = ["amdgpu_any"],
+    env = {
+        "RCCL_WARP_SPEED_AG_THRESHOLD": "1048576",
+    },
+    size = "large",
+    tags = [
+        "manual",
+        "rocm-only",
+    ],
+    timeout = "moderate",
+    deps = [
+        ":collective_ops_e2e_test_base",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "collective_ops_ffi_kernels",
     testonly = True,
