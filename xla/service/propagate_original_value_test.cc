@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -97,8 +98,8 @@ TEST_F(PropagateOriginalValueTest, CallInlinerMultipleCallSites) {
 
   ENTRY main () -> f32[] {
     lhs = f32[] constant(42)
-    call.1 = f32[] call(f32[] lhs), to_apply=incr, origin={{"call.1"}}
-    call.2 = f32[] call(f32[] lhs), to_apply=incr, origin={{"call.2"}}
+    call.1 = f32[] call(f32[] lhs), to_apply=incr, origin={{"call.1"},["call.1"]}
+    call.2 = f32[] call(f32[] lhs), to_apply=incr, origin={{"call.2"},["call.2"]}
     ROOT add = f32[] add(f32[] call.1, f32[] call.2)
   })";
 
