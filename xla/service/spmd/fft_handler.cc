@@ -353,8 +353,21 @@ HloInstruction* SliceValidData(HloInstruction* hlo, const Shape& target_shape,
 
 // Distributed FFT using the algorithm described in go/tpu-spmd-fft.
 absl::Status SpmdPartitioningVisitor::HandleFft(HloInstruction* hlo) {
-  if (hlo->operand(0)->shape().dimensions().size() < 3 ||
-      hlo->fft_type() != FftType::FFT) {
+  const int64_t rank = hlo->operand(0)->shape().dimensions().size();
+  const int64_t first_fft_dim = rank - hlo->fft_length().size();
+  if (hlo->has_sharding() && hlo->sharding().IsTiled()) {
+    bool fft_dims_unsharded = true;
+    for (int64_t dim = first_fft_dim; dim < rank; ++dim) {
+      fft_dims_unsharded &= hlo->sharding().dimension(dim) == 1;
+    }
+    if (fft_dims_unsharded) {
+      // FFTs are independent across non-transformed dimensions, so they can
+      // use the same local partitioning as elementwise operations.
+      return HandleElementwise(hlo);
+    }
+  }
+
+  if (rank < 3 || hlo->fft_type() != FftType::FFT) {
     return DefaultAction(hlo);
   }
 
