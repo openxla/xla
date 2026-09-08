@@ -20,8 +20,7 @@ fusion {
 
 // NEW-VECTOR:      %[[LHS:.*]] = vector.transfer_read %{{.*}} : memref<2x16x32xf32>, vector<1x4x8xf32>
 // NEW-VECTOR:      %[[RHS:.*]] = vector.transfer_read %{{.*}} : memref<2x32x8xf32>, vector<1x8x4xf32>
-// NEW-VECTOR:      vector.contract {indexing_maps = [{{.*}}], iterator_types = ["parallel", "reduction", "parallel", "parallel"], kind = #vector.kind<add>} %[[LHS]], %[[RHS]], %{{.*}} : vector<1x4x8xf32>, vector<1x8x4xf32> into vector<1x4x4xf32>
-// NEW-VECTOR:      vector.transfer_write %{{.*}}, %{{.*}} : vector<1x4x4xf32>, memref<2x16x8xf32>
+// NEW-VECTOR:      %[[RES:.*]] = vector.contract {indexing_maps = [{{.*}}], iterator_types = ["parallel", "reduction", "parallel", "parallel"], kind = #vector.kind<add>} %[[LHS]], %[[RHS]], %{{.*}} : vector<1x4x8xf32>, vector<1x8x4xf32> into vector<1x4x4xf32>
 
 ENTRY main {
   p0 = f32[2,16,32] parameter(0)
