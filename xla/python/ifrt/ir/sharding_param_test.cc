@@ -74,7 +74,7 @@ TEST(ShardingParamTest, ValidShardingIsAccepted) {
 
   ShardingParam sharding(/*dim_shards=*/{2, 4}, minor_to_major);
 
-  EXPECT_TRUE(sharding.verify().ok());
+  EXPECT_OK(sharding.verify());
 }
 
 }  // namespace
