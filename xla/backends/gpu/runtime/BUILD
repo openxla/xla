@@ -1956,10 +1956,10 @@ xla_test(
     ],
 )
 
-# ROCm-only integration coverage for the grouped multi-buffer AllGather shape
-# that exposed an RCCL WarpSpeed bug. This target is manual because it requires
-# eight gfx950 GPUs and a WarpSpeed-enabled RCCL; a dedicated CI lane must invoke it.
-# RCCL_WARP_SPEED_AUTO=0 can be supplied externally as a diagnostic control.
+# HLO execution coverage for the grouped multi-buffer AllGather shape that
+# exposed an RCCL WarpSpeed bug. This target is manual because it requires
+# eight gfx950 GPUs and a WarpSpeed-enabled RCCL. A dedicated CI lane must invoke
+# it; RCCL_WARP_SPEED_AUTO=0 is an external diagnostic control.
 xla_test(
     name = "rccl_warpspeed_grouped_all_gather_test",
     srcs = ["rccl_warpspeed_grouped_all_gather_test.cc"],
@@ -1978,25 +1978,21 @@ xla_test(
     ],
     timeout = "moderate",
     deps = [
-        ":all_gather_thunk",
-        ":collective_thunk",
-        ":collective_thunk_multigpu_test_utils",
-        ":thunk",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/service:buffer_assignment",
-        "//xla/service:device_assignment",
-        "//xla/service:shaped_slice",
-        "//xla/service/gpu:buffer_allocations",
-        "//xla/stream_executor:device_address",
-        "//xla/stream_executor:stream",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla:xla_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_collectives",
+        "//xla/backends/gpu/tests:collective_ops_e2e_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor/rocm:rocm_compute_capability",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_macros",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
+        "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
