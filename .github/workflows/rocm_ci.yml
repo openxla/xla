@@ -61,7 +61,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       matrix:
-        job-index: [1, 2, 3, 4, 5, 6, 7, 8]
+        job-index: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
       ROCM_DISTRO_URL: ${{ needs.rocm-config.outputs.rocm-distro-url }}
