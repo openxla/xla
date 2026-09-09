@@ -7586,6 +7586,90 @@ TEST_F(AlgebraicSimplifierTest, TrivialDynamicUpdateSlice) {
                                          m::Parameter(), m::Constant())));
 }
 
+TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceOfPadToConcatHigh) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule DynamicUpdateSliceOfPadToConcatHigh
+
+ENTRY main {
+  x = f32[4,1] parameter(0)
+  nan_val = f32[] constant(nan)
+  pad = f32[4,2] pad(x, nan_val), padding=0_0x0_1
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  ROOT dus = f32[4,2] dynamic-update-slice(pad, x, c0, c1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(0))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DynamicUpdateSliceOfPadToConcatHighDifferentUpdate) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule DynamicUpdateSliceOfPadToConcatHighDifferentUpdate
+
+ENTRY main {
+  x = f32[4,3] parameter(0)
+  y = f32[4,2] parameter(1)
+  zero = f32[] constant(0.0)
+  pad = f32[4,5] pad(x, zero), padding=0_0x0_2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(3)
+  ROOT dus = f32[4,5] dynamic-update-slice(pad, y, c0, c1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(1))));
+}
+
+TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceOfPadToConcatLow) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule DynamicUpdateSliceOfPadToConcatLow
+
+ENTRY main {
+  x = f32[4,3] parameter(0)
+  y = f32[4,2] parameter(1)
+  zero = f32[] constant(0.0)
+  pad = f32[4,5] pad(x, zero), padding=0_0x2_0
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(0)
+  ROOT dus = f32[4,5] dynamic-update-slice(pad, y, c0, c1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(1), m::Parameter(0))));
+}
+
+TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceOfPadNotOverwritingPadding) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule DynamicUpdateSliceOfPadNotOverwritingPadding
+
+ENTRY main {
+  x = f32[4,3] parameter(0)
+  y = f32[4,1] parameter(1)
+  zero = f32[] constant(0.0)
+  pad = f32[4,5] pad(x, zero), padding=0_0x0_2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(3)
+  ROOT dus = f32[4,5] dynamic-update-slice(pad, y, c0, c1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              Not(GmockMatch(m::Concatenate())));
+}
+
 // Test that two consecutive broadcasts can be merged to one.
 TEST_F(AlgebraicSimplifierTest, MergeBroadcasts) {
   auto m = CreateNewVerifiedModule();
