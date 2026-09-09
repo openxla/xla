@@ -642,7 +642,7 @@ TEST_P(CollectivesModeOps, AllGatherMixedTypes) {
   }
 }
 
-// Extend multi-input AllGather coverage to large BF16 buffers and eight GPUs.
+// Extend multi-input AllGather coverage to large BF16 buffers and four GPUs.
 class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
  public:
   AllGatherGroupedTest()
@@ -650,9 +650,9 @@ class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
                                  /*collectives_memory_size=*/128 * kMB) {}
 
  protected:
-  static constexpr int kNumDevices = 8;
+  static constexpr int kNumReplicas = 4;
   static constexpr int kNumBuffers = 2;
-  static constexpr int64_t kElementsPerRank = 4194304;
+  static constexpr int64_t kElementsPerRank = 8388608;
 
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options = CollectiveOpsE2ETestBase::GetDebugOptionsForTest();
@@ -668,9 +668,9 @@ class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
     Literal input = Literal::CreateFromShape(
         ShapeUtil::MakeShape(BF16, {kElementsPerRank}));
     // All values are integers in [0, 255], exactly representable in BF16.
-    std::mt19937 rng(buffer * kNumDevices + rank);
+    std::mt19937 rng(buffer * kNumReplicas + rank);
     std::uniform_int_distribution<int> distribution(0, 15);
-    const int base = (buffer * kNumDevices + rank) * 16;
+    const int base = (buffer * kNumReplicas + rank) * 16;
     for (int64_t i = 0; i < kElementsPerRank; ++i) {
       input.data<bfloat16>()[i] =
           bfloat16(static_cast<float>(base + distribution(rng)));
@@ -679,32 +679,32 @@ class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
   }
 };
 
-TEST_F(AllGatherGroupedTest, LargeTwoInputs8GpuBF16) {
-  if (device_count() < kNumDevices) {
-    GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
-  }
+TEST_F(AllGatherGroupedTest, LargeTwoInputs4GpuBF16) {
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << device_count() << " available)";
 
-  // Gather two 8 MiB inputs per rank using two calls in the same group.
+  // Gather two 16 MiB inputs per rank using two calls in the same group.
   constexpr absl::string_view kHlo = R"(
 HloModule grouped_all_gather
 
 ENTRY main {
-  a = bf16[4194304]{0} parameter(0)
-  b = bf16[4194304]{0} parameter(1)
+  a = bf16[8388608]{0} parameter(0)
+  b = bf16[8388608]{0} parameter(1)
   ROOT gathered = (bf16[33554432]{0}, bf16[33554432]{0})
     all-gather(a, b), dimensions={0},
-    replica_groups={{0,1,2,3,4,5,6,7}}
+    replica_groups={{0,1,2,3}}
 }
 )";
   ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(kHlo, kNumDevices));
+                       ParseAndReturnVerifiedModule(kHlo, kNumReplicas));
 
   // Prepare inputs and expected outputs.
-  std::vector<std::vector<Literal>> inputs(kNumDevices);
+  std::vector<std::vector<Literal>> inputs(kNumReplicas);
   Literal expected = Literal::CreateFromShape(
       module->entry_computation()->root_instruction()->shape());
   for (int buffer = 0; buffer < kNumBuffers; ++buffer) {
-    for (int rank = 0; rank < kNumDevices; ++rank) {
+    for (int rank = 0; rank < kNumReplicas; ++rank) {
       inputs[rank].push_back(MakeInput(buffer, rank));
       const auto data = inputs[rank].back().data<bfloat16>();
       std::copy(
@@ -712,8 +712,8 @@ ENTRY main {
           expected.data<bfloat16>({buffer}).begin() + rank * kElementsPerRank);
     }
   }
-  std::vector<std::vector<Literal*>> arguments(kNumDevices);
-  for (int rank = 0; rank < kNumDevices; ++rank) {
+  std::vector<std::vector<Literal*>> arguments(kNumReplicas);
+  for (int rank = 0; rank < kNumReplicas; ++rank) {
     arguments[rank] = {&inputs[rank][0], &inputs[rank][1]};
   }
 
@@ -733,8 +733,8 @@ ENTRY main {
   }
   EXPECT_EQ(all_gather_count, 1);
 
-  ASSERT_EQ(execution.results.size(), kNumDevices);
-  for (int rank = 0; rank < kNumDevices; ++rank) {
+  ASSERT_EQ(execution.results.size(), kNumReplicas);
+  for (int rank = 0; rank < kNumReplicas; ++rank) {
     EXPECT_TRUE(LiteralTestUtil::Equal(expected, execution.results[rank]))
         << "destination rank " << rank;
   }
