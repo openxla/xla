@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -166,6 +167,13 @@ class RaggedDotFusionRewriterIntegrationTest
     return device_description().runtime_version();
   }
 
+  // moe_grouped_matmul_bwd (used for the ragged dot wgrad) requires cuDNN
+  // 9.24+ and cuBLASLt 13.5+; the latter is only known at compile time.
+  bool SupportsCudnnRaggedDotWgrad() const {
+    return GetDnnVersion() >= se::dnn::VersionInfo{9, 24, 0} &&
+           CUBLAS_VERSION >= 130500;
+  }
+
   RaggedDotFusionRewriterIntegrationTest()
       : HloInterpreterReferenceMixin<HloPjRtGpuTestBase>(
             HloTestBaseOptions{/*verifier_layout_sensitive=*/false,
@@ -225,8 +233,9 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotOnly) {
 // Wgrad: contracts over the ragged M dimension (kRaggedContracting).
 // Uses cuDNN moe_grouped_matmul_bwd to compute dweight[G,K,N].
 TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
-  if (GetDnnVersion() < se::dnn::VersionInfo{9, 22, 0}) {
-    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.22+.";
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+ and "
+                    "cuBLASLt 13.5+.";
   }
 
   const auto& [data_type, group_type] = GetParam();
@@ -261,8 +270,9 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
 // expected to pad them at compile time rather than fail or require runtime
 // padding based on group_sizes.
 TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgradUnalignedKN) {
-  if (GetDnnVersion() < se::dnn::VersionInfo{9, 22, 0}) {
-    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.22+.";
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+ and "
+                    "cuBLASLt 13.5+.";
   }
 
   const auto& [data_type, group_type] = GetParam();
@@ -309,8 +319,9 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgradUnalignedKN) {
 // the padding together.
 TEST_P(RaggedDotFusionRewriterIntegrationTest,
        TestRaggedDotWgradTransposeMLeadingDim) {
-  if (GetDnnVersion() < se::dnn::VersionInfo{9, 22, 0}) {
-    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.22+.";
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+ and "
+                    "cuBLASLt 13.5+.";
   }
 
   const auto& [data_type, group_type] = GetParam();
