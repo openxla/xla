@@ -127,18 +127,6 @@ struct AllocationSegmentContext {
   bool only_extend_existing_allocation;
 };
 
-// Returns the latest schedule time at which `view` (a value colored
-// `view_color`, see Options::dus_view_color) still has its underlying storage
-// read through it: the max schedule time over the transitive closure of the
-// view's readers, following users that are themselves view colored. Exposed
-// for testing.
-//
-// REQUIRES: view->shape().IsTuple() == false.
-int64_t ViewExtendedTransitiveUseTime(
-    const HloInstruction* view, int64_t view_color,
-    const absl::flat_hash_map<const HloInstruction*, int64_t>&
-        instruction_schedule);
-
 // Compare asynchronous copies such that an earlier start time has the same or
 // earlier end time and an earlier end time has the same or earlier start time.
 bool operator<(const AsynchronousCopy& a, const AsynchronousCopy& b);
@@ -639,6 +627,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     int64_t first_use_time = std::numeric_limits<int64_t>::max();
     bool all_uses_allowed_in_alternate_memory = true;
     bool all_uses_are_synchronous = true;
+    const HloInstruction* first_use_instruction = nullptr;
   };
 
   // Encapsulates the block prefetch scheduling state that is maintained across
@@ -1007,6 +996,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   void MaybeCreateOrAddToAliasedOffset(const Allocation& allocation,
                                        AliasedOffset* aliased_offset);
 
+  // Records the aliased offset for async pipelined while loop boundary buffers
+  // to ensure exact colocation across loop parameters, body roots, and callers.
+  void RecordAliasedOffsetForAsyncPipelinedWhileLoop(
+      const HloPosition& position, AliasedOffset* aliased_offset);
+
   // Given an allocation sequence, returns the live allocation at time with a
   // preference towards allocations in alternate memory. Returns nullptr if no
   // allocation is alive at that time.
@@ -1056,11 +1050,78 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // already have a copy in the default memory space. We search backwards
   // (latest to earliest in execution time) for a suitable allocation in
   // order to find the most recent one.
+  //
+  // Updates the following data structures:
+  // - `allocation_values`: Appends `ParentAllocation` and `MirroredAllocation`
+  //   entries to the `AllocationSequence`s of the matching while body parameter
+  //   and post-while `AllocationValue`s if redundant eviction elimination is
+  //   enabled.
+  // - `preferred_offset_for_computation`: Maps the while body computation to
+  //   the preferred `AliasedOffset*` when `has_async_pipelined_while_loops_` is
+  //   false.
+  // - Delegates to `SynchronizeAliasedWhileLoopOffsets` when
+  //   `has_async_pipelined_while_loops_` is true.
   void MaybeCreateMirroredParentAllocationForWhileUse(
       const AllocationValue& allocation_value, const AllocationValue::Use& use,
       int64_t use_time, absl::Span<AllocationValue> allocation_values,
       absl::flat_hash_map<const HloComputation*, AliasedOffset*>&
           preferred_offset_for_computation);
+
+  // Synchronizes the preferred alternate memory offset and records required
+  // memory assignments across all aliased positions of an async pipelined while
+  // loop (the loop parameter, body root instruction, and while instruction
+  // itself) for a given tuple element (`hlo_use.operand_index`).
+  //
+  // Updates the following member data structures:
+  // - `pipelined_while_preferred_offset_for_computation_`: Maps
+  //   `(while_body, operand_index)` to `offset`.
+  // - `required_assignments_`: Adds required `kAliasedUse` assignments on the
+  //   while body parameter, while body root, and while instruction via
+  //   `AddAliasedRequiredAssignment`.
+  // - `pipelined_while_buffer_id_to_aliased_offset_`: Maps the
+  //   `HloBuffer::id()` of the while body parameter, while body root, and while
+  //   instruction positions to `offset` via
+  //   `RecordAliasedOffsetForAsyncPipelinedWhileLoop`.
+  void SynchronizeAliasedWhileLoopOffsets(const HloUse& hlo_use,
+                                          const Allocation& aliased_allocation,
+                                          AliasedOffset* offset);
+
+  // Returns true if a buffer is allocated in the alternate memory space
+  // throughout the live range of a conditional and used in the conditional.
+  // The uses inside the conditional read the buffer from mirrored
+  // allocation.
+  bool NeedsMirroredAllocation(
+      const AllocationValue& allocation_value,
+      const AllocationValue::Use& current_use,
+      // We check if the previous use is a conditional operand.
+      const AllocationValue::Use* previous_use) const;
+
+  // If a buffer is allocated in the alternate memory space throughout the live
+  // range of a conditional, the uses of the buffer inside the conditional
+  // should read the buffer from a mirrored allocation.
+  void CreateMirroredAllocations(
+      AllocationValue& allocation_value,
+      const AllocationValue::Use& current_use,
+      // We check if the previous use is a conditional operand.
+      const AllocationValue::Use* previous_use,
+      absl::Span<AllocationValue> allocation_values,
+      // A set of allocation values inside the conditional, that may get a
+      // mirrored allocation that points to a real allocation outside the
+      // conditional, that is live throughout the conditional. We maintain
+      // this set to avoid re-processing these allocation values.
+      absl::flat_hash_set<AllocationValue*>&
+          already_processed_allocation_values_inside_a_conditional);
+
+  // Returns true, if the previous use is a conditional operand in the alternate
+  // memory, and, an eviction is required before the conditional. We check if
+  // all the buffer positions and uses inside the conditional are allowed in
+  // alternate memory and if the jointly processed allocation values can be
+  // processed without imposing infeasible constraints. We require an eviction
+  // if these conditions are not met.
+  bool IsEvictionRequiredForPreviousUseAtConditional(
+      AllocationValue& allocation_value, const AllocationValue::Use& use,
+      const AllocationValue::Use* previous_use,
+      absl::Span<AllocationValue> allocation_values);
 
   // Creates a detailed memory allocation request for a given use of an
   // allocation value. Analyzes the usage pattern of the use to determine if it
@@ -1087,6 +1148,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       const std::vector<int64_t>& all_use_times,
       bool only_extend_existing_allocation,
       absl::Span<AllocationValue> processed_allocation_values,
+      absl::Span<AllocationValue> all_allocation_values,
       std::optional<Shape> shape_override);
 
   // Returns true, if the allocation value requires a pinned allocation in the
@@ -1095,7 +1157,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       AllocationValue& allocation_value) const;
 
   // Adds a required assignment in default memory, at the given time, if
-  // allocation_value's defining position is not allowed in alternate memory.
+  // allocation_value's position is not allowed in alternate memory.
   void AssignDefaultMemIfNotAllowedInAlternateMem(
       AllocationValue& allocation_value, int64_t time);
 
@@ -1108,6 +1170,26 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       int allocation_value_idx) const;
 
   bool VerifyAllConversionsAreSuccessful();
+
+  // For async pipelined while loops, updates and returns whether the given
+  // allocation value should require a pinned (no-copy) allocation in alternate
+  // memory space.
+  //
+  // Returns false if:
+  // - `preferred_offset` is null.
+  // - The defining position is not allowed in alternate memory or exceeds
+  //   `max_size_in_bytes`.
+  // - The buffer is not aliased to an async pipelined while loop.
+  // - The defining instruction is an asynchronous operation other than dynamic
+  //   update slice or dynamic slice.
+  // - The underlying buffer ID is in `default_req_buffer_ids` (a set of buffer
+  //   IDs that have required assignments in default memory).
+  // Otherwise, returns true.
+  bool GetUpdatedRequireNoCopyAlternateMemForAsyncPipelinedWhile(
+      bool require_no_copy_alt_mem,
+      const AllocationValue& allocation_value_to_update,
+      const AliasedOffset* preferred_offset,
+      const absl::flat_hash_set<int64_t>& default_req_buffer_ids) const;
 
   // Finds allocations for allocation values generated from colocated intervals.
   // All of the allocation values have a must-alias relationship with each
@@ -1564,6 +1646,20 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
                               ShapeIndex producer_shape_index,
                               absl::string_view consumer_name) const;
 
+  // Finds the matching AllocationValue for a given HloUse. Returns nullptr if
+  // no matching AllocationValue is found.
+  //
+  // candidate_allocation_values contains all AllocationValue objects for the
+  // non-trivial defining positions of the specific HloValue that `use`
+  // consumes.
+  //
+  // REQUIRES: candidate_allocation_values must be sorted by the definition time
+  // of their defining instruction.
+  AllocationValue* FindAllocationValueForUse(
+      const HloUse& use,
+      absl::Span<AllocationValue> candidate_allocation_values,
+      int64_t use_time) const;
+
   // Takes a group of allocation values and splits them if they can be split on
   // the same dimension.
   void MaybeSplitAllocationValues(
@@ -1692,6 +1788,10 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   int64_t next_repack_allocation_block_id_ = 0;
   int64_t num_repacks_ = 0;
   int64_t num_repacks_successful_ = 0;
+  // True if any instruction in the module carries frontend attributes
+  // indicating custom while loop copy control, requiring async pipelined
+  // while loop alternate memory offset colocation.
+  bool has_async_pipelined_while_loops_ = false;
   std::vector<std::pair<MsaBufferInterval, Chunk>> pending_chunks_;
   std::vector<AsynchronousCopy> pending_async_copies_;
   std::vector<std::pair<const HloValue*, RequiredMemoryAssignment>>
@@ -1781,11 +1881,43 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // results.
   std::vector<HloUse> uses_in_default_memory_;
 
+  // Preferred alternate memory offset mapping for while loop body computations,
+  // keyed by the while body computation and tuple shape index. Only used for
+  // pipelined async while loops. Maintained only during the current allocation
+  // attempt.
+  absl::flat_hash_map<const HloComputation*,
+                      absl::flat_hash_map<ShapeIndex, AliasedOffset*>>
+      pipelined_while_preferred_offset_for_computation_;
+
+  // Mapping from HloBuffer ID to assigned alternate memory offset to ensure
+  // exact offset colocation across loop parameters, roots, and callers. Only
+  // used for pipelined async while loops. Maintained only during the current
+  // allocation attempt.
+  absl::flat_hash_map<int64_t, AliasedOffset*>
+      pipelined_while_buffer_id_to_aliased_offset_;
+
   // We have released the chunks corresponding to the allocations in the list.
   // When we uncommit the current pending state following a
   // kFailRequiresUncommit, we need to re-reserve those chunks.
   std::vector<ReservedAllocation*> pending_deallocated_reserved_allocations_;
 };
+
+// Helper to inspect the async wrapped opcode of a pipelined while loop position
+// or tuple index.
+std::optional<HloOpcode> GetAsyncPipelinedWhileWrappedOpcode(
+    const HloInstruction* while_instr, const HloPosition& pos,
+    const HloAliasAnalysis& alias_analysis);
+std::optional<HloOpcode> GetAsyncPipelinedWhileWrappedOpcode(
+    const HloInstruction* while_instr, int64_t tuple_idx,
+    const HloAliasAnalysis& alias_analysis);
+
+// Returns true if the position in an async pipelined while loop corresponds to
+// a buffer that is intended to reside in alternate memory (e.g., prefetched
+// dynamic-slice output, or dynamic-update-slice update slice). Base tensors of
+// dynamic-slice or dynamic-update-slice and dynamic-update-slice outputs
+// reside in default memory (HBM) on TPU and return false.
+bool IsAsyncPipelinedWhileAlternateMemoryPosition(
+    const HloPosition& pos, const HloAliasAnalysis& alias_analysis);
 
 }  // namespace memory_space_assignment
 }  // namespace xla

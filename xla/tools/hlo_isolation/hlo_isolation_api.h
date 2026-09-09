@@ -22,13 +22,16 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/service/hlo_runner_interface.h"
@@ -38,12 +41,18 @@ limitations under the License.
 namespace xla {
 namespace hlo_isolation {
 
+using ExpectedLiteralsMap =
+    absl::flat_hash_map<std::string, std::shared_ptr<const Literal>>;
+
+using GroupKey = std::pair<HloOpcode, std::string>;
+
 struct RunModuleOptions {
   bool run_hlo_passes = false;
   bool use_fusion_debugger = false;
   absl::Span<const HloOutputCallback> hlo_output_callbacks = {};
   std::function<void(absl::string_view, Literal*)> eval_literal_mutator =
       nullptr;
+  std::shared_ptr<ExpectedLiteralsMap> expected_literals = nullptr;
 };
 
 struct ModuleIsolationOptions {
@@ -87,6 +96,19 @@ absl::StatusOr<Literal> RunModule(std::unique_ptr<HloModule> module,
                                   absl::Span<const Literal> input_data,
                                   const RunModuleOptions& options = {});
 
+std::vector<HloOutputCallback> CreateDumpHloOutputCallbacks(
+    HloModule* module, std::shared_ptr<ExpectedLiteralsMap> expected_literals,
+    const std::function<void(absl::string_view, Literal*)>&
+        eval_literal_mutator = nullptr);
+
+std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
+    HloModule* test_module_clone,
+    const absl::flat_hash_map<GroupKey, std::vector<std::string>>& ref_groups,
+    std::shared_ptr<ExpectedLiteralsMap> expected_literals,
+    const HloModule& original_module, const ModuleIsolationOptions& options,
+    std::shared_ptr<absl::Mutex> result_mutex,
+    HloIsolationTestResult* test_result);
+
 void PopulateNumericCheckMismatches(
     NumericCheck* numeric_check,
     const absl::StatusOr<std::vector<NumericMismatch>>& top_mismatches);
@@ -106,12 +128,12 @@ absl::StatusOr<std::vector<HloIsolationTestResult>> RunIsolationPipeline(
 
 absl::Status DefuseModule(HloModule* module);
 
-// Extracts numeric mismatch statistics from the comparison error status
-// message, enriches them with HLO module context (e.g. root instruction
-// name, reduction info), and converts them into MismatchDetails structs for
-// HLO debug visualization.
+// Extracts numeric mismatch statistics from an HloIsolationTestResult
+// (including both parent check mismatches and FusionDebugger:<op_name> checks)
+// and converts them into MismatchDetails structs for unified HTML
+// visualization.
 std::vector<numerics::debug_info::MismatchDetails> ExtractMismatchDetails(
-    const HloModule& module, const absl::Status& compare_status);
+    const HloModule& module, const HloIsolationTestResult& result);
 
 absl::StatusOr<std::vector<NumericMismatch>> ExtractAndEnrichTopMismatches(
     std::string error_message, const HloModule* module);
@@ -131,11 +153,7 @@ bool ModuleContainsLargeKeyValueSort(const HloModule& module);
 bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
 bool LiteralContainsInfOrNan(const LiteralSlice& literal);
-
-std::string GetFusionDebuggerDir();
-std::string GetFusionDebuggerFilePath(absl::string_view op_name);
-void CleanUpAllFusionDebuggerFiles();
-std::vector<std::string> GetLeftoverFusionDebuggerFiles();
+bool ModuleContainsConstantInfOrNan(const HloModule& module);
 
 }  // namespace hlo_isolation
 }  // namespace xla

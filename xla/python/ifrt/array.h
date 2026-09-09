@@ -25,11 +25,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/layout.h"
+#include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/value.h"
@@ -63,7 +63,7 @@ using ArrayRef = tsl::RCReference<Array>;
 
 // Represents a single logical array from one or more sharded buffers.
 // Implementations must be thread-safe.
-class Array : public llvm::RTTIExtends<Array, Value> {
+class Array : public RTTIExtends<Array, Value> {
  public:
   Array() = default;
 
@@ -131,7 +131,7 @@ class Array : public llvm::RTTIExtends<Array, Value> {
   // they use DMA) and across different `DType` and `Shape`. We may need to add
   // an API that lets users query the alignment requirement of the specific
   // implementation.
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   virtual tsl::Future<> CopyToHostBuffer(
       void* data, std::optional<absl::Span<const int64_t>> byte_strides,
       ArrayCopySemantics semantics) = 0;
