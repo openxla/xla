@@ -170,7 +170,7 @@ class ExecutionInput {
   std::unique_ptr<Shape> host_shape_;
 };
 
-// ExecutionOutput encapsulates the output buffers of a execution and the
+// ExecutionOutput encapsulates the output buffers of an execution and the
 // leftover buffers to be released by the caller.
 class ExecutionOutput {
  public:

@@ -149,7 +149,7 @@ absl::StatusOr<ReplacedAsync> CreateAsyncStartDone(
       for (int i = 0; i < instruction->shape().tuple_shapes().size(); ++i) {
         // Map the data from the input tuple to the output tuple.
         // Index 0 is the data from the input tuple.
-        // Index 1 is the context for an sync opt.
+        // Index 1 is the context for a sync opt.
         aliasing.push_back({{1, i}, {i, {}}});
       }
     } else {

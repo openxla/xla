@@ -476,7 +476,7 @@ class HloParserImpl : public HloParser {
   //
   // Parses attributes given names and configs of the attributes. Each parsed
   // result is passed back through the result pointer in corresponding
-  // AttrConfig. Note that the result pointer must point to a optional<T> typed
+  // AttrConfig. Note that the result pointer must point to an optional<T> typed
   // variable which outlives this function. Returns false on error. You should
   // not use the any of the results if this function failed.
   //
@@ -592,7 +592,7 @@ class HloParserImpl : public HloParser {
                       std::vector<int64_t>* result);
   bool ParseInt64ListList(TokKind start, TokKind end, TokKind delim,
                           std::vector<std::vector<int64_t>>* result);
-  // 'parse_and_add_item' is an lambda to parse an element in the list and add
+  // 'parse_and_add_item' is a lambda to parse an element in the list and add
   // the parsed element to the result. It's supposed to capture the result.
   bool ParseList(TokKind start, TokKind end, TokKind delim,
                  absl::FunctionRef<bool()> parse_and_add_item);

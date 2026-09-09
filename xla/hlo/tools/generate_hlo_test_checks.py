@@ -1044,7 +1044,7 @@ def parse_args(
       prog=_SCRIPT_NAME,
       usage="%(prog)s TEST_FILE [-h] [-i] [-I EXPAND] -- OPT_CMD [OPT_ARGS...]",
       description=(
-          f"For each test case in an specified HLO test file, this script runs "
+          f"For each test case in a specified HLO test file, this script runs "
           f"the test case through an HLO optimizer, converts the optimized HLO "
           f"into FileCheck expectations, and inserts these expectations above "
           f"the test case.\n"

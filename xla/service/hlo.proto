@@ -229,7 +229,7 @@ message HloInstructionProto {
   // The string representation of the infeed configuration.
   bytes infeed_config = 27;
 
-  // Name of a external target (eg, global symbol) to call, only present for
+  // Name of an external target (eg, global symbol) to call, only present for
   // kCustomCall.
   string custom_call_target = 28;
 

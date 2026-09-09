@@ -1521,7 +1521,7 @@ class IndirectUseTest : public RecomputeAndCompressHloRematerializationTest,
                         public ::testing::WithParamInterface<bool> {};
 
 TEST_P(IndirectUseTest, IndirectUseRematerialized) {
-  // Test that an rematerializable instruction is rematerialized if it has
+  // Test that a rematerializable instruction is rematerialized if it has
   // indirect use
   // Module:
   //

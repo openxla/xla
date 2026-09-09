@@ -1648,7 +1648,7 @@ class DnnSupport {
   //  dropout: the dropout threshold between layers. When it is 0., no dropout
   //    is added.
   //  seed: a seed for initializing the dropout layers.
-  //  state_allocator: an memory allocator that will be used to store the state
+  //  state_allocator: a memory allocator that will be used to store the state
   //    for dropout layer. The user has to maintain the memory until the model
   //    is no longer in use.
   //  use_padded_io: a bool to specify whether the input is using padded IO.
@@ -1719,7 +1719,7 @@ class DnnSupport {
   //    must be specified for LSTM models.
   //  is_training: whether this is used in training or inference. That decides
   //    whether respace_space data need to be produced.
-  //  reserve_space_allocator: if "is_training" is true, an memory allocator
+  //  reserve_space_allocator: if "is_training" is true, a memory allocator
   //    to create memory that holds the produced reserve_space. The caller is
   //  retains the data and feed it to the backward pass.
   //  workspace_allocator: an allocator to create temporary workspace used in

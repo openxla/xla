@@ -397,7 +397,7 @@ class BufferedGcsRandomAccessFile : public RandomAccessFile {
     return absl::OkStatus();
   }
 
-  /// The implementation of reads with an read buffer. Thread safe.
+  /// The implementation of reads with a read buffer. Thread safe.
   /// Returns `OUT_OF_RANGE` if fewer than n bytes were stored in `*result`
   /// because of EOF.
   absl::Status Read(uint64_t offset, size_t n, absl::string_view* result,

@@ -244,7 +244,7 @@ ENTRY main {
 }
 
 TEST_F(HloAliasAnalysisTest, NondistinctTuple) {
-  // Test a expression with a non-distinct buffer set.
+  // Test an expression with a non-distinct buffer set.
   const char* hlo_string = R"(
 HloModule test
 

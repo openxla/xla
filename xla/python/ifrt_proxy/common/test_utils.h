@@ -43,7 +43,7 @@ class TestQueue {
     queue_.push_back(std::move(t));
   }
 
-  // Pops the first element in the queue if a element is already available or
+  // Pops the first element in the queue if an element is already available or
   // appears within the provided (because `Push` is called). Otherwise returns
   // std::nullopt. The timeout is by default the timeout specified in the
   // constructor.
@@ -63,7 +63,7 @@ class TestQueue {
     return result;
   }
 
-  // Pops the first element in the queue if a element is already available or
+  // Pops the first element in the queue if an element is already available or
   // appears within `pop_timeout`, and fails otherwise.
   T Pop() {
     std::optional<T> result = PopOrTimeout();

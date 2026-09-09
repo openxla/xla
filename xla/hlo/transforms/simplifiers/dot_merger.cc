@@ -490,7 +490,7 @@ absl::StatusOr<std::vector<ConcatTargetInfo>> ComputeTargetConcatDims(
                             usage.dot->shape().element_type(),
                             contracting_is_minor));
 
-    // TransformConcatDims returns a old->new tracker for the concat operand.
+    // TransformConcatDims returns an old->new tracker for the concat operand.
     // What we actually want is a source->new tracker. To build it, we compose
     // the source->old tracker with the old->new tracker.
     HloInstruction* old_concat =

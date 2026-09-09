@@ -907,7 +907,7 @@ ENTRY main {
       4);
 
   // We expect that after unrolling, the first operand of the output tuple
-  // should not have any control dependency since it's a elementwise add with a
+  // should not have any control dependency since it's an elementwise add with a
   // constant operand.
   EXPECT_EQ(while_instruction->while_body()
                 ->root_instruction()
