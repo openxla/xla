@@ -278,6 +278,10 @@ ConfigAssigner::Options GetConfigAssignerOptions(
       !debug_options.xla_gpu_exclude_nondeterministic_ops() &&
       debug_options.xla_gpu_autotune_level() > 0 && !is_deviceless;
 
+  options.prefer_estimated_configs =
+      debug_options.xla_gpu_experimental_cost_model_gemm_tiling_default() &&
+      !debug_options.xla_gpu_exhaustive_tiling_search();
+
   options.expect_all_instructions_in_cache =
       debug_options.xla_gpu_require_complete_aot_autotune_results();
   options.dump_hlos = debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
@@ -286,6 +290,7 @@ ConfigAssigner::Options GetConfigAssignerOptions(
       debug_options.xla_gpu_use_new_autotune_cache_format();
   options.compile_all_supported_configs =
       debug_options.xla_compile_all_supported_configs();
+  options.force_config = debug_options.xla_force_config();
 
   return options;
 }
@@ -293,7 +298,6 @@ ConfigAssigner::Options GetConfigAssignerOptions(
 CodegenOrchestrator::Options GetCodegenOrchestratorOptions(
     const DebugOptions& debug_options) {
   CodegenOrchestrator::Options options;
-  options.exclude_cublas_config = !debug_options.xla_gpu_cublas_fallback();
   if (!debug_options.xla_gpu_fail_ptx_compilation_on_register_spilling()) {
     options.allow_reg_spills_fn = [](const HloInstruction& instr,
                                      autotuner::Backend backend) {
@@ -310,6 +314,7 @@ CodegenOrchestrator::Options GetCodegenOrchestratorOptions(
     options.allow_reg_spills_fn = [](const HloInstruction&,
                                      autotuner::Backend) { return false; };
   }
+  options.candidate_configs_file = debug_options.xla_candidate_configs_file();
   return options;
 }
 
@@ -331,6 +336,12 @@ ProfileOptions GetProfileOptions(const DebugOptions& debug_options,
 Autotuner::Options GetAutotunerOptions(const DebugOptions& debug_options,
                                        bool is_buffer_check_supported) {
   Autotuner::Options autotuner_options;
+  if (!debug_options.xla_gpu_cublas_fallback()) {
+    autotuner_options.excluded_backends.push_back(
+        autotuner::Backend::CUBLASLT_FISSION);
+    autotuner_options.excluded_backends.push_back(
+        autotuner::Backend::HIPBLASLT_FISSION);
+  }
   autotuner_options.correctness_check_options.enable_correctness_check =
       is_buffer_check_supported && debug_options.xla_gpu_autotune_level() >= 4;
   autotuner_options.correctness_check_options.relative_tolerance =

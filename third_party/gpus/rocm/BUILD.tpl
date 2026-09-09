@@ -129,16 +129,16 @@ cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": [
-            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
         ],
         ":link_only": [
         ],
         ":multiple_rocm_paths": [
-            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
             "-Wl,-rpath=%{rocm_lib_paths}",
         ],
         "//conditions:default": [
-            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
             "-Wl,-rpath,/opt/rocm/lib",
         ],
     }),
@@ -431,6 +431,15 @@ rocm_lib_import(
         ":amd_comgr_libs",
         ":system_libs",
     ],
+)
+
+rocm_lib_import(
+    name = "rocprofiler_sdk_roctx",
+    data = glob(["%{rocm_root}/lib/librocprofiler-sdk-roctx.so*"]),
+    interface_library = "%{rocm_root}/lib/librocprofiler-sdk-roctx.so",
+    # NEEDED librocprofiler-register.so, which the glob above does not match.
+    # Without this a hermetic build stages the shim without it and fails at load.
+    deps = [":rocprofiler_register_libs"],
 )
 
 rocm_lib_import(

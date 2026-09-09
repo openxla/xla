@@ -29,6 +29,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -168,10 +169,9 @@ MakeTestPjRtStreamExecutorClient(
     std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options = nullptr,
     std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr) {
   se::StreamExecutor* first_executor = nullptr;
-  for (const auto& dev : devices) {
-    if (dev->IsAddressable() && dev->local_device_state() != nullptr &&
-        dev->local_device_state()->compute_stream() != nullptr) {
-      first_executor = dev->local_device_state()->compute_stream()->parent();
+  for (const auto& state : local_device_states) {
+    if (state != nullptr && state->compute_stream() != nullptr) {
+      first_executor = state->compute_stream()->parent();
       break;
     }
   }
@@ -208,11 +208,11 @@ absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClient() {
   int local_device_id = local_device_states.back()->local_device_id().value();
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   devices.emplace_back(std::make_unique<PjRtStreamExecutorDevice>(
-      0, local_device_states.back().get(), local_device_id, /*process_index=*/0,
+      0, /*is_addressable=*/true, local_device_id, /*process_index=*/0,
       /*process_index_in_partition=*/0, /*partition_index=*/0, "cpu"));
   std::vector<std::unique_ptr<PjRtMemorySpace>> memory_spaces;
   memory_spaces.emplace_back(std::make_unique<PjRtStreamExecutorMemorySpace>(
-      0, devices.back().get(), "cpu", 0));
+      0, devices.back().get(), "device", tsl::Fingerprint32("device")));
   devices.back()->AttachMemorySpace(memory_spaces.back().get(),
                                     /*is_default=*/true);
   auto topology = CreateCpuTopologyDescription(devices.size());
@@ -260,17 +260,17 @@ absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClientWithDevices(
         /*allow_event_reuse=*/false, /*use_callback_stream=*/false));
     int local_device_id = local_device_states.back()->local_device_id().value();
     devices.emplace_back(std::make_unique<PjRtStreamExecutorDevice>(
-        i, local_device_states.back().get(), local_device_id,
+        i, /*is_addressable=*/true, local_device_id,
         /*process_index=*/0,
         /*process_index_in_partition=*/0, /*partition_index=*/0, "cpu"));
     memory_spaces.emplace_back(std::make_unique<PjRtStreamExecutorMemorySpace>(
-        i, devices.back().get(), "cpu", 0));
+        i, devices.back().get(), "device", tsl::Fingerprint32("device")));
     devices.back()->AttachMemorySpace(memory_spaces.back().get(),
                                       /*is_default=*/true);
   }
   for (int i = num_addressable_devices; i < total_devices; ++i) {
     devices.emplace_back(std::make_unique<PjRtStreamExecutorDevice>(
-        i, /*local_device_state=*/nullptr, /*local_device_id=*/-1,
+        i, /*is_addressable=*/false, /*local_device_id=*/-1,
         /*process_index=*/1, /*process_index_in_partition=*/0,
         /*partition_index=*/0, "cpu"));
   }
@@ -484,7 +484,7 @@ TEST(PjRtStreamExecutorClientTest, ExecutePortableRemoteDevice) {
           *client, shape, [](XlaBuilder& builder) {}, compile_options));
 
   auto remote_device = std::make_unique<PjRtStreamExecutorDevice>(
-      1, /*local_device_state=*/nullptr, /*local_device_id=*/-1,
+      1, /*is_addressable=*/false, /*local_device_id=*/-1,
       /*process_index=*/1, /*process_index_in_partition=*/1,
       /*partition_index=*/0, "cpu");
   remote_device->SetClient(client.get());
@@ -511,7 +511,7 @@ TEST(PjRtStreamExecutorClientTest, MakeAllocationReadyEventAsync) {
                        data.data(), S32, {1024}, /*byte_strides=*/std::nullopt,
                        PjRtClient::HostBufferSemantics::kImmutableZeroCopy,
                        nullptr, memory_space, /*device_layout=*/nullptr));
-
+  TF_ASSERT_OK(buffer->GetReadyFuture().Await());
   Shape shape = buffer->on_device_shape();
   TF_ASSERT_OK_AND_ASSIGN(auto result,
                           client->CreateAliasBuffer(shape, memory_space));
@@ -669,6 +669,9 @@ TEST(PjRtStreamExecutorClientTest, CrossHostSendBuffersCleanupAfterFailure) {
           PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
           /*memory_space=*/memory_space,
           /*device_layout=*/nullptr));
+
+  TF_ASSERT_OK(buffer0->GetReadyFuture().Await());
+  TF_ASSERT_OK(buffer1->GetReadyFuture().Await());
 
   // Delete buffer1 so that AcquireScopedRawBuffer fails on it mid-loop in
   // CrossHostSendBuffers.

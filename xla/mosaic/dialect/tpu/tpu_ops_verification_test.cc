@@ -60,7 +60,7 @@ class TpuOpsVerificationTest : public ::testing::Test {
     context_.loadAllAvailableDialects();
     context_.printOpOnDiagnostic(true);
   }
-  ~TpuOpsVerificationTest() {
+  ~TpuOpsVerificationTest() override {
     for (int i = ops_.size() - 1; i >= 0; --i) {
       ops_[i]->erase();
     }
@@ -598,7 +598,8 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksI32) {
   Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
-  ASSERT_OK(VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)));
+  ASSERT_OK(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask, 0)));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksBF16) {
@@ -607,7 +608,8 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksBF16) {
       VectorType::get(/*shape=*/{2, 8}, /*type=*/builder().getBF16Type());
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
-  ASSERT_OK(VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)));
+  ASSERT_OK(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask, 1)));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksI1) {
@@ -615,23 +617,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationWorksI1) {
   Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
 
   ASSERT_OK(VerifyOp(
-      Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, /*mask=*/nullptr)));
-}
-
-TEST_F(TpuOpsVerificationTest, ScanOnUnsupportedCore) {
-  auto func_op =
-      Create<func::FuncOp>("scalar_kernel", builder().getFunctionType({}, {}));
-  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
-                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
-  builder().setInsertionPointToStart(func_op.addEntryBlock());
-  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
-  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
-  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
-
-  ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
-      StatusIs(_,
-               HasSubstr("Scan is supported only on the SC vector subcore")));
+      Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, /*mask=*/nullptr, 0)));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -641,7 +627,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask, 0)),
       StatusIs(
           _,
           HasSubstr(
@@ -655,7 +641,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask, 0)),
       StatusIs(_, HasSubstr("Input and output element type mismatch.")));
 }
 
@@ -665,20 +651,9 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationMismatchShape) {
   Value mask = ConstantI1Vector(/*shape=*/{16}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask, 0)),
       StatusIs(_, HasSubstr("Input and output shape mismatch. Input "
                             "shape: (16). Output shape: (8).")));
-}
-
-TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidInputRank) {
-  Value src = ConstantI32Vector(/*shape=*/{8, 1, 1}, /*values=*/{1});
-  Type dst =
-      VectorType::get(/*shape=*/{8, 1, 1}, /*type=*/builder().getI32Type());
-  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{1});
-
-  ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
-      StatusIs(_, HasSubstr("Input must be a rank 1 or 2 vector.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -688,7 +663,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kArgMax, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kArgMax, mask, 0)),
       StatusIs(_,
                HasSubstr("Only sum, max and min reductions are supported.")));
 }
@@ -700,7 +675,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask, 0)),
       StatusIs(
           _,
           HasSubstr("Only sum reduction is supported for i1 vector inputs.")));
@@ -713,7 +688,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kSum, mask, 0)),
       StatusIs(_, HasSubstr("Mask is not supported for i1 vector inputs.")));
 }
 
@@ -723,8 +698,11 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskRank) {
   Value mask = ConstantI1Vector(/*shape=*/{1, 8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask)),
-      StatusIs(_, HasSubstr("Mask must be a rank 1 vector.")));
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 0)),
+      StatusIs(
+          _,
+          HasSubstr(
+              "must be vector of 1-bit signless integer values of ranks 1")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
@@ -733,42 +711,56 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
   Value mask = ConstantI1Vector(/*shape=*/{16}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 1)),
       StatusIs(_, HasSubstr("Mask and input mismatch. Expected mask of "
                             "length: 8, but got 16.")));
 }
 
-TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
-  auto dma = Create<EnqueueDMAOp>(
-      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
-      /*source_semaphore=*/AllocaSemaphore(),
-      /*target=*/
-      Create<memref::AllocaOp>(GetMemRefType({1024, 256, 128},
-                                             builder().getI64Type(),
-                                             MemorySpace::kHbm))
-          .getMemref(),
-      /*target_semaphore=*/AllocaSemaphore(),
-      /*device_id=*/nullptr,
-      /*core_id=*/nullptr);
+TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidDimension) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
+  Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(dma),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, -1)),
+      StatusIs(_, HasSubstr("Dimension must be in [0, rank).")));
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 1)),
+      StatusIs(_, HasSubstr("Dimension must be in [0, rank).")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
+  auto src = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
+  auto dst = Create<memref::AllocaOp>(GetMemRefType({1024, 256, 128},
+                                                    builder().getI64Type(),
+                                                    MemorySpace::kHbm))
+                 .getMemref();
+  auto sem = AllocaSemaphore();
+
+  ASSERT_THAT(
+      VerifyOp(Create<EnqueueDMAOp>(src, sem, dst, sem, nullptr, nullptr)),
+      StatusIs(_, HasSubstr("DMA source and target element type mismatch")));
+
+  ASSERT_THAT(
+      VerifyOp(Create<WaitDMAOp>(src, nullptr, dst, sem, nullptr, nullptr,
+                                 nullptr, 0, false, /*wait_target=*/true)),
       StatusIs(_, HasSubstr("DMA source and target element type mismatch")));
 }
 
-TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaDynamicRankMismatch) {
-  auto dma = Create<EnqueueDMAOp>(
-      /*source=*/AllocaI32({ShapedType::kDynamic, 256, 128}, MemorySpace::kHbm),
-      /*source_semaphore=*/AllocaSemaphore(),
-      /*target=*/
-      AllocaI32({ShapedType::kDynamic, ShapedType::kDynamic, 128},
-                MemorySpace::kHbm),
-      /*target_semaphore=*/AllocaSemaphore(),
-      /*device_id=*/nullptr,
-      /*core_id=*/nullptr);
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaShapeMismatch) {
+  auto src = AllocaI32({ShapedType::kDynamic, 256, 128}, MemorySpace::kHbm);
+  auto dst = AllocaI32({ShapedType::kDynamic, ShapedType::kDynamic, 128},
+                       MemorySpace::kHbm);
+  auto sem = AllocaSemaphore();
 
-  ASSERT_THAT(VerifyOp(dma),
-              StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
+  ASSERT_THAT(
+      VerifyOp(Create<EnqueueDMAOp>(src, sem, dst, sem, nullptr, nullptr)),
+      StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
+
+  ASSERT_THAT(
+      VerifyOp(Create<WaitDMAOp>(src, nullptr, dst, sem, nullptr, nullptr,
+                                 nullptr, 0, false, /*wait_target=*/true)),
+      StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaStrictOrderingSupported) {
@@ -783,6 +775,82 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaStrictOrderingSupported) {
       /*strict_ordering=*/true);
 
   ASSERT_OK(VerifyOp(dma));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaVectorSubcoreValidStreams) {
+  auto vmem = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
+  auto hbm = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
+  auto sem = AllocaSemaphore();
+
+  // Push stream (VMEM -> HBM): supports target sem, source sem, or no sem.
+  ASSERT_OK(VerifyOp(
+      Create<EnqueueDMAOp>(vmem, nullptr, hbm, sem, nullptr, nullptr)));
+  ASSERT_OK(VerifyOp(
+      Create<EnqueueDMAOp>(vmem, sem, hbm, nullptr, nullptr, nullptr)));
+  ASSERT_OK(VerifyOp(
+      Create<EnqueueDMAOp>(vmem, nullptr, hbm, nullptr, nullptr, nullptr)));
+  ASSERT_OK(VerifyOp(Create<WaitDMAOp>(vmem, nullptr, hbm, sem, nullptr,
+                                       nullptr, nullptr, 0, false,
+                                       /*wait_target=*/true)));
+  ASSERT_OK(VerifyOp(Create<WaitDMAOp>(vmem, sem, hbm, nullptr, nullptr,
+                                       nullptr, nullptr, 0, false,
+                                       /*wait_target=*/false)));
+
+  // Pull stream (HBM -> VMEM): supports no sem.
+  ASSERT_OK(VerifyOp(
+      Create<EnqueueDMAOp>(hbm, nullptr, vmem, nullptr, nullptr, nullptr)));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       DmaPullStreamSourceSemaphoreNotSupported) {
+  auto vmem = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
+  auto hbm = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
+  auto smem = AllocaI32({1024, 256, 128}, MemorySpace::kSmem);
+  auto sem = AllocaSemaphore();
+
+  const char* err_msg =
+      "Source semaphores are unsupported for transfers from a "
+      "non-local memory to local memory on SparseCore";
+
+  // HBM -> VMEM pull stream with source semaphore.
+  ASSERT_THAT(
+      VerifyOp(Create<EnqueueDMAOp>(hbm, sem, vmem, nullptr, nullptr, nullptr)),
+      StatusIs(_, HasSubstr(err_msg)));
+
+  // SMEM -> VMEM pull stream with source semaphore.
+  ASSERT_THAT(VerifyOp(Create<EnqueueDMAOp>(smem, sem, vmem, nullptr, nullptr,
+                                            nullptr)),
+              StatusIs(_, HasSubstr(err_msg)));
+
+  // Awaiting source on pull stream without semaphore.
+  ASSERT_THAT(
+      VerifyOp(Create<WaitDMAOp>(hbm, nullptr, vmem, nullptr, nullptr, nullptr,
+                                 nullptr, 0, false, /*wait_target=*/false)),
+      StatusIs(_, HasSubstr("Awaiting source read completion is unsupported")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaMissingMemorySpaceOnSparseCore) {
+  auto vmem = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
+  auto unannotated = AllocaI32({1024, 256, 128}, std::nullopt);
+  auto sem = AllocaSemaphore();
+
+  const char* src_err_msg =
+      "Source memory space must be provided for SparseCore DMA";
+  const char* tgt_err_msg =
+      "Target memory space must be provided for SparseCore DMA";
+
+  ASSERT_THAT(VerifyOp(Create<EnqueueDMAOp>(unannotated, nullptr, vmem, sem,
+                                            nullptr, nullptr)),
+              StatusIs(_, HasSubstr(src_err_msg)));
+
+  ASSERT_THAT(VerifyOp(Create<EnqueueDMAOp>(vmem, sem, unannotated, nullptr,
+                                            nullptr, nullptr)),
+              StatusIs(_, HasSubstr(tgt_err_msg)));
+
+  ASSERT_THAT(VerifyOp(Create<WaitDMAOp>(unannotated, nullptr, vmem, sem,
+                                         nullptr, nullptr, nullptr, 0, false,
+                                         /*wait_target=*/true)),
+              StatusIs(_, HasSubstr(src_err_msg)));
 }
 
 TEST_F(TpuOpsVerificationTest, DmaStrictOrderingNotSupportedOnTc) {
@@ -805,6 +873,89 @@ TEST_F(TpuOpsVerificationTest, DmaStrictOrderingNotSupportedOnTc) {
   ASSERT_THAT(VerifyOp(dma),
               StatusIs(_, HasSubstr("Strict ordering is only supported on the "
                                     "SC scalar and vector subcores")));
+
+  auto wait = Create<WaitDMAOp>(
+      /*source=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
+      /*source_semaphore=*/nullptr,
+      /*target=*/AllocaI32({1024, 256, 128}, MemorySpace::kVmem),
+      /*target_semaphore=*/AllocaSemaphore(),
+      /*device_id=*/nullptr,
+      /*core_id=*/nullptr,
+      /*subcore_id=*/nullptr,
+      /*priority=*/0,
+      /*strict_ordering=*/true,
+      /*wait_target=*/true);
+
+  ASSERT_THAT(VerifyOp(wait),
+              StatusIs(_, HasSubstr("Strict ordering is only supported on the "
+                                    "SC scalar and vector subcores")));
+}
+
+TEST_F(TpuOpsVerificationTest, DmaTargetSemaphoreRequiredOnTc) {
+  auto func_op =
+      Create<func::FuncOp>("tc_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+
+  auto src = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
+  auto dst = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
+
+  auto dma = Create<EnqueueDMAOp>(src, /*source_semaphore=*/nullptr, dst,
+                                  /*target_semaphore=*/nullptr,
+                                  /*device_id=*/nullptr, /*core_id=*/nullptr);
+  ASSERT_THAT(VerifyOp(dma),
+              StatusIs(_, HasSubstr("DMA target semaphore must be specified")));
+
+  auto wait = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/nullptr, dst, /*target_semaphore=*/nullptr,
+      /*device_id=*/nullptr, /*core_id=*/nullptr, /*subcore_id=*/nullptr,
+      /*priority=*/0, /*strict_ordering=*/false, /*wait_target=*/true);
+  ASSERT_THAT(VerifyOp(wait),
+              StatusIs(_, HasSubstr("DMA target semaphore must be specified")));
+}
+
+TEST_F(TpuOpsVerificationTest, DmaLocalSourceSemaphoreRejectedOnTc) {
+  auto func_op =
+      Create<func::FuncOp>("tc_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+
+  auto src = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
+  auto dst = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
+  auto sem = AllocaSemaphore();
+
+  auto dma = Create<EnqueueDMAOp>(src, /*source_semaphore=*/sem, dst,
+                                  /*target_semaphore=*/sem,
+                                  /*device_id=*/nullptr, /*core_id=*/nullptr);
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("DMA destination device_id or core_id must be "
+                            "specified when source semaphore is specified")));
+
+  auto wait = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/sem, dst, /*target_semaphore=*/sem,
+      /*device_id=*/nullptr, /*core_id=*/nullptr, /*subcore_id=*/nullptr,
+      /*priority=*/0, /*strict_ordering=*/false, /*wait_target=*/true);
+  ASSERT_THAT(
+      VerifyOp(wait),
+      StatusIs(_, HasSubstr("DMA destination device_id or core_id must be "
+                            "specified when source semaphore is specified")));
+}
+
+TEST_F(TpuOpsVerificationTest, DmaRemoteTargetWaitAllowsNullSourceSemaphore) {
+  auto src = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
+  auto dst = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
+  auto sem = AllocaSemaphore();
+  auto device_id = Create<arith::ConstantIntOp>(0, 32).getResult();
+  auto core_id = Create<arith::ConstantIntOp>(0, 32).getResult();
+
+  auto wait = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/nullptr, dst, /*target_semaphore=*/sem,
+      /*device_id=*/device_id, /*core_id=*/core_id, /*subcore_id=*/nullptr,
+      /*priority=*/0, /*strict_ordering=*/false, /*wait_target=*/true);
+  ASSERT_OK(VerifyOp(wait));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -1452,7 +1603,6 @@ TEST_F(TpuOpsVerificationTest, ReduceOpDuplicateDims) {
       VerifyOp(reduce),
       StatusIs(_, HasSubstr("Reduced dimension 0 is present more than once")));
 }
-
 TEST_F(TpuOpsVerificationTest, ConvOpVerificationWorks) {
   Value lhs = ConstantF32Vector({1, 8, 128}, {1.0f});
   Value rhs = ConstantF32Vector({3, 128, 128}, {1.0f});
@@ -1475,6 +1625,8 @@ TEST_F(TpuOpsVerificationTest, ConvOpVerificationWorks) {
       /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(1),
+      /*batch_group_count=*/builder().getI64IntegerAttr(1),
       /*precision=*/nullptr);
   ASSERT_OK(VerifyOp(conv));
 }
@@ -1501,6 +1653,8 @@ TEST_F(TpuOpsVerificationTest, ConvOpRankMismatch) {
       /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(1),
+      /*batch_group_count=*/builder().getI64IntegerAttr(1),
       /*precision=*/nullptr);
   ASSERT_THAT(VerifyOp(conv),
               StatusIs(_, HasSubstr("Expected rhs rank to be 3")));
@@ -1528,11 +1682,16 @@ TEST_F(TpuOpsVerificationTest, ConvOpFeatureSizeMismatch) {
       /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(1),
+      /*batch_group_count=*/builder().getI64IntegerAttr(1),
       /*precision=*/nullptr);
   ASSERT_THAT(
       VerifyOp(conv),
-      StatusIs(_, HasSubstr("LHS feature dimension size (64) must match "
-                            "kernel input feature dimension size (128)")));
+      StatusIs(
+          _,
+          HasSubstr("LHS feature dimension size divided by feature_group_count "
+                    "(64 / 1 = 64) must match kernel input feature dimension "
+                    "size (128)")));
 }
 
 TEST_F(TpuOpsVerificationTest, ConvOpSpatialOutputMismatch) {
@@ -1557,10 +1716,230 @@ TEST_F(TpuOpsVerificationTest, ConvOpSpatialOutputMismatch) {
       /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
       /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(1),
+      /*batch_group_count=*/builder().getI64IntegerAttr(1),
       /*precision=*/nullptr);
   ASSERT_THAT(VerifyOp(conv),
               StatusIs(_, HasSubstr("Output spatial dimension 1 size mismatch: "
                                     "expected 6, got 5")));
+}
+
+TEST_F(TpuOpsVerificationTest, AnnotateOpVerification) {
+  Value vmem_ref = AllocaI32({8, 128}, MemorySpace::kVmem);
+  Value smem_ref = AllocaI32({8, 128}, MemorySpace::kSmem);
+  Value hbm_ref = AllocaI32({8, 128}, MemorySpace::kHbm);
+  Value unsp_ref = AllocaI32({8, 128});
+
+  // Valid combinations on VMEM
+  EXPECT_OK(VerifyOp(Create<AnnotateOp>(vmem_ref.getType(), vmem_ref,
+                                        /*no_store=*/false,
+                                        /*no_bank_conflict=*/false,
+                                        /*no_hazard=*/true,
+                                        /*no_hazard_no_deps=*/false)));
+  EXPECT_OK(VerifyOp(Create<AnnotateOp>(vmem_ref.getType(), vmem_ref,
+                                        /*no_store=*/false,
+                                        /*no_bank_conflict=*/false,
+                                        /*no_hazard=*/false,
+                                        /*no_hazard_no_deps=*/true)));
+  EXPECT_OK(VerifyOp(Create<AnnotateOp>(vmem_ref.getType(), vmem_ref,
+                                        /*no_store=*/true,
+                                        /*no_bank_conflict=*/true,
+                                        /*no_hazard=*/false,
+                                        /*no_hazard_no_deps=*/false)));
+
+  // Valid cases on SMEM/HBM/unspecified memory space (without hazard overrides)
+  EXPECT_OK(VerifyOp(Create<AnnotateOp>(smem_ref.getType(), smem_ref,
+                                        /*no_store=*/true,
+                                        /*no_bank_conflict=*/true,
+                                        /*no_hazard=*/false,
+                                        /*no_hazard_no_deps=*/false)));
+  EXPECT_OK(VerifyOp(Create<AnnotateOp>(hbm_ref.getType(), hbm_ref,
+                                        /*no_store=*/true,
+                                        /*no_bank_conflict=*/true,
+                                        /*no_hazard=*/false,
+                                        /*no_hazard_no_deps=*/false)));
+  EXPECT_OK(VerifyOp(Create<AnnotateOp>(unsp_ref.getType(), unsp_ref,
+                                        /*no_store=*/true,
+                                        /*no_bank_conflict=*/true,
+                                        /*no_hazard=*/false,
+                                        /*no_hazard_no_deps=*/false)));
+
+  // Mutual exclusivity: at most one of no_store, no_hazard, or
+  // no_hazard_no_deps
+  EXPECT_THAT(VerifyOp(Create<AnnotateOp>(vmem_ref.getType(), vmem_ref,
+                                          /*no_store=*/true,
+                                          /*no_bank_conflict=*/false,
+                                          /*no_hazard=*/true,
+                                          /*no_hazard_no_deps=*/false)),
+              StatusIs(_, HasSubstr("At most one of no_store, no_hazard, or "
+                                    "no_hazard_no_deps can be set")));
+  EXPECT_THAT(VerifyOp(Create<AnnotateOp>(vmem_ref.getType(), vmem_ref,
+                                          /*no_store=*/true,
+                                          /*no_bank_conflict=*/false,
+                                          /*no_hazard=*/false,
+                                          /*no_hazard_no_deps=*/true)),
+              StatusIs(_, HasSubstr("At most one of no_store, no_hazard, or "
+                                    "no_hazard_no_deps can be set")));
+  EXPECT_THAT(VerifyOp(Create<AnnotateOp>(vmem_ref.getType(), vmem_ref,
+                                          /*no_store=*/false,
+                                          /*no_bank_conflict=*/false,
+                                          /*no_hazard=*/true,
+                                          /*no_hazard_no_deps=*/true)),
+              StatusIs(_, HasSubstr("At most one of no_store, no_hazard, or "
+                                    "no_hazard_no_deps can be set")));
+
+  // Invalid cases: hazard overrides on non-VMEM memory spaces
+  EXPECT_THAT(
+      VerifyOp(Create<AnnotateOp>(smem_ref.getType(), smem_ref,
+                                  /*no_store=*/false,
+                                  /*no_bank_conflict=*/false,
+                                  /*no_hazard=*/true,
+                                  /*no_hazard_no_deps=*/false)),
+      StatusIs(_, HasSubstr(
+                      "Hazard overrides are only valid for VMEM allocations")));
+  EXPECT_THAT(
+      VerifyOp(Create<AnnotateOp>(hbm_ref.getType(), hbm_ref,
+                                  /*no_store=*/false,
+                                  /*no_bank_conflict=*/false,
+                                  /*no_hazard=*/true,
+                                  /*no_hazard_no_deps=*/false)),
+      StatusIs(_, HasSubstr(
+                      "Hazard overrides are only valid for VMEM allocations")));
+  EXPECT_THAT(
+      VerifyOp(Create<AnnotateOp>(unsp_ref.getType(), unsp_ref,
+                                  /*no_store=*/false,
+                                  /*no_bank_conflict=*/false,
+                                  /*no_hazard=*/true,
+                                  /*no_hazard_no_deps=*/false)),
+      StatusIs(_, HasSubstr(
+                      "Hazard overrides are only valid for VMEM allocations")));
+  EXPECT_THAT(
+      VerifyOp(Create<AnnotateOp>(smem_ref.getType(), smem_ref,
+                                  /*no_store=*/false,
+                                  /*no_bank_conflict=*/false,
+                                  /*no_hazard=*/false,
+                                  /*no_hazard_no_deps=*/true)),
+      StatusIs(_, HasSubstr(
+                      "Hazard overrides are only valid for VMEM allocations")));
+  EXPECT_THAT(
+      VerifyOp(Create<AnnotateOp>(hbm_ref.getType(), hbm_ref,
+                                  /*no_store=*/false,
+                                  /*no_bank_conflict=*/false,
+                                  /*no_hazard=*/false,
+                                  /*no_hazard_no_deps=*/true)),
+      StatusIs(_, HasSubstr(
+                      "Hazard overrides are only valid for VMEM allocations")));
+  EXPECT_THAT(
+      VerifyOp(Create<AnnotateOp>(unsp_ref.getType(), unsp_ref,
+                                  /*no_store=*/false,
+                                  /*no_bank_conflict=*/false,
+                                  /*no_hazard=*/false,
+                                  /*no_hazard_no_deps=*/true)),
+      StatusIs(_, HasSubstr(
+                      "Hazard overrides are only valid for VMEM allocations")));
+}
+
+TEST_F(TpuOpsVerificationTest, ConvOpInvalidGroupCounts) {
+  Value lhs = ConstantF32Vector({1, 8, 128}, {1.0f});
+  Value rhs = ConstantF32Vector({3, 128, 128}, {1.0f});
+  Value acc = ConstantF32Vector({1, 6, 128}, {1.0f});
+  auto dnums = ConvDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*input_batch_dimension=*/0, /*input_feature_dimension=*/2,
+      /*input_spatial_dimensions=*/{1},
+      /*kernel_input_feature_dimension=*/1,
+      /*kernel_output_feature_dimension=*/2,
+      /*kernel_spatial_dimensions=*/{0},
+      /*output_batch_dimension=*/0, /*output_feature_dimension=*/2,
+      /*output_spatial_dimensions=*/{1});
+
+  auto conv_invalid_fg = Create<ConvOp>(
+      /*result=*/VectorType::get({1, 6, 128}, builder().getF32Type()),
+      /*lhs=*/lhs, /*rhs=*/rhs, /*acc=*/acc,
+      /*dimension_numbers=*/dnums,
+      /*window_strides=*/builder().getDenseI64ArrayAttr({1}),
+      /*padding=*/builder().getDenseI64ArrayAttr({0, 0}),
+      /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(0),
+      /*batch_group_count=*/builder().getI64IntegerAttr(1),
+      /*precision=*/nullptr);
+  ASSERT_THAT(
+      VerifyOp(conv_invalid_fg),
+      StatusIs(_, HasSubstr("Expected feature_group_count to be positive")));
+
+  auto conv_invalid_both = Create<ConvOp>(
+      /*result=*/VectorType::get({1, 6, 128}, builder().getF32Type()),
+      /*lhs=*/lhs, /*rhs=*/rhs, /*acc=*/acc,
+      /*dimension_numbers=*/dnums,
+      /*window_strides=*/builder().getDenseI64ArrayAttr({1}),
+      /*padding=*/builder().getDenseI64ArrayAttr({0, 0}),
+      /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(2),
+      /*batch_group_count=*/builder().getI64IntegerAttr(2),
+      /*precision=*/nullptr);
+  ASSERT_THAT(VerifyOp(conv_invalid_both),
+              StatusIs(_, HasSubstr("At most one of batch_group_count and "
+                                    "feature_group_count may be > 1")));
+}
+
+TEST_F(TpuOpsVerificationTest, ConvOpFeatureGroupCountValid) {
+  Value lhs = ConstantF32Vector({1, 8, 128}, {1.0f});
+  Value rhs = ConstantF32Vector({3, 64, 128}, {1.0f});
+  Value acc = ConstantF32Vector({1, 6, 128}, {1.0f});
+  auto dnums = ConvDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*input_batch_dimension=*/0, /*input_feature_dimension=*/2,
+      /*input_spatial_dimensions=*/{1},
+      /*kernel_input_feature_dimension=*/1,
+      /*kernel_output_feature_dimension=*/2,
+      /*kernel_spatial_dimensions=*/{0},
+      /*output_batch_dimension=*/0, /*output_feature_dimension=*/2,
+      /*output_spatial_dimensions=*/{1});
+  auto conv = Create<ConvOp>(
+      /*result=*/VectorType::get({1, 6, 128}, builder().getF32Type()),
+      /*lhs=*/lhs, /*rhs=*/rhs, /*acc=*/acc,
+      /*dimension_numbers=*/dnums,
+      /*window_strides=*/builder().getDenseI64ArrayAttr({1}),
+      /*padding=*/builder().getDenseI64ArrayAttr({0, 0}),
+      /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(2),
+      /*batch_group_count=*/builder().getI64IntegerAttr(1),
+      /*precision=*/nullptr);
+  ASSERT_OK(VerifyOp(conv));
+}
+
+TEST_F(TpuOpsVerificationTest, ConvOpBatchGroupCountValid) {
+  Value lhs = ConstantF32Vector({4, 8, 128}, {1.0f});
+  Value rhs = ConstantF32Vector({3, 128, 64}, {1.0f});
+  Value acc = ConstantF32Vector({2, 6, 64}, {1.0f});
+  auto dnums = ConvDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*input_batch_dimension=*/0, /*input_feature_dimension=*/2,
+      /*input_spatial_dimensions=*/{1},
+      /*kernel_input_feature_dimension=*/1,
+      /*kernel_output_feature_dimension=*/2,
+      /*kernel_spatial_dimensions=*/{0},
+      /*output_batch_dimension=*/0, /*output_feature_dimension=*/2,
+      /*output_spatial_dimensions=*/{1});
+  auto conv = Create<ConvOp>(
+      /*result=*/VectorType::get({2, 6, 64}, builder().getF32Type()),
+      /*lhs=*/lhs, /*rhs=*/rhs, /*acc=*/acc,
+      /*dimension_numbers=*/dnums,
+      /*window_strides=*/builder().getDenseI64ArrayAttr({1}),
+      /*padding=*/builder().getDenseI64ArrayAttr({0, 0}),
+      /*lhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*rhs_dilation=*/builder().getDenseI64ArrayAttr({1}),
+      /*window_reversal=*/builder().getDenseBoolArrayAttr({false}),
+      /*feature_group_count=*/builder().getI64IntegerAttr(1),
+      /*batch_group_count=*/builder().getI64IntegerAttr(2),
+      /*precision=*/nullptr);
+  ASSERT_OK(VerifyOp(conv));
 }
 }  // namespace
 }  // namespace mlir::tpu

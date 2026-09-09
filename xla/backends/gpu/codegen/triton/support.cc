@@ -879,16 +879,8 @@ CodegenDecision IsTritonSupportedInstructionImpl(
       return IsTritonSupportedAllReduce(*Cast<HloAllReduceInstruction>(&instr),
                                         gpu_version);
     case HloOpcode::kAllGather:
-      if (instr.shape().element_type() == S4) {
-        return CodegenDecision::Forbid("S4 is not supported.");
-      }
-      return instr.GetModule()
-                     ->config()
-                     .debug_options()
-                     .xla_gpu_experimental_enable_tiling_propagation()
-                 ? CodegenDecision::Allow()
-                 : CodegenDecision::Forbid(absl::StrCat(
-                       HloOpcodeString(instr.opcode()), " is not supported"));
+      return CodegenDecision(instr.shape().element_type() != S4,
+                             "S4 is not supported.");
     default:
       // Not all instructions have a special handling.
       break;
@@ -976,6 +968,13 @@ CodegenDecision IsTritonSupportedComputation(
         instruction->opcode() == HloOpcode::kTuple) {
       // While Tuple is not generally supported by Triton codegen, it is
       // supported for fusion roots.
+      continue;
+    }
+    if (instruction->opcode() == HloOpcode::kGetTupleElement &&
+        instruction->operand(0)->opcode() == HloOpcode::kScan &&
+        instruction->tuple_index() == 0) {
+      // While GetTupleElement is not generally supported by Triton codegen, it
+      // is supported for scan results.
       continue;
     }
     if (CodegenDecision can_codegen =

@@ -92,6 +92,10 @@ class PjRtExecutableLoadState
   virtual void Delete() = 0;
   virtual bool IsDeleted() const = 0;
 
+  virtual absl::Status Preload(PjRtExecutable* executable) {
+    return absl::OkStatus();
+  }
+
   virtual absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
   LoadRawExecutable(tsl::AsyncValueRef<PjRtExecutable> executable,
                     const ExecuteOptions& options, size_t host_callback_idx,
@@ -179,6 +183,9 @@ class PjRtRawClient {
     return absl::UnimplementedError("DmaUnmap is not supported.");
   }
 
+  // Returns the required byte alignment for host memory when performing DMA.
+  virtual size_t GetDmaHostAlignment() const { return 1; }
+
   virtual void UpdateGlobalProcessInfo(
       absl::Span<xla::coordination::TaskInfo> infos) {
     LOG(WARNING) << "UpdateGlobalProcessInfo is not supported.";
@@ -192,6 +199,29 @@ class PjRtRawClient {
   virtual absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
   RuntimeAbiVersion() const {
     return absl::UnimplementedError("RuntimeAbiVersion is not supported.");
+  }
+
+  virtual tsl::AsyncValueRef<PjRtExecutable> ToAsyncExecutable(
+      std::shared_ptr<PjRtExecutable> executable) const = 0;
+
+  virtual tsl::RCReference<PjRtExecutableLoadState> MakeLoadState() {
+    LOG(FATAL) << "Implement MakeLoadState()";
+  }
+
+  virtual absl::StatusOr<bool> PoisonExecution(LocalDeviceId local_device_id,
+                                               int32_t launch_id,
+                                               absl::Status error) {
+    return absl::UnimplementedError("PoisonExecution is not supported");
+  }
+
+  virtual absl::Status TransferToInfeed(LocalDeviceId local_device_id,
+                                        const LiteralSlice& literal) {
+    return absl::UnimplementedError("TransferToInfeed is not supported");
+  }
+
+  virtual absl::Status TransferFromOutfeed(LocalDeviceId local_device_id,
+                                           MutableBorrowingLiteral literal) {
+    return absl::UnimplementedError("TransferToOutfeed is not supported");
   }
 
   virtual void ScheduleRemoteSend(PjRtMemorySpace* memory_space,

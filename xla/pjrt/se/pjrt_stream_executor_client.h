@@ -106,22 +106,20 @@ class StreamExecutorExecutable;
 
 class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
-  PjRtStreamExecutorDevice(int id, LocalDeviceState* local_device_state,
-                           int local_device_id, int process_index,
-                           int process_index_in_partition, int partition_index,
-                           std::string device_kind)
-      : local_device_id_(local_device_id),
-        local_hardware_id_(local_device_state
-                               ? local_device_state->local_hardware_id()
-                               : LocalChipId(-1)),
-        local_device_state_(local_device_state),
+  PjRtStreamExecutorDevice(int id, bool is_addressable, int local_device_id,
+                           int process_index, int process_index_in_partition,
+                           int partition_index, std::string device_kind,
+                           LocalChipId local_hardware_id = LocalChipId(-1))
+      : is_addressable_(is_addressable),
+        local_device_id_(local_device_id),
+        local_hardware_id_(local_hardware_id.value() != -1
+                               ? local_hardware_id
+                               : (is_addressable ? LocalChipId(local_device_id)
+                                                 : LocalChipId(-1))),
         description_(id, local_device_id_.value(), process_index,
                      process_index_in_partition, partition_index,
-                     std::move(device_kind)) {
-    if (local_device_state_ != nullptr) {
-      CHECK_EQ(local_device_state_->local_device_id(), local_device_id_);
-    }
-  }
+                     std::move(device_kind)) {}
+
   ~PjRtStreamExecutorDevice() override = default;
 
   // Must set client exactly once.
@@ -155,7 +153,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   PjRtClient* client() const override { return client_; }
 
-  bool IsAddressable() const override { return local_device_state_ != nullptr; }
+  bool IsAddressable() const override { return is_addressable_; }
 
   LocalDeviceId local_device_id() const override { return local_device_id_; }
 
@@ -165,16 +163,6 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
       const override {
     return attributes_;
   }
-
-  // If this is a device local to this host, returns a LocalDeviceState object
-  // that can be used to manipulate the device. Returns nullptr if the device is
-  // not local to this host.
-  LocalDeviceState* local_device_state() const { return local_device_state_; }
-
-  // If this is a device local to this host, returns a LocalDeviceState object
-  // that can be used to manipulate the device. Returns an error if the device
-  // is not local to this host.
-  absl::StatusOr<LocalDeviceState*> GetLocalDeviceState() const;
 
   absl::Status TransferToInfeed(const LiteralSlice& literal) override;
 
@@ -201,9 +189,9 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   }
 
  private:
+  const bool is_addressable_;
   const LocalDeviceId local_device_id_;
   const LocalChipId local_hardware_id_;
-  LocalDeviceState* local_device_state_ = nullptr;
   PjRtStreamExecutorDeviceDescription description_;
   absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes_;
   PjRtClient* client_ = nullptr;
@@ -263,6 +251,16 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
     return it != local_device_states_by_id_.end() ? it->second : nullptr;
   }
 
+  absl::StatusOr<LocalDeviceState*> GetLocalDeviceState(
+      LocalDeviceId local_device_id) const {
+    LocalDeviceState* state = device_state(local_device_id);
+    if (state == nullptr) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Device ", local_device_id.value(), " is not a local device."));
+    }
+    return state;
+  }
+
   gpu::GpuExecutableRunOptions* gpu_run_options() const {
     return gpu_run_options_.get();
   }
@@ -292,6 +290,9 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
            size < (int64_t{1} << 30) &&
            (executor_ == nullptr || !executor_->IsHostMemoryPinned(data, size));
   }
+
+  tsl::AsyncValueRef<PjRtExecutable> ToAsyncExecutable(
+      std::shared_ptr<PjRtExecutable> executable) const override;
 
   void ThenRecordEvent(BufferSequencingEventRef event,
                        LocalDeviceState* local_device,
@@ -359,6 +360,12 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEventForStream(
       PjRtMemorySpace* memory_space, std::intptr_t stream) override;
 
+  absl::Status TransferToInfeed(LocalDeviceId local_device_id,
+                                const LiteralSlice& literal) override;
+
+  absl::Status TransferFromOutfeed(LocalDeviceId local_device_id,
+                                   MutableBorrowingLiteral literal) override;
+
   virtual void UpdateCompileOptionsTopology(
       const PjRtTopologyDescription& topology, CompileOptions* options) const {}
 
@@ -392,6 +399,8 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
       const PjRtTopologyDescription& target_topology);
 
   virtual void RecordMemoryStats(LocalDeviceState* local_device_state) {}
+
+  tsl::RCReference<PjRtExecutableLoadState> MakeLoadState() override;
 
  private:
   se::DeviceAddressAllocator* allocator_ = nullptr;
@@ -427,6 +436,8 @@ class PjRtStreamExecutorExecutableLoadState : public PjRtExecutableLoadState {
 
   void Delete() override { is_deleted_.store(true); }
   bool IsDeleted() const override { return is_deleted_.load(); }
+
+  absl::Status Preload(PjRtExecutable* executable) override;
 
   absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
       tsl::AsyncValueRef<PjRtExecutable> executable,
@@ -512,6 +523,14 @@ class PjRtStreamExecutorClient : public CommonPjRtClientImpl {
     return PjRtDynamicShapeKind::kSuffix;
   }
 
+  bool BufferFromHostBufferSupportsZeroCopy(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides, const Shape& shape,
+      PjRtMemorySpace* memory_space,
+      const Layout* device_layout) const override {
+    return false;
+  }
+
   bool ShouldPerformZeroCopyLinearize(
       const void* data, const xla::Shape& device_shape, PrimitiveType type,
       absl::Span<int64_t const> dims,
@@ -540,9 +559,6 @@ class PjRtStreamExecutorClient : public CommonPjRtClientImpl {
  protected:
   friend class PjRtStreamExecutorRawBuffer;
   friend class PjRtStreamExecutorRawLoadedExecutable;
-
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
-      std::shared_ptr<PjRtExecutable> executable, bool dump);
 };
 
 struct PjRtStreamExecutorExecutionOutput {
