@@ -667,22 +667,23 @@ class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
   static Literal MakeInput(int buffer, int rank) {
     Literal input = Literal::CreateFromShape(
         ShapeUtil::MakeShape(BF16, {kElementsPerRank}));
-    // All values are integers in [0, 255], exactly representable in BF16.
+    // All values are integers in [0, 127], exactly representable in BF16.
     std::mt19937 rng(buffer * kNumReplicas + rank);
     std::uniform_int_distribution<int> distribution(0, 15);
     const int base = (buffer * kNumReplicas + rank) * 16;
+    absl::Span<bfloat16> data = input.data<bfloat16>();
     for (int64_t i = 0; i < kElementsPerRank; ++i) {
-      input.data<bfloat16>()[i] =
-          bfloat16(static_cast<float>(base + distribution(rng)));
+      data[i] = bfloat16(static_cast<float>(base + distribution(rng)));
     }
     return input;
   }
 };
 
 TEST_F(AllGatherGroupedTest, LargeTwoInputs4GpuBF16) {
-  ASSERT_GE(device_count(), kNumReplicas)
-      << "Test requires at least " << kNumReplicas << " devices ("
-      << device_count() << " available)";
+  if (device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << device_count() << " available)";
+  }
 
   // Gather two 16 MiB inputs per rank using two calls in the same group.
   constexpr absl::string_view kHlo = R"(
@@ -714,7 +715,10 @@ ENTRY main {
   }
   std::vector<std::vector<Literal*>> arguments(kNumReplicas);
   for (int rank = 0; rank < kNumReplicas; ++rank) {
-    arguments[rank] = {&inputs[rank][0], &inputs[rank][1]};
+    arguments[rank].reserve(kNumBuffers);
+    for (int buffer = 0; buffer < kNumBuffers; ++buffer) {
+      arguments[rank].push_back(&inputs[rank][buffer]);
+    }
   }
 
   ASSERT_OK_AND_ASSIGN(ExecutionResult execution,
