@@ -50,6 +50,10 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
+#if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cublas_v2.h"
+#endif  // GOOGLE_CUDA
+
 namespace xla {
 
 namespace se = ::stream_executor;
@@ -361,7 +365,9 @@ bool IsBF16Operation(const HloInstruction* ragged_dot) {
          (ragged_dot->operand(1)->shape().element_type() == BF16);
 }
 
-bool CanBeHandledByCuDNNFusion(const HloInstruction* instruction) {
+bool CanBeHandledByCuDNNFusion(
+    const HloInstruction* instruction,
+    stream_executor::dnn::VersionInfo cudnn_version) {
   const HloRaggedDotInstruction* ragged_dot =
       DynCast<HloRaggedDotInstruction>(instruction);
   const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
@@ -373,8 +379,17 @@ bool CanBeHandledByCuDNNFusion(const HloInstruction* instruction) {
   int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
   RaggedDotMode mode =
       GetRaggedDotMode(lhs_ragged_dim, ragged_dims.dot_dimension_numbers());
-  return mode == RaggedDotMode::kRaggedNonContracting ||
-         mode == RaggedDotMode::kRaggedContracting;
+  if (mode == RaggedDotMode::kRaggedContracting) {
+    // Wgrad: needs cuDNN's moe_grouped_matmul_bwd, gated separately since it
+    // additionally requires cuBLASLt 13.5+.
+#if GOOGLE_CUDA
+    return cudnn_version >= kMinCudnnVersionForRaggedDotWgradFusion &&
+           CUBLAS_VERSION >= 130500;
+#else
+    return false;
+#endif  // GOOGLE_CUDA
+  }
+  return mode == RaggedDotMode::kRaggedNonContracting;
 }
 
 // Pads the given dimension of `operand` up to `new_size` with zeros. Returns
@@ -582,7 +597,7 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
         // GroupGemm or cuDNN fusion are added to the list of operations to
         // rewrite in regular dot.
         if (ragged_dot_fusion_enabled &&
-            CanBeHandledByCuDNNFusion(instruction)) {
+            CanBeHandledByCuDNNFusion(instruction, cudnn_version_)) {
           cudnn_fusion_dots.push_back(
               Cast<HloRaggedDotInstruction>(instruction));
           continue;
