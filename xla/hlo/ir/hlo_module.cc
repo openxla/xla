@@ -211,12 +211,12 @@ HloComputation* HloModule::AddComputationInternal(
   topological_sort_.AddNode(computation_raw_ptr);
   for (auto& [caller, count] : computation_raw_ptr->caller_computations_) {
     if (caller->parent() == this) {
-      topological_sort_.AddEdge(caller, computation_raw_ptr);
+      CHECK(topological_sort_.AddEdge(caller, computation_raw_ptr));
     }
   }
   for (auto& [callee, count] : computation_raw_ptr->callee_computations_) {
     if (callee->parent() == this) {
-      topological_sort_.AddEdge(computation_raw_ptr, callee);
+      CHECK(topological_sort_.AddEdge(computation_raw_ptr, callee));
     }
   }
   return computation_raw_ptr;
@@ -1635,15 +1635,14 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
   std::vector<HloComputation*> post_order;
   post_order.reserve(computation_count());
   size_t num_computations = 0;
-  for (auto it = topological_sort_.rbegin(); it != topological_sort_.rend();
-       ++it) {
+  topological_sort_.ForEachPostOrder([&](int32_t idx) {
     ++num_computations;
-    HloComputation* computation = computations_[*it].get();
+    HloComputation* computation = computations_[idx].get();
     if (execution_threads.empty() ||
         execution_threads.contains(computation->execution_thread())) {
       post_order.push_back(computation);
     }
-  }
+  });
 
   if (num_computations != computation_count()) {
     for (int32_t idx : topological_sort_) {
@@ -1671,8 +1670,7 @@ class FingerprintMap {
     auto result = fingerprint_map_.try_emplace(computation, 0);
     if (result.second) {
       HighwayHashPrinter printer;
-      computation->Print(&printer, print_options_,
-                         computation->MakeInstructionPostOrder());
+      computation->Print(&printer, print_options_, {});
       result.first->second = printer.ToFingerprint();
     }
     return result.first->second;

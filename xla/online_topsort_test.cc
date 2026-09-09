@@ -77,11 +77,11 @@ struct TestGraph {
 
   void RemoveNode(int id) {
     TestNode* node = node_index[id];
-    for (TestNode* x : node->in) {
-      RemoveEdge(x->id, node->id);
+    while (!node->in.empty()) {
+      RemoveEdge(node->in.back()->id, node->id);
     }
-    for (TestNode* x : node->out) {
-      RemoveEdge(id, x->id);
+    while (!node->out.empty()) {
+      RemoveEdge(id, node->out.back()->id);
     }
     node_index[id] = nullptr;
     topsort.RemoveNode(node);
@@ -91,16 +91,19 @@ struct TestGraph {
     nodes.erase(it);
   }
 
-  void AddEdge(int from, int to) {
+  bool AddEdge(int from, int to) {
     CHECK_GE(from, 0);
     CHECK_LT(from, node_index.size());
     CHECK_GE(to, 0);
     CHECK_LT(to, node_index.size());
     TestNode* from_node = node_index[from];
     TestNode* to_node = node_index[to];
-    topsort.AddEdge(from_node, to_node);
+    if (!topsort.AddEdge(from_node, to_node)) {
+      return false;
+    }
     from_node->out.push_back(to_node);
     to_node->in.push_back(from_node);
+    return true;
   }
 
   bool HasEdge(int from, int to) const {
@@ -119,6 +122,22 @@ struct TestGraph {
     it = std::find(to_node->in.begin(), to_node->in.end(), from_node);
     CHECK(it != to_node->in.end());
     to_node->in.erase(it);
+  }
+
+  void CompactAndReindex() {
+    std::vector<int> old_to_new(node_index.size(), -1);
+    std::vector<TestNode*> new_node_index;
+    new_node_index.reserve(nodes.size());
+    for (size_t old_id = 0; old_id < node_index.size(); ++old_id) {
+      if (node_index[old_id] != nullptr) {
+        int new_id = static_cast<int>(new_node_index.size());
+        old_to_new[old_id] = new_id;
+        node_index[old_id]->id = new_id;
+        new_node_index.push_back(node_index[old_id]);
+      }
+    }
+    node_index = std::move(new_node_index);
+    topsort.Reindex(old_to_new);
   }
 
   // Returns std::nullopt if the topological order is valid. Otherwise, returns
@@ -220,7 +239,30 @@ TEST(TopologicalSortTest, ChangeOrder) {
   }
   g.RemoveEdge(13, 14);
   ASSERT_THAT(g, HasValidTopologicalOrder());
-  g.AddEdge(n - 1, 0);
+  ASSERT_TRUE(g.AddEdge(n - 1, 0));
+  ASSERT_THAT(g, HasValidTopologicalOrder());
+}
+
+TEST(TopologicalSortTest, CycleDetection) {
+  TestGraph g;
+  int n = 20;
+  for (int i = 0; i < n; ++i) {
+    g.AddNode(i);
+  }
+  // Self-loop.
+  EXPECT_FALSE(g.AddEdge(0, 0));
+  ASSERT_THAT(g, HasValidTopologicalOrder());
+
+  // Short cycle (caught by backwards search).
+  ASSERT_TRUE(g.AddEdge(0, 1));
+  EXPECT_FALSE(g.AddEdge(1, 0));
+  ASSERT_THAT(g, HasValidTopologicalOrder());
+
+  // Long cycle (caught by forwards search).
+  for (int i = 1; i < n - 1; ++i) {
+    ASSERT_TRUE(g.AddEdge(i, i + 1));
+  }
+  EXPECT_FALSE(g.AddEdge(n - 1, 0));
   ASSERT_THAT(g, HasValidTopologicalOrder());
 }
 
@@ -271,6 +313,89 @@ TEST(TopologicalSortTest, Random) {
       // Note: this check makes the test O(m^2), but it's valuable to verify
       // the invariant is maintained.
       ASSERT_THAT(g, HasValidTopologicalOrder());
+    }
+  }
+}
+
+TEST(TopologicalSortTest, ReindexAndAddEdges) {
+  absl::BitGen gen;
+  for (int trial = 0; trial < 10; ++trial) {
+    int n = absl::Uniform(gen, 20, 200);
+    int m = absl::Uniform(gen, n, std::min(n * 4, (n * (n - 1)) / 2));
+    TestGraph g;
+    for (int i = 0; i < n; ++i) {
+      g.AddNode(i);
+    }
+    std::vector<int> order(n);
+    absl::c_iota(order, 0);
+    absl::c_shuffle(order, gen);
+
+    // Add initial half of the edges.
+    int half_m = m / 2;
+    for (int i = 0; i < half_m; ++i) {
+      int a, b;
+      do {
+        a = absl::Uniform(gen, 0, n);
+        b = absl::Uniform(gen, 0, n);
+        if (a > b) {
+          std::swap(a, b);
+        }
+      } while (a == b || g.HasEdge(order[a], order[b]));
+      g.AddEdge(order[a], order[b]);
+      ASSERT_THAT(g, HasValidTopologicalOrder());
+    }
+
+    // Remove ~20% of the nodes.
+    std::vector<int> remaining_ranks;
+    for (int rank = 0; rank < n; ++rank) {
+      if (absl::Bernoulli(gen, 0.2)) {
+        g.RemoveNode(order[rank]);
+      } else {
+        remaining_ranks.push_back(order[rank]);
+      }
+    }
+    ASSERT_THAT(g, HasValidTopologicalOrder());
+
+    // Compact IDs and Reindex, mapping remaining_ranks to their new compacted
+    // IDs.
+    std::vector<int> old_to_new(g.node_index.size(), -1);
+    int next_id = 0;
+    for (size_t old_id = 0; old_id < g.node_index.size(); ++old_id) {
+      if (g.node_index[old_id] != nullptr) {
+        old_to_new[old_id] = next_id++;
+      }
+    }
+    std::vector<int> compacted_ranks;
+    compacted_ranks.reserve(remaining_ranks.size());
+    for (int old_id : remaining_ranks) {
+      compacted_ranks.push_back(old_to_new[old_id]);
+    }
+    g.CompactAndReindex();
+    ASSERT_THAT(g, HasValidTopologicalOrder());
+
+    // Continue adding edges between remaining nodes and check
+    // TopologicalOrderIsValid() after each.
+    int rem_n = static_cast<int>(compacted_ranks.size());
+    if (rem_n >= 2) {
+      int extra_edges = std::min(half_m, (rem_n * (rem_n - 1)) / 2);
+      for (int i = 0; i < extra_edges; ++i) {
+        int a, b;
+        int attempts = 0;
+        do {
+          a = absl::Uniform(gen, 0, rem_n);
+          b = absl::Uniform(gen, 0, rem_n);
+          if (a > b) {
+            std::swap(a, b);
+          }
+          ++attempts;
+        } while (
+            (a == b || g.HasEdge(compacted_ranks[a], compacted_ranks[b])) &&
+            attempts < 100);
+        if (a != b && !g.HasEdge(compacted_ranks[a], compacted_ranks[b])) {
+          g.AddEdge(compacted_ranks[a], compacted_ranks[b]);
+          ASSERT_THAT(g, HasValidTopologicalOrder());
+        }
+      }
     }
   }
 }

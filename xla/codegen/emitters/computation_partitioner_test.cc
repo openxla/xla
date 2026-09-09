@@ -148,9 +148,9 @@ TEST_F(ComputationPartitionerTest, DiamondConcatenate) {
 
   constexpr auto kExpected = R"(PartitionedComputation fused_computation:
       SUBGRAPH fused_computation_concat {
-        %neg = f32[6]{0} negate(%log)
         %param2 = f32[6]{0} parameter(1)
         %add = f32[6]{0} add(%log, %param2)
+        %neg = f32[6]{0} negate(%log)
         %exp = f32[6]{0} exponential(%add)
         ROOT %concat = f32[12]{0} concatenate(%neg, %exp), dimensions={0}
       }

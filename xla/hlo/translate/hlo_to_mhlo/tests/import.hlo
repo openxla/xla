@@ -325,8 +325,8 @@ add {
   // CHECK-NEXT:  %[[GTE_1:.+]] = mhlo.get_tuple_element %arg0[0]
   // CHECK-NEXT:  %[[GTE_2:.+]] = mhlo.get_tuple_element %arg0[1] {xla_shape = "(s64[], s64[])"
   // CHECK-NEXT:  %[[GTE_3:.+]] = mhlo.get_tuple_element %[[GTE_2]][1]
-  // CHECK-NEXT:  %[[ADD_1:.+]] = mhlo.add %[[GTE_1]], %[[GTE_3]]
   // CHECK-NEXT:  %[[GTE_4:.+]] = mhlo.get_tuple_element %[[GTE_2]][0]
+  // CHECK-NEXT:  %[[ADD_1:.+]] = mhlo.add %[[GTE_1]], %[[GTE_3]]
   // CHECK-NEXT:  %[[ADD_2:.+]] = mhlo.add %arg1, %[[GTE_4]]
   // CHECK-NEXT:  %[[TUPLE:.+]] = mhlo.tuple %[[ADD_1]], %[[ADD_2]]
   // CHECK-NEXT: return %[[TUPLE]]
