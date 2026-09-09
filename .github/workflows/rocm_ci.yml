@@ -155,7 +155,7 @@ jobs:
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --local_test_jobs=1 \
             --internal_spawn_scheduler \
-            --nocache_test_results \
+            --test_env=TEST_VAR=random \
             --strategy=TestRunner=local \
             --bes_keywords=xla \
             --bes_keywords=upstream \
