@@ -46,9 +46,10 @@ class ElementalKernelEmitterTest : public TargetMachineTestBase {
   void SetUp() override {
     // register X86/ARM targets
     TargetMachineTestBase::SetUp();
-    target_machine_features_ = CreateTargetMachineFeatures(
-        "x86_64-unknown-linux-gnu", "", "");
+    target_machine_features_ =
+        CreateTargetMachineFeatures("x86_64-unknown-linux-gnu", "", "");
   }
+
  public:
   absl::StatusOr<KernelDefinition<LlvmKernelSource>> EmitKernelDefinition(
       const HloInstruction* instr, const BufferAssignment* buffer_assignment) {
