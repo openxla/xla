@@ -497,7 +497,8 @@ class HloComputation {
 
   // Compute and return a post-order of the instructions in the computation. In
   // this order, definitions of values always appear before their uses.
-  std::vector<HloInstruction*> MakeInstructionPostOrder() const;
+  std::vector<HloInstruction*> MakeInstructionPostOrder(
+      bool dfs_postorder = false) const;
   // Same as MakeInstructionPostOrder but starting at any instruction in the
   // computation, not just the root. Describes the corresponding subgraph.
   std::vector<HloInstruction*> MakeInstructionPostOrderFrom(
@@ -509,7 +510,8 @@ class HloComputation {
 
   // Calls `func` with each instruction in the computation in post-order.
   void ForEachInstructionPostOrder(
-      absl::FunctionRef<void(HloInstruction*)> func) const;
+      absl::FunctionRef<void(HloInstruction*)> func,
+      bool dfs_postorder = false) const;
 
   int64_t instruction_count() const { return instruction_count_; }
 
@@ -1084,6 +1086,11 @@ class HloComputation {
   void AddCallee(HloInstruction* caller, HloComputation* callee);
   void RemoveCallee(HloInstruction* caller, HloComputation* callee);
 
+  // Records a dependency from `user` to `operand` (either a data dependency or
+  // a control dependency) in the computation's topological order. Both
+  // instructions must belong to this computation.
+  void AddDependency(HloInstruction* user, HloInstruction* operand);
+
   // Returns nullptr if `callers_` is not a map.
   absl::flat_hash_map<HloInstruction*, int>* GetCallersMap();
   absl::flat_hash_map<HloInstruction*, int>* const GetCallersMap() const;
@@ -1203,19 +1210,16 @@ class HloComputation {
                             callee_computations_.end());
   }
 
-  template <typename S, typename Index, TopologicalSortNode<S> S::* Link,
-            Index S::* IndexInParent, typename PredecessorIterator,
-            PredecessorIterator (S::*PredecessorsBegin)() const,
-            PredecessorIterator (S::*PredecessorsEnd)() const,
-            typename SuccessorIterator,
-            SuccessorIterator (S::*SuccessorsBegin)() const,
-            SuccessorIterator (S::*SuccessorsEnd)() const>
-  friend class TopologicalSort;
+  // Dense index of this computation within its parent HloModule, used as the
+  // node index in the module's TopologicalSort.
+  int32_t index_in_module_ = -1;
 
-  template <typename S, TopologicalSortNode<S> S::* Link>
-  friend class TopologicalSortIterator;
-
-  TopologicalSortNode<HloComputation> topological_sort_node_;
+  TopologicalSort<
+      HloInstruction, int32_t, &HloInstruction::local_id_,
+      HloInstruction::NeighborIterator, &HloInstruction::users_begin,
+      &HloInstruction::users_end, HloInstruction::NeighborIterator,
+      &HloInstruction::operands_begin, &HloInstruction::operands_end>
+      topological_sort_;
 
   HloComputation(const HloComputation&) = delete;
   HloComputation& operator=(const HloComputation&) = delete;
