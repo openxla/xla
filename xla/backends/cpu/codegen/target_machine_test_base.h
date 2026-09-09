@@ -66,8 +66,10 @@ class TargetMachineTestBase : public HloHardwareIndependentTestBase {
       absl::string_view triple_string, absl::string_view cpu_name,
       absl::string_view features) {
     llvm::TargetMachine* target_machine =
-	    target_machines_.emplace_back(
-              CreateTargetMachine(triple_string, cpu_name, features)).get();
+        target_machines_
+            .emplace_back(
+                CreateTargetMachine(triple_string, cpu_name, features))
+            .get();
     return std::make_unique<TargetMachineFeatures>(target_machine);
   }
 

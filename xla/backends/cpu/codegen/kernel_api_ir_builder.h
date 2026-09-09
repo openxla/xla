@@ -141,10 +141,9 @@ class KernelApiIrBuilder {
 
   // Create a module with the given name, the name is given a prefix that is
   // specific to XLA and relied on further down the pipeline.
-  static std::unique_ptr<llvm::Module>
-  CreateModule(absl::string_view name,
-               llvm::LLVMContext& context,
-               const TargetMachineFeatures* target_machine_features);
+  static std::unique_ptr<llvm::Module> CreateModule(
+      absl::string_view name, llvm::LLVMContext& context,
+      const TargetMachineFeatures* target_machine_features);
 
   static absl::StatusOr<std::vector<KernelParameter>>
   GetKernelArgumentsParameters(const HloInstruction* instruction,
