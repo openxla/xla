@@ -155,7 +155,7 @@ jobs:
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --local_test_jobs=1 \
             --internal_spawn_scheduler \
-            --strategy=TestRunner=dynamic \
+            --strategy=TestRunner=local \
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
