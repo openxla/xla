@@ -333,6 +333,7 @@ cc_library(
             ["nvtx_utils_stub.cc"],
         ),
     ),
+    hdrs = ["nvtx_utils.h"],
     visibility = ["//visibility:public"],
     # Mirrors the nesting in srcs: exactly one backend is ever compiled, so a
     # tree with both CUDA and ROCm configured must not link the roctx shim.
@@ -353,6 +354,7 @@ cc_library(
 cc_library(
     name = "nvtx_utils_external",
     srcs = ["nvtx_utils_stub.cc"],
+    hdrs = ["nvtx_utils.h"],
     visibility = ["//visibility:public"],
 )
 

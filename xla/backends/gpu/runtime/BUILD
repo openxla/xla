@@ -64,8 +64,6 @@ cc_library(
     hdrs = ["annotation.h"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
-        "//third_party/tsl/tsl/profiler/lib:nvtx_utils",
-        "//third_party/tsl/tsl/profiler/lib:scoped_annotation",
         "//xla:printer",
         "//xla:side_effect_util",
         "//xla:xla_data_proto_cc",
@@ -81,6 +79,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ] + if_cuda_is_configured(nvtx_headers()),
 )
 
