@@ -202,16 +202,18 @@ TEST_P(CpuLibraryFullParamTest, AddMatMul) {
     HloModule matmul
 
     ENTRY %main {
-      %a = $in_dtype[64,64] parameter(0)
-      %b = $in_dtype[64,64] parameter(1)
-      %c = $in_dtype[64,64] parameter(2)
-      %x = $in_dtype[64,64] add(%a, %b)
-      %y = $in_dtype[64,64] add(%a, %c)
-      ROOT %dot = $out_dtype[64,64]{1,0} dot(%x, %y),
+      %a = $in_dtype[$m,$m] parameter(0)
+      %b = $in_dtype[$m,$m] parameter(1)
+      %c = $in_dtype[$m,$m] parameter(2)
+      %x = $in_dtype[$m,$m] add(%a, %b)
+      %y = $in_dtype[$m,$m] add(%a, %c)
+      ROOT %dot = $out_dtype[$m,$m]{1,0} dot(%x, %y),
                   lhs_contracting_dims={1}, rhs_contracting_dims={0}
     })";
 
   DotRewriteTestSpec spec = GetParam();
+  // oneDNN does not rewrite for small flops, so use a larger m.
+  const int m = (spec.lib == "onednn") ? 1024 : 64;
   FusionProperties expected = {HloOpcode::kDot, 0, 0, false};
   if (IsDotEnabledOnCPU()) {
     // {Add, Add, Dot} for XNN, {Dot} for oneDNN.
@@ -222,7 +224,8 @@ TEST_P(CpuLibraryFullParamTest, AddMatMul) {
   } else if (spec.fusion_mode == "greedy") {
     expected = FusionProperties{HloOpcode::kAdd, 2, 3, true};
   }
-  RunTest(hlo_template, expected);
+  RunTest(absl::StrReplaceAll(hlo_template, {{"$m", absl::StrCat(m)}}),
+          expected);
 }
 
 TEST_P(CpuLibraryFullParamTest, MatMul) {
