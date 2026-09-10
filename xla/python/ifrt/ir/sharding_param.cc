@@ -180,7 +180,6 @@ void ShardingParam::MinorToMajor::ToDeviceList(
   cum_sizes.reserve(axis_sizes.size());
   for (auto size : axis_sizes) {
     cum_sizes.push_back(cum_size);
-    // Already rejected by verify() at deserialization time.
     cum_size *= size;
   }
   PopulateDevices(permutation, axis_sizes, cum_sizes, out_devices);
@@ -271,8 +270,6 @@ absl::Status ShardingParam::verify() const {
           absl::StrJoin(dim_shards(), "x")));
     }
   }
-  // `total_dim_shards_size` is positive here, so no zero-divisor check
-  // is needed below.
   if (NumDevices() % total_dim_shards_size != 0) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Can't shard the dims ", absl::StrJoin(dim_shards(), "x"),
