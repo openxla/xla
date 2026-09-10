@@ -112,7 +112,6 @@ jobs:
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --local_test_jobs=1 \
-            --test_output=streamed \
             --internal_spawn_scheduler \
             --test_env=TEST_VAR=random \
             --strategy=TestRunner=local \
