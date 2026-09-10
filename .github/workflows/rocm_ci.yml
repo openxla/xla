@@ -57,7 +57,7 @@ jobs:
   xla:
     needs: rocm-config
     name: XLA Linux x86 AMD Instinct GPU - ${{ matrix.job-index }}
-    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1-test' }}
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1-isolated' }}
     timeout-minutes: 120
     container:
       image: ${{ needs.rocm-config.outputs.docker-image }}
