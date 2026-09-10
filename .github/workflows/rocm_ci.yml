@@ -30,7 +30,7 @@ on:
       runner_label:
         description: 'Runner label for GPU jobs'
         required: false
-        default: 'amd-do-linux-xla-gpu-gfx950-1-test'
+        default: 'amd-do-linux-xla-gpu-gfx950-1-testv2'
         type: string
 
 concurrency:
@@ -129,6 +129,7 @@ jobs:
             --shm-size=64G \
             --cap-add=SYS_PTRACE \
             --security-opt=seccomp=unconfined \
+            --test_output=streamed \
             -e HOME=/github/home \
             -v "${GITHUB_HOME}":/github/home \
             -v /data/ci-cert.crt:/data/ci-cert.crt \
@@ -154,6 +155,7 @@ jobs:
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --local_test_jobs=1 \
+            --test_output=streamed \
             --internal_spawn_scheduler \
             --test_env=TEST_VAR=random \
             --strategy=TestRunner=local \
