@@ -338,6 +338,10 @@ common:macos --copt=-w
 common:macos --host_copt=-w
 common:windows --copt=/W0
 common:windows --host_copt=/W0
+common:windows --copt=/clang:-ftemplate-depth=1024
+common:windows --copt=/clang:-fbracket-depth=1024
+common:windows --host_copt=/clang:-ftemplate-depth=1024
+common:windows --host_copt=/clang:-fbracket-depth=1024
 
 # Linux ARM64 specific options
 common:linux_arm64 --copt="-mtune=generic" --copt="-march=armv8-a" --copt="-O3"
@@ -452,6 +456,10 @@ common:win_clang_base --linkopt=/demangle:no --host_linkopt=/demangle:no
 common:win_clang_base --linkopt=/errorlimit:0 --host_linkopt=/errorlimit:0
 common:win_clang_base --copt=/clang:-Weverything
 common:win_clang_base --host_copt=/clang:-Weverything
+common:win_clang_base --copt=/clang:-ftemplate-depth=1024
+common:win_clang_base --copt=/clang:-fbracket-depth=1024
+common:win_clang_base --host_copt=/clang:-ftemplate-depth=1024
+common:win_clang_base --host_copt=/clang:-fbracket-depth=1024
 common:win_clang_base --compiler=clang-cl
 common:win_clang_base --linkopt=/FORCE:MULTIPLE
 common:win_clang_base --host_linkopt=/FORCE:MULTIPLE
@@ -473,11 +481,11 @@ common:windows_x86_cpu_2022 --host_platform="//tensorflow/tools/toolchains/win20
 common:windows_x86_cpu_2022 --platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang"
 
 common:xla_windows_x86_cpu_2022 --config=win_clang_base
-common:xla_windows_x86_cpu_2022 --crosstool_top="//tools/toolchains/win2022/20241118:toolchain"
-common:xla_windows_x86_cpu_2022 --extra_toolchains="//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
-common:xla_windows_x86_cpu_2022 --extra_execution_platforms="//tools/toolchains/win2022:windows_ltsc2022_clang"
-common:xla_windows_x86_cpu_2022 --host_platform="//tools/toolchains/win2022:windows_ltsc2022_clang"
-common:xla_windows_x86_cpu_2022 --platforms="//tools/toolchains/win2022:windows_ltsc2022_clang"
+common:xla_windows_x86_cpu_2022 --crosstool_top="//tools/toolchains/win2022/t20260812:toolchain"
+common:xla_windows_x86_cpu_2022 --extra_toolchains="//tools/toolchains/win2022/t20260812:cc-toolchain-x64_windows-clang-cl"
+common:xla_windows_x86_cpu_2022 --extra_execution_platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
+common:xla_windows_x86_cpu_2022 --host_platform="//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
+common:xla_windows_x86_cpu_2022 --platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_ml_actions"
 
 # Options to build TensorFlow 1.x or 2.x.
 # TODO(kanglan): Change v2's define to default behavior
@@ -595,10 +603,6 @@ common:rbe_windows_x86_cpu_2022 --platforms="//tensorflow/tools/toolchains/win20
 common:rbe_xla_windows_x86_cpu_2022 --config=rbe_win_base --config=xla_windows_x86_cpu_2022
 common:rbe_xla_windows_x86_cpu_2022 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
 common:rbe_xla_windows_x86_cpu_2022 --bes_instance_name="ml-oss-rbe-general"
-
-common:rbe_xla_windows_x86_cpu_2022 --host_platform="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
-common:rbe_xla_windows_x86_cpu_2022 --extra_execution_platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
-common:rbe_xla_windows_x86_cpu_2022 --platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
 # END TF REMOTE BUILD EXECUTION OPTIONS
 
