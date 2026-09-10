@@ -1290,6 +1290,7 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # TODO: Remove this workaround after the RCCL team fixes the WarpSpeed issue.
     env = if_rocm_is_configured(
         {"RCCL_WARP_SPEED_AUTO": "0"},
         {},
