@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/str_join.h"
 
 namespace xla::gpu {
@@ -113,6 +114,7 @@ class EuclideanComplementInterpolator : public EuclideanNNInterpolator<R, N> {
 
   void Add(std::array<int64_t, N>& point, R val) override {
     retrieval_[point] = val;
+    EuclideanNNInterpolator<R, N>::Add(point, val);
   }
 
   R Eval(std::array<int64_t, N>& point) const override {
@@ -133,7 +135,14 @@ class EuclideanComplementInterpolator : public EuclideanNNInterpolator<R, N> {
       interpolation_point[i] =
           std::max(std::min(*next_potential_dim, max_ctx_[i]), min_ctx_[i]);
     }
-    return retrieval_.at(interpolation_point);
+    if (auto it = retrieval_.find(interpolation_point);
+        it != retrieval_.end()) {
+      return it->second;
+    }
+    // No exact match, use the nearest one.
+    VLOG(10) << "No exact match for (" << absl::StrJoin(point, ", ")
+             << "), using the nearest neighbour.";
+    return EuclideanNNInterpolator<R, N>::Eval(point);
   }
 
  protected:
