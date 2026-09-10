@@ -30,7 +30,7 @@ on:
       runner_label:
         description: 'Runner label for GPU jobs'
         required: false
-        default: 'amd-do-linux-xla-gpu-gfx950-1-testv2'
+        default: 'amd-do-linux-xla-gpu-gfx950-1-isolated'
         type: string
 
 concurrency:
