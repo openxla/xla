@@ -54,6 +54,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -6882,12 +6883,27 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
       graph_.select_behavior_notes(
           {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
     }
+    if (engine_options.force_tensor_ir) {
+      // CUTLASS FALLBACK engines (eng0..eng2) report
+      // NUMERICAL_NOTE_TENSOR_CORE;
+      // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE (eng3) does not.
+      graph_.deselect_numeric_notes(
+          {cudnn_frontend::NumericalNote_t::TENSOR_CORE});
+    }
     return absl::OkStatus();
   };
 
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
+    // Explicitly clear any CUDA context left active by unrelated prior work
+    // on this thread. cuDNN's TensorIR engine eagerly loads CUDA modules
+    // during "compile" when some context is current; forcing this to null
+    // makes it defer that work to execute time instead, where XLA's real
+    // Execute() path (via CudnnHandle's RAII) always activates the correct
+    // context on its own. See the deviceless branch below for the other
+    // reason this matters.
+    stream_executor::gpu::ScopedDeactivateContext deactivate;
     ABSL_ASSIGN_OR_RETURN(auto cudnn_handle,
                      cudnn_support.cudnn_->GetCompilationHandle());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
@@ -6897,8 +6913,13 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
   } else {
     // Deviceless mode. No cuDNN version guard needed: DeviceProperties
     // deserialization inside BuildDeviceProperties rejects runtimes < 9.8.
+    // Explicitly clear any CUDA context left active by unrelated prior work
+    // on this thread, so cuDNN's internal "is a context current?" checks
+    // reliably see this compile as truly deviceless rather than incidentally
+    // picking up a leftover context.
+    stream_executor::gpu::ScopedDeactivateContext deactivate;
     ABSL_ASSIGN_OR_RETURN(auto device_props,
-                     xla::gpu::BuildDeviceProperties(gpu_device_info));
+                          xla::gpu::BuildDeviceProperties(gpu_device_info));
     graph_.set_device_properties(device_props);
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph());
@@ -6914,8 +6935,11 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
+    // See the comment in Prepare()'s device branch for why this is cleared
+    // explicitly rather than activating this StreamExecutor's context.
+    stream_executor::gpu::ScopedDeactivateContext deactivate;
     ABSL_ASSIGN_OR_RETURN(auto cudnn_handle,
-                     cudnn_support.cudnn_->GetCompilationHandle());
+                          cudnn_support.cudnn_->GetCompilationHandle());
     if (plan_id.has_value()) {
       RETURN_CUDNN_FRONTEND_STATUS(
           graph_.build_plan_at_index(cudnn_handle, *plan_id));
@@ -6923,6 +6947,9 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
     RETURN_CUDNN_FRONTEND_STATUS(graph_.build_plans(cudnn_handle));
   } else {
     // no need to set_device_properties, it is done in Prepare()
+    // See the comment in Prepare()'s deviceless branch for why this is
+    // cleared explicitly rather than relying on no context being ambient.
+    stream_executor::gpu::ScopedDeactivateContext deactivate;
     if (plan_id.has_value()) {
       RETURN_CUDNN_FRONTEND_STATUS(graph_.build_plan_at_index(*plan_id));
     }
