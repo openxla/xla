@@ -357,6 +357,9 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
+// Test change: verify bazel-diff impacted target filtering on a widely-used
+// GPU compiler source file.
+
 namespace xla {
 namespace gpu {
 namespace {
