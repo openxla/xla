@@ -582,8 +582,13 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeHostBufferInto(
 
 absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeInto(
     const LiteralSlice& literal, const xla::Shape& device_shape,
-    HostBufferSemantics host_buffer_semantics, PjRtRawBufferRef raw_buffer) {
+    HostBufferSemantics host_buffer_semantics,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+    PjRtRawBufferRef raw_buffer) {
   if (device_shape.IsToken()) {
+    if (on_done_with_host_buffer) {
+      std::move(on_done_with_host_buffer)();
+    }
     return raw_buffer->MakeAllocationReadyEvent();
   }
   absl::InlinedVector<int64_t, 4> strides(literal.shape().dimensions().size());
@@ -599,7 +604,7 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeInto(
   return LinearizeIntoImpl(literal.untyped_data(), device_shape.element_type(),
                            device_shape.dimensions(), strides,
                            host_buffer_semantics,
-                           /*on_done_with_host_buffer=*/nullptr, device_shape,
+                           std::move(on_done_with_host_buffer), device_shape,
                            dynamic_sizes, raw_buffer);
 }
 
@@ -984,7 +989,7 @@ CommonPjRtClient::BufferFromHostLiteral(const LiteralSlice& literal,
       auto definition_event,
       LinearizeInto(literal, device_shape,
                     HostBufferSemantics::kImmutableUntilTransferCompletes,
-                    raw_buffer));
+                    /*on_done_with_host_buffer=*/nullptr, raw_buffer));
   return DefineBuffer(std::move(device_shape), memory_space,
                       std::move(raw_buffer), {std::move(definition_event)});
 }
@@ -3099,7 +3104,7 @@ CommonPjRtBufferImpl::CopyToCpuMemorySpace(xla::Shape dst_shape,
         status_or_h2d_transfer_event = dst_client->LinearizeInto(
             *literal, *shared_dst_shape,
             PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
-            dst_raw_buffer);
+            /*on_done_with_host_buffer=*/nullptr, dst_raw_buffer);
         if (!status_or_h2d_transfer_event.ok()) {
           definition_event_promise.SetError(
               status_or_h2d_transfer_event.status());
@@ -3342,7 +3347,7 @@ CommonPjRtBufferImpl::CopyFromCpuToMemorySpace(
           auto status_or_h2d_transfer_event = dst_client->LinearizeInto(
               *literal, *device_shape,
               PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
-              std::move(dst_raw_buffer));
+              /*on_done_with_host_buffer=*/nullptr, std::move(dst_raw_buffer));
           CHECK_OK(status_or_h2d_transfer_event);
           auto h2d_transfer_event = *std::move(status_or_h2d_transfer_event);
           h2d_transfer_event.AndThen(

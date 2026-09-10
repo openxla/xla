@@ -250,6 +250,25 @@ class CommonAsyncHostToDeviceTransferManager
   absl::Status TransferLiteralToBuffer(
       int buffer_index, const LiteralSlice& literal,
       absl::AnyInvocable<void() &&> on_done) override {
+    return TransferLiteralToBuffer(buffer_index, literal,
+                                   /*on_done_with_host_buffer=*/nullptr,
+                                   std::move(on_done));
+  }
+
+  absl::Status TransferLiteralToBuffer(
+      int buffer_index, std::shared_ptr<const LiteralSlice> literal,
+      absl::AnyInvocable<void() &&> on_done) override {
+    const LiteralSlice& literal_ref = *literal;
+    return TransferLiteralToBuffer(
+        buffer_index, literal_ref,
+        /*on_done_with_host_buffer=*/[literal = std::move(literal)]() {},
+        std::move(on_done));
+  }
+
+  absl::Status TransferLiteralToBuffer(
+      int buffer_index, const LiteralSlice& literal,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+      absl::AnyInvocable<void() &&> on_done) {
     absl::ReleasableMutexLock l(mu_);
 
     DCHECK_LT(buffer_index, undispatched_buffer_refs_.size());
@@ -297,7 +316,7 @@ class CommonAsyncHostToDeviceTransferManager
         client_->LinearizeInto(
             literal, *device_shapes_[buffer_index],
             PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
-            raw_buffer));
+            std::move(on_done_with_host_buffer), raw_buffer));
     if (client_->event_tracking_enabled()) {
       // Acquire when logging, for the sake of definition_events_.
       absl::MutexLock l(mu_);

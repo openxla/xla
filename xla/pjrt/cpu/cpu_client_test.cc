@@ -597,6 +597,35 @@ TEST(PjRtCpuClientTest, AsyncTransferLiteral) {
               ElementsAreArray(literal.data<float>()));
 }
 
+TEST(PjRtCpuClientTest, AsyncTransferSharedLiteral) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(F32, {128, 256});
+  TF_ASSERT_OK_AND_ASSIGN(auto transfer_manager,
+                          client->CreateBuffersForAsyncHostToDevice(
+                              {shape}, client->memory_spaces()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+  auto ready_future = buffer->GetReadyFuture();
+  EXPECT_THAT(ready_future.IsReady(), IsFalse());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
+  std::vector<float> expected_data(literal.data<float>().begin(),
+                                   literal.data<float>().end());
+  struct OwnedLiteralSlice {
+    explicit OwnedLiteralSlice(Literal l)
+        : literal(std::move(l)), slice(literal) {}
+    Literal literal;
+    LiteralSlice slice;
+  };
+  auto owned = std::make_shared<OwnedLiteralSlice>(std::move(literal));
+  std::shared_ptr<const LiteralSlice> shared_slice(owned, &owned->slice);
+  std::weak_ptr<const LiteralSlice> weak_slice = shared_slice;
+  owned.reset();
+  TF_ASSERT_OK(transfer_manager->TransferLiteralToBuffer(
+      0, std::move(shared_slice), []() {}));
+  EXPECT_TRUE(weak_slice.expired());
+  TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteral().Await());
+  EXPECT_THAT(received_literal->data<float>(), ElementsAreArray(expected_data));
+}
+
 TEST(PjRtCpuClientTest, AsyncTransferLiteralInt4) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   xla::Shape shape = xla::ShapeUtil::MakeShape(S4, {128, 256});

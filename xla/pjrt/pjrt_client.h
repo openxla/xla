@@ -841,6 +841,19 @@ class PjRtClient {
         int buffer_index, const LiteralSlice& literal,
         absl::AnyInvocable<void() &&> on_done) = 0;
 
+    // Transfers 'literal' into buffer_index. Similar to the overload above,
+    // except that ownership of 'literal' is passed via std::shared_ptr so it
+    // may be released as soon as the runtime no longer needs the host buffer.
+    virtual absl::Status TransferLiteralToBuffer(
+        int buffer_index, std::shared_ptr<const LiteralSlice> literal,
+        absl::AnyInvocable<void() &&> on_done) {
+      const LiteralSlice& literal_ref = *literal;
+      return TransferLiteralToBuffer(
+          buffer_index, literal_ref,
+          [on_done = std::move(on_done),
+           literal = std::move(literal)]() mutable { std::move(on_done)(); });
+    }
+
     // Returns the on-device size in bytes of buffer buffer_index.
     virtual size_t buffer_size(int buffer_index) const = 0;
 

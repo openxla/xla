@@ -2647,7 +2647,7 @@ TEST(StreamExecutorGpuClientTest, LinkedEventPromise) {
       client->LinearizeInto(
           literal, device_shape,
           PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
-          raw_buffer));
+          /*on_done_with_host_buffer=*/nullptr, raw_buffer));
   promise.Set(std::move(definition_event));
 
   TF_ASSERT_OK_AND_ASSIGN(auto new_literal, buffer->ToLiteral().Await());
