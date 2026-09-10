@@ -41,6 +41,7 @@ If you'd like to contribute to XLA, review
 ## Resources
 
 *   [Community Resources](https://github.com/openxla/community)
+*   [OpenXLA GitHub](https://github.com/openxla/xla)
 
 ## Code of Conduct
 
