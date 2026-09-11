@@ -18,8 +18,10 @@ limitations under the License.
 
 #include <optional>
 #include <variant>
+#include <unordered_map>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"

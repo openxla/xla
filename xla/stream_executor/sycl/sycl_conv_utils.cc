@@ -17,10 +17,13 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/shape.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -86,7 +89,7 @@ absl::StatusOr<ConvBufferPointers> GetConvBufferPointers(
     case xla::gpu::CudnnConvKind::kBackwardFilter:
       return ConvBufferPointers{op0, res, op1};
     default:
-      return xla::Internal("Unknown convolution kind");
+      return absl::InvalidArgumentError("Unknown convolution kind");
   }
 }
 
@@ -107,7 +110,7 @@ absl::StatusOr<dnnl::memory::format_tag> ToOneDnnDataFormatTag(
       return is_conv3d ? dnnl::memory::format_tag::ndhwc
                        : dnnl::memory::format_tag::nhwc;
     default:
-      return xla::Internal("Unsupported data layout");
+      return absl::InvalidArgumentError("Unsupported data layout");
   }
 }
 
@@ -136,12 +139,12 @@ absl::StatusOr<dnnl::memory::format_tag> ToOneDnnFilterFormatTag(
                            : dnnl::memory::format_tag::ohwi;
     case FilterLayout::kYXInputOutput:
       if (is_conv3d) {
-        return xla::Internal("Unsupported conv weight format");
+        return absl::InvalidArgumentError("Unsupported conv weight format");
       }
       return is_group_conv ? dnnl::memory::format_tag::hwigo
                            : dnnl::memory::format_tag::hwio;
     default:
-      return xla::Internal("Unsupported conv weight format");
+      return absl::InvalidArgumentError("Unsupported conv weight format");
   }
 }
 
@@ -271,7 +274,7 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
       input_type = config.output_type;
       break;
     default:
-      return xla::Internal("Unknown convolution kind");
+      return absl::InvalidArgumentError("Unknown convolution kind");
   }
 
   // Get buffer pointers
@@ -293,15 +296,10 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     }
   }
 
-  // It is group-conv if filter_in != src_in
-  // G = src_in/filter_in
-  // O = filter_out/G
-  // TODO: depthwise-conv
-  int ic = config.input_descriptor.feature_map_count();
-  int filter_ic = config.filter_descriptor.input_feature_map_count();
-  bool is_group_conv = ic != filter_ic;
-  int kg = ic / filter_ic;  // kg for group-conv and depthwise-conv
-  int oc = config.output_descriptor.feature_map_count();
+  // TODO(intel-tf): depthwise-conv
+  const int64_t group_count = config.conv_desc.group_count();
+  const bool is_group_conv = group_count > 1;
+  const int64_t output_channels = config.output_descriptor.feature_map_count();
 
   absl::Span<const int64_t> padding_dimensions = config.conv_desc.padding();
   absl::Span<const int64_t> stride_dimensions = config.conv_desc.strides();
@@ -316,8 +314,8 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     dnnl::memory::dims src_dims(src_full.begin(), src_full.end());
     dnnl::memory::dims dst_dims(dst_full.begin(), dst_full.end());
     dnnl::memory::dims filter_dims =
-        ToOneDnnFilterDims(config.filter_descriptor, kg);
-    dnnl::memory::dims bias_dims = {oc};
+        ToOneDnnFilterDims(config.filter_descriptor, group_count);
+    dnnl::memory::dims bias_dims = {output_channels};
     dnnl::memory::dims stride_dims(stride_dimensions.begin(),
                                    stride_dimensions.end());
     dnnl::memory::dims padding_dims_l(padding_dimensions.begin(),
@@ -398,8 +396,10 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     // a post-op.
     if (!alpha_is_one && bias_data) {
       dnnl::memory::dims bias_post_dims(dst_dims.size(), 1);
-      bias_post_dims[1] = bias_dims[0];  // Logical dimension 1 is always channels (C) in oneDNN
-      auto bias_post_md = dnnl::memory::desc(bias_post_dims, data_type, dst_fmt);
+      bias_post_dims[1] =
+          bias_dims[0];  // Logical dimension 1 is always channels (C) in oneDNN
+      auto bias_post_md =
+          dnnl::memory::desc(bias_post_dims, data_type, dst_fmt);
       po.append_binary(dnnl::algorithm::binary_add, bias_post_md);
       post_op_bias_memory = CreateDnnlMemory(
           bias_post_md, onednn_conv_primitive.engine, bias_data);
@@ -431,7 +431,7 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         case stream_executor::dnn::kNone:
           break;
         default:
-          return xla::Internal("Unsupported Activation mode");
+          return absl::InvalidArgumentError("Unsupported Activation mode");
       }
     }
     post_ops_attr.set_post_ops(po);
@@ -548,10 +548,11 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         break;
       }
       default:
-        return xla::Internal("Unknown convolution kind");
+        return absl::InvalidArgumentError("Unknown convolution kind");
     }
   } catch (dnnl::error& e) {
-    return xla::Internal("OneDNN Conv error: %s", e.message);
+    return absl::InternalError(
+        absl::StrCat("OneDNN Conv error: ", e.message));
   }
   return onednn_conv_primitive;
 }
@@ -582,7 +583,8 @@ absl::Status DoOnednnConv(const OneDnnConvPrimitive& onednn_primitive) {
         },
         onednn_primitive.op);
   } catch (dnnl::error& e) {
-    return xla::Internal("OneDNN Conv execution error: %s", e.message);
+    return absl::InternalError(
+        absl::StrCat("OneDNN Conv execution error: ", e.message));
   }
 
   return absl::OkStatus();

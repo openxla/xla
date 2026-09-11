@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/status/status_macros.h"
 #include "absl/types/span.h"
 #include "dnnl.hpp"
 #include "xla/service/gpu/gpu_conv_runner.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace sycl {
