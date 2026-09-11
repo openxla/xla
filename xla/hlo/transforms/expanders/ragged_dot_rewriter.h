@@ -30,8 +30,8 @@ inline const stream_executor::dnn::VersionInfo
     kMinCudnnVersionForRaggedDotFusion(9, 22);
 
 // The ragged-dot wgrad (kRaggedContracting) path lowers to cuDNN's
-// moe_grouped_matmul_bwd, which additionally requires cuDNN 9.24+ and
-// cuBLASLt 13.5+ (the latter checked at compile time via CUBLAS_VERSION).
+// moe_grouped_matmul_bwd, which requires a newer cuDNN than the forward
+// ragged-dot fusion.
 inline const stream_executor::dnn::VersionInfo
     kMinCudnnVersionForRaggedDotWgradFusion(9, 24);
 
