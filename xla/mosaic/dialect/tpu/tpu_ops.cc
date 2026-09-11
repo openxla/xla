@@ -1956,12 +1956,23 @@ LogicalResult ScanOp::verify() {
   }
 
   VectorType mask_ty = getMask().getType();
-  // Enforced via VectorOfRankAndType in .td declaration:
-  CHECK_EQ(mask_ty.getRank(), 1);
-  if (mask_ty.getDimSize(0) != input_ty.getDimSize(dimension)) {
-    return emitOpError("Mask and input mismatch. Expected mask of length: ")
+  if (mask_ty.getRank() != 1 && mask_ty.getRank() != input_ty.getRank()) {
+    return emitOpError(
+               "Mask and input mismatch. Expected mask rank to be 1 or match "
+               "input rank (")
+           << input_ty.getRank() << "), but got " << mask_ty.getRank() << ".";
+  }
+  const bool is_1d_matching_dim =
+      mask_ty.getRank() == 1 &&
+      mask_ty.getDimSize(0) == input_ty.getDimSize(dimension);
+  const bool is_same_shape = mask_ty.getShape() == input_ty.getShape();
+  if (!is_1d_matching_dim && !is_same_shape) {
+    return emitOpError(
+               "Mask and input mismatch. Expected mask shape to match input "
+               "shape (")
+           << input_ty.getShape() << ") or be 1D of length "
            << input_ty.getDimSize(dimension) << ", but got "
-           << mask_ty.getDimSize(0) << ".";
+           << mask_ty.getShape() << ".";
   }
 
   return success();
