@@ -289,9 +289,9 @@ absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
         ShapeUtil::GetSubshape(dst->shape(), dst_shape_index);
 
     ABSL_ASSIGN_OR_RETURN(auto src_slice,
-                     buffer_assignment.GetUniqueSlice(src, /*index=*/{}));
-    ABSL_ASSIGN_OR_RETURN(auto dst_slice,
-                     buffer_assignment.GetUniqueSlice(dst, dst_shape_index));
+                          buffer_assignment.GetUniqueSlice(src, /*index=*/{}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto dst_slice, buffer_assignment.GetUniqueSlice(dst, dst_shape_index));
 
     buffers.push_back(CollectiveThunk::Buffer{
         /*element_count=*/ShapeUtil::ElementsIn(src_shape),
@@ -318,7 +318,7 @@ absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
     ABSL_RETURN_IF_ERROR(
         add_buffer(inst->operand(0), inst->operand(0), ShapeIndex({})));
     ABSL_RETURN_IF_ERROR(add_buffer(inst->operand(1), inst,
-                               GetCollectiveResultShapeIndex(inst, 0)));
+                                    GetCollectiveResultShapeIndex(inst, 0)));
 
     for (int64_t i = 2; i < operand_count; i++) {
       ABSL_RETURN_IF_ERROR(
@@ -327,11 +327,11 @@ absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
   } else {
     // For other operations simply zip operands with results.
     //
-    // A collective-broadcast with a dynamic root carries an extra trailing
-    // operand: a 1-D S32 vector holding the runtime-selected root rank for each
-    // data operand. That operand has no corresponding output, so it is not
-    // zipped with a result; instead it is mapped to its own allocation and
-    // consumed separately by the thunk.
+    // A collective-broadcast or collective-reduce with a dynamic root carries
+    // an extra trailing operand: a 1-D S32 vector holding the runtime-selected
+    // root rank for each data operand. That operand has no corresponding
+    // output, so it is not zipped with a result; instead it is mapped to its
+    // own allocation and consumed separately by the thunk.
     int64_t num_data_operands =
         has_dynamic_root ? operand_count - 1 : operand_count;
     for (int64_t i = 0; i < num_data_operands; i++) {
@@ -349,9 +349,10 @@ absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
 absl::StatusOr<CollectiveBufferProto> CollectiveThunk::Buffer::ToProto() const {
   CollectiveBufferProto proto;
   proto.set_element_count(element_count);
-  ABSL_ASSIGN_OR_RETURN(*proto.mutable_source_buffer(), source_buffer.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*proto.mutable_source_buffer(),
+                        source_buffer.ToProto());
   ABSL_ASSIGN_OR_RETURN(*proto.mutable_destination_buffer(),
-                   destination_buffer.ToProto());
+                        destination_buffer.ToProto());
   proto.set_source_memory_space(source_memory_space);
   proto.set_destination_memory_space(destination_memory_space);
   return proto;
@@ -365,9 +366,10 @@ absl::StatusOr<CollectiveThunk::Buffer> CollectiveThunk::Buffer::FromProto(
   ABSL_ASSIGN_OR_RETURN(
       res.source_buffer,
       ShapedSlice::FromProto(buffer_proto.source_buffer(), buffer_allocations));
-  ABSL_ASSIGN_OR_RETURN(res.destination_buffer,
-                   ShapedSlice::FromProto(buffer_proto.destination_buffer(),
-                                          buffer_allocations));
+  ABSL_ASSIGN_OR_RETURN(
+      res.destination_buffer,
+      ShapedSlice::FromProto(buffer_proto.destination_buffer(),
+                             buffer_allocations));
   res.source_memory_space = buffer_proto.source_memory_space();
   res.destination_memory_space = buffer_proto.destination_memory_space();
   return res;
@@ -473,16 +475,17 @@ absl::Status CollectiveThunk::RunWithCommAndRendezvous(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                       config().group_mode, communication_id_));
-  ABSL_ASSIGN_OR_RETURN(Communicator * comm,
-                   params.collective_cliques->GetComm(
-                       clique_key, params.collective_params->global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      params.collective_cliques->GetComm(
+          clique_key, params.collective_params->global_device_id));
   DCHECK(comm) << "Failed to get communicator for collective operation";
 
   ABSL_RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "before",
-                                      pre_call_rendezvous_flag_));
+                                           pre_call_rendezvous_flag_));
   ABSL_RETURN_IF_ERROR(fn(clique_key, *comm));
   ABSL_RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "after",
-                                      post_call_rendezvous_flag_));
+                                           post_call_rendezvous_flag_));
   return absl::OkStatus();
 }
 
@@ -503,14 +506,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectiveThunk::Record(
   ABSL_RETURN_IF_ERROR(RunWithCommAndRendezvous(
       execute_params,
       [&](const GpuCliqueKey& clique_key, Communicator& comm) -> absl::Status {
-        ABSL_ASSIGN_OR_RETURN(nested_cmd,
-                         se::TraceCommandBufferFactory::Create(
-                             execute_params.stream->parent(),
-                             execute_params.command_buffer_trace_stream,
-                             [&](se::Stream* stream) {
-                               return RunCollective(execute_params, clique_key,
-                                                    *stream, comm);
-                             }));
+        ABSL_ASSIGN_OR_RETURN(
+            nested_cmd, se::TraceCommandBufferFactory::Create(
+                            execute_params.stream->parent(),
+                            execute_params.command_buffer_trace_stream,
+                            [&](se::Stream* stream) {
+                              return RunCollective(execute_params, clique_key,
+                                                   *stream, comm);
+                            }));
         return absl::OkStatus();
       }));
 
