@@ -155,6 +155,7 @@ xla_cc_test(
     srcs = ["sharding_param_test.cc"],
     deps = [
         ":sharding_param",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",

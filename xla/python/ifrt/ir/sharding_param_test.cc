@@ -21,6 +21,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "llvm/ADT/SmallVector.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace xla {
 namespace ifrt {
