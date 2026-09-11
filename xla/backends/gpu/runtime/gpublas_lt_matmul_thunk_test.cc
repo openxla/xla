@@ -415,10 +415,18 @@ struct MockBlasLt : public se::gpu::BlasLt {
 };
 
 struct MockMatmulPlan : public se::gpu::BlasLt::MatmulPlan {
+  // On a real backend GetAlgorithms is the solution heuristic, which is what
+  // the plan caches; tests assert it does not re-run per call.
+  mutable int get_algorithms_calls = 0;
+
   absl::StatusOr<std::vector<se::gpu::BlasLt::MatmulAlgorithm>> GetAlgorithms(
       size_t max_algorithm_count, size_t max_workspace_size) const override {
-    se::gpu::BlasLt::MatmulAlgorithm algo;
-    return std::vector<se::gpu::BlasLt::MatmulAlgorithm>{algo};
+    ++get_algorithms_calls;
+    // Honor the requested count: SetCachedAlgorithm bounds-checks the algorithm
+    // index against the returned list, and the monotone refetch rule relies on
+    // a shorter request being a prefix of a longer one.
+    return std::vector<se::gpu::BlasLt::MatmulAlgorithm>(
+        std::max<size_t>(max_algorithm_count, 1));
   }
 
   absl::Status SetAlgorithm(const se::gpu::BlasLt::MatmulAlgorithm&) override {
@@ -486,6 +494,78 @@ TEST_F(GpuBlasLtMatmulThunkTest, CacheUnitTest) {
     }
   }
   EXPECT_TRUE(size.has_value() && static_cast<int>(*size <= mod));
+}
+
+// Two structurally identical GEMMs canonicalize to the same plan cache key and
+// share one MatmulPlan by design, but callers may request different algorithm
+// counts for the same plan (e.g. 1 for index 0, GemmConfig::kNumAlgorithms
+// otherwise). The cached algorithm list must therefore only ever grow, never be
+// refetched because a caller asked for fewer than are already cached: otherwise
+// the two GEMMs invalidate each other on every invocation and the solution
+// heuristic runs per call instead of once.
+TEST_F(GpuBlasLtMatmulThunkTest, StraddlingAlgorithmCountsDoNotRefetchPerCall) {
+  MockBlasLt blas_lt;
+  auto create_func = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
+    return std::make_unique<MockMatmulPlan>();
+  };
+
+  constexpr size_t kNumAlgorithms = 128;
+  const std::string key = "identical_gemm";
+  se::gpu::BlasLt::MatmulPlan* plan = nullptr;
+
+  for (int i = 0; i < 10; ++i) {
+    TF_ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                      key, create_func, /*algorithm_idx=*/0,
+                                      /*num_algorithms=*/1,
+                                      /*max_workspace_size=*/0));
+    TF_ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                      key, create_func, /*algorithm_idx=*/20,
+                                      /*num_algorithms=*/kNumAlgorithms,
+                                      /*max_workspace_size=*/0));
+  }
+
+  // The entry stays shared -- keying on the algorithm index instead would give
+  // the autotuner one plan per candidate.
+  EXPECT_EQ(blas_lt.GetMatmulPlanCacheSize(), 1);
+  // Exactly two heuristic runs for twenty lookups: the initial fetch of one
+  // algorithm, then one growth to kNumAlgorithms. Every later request for a
+  // single algorithm is served from the longer list. Before the fix this was
+  // 20.
+  EXPECT_EQ(static_cast<MockMatmulPlan*>(plan)->get_algorithms_calls, 2);
+}
+
+// The workspace size is matched exactly rather than monotonically: it decides
+// which algorithms are admissible at all, so a different budget can return a
+// different list and the indices would not line up. That cannot thrash the way
+// the algorithm count did, because the workspace is part of the plan cache key
+// (it is the custom call's workspace tuple element, which CanonicalGemmHlo
+// prints), so two GEMMs sharing a key always agree on it.
+TEST_F(GpuBlasLtMatmulThunkTest, WorkspaceChangeRefetchesAlgorithms) {
+  MockBlasLt blas_lt;
+  auto create_func = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
+    return std::make_unique<MockMatmulPlan>();
+  };
+
+  const std::string key = "identical_gemm";
+  se::gpu::BlasLt::MatmulPlan* plan = nullptr;
+
+  auto lookup = [&](size_t workspace) {
+    auto result = blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+        key, create_func, /*algorithm_idx=*/0, /*num_algorithms=*/1, workspace);
+    if (result.ok()) {
+      plan = *result;
+    }
+    return result.status();
+  };
+
+  ASSERT_OK(lookup(0));
+  ASSERT_OK(lookup(0));
+  ASSERT_OK(lookup(79691776));
+  ASSERT_OK(lookup(79691776));
+
+  EXPECT_EQ(blas_lt.GetMatmulPlanCacheSize(), 1);
+  // One fetch per distinct workspace size, not one per lookup.
+  EXPECT_EQ(static_cast<MockMatmulPlan*>(plan)->get_algorithms_calls, 2);
 }
 
 TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerialization) {
