@@ -93,6 +93,7 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -114,6 +115,7 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -123,6 +125,7 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/numa.h"
+#include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 namespace xla {
 namespace {
@@ -419,6 +422,73 @@ ENTRY main.5 {
 }
 #endif  // defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) ||
         // defined(TENSORFLOW_USE_SYCL)
+
+TEST(StreamExecutorGpuClientTest, HloSnapshot) {
+  static constexpr char kProgram[] = R"(
+    HloModule add
+    ENTRY add {
+      x = f32[3,2] parameter(0)
+      y = f32[3,2] parameter(1)
+      ROOT add = f32[3,2] add(x, y)
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+
+  std::string dir = tsl::io::JoinPath(tsl::testing::TmpDir(), "GpuHloSnapshot");
+  xla::CompileOptions options;
+  auto* debug_opts = options.executable_build_options.mutable_debug_options();
+  debug_opts->set_xla_dump_to(dir);
+  debug_opts->set_xla_dump_hlo_snapshots(true);
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kProgram, *client, options));
+
+  std::vector<float> data1{1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+  std::vector<float> data2{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+  Shape shape = ShapeUtil::MakeShape(F32, {3, 2});
+  PjRtMemorySpace* memory_space =
+      client->addressable_devices()[0]->memory_spaces()[0];
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer1,
+      client->BufferFromHostBuffer(
+          data1.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, memory_space,
+          /*device_layout=*/nullptr));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer2,
+      client->BufferFromHostBuffer(
+          data2.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, memory_space,
+          /*device_layout=*/nullptr));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto result,
+      executable->Execute({{buffer1.get(), buffer2.get()}}, /*options=*/{}));
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  TF_EXPECT_OK(result[0][0]->GetReadyFuture().Await());
+
+  std::vector<std::string> paths;
+  TF_ASSERT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(dir, "*.snapshot.*.pb"), &paths));
+  ASSERT_EQ(paths.size(), 1);
+
+  HloSnapshot snapshot;
+  TF_ASSERT_OK(tsl::ReadBinaryProto(tsl::Env::Default(), paths[0], &snapshot));
+
+  ASSERT_EQ(*Literal::CreateFromProto(snapshot.arguments(0)),
+            LiteralUtil::CreateR2<float>({{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}}));
+  ASSERT_EQ(
+      *Literal::CreateFromProto(snapshot.arguments(1)),
+      LiteralUtil::CreateR2<float>({{10.0, 20.0}, {30.0, 40.0}, {50.0, 60.0}}));
+  ASSERT_EQ(
+      *Literal::CreateFromProto(snapshot.result()),
+      LiteralUtil::CreateR2<float>({{11.0, 22.0}, {33.0, 44.0}, {55.0, 66.0}}));
+}
 
 TEST(StreamExecutorGpuClientTest, CreateErrorBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(
