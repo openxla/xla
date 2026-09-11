@@ -1936,8 +1936,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
       hlo_module, /*platform_id=*/PlatformId(), compilation_stats));
 
   ABSL_RETURN_IF_ERROR(RunFusionPasses(
-      hlo_module, gpu_topology.gpu_target_config(), thread_pool.get_mutable(),
-      ShapeSizeBytesFunction(), alias_info, mlir_context, compilation_stats));
+      hlo_module, gpu_topology.gpu_target_config(),
+      thread_pool.get_mutable(), ShapeSizeBytesFunction(), alias_info,
+      mlir_context, compilation_stats));
   ABSL_RETURN_IF_ERROR(RunPostFusionPasses(
       hlo_module, device_description, alias_info, pointer_size_, options,
       gpu_topology, mlir_context, compilation_stats));
