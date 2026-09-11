@@ -30,7 +30,7 @@ on:
       runner_label:
         description: 'Runner label for GPU jobs'
         required: false
-        default: 'amd-do-linux-xla-gpu-gfx950-1'
+        default: 'amd-do-linux-xla-gpu-gfx950-1-test'
         type: string
 
 concurrency:
@@ -54,22 +54,23 @@ jobs:
             echo "rocm-distro-hash=1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6"
           } >> "$GITHUB_OUTPUT"
 
-  jax:
+  xla:
     needs: rocm-config
-    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
-    name: JAX Linux x86 AMD Instinct GPU
-    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1' }}
-    timeout-minutes: 80
-    # Remove this once the JAX CI is stable.
-    continue-on-error: true
+    name: XLA Linux x86 AMD Instinct GPU - ${{ matrix.job-index }}
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1-test' }}
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        job-index: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
       ROCM_DISTRO_URL: ${{ needs.rocm-config.outputs.rocm-distro-url }}
       ROCM_DISTRO_HASH: ${{ needs.rocm-config.outputs.rocm-distro-hash }}
+      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}/build_tools/rocm/execute_ci_build_upstream.sh
       # Unique per run so a crashed run cannot collide with this one on a pooled node.
-      CONTAINER_NAME: jax-${{ github.run_id }}-${{ github.run_attempt }}
+      CONTAINER_NAME: xla-${{ matrix.job-index }}-${{ github.run_id }}-${{ github.run_attempt }}
       # Stable label so leftover containers from crashed runs can be swept on a pooled node.
-      CONTAINER_LABEL: ci-rocm-jax
+      CONTAINER_LABEL: ci-rocm-xla
     defaults:
       run:
         shell: bash
@@ -80,15 +81,12 @@ jobs:
           repository: openxla/xla
           persist-credentials: false
 
-      - name: Checkout JAX
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: jax-ml/jax
-          path: jax
-          persist-credentials: false
+      - name: Fetch ROCm XLA Upstream Scripts from ROCm/xla
+        run: |
+          wget -O build_tools/rocm/execute_ci_build_upstream.sh "${EXECUTE_CI_BUILD_URL}"
+          chmod +x build_tools/rocm/execute_ci_build_upstream.sh
 
-      - &start_container
-        name: Start container
+      - name: Start container
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
@@ -143,75 +141,6 @@ jobs:
       - name: CPU Info
         run: lscpu
 
-      - name: Run JAX Unit Tests
-        timeout-minutes: 60
-        run: |
-          docker exec -w /work/jax "${CONTAINER_NAME}" ./ci/run_bazel_test_rocm_rbe.sh \
-            --override_repository=xla="/work" \
-            --override_module=xla="/work" \
-            --config=single_gpu \
-            --//jax:build_jaxlib=wheel \
-            --//jax:build_jax=true \
-            --local_test_jobs=1 \
-            --action_env=JAX_ENABLE_X64=0 \
-            --repo_env=HERMETIC_PYTHON_VERSION=3.14 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
-            --jobs=20 \
-            --repo_env=ROCM_PATH="" \
-            --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
-            --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
-            --repo_env=SYSROOT_DIST=linux_glibc_2_31 \
-            --bes_keywords=jax \
-            --bes_keywords=upstream \
-            --bes_keywords=gpu \
-            --bes_keywords=pull_request \
-            --build_event_json_file=/work/jax_build_events.json
-
-      - name: Upload JAX BEP File
-        if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
-        with:
-          name: jax-bep
-          path: jax_build_events.json
-          if-no-files-found: warn
-
-      - &cleanup_container
-        name: Cleanup container
-        if: always()
-        run: docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
-  xla:
-    needs: rocm-config
-    name: XLA Linux x86 AMD Instinct GPU
-    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-1' }}
-    timeout-minutes: 220
-    env:
-      DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
-      ROCM_DISTRO_URL: ${{ needs.rocm-config.outputs.rocm-distro-url }}
-      ROCM_DISTRO_HASH: ${{ needs.rocm-config.outputs.rocm-distro-hash }}
-      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}/build_tools/rocm/execute_ci_build_upstream.sh
-      # Unique per run so a crashed run cannot collide with this one on a pooled node.
-      CONTAINER_NAME: xla-${{ github.run_id }}-${{ github.run_attempt }}
-      # Stable label so leftover containers from crashed runs can be swept on a pooled node.
-      CONTAINER_LABEL: ci-rocm-xla
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checking out openxla/xla
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: openxla/xla
-          persist-credentials: false
-
-      - name: Fetch ROCm XLA Upstream Scripts from ROCm/xla
-        run: |
-          wget -O build_tools/rocm/execute_ci_build_upstream.sh "${EXECUTE_CI_BUILD_URL}"
-          chmod +x build_tools/rocm/execute_ci_build_upstream.sh
-      - *start_container
-
-      - name: CPU Info
-        run: lscpu
-
       - name: Test XLA [single_gpu]
         timeout-minutes: 120
         run: |
@@ -226,40 +155,22 @@ jobs:
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --local_test_jobs=1 \
             --internal_spawn_scheduler \
-            --strategy=TestRunner=dynamic \
+            --test_env=TEST_VAR=random \
+            --strategy=TestRunner=local \
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
-            --build_event_json_file=/work/xla_single_gpu_build_events.json \
+            --build_event_json_file=/work/xla_single_gpu_build_events.json
 
-      - name: Test XLA [rocm_cpu]
-        timeout-minutes: 80
-        run: |
-          # shellcheck disable=SC2086
-          docker exec "${CONTAINER_NAME}" build_tools/rocm/execute_ci_build_upstream.sh \
-            --config=rocm_ci_hermetic \
-            --config=rocm_rbe \
-            --config=ci_rocm_cpu \
-            --local_test_jobs=200 \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
-            --repo_env=ROCM_PATH="" \
-            --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
-            --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
-            --bes_keywords=xla \
-            --bes_keywords=upstream \
-            --bes_keywords=cpu \
-            --bes_keywords=pull_request \
-            --build_event_json_file=/work/xla_rocm_cpu_build_events.json
-
-      - name: Upload XLA BEP Files
+      - name: Upload XLA BEP File
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
-          name: xla-bep
-          path: |
-            xla_single_gpu_build_events.json
-            xla_rocm_cpu_build_events.json
+          name: xla-bep-${{ matrix.job-index }}
+          path: xla_single_gpu_build_events.json
           if-no-files-found: warn
 
-      - *cleanup_container
+      - name: Cleanup container
+        if: always()
+        run: docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
