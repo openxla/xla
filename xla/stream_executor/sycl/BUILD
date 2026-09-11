@@ -561,7 +561,8 @@ xla_test(
 
 cc_library(
     name = "sycl_blas_lt_plugin",
-    srcs = ["sycl_blas_lt.cc"],
+    srcs = ["sycl_blas_lt.cc",
+            "onemkl_util.h"],
     hdrs = ["sycl_blas_lt.h"],
     tags = [
         "gpu",
