@@ -2696,6 +2696,7 @@ xla_test(
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/transforms/expanders:ragged_dot_rewriter",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",

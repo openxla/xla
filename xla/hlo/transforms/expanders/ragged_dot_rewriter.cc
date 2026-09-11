@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape.h"
@@ -46,6 +47,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -359,7 +361,9 @@ bool IsBF16Operation(const HloInstruction* ragged_dot) {
          (ragged_dot->operand(1)->shape().element_type() == BF16);
 }
 
-bool CanBeHandledByCuDNNFusion(const HloInstruction* instruction) {
+bool CanBeHandledByCuDNNFusion(
+    const HloInstruction* instruction,
+    stream_executor::dnn::VersionInfo cudnn_version) {
   const HloRaggedDotInstruction* ragged_dot =
       DynCast<HloRaggedDotInstruction>(instruction);
   const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
@@ -371,7 +375,163 @@ bool CanBeHandledByCuDNNFusion(const HloInstruction* instruction) {
   int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
   RaggedDotMode mode =
       GetRaggedDotMode(lhs_ragged_dim, ragged_dims.dot_dimension_numbers());
+  if (mode == RaggedDotMode::kRaggedContracting) {
+    // Wgrad: needs cuDNN's moe_grouped_matmul_bwd, gated separately since it
+    // requires a newer cuDNN than the forward ragged-dot fusion.
+    return cudnn_version >= kMinCudnnVersionForRaggedDotWgradFusion;
+  }
   return mode == RaggedDotMode::kRaggedNonContracting;
+}
+
+// Pads the given dimension of `operand` up to `new_size` with zeros. Returns
+// `operand` unchanged if it is already `new_size`.
+HloInstruction* PadDimTo(HloInstruction* operand, int dim, int64_t new_size) {
+  int64_t old_size = operand->shape().dimensions(dim);
+  if (old_size == new_size) {
+    return operand;
+  }
+  auto computation = operand->parent();
+  Shape new_shape = operand->shape();
+  new_shape.set_dimensions(dim, new_size);
+  PaddingConfig padding_config;
+  for (int i = 0; i < operand->shape().dimensions().size(); ++i) {
+    auto* padding_dim = padding_config.add_dimensions();
+    padding_dim->set_edge_padding_low(0);
+    padding_dim->set_edge_padding_high(i == dim ? new_size - old_size : 0);
+    padding_dim->set_interior_padding(0);
+  }
+  auto* zero =
+      computation->AddInstruction(Zero(operand->shape().element_type()));
+  return computation->AddInstruction(
+      HloInstruction::CreatePad(new_shape, operand, zero, padding_config));
+}
+
+// Slices the given dimension of `operand` down to `new_size`, starting at 0.
+// Returns `operand` unchanged if it is already `new_size`.
+HloInstruction* SliceDimTo(HloInstruction* operand, int dim, int64_t new_size) {
+  int64_t old_size = operand->shape().dimensions(dim);
+  if (old_size == new_size) {
+    return operand;
+  }
+  auto computation = operand->parent();
+  Shape new_shape = operand->shape();
+  new_shape.set_dimensions(dim, new_size);
+  llvm::SmallVector<int64_t> starts(operand->shape().dimensions().size(), 0);
+  llvm::SmallVector<int64_t> limits(operand->shape().dimensions().begin(),
+                                    operand->shape().dimensions().end());
+  limits[dim] = new_size;
+  llvm::SmallVector<int64_t> strides(operand->shape().dimensions().size(), 1);
+  return computation->AddInstruction(
+      HloInstruction::CreateSlice(new_shape, operand, starts, limits, strides));
+}
+
+// Returns true if `dim` is `shape`'s fastest-moving (minor-most) dimension,
+// using its explicit layout if one is set, or XLA's default layout
+// (descending dimension order, i.e. the last dimension is minor-most)
+// otherwise.
+bool IsFastestMovingDimension(const Shape& shape, int dim) {
+  if (shape.has_layout()) {
+    return shape.layout().minor_to_major(0) == dim;
+  }
+  return dim == shape.dimensions().size() - 1;
+}
+
+// Swaps the two dimensions of a rank-2 `operand`.
+HloInstruction* SwapDims2D(HloInstruction* operand) {
+  auto computation = operand->parent();
+  Shape new_shape = ShapeUtil::MakeShape(
+      operand->shape().element_type(),
+      {operand->shape().dimensions(1), operand->shape().dimensions(0)});
+  return computation->AddInstruction(
+      HloInstruction::CreateTranspose(new_shape, operand, {1, 0}));
+}
+
+// cuDNN's ragged-dot wgrad path (kRaggedContracting mode) lowers to a
+// cuBLASLt grouped GEMM that relies on TMA and requires 16-byte alignment on
+// the fastest-moving (minor-most) dimension of the lhs/rhs operands. If that
+// dimension is the ragged M dimension, the alignment requirement falls on
+// the per-group sizes -- which are only known at runtime and can't be
+// padded at compile time. To avoid that, operands with M as the
+// fastest-moving dimension are first transposed so that K/N becomes the
+// fastest-moving dimension instead; K and N are static, so they can then be
+// padded up to the required alignment ahead of time. The ragged-dot is kept
+// (so it is still recognized and handled by the cuDNN fusion compiler), and
+// the [G, K, N] result is sliced back down to the original K, N.
+//
+// Only the simple, non-batched wgrad shapes (2D lhs/rhs) produced for the
+// cuDNN fusion path are supported; other shapes are returned unchanged.
+absl::StatusOr<HloInstruction*> PadWgradForCuDNNAlignment(
+    HloRaggedDotInstruction* ragged_dot) {
+  const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
+  const auto& dot_dims = ragged_dims.dot_dimension_numbers();
+  int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+  if (GetRaggedDotMode(lhs_ragged_dim, dot_dims) !=
+      RaggedDotMode::kRaggedContracting) {
+    return nullptr;
+  }
+
+  HloInstruction* lhs = ragged_dot->mutable_operand(0);
+  HloInstruction* rhs = ragged_dot->mutable_operand(1);
+  if (lhs->shape().dimensions().size() != 2 ||
+      rhs->shape().dimensions().size() != 2) {
+    return nullptr;
+  }
+  int rhs_ragged_dim = FindRhsRaggedDim(dot_dims, lhs_ragged_dim);
+
+  // Only swap an operand's dimensions if M is actually the fastest-moving
+  // one; if K/N is already the fastest-moving dimension, it is already
+  // safe to pad at compile time and no transpose is needed.
+  bool transposed = false;
+  if (IsFastestMovingDimension(lhs->shape(), lhs_ragged_dim)) {
+    lhs = SwapDims2D(lhs);
+    lhs_ragged_dim = 1 - lhs_ragged_dim;
+    transposed = true;
+  }
+  if (IsFastestMovingDimension(rhs->shape(), rhs_ragged_dim)) {
+    rhs = SwapDims2D(rhs);
+    rhs_ragged_dim = 1 - rhs_ragged_dim;
+    transposed = true;
+  }
+  int lhs_k_dim = 1 - lhs_ragged_dim;
+  int rhs_n_dim = 1 - rhs_ragged_dim;
+
+  int64_t alignment_elements = std::max<int64_t>(
+      16 / primitive_util::ByteWidth(lhs->shape().element_type()), 1);
+  int64_t k = lhs->shape().dimensions(lhs_k_dim);
+  int64_t n = rhs->shape().dimensions(rhs_n_dim);
+  int64_t padded_k = RoundUpTo(k, alignment_elements);
+  int64_t padded_n = RoundUpTo(n, alignment_elements);
+  if (!transposed && padded_k == k && padded_n == n) {
+    return nullptr;
+  }
+
+  HloInstruction* padded_lhs = PadDimTo(lhs, lhs_k_dim, padded_k);
+  HloInstruction* padded_rhs = PadDimTo(rhs, rhs_n_dim, padded_n);
+
+  // Reflect wherever M ended up (0 or 1) for each (possibly swapped)
+  // operand; downstream consumers key off dnums rather than assuming a
+  // fixed position.
+  RaggedDotDimensionNumbers new_ragged_dims = ragged_dims;
+  new_ragged_dims.set_lhs_ragged_dimensions(0, lhs_ragged_dim);
+  new_ragged_dims.mutable_dot_dimension_numbers()
+      ->set_lhs_contracting_dimensions(0, lhs_ragged_dim);
+  new_ragged_dims.mutable_dot_dimension_numbers()
+      ->set_rhs_contracting_dimensions(0, rhs_ragged_dim);
+
+  Shape padded_shape = ragged_dot->shape();
+  padded_shape.set_dimensions(1, padded_k);
+  padded_shape.set_dimensions(2, padded_n);
+
+  HloComputation* computation = ragged_dot->parent();
+  HloInstruction* padded_ragged_dot =
+      computation->AddInstruction(HloInstruction::CreateRaggedDot(
+          padded_shape, padded_lhs, padded_rhs, ragged_dot->mutable_operand(2),
+          new_ragged_dims, ragged_dot->precision_config()));
+  padded_ragged_dot->set_metadata(ragged_dot->metadata());
+
+  HloInstruction* result = SliceDimTo(padded_ragged_dot, 1, k);
+  result = SliceDimTo(result, 2, n);
+  return result;
 }
 
 bool CanBeHandledByGpublasltGroupGemm(
@@ -419,6 +579,7 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
 
   // Gather all Ragged Dot operations.
   std::vector<HloRaggedDotInstruction*> ragged_dots;
+  std::vector<HloRaggedDotInstruction*> cudnn_fusion_dots;
   for (auto* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (auto* instruction : computation->instructions()) {
@@ -427,7 +588,9 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
         // GroupGemm or cuDNN fusion are added to the list of operations to
         // rewrite in regular dot.
         if (ragged_dot_fusion_enabled &&
-            CanBeHandledByCuDNNFusion(instruction)) {
+            CanBeHandledByCuDNNFusion(instruction, cudnn_version_)) {
+          cudnn_fusion_dots.push_back(
+              Cast<HloRaggedDotInstruction>(instruction));
           continue;
         }
         if (has_grouped_gemm && CanBeHandledByGpublasltGroupGemm(
@@ -439,6 +602,8 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
     }
   }
 
+  bool changed = !ragged_dots.empty();
+
   for (auto* ragged_dot : ragged_dots) {
     ABSL_ASSIGN_OR_RETURN(auto general_dot, RaggedToGeneral(ragged_dot));
     general_dot->set_metadata(ragged_dot->metadata());
@@ -446,7 +611,18 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
         ragged_dot, std::move(general_dot)));
   }
 
-  return !ragged_dots.empty();
+  for (auto* ragged_dot : cudnn_fusion_dots) {
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * replacement,
+                          PadWgradForCuDNNAlignment(ragged_dot));
+    if (replacement == nullptr) {
+      continue;
+    }
+    ABSL_RETURN_IF_ERROR(
+        ragged_dot->parent()->ReplaceInstruction(ragged_dot, replacement));
+    changed = true;
+  }
+
+  return changed;
 }
 
 }  // namespace xla
