@@ -177,6 +177,8 @@ class ProfileData {
 
   ProfilePlane* find_plane_with_name(const std::string& name) const;
 
+  std::shared_ptr<const XSpace> raw_xspace() const { return xspace_; }
+
  private:
   // The actual XSpace protobuf we are wrapping around. A shared ptr is used so
   // the different levels of  visitors (ProfileData, ProfilePlane,

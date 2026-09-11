@@ -367,6 +367,28 @@ NB_MODULE(_profiler, m) {
       .def_static("is_enabled", &TraceMeWrapper::IsEnabled);
 
   m.def(
+      "export_to_tensorboard",
+      [](const tensorflow::profiler::python::ProfileData& profile_data,
+         const std::string& tensorboard_dir,
+         const std::string& session_id = "") {
+        if (profile_data.raw_xspace() == nullptr) {
+          throw xla::XlaRuntimeError("ProfileData does not contain XSpace");
+        }
+        nb::gil_scoped_release release;
+        if (session_id.empty()) {
+          xla::ThrowIfError(tsl::profiler::ExportToTensorBoard(
+              *profile_data.raw_xspace(), tensorboard_dir,
+              /* also_export_trace_json= */ true));
+        } else {
+          xla::ThrowIfError(tsl::profiler::ExportToTensorBoard(
+              *profile_data.raw_xspace(), tensorboard_dir, session_id,
+              /* also_export_trace_json= */ true));
+        }
+      },
+      nb::arg("profile_data"), nb::arg("tensorboard_dir"),
+      nb::arg("session_id") = "");
+
+  m.def(
       "get_profiled_instructions_proto",
       [](std::string tensorboard_dir) {
         tensorflow::profiler::ProfiledInstructionsProto profile_proto;
