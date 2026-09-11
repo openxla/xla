@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -340,11 +341,11 @@ absl::Status TritonBackend::ApplyConfig(HloInstruction& instr,
     const bool is_batch_apply =
         absl::c_count(dot_dims.lhs_batch_dimensions(), lhs_ragged_dim) > 0;
 
-    BlockLevelFusionConfig* blk_cfg =
+    xtile::BlockLevelFusionConfig* blk_cfg =
         backend_config.mutable_block_level_fusion_config();
     blk_cfg->clear_output_tiles();
     auto* output_tile = blk_cfg->add_output_tiles();
-    Tile inner_tile;
+    xtile::Tile inner_tile;
 
     if (is_batch_apply) {
       // kRaggedBatch: parallel dims = [B=1, M, N].
@@ -513,9 +514,45 @@ TritonBackend::GetSupportedConfigsForRaggedDot(const HloInstruction* instr) {
     struct SimpleConfig {
       int block_m, block_n, block_k, num_stages, num_warps, group_size;
     };
+    // Note that set of default configurations has been obtained by evaluating
+    // a few different input problems on MI300, MI350 on H100.
+    // It might require to be extended for more targets.
     const SimpleConfig kDefaultConfigs[] = {
-        {32, 32, 32, 1, 4, 1},  {64, 32, 32, 1, 4, 1},  {64, 64, 32, 1, 4, 2},
-        {128, 32, 32, 1, 8, 1}, {128, 64, 32, 1, 8, 2},
+        {32, 32, 32, 1, 4, 1},
+        {64, 32, 32, 1, 4, 1},
+        {64, 64, 32, 1, 4, 2},
+        {128, 32, 32, 1, 8, 1},
+        {128, 64, 32, 1, 8, 2},
+        {16, 16, 128, 2, 2, 1},
+        {64, 64, 64, 2, 4, 1},
+        {32, 64, 64, 2, 4, 1},
+        {32, 128, 64, 2, 4, 2},
+        {32, 128, 128, 2, 8, 1},
+        {16, 256, 256, 2, 8, 1},
+        {256, 64, 64, 1, 4, 1},
+        {256, 16, 32, 2, 4, 1},
+        {128, 64, 64, 1, 4, 1},
+        {64, 128, 64, 2, 4, 2},
+        {64, 128, 128, 1, 8, 1},
+        {32, 128, 32, 2, 4, 2},
+        {64, 64, 64, 1, 8, 1},
+        {64, 128, 64, 1, 4, 1},
+        // Exhaustive-autotuner winners over real MoE model shapes
+        // (mixtral / deepseek / qwen3 / gpt-oss / llama4)
+        // on MI300, MI350 and H100.
+        {16, 256, 32, 2, 2, 2},
+        {64, 128, 64, 2, 4, 8},
+        {64, 128, 32, 1, 2, 4},
+        {128, 256, 64, 1, 4, 2},
+        {32, 128, 64, 1, 4, 8},
+        {16, 128, 32, 1, 2, 2},
+        {64, 128, 64, 1, 4, 8},
+        {64, 256, 64, 1, 8, 2},
+        {128, 128, 128, 1, 4, 1},
+        {32, 256, 32, 2, 4, 1},
+        {128, 256, 32, 2, 8, 8},
+        {64, 128, 128, 1, 4, 4},
+        {64, 256, 128, 1, 2, 4},
     };
     for (const auto& c : kDefaultConfigs) {
       if (c.block_m > M_total || c.block_n > N_dim) continue;
