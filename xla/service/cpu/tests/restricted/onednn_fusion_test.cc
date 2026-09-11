@@ -129,6 +129,67 @@ class OneDnnFusionBinaryOpTest : public OneDnnFusionTestBase {
   }
 };
 
+// TODO(intel-tf): Expand testing to other dtypes as library integration
+// matures.
+class OneDnnGraphPipelineTest
+    : public HloTestBaseLegacy,
+      public ::testing::WithParamInterface<PrimitiveType> {
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = HloTestBaseLegacy::GetDebugOptionsForTest();
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
+    debug_options.set_xla_cpu_use_onednn(true);
+    debug_options.set_xla_cpu_use_xnnpack(false);
+    debug_options.mutable_xla_cpu_experimental_onednn_fusion_type()->Add(
+        DebugOptions::LIBRARY_FUSION_TYPE_DOT);
+    return debug_options;
+  }
+
+  PrimitiveType dtype_;
+  std::string dtypeString_;
+  float atol_;
+  float rtol_;
+
+  constexpr static const char* kOneDNNBasicFusionStr = R"(
+    ; CHECK:     fusion(%{{[a-z,A-Z,0-9,_,-,.]*}}, %{{[a-z,A-Z,0-9,_,-,.]*}})
+    ; CHECK:       backend_config={
+    ; CHECK-DAG:     "outer_dimension_partitions":[],
+    ; CHECK-DAG:       "fusion_config":{
+    ; CHECK-DAG:        "kind":"__onednn_fusion"
+    ; CHECK-DAG:      }
+    ; CHECK-DAG:     }
+    )";
+
+  OneDnnGraphPipelineTest() {
+    dtype_ = GetParam();
+    atol_ = rtol_ = (dtype_ == F32) ? 1e-4 : 1e-2;
+    dtypeString_ = primitive_util::LowercasePrimitiveTypeName(dtype_);
+  }
+
+  void SetUp() override {
+    if (!IsOneDnnGraphEnabled()) {
+      GTEST_SKIP() << "oneDNN graph is disabled!";
+    }
+    if (!IsSupportedType(dtype_)) {
+      GTEST_SKIP() << "CPU does not support " << dtypeString_;
+    }
+  }
+
+  void AdjustToleranceForDtype(PrimitiveType for_type, float atol, float rtol) {
+    if (dtype_ == for_type) {
+      atol_ = atol;
+      rtol_ = rtol;
+    }
+  }
+
+  void RunCompareAndMatchOptimizedHlo(const absl::string_view outline) {
+    const std::string module_str =
+        absl::StrReplaceAll(outline, {{"$dtype", dtypeString_}});
+    EXPECT_TRUE(RunAndCompare(module_str, ErrorSpec{atol_, rtol_}));
+    MatchOptimizedHlo(module_str, kOneDNNBasicFusionStr);
+  }
+};
+
 TEST_P(OneDnnFusionBinaryOpTest, BinaryOp) { RunTest(); }
 
 std::vector<OneDnnFusionTestParams> GetOneDnnFusionBinaryOpTestSpecs() {
@@ -310,6 +371,53 @@ INSTANTIATE_TEST_SUITE_P(
     OneDnnFusionMatMulFusionTestSuite, OneDnnFusionMatMulFuseUnaryTest,
     ::testing::ValuesIn(GetOneDnnFusionFuseUnaryTestSpecs()),
     OneDnnFusionMatMulFuseUnaryTest::Name);
+
+TEST_P(OneDnnGraphPipelineTest, SimpleTestGemv) {
+  const absl::string_view outline = R"(
+  HloModule gemv
+  ENTRY entry {
+    arg.0 = $dtype[4096,4096] parameter(0)
+    arg.1 = $dtype[4096] parameter(1)
+    ROOT dot.0 = $dtype[4096] dot(arg.0, arg.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  })";
+
+  RunCompareAndMatchOptimizedHlo(outline);
+}
+
+TEST_P(OneDnnGraphPipelineTest, MismatchedOpRankDot) {
+  const absl::string_view outline = R"(
+  HloModule mismatched_rank
+  ENTRY entry {
+    arg.0 = $dtype[100,300,300] parameter(0)
+    arg.1 = $dtype[300] parameter(1)
+    ROOT dot.0 = $dtype[100,300] dot(arg.0, arg.1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  })";
+
+  RunCompareAndMatchOptimizedHlo(outline);
+}
+
+TEST_P(OneDnnGraphPipelineTest, MismatchedOpRankDot4D) {
+  const absl::string_view outline = R"(
+  HloModule mismatched_rank
+  ENTRY entry {
+    arg.0 = $dtype[2,100,300,300] parameter(0)
+    arg.1 = $dtype[300,3] parameter(1)
+    ROOT dot.0 = $dtype[2,100,300,3] dot(arg.0, arg.1), lhs_contracting_dims={3}, rhs_contracting_dims={0}
+  })";
+
+  RunCompareAndMatchOptimizedHlo(outline);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    OneDnnGraphPipelineTestSuite, OneDnnGraphPipelineTest,
+    ::testing::Values(F32),
+    [](const ::testing::TestParamInfo<OneDnnGraphPipelineTest::ParamType>&
+           info) {
+      auto test_name = primitive_util::LowercasePrimitiveTypeName(info.param);
+      std::transform(test_name.begin(), test_name.end(), test_name.begin(),
+                     [](auto c) { return std::toupper(c); });
+      return test_name;
+    });
 
 }  // namespace
 }  // namespace xla::cpu

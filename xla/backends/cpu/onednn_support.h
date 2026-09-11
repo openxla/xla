@@ -28,12 +28,17 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/cpu/onednn_util.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
 using dnnl::graph::op;
+
+inline bool IsRowMajor(const Shape& shape) {
+  return LayoutUtil::IsMonotonicWithDim0Major(shape.layout());
+}
 
 bool IsOneDnnSupportedDType(PrimitiveType dtype,
                             const TargetMachineFeatures* cpu_features);
@@ -47,12 +52,13 @@ bool IsOneDnnSupportedTypeAndLayout(
     const HloInstruction* hlo,
     const TargetMachineFeatures* cpu_features = nullptr);
 
-// Returns true if the dot operation is supported by oneDNN. Returns an error
-// if the dot operation shape is invalid.
-absl::StatusOr<bool> IsDotSupportedByOneDnn(
-    const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
-    const Shape& rhs_shape, const Shape& out_shape,
-    const TargetMachineFeatures* cpu_features = nullptr);
+// Returns true if the dot operation is supported by oneDNN.
+bool ShouldRewriteDot(const HloInstruction* dot_instr,
+                      bool before_layout_assignment = false,
+                      const TargetMachineFeatures* cpu_features = nullptr);
+
+// Returns true if the convolution operation is supported by oneDNN.
+bool ShouldRewriteConv(const HloInstruction* conv_instr);
 
 // Returns the mappings from HLO opcodes to OneDNN unary operators.
 const absl::flat_hash_map<HloOpcode, op::kind>& GetOneDnnUnaryOpMap();
