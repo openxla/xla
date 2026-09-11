@@ -92,8 +92,8 @@ jobs:
         working-directory: jax
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh \
-            --override_repository=xla="/__w/xla/xla" \
-            --override_module=xla="/__w/xla/xla" \
+            --override_repository=xla="${GITHUB_WORKSPACE}" \
+            --override_module=xla="${GITHUB_WORKSPACE}" \
             --config=single_gpu \
             --//jax:build_jaxlib=wheel \
             --//jax:build_jax=true \
