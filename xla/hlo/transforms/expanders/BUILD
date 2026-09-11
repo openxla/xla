@@ -18,7 +18,6 @@
 
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
-load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -406,7 +405,6 @@ cc_library(
     name = "ragged_dot_rewriter",
     srcs = ["ragged_dot_rewriter.cc"],
     hdrs = ["ragged_dot_rewriter.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         "//xla:comparison_util",
         "//xla:literal_util",
@@ -430,7 +428,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-    ] + if_cuda_is_configured(["@local_config_cuda//cuda:cuda_headers"]),
+    ],
 )
 
 xla_cc_test(

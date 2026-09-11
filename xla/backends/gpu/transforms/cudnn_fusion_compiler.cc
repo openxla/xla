@@ -39,7 +39,6 @@ limitations under the License.
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_version.h"
-#include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
@@ -1171,16 +1170,16 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
       if (ragged_dot_adapter->IsWgrad()) {
         // Wgrad: operand(0)=input/token, operand(1)=doutput,
         // operand(2)=first_token_offset. cuDNN takes (doutput, token, offset).
-#if CUDNN_VERSION >= 92400 && CUBLAS_VERSION >= 130500
+        // moe_grouped_matmul_bwd was added to the cuDNN frontend in v1.22.1.
+#if CUDNN_FRONTEND_VERSION >= 12201
         hlo_to_cudnn[hlo] = graph.moe_grouped_matmul_bwd(
             operand(1), operand(0), operand(2),
             graph::Moe_grouped_matmul_bwd_attributes().set_compute_data_type(
                 compute_dtype.value()));
 #else
         return absl::UnimplementedError(
-            "moe_grouped_matmul_bwd requires cuDNN 9.24+ and cuBLASLt "
-            "13.5+.");
-#endif  // CUDNN_VERSION >= 92400 && CUBLAS_VERSION >= 130500
+            "moe_grouped_matmul_bwd requires cuDNN frontend 1.22.1+.");
+#endif  // CUDNN_FRONTEND_VERSION >= 12201
       } else {
         auto moe_grouped_matmul_attr =
             graph::Moe_grouped_matmul_attributes()

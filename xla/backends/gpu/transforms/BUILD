@@ -1135,7 +1135,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@cudnn_frontend_archive//:cudnn_frontend",
-        "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
         "@tsl//tsl/platform:tensor_float_32_utils",
     ],
@@ -2696,6 +2695,7 @@ xla_test(
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/transforms/expanders:ragged_dot_rewriter",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
@@ -2714,7 +2714,6 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 

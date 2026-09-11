@@ -50,10 +50,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
-#if GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#endif  // GOOGLE_CUDA
-
 namespace xla {
 
 namespace se = ::stream_executor;
@@ -381,13 +377,8 @@ bool CanBeHandledByCuDNNFusion(
       GetRaggedDotMode(lhs_ragged_dim, ragged_dims.dot_dimension_numbers());
   if (mode == RaggedDotMode::kRaggedContracting) {
     // Wgrad: needs cuDNN's moe_grouped_matmul_bwd, gated separately since it
-    // additionally requires cuBLASLt 13.5+.
-#if GOOGLE_CUDA
-    return cudnn_version >= kMinCudnnVersionForRaggedDotWgradFusion &&
-           CUBLAS_VERSION >= 130500;
-#else
-    return false;
-#endif  // GOOGLE_CUDA
+    // requires a newer cuDNN than the forward ragged-dot fusion.
+    return cudnn_version >= kMinCudnnVersionForRaggedDotWgradFusion;
   }
   return mode == RaggedDotMode::kRaggedNonContracting;
 }
