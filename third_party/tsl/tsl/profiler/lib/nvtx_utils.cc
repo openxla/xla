@@ -87,7 +87,8 @@ void RangePush(ProfilerDomainHandle domain, const char* ascii) {
 
 namespace detail {
 void RangePush(ProfilerDomainHandle domain, StringHandle title,
-               uint64_t schema_id, const void* payload, size_t payload_size) {
+               const char* /*title_text*/, uint64_t schema_id,
+               const void* payload, size_t payload_size) {
   nvtxEventAttributes_t attrs{};
   attrs.version = NVTX_VERSION;
   attrs.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
