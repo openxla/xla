@@ -418,33 +418,43 @@ void RemapEventMetadata(XEvent* event, const MetadataIdMap& event_map,
   }
 }
 
-// Extracts all elements from a RepeatedPtrField in forward order using
-// arena-aware extraction when `same_arena` is true.
 template <typename T>
-std::vector<T*> ExtractRepeatedPtrField(protobuf::RepeatedPtrField<T>* field,
-                                        bool same_arena) {
-  const int size = field->size();
-  std::vector<T*> elements(size);
-  if (same_arena) {
-    field->UnsafeArenaExtractSubrange(0, size, elements.data());
-  } else {
-    field->ExtractSubrange(0, size, elements.data());
+struct ElementDeleter {
+  tsl::protobuf::Arena* arena;
+  void operator()(T* ptr) const {
+    if (arena == nullptr) {
+      delete ptr;
+    }
+  }
+};
+
+template <typename T>
+using ElementPtr = std::unique_ptr<T, ElementDeleter<T>>;
+
+// Extracts all elements from a RepeatedPtrField in reverse order and reverses
+// them into a vector of ElementPtr to preserve original forward order.
+template <typename T>
+std::vector<ElementPtr<T>> ExtractAllElements(
+    tsl::protobuf::RepeatedPtrField<T>& field, tsl::protobuf::Arena* arena) {
+  std::vector<T*> raw_elements;
+  raw_elements.reserve(field.size());
+  while (!field.empty()) {
+    raw_elements.push_back((arena != nullptr) ? field.UnsafeArenaReleaseLast()
+                                              : field.ReleaseLast());
+  }
+  std::vector<ElementPtr<T>> elements;
+  elements.reserve(raw_elements.size());
+  for (auto it = raw_elements.rbegin(); it != raw_elements.rend(); ++it) {
+    elements.push_back(ElementPtr<T>(*it, ElementDeleter<T>{arena}));
   }
   return elements;
 }
 
 // Aligns the starting timestamps of two lines, offset-shifts event start times
-// to preserve relative timeline positions, and zero-copy transfers events from
-// the source line to the target line.
+// to preserve relative timeline positions, preserves line metadata, and
+// merges events from the source line to the target line.
 void MergeLine(XLine* from_line, XLine* to_line, const MetadataIdMap& event_map,
-               const MetadataIdMap& stat_map) {
-  if (to_line->name().empty() && !from_line->name().empty()) {
-    to_line->set_name(from_line->name());
-  }
-  if (to_line->display_name().empty() && !from_line->display_name().empty()) {
-    to_line->set_display_name(from_line->display_name());
-  }
-
+               const MetadataIdMap& stat_map, bool same_arena) {
   // Align timestamps
   const int64_t to_start = to_line->timestamp_ns();
   const int64_t from_start = from_line->timestamp_ns();
@@ -461,20 +471,41 @@ void MergeLine(XLine* from_line, XLine* to_line, const MetadataIdMap& event_map,
     }
   }
 
-  const bool same_arena = (from_line->GetArena() != nullptr &&
-                           from_line->GetArena() == to_line->GetArena());
-  const int num_to_events = to_line->events_size();
-  for (XEvent* event :
-       ExtractRepeatedPtrField(from_line->mutable_events(), same_arena)) {
-    RemapEventMetadata(event, event_map, stat_map);
-    if (same_arena) {
-      to_line->mutable_events()->UnsafeArenaAddAllocated(event);
-    } else {
-      to_line->mutable_events()->AddAllocated(event);
-    }
+  // Preserve line metadata
+  if (to_line->name().empty() && !from_line->name().empty()) {
+    to_line->set_name(from_line->name());
+  }
+  if (to_line->display_name().empty() && !from_line->display_name().empty()) {
+    to_line->set_display_name(from_line->display_name());
+  }
+  if (to_line->display_id() == 0 && from_line->display_id() != 0) {
+    to_line->set_display_id(from_line->display_id());
   }
   to_line->set_duration_ps(
       std::max(to_line->duration_ps(), from_line->duration_ps()));
+
+  const int num_to_events = to_line->events_size();
+
+  if (same_arena) {
+    tsl::protobuf::Arena* const arena = from_line->GetArena();
+    auto events_to_move =
+        ExtractAllElements(*from_line->mutable_events(), arena);
+    to_line->mutable_events()->Reserve(to_line->events_size() +
+                                       events_to_move.size());
+    for (auto& event : events_to_move) {
+      RemapEventMetadata(event.get(), event_map, stat_map);
+      to_line->mutable_events()->AddAllocated(event.release());
+    }
+  } else {
+    to_line->mutable_events()->Reserve(to_line->events_size() +
+                                       from_line->events_size());
+    for (XEvent& from_event : *from_line->mutable_events()) {
+      XEvent* to_event = to_line->add_events();
+      *to_event = std::move(from_event);
+      RemapEventMetadata(to_event, event_map, stat_map);
+    }
+    from_line->clear_events();
+  }
 
   // Events from `from_line` may start before events already in `to_line`
   // (e.g. a scope entered in an earlier chunk that is only recorded when it
@@ -502,45 +533,74 @@ void MergeLine(XLine* from_line, XLine* to_line, const MetadataIdMap& event_map,
 // remapping metadata IDs on all transferred events.
 void MergePlaneLines(XPlane* from_plane, XPlane* to_plane,
                      const MetadataIdMap& event_map,
-                     const MetadataIdMap& stat_map) {
-  const bool same_arena = (from_plane->GetArena() != nullptr &&
-                           from_plane->GetArena() == to_plane->GetArena());
+                     const MetadataIdMap& stat_map, bool same_arena) {
   absl::flat_hash_map<int64_t, XLine*> to_lines;
   for (int i = 0; i < to_plane->lines_size(); ++i) {
     XLine* l = to_plane->mutable_lines(i);
     to_lines[l->id()] = l;
   }
 
-  for (XLine* from_line :
-       ExtractRepeatedPtrField(from_plane->mutable_lines(), same_arena)) {
-    auto line_it = to_lines.find(from_line->id());
+  if (same_arena) {
+    tsl::protobuf::Arena* const arena = from_plane->GetArena();
+    auto lines_to_move =
+        ExtractAllElements(*from_plane->mutable_lines(), arena);
+    for (auto& from_line : lines_to_move) {
+      auto line_it = to_lines.find(from_line->id());
 
-    if (line_it == to_lines.end()) {
-      for (XEvent& event : *from_line->mutable_events()) {
-        RemapEventMetadata(&event, event_map, stat_map);
-      }
-      to_lines[from_line->id()] = from_line;
-      if (same_arena) {
-        to_plane->mutable_lines()->UnsafeArenaAddAllocated(from_line);
+      if (line_it == to_lines.end()) {
+        for (XEvent& event : *from_line->mutable_events()) {
+          RemapEventMetadata(&event, event_map, stat_map);
+        }
+        to_lines[from_line->id()] = from_line.get();
+        to_plane->mutable_lines()->AddAllocated(from_line.release());
       } else {
-        to_plane->mutable_lines()->AddAllocated(from_line);
-      }
-    } else {
-      MergeLine(from_line, line_it->second, event_map, stat_map);
-      if (!same_arena) {
-        delete from_line;
+        MergeLine(from_line.get(), line_it->second, event_map, stat_map,
+                  /*same_arena=*/true);
       }
     }
+  } else {
+    for (XLine& from_line : *from_plane->mutable_lines()) {
+      auto line_it = to_lines.find(from_line.id());
+
+      if (line_it == to_lines.end()) {
+        XLine* to_line = to_plane->add_lines();
+        to_line->set_id(from_line.id());
+        to_line->set_name(from_line.name());
+        to_line->set_display_name(from_line.display_name());
+        to_line->set_timestamp_ns(from_line.timestamp_ns());
+        to_line->set_display_id(from_line.display_id());
+        to_line->set_duration_ps(from_line.duration_ps());
+        to_lines[to_line->id()] = to_line;
+        to_line->mutable_events()->Reserve(from_line.events_size());
+        for (XEvent& from_event : *from_line.mutable_events()) {
+          XEvent* to_event = to_line->add_events();
+          *to_event = std::move(from_event);
+          RemapEventMetadata(to_event, event_map, stat_map);
+        }
+      } else {
+        MergeLine(&from_line, line_it->second, event_map, stat_map,
+                  /*same_arena=*/false);
+      }
+    }
+    from_plane->clear_lines();
   }
 }
 
 // High-level orchestrator to merge a source plane into a target plane.
-void MergePlane(XPlane* from_plane, XPlane* to_plane) {
+void MergePlane(XPlane* from_plane, XPlane* to_plane, bool same_arena) {
+  if (to_plane->name().empty() && !from_plane->name().empty()) {
+    to_plane->set_name(from_plane->name());
+  }
+  if (to_plane->id() == 0 && from_plane->id() != 0) {
+    to_plane->set_id(from_plane->id());
+  }
+
   // Remap metadata IDs
   const MetadataIdMaps id_maps = BuildMetadataIdMaps(from_plane, to_plane);
 
   // Merge lines and events
-  MergePlaneLines(from_plane, to_plane, id_maps.event_map, id_maps.stat_map);
+  MergePlaneLines(from_plane, to_plane, id_maps.event_map, id_maps.stat_map,
+                  same_arena);
 
   // Merge plane-level stats
   absl::flat_hash_set<int64_t> existing_plane_stats;
@@ -1155,16 +1215,13 @@ bool IsDevicePlane(const XPlane& plane) {
          IsCustomPlane(plane);
 }
 
-void MergeXSpace(XSpace* from, XSpace* to) {
-  if (!from || !to || from == to) {
+void MergeXSpace(XSpace&& from, XSpace* to) {
+  if (to == nullptr) {
     return;
   }
 
   // 1. Merge top-level data
-  MergeXSpaceTopLevelMetadata(*from, to);
-
-  const bool same_arena =
-      (from->GetArena() != nullptr && from->GetArena() == to->GetArena());
+  MergeXSpaceTopLevelMetadata(from, to);
 
   absl::flat_hash_map<absl::string_view, XPlane*> to_planes;
   for (int i = 0; i < to->planes_size(); ++i) {
@@ -1172,32 +1229,52 @@ void MergeXSpace(XSpace* from, XSpace* to) {
     to_planes[p->name()] = p;
   }
 
-  // 2. Process planes
-  for (XPlane* from_plane :
-       ExtractRepeatedPtrField(from->mutable_planes(), same_arena)) {
-    auto it = to_planes.find(from_plane->name());
+  const bool same_arena = (from.GetArena() == to->GetArena());
+  tsl::protobuf::Arena* const arena = from.GetArena();
 
-    if (it == to_planes.end()) {
-      to_planes[from_plane->name()] = from_plane;
-      if (same_arena) {
-        to->mutable_planes()->UnsafeArenaAddAllocated(from_plane);
+  // 2. Process planes
+  if (same_arena) {
+    auto planes_to_move = ExtractAllElements(*from.mutable_planes(), arena);
+    for (auto& from_plane : planes_to_move) {
+      auto it = to_planes.find(from_plane->name());
+
+      if (it == to_planes.end()) {
+        to_planes[from_plane->name()] = from_plane.get();
+        to->mutable_planes()->AddAllocated(from_plane.release());
       } else {
-        to->mutable_planes()->AddAllocated(from_plane);
-      }
-    } else {
-      MergePlane(from_plane, it->second);
-      if (!same_arena) {
-        delete from_plane;
+        MergePlane(from_plane.get(), it->second, /*same_arena=*/true);
       }
     }
+  } else {
+    for (XPlane& from_plane : *from.mutable_planes()) {
+      auto it = to_planes.find(from_plane.name());
+
+      if (it == to_planes.end()) {
+        XPlane* to_plane = to->add_planes();
+        to_plane->set_id(from_plane.id());
+        to_plane->set_name(from_plane.name());
+        to_planes[to_plane->name()] = to_plane;
+        MergePlane(&from_plane, to_plane, /*same_arena=*/false);
+      } else {
+        MergePlane(&from_plane, it->second, /*same_arena=*/false);
+      }
+    }
+    from.clear_planes();
   }
 }
 
-void MergeXSpace(std::unique_ptr<XSpace> from, XSpace* to) {
-  if (!from) {
+void MergeXSpace(tensorflow::profiler::XSpace* from, XSpace* to) {
+  if (!from || to == nullptr || from == to) {
     return;
   }
-  MergeXSpace(from.get(), to);
+  MergeXSpace(std::move(*from), to);
+}
+
+void MergeXSpace(std::unique_ptr<XSpace> from, XSpace* to) {
+  if (!from || to == nullptr || from.get() == to) {
+    return;
+  }
+  MergeXSpace(std::move(*from), to);
 }
 
 }  // namespace profiler
