@@ -1290,6 +1290,8 @@ xla_test(
     backends = [
         "gpu",
     ],
+    # TODO: Remove this workaround after the RCCL team fixes the WarpSpeed issue.
+    env = {"RCCL_WARP_SPEED_AUTO": "0"},
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:array",
