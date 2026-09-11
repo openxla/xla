@@ -442,7 +442,7 @@ class CopyRemover {
                     std::function<bool(const HloInstruction* copy)>
                         should_skip_removal = nullptr);
 
-  // Delete the given ValueNode associated with a elided kCopy
+  // Delete the given ValueNode associated with an elided kCopy
   // instruction. This should be called after splicing the value lists of the
   // source and destination buffers together.  'operand_node' is the node
   // whose value the elided copy read; it receives the uses of

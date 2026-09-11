@@ -170,7 +170,7 @@ bool MatchBinaryInstructionOperand(const HloPredicate& matcher,
                                    HloInstruction** matching_operand,
                                    HloInstruction** other_operand);
 
-// Returns whether a binary instruction has a operand with a given opcode.
+// Returns whether a binary instruction has an operand with a given opcode.
 // This is a special case of MatchingBinaryInstructionOperand.
 bool MatchBinaryInstructionOperandOpcode(HloOpcode opcode,
                                          HloInstruction* instruction,

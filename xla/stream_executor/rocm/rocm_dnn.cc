@@ -796,7 +796,7 @@ absl::StatusOr<ScopedNormalizeDescriptor> scope(
   return obj;
 }
 
-// Turns a activation mode into a miopen activation mode descriptor with a scope
+// Turns an activation mode into a miopen activation mode descriptor with a scope
 // around it
 struct ScopedActivationDescriptor
     : ScopedDescriptor<miopenActivationDescriptor_t> {

@@ -137,7 +137,7 @@ void TilingSpace::ProcessInstruction(const HloInstruction& hlo) {
       ProcessRaggedDot(hlo);
       break;
     default:
-      // TODO(goncharov): should have a explicit list of supported instructions?
+      // TODO(goncharov): should have an explicit list of supported instructions?
       break;
   }
 }

@@ -1052,7 +1052,7 @@ absl::StatusOr<std::unique_ptr<TransposePlan>> TransposePlan::Create(
     case Transformation::kF64ToEf57:
       if (o.elem_size_in_bytes != sizeof(float)) {
         return InvalidArgument(
-            "EF57 conversion requires a element size of %d bytes, got %d",
+            "EF57 conversion requires an element size of %d bytes, got %d",
             sizeof(float), o.elem_size_in_bytes);
       }
       if (plan->a_dims_.empty() || plan->a_dims_.back() % 2 != 0 ||

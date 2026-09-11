@@ -89,7 +89,7 @@ void MapSubgraph(const HloInstructionNode* absl_nonnull left,
       [&mappings](const HloInstructionNode& node) {
         auto props =
             mappings.left_to_right_instruction_map.GetPropsByRight(&node);
-        // Do not traverse into an subgraph already matched by this matcher.
+        // Do not traverse into a subgraph already matched by this matcher.
         return !props.has_value() ||
                props->matcher_type != MatcherType::kGreedySubGraphExactMatcher;
       });

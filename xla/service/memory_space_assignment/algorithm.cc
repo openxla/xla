@@ -9626,7 +9626,7 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
 
   MsaBufferInterval eviction_mem_interval;
   eviction_mem_interval.buffer = request.allocation_value->value();
-  // When replacing an sync slice, the size of the original allocation_value
+  // When replacing a sync slice, the size of the original allocation_value
   // matters instead of the queuing_allocation_value
   // TODO(mehrdadk): separate the request size for src and dst
   // AllocationSequence
