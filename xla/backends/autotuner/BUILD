@@ -579,6 +579,7 @@ xla_cc_test(
     name = "config_selector_test",
     srcs = ["config_selector_test.cc"],
     deps = [
+        ":backends_proto_cc",
         ":codegen_backend",
         ":config_runner",
         ":config_selector",

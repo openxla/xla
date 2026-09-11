@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/autotuner/codegen_backend.h"
-#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
+#include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/backends/cpu/ynn_fusion_options.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
