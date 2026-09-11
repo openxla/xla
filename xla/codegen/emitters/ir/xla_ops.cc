@@ -1139,6 +1139,17 @@ std::optional<xla::BackendKind> GetBackendKind(mlir::func::FuncOp fn) {
   return backend_attr.getValue();
 }
 
+static constexpr llvm::StringRef kContiguousOutputAttrName =
+    "xla.contiguous_output";
+
+void SetContiguousOutput(mlir::MLIRContext* context, mlir::func::FuncOp fn) {
+  fn->setAttr(kContiguousOutputAttrName, mlir::UnitAttr::get(context));
+}
+
+bool HasContiguousOutput(mlir::func::FuncOp fn) {
+  return fn->hasAttr(kContiguousOutputAttrName);
+}
+
 }  // namespace xla
 
 #define GET_OP_CLASSES

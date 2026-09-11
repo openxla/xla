@@ -141,6 +141,11 @@ TEST_F(MlirKernelFusionTest, CreateMlirModule) {
     // CHECK:        return %[[RET]]
   )"));
   EXPECT_TRUE(filecheck_result);
+
+  // Emitters that route through the base MlirKernelEmitter path (reduction,
+  // transpose, scatter) do not tag the entry function as contiguous-output;
+  // only the loop/concatenate/dynamic-update-slice emitters do.
+  EXPECT_EQ(out.find("xla.contiguous_output"), std::string::npos);
 }
 
 TEST_F(MlirKernelFusionTest, CreateLLVMModule) {

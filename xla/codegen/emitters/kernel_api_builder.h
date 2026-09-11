@@ -37,6 +37,12 @@ namespace xla::emitters {
 
 inline constexpr absl::string_view kXlaNotInvariantAttr = "xla.not_invariant";
 
+// Marks an argument whose buffer is read exactly once per output element with
+// no reuse (no reduction/window re-read, no broadcast, no dynamic access).
+// Computed from indexing-map reuse analysis at emit time and consumed by the
+// AMD non-temporal hint pass to decide streaming loads.
+inline constexpr absl::string_view kXlaStreamedOnceAttr = "xla.streamed_once";
+
 // Emits and return the kernel entry function into the provided module it for
 // the given HLO instruction.
 // The function will be given the provided name and the arguments will be

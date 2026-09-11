@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/numeric/bits.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -1461,8 +1462,10 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
       return;
     }
 
-    getOperation()->walk([this](ml::LoadOp load) {
-      Value addr = load.getAddr();
+    // Traces a load/store address back to the function-argument buffer it
+    // addresses. Returns a null BlockArgument for shared memory,
+    // global constants and temporaries (allocas), which must not be annotated.
+    auto global_buffer_arg = [](Value addr) -> mlir::BlockArgument {
       while (auto gep = addr.getDefiningOp<ml::GEPOp>()) {
         addr = gep.getBase();
       }
@@ -1472,19 +1475,106 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
       if (addr.getDefiningOp<ml::AddrSpaceCastOp>() ||
           addr.getDefiningOp<ml::AddressOfOp>() ||
           addr.getDefiningOp<ml::AllocaOp>()) {
-        // Shared memory, global constant or temporary - no need to annotate
-        // anything.
+        return nullptr;
+      }
+      return mlir::dyn_cast<mlir::BlockArgument>(addr);
+    };
+
+    auto arg_has_attr = [](mlir::BlockArgument arg,
+                           llvm::StringRef name) -> bool {
+      auto func =
+          mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+      return func && func.getArgAttr(arg.getArgNumber(), name) != nullptr;
+    };
+
+    // Buffer args read in the kernel; used to exclude read-back outputs
+    // (e.g. in-place updates) from non-temporal stores.
+    llvm::DenseSet<Value> loaded_args;
+    getOperation()->walk([&](ml::LoadOp load) {
+      mlir::BlockArgument arg = global_buffer_arg(load.getAddr());
+      if (!arg) {
+        // Shared memory, global constant or temporary - no need to annotate.
         return;
       }
-      if (auto base = mlir::dyn_cast<mlir::BlockArgument>(addr)) {
-        if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(
-                base.getOwner()->getParentOp())) {
-          if (func.getArgAttr(base.getArgNumber(), "xla.invariant")) {
-            load.setInvariant(true);
-          }
-        }
+      loaded_args.insert(arg);
+      if (arg_has_attr(arg, "xla.invariant")) {
+        load.setInvariant(true);
       }
     });
+
+    // AMD-only non-temporal (streaming) cache hints.
+    if (device_spec_.IsAmdGpu()) {
+      // Buffer size behind an arg (llvm.dereferenceable); 0 if unknown.
+      auto arg_bytes = [](mlir::BlockArgument arg) -> int64_t {
+        auto func =
+            mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+        if (!func) {
+          return 0;
+        }
+        auto size = func.getArgAttrOfType<mlir::IntegerAttr>(
+            arg.getArgNumber(), ml::LLVMDialect::getDereferenceableAttrName());
+        return size ? size.getInt() : 0;
+      };
+      // Set by the loop/concat/DUS emitters when the kernel writes outputs
+      // contiguously. Reductions/transposes lack it: their partial-line stores
+      // benefit from L2 aggregation, so we don't stream them.
+      bool contiguous_output = false;
+      for (auto func : getOperation().getOps<mlir::func::FuncOp>()) {
+        if (func->hasAttr("xla.entry") &&
+            func->hasAttr("xla.contiguous_output")) {
+          contiguous_output = true;
+          break;
+        }
+      }
+      // Stream only when the buffer far exceeds L2; smaller buffers use the
+      // cache as a bandwidth buffer. Crossover on MI300X is ~16x L2 (~64 MiB);
+      // L2 = 0 disables the size path. Runtime override planned as a follow-up.
+      static constexpr int64_t kNontemporalStreamL2Multiple = 16;
+      const int64_t l2_bytes = device_spec_.gpu().l2_cache_size();
+      const int64_t stream_threshold = kNontemporalStreamL2Multiple * l2_bytes;
+      // Mark a read-only (xla.invariant) input non-temporal when the emitter
+      // proved read-once (xla.streamed_once), or - in a non-contiguous kernel -
+      // the buffer exceeds the streaming threshold.
+      bool streams_input = false;
+      getOperation()->walk([&](ml::LoadOp load) {
+        mlir::BlockArgument arg = global_buffer_arg(load.getAddr());
+        if (!arg) {
+          return;
+        }
+        if (!arg_has_attr(arg, "xla.invariant")) {
+          return;
+        }
+        const bool is_streamed_once = arg_has_attr(arg, "xla.streamed_once");
+        // Size path: non-contiguous kernel whose read-only input dwarfs L2. No
+        // load-count guard needed - reused inputs aren't xla.invariant and
+        // reductions read each element once.
+        const bool exceeds_size_threshold = !contiguous_output &&
+                                            l2_bytes > 0 &&
+                                            arg_bytes(arg) >= stream_threshold;
+        if (is_streamed_once || exceeds_size_threshold) {
+          load.setNontemporal(true);
+          streams_input = true;
+        }
+      });
+      // Root output stores: only when the kernel writes contiguously and
+      // streams an input. A store whose buffer is not read-only and not read
+      // back (e.g. in-place update) is a streamed-once write; mark it.
+      if (contiguous_output && streams_input) {
+        getOperation()->walk([&](ml::StoreOp store) {
+          mlir::BlockArgument arg = global_buffer_arg(store.getAddr());
+          if (!arg) {
+            return;
+          }
+          if (arg_has_attr(arg, "xla.invariant")) {
+            return;
+          }
+          if (loaded_args.contains(arg)) {
+            return;
+          }
+          store.setNontemporal(true);
+        });
+      }
+    }
   }
 
  private:
