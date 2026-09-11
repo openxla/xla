@@ -193,8 +193,10 @@ class BlasLt : public gpu::BlasLt {
     int8_t bias_type_ = 0;
   };  // class GroupedMatmulPlan
 
-  // Executes complex (C64/C128) matmuls via rocBLAS (rocblas_cgemm/zgemm),
-  // since hipBLASLt has no complex GEMM kernels in current ROCm releases.
+#if !(TF_ROCM_VERSION == 71400 || TF_ROCM_VERSION >= 100000)
+  // Executes complex (C64/C128) matmuls via rocBLAS (rocblas_cgemm/zgemm) on
+  // the ROCm releases whose hipBLASLt has no complex GEMM kernels; hipBLASLt
+  // has them in 7.14 and in 10 and newer, so only the rest compile this.
   class RocBlasGemmPlan : public gpu::BlasLt::MatmulPlan {
    public:
     friend class BlasLt;
@@ -224,6 +226,7 @@ class BlasLt : public gpu::BlasLt {
     const BlasLt& blas_lt_;
     gpu::GemmConfig cfg_;
   };  // class RocBlasGemmPlan
+#endif  // no hipBLASLt complex GEMM
 
   explicit BlasLt(StreamExecutor* executor)
       : executor_(executor), handle_(nullptr, hipblasLtDestroy) {}
