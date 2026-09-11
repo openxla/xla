@@ -60,7 +60,7 @@ jobs:
     timeout-minutes: 220
     # Remove this once the JAX CI is stable.
     continue-on-error: true
-    container:
+    container: &rocm_container
       image: ${{ needs.rocm-config.outputs.docker-image }}  # zizmor: ignore[unpinned-images]
       credentials:
         username: ${{ github.actor }}
@@ -124,11 +124,7 @@ jobs:
     name: XLA Linux x86 AMD Instinct GPU
     runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-dpx-1' }}
     timeout-minutes: 220
-    container:
-      image: ${{ needs.rocm-config.outputs.docker-image }}  # zizmor: ignore[unpinned-images]
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    container: *rocm_container
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
     defaults:
@@ -180,7 +176,6 @@ jobs:
             --config=rocm_rbe \
             --config=ci_rocm_cpu \
             --local_test_jobs=200 \
-            --strategy=TestRunner=local \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
             --repo_env=ROCM_PATH="" \
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
