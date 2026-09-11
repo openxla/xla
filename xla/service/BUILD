@@ -4576,6 +4576,7 @@ cc_library(
         "//xla:window_util",
         "//xla:xla_data_proto_cc",
         "//xla/codegen/intrinsic",
+        "//xla/codegen/intrinsic:expm1",
         "//xla/codegen/intrinsic:fptrunc",
         "//xla/codegen/intrinsic:log1p",
         "//xla/hlo/ir:hlo",
