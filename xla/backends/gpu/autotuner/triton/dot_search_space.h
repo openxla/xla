@@ -209,6 +209,11 @@ class TritonDotFusionSearchSpace {
   void AddTmaParameter(const ConfigWithNotes& config,
                        std::vector<ConfigWithNotes>& updated_configs) const;
 
+  // Extend the passed configs with the number of CTAs per cluster.
+  void AddClusterSizeParameter(
+      const ConfigWithNotes& config,
+      std::vector<ConfigWithNotes>& updated_configs) const;
+
   // Extend the passed configs with automatic warp specialization.
   void AddWarpSpecializationParameter(
       const ConfigWithNotes& config,
