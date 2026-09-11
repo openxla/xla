@@ -49,7 +49,7 @@ namespace stream_executor::gpu {
 struct MultiGpuBarrierKernel {
   // Maximum number of peers supported by the barrier.
   // Can be extended to support larger GPU clusters in the future.
-  static constexpr int64_t kMaxPeers = 32;
+  static constexpr int64_t kMaxPeers = 128;
 
   using KernelType =
       stream_executor::TypedKernel<int64_t, int64_t,
@@ -66,7 +66,7 @@ struct MultiGpuBarrierKernel {
 struct MultiGpuBarrierWithNcclKernel {
   // Maximum number of peers supported by the barrier.
   // Can be extended to support larger GPU clusters in the future.
-  static constexpr int64_t kMaxPeers = 32;
+  static constexpr int64_t kMaxPeers = MultiGpuBarrierKernel::kMaxPeers;
 
   using KernelType = stream_executor::TypedKernel<
       int64_t, int64_t, xla::SymmetricMemory*,  // signal buffers
