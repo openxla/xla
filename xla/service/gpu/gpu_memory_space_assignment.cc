@@ -118,12 +118,15 @@ ParseIndexMemorySpacePairs(absl::string_view str) {
 
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
-// buffers registered with the collective runtime ahead of time.
+// buffers registered with the collective runtime ahead of time. Dynamic-slice
+// fusions may wrap the collective custom call, so the analysis looks through
+// the fusion boundary to the wrapped hero instruction.
 bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
-  if (!inst->has_backend_config()) {
+  const HloInstruction& unwrapped = UnwrapDynamicSliceFusion(*inst);
+  if (!unwrapped.has_backend_config()) {
     return false;
   }
-  auto gpu_config = inst->backend_config<GpuBackendConfig>();
+  auto gpu_config = unwrapped.backend_config<GpuBackendConfig>();
   if (!gpu_config.ok()) {
     return false;
   }
