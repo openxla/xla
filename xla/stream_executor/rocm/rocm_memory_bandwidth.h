@@ -29,9 +29,6 @@ namespace stream_executor::gpu {
 //   2. a per-gfx peak for architectures the formula gets wrong;
 //   3. the legacy formula otherwise (correct on HBM2/HBM2e).
 //
-// Tier 1 is per board rather than per gfx target, which is what separates
-// MI355X from the MI350X the shared gfx950 entry reports.
-//
 // `pci_bus_id` identifies the device to SMI. `mem_bus_width_bits` and
 // `mem_clock_khz` come from hipDeviceProp_t (memoryBusWidth, memoryClockRate)
 // and feed the formula.
