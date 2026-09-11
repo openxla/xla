@@ -2,7 +2,6 @@
 # verify the IR emitted.
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 
 # copybara:uncomment load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
@@ -1291,10 +1290,7 @@ xla_test(
         "gpu",
     ],
     # TODO: Remove this workaround after the RCCL team fixes the WarpSpeed issue.
-    env = if_rocm_is_configured(
-        {"RCCL_WARP_SPEED_AUTO": "0"},
-        {},
-    ),
+    env = {"RCCL_WARP_SPEED_AUTO": "0"},
     deps = [
         ":collective_ops_e2e_test_base",
         "//xla:array",
