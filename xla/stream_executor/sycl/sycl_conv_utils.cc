@@ -486,15 +486,15 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
       case xla::gpu::CudnnConvKind::kBackwardInput: {
         // Create a forward convolution primitive descriptor for the backward
         // input convolution.
-        ConvFwdPd fwd_pd = CreateConvFwdPd(
-            onednn_conv_primitive.engine, src_md, filter_md_prefer,
-            /*bias_md=*/std::nullopt, dst_md, stride_dims, dilation_dims,
-            padding_dims_l, padding_dims_r, post_ops_attr);
         dnnl::primitive_attr attr;
         if (input_type == xla::F32) {
           attr.set_fpmath_mode(fp32_math_mode);
         }
         attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+        ConvFwdPd fwd_pd = CreateConvFwdPd(
+            onednn_conv_primitive.engine, src_md, filter_md_prefer,
+            /*bias_md=*/std::nullopt, dst_md, stride_dims, dilation_dims,
+            padding_dims_l, padding_dims_r, attr);
         ConvBwdInputPd bwd_input_pd = ConvBwdInputPd(
             onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct,
             src_md, filter_md_prefer, dst_md, stride_dims, dilation_dims,
@@ -518,16 +518,15 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
       case xla::gpu::CudnnConvKind::kBackwardFilter: {
         // Create a forward convolution primitive descriptor for the backward
         // weights convolution.
-        ConvFwdPd fwd_pd = CreateConvFwdPd(
-            onednn_conv_primitive.engine, src_md, filter_md_prefer,
-            /*bias_md=*/std::nullopt, dst_md, stride_dims, dilation_dims,
-            padding_dims_l, padding_dims_r, post_ops_attr);
-
         dnnl::primitive_attr attr;
         if (input_type == xla::F32) {
           attr.set_fpmath_mode(fp32_math_mode);
         }
         attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+        ConvFwdPd fwd_pd = CreateConvFwdPd(
+            onednn_conv_primitive.engine, src_md, filter_md_prefer,
+            /*bias_md=*/std::nullopt, dst_md, stride_dims, dilation_dims,
+            padding_dims_l, padding_dims_r, attr);
         ConvBwdFilterPd bwd_filter_pd = ConvBwdFilterPd(
             onednn_conv_primitive.engine, dnnl::algorithm::convolution_direct,
             src_md, filter_md_prefer, dst_md, stride_dims, dilation_dims,
