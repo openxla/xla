@@ -506,9 +506,20 @@ TritonBackend::GetSupportedConfigsForRaggedDot(const HloInstruction* instr) {
     struct SimpleConfig {
       int block_m, block_n, block_k, num_stages, num_warps, group_size;
     };
+    // Note that set of default configurations has been obtained by evaluating
+    // a few different input problems on MI300, MI350 on H100.
+    // It might require to be extended for more targets.
     const SimpleConfig kDefaultConfigs[] = {
-        {32, 32, 32, 1, 4, 1},  {64, 32, 32, 1, 4, 1},  {64, 64, 32, 1, 4, 2},
-        {128, 32, 32, 1, 8, 1}, {128, 64, 32, 1, 8, 2},
+        {32, 32, 32, 1, 4, 1},   {64, 32, 32, 1, 4, 1},
+        {64, 64, 32, 1, 4, 2},   {128, 32, 32, 1, 8, 1},
+        {128, 64, 32, 1, 8, 2},  {16, 16, 128, 2, 2, 1},
+        {64, 64, 64, 2, 4, 1},   {32, 64, 64, 2, 4, 1},
+        {32, 128, 64, 2, 4, 2},  {32, 128, 128, 2, 8, 1},
+        {16, 256, 256, 2, 8, 1}, {256, 64, 64, 1, 4, 1},
+        {256, 16, 32, 2, 4, 1},  {128, 64, 64, 1, 4, 1},
+        {64, 128, 64, 2, 4, 2},  {64, 128, 128, 1, 8, 1},
+        {32, 128, 32, 2, 4, 2},  {64, 64, 64, 1, 8, 1},
+        {64, 128, 64, 1, 4, 1},
     };
     for (const auto& c : kDefaultConfigs) {
       if (c.block_m > M_total || c.block_n > N_dim) continue;
