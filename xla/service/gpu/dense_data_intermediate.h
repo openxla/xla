@@ -17,14 +17,15 @@ limitations under the License.
 #define XLA_SERVICE_GPU_DENSE_DATA_INTERMEDIATE_H_
 
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/dense_data_intermediate.pb.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
 
 namespace xla {
 namespace gpu {
@@ -34,8 +35,8 @@ namespace gpu {
 // constant emission.
 class DenseDataIntermediate {
  public:
-  // Creates an instance of DenseDataIntermediate that owns the provided vector.
-  static DenseDataIntermediate Own(std::vector<uint8_t> owned) {
+  // Creates an instance of DenseDataIntermediate that owns the provided string.
+  static DenseDataIntermediate Own(std::string owned) {
     DenseDataIntermediate di;
     di.data_ = std::move(owned);
     return di;
@@ -50,8 +51,12 @@ class DenseDataIntermediate {
 
   // Returns a reference to the data this object represents.
   absl::Span<const uint8_t> span() const {
-    return data_.index() == 0 ? absl::Span<const uint8_t>(std::get<0>(data_))
-                              : std::get<1>(data_);
+    if (data_.index() == 0) {
+      const std::string& str = std::get<0>(data_);
+      return absl::Span<const uint8_t>(
+          tsl::safe_reinterpret_cast<const uint8_t*>(str.data()), str.size());
+    }
+    return std::get<1>(data_);
   }
 
   // Converts `this` into its protobuf representation.
@@ -65,7 +70,7 @@ class DenseDataIntermediate {
       const DenseDataIntermediateProto& proto);
 
  private:
-  std::variant<std::vector<uint8_t>, absl::Span<const uint8_t>> data_;
+  std::variant<std::string, absl::Span<const uint8_t>> data_;
 };
 
 absl::StatusOr<DenseDataIntermediate> LiteralToXlaFormat(
