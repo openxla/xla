@@ -15,8 +15,10 @@ limitations under the License.
 
 // Utility for launching some HLO text that supports multiple hosts/devices.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -82,6 +84,14 @@ Tip: If the input generation takes too long or uses too much host memory,
 consider using --hlo_argument_mode=uninitialized.
 )";
 
+// Statistic over the per-repeat execution times reported in the profile CSV.
+enum class CsvProfileStatistic { kMean, kMedian };
+
+// Fallback for --profile_csv_statistic, so that a benchmark sweep can be
+// switched over without editing the caller's argv.
+constexpr char kCsvProfileStatisticEnvVar[] =
+    "HLO_RUNNER_PROFILE_CSV_STATISTIC";
+
 struct HloRunnerConfig {
   std::string input_format_str = "text";
   xla::InputFormat input_format;
@@ -121,6 +131,8 @@ struct HloRunnerConfig {
   float gpu_client_mem_fraction = xla::GpuAllocatorConfig{}.memory_fraction;
   bool profile_execution = false;
   std::string append_profile_to_csv_file = "";
+  std::string profile_csv_statistic_str = "";
+  CsvProfileStatistic profile_csv_statistic = CsvProfileStatistic::kMean;
   std::string xla_gpu_dump_xspace_to = "";
 };
 
@@ -158,6 +170,29 @@ ArgumentModeFromString(absl::string_view text) {
                    R"("use_shared_random_inputs", "use_zeros_as_input", )"
                    R"("uninitialized", or "use_random_normal_inputs". Got: )",
                    text));
+}
+
+// The flag wins over kCsvProfileStatisticEnvVar, which wins over the mean.
+// Defaulting to the mean keeps --append_profile_to_csv_file as it was.
+static absl::StatusOr<CsvProfileStatistic> CsvProfileStatisticFromFlags(
+    const HloRunnerConfig& opts) {
+  absl::string_view text = opts.profile_csv_statistic_str;
+  if (text.empty()) {
+    if (const char* env = std::getenv(kCsvProfileStatisticEnvVar);
+        env != nullptr) {
+      text = env;
+    }
+  }
+  if (text.empty() || text == "mean") {
+    return CsvProfileStatistic::kMean;
+  }
+  if (text == "median") {
+    return CsvProfileStatistic::kMedian;
+  }
+  return absl::InvalidArgumentError(absl::StrCat(
+      R"(Invalid --profile_csv_statistic specified. Expected "mean" or )"
+      R"("median". Got: )",
+      text));
 }
 
 static absl::StatusOr<FunctionalHloRunner::PreprocessingOptions>
@@ -252,7 +287,8 @@ struct CSVProfileTimeWriter {
   constexpr static const char kCSVSep = ',';
 
   explicit CSVProfileTimeWriter(const HloRunnerConfig& opts)
-      : csv_file_path_(opts.append_profile_to_csv_file) {
+      : csv_file_path_(opts.append_profile_to_csv_file),
+        statistic_(opts.profile_csv_statistic) {
     // Use different CSV file for each node since they can use shared file
     // system.
     if (opts.num_nodes > 1) {
@@ -266,18 +302,20 @@ struct CSVProfileTimeWriter {
 
   void append_row(absl::string_view hlo_file,
                   const std::vector<ExecutionProfile>& exec_profiles) {
-    double total_ns = 0.0;
     size_t num_repeats = exec_profiles.size();
-    for (size_t i = 0; i < num_repeats; ++i) {
-      total_ns += exec_profiles[i].compute_time_ns();
+    if (num_repeats == 0) {
+      exec_time_ms_[hlo_file] = 0.0;
+      return;
     }
-    // If there are multiple repeats, we average the execution time over them
-    // skipping the first one which is a warmup run.
-    if (num_repeats > 1) {
-      total_ns -= exec_profiles[0].compute_time_ns();
-      total_ns /= (num_repeats - 1);
+    // Drop the first repeat, which is a warmup run. A lone repeat is all we
+    // have, so report it as is.
+    size_t first = num_repeats > 1 ? 1 : 0;
+    std::vector<double> samples;
+    samples.reserve(num_repeats - first);
+    for (size_t i = first; i < num_repeats; ++i) {
+      samples.push_back(exec_profiles[i].compute_time_ns());
     }
-    exec_time_ms_[hlo_file] = total_ns / 1e6;
+    exec_time_ms_[hlo_file] = Reduce(samples) / 1e6;
   }
 
   ~CSVProfileTimeWriter() {
@@ -313,8 +351,25 @@ struct CSVProfileTimeWriter {
   }
 
  private:
+  // Reduces non-empty per-repeat times in ns to statistic_, reordering
+  // `samples` in place. An even-sized median averages the two middle samples.
+  double Reduce(std::vector<double>& samples) const {
+    size_t n = samples.size();
+    if (statistic_ == CsvProfileStatistic::kMedian) {
+      std::sort(samples.begin(), samples.end());
+      return n % 2 != 0 ? samples[n / 2]
+                        : 0.5 * (samples[n / 2 - 1] + samples[n / 2]);
+    }
+    double total = 0.0;
+    for (double sample : samples) {
+      total += sample;
+    }
+    return total / n;
+  }
+
   std::string csv_file_path_, run_time_;
   bool new_file_;
+  CsvProfileStatistic statistic_;
   // Use a btree map to sort the HLO files by name.
   absl::btree_map<std::string, double> exec_time_ms_;
 };  // struct CSVProfileTimeWriter
@@ -325,6 +380,8 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
       !AbslParseFlag(opts.input_format_str, &opts.input_format, &error)) {
     return absl::InvalidArgumentError(error);
   }
+  ABSL_ASSIGN_OR_RETURN(opts.profile_csv_statistic,
+                        CsvProfileStatisticFromFlags(opts));
 
   PreprocessFlags(opts);
 
@@ -604,6 +661,12 @@ int main(int argc, char** argv) {
           "--profile_execution is set. If the file does not exist, it "
           "will be created with a header row listing all input hlo files. "
           "Otherwise, new results will be appended to the existing file."),
+      tsl::Flag(
+          "profile_csv_statistic", &opts.profile_csv_statistic_str,
+          "The statistic --append_profile_to_csv_file reports over the "
+          "per-repeat execution times, excluding the warmup repeat. One of: "
+          "mean (default), median. Falls back to the "
+          "HLO_RUNNER_PROFILE_CSV_STATISTIC environment variable when unset."),
       tsl::Flag("xla_gpu_dump_xspace_to", &opts.xla_gpu_dump_xspace_to,
                 "A directory to dump xspace data for GPU profiling."),
       // This option is not used during parsing, but it is added here for
