@@ -1,0 +1,14 @@
+diff --git a/src/common/utils.hpp b/src/common/utils.hpp
+index 038d16d5e9..58d1c00bd8 100644
+--- a/src/common/utils.hpp
++++ b/src/common/utils.hpp
+@@ -803,7 +803,7 @@ static constexpr bool is_dev_mode() {
+ template <typename T>
+ struct setting_t {
+ private:
+     T value_;
+-    bool initialized_;
++    std::atomic<bool> initialized_;
+ 
+ public:
+     constexpr setting_t() : value_ {}, initialized_ {false} {}

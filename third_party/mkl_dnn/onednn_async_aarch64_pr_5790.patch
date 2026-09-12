@@ -1,0 +1,172 @@
+From 65436371443c376fec5708fe4195b70bd611aa8d Mon Sep 17 00:00:00 2001
+From: Siddhartha Menon <siddhartha.menon@arm.com>
+Date: Tue, 18 Aug 2026 11:16:34 +0100
+Subject: [PATCH] cpu: aarch64: brgemm_matmul: make async compatible
+
+Signed-off-by: Siddhartha Menon <siddhartha.menon@arm.com>
+---
+ src/cpu/aarch64/matmul/brgemm_matmul.cpp      | 44 ++++++++++++-------
+ src/cpu/aarch64/matmul/brgemm_matmul.hpp      | 10 ++---
+ .../aarch64/matmul/brgemm_matmul_reorders.cpp |  7 +--
+ 3 files changed, 37 insertions(+), 24 deletions(-)
+
+diff --git a/src/cpu/aarch64/matmul/brgemm_matmul.cpp b/src/cpu/aarch64/matmul/brgemm_matmul.cpp
+index bcdf31e2e3..aa4e28e381 100644
+--- a/src/cpu/aarch64/matmul/brgemm_matmul.cpp
++++ b/src/cpu/aarch64/matmul/brgemm_matmul.cpp
+@@ -16,7 +16,10 @@
+ * limitations under the License.
+ *******************************************************************************/
+ 
++#include <memory>
++
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/memory_tracking.hpp"
+ #include "common/type_helpers.hpp"
+@@ -297,19 +300,26 @@ status_t brgemm_matmul_t<isa>::execute_body(const exec_ctx_t &ctx) const {
+     const float *oscales = precompute_scales(
+             scratchpad, src_scales, wei_scales, pd()->N(), pd()->attr());
+ 
+-    brg_matmul_exec_ctx_t brgmm_ctx(ctx, pd(), oscales, dst_scales, helper);
++    const auto &brgmm_ctx_ptr = std::make_shared<brg_matmul_exec_ctx_t>(
++            ctx, pd(), oscales, dst_scales, helper);
++
++    const int num_threads
++            = brgmm_ctx_ptr->get_num_threads_for_parallelization();
++
++    parallel(num_threads,
++            [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
++        const auto &brgmm_ctx = *brgmm_ctx_ptr;
+ 
+-    const auto &bgmmc = pd()->get_brgemm_matmul_conf();
+-    const bool use_buffer_a
+-            = bgmmc.use_buffer_a || bgmmc.use_buffer_a_tail_only;
+-    const int num_threads = brgmm_ctx.get_num_threads_for_parallelization();
+-
+-    const int M_chunks = brgmm_ctx.get_M_chunks();
+-    const int M_chunk_size = brgmm_ctx.get_M_chunk_size();
+-    const int M_chunk_tail = brgmm_ctx.get_M_chunk_tail();
+-    parallel(num_threads, [&](const int ithr, const int nthr) {
+         const int ithr_bmn = brgmm_ctx.get_thread_idx_for_bmn(ithr);
+         const int ithr_k = brgmm_ctx.get_thread_idx_for_k(ithr);
++        const int M_chunks = brgmm_ctx.get_M_chunks();
++        const int M_chunk_size = brgmm_ctx.get_M_chunk_size();
++        const int M_chunk_tail = brgmm_ctx.get_M_chunk_tail();
++
++        const auto &bgmmc = pd()->get_brgemm_matmul_conf();
++        const bool use_buffer_a
++                = bgmmc.use_buffer_a || bgmmc.use_buffer_a_tail_only;
++
+         if (ithr_bmn < 0 || ithr_k < 0) return;
+         int start {0}, end {0};
+         balance211(brgmm_ctx.get_parallel_work_amount(),
+@@ -363,7 +373,7 @@ status_t brgemm_matmul_t<isa>::execute_body(const exec_ctx_t &ctx) const {
+         }
+     });
+ 
+-    maybe_reduce_partial_results_and_apply_postops(brgmm_ctx);
++    maybe_reduce_partial_results_and_apply_postops(brgmm_ctx_ptr);
+ 
+     return status::success;
+ }
+@@ -506,13 +516,17 @@ void brgemm_matmul_t<isa>::compute_kernel(
+ 
+ template <cpu_isa_t isa>
+ void brgemm_matmul_t<isa>::maybe_reduce_partial_results_and_apply_postops(
+-        const brg_matmul_exec_ctx_t &brgmm_ctx) const {
+-    if (!brgmm_ctx.parallel_reduction_is_used()) return;
++        const std::shared_ptr<brg_matmul_exec_ctx_t> &brgmm_ctx_ptr) const {
++    if (!brgmm_ctx_ptr->parallel_reduction_is_used()) return;
+ 
+     const auto &bgmmc = pd()->get_brgemm_matmul_conf();
+-    const int num_threads = brgmm_ctx.get_num_threads_for_parallelization();
++    const int num_threads
++            = brgmm_ctx_ptr->get_num_threads_for_parallelization();
++
++    parallel(num_threads,
++            [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
++        const auto &brgmm_ctx = *brgmm_ctx_ptr;
+ 
+-    parallel(num_threads, [&](const int ithr, const int nthr) {
+         const int nthr_k = brgmm_ctx.get_num_threads_for_k();
+         const int ithr_bmn = brgmm_ctx.get_thread_idx_for_bmn(ithr);
+         const int ithr_k = brgmm_ctx.get_thread_idx_for_k(ithr);
+diff --git a/src/cpu/aarch64/matmul/brgemm_matmul.hpp b/src/cpu/aarch64/matmul/brgemm_matmul.hpp
+index 558dad80c1..a3c15d5cf5 100644
+--- a/src/cpu/aarch64/matmul/brgemm_matmul.hpp
++++ b/src/cpu/aarch64/matmul/brgemm_matmul.hpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2021 Intel Corporation
+ * Copyright 2024 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+@@ -18,15 +18,13 @@
+ #ifndef CPU_AARCH64_MATMUL_BRGEMM_MATMUL_HPP
+ #define CPU_AARCH64_MATMUL_BRGEMM_MATMUL_HPP
+ 
++#include <memory>
++
+ #include "common/c_types_map.hpp"
+ #include "common/primitive.hpp"
+-#include "common/type_helpers.hpp"
+ 
+ #include "cpu/matmul/cpu_matmul_pd.hpp"
+ 
+-#include "cpu/aarch64/brgemm/brgemm.hpp"
+-#include "cpu/aarch64/brgemm/brgemm_containers.hpp"
+-#include "cpu/aarch64/brgemm/brgemm_utils.hpp"
+ #include "cpu/aarch64/cpu_reducer.hpp"
+ #include "cpu/aarch64/matmul/brgemm_matmul_copy_utils.hpp"
+ #include "cpu/aarch64/matmul/brgemm_matmul_utils.hpp"
+@@ -88,7 +86,7 @@ private:
+     void copy_b_chunk_in_buffer(const brg_matmul_exec_ctx_t &brgmm_ctx,
+             int ithr, int b_idx, int n_blk_idx, int k_blk_idx) const;
+     void maybe_reduce_partial_results_and_apply_postops(
+-            const brg_matmul_exec_ctx_t &brgmm_ctx) const;
++            const std::shared_ptr<brg_matmul_exec_ctx_t> &brgmm_ctx_ptr) const;
+     void accumulate(
+             char *result_ptr, const char *reduce_ptr, size_t size) const;
+ 
+diff --git a/src/cpu/aarch64/matmul/brgemm_matmul_reorders.cpp b/src/cpu/aarch64/matmul/brgemm_matmul_reorders.cpp
+index 2b1c768383..da8792aca1 100644
+--- a/src/cpu/aarch64/matmul/brgemm_matmul_reorders.cpp
++++ b/src/cpu/aarch64/matmul/brgemm_matmul_reorders.cpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2022 Intel Corporation
+ * Copyright 2024 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -16,9 +16,10 @@
+ * limitations under the License.
+ *******************************************************************************/
+ 
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+-#include "cpu/aarch64/cpu_isa_traits.hpp"
+ 
++#include "cpu/aarch64/cpu_isa_traits.hpp"
+ #include "cpu/aarch64/matmul/brgemm_matmul_reorders.hpp"
+ 
+ namespace dnnl {
+@@ -182,7 +183,7 @@ status_t brgemm_matmul_copy_reorder_t::execute_body(
+                 : (dt_sz) * (md).blk_off((d0), (d1)))
+ 
+     parallel_nd(kernel_conf.batch, div_up(kernel_conf.N, kernel_conf.N_blk),
+-            [&](dim_t batch, dim_t n_blk_idx) {
++            [= COMPAT_THIS_CAPTURE](dim_t batch, dim_t n_blk_idx) {
+         const auto n = n_blk_idx * kernel_conf.N_blk;
+         const bool is_N_tail = (kernel_conf.N - n < kernel_conf.N_blk);
+         auto ker_exec_ctx = matmul::jit_brgemm_matmul_copy_b_t::ctx_t();
+-- 
+2.43.0
+

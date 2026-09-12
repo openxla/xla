@@ -1,0 +1,869 @@
+From f5609bee3b91f57485b3963d293ab7043a9f5f76 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 01/16] cpu: aarch64: make jit_uni_binary async compatible
+
+---
+ src/cpu/aarch64/jit_uni_binary.cpp | 32 +++++++++++++++---------------
+ 1 file changed, 16 insertions(+), 16 deletions(-)
+
+diff --git a/src/cpu/aarch64/jit_uni_binary.cpp b/src/cpu/aarch64/jit_uni_binary.cpp
+index 983ac4f6436..d7bbc290ea0 100644
+--- a/src/cpu/aarch64/jit_uni_binary.cpp
++++ b/src/cpu/aarch64/jit_uni_binary.cpp
+@@ -636,7 +636,7 @@ void jit_uni_binary_t::execute_no_bcast_strategy(const data_t *src0,
+         // Divide number of threads by batch size and limiting it by a number
+         // of outer_dims nelems to parallel over it when needed.
+         parallel_nd_ext(nthr, batch, thr_per_nelems_group,
+-                [&](int, int, dim_t b, dim_t nelems_group) {
++                [=](int, int, dim_t b, dim_t nelems_group) {
+             dim_t start = 0, end = 0;
+             balance211(nelems0_simd + has_tail, thr_per_nelems_group,
+                     nelems_group, start, end);
+@@ -680,7 +680,7 @@ void jit_uni_binary_t::execute_no_bcast_strategy(const data_t *src0,
+         // Compute number of vectors, divide it equally between all threads.
+         // Last one will also handle a tail if present.
+         const int nthr = get_exec_num_of_threads(dst_d);
+-        parallel(nthr, [&](const int ithr, const int nthr) {
++        parallel(nthr, [=](const int ithr, const int nthr) {
+             dim_t start = 0, end = 0;
+             balance211(nelems0_simd + has_tail, nthr, ithr, start, end);
+             if (start >= end) return;
+@@ -732,7 +732,7 @@ void jit_uni_binary_t::execute_bcast_per_batch_strategy(const data_t *src0,
+     const int nthr = get_exec_num_of_threads(dst_d);
+     const dim_t thr_per_batch = nstl::min(nelems0_simd + has_tail, (dim_t)nthr);
+     parallel_nd_ext(
+-            nthr, MB, thr_per_batch, [&](int, int, dim_t b, dim_t ithr) {
++            nthr, MB, thr_per_batch, [=](int, int, dim_t b, dim_t ithr) {
+         dim_t start = 0, end = 0;
+         balance211(nelems0_simd + has_tail, thr_per_batch, ithr, start, end);
+         if (start >= end) return;
+@@ -797,10 +797,10 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+ 
+         const std::function<void(jit_uni_binary_args_t *, dim_t)>
+                 kernel_blocked_no_tail
+-                = [&](jit_uni_binary_args_t *p, dim_t C_blk) { (*kernel)(p); };
++                = [=](jit_uni_binary_args_t *p, dim_t C_blk) { (*kernel)(p); };
+         const std::function<void(jit_uni_binary_args_t *, dim_t)>
+                 kernel_blocked_tail
+-                = [&](jit_uni_binary_args_t *p, dim_t C_blk) {
++                = [=](jit_uni_binary_args_t *p, dim_t C_blk) {
+             if (C_blk == (C_blocks - 1))
+                 (*kernel_tail)(p);
+             else
+@@ -808,7 +808,7 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+         };
+         const auto &kernel_blocked = blocked_oc_tail ? kernel_blocked_tail
+                                                      : kernel_blocked_no_tail;
+-        const auto src1_off = [&](dim_t mb, dim_t C_blk, dim_t off) -> dim_t {
++        const auto src1_off = [=](dim_t mb, dim_t C_blk, dim_t off) -> dim_t {
+             switch (bcast_type) {
+                 case bcast_t::scalar: return mb * nelems_slice_src1;
+                 case bcast_t::per_batch: return C_blk * SP * simd_w;
+@@ -818,7 +818,7 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+         };
+ 
+         parallel_nd_ext(
+-                nthr, MB, C_blocks, [&](int, int, dim_t mb, dim_t C_blk) {
++                nthr, MB, C_blocks, [=](int, int, dim_t mb, dim_t C_blk) {
+             jit_uni_binary_args_t p;
+             p.spat_offt_count = SP * simd_w * dst_type_size;
+             const dim_t off = mb * nelems_slice_src0 + C_blk * SP * simd_w;
+@@ -832,7 +832,7 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+             kernel_blocked(&p, C_blk);
+         });
+     } else if (op_type == op_t::n_spatial_c) {
+-        const auto src1_off = [&](dim_t mb, dim_t sp, dim_t off) -> dim_t {
++        const auto src1_off = [=](dim_t mb, dim_t sp, dim_t off) -> dim_t {
+             switch (bcast_type) {
+                 case bcast_t::per_batch: return sp * C;
+                 case bcast_t::none: return off;
+@@ -842,7 +842,7 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+ 
+         // Compute strategy:
+         // Each line of channels is individual, parallel over MB and spatial.
+-        parallel_nd_ext(nthr, MB, SP, [&](int, int, dim_t mb, dim_t sp) {
++        parallel_nd_ext(nthr, MB, SP, [=](int, int, dim_t mb, dim_t sp) {
+             jit_uni_binary_args_t p;
+             p.spat_offt_count = C * dst_type_size;
+             const auto off = mb * nelems_slice_src0 + sp * C;
+@@ -856,7 +856,7 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+             (*kernel)(&p);
+         });
+     } else if (op_type == op_t::n_c_spatial) {
+-        const auto src1_off = [&](dim_t mb, dim_t c, dim_t off) -> dim_t {
++        const auto src1_off = [=](dim_t mb, dim_t c, dim_t off) -> dim_t {
+             switch (bcast_type) {
+                 case bcast_t::scalar: return mb * nelems_slice_src1;
+                 case bcast_t::per_batch: return c * SP;
+@@ -867,7 +867,7 @@ void jit_uni_binary_t::execute_bcast_per_c_strategy(const data_t *src0,
+ 
+         // Compute strategy:
+         // Each line of spatial is individual, parallel over MB and C.
+-        parallel_nd_ext(nthr, MB, C, [&](int, int, dim_t mb, dim_t c) {
++        parallel_nd_ext(nthr, MB, C, [=](int, int, dim_t mb, dim_t c) {
+             jit_uni_binary_args_t p;
+             p.spat_offt_count = SP * dst_type_size;
+             const auto off = mb * nelems_slice_src0 + c * SP;
+@@ -928,10 +928,10 @@ void jit_uni_binary_t::execute_bcast_per_w_strategy(const data_t *src0,
+ 
+         const std::function<void(jit_uni_binary_args_t *, dim_t)>
+                 kernel_blocked_no_tail
+-                = [&](jit_uni_binary_args_t *p, dim_t C_blk) { (*kernel)(p); };
++                = [=](jit_uni_binary_args_t *p, dim_t C_blk) { (*kernel)(p); };
+         const std::function<void(jit_uni_binary_args_t *, dim_t)>
+                 kernel_blocked_tail
+-                = [&](jit_uni_binary_args_t *p, dim_t C_blk) {
++                = [=](jit_uni_binary_args_t *p, dim_t C_blk) {
+             if (C_blk == (C_blocks - 1))
+                 (*kernel_tail)(p);
+             else
+@@ -941,7 +941,7 @@ void jit_uni_binary_t::execute_bcast_per_w_strategy(const data_t *src0,
+                                                      : kernel_blocked_no_tail;
+ 
+         parallel_nd_ext(nthr, MB, C_blocks, N, SP_no_bcast,
+-                [&](int, int, dim_t mb, dim_t C_blk, dim_t n, dim_t sp) {
++                [=](int, int, dim_t mb, dim_t C_blk, dim_t n, dim_t sp) {
+             jit_uni_binary_args_t p;
+             p.spat_offt_count = simd_w * dst_type_size;
+             const auto off = mb * nelems_slice_src0
+@@ -965,7 +965,7 @@ void jit_uni_binary_t::execute_bcast_per_w_strategy(const data_t *src0,
+         // (broadcasted and not broadcasted spatial dims separately).
+ 
+         parallel_nd_ext(nthr, MB, N, SP_no_bcast,
+-                [&](int, int, dim_t mb, dim_t n, dim_t sp) {
++                [=](int, int, dim_t mb, dim_t n, dim_t sp) {
+             jit_uni_binary_args_t p;
+             p.spat_offt_count = C * dst_type_size;
+             const auto off
+@@ -988,7 +988,7 @@ void jit_uni_binary_t::execute_bcast_per_w_strategy(const data_t *src0,
+         // value into a vector register.
+ 
+         parallel_nd_ext(
+-                nthr, MB, C, N, [&](int, int, dim_t mb, dim_t c, dim_t n) {
++                nthr, MB, C, N, [=](int, int, dim_t mb, dim_t c, dim_t n) {
+             jit_uni_binary_args_t p;
+             p.spat_offt_count = SP_no_bcast * dst_type_size;
+             const auto off = mb * nelems_slice_src0 + c * N * SP_no_bcast
+
+From a22f0ee5df7448e0a2f89224bde54b84fa736eae Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 02/16] cpu: aarch64: make eltwise_lut async compatible
+
+---
+ src/cpu/aarch64/eltwise_lut.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/eltwise_lut.cpp b/src/cpu/aarch64/eltwise_lut.cpp
+index 3ad6f490fe7..a0f86dd953c 100644
+--- a/src/cpu/aarch64/eltwise_lut.cpp
++++ b/src/cpu/aarch64/eltwise_lut.cpp
+@@ -62,7 +62,7 @@ status_t eltwise_lut_fwd_t::execute(const exec_ctx_t &ctx) const {
+     src += data_d.offset0();
+     dst += data_d.offset0();
+ 
+-    dnnl::impl::parallel(0, [&](int ithr, int nthr) {
++    dnnl::impl::parallel(0, [=](int ithr, int nthr) {
+         dim_t begin = 0, end = 0;
+         dnnl::impl::balance211(n, nthr, ithr, begin, end);
+         if (begin == end) return;
+
+From bebbf6db3628a392d3deedf0c5e329a4425bcd53 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 03/16] cpu: aarch64: make jit_uni_eltwise async compatible
+
+---
+ src/cpu/aarch64/jit_uni_eltwise.cpp | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/cpu/aarch64/jit_uni_eltwise.cpp b/src/cpu/aarch64/jit_uni_eltwise.cpp
+index b3b6aafd916..9e42c593471 100644
+--- a/src/cpu/aarch64/jit_uni_eltwise.cpp
++++ b/src/cpu/aarch64/jit_uni_eltwise.cpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2017 Intel Corporation
+ * Copyright 2021-2023 FUJITSU LIMITED
+-* Copyright 2022, 2025 Arm Ltd. and affiliates
++* Copyright 2022, 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -18,6 +18,7 @@
+ 
+ #include "common/bfloat16.hpp"
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/nstl.hpp"
+ #include "common/type_helpers.hpp"
+@@ -560,7 +561,7 @@ status_t jit_uni_eltwise_fwd_t<isa>::execute(const exec_ctx_t &ctx) const {
+     src += offset_bytes;
+     dst += offset_bytes;
+ 
+-    parallel(0, [&](const int ithr, const int nthr) {
++    parallel(0, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         dim_t start {0}, end {0};
+ 
+         balance211(
+@@ -657,7 +658,7 @@ status_t jit_uni_eltwise_bwd_t<isa>::execute(const exec_ctx_t &ctx) const {
+     diff_dst += diff_off_bytes;
+     diff_src += diff_off_bytes;
+ 
+-    parallel(0, [&](const int ithr, const int nthr) {
++    parallel(0, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
+         dim_t start {0}, end {0};
+ 
+         balance211(
+
+From 37ae9a4b5d51173e612281d8c419328714d3a407 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 04/16] cpu: aarch64: make jit_uni_layer_normalization async
+ compatible
+
+---
+ src/cpu/aarch64/jit_uni_layer_normalization.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_uni_layer_normalization.cpp b/src/cpu/aarch64/jit_uni_layer_normalization.cpp
+index e4e7c6bbcb6..6358c2ff7af 100644
+--- a/src/cpu/aarch64/jit_uni_layer_normalization.cpp
++++ b/src/cpu/aarch64/jit_uni_layer_normalization.cpp
+@@ -19,6 +19,7 @@
+ #include <cmath>
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/reorder.hpp"
+ #include "common/stream.hpp"
+@@ -631,7 +632,7 @@ status_t jit_uni_layer_normalization_fwd_t<isa>::execute_forward(
+     const dim_t C_padded = src_d.padded_dims()[pd()->ndims() - 1];
+     const dim_t C = src_d.dims()[pd()->ndims() - 1];
+ 
+-    parallel(pd()->nthr_, [&](int ithr, int nthr) {
++    parallel(pd()->nthr_, [= COMPAT_THIS_CAPTURE](int ithr, int nthr) {
+         dim_t N_start_idx = 0, N_end_idx = 0;
+         balance211(N, nthr, ithr, N_start_idx, N_end_idx);
+         const char *const src_ptr = reinterpret_cast<const char *>(src)
+
+From 5884460d567818115ea1d1a260ac6a9c462ab84b Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 05/16] cpu: aarch64: disable ACL primitives for threadpool
+
+---
+ src/cpu/aarch64/acl_deconvolution.hpp             | 6 ++++++
+ src/cpu/aarch64/acl_depthwise_convolution.cpp     | 7 ++++++-
+ src/cpu/aarch64/acl_gemm_convolution.cpp          | 4 ++++
+ src/cpu/aarch64/acl_indirect_gemm_convolution.cpp | 4 ++++
+ src/cpu/aarch64/acl_inner_product.cpp             | 6 ++++++
+ src/cpu/aarch64/acl_winograd_convolution.hpp      | 4 +++-
+ src/cpu/aarch64/matmul/acl_lowp_matmul.cpp        | 4 ++++
+ src/cpu/aarch64/matmul/acl_lowp_matmul_sq.cpp     | 4 ++++
+ src/cpu/aarch64/matmul/acl_matmul.cpp             | 5 +++++
+ src/cpu/aarch64/reorder/acl_reorder.cpp           | 7 ++++++-
+ 10 files changed, 48 insertions(+), 3 deletions(-)
+
+diff --git a/src/cpu/aarch64/acl_deconvolution.hpp b/src/cpu/aarch64/acl_deconvolution.hpp
+index f937ff11028..3b158dead54 100644
+--- a/src/cpu/aarch64/acl_deconvolution.hpp
++++ b/src/cpu/aarch64/acl_deconvolution.hpp
+@@ -18,6 +18,8 @@
+ #ifndef CPU_AARCH64_ACL_DECONVOLUTION_HPP
+ #define CPU_AARCH64_ACL_DECONVOLUTION_HPP
+ 
++#include "common/dnnl_thread.hpp"
++
+ #include "cpu/aarch64/acl_utils.hpp"
+ #include "cpu/aarch64/cpu_isa_traits.hpp"
+ #include "cpu/aarch64/post_ops_fallback.hpp"
+@@ -105,6 +107,10 @@ struct acl_deconvolution_fwd_t : public primitive_t {
+             const auto dst_data_t = dst_d.data_type();
+             const auto bia_data_t = bia_d.data_type();
+ 
++            VDISPATCH_DECONVOLUTION(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+             const bool ok = is_fwd() // Only forward deconvolutions
+                     && utils::one_of(
+                             desc()->alg_kind, alg_kind::deconvolution_direct)
+diff --git a/src/cpu/aarch64/acl_depthwise_convolution.cpp b/src/cpu/aarch64/acl_depthwise_convolution.cpp
+index db7fabbc6fa..5cb39fba714 100644
+--- a/src/cpu/aarch64/acl_depthwise_convolution.cpp
++++ b/src/cpu/aarch64/acl_depthwise_convolution.cpp
+@@ -1,5 +1,5 @@
+ /*******************************************************************************
+-* Copyright 2023-2024 Arm Ltd. and affiliates
++* Copyright 2023-2024, 2026 Arm Ltd. and affiliates
+ * Copyright 2026 Intel Corporation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -17,6 +17,8 @@
+ 
+ #include "cpu/aarch64/acl_depthwise_convolution.hpp"
+ 
++#include "common/dnnl_thread.hpp"
++
+ namespace dnnl {
+ namespace impl {
+ namespace cpu {
+@@ -49,6 +51,9 @@ status_t acl_depthwise_convolution_fwd_t::pd_t::init(const engine_t *engine) {
+     const bool is_fp32_ok = expect_data_types(f32, f32, f32, f32, undef)
+             && attr()->has_default_values(
+                     primitive_attr_t::skip_mask_t::post_ops, f32);
++    VDISPATCH_CONV(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     bool ok = is_fwd() && set_default_alg_kind(alg_kind::convolution_direct)
+             && utils::one_of(true, is_fp16_ok, is_fp32_ok)
+             && !has_zero_dim_memory()
+diff --git a/src/cpu/aarch64/acl_gemm_convolution.cpp b/src/cpu/aarch64/acl_gemm_convolution.cpp
+index ea045f2d85e..c04a45ca0a3 100644
+--- a/src/cpu/aarch64/acl_gemm_convolution.cpp
++++ b/src/cpu/aarch64/acl_gemm_convolution.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "acl_gemm_convolution.hpp"
+ #include "acl_convolution_utils.hpp"
++#include "common/dnnl_thread.hpp"
+ #include "common/memory_tracking.hpp"
+ #include "cpu/aarch64/cpu_isa_traits.hpp"
+ 
+@@ -56,6 +57,9 @@ status_t acl_gemm_convolution_fwd_t<src_t, wei_t, dst_t, bia_t>::pd_t::init(
+     using namespace data_type;
+     using smask_t = primitive_attr_t::skip_mask_t;
+ 
++    VDISPATCH_CONV(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     bool ok = is_fwd() && set_default_alg_kind(alg_kind::convolution_direct)
+             && expect_data_types(src_t, wei_t, bia_t, dst_t, undef)
+             && !has_zero_dim_memory()
+diff --git a/src/cpu/aarch64/acl_indirect_gemm_convolution.cpp b/src/cpu/aarch64/acl_indirect_gemm_convolution.cpp
+index d3194e4bd2f..83eaf94c680 100644
+--- a/src/cpu/aarch64/acl_indirect_gemm_convolution.cpp
++++ b/src/cpu/aarch64/acl_indirect_gemm_convolution.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "acl_indirect_gemm_convolution.hpp"
+ #include "acl_convolution_utils.hpp"
++#include "common/dnnl_thread.hpp"
+ #include "common/memory_tracking.hpp"
+ #include "common/utils.hpp"
+ #include "cpu/aarch64/cpu_isa_traits.hpp"
+@@ -101,6 +102,9 @@ status_t acl_indirect_gemm_convolution_fwd_t::pd_t::init(
+     const bool is_fp32_ok = expect_data_types(f32, f32, f32, f32, undef)
+             && attr()->has_default_values(
+                     smask_t::post_ops | smask_t::fpmath_mode, f32);
++    VDISPATCH_CONV(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     bool ok = is_fwd() && set_default_alg_kind(alg_kind::convolution_direct)
+             && utils::one_of(true, is_fp16_ok, is_bf16_ok, is_fp32_ok)
+             && !has_zero_dim_memory()
+diff --git a/src/cpu/aarch64/acl_inner_product.cpp b/src/cpu/aarch64/acl_inner_product.cpp
+index 48dc4329e5c..65d755bbb99 100644
+--- a/src/cpu/aarch64/acl_inner_product.cpp
++++ b/src/cpu/aarch64/acl_inner_product.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include "cpu/aarch64/acl_inner_product.hpp"
+ 
++#include "common/dnnl_thread.hpp"
++
+ namespace dnnl {
+ namespace impl {
+ namespace cpu {
+@@ -109,6 +111,10 @@ status_t acl_inner_product_fwd_t::pd_t::init(const engine_t *engine) {
+     const bool is_weights_md_format_ok
+             = utils::one_of(weights_format_kind_received, format_kind::any,
+                     format_kind::blocked);
++    VDISPATCH_INNER_PRODUCT(
++            DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     const bool ok = is_fwd() && !has_zero_dim_memory()
+             && utils::one_of(true, is_fp16_ok, is_fp32_ok, is_bf16_ok)
+             && is_weights_md_format_ok
+diff --git a/src/cpu/aarch64/acl_winograd_convolution.hpp b/src/cpu/aarch64/acl_winograd_convolution.hpp
+index 3756c3043e9..d4b5b21ff34 100644
+--- a/src/cpu/aarch64/acl_winograd_convolution.hpp
++++ b/src/cpu/aarch64/acl_winograd_convolution.hpp
+@@ -88,7 +88,9 @@ struct acl_wino_convolution_fwd_t : public primitive_t {
+                     && utils::one_of(true, is_fp16_ok, is_fp32_ok)
+                     && !has_zero_dim_memory();
+ 
+-            ok = ok && DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL;
++            VDISPATCH_CONV(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+             if (!ok) return status::unimplemented;
+ 
+             CHECK(acl_convolution_utils::init_conf_wino(acp_, src_md_,
+diff --git a/src/cpu/aarch64/matmul/acl_lowp_matmul.cpp b/src/cpu/aarch64/matmul/acl_lowp_matmul.cpp
+index bbd8a539543..7cb4cc85da9 100644
+--- a/src/cpu/aarch64/matmul/acl_lowp_matmul.cpp
++++ b/src/cpu/aarch64/matmul/acl_lowp_matmul.cpp
+@@ -16,6 +16,7 @@
+ *******************************************************************************/
+ 
+ #include "cpu/aarch64/matmul/acl_lowp_matmul.hpp"
++#include "common/dnnl_thread.hpp"
+ #include "cpu/cpu_primitive.hpp"
+ 
+ namespace dnnl {
+@@ -42,6 +43,9 @@ const std::vector<lowp_matmul_key_t> lowp_matmul_keys = {
+ };
+ } // namespace
+ status_t acl_lowp_matmul_t::pd_t::init(const engine_t *engine) {
++    VDISPATCH_MATMUL(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     VDISPATCH_MATMUL(set_default_formats(), "failed to set default formats");
+     using smask_t = primitive_attr_t::skip_mask_t;
+     VDISPATCH_MATMUL(attr()->has_default_values(smask_t::scales
+diff --git a/src/cpu/aarch64/matmul/acl_lowp_matmul_sq.cpp b/src/cpu/aarch64/matmul/acl_lowp_matmul_sq.cpp
+index ae4c4544177..6a164a6ba60 100644
+--- a/src/cpu/aarch64/matmul/acl_lowp_matmul_sq.cpp
++++ b/src/cpu/aarch64/matmul/acl_lowp_matmul_sq.cpp
+@@ -19,6 +19,8 @@
+ 
+ #include "arm_compute/core/utils/quantization/AsymmHelpers.h"
+ 
++#include "common/dnnl_thread.hpp"
++
+ #include "cpu/aarch64/acl_utils.hpp"
+ 
+ namespace dnnl {
+@@ -64,6 +66,8 @@ status_t acl_lowp_matmul_sq_t::init(engine_t *engine) {
+ }
+ 
+ status_t acl_lowp_matmul_sq_t::pd_t::init(const engine_t *engine) {
++    VDISPATCH_MATMUL(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+ 
+     VDISPATCH_MATMUL(set_default_formats(), "failed to set default formats");
+     using smask_t = primitive_attr_t::skip_mask_t;
+diff --git a/src/cpu/aarch64/matmul/acl_matmul.cpp b/src/cpu/aarch64/matmul/acl_matmul.cpp
+index 3236fad98d7..1af26516645 100644
+--- a/src/cpu/aarch64/matmul/acl_matmul.cpp
++++ b/src/cpu/aarch64/matmul/acl_matmul.cpp
+@@ -18,6 +18,8 @@
+ #include "cpu/aarch64/matmul/acl_matmul.hpp"
+ #include "cpu/aarch64/acl_utils.hpp"
+ 
++#include "common/dnnl_thread.hpp"
++
+ #include <mutex>
+ 
+ namespace dnnl {
+@@ -91,6 +93,9 @@ status_t acl_matmul_t::pd_t::init(const engine_t *engine) {
+     const bool is_gemv = utils::everyone_is(2, src_md()->ndims, dst_md()->ndims)
+             && (src_md()->dims[0] == 1 || weights_md()->dims[1] == 1);
+ 
++    VDISPATCH_MATMUL(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     // in case of gemv and we have SVE, we leave BRGeMM to handle it
+     VDISPATCH_MATMUL(!(is_gemv && arm_compute::CPUInfo::get().has_sve()),
+             "falling back to brgemm for GEMV, based on heuristics");
+diff --git a/src/cpu/aarch64/reorder/acl_reorder.cpp b/src/cpu/aarch64/reorder/acl_reorder.cpp
+index 7363ac19b9f..37f231363ad 100644
+--- a/src/cpu/aarch64/reorder/acl_reorder.cpp
++++ b/src/cpu/aarch64/reorder/acl_reorder.cpp
+@@ -1,5 +1,5 @@
+ /*******************************************************************************
+-* Copyright 2023, 2025 Arm Ltd. and affiliates
++* Copyright 2023, 2025-2026 Arm Ltd. and affiliates
+ * Copyright 2026 Intel Corporation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -18,6 +18,8 @@
+ #include "cpu/aarch64/reorder/acl_reorder.hpp"
+ #include "cpu/aarch64/cpu_isa_traits.hpp"
+ 
++#include "common/dnnl_thread.hpp"
++
+ namespace {
+ /*
+ * Find the index of the dense dimension.
+@@ -71,6 +73,9 @@ status_t acl_reorder_fwd_t::pd_t::create(reorder_pd_t **reorder_pd,
+     using namespace dnnl::impl;
+ 
+     // ComputeLibrary reorders support f32->f32 and f32->bf16
++    VDISPATCH_REORDER_IC(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     bool ok = src_md->data_type == data_type::f32
+             && utils::one_of(dst_md->data_type, data_type::f32, data_type::bf16)
+             && attr->has_default_values();
+
+From 82333c1e81a5859b2cb4a21d779dda95cbde8cd2 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 06/16] cpu: aarch64: disable jit_brgemm_conv_bwd for
+ threadpool
+
+---
+ src/cpu/aarch64/jit_brgemm_conv_bwd.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_brgemm_conv_bwd.cpp b/src/cpu/aarch64/jit_brgemm_conv_bwd.cpp
+index 16f075ea5f0..6babd5ebc29 100644
+--- a/src/cpu/aarch64/jit_brgemm_conv_bwd.cpp
++++ b/src/cpu/aarch64/jit_brgemm_conv_bwd.cpp
+@@ -1,6 +1,6 @@
+ /*******************************************************************************
+ * Copyright 2025 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ * Copyright 2026 Intel Corporation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+@@ -105,6 +105,8 @@ status_t brgemm_convolution_bwd_t<isa>::pd_t::init(const engine_t *engine) {
+     using namespace data_type;
+     using namespace utils;
+ 
++    VDISPATCH_CONV(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+     VDISPATCH_CONV(is_bwd_d(), VERBOSE_BAD_PROPKIND);
+     VDISPATCH_CONV(set_default_alg_kind(alg_kind::convolution_direct),
+             VERBOSE_BAD_ALGORITHM);
+
+From bf57103fc3e57fe18b19a912d72d708f2c18089d Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 07/16] cpu: aarch64: disable jit_brgemm_deconv for threadpool
+
+---
+ src/cpu/aarch64/jit_brgemm_deconv.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_brgemm_deconv.cpp b/src/cpu/aarch64/jit_brgemm_deconv.cpp
+index 2d1354b1f5c..6f64d504353 100644
+--- a/src/cpu/aarch64/jit_brgemm_deconv.cpp
++++ b/src/cpu/aarch64/jit_brgemm_deconv.cpp
+@@ -1,6 +1,6 @@
+ /*******************************************************************************
+ * Copyright 2022 Intel Corporation
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -104,6 +104,9 @@ status_t brgemm_deconvolution_fwd_t<isa>::pd_t::init(const engine_t *engine) {
+     auto skip_mask = smask_t::post_ops | smask_t::sum_dt;
+     if (is_int8) skip_mask |= smask_t::scales | smask_t::zero_points;
+ 
++    VDISPATCH_DECONVOLUTION(
++            DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+     VDISPATCH_DECONVOLUTION(is_fwd(), VERBOSE_BAD_PROPKIND);
+     VDISPATCH_DECONVOLUTION((desc()->alg_kind & alg_kind::deconvolution_direct),
+             VERBOSE_BAD_ALGORITHM);
+
+From 426c3df6c2e972ea6120f68aa05c0cce4b719727 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Fri, 14 Aug 2026 07:10:08 +0000
+Subject: [PATCH 08/16] cpu: aarch64: disable jit_sve_512_x8s8s32x_convolution
+ for threadpool
+
+---
+ src/cpu/aarch64/jit_sve_512_x8s8s32x_convolution.hpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_sve_512_x8s8s32x_convolution.hpp b/src/cpu/aarch64/jit_sve_512_x8s8s32x_convolution.hpp
+index 52bbc0a6d27..ea8490e928a 100644
+--- a/src/cpu/aarch64/jit_sve_512_x8s8s32x_convolution.hpp
++++ b/src/cpu/aarch64/jit_sve_512_x8s8s32x_convolution.hpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2021 Intel Corporation
+ * Copyright 2021 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -44,6 +44,10 @@ struct jit_sve_512_x8s8s32x_convolution_fwd_t : public primitive_t {
+ 
+         status_t init(const engine_t *engine) {
+             using smask_t = primitive_attr_t::skip_mask_t;
++            VDISPATCH_CONV(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+             bool ok = true && is_fwd()
+                     && set_default_alg_kind(alg_kind::convolution_direct)
+                     && expect_data_types(src_type, data_type::s8,
+
+From b62ce18dab211f0a47ace0115608c9c544b06207 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Fri, 14 Aug 2026 07:10:19 +0000
+Subject: [PATCH 09/16] cpu: aarch64: disable
+ jit_sve_512_x8s8s32x_deconvolution for threadpool
+
+---
+ src/cpu/aarch64/jit_sve_512_core_x8s8s32x_deconvolution.hpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_sve_512_core_x8s8s32x_deconvolution.hpp b/src/cpu/aarch64/jit_sve_512_core_x8s8s32x_deconvolution.hpp
+index 39d334e37ab..88f35034c3e 100644
+--- a/src/cpu/aarch64/jit_sve_512_core_x8s8s32x_deconvolution.hpp
++++ b/src/cpu/aarch64/jit_sve_512_core_x8s8s32x_deconvolution.hpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2018 Intel Corporation
+ * Copyright 2022 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -280,6 +280,10 @@ struct jit_sve_512_core_x8s8s32x_deconvolution_fwd_t : public primitive_t {
+         status_t init(const engine_t *engine) {
+             using namespace data_type;
+             using skip_mask_t = primitive_attr_t::skip_mask_t;
++            VDISPATCH_DECONVOLUTION(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+             const bool ok = mayiuse(sve_512) && is_fwd()
+                     && (desc()->alg_kind & alg_kind::deconvolution_direct)
+                     && utils::one_of(src_md(0)->data_type, s8, u8)
+
+From 156ef24316e7a07f4ed6d2ceb1d3b2b9a27e660a Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 10/16] cpu: aarch64: disable jit_uni_batch_normalization for
+ threadpool
+
+---
+ src/cpu/aarch64/jit_uni_batch_normalization.cpp    | 4 ++++
+ src/cpu/aarch64/jit_uni_batch_normalization_s8.cpp | 3 +++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/src/cpu/aarch64/jit_uni_batch_normalization.cpp b/src/cpu/aarch64/jit_uni_batch_normalization.cpp
+index 20820341f6a..b856eb70bc1 100644
+--- a/src/cpu/aarch64/jit_uni_batch_normalization.cpp
++++ b/src/cpu/aarch64/jit_uni_batch_normalization.cpp
+@@ -2206,6 +2206,8 @@ using namespace utils;
+ template <cpu_isa_t isa>
+ status_t jit_uni_batch_normalization_fwd_t<isa>::pd_t::init(
+         const engine_t *engine) {
++    VDISPATCH_BNORM(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+     VDISPATCH_BNORM(is_fwd(), VERBOSE_BAD_PROPKIND);
+     VDISPATCH_BNORM(mayiuse(isa), VERBOSE_UNSUPPORTED_ISA);
+     VDISPATCH_BNORM(!has_zero_dim_memory(), "zero dims are not supported");
+@@ -2330,6 +2332,8 @@ jit_uni_batch_normalization_fwd_t<isa>::~jit_uni_batch_normalization_fwd_t() {
+ template <cpu_isa_t isa>
+ status_t jit_uni_batch_normalization_bwd_t<isa>::pd_t::init(
+         const engine_t *engine) {
++    VDISPATCH_BNORM(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+     VDISPATCH_BNORM(!is_fwd(), VERBOSE_BAD_PROPKIND);
+     VDISPATCH_BNORM(mayiuse(isa), VERBOSE_UNSUPPORTED_ISA);
+     VDISPATCH_BNORM(!has_zero_dim_memory(), "zero dims are not supported");
+diff --git a/src/cpu/aarch64/jit_uni_batch_normalization_s8.cpp b/src/cpu/aarch64/jit_uni_batch_normalization_s8.cpp
+index 845733f7be0..885dbdd1e55 100644
+--- a/src/cpu/aarch64/jit_uni_batch_normalization_s8.cpp
++++ b/src/cpu/aarch64/jit_uni_batch_normalization_s8.cpp
+@@ -414,6 +414,9 @@ status_t jit_uni_batch_normalization_s8_fwd_t<isa>::pd_t::init(
+         const engine_t *engine) {
+     auto desired_fmt_tag = (ndims() == 4) ? nhwc : ndhwc;
+ 
++    VDISPATCH_BNORM(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     bool ok = true && mayiuse(isa) && is_fwd() && !has_zero_dim_memory()
+             && one_of(ndims(), 4, 5) && stats_is_src()
+             && src_md()->data_type == s8 && check_scale_shift_data_type()
+
+From 23cf74048313111c63ccde64b71bc9d8264cf7e5 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 11/16] cpu: aarch64: disable jit_uni_pooling for threadpool
+
+---
+ src/cpu/aarch64/jit_uni_pooling.hpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/cpu/aarch64/jit_uni_pooling.hpp b/src/cpu/aarch64/jit_uni_pooling.hpp
+index 2dc0ff86f2d..743894ad601 100644
+--- a/src/cpu/aarch64/jit_uni_pooling.hpp
++++ b/src/cpu/aarch64/jit_uni_pooling.hpp
+@@ -23,6 +23,7 @@
+ #include <memory>
+ 
+ #include "common/c_types_map.hpp"
++#include "common/dnnl_thread.hpp"
+ #include "common/primitive.hpp"
+ #include "common/utils.hpp"
+ 
+@@ -53,6 +54,10 @@ struct jit_uni_pooling_fwd_t : public primitive_t {
+         status_t init(const engine_t *engine) {
+             using namespace utils;
+ 
++            VDISPATCH_POOLING(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+             const bool ok = mayiuse(isa) && is_fwd() && !has_zero_dim_memory()
+                     && everyone_is(
+                             d_type, src_md()->data_type, dst_md()->data_type)
+@@ -125,6 +130,10 @@ struct jit_uni_pooling_bwd_t : public primitive_t {
+         status_t init(const engine_t *engine) {
+             using namespace utils;
+ 
++            VDISPATCH_POOLING(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+             const bool ok = mayiuse(isa)
+                     && set_default_params() == status::success && !is_fwd()
+                     && !has_zero_dim_memory()
+
+From 0a8928283903a014ebc460df4d639731e4db0e5e Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Fri, 14 Aug 2026 07:12:06 +0000
+Subject: [PATCH 12/16] cpu: aarch64: disable jit_uni_i8i8_pooling for
+ threadpool
+
+---
+ src/cpu/aarch64/jit_uni_i8i8_pooling.hpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_uni_i8i8_pooling.hpp b/src/cpu/aarch64/jit_uni_i8i8_pooling.hpp
+index 90e96837615..0d7d436387e 100644
+--- a/src/cpu/aarch64/jit_uni_i8i8_pooling.hpp
++++ b/src/cpu/aarch64/jit_uni_i8i8_pooling.hpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2020 Intel Corporation
+ * Copyright 2020-2021 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -45,6 +45,10 @@ struct jit_uni_i8i8_pooling_fwd_t : public primitive_t {
+                 jit_uni_i8i8_pooling_fwd_t);
+ 
+         status_t init(const engine_t *engine) {
++            VDISPATCH_POOLING(
++                    DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++                    VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+             bool ok = true && mayiuse(isa) && utils::one_of(ndims(), 3, 4, 5)
+                     && set_default_params() == status::success
+                     && desc()->prop_kind == prop_kind::forward_inference
+
+From c804bab5022a0b521eefdc2300d28d93b629e561 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 13/16] cpu: aarch64: disable jit_uni_shuffle for threadpool
+
+---
+ src/cpu/aarch64/shuffle/jit_uni_shuffle.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/cpu/aarch64/shuffle/jit_uni_shuffle.cpp b/src/cpu/aarch64/shuffle/jit_uni_shuffle.cpp
+index f09a3b5f293..402d2df6de3 100644
+--- a/src/cpu/aarch64/shuffle/jit_uni_shuffle.cpp
++++ b/src/cpu/aarch64/shuffle/jit_uni_shuffle.cpp
+@@ -48,6 +48,9 @@ status_t jit_uni_shuffle_t<isa>::pd_t::init(const engine_t *engine) {
+ 
+     conf_.data_type = src_d.data_type();
+ 
++    VDISPATCH_SHUFFLE(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     const bool ok = is_superset(get_max_cpu_isa(), isa)
+             && utils::one_of(conf_.data_type, f32, s32, bf16)
+             && src_d.data_type() == dst_d.data_type()
+
+From 462602bdf0a67bec1b0e67ee1dab1cd0309b7579 Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 14/16] cpu: aarch64: disable jit_bf16_matmul for threadpool
+
+---
+ src/cpu/aarch64/matmul/jit_bf16_matmul.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/cpu/aarch64/matmul/jit_bf16_matmul.cpp b/src/cpu/aarch64/matmul/jit_bf16_matmul.cpp
+index 60fb4ac49e0..fef783a56df 100644
+--- a/src/cpu/aarch64/matmul/jit_bf16_matmul.cpp
++++ b/src/cpu/aarch64/matmul/jit_bf16_matmul.cpp
+@@ -287,6 +287,8 @@ status_t jit_bf16_matmul_t::pd_t::init(const engine_t *engine) {
+ 
+     VDISPATCH_MATMUL(
+             no_runtime_dims_or_strides, VERBOSE_RUNTIMEDIM_UNSUPPORTED);
++    VDISPATCH_MATMUL(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+ 
+     const auto src_type = src_md(0)->data_type;
+     const auto wei_type = weights_md(0)->data_type;
+
+From d66d5b299c9d24ae986ebab2e08381785aa26eec Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 15/16] cpu: aarch64: disable jit_int8_matmul for threadpool
+
+---
+ src/cpu/aarch64/matmul/jit_int8_matmul.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/cpu/aarch64/matmul/jit_int8_matmul.cpp b/src/cpu/aarch64/matmul/jit_int8_matmul.cpp
+index de7c9f5ee20..4ac4eb2158f 100644
+--- a/src/cpu/aarch64/matmul/jit_int8_matmul.cpp
++++ b/src/cpu/aarch64/matmul/jit_int8_matmul.cpp
+@@ -882,6 +882,8 @@ status_t jit_int8_matmul_t<isa>::pd_t::init(const engine_t *engine) {
+ 
+     VDISPATCH_MATMUL(
+             no_runtime_dims_or_strides, VERBOSE_RUNTIMEDIM_UNSUPPORTED);
++    VDISPATCH_MATMUL(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
+     VDISPATCH_MATMUL(is_dense_format_kind(), VERBOSE_UNSUPPORTED_SPARSE_CFG);
+ 
+     bool is_u8 = utils::everyone_is(u8, src_type, wei_type);
+
+From 3b70691e573b438e8a8bb757212c6bc1d6d72e4d Mon Sep 17 00:00:00 2001
+From: Crefeda Rodrigues <crefeda.rodrigues@arm.com>
+Date: Wed, 12 Aug 2026 14:13:12 +0000
+Subject: [PATCH 16/16] cpu: aarch64: disable jit_uni_eltwise_int for
+ threadpool
+
+---
+ src/cpu/aarch64/jit_uni_eltwise_int.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/aarch64/jit_uni_eltwise_int.cpp b/src/cpu/aarch64/jit_uni_eltwise_int.cpp
+index fee72490b2b..bfe5dff619f 100644
+--- a/src/cpu/aarch64/jit_uni_eltwise_int.cpp
++++ b/src/cpu/aarch64/jit_uni_eltwise_int.cpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2021 Intel Corporation
+ * Copyright 2021 FUJITSU LIMITED
+-* Copyright 2025 Arm Ltd. and affiliates
++* Copyright 2025-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -349,6 +349,9 @@ void jit_uni_subkernel_int_t<sve_512>::store_8bit(const bool vectorize,
+ template <cpu_isa_t isa, data_type_t d_type>
+ status_t jit_uni_eltwise_int_fwd_t<isa, d_type>::pd_t::init(
+         const engine_t *engine) {
++    VDISPATCH_ELTWISE(DNNL_CPU_THREADING_RUNTIME != DNNL_RUNTIME_THREADPOOL,
++            VERBOSE_UNSUPPORTED_THREADPOOL_RUNTIME);
++
+     bool ok = is_fwd() && mayiuse(isa)
+             && utils::everyone_is(
+                     d_type, src_md()->data_type, dst_md()->data_type)

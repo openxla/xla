@@ -136,6 +136,7 @@ use_repo(
     "oneccl_v1",
     "onednn",
     "onednn_async",
+    "onednn_async_aarch64",
     "org_sqlite",
     "pthreadpool",
     "raft",
@@ -170,6 +171,7 @@ single_version_override(
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.defaults(python_version = "3.11")
 python.toolchain(python_version = "3.11")
+python.toolchain(python_version = "3.12")
 use_repo(python, "pythons_hub")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
@@ -192,6 +194,17 @@ pip.parse(
     hub_name = "xla_pypi",
     python_version = "3.11",
     requirements_lock = "//:requirements_lock_3_11.txt",
+    whl_modifications = {
+        "@pypi_mods//:numpy.json": "numpy",
+    },
+)
+pip.parse(
+    extra_hub_aliases = {
+        "numpy": ["numpy_headers"],
+    },
+    hub_name = "xla_pypi",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_lock_3_12.txt",
     whl_modifications = {
         "@pypi_mods//:numpy.json": "numpy",
     },
