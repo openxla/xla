@@ -373,6 +373,18 @@ TEST_F(WhileLoopAnalysisTest, ExactBoundTrivialTripCount) {
       CalculateTripCount(0, 40, 5, ComparisonDirection::kLe));
 }
 
+TEST_F(WhileLoopAnalysisTest, NonDivisibleStepDoesNotUndercount) {
+  EXPECT_EQ(
+      MakeWhileLoopAndGetTripCount(0, 1, 2, ComparisonDirection::kLt).value(),
+      1);
+}
+
+TEST_F(WhileLoopAnalysisTest, EmptyLessEqualLoopHasZeroTrips) {
+  EXPECT_EQ(
+      MakeWhileLoopAndGetTripCount(6, 5, 5, ComparisonDirection::kLe).value(),
+      0);
+}
+
 TEST_F(WhileLoopAnalysisTest, NoAIVNoConstChain) {
   absl::string_view kHloModule = R"(
     HloModule ModuleWithWhile
