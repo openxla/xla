@@ -17,19 +17,18 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/strings/ascii.h"
-#include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -42,14 +41,12 @@ TEST(SharedMemoryUseTest, ArrayReversalWorks) {
   // Create an array with a 2D pattern of numbers, fill the requested shared
   // memory with it, read it back inverting both axes,
   // copy the result back to the host and verify it.
-  TF_ASSERT_OK_AND_ASSIGN(auto platform_name,
-                          PlatformUtil::CanonicalPlatformName("gpu"));
-  TF_ASSERT_OK_AND_ASSIGN(se::Platform * platform,
-                          se::PlatformManager::PlatformWithName(
-                              absl::AsciiStrToUpper(platform_name)));
-  TF_ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
-                          platform->ExecutorForDevice(0));
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithName(se::GpuPlatformName()));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   // Use 90% of the available shared memory to verify that a fractional
   // amount works as well, not only the full size.
@@ -64,8 +61,7 @@ TEST(SharedMemoryUseTest, ArrayReversalWorks) {
   const int buffer_size_bytes = n_elements * sizeof(data_type);
   VLOG(1) << "Using " << buffer_size_bytes << " bytes of shared memory";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto kernel,
-                          se::gpu::LoadDynShmemTestKernel(executor));
+  ASSERT_OK_AND_ASSIGN(auto kernel, se::gpu::LoadDynShmemTestKernel(executor));
 
   se::DeviceAddress<data_type> device_buffer =
       executor->AllocateArray<data_type>(n_elements);
