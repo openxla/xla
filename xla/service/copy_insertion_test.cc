@@ -3991,7 +3991,22 @@ ENTRY main {
   CopyInsertion copy_insertion(&alias_info_,
                                /*use_region_based_live_range_analysis=*/-1);
   ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
-  EXPECT_EQ(CountCopies(*module), 2);
+  // Broadcast operands of in-place operations are cloned when they have
+  // multiple users so that each in-place operation gets a distinct buffer
+  // without requiring any physical copy instructions.
+  EXPECT_EQ(CountCopies(*module), 0);
+  auto* dus5 = module->entry_computation()->GetInstructionWithName(
+      "dynamic-update-slice.5");
+  auto* dus4 = module->entry_computation()->GetInstructionWithName(
+      "dynamic-update-slice.4");
+  EXPECT_NE(dus5->operand(0), dus4->operand(0));
+  EXPECT_EQ(dus5->operand(0)->opcode(), HloOpcode::kBroadcast);
+  EXPECT_EQ(dus4->operand(0)->opcode(), HloOpcode::kBroadcast);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                          HloAliasAnalysis::Run(module.get(), &alias_info_));
+  EXPECT_NE(&alias_analysis->GetUniqueBufferAt(dus5),
+            &alias_analysis->GetUniqueBufferAt(dus4));
 }
 
 TEST_F(CopyInsertionTest, CustomCallAliasingCopyInsertedAliasedParam) {
