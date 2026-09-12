@@ -25,6 +25,14 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 
 namespace mlir {
+
+class StackFrameIndexBuilderTestPeer {
+ public:
+  static int MemoSize(const StackFrameIndexBuilder& builder) {
+    return builder.call_stack_to_frame_id_.size();
+  }
+};
+
 namespace {
 
 Location MakeFrameLoc(MLIRContext* ctx, const std::string& name,
@@ -57,10 +65,10 @@ TEST(StackFrameIndexBuilderTest, CallSiteLocConcatenation) {
   Location abcd = CallSiteLoc::get(ab, cd);
 
   StackFrameIndexBuilder builder;
-  auto result = builder.AddCallStackAndGetFirstFrameId(abcd);
+  int frame_id = builder.AddCallStackAndGetFirstFrameId(abcd);
   auto proto = builder.Build();
 
-  std::vector<std::string> names = GetFrameNames(proto, result.last_frame_id);
+  std::vector<std::string> names = GetFrameNames(proto, frame_id);
   std::vector<std::string> expected = {"A", "B", "C", "D"};
   EXPECT_EQ(names, expected);
 }
@@ -81,10 +89,10 @@ TEST(StackFrameIndexBuilderTest, DeeplyNestedCallSiteLoc) {
   Location abcdef = CallSiteLoc::get(abc, def);
 
   StackFrameIndexBuilder builder;
-  auto result = builder.AddCallStackAndGetFirstFrameId(abcdef);
+  int frame_id = builder.AddCallStackAndGetFirstFrameId(abcdef);
   auto proto = builder.Build();
 
-  std::vector<std::string> names = GetFrameNames(proto, result.last_frame_id);
+  std::vector<std::string> names = GetFrameNames(proto, frame_id);
   std::vector<std::string> expected = {"A", "B", "C", "D", "E", "F"};
   EXPECT_EQ(names, expected);
 }
@@ -101,10 +109,10 @@ TEST(StackFrameIndexBuilderTest, LinearChain) {
   Location abcd = CallSiteLoc::get(a, bcd);
 
   StackFrameIndexBuilder builder;
-  auto result = builder.AddCallStackAndGetFirstFrameId(abcd);
+  int frame_id = builder.AddCallStackAndGetFirstFrameId(abcd);
   auto proto = builder.Build();
 
-  std::vector<std::string> names = GetFrameNames(proto, result.last_frame_id);
+  std::vector<std::string> names = GetFrameNames(proto, frame_id);
   std::vector<std::string> expected = {"A", "B", "C", "D"};
   EXPECT_EQ(names, expected);
 }
@@ -130,10 +138,10 @@ TEST(StackFrameIndexBuilderTest, InlinedOpWithOpNameWrapperLocs) {
   Location inlined = CallSiteLoc::get(callee_op, caller_op);
 
   StackFrameIndexBuilder builder;
-  auto result = builder.AddCallStackAndGetFirstFrameId(inlined);
+  int frame_id = builder.AddCallStackAndGetFirstFrameId(inlined);
   auto proto = builder.Build();
 
-  std::vector<std::string> names = GetFrameNames(proto, result.last_frame_id);
+  std::vector<std::string> names = GetFrameNames(proto, frame_id);
   std::vector<std::string> expected = {"A", "B", "C", "D"};
   EXPECT_EQ(names, expected);
 }
@@ -148,10 +156,10 @@ TEST(StackFrameIndexBuilderTest, FusedLocKeepsFirstCallStack) {
   Location fused = FusedLoc::get(&ctx, {CallSiteLoc::get(a, b), c});
 
   StackFrameIndexBuilder builder;
-  auto result = builder.AddCallStackAndGetFirstFrameId(fused);
+  int frame_id = builder.AddCallStackAndGetFirstFrameId(fused);
   auto proto = builder.Build();
 
-  std::vector<std::string> names = GetFrameNames(proto, result.last_frame_id);
+  std::vector<std::string> names = GetFrameNames(proto, frame_id);
   std::vector<std::string> expected = {"A", "B"};
   EXPECT_EQ(names, expected);
 }
@@ -165,12 +173,90 @@ TEST(StackFrameIndexBuilderTest, FusedLocSkipsSubLocationsWithoutFrames) {
   Location fused = FusedLoc::get(&ctx, {no_frames, a});
 
   StackFrameIndexBuilder builder;
-  auto result = builder.AddCallStackAndGetFirstFrameId(fused);
+  int frame_id = builder.AddCallStackAndGetFirstFrameId(fused);
   auto proto = builder.Build();
 
-  std::vector<std::string> names = GetFrameNames(proto, result.last_frame_id);
+  std::vector<std::string> names = GetFrameNames(proto, frame_id);
   std::vector<std::string> expected = {"A"};
   EXPECT_EQ(names, expected);
+}
+
+// Ops sharing a call stack, or a caller, reuse the frames of the first walk;
+// the same frame under another caller, or seen as a root, gets its own entry.
+TEST(StackFrameIndexBuilderTest, SharedCallStacksAndCallers) {
+  MLIRContext ctx;
+  Location a = MakeFrameLoc(&ctx, "A", "a.py", 1);
+  Location b = MakeFrameLoc(&ctx, "B", "b.py", 2);
+  Location c = MakeFrameLoc(&ctx, "C", "c.py", 3);
+  Location d = MakeFrameLoc(&ctx, "D", "d.py", 4);
+  Location e = MakeFrameLoc(&ctx, "E", "e.py", 5);
+  auto wrap = [&](const char* name, Location loc) {
+    return NameLoc::get(StringAttr::get(&ctx, name), loc);
+  };
+  Location callee_op_a =
+      wrap("add:", wrap("jit(f)/add", CallSiteLoc::get(a, b)));
+  Location callee_op_e =
+      wrap("mul:", wrap("jit(f)/mul", CallSiteLoc::get(e, b)));
+  Location caller_op =
+      wrap("call:", wrap("jit(f)/call", CallSiteLoc::get(c, d)));
+  Location inlined_a = CallSiteLoc::get(callee_op_a, caller_op);
+  Location inlined_e = CallSiteLoc::get(callee_op_e, caller_op);
+
+  StackFrameIndexBuilder builder;
+  int frame_a = builder.AddCallStackAndGetFirstFrameId(inlined_a);
+  EXPECT_EQ(builder.AddCallStackAndGetFirstFrameId(inlined_a), frame_a);
+  int frame_e = builder.AddCallStackAndGetFirstFrameId(inlined_e);
+  int frame_ac = builder.AddCallStackAndGetFirstFrameId(CallSiteLoc::get(a, c));
+  int root_a = builder.AddCallStackAndGetFirstFrameId(callee_op_a);
+  xla::StackFrameIndexProto proto = builder.Build();
+
+  using Names = std::vector<std::string>;
+  EXPECT_EQ(GetFrameNames(proto, frame_a), Names({"A", "B", "C", "D"}));
+  EXPECT_EQ(GetFrameNames(proto, frame_e), Names({"E", "B", "C", "D"}));
+  EXPECT_EQ(GetFrameNames(proto, frame_ac), Names({"A", "C"}));
+  EXPECT_EQ(GetFrameNames(proto, root_a), Names({"A", "B"}));
+  // D, C, B, A and E under the shared caller; C and A under C; B and A as a
+  // root: no duplicate entries for the repeated root or the shared caller.
+  EXPECT_EQ(proto.stack_frames_size(), 9);
+}
+
+// Two ops inlined under one caller share the caller's frames and the callee
+// frames below their leaves; the memo holds each (location, parent) pair once
+// and none of the per op name wrappers.
+TEST(StackFrameIndexBuilderTest, MemoHoldsSharedLocationsOnly) {
+  MLIRContext ctx;
+  Location a = MakeFrameLoc(&ctx, "A", "a.py", 1);
+  Location b = MakeFrameLoc(&ctx, "B", "b.py", 2);
+  Location c = MakeFrameLoc(&ctx, "C", "c.py", 3);
+  Location d = MakeFrameLoc(&ctx, "D", "d.py", 4);
+  Location e = MakeFrameLoc(&ctx, "E", "e.py", 5);
+  auto wrap = [&](const char* name, Location loc) {
+    return NameLoc::get(StringAttr::get(&ctx, name), loc);
+  };
+  Location caller_op =
+      wrap("call:", wrap("jit(f)/call", CallSiteLoc::get(c, d)));
+  Location inlined_a = CallSiteLoc::get(
+      wrap("add:", wrap("jit(f)/add", CallSiteLoc::get(a, b))), caller_op);
+  Location inlined_e = CallSiteLoc::get(
+      wrap("mul:", wrap("jit(f)/mul", CallSiteLoc::get(e, b))), caller_op);
+
+  StackFrameIndexBuilder builder;
+  int frame_a = builder.AddCallStackAndGetFirstFrameId(inlined_a);
+  int frame_e = builder.AddCallStackAndGetFirstFrameId(inlined_e);
+  // Pairs walked, with the parent in brackets: inlined_a [0], CallSiteLoc(c,
+  // d) [0], d [0], c [D], CallSiteLoc(a, b) [C], b [C], a [B], inlined_e [0],
+  // CallSiteLoc(e, b) [C] and e [B]; b [C] is a hit and the wrappers are not
+  // keys.
+  EXPECT_EQ(StackFrameIndexBuilderTestPeer::MemoSize(builder), 10);
+  EXPECT_EQ(builder.AddCallStackAndGetFirstFrameId(inlined_a), frame_a);
+  EXPECT_EQ(builder.AddCallStackAndGetFirstFrameId(inlined_e), frame_e);
+  EXPECT_EQ(StackFrameIndexBuilderTestPeer::MemoSize(builder), 10);
+
+  xla::StackFrameIndexProto proto = builder.Build();
+  using Names = std::vector<std::string>;
+  EXPECT_EQ(GetFrameNames(proto, frame_a), Names({"A", "B", "C", "D"}));
+  EXPECT_EQ(GetFrameNames(proto, frame_e), Names({"E", "B", "C", "D"}));
+  EXPECT_EQ(proto.stack_frames_size(), 5);
 }
 
 }  // namespace
