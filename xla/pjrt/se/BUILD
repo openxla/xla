@@ -449,3 +449,18 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+xla_cc_test(
+    name = "buffer_sequencing_event_test",
+    srcs = ["buffer_sequencing_event_test.cc"],
+    deps = [
+        ":event_pool",
+        ":local_device_state",
+        "//xla/pjrt:device_event",
+        "//xla/pjrt/c:pjrt_c_api_device_event_hdrs",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
