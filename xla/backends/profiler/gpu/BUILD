@@ -88,6 +88,7 @@ cc_library(
     deps = [
         ":rocm_collector",
         ":rocm_tracer",
+        ":rocm_tracer_options_utils",
         ":rocm_tracer_utils",
         "//xla:debug_options_flags",
         "//xla/stream_executor/rocm:roctracer_wrapper",
@@ -538,6 +539,53 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "rocm_tracer_utils_test",
+    size = "small",
+    srcs = ["rocm_tracer_utils_test.cc"],
+    deps = [
+        ":rocm_tracer_utils",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Deliberately carries no rocm-only/gpu/manual tag: this target has no ROCm
+# dependency, which is what lets its test run on ordinary presubmit machines.
+# Keep it that way.
+cc_library(
+    name = "rocm_tracer_options_utils",
+    srcs = ["rocm_tracer_options_utils.cc"],
+    hdrs = ["rocm_tracer_options_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":rocm_tracer_utils",
+        "//xla/tsl/profiler/utils:profiler_options_util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_cc_test(
+    name = "rocm_tracer_options_utils_test",
+    size = "small",
+    srcs = ["rocm_tracer_options_utils_test.cc"],
+    deps = [
+        ":rocm_tracer_options_utils",
+        ":rocm_tracer_utils",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
 cc_library(
     name = "rocm_collector",
     srcs = ["rocm_collector.cc"],
@@ -633,6 +681,32 @@ xla_cc_test(
         "@local_config_rocm//rocm:rocm_headers",
         "@local_config_rocm//rocm:rocprofiler_sdk",  # buildcleaner: keep
         "@local_config_rocm//rocm:rocprofiler_sdk_roctx",  # buildcleaner: keep
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_cc_test(
+    name = "device_tracer_rocm_test",
+    size = "small",
+    srcs = ["device_tracer_rocm_test.cc"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        "manual",
+    ]),
+    deps = [
+        ":device_tracer_rocm",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:hip",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk",  # buildcleaner: keep
+        "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
