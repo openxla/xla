@@ -15,27 +15,40 @@ limitations under the License.
 
 #include "xla/hlo/translate/mhlo_to_hlo/stack_frame_index_builder.h"
 
-#include <map>
 #include <string>
 #include <tuple>
 #include <utility>
-#include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/StringRef.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/service/hlo.pb.h"
 
 namespace mlir {
+namespace {
 
-int FindId(absl::string_view key, std::map<absl::string_view, int>& index) {
+int FindId(absl::string_view key,
+           const absl::flat_hash_map<absl::string_view, int>& index) {
   auto entry_iterator = index.find(key);
   if (entry_iterator == index.end()) {
     return 0;
   }
   return entry_iterator->second;
 }
+
+absl::string_view ToStringView(llvm::StringRef ref) {
+  return absl::string_view(ref.data(), ref.size());
+}
+
+bool IsFrameNameLocation(mlir::Location location) {
+  return isa<mlir::NameLoc>(location) &&
+         isa<mlir::FileLineColLoc>(cast<mlir::NameLoc>(location).getChildLoc());
+}
+
+}  // namespace
 
 int StackFrameIndexBuilder::AddStackFrameLocation(
     const mlir::NameLoc& name_location, int parent_frame_id) {
@@ -46,26 +59,28 @@ int StackFrameIndexBuilder::AddStackFrameLocation(
   int end_line = file_line_location.getEndLine();
   int column = file_line_location.getColumn();
   int end_column = file_line_location.getEndColumn();
-  std::string filename = file_line_location.getFilename().str();
-  std::string function_name = name_location.getName().str();
+  absl::string_view filename =
+      ToStringView(file_line_location.getFilename().getValue());
+  absl::string_view function_name =
+      ToStringView(name_location.getName().getValue());
 
   int filename_id = FindId(filename, file_name_to_id_);
   if (filename_id == 0) {
-    indexes_.add_file_names(std::move(filename));
+    indexes_.add_file_names(filename);
     filename_id = indexes_.file_names_size();
     file_name_to_id_[indexes_.file_names(filename_id - 1)] = filename_id;
   }
 
   int function_name_id = FindId(function_name, function_name_to_id_);
   if (function_name_id == 0) {
-    indexes_.add_function_names(std::move(function_name));
+    indexes_.add_function_names(function_name);
     function_name_id = indexes_.function_names_size();
     function_name_to_id_[indexes_.function_names(function_name_id - 1)] =
         function_name_id;
   }
 
-  auto location_tuple =
-      std::make_tuple(filename_id, function_name_id, line, column);
+  std::tuple<int, int, int, int> location_tuple(filename_id, function_name_id,
+                                                line, column);
   auto file_location_iterator = file_location_to_id_.find(location_tuple);
   int file_location_id = 0;
   if (file_location_iterator == file_location_to_id_.end()) {
@@ -83,8 +98,8 @@ int StackFrameIndexBuilder::AddStackFrameLocation(
     file_location_id = file_location_iterator->second;
   }
 
-  auto frame_tuple = std::make_tuple(file_location_id, parent_frame_id);
-  auto stack_frame_iterator = frame_to_id_.find(frame_tuple);
+  std::pair<int, int> frame_key(file_location_id, parent_frame_id);
+  auto stack_frame_iterator = frame_to_id_.find(frame_key);
   int stack_frame_id = 0;
   if (stack_frame_iterator == frame_to_id_.end()) {
     auto frame = indexes_.add_stack_frames();
@@ -92,7 +107,7 @@ int StackFrameIndexBuilder::AddStackFrameLocation(
     frame->set_parent_frame_id(parent_frame_id);
 
     stack_frame_id = indexes_.stack_frames_size();
-    frame_to_id_[frame_tuple] = stack_frame_id;
+    frame_to_id_[frame_key] = stack_frame_id;
   } else {
     stack_frame_id = stack_frame_iterator->second;
   }
@@ -100,70 +115,67 @@ int StackFrameIndexBuilder::AddStackFrameLocation(
   return stack_frame_id;
 }
 
-namespace {
+int StackFrameIndexBuilder::AddFrames(mlir::Location loc, int parent_frame_id) {
+  // A location reached without a parent is a whole call stack: an op's root, a
+  // caller below it, or a wrapper around either. Ops share them, so each is
+  // indexed once; a repeat would find every frame in place and return the
+  // same id.
+  const bool is_call_stack =
+      parent_frame_id == StackFrameIndexBuilder::kInvalidIndex;
+  if (is_call_stack) {
+    auto call_stack_iterator = call_stack_to_frame_id_.find(loc);
+    if (call_stack_iterator != call_stack_to_frame_id_.end()) {
+      return call_stack_iterator->second;
+    }
+  }
 
-bool IsFrameNameLocation(mlir::Location location) {
-  return isa<mlir::NameLoc>(location) &&
-         isa<mlir::FileLineColLoc>(cast<mlir::NameLoc>(location).getChildLoc());
-}
-
-// Appends the frames of the call stack encoded in `loc` to `frames`, from the
-// innermost (callee) frame to the outermost (caller) frame. Returns whether
-// `loc` holds a call stack.
-bool CollectFrames(mlir::Location loc, std::vector<mlir::NameLoc>& frames) {
-  // Based on JAX's `jaxlib/mlir/_mlir_libs/traceback_to_location.cc`, and on
-  // `stackLocations` in `mlir/lib/Transforms/Utils/InliningUtils.cpp`.
+  int frame_id = parent_frame_id;
   if (auto call_site = dyn_cast<mlir::CallSiteLoc>(loc)) {
-    bool callee_has_frames = CollectFrames(call_site.getCallee(), frames);
-    bool caller_has_frames = CollectFrames(call_site.getCaller(), frames);
-    return callee_has_frames || caller_has_frames;
-  }
-  // Also `jaxlib/mlir/_mlir_libs/traceback_to_location.cc`, which emits one
-  // `NameLoc(<function name>, FileLineColRange)` per Python frame.
-  if (IsFrameNameLocation(loc)) {
-    frames.push_back(cast<mlir::NameLoc>(loc));
-    return true;
-  }
-  // Based on `source_info_to_location` in JAX's
-  // `jax/_src/interpreters/mlir.py`, and on
-  // `xla/hlo/translate/hlo_to_mhlo/location_importer.cc`.
-  if (auto name_loc = dyn_cast<mlir::NameLoc>(loc)) {
-    return CollectFrames(name_loc.getChildLoc(), frames);
-  }
-  // Based on `xla/hlo/translate/hlo_to_mhlo/location_importer.cc`. The
-  // sub-locations are unrelated ops, so keep the first stack instead of
-  // concatenating them.
-  if (auto fused_loc = dyn_cast<mlir::FusedLoc>(loc)) {
+    // Based on JAX's jaxlib/mlir/_mlir_libs/traceback_to_location.cc, and on
+    // stackLocations in mlir/lib/Transforms/Utils/InliningUtils.cpp. The
+    // caller's frames are the parents of the callee's.
+    int caller_frame_id = AddFrames(call_site.getCaller(), parent_frame_id);
+    frame_id = AddFrames(call_site.getCallee(), caller_frame_id);
+  } else if (IsFrameNameLocation(loc)) {
+    // Also traceback_to_location.cc, which emits one
+    // NameLoc(<function name>, FileLineColRange) per Python frame.
+    frame_id = AddStackFrameLocation(cast<mlir::NameLoc>(loc), parent_frame_id);
+  } else if (auto name_loc = dyn_cast<mlir::NameLoc>(loc)) {
+    // Based on source_info_to_location in JAX's
+    // jax/_src/interpreters/mlir.py, and on
+    // xla/hlo/translate/hlo_to_mhlo/location_importer.cc.
+    frame_id = AddFrames(name_loc.getChildLoc(), parent_frame_id);
+  } else if (auto fused_loc = dyn_cast<mlir::FusedLoc>(loc)) {
+    // Based on xla/hlo/translate/hlo_to_mhlo/location_importer.cc. The
+    // sub-locations are unrelated ops, so keep the first stack instead of
+    // concatenating them; a sub-location without frames hands the parent back.
     for (mlir::Location sub_loc : fused_loc.getLocations()) {
-      if (CollectFrames(sub_loc, frames)) {
-        return true;
+      frame_id = AddFrames(sub_loc, parent_frame_id);
+      if (frame_id != parent_frame_id) {
+        break;
       }
     }
   }
-  return false;
-}
 
-}  // namespace
+  if (is_call_stack) {
+    call_stack_to_frame_id_[loc] = frame_id;
+  }
+  return frame_id;
+}
 
 StackFrameIndexBuilder::AddStackFrameResult
 StackFrameIndexBuilder::AddCallStackAndGetFirstFrameId(
     const mlir::Location& root_loc) {
-  std::vector<mlir::NameLoc> frames;
-  CollectFrames(root_loc, frames);
-
-  int parent_frame_id = StackFrameIndexBuilder::kInvalidIndex;
-  for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
-    parent_frame_id = AddStackFrameLocation(*it, parent_frame_id);
-  }
-
-  if (parent_frame_id == StackFrameIndexBuilder::kInvalidIndex) {
+  int frame_id = AddFrames(root_loc, StackFrameIndexBuilder::kInvalidIndex);
+  if (frame_id == StackFrameIndexBuilder::kInvalidIndex) {
     return {StackFrameIndexBuilder::kInvalidIndex, "", 0};
   }
 
-  auto stack_frame = indexes_.stack_frames(parent_frame_id - 1);
-  auto file_location =
+  const xla::StackFrameIndexProto::StackFrame& stack_frame =
+      indexes_.stack_frames(frame_id - 1);
+  const xla::StackFrameIndexProto::FileLocation& file_location =
       indexes_.file_locations(stack_frame.file_location_id() - 1);
-  return {parent_frame_id,
+  return {frame_id,
           indexes_.file_names(file_location.file_name_id() - 1),
           file_location.line(),
           file_location.end_line(),
