@@ -337,6 +337,16 @@ class XLAConfigOptions:
     rc = []
     build_and_test_tag_filters = list(_DEFAULT_BUILD_AND_TEST_TAG_FILTERS)
 
+    # Local copy: this method must not mutate self.compiler_options (or any
+    # other field), since XLAConfigOptions is frozen and callers may
+    # reasonably call to_bazelrc_lines() more than once, or share a
+    # compiler_options list across multiple XLAConfigOptions instances.
+    # Appending directly to self.compiler_options previously caused
+    # "-Wno-error=unused-command-line-argument" /
+    # "-Wno-gnu-offsetof-extensions" / "-Wno-c23-extensions" to accumulate
+    # duplicates on every additional call.
+    compiler_options = list(self.compiler_options)
+
     if self.os == OS.DARWIN:
       build_and_test_tag_filters.append("-no_mac")
 
@@ -349,7 +359,7 @@ class XLAConfigOptions:
         rc.append(f"build --action_env CLANG_COMPILER_PATH={dpav.clang_path}")
         rc.append(f"build --repo_env CC={dpav.clang_path}")
         rc.append(f"build --repo_env BAZEL_COMPILER={dpav.clang_path}")
-      self.compiler_options.append("-Wno-error=unused-command-line-argument")
+      compiler_options.append("-Wno-error=unused-command-line-argument")
       if dpav.lld_path:
         rc.append(f"build --linkopt --ld-path={dpav.lld_path}")
 
@@ -448,10 +458,10 @@ class XLAConfigOptions:
     # Needed due to error in @upb//:upb which is a dep of @com_github_grpc_grpc
     # error: defining a type within 'offsetof' is a Clang extension
     if dpav.clang_major_version in (16, 17, 18):
-      self.compiler_options.append("-Wno-gnu-offsetof-extensions")
+      compiler_options.append("-Wno-gnu-offsetof-extensions")
     # error: defining a type within 'offsetof' is a C23 extension
     if dpav.clang_major_version and dpav.clang_major_version >= 19:
-      self.compiler_options.append("-Wno-c23-extensions")
+      compiler_options.append("-Wno-c23-extensions")
 
     rc.append(f"build --action_env PYTHON_BIN_PATH={self.python_bin_path}")
     rc.append(f"build --python_path {self.python_bin_path}")
@@ -460,7 +470,7 @@ class XLAConfigOptions:
 
     rc.extend([
         f"build --copt {compiler_option}"
-        for compiler_option in self.compiler_options
+        for compiler_option in compiler_options
     ])
 
     # Add build and test tag filters
