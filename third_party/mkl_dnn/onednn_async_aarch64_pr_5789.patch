@@ -1,0 +1,309 @@
+From 7aca67ce0253b042d9ce530d14654619386b0f32 Mon Sep 17 00:00:00 2001
+From: Renato Arantes <renato.arantes@arm.com>
+Date: Sun, 9 Aug 2026 19:07:04 +0000
+Subject: [PATCH] cpu: aarch64: make jit:uni reorder async compatible
+
+- Guard optional scale pointers.
+- Precompute destination scales in order.
+- Capture asynchronous work by value.
+- Schedule the 0D path asynchronously.
+- Read zero points inside async tasks.
+- Make compensation reduction async-safe.
+---
+ src/cpu/aarch64/reorder/jit_uni_reorder.cpp | 178 +++++++++++++-------
+ 1 file changed, 116 insertions(+), 62 deletions(-)
+
+diff --git a/src/cpu/aarch64/reorder/jit_uni_reorder.cpp b/src/cpu/aarch64/reorder/jit_uni_reorder.cpp
+index de8a827702..5c41419ef9 100644
+--- a/src/cpu/aarch64/reorder/jit_uni_reorder.cpp
++++ b/src/cpu/aarch64/reorder/jit_uni_reorder.cpp
+@@ -1,7 +1,7 @@
+ /*******************************************************************************
+ * Copyright 2018 Intel Corporation
+ * Copyright 2020-2024 FUJITSU LIMITED
+-* Copyright 2022-2025 Arm Ltd. and affiliates
++* Copyright 2022-2026 Arm Ltd. and affiliates
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+@@ -19,6 +19,7 @@
+ #include <cassert>
+ 
+ #include "common/c_types_map.hpp"
++#include "common/compiler_workarounds.hpp"
+ #include "common/dnnl_thread.hpp"
+ #include "common/memory_desc_wrapper.hpp"
+ #include "common/primitive.hpp"
+@@ -49,6 +50,15 @@ namespace impl {
+ namespace cpu {
+ namespace aarch64 {
+ 
++// Scale arguments are not present when their type is NONE. Here we check the pointer
++// for null before applying the offset to avoid performing arithmetic on a null pointer.
++static const float *scale_ptr(
++        const float *ptr, tr::scale_type_t type, ptrdiff_t offset) {
++    if (type == tr::scale_type_t::NONE) return nullptr;
++    assert(ptr);
++    return ptr + offset;
++}
++
+ status_t jit_uni_reorder_t::pd_t::init(const engine_t *engine,
+         const engine_t *src_engine, const engine_t *dst_engine) {
+     CHECK(cpu_reorder_pd_t::init(engine, src_engine, dst_engine));
+@@ -83,11 +93,9 @@ status_t jit_uni_reorder_t::pd_t::init_scratchpad() {
+         const memory_desc_wrapper input_d(src_md());
+         int mask = attr()->scales_.get_mask(DNNL_ARG_DST);
+         get_D_values(input_d, mask, nullptr, &D_mask_, nullptr);
+-        if (D_mask_ > 1) {
+-            scratchpad.template book<float>(
+-                    memory_tracking::names::key_reorder_precomputed_dst_scales,
+-                    D_mask_);
+-        }
++        scratchpad.template book<float>(
++                memory_tracking::names::key_reorder_precomputed_dst_scales,
++                D_mask_);
+     }
+ 
+     return status::success;
+@@ -153,8 +161,8 @@ void jit_uni_reorder_t::omp_driver_0d(int off, const char *in, char *out,
+     tr::call_param_t base_params;
+     base_params.in = in;
+     base_params.out = out;
+-    base_params.src_scales = src_scales;
+-    base_params.dst_scales = dst_scales;
++    base_params.src_scales = scale_ptr(src_scales, prb.src_scale_type, 0);
++    base_params.dst_scales = scale_ptr(dst_scales, prb.dst_scale_type, 0);
+     base_params.src_zp = src_zp;
+     base_params.dst_zp = dst_zp;
+     base_params.compensation_scratch = compensation_scratch;
+@@ -182,8 +190,11 @@ void jit_uni_reorder_t::omp_driver_1d(int ithr, int nthr, int off,
+         tr::call_param_t base_params;
+         base_params.in = in + d0 * ns[0].is * data_type_size(prb.itype);
+         base_params.out = out + d0 * ns[0].os * data_type_size(prb.otype);
+-        base_params.src_scales = src_scales + d0 * ns[0].ss;
+-        base_params.dst_scales = dst_scales + d0 * ns[0].ss;
++        const auto scale_offset = d0 * ns[0].ss;
++        base_params.src_scales
++                = scale_ptr(src_scales, prb.src_scale_type, scale_offset);
++        base_params.dst_scales
++                = scale_ptr(dst_scales, prb.dst_scale_type, scale_offset);
+         base_params.src_zp = src_zp;
+         base_params.dst_zp = dst_zp;
+         base_params.compensation_scratch = compensation_scratch + d0 * ns[0].cs;
+@@ -217,8 +228,11 @@ void jit_uni_reorder_t::omp_driver_2d(int ithr, int nthr, int off,
+                 + (d0 * ns[0].is + d1 * ns[1].is) * data_type_size(prb.itype);
+         base_params.out = out
+                 + (d0 * ns[0].os + d1 * ns[1].os) * data_type_size(prb.otype);
+-        base_params.src_scales = src_scales + d0 * ns[0].ss + d1 * ns[1].ss;
+-        base_params.dst_scales = dst_scales + d0 * ns[0].ss + d1 * ns[1].ss;
++        const auto scale_offset = d0 * ns[0].ss + d1 * ns[1].ss;
++        base_params.src_scales
++                = scale_ptr(src_scales, prb.src_scale_type, scale_offset);
++        base_params.dst_scales
++                = scale_ptr(dst_scales, prb.dst_scale_type, scale_offset);
+         base_params.src_zp = src_zp;
+         base_params.dst_zp = dst_zp;
+         base_params.compensation_scratch
+@@ -255,10 +269,11 @@ void jit_uni_reorder_t::omp_driver_3d(int ithr, int nthr, int off,
+         base_params.out = out
+                 + (d0 * ns[0].os + d1 * ns[1].os + d2 * ns[2].os)
+                         * data_type_size(prb.otype);
++        const auto scale_offset = d0 * ns[0].ss + d1 * ns[1].ss + d2 * ns[2].ss;
+         base_params.src_scales
+-                = src_scales + d0 * ns[0].ss + d1 * ns[1].ss + d2 * ns[2].ss;
++                = scale_ptr(src_scales, prb.src_scale_type, scale_offset);
+         base_params.dst_scales
+-                = dst_scales + d0 * ns[0].ss + d1 * ns[1].ss + d2 * ns[2].ss;
++                = scale_ptr(dst_scales, prb.dst_scale_type, scale_offset);
+         base_params.src_zp = src_zp;
+         base_params.dst_zp = dst_zp;
+         base_params.compensation_scratch = compensation_scratch + d0 * ns[0].cs
+@@ -298,10 +313,12 @@ void jit_uni_reorder_t::omp_driver_4d(int ithr, int nthr, int off,
+                 + (d0 * ns[0].os + d1 * ns[1].os + d2 * ns[2].os
+                           + d3 * ns[3].os)
+                         * data_type_size(prb.otype);
+-        base_params.src_scales = src_scales + d0 * ns[0].ss + d1 * ns[1].ss
+-                + d2 * ns[2].ss + d3 * ns[3].ss;
+-        base_params.dst_scales = dst_scales + d0 * ns[0].ss + d1 * ns[1].ss
+-                + d2 * ns[2].ss + d3 * ns[3].ss;
++        const auto scale_offset
++                = d0 * ns[0].ss + d1 * ns[1].ss + d2 * ns[2].ss + d3 * ns[3].ss;
++        base_params.src_scales
++                = scale_ptr(src_scales, prb.src_scale_type, scale_offset);
++        base_params.dst_scales
++                = scale_ptr(dst_scales, prb.dst_scale_type, scale_offset);
+         base_params.src_zp = src_zp;
+         base_params.dst_zp = dst_zp;
+         base_params.compensation_scratch = compensation_scratch + d0 * ns[0].cs
+@@ -346,10 +363,10 @@ void jit_uni_reorder_t::omp_driver(const char *in, char *out,
+     const bool req_compensation = req_s8s8_comp || req_asymmetric_comp;
+     assert(ndims - ndims_ker <= ndims_driver_max);
+ 
+-    auto src_zp = src_zero_points ? src_zero_points[0] : 0;
+-    auto dst_zp = dst_zero_points ? dst_zero_points[0] : 0;
+     int32_t *compensation_reduce_scratch = scratchpad.template get<int32_t>(
+             memory_tracking::names::key_reorder_space);
++    float *dst_scales_inv_scratch = scratchpad.template get<float>(
++            memory_tracking::names::key_reorder_precomputed_dst_scales);
+ 
+     const memory_desc_wrapper od(pd()->dst_md());
+     const auto G = pd()->with_groups_ ? od.padded_dims()[0] : 1;
+@@ -358,48 +375,72 @@ void jit_uni_reorder_t::omp_driver(const char *in, char *out,
+     const auto wspace_per_thr_size = utils::rnd_up(G * N, cache_line_size);
+     const auto wspace_per_thr_bytes = wspace_per_thr_size * sizeof(int32_t);
+ 
+-    if (ndims - ndims_ker == 0) {
+-        if (req_compensation)
+-            std::memset(compensation_reduce_scratch, 0, wspace_per_thr_bytes);
++    const bool has_dst_scales
++            = !pd()->attr()->scales_.has_default_values(DNNL_ARG_DST);
++    const float *dst_scales_inv
++            = has_dst_scales ? dst_scales_inv_scratch : nullptr;
++    if (has_dst_scales) {
++        assert(dst_scales && dst_scales_inv_scratch);
++        const auto dst_scales_count = pd()->D_mask_;
++
++        // Precompute destination scales in a separate single-task parallel
++        // region. Asynchronous threadpools chain regions in submission order,
++        // so the reorder below reads a fully initialized shared buffer without
++        // requiring one writable copy per worker.
++        parallel(1, [=](const int, const int) {
++            for (dim_t i = 0; i < dst_scales_count; i++) {
++                dst_scales_inv_scratch[i] = 1.f / dst_scales[i];
++            }
++        });
++    }
+ 
+-        omp_driver_0d(ndims_ker, in, out, src_scales, dst_scales, src_zp,
+-                dst_zp, compensation_reduce_scratch);
+-    } else {
+-        parallel(pd()->nthr_, [&](const int ithr, const int nthr) {
+-            int32_t *compensation_scratch = nullptr;
+-            if (req_compensation) {
++    const int nthr_par = ndims - ndims_ker == 0 ? 1 : pd()->nthr_;
++    parallel(nthr_par, [= COMPAT_THIS_CAPTURE](const int ithr, const int nthr) {
++        int32_t *compensation_scratch = nullptr;
++        if (req_compensation) {
++            if (ndims - ndims_ker == 0)
++                compensation_scratch = compensation_reduce_scratch;
++            else
+                 compensation_scratch = &compensation_reduce_scratch[ithr
+                         * wspace_per_thr_size];
+-                std::memset(compensation_scratch, 0, wspace_per_thr_bytes);
+-            }
++            std::memset(compensation_scratch, 0, wspace_per_thr_bytes);
++        }
+ 
+-            switch (ndims - ndims_ker) {
+-                case 1:
+-                    omp_driver_1d(ithr, nthr, ndims_ker, in, out, src_scales,
+-                            dst_scales, src_zp, dst_zp, compensation_scratch);
+-                    break;
+-                case 2:
+-                    omp_driver_2d(ithr, nthr, ndims_ker, in, out, src_scales,
+-                            dst_scales, src_zp, dst_zp, compensation_scratch);
+-                    break;
+-                case 3:
+-                    omp_driver_3d(ithr, nthr, ndims_ker, in, out, src_scales,
+-                            dst_scales, src_zp, dst_zp, compensation_scratch);
+-                    break;
+-                case 4:
+-                    omp_driver_4d(ithr, nthr, ndims_ker, in, out, src_scales,
+-                            dst_scales, src_zp, dst_zp, compensation_scratch);
+-                    break;
+-                default: assert(!"unimplemented");
+-            }
+-        });
+-    }
++        // An earlier async operation may still be producing thse values.
++        // Reading them within the scheduled task preserves stream ordering,
++        // guaranteeing to read the correct values.
++        const auto src_zp = src_zero_points ? src_zero_points[0] : 0;
++        const auto dst_zp = dst_zero_points ? dst_zero_points[0] : 0;
++
++        switch (ndims - ndims_ker) {
++            case 0:
++                omp_driver_0d(ndims_ker, in, out, src_scales, dst_scales_inv,
++                        src_zp, dst_zp, compensation_scratch);
++                break;
++            case 1:
++                omp_driver_1d(ithr, nthr, ndims_ker, in, out, src_scales,
++                        dst_scales_inv, src_zp, dst_zp, compensation_scratch);
++                break;
++            case 2:
++                omp_driver_2d(ithr, nthr, ndims_ker, in, out, src_scales,
++                        dst_scales_inv, src_zp, dst_zp, compensation_scratch);
++                break;
++            case 3:
++                omp_driver_3d(ithr, nthr, ndims_ker, in, out, src_scales,
++                        dst_scales_inv, src_zp, dst_zp, compensation_scratch);
++                break;
++            case 4:
++                omp_driver_4d(ithr, nthr, ndims_ker, in, out, src_scales,
++                        dst_scales_inv, src_zp, dst_zp, compensation_scratch);
++                break;
++            default: assert(!"unimplemented");
++        }
++    });
+ 
+     //reduction of intermediate compensation results to the final output
+     if (req_compensation) {
+-        const int nthr = ndims - ndims_ker == 0 ? 1 : pd()->nthr_;
+-        reduce_compensation(
+-                out, compensation_reduce_scratch, nthr, wspace_per_thr_size);
++        reduce_compensation(out, compensation_reduce_scratch, nthr_par,
++                wspace_per_thr_size);
+     }
+ }
+ 
+@@ -408,6 +449,11 @@ void jit_uni_reorder_t::reduce_compensation(char *out,
+         const dim_t wspace_per_thr_size) const {
+ 
+     const memory_desc_wrapper od(pd()->dst_md());
++    // offset points to the start of the metadata buffer inside out:
++    // out
++    //  |- reordered tensor data
++    //  |- s8s8 compensation: int32_t[GN]
++    //  |- asymmetric compensation: int32_t[GN]
+     const size_t offset = od.size() - od.additional_buffer_size();
+ 
+     static constexpr auto comp_dt_size = sizeof(int32_t);
+@@ -423,7 +469,10 @@ void jit_uni_reorder_t::reduce_compensation(char *out,
+     const size_t zp_offset
+             = offset + (pd()->prb_.req_s8s8_comp ? GN * comp_dt_size : 0);
+ 
+-    parallel_nd(GN, [&](int idx) {
++    // It uses only local variables and pointers computed outside the lambda,
++    // so this lambda does not need to capture `this` and therefore does not
++    // require COMPAT_THIS_CAPTURE.
++    parallel_nd(GN, [=](int idx) {
+         int32_t acc = 0;
+         for (int ithr = 0; ithr < nthr; ithr++) {
+             acc -= compensation_reduce_scratch[ithr * wspace_per_thr_size
+@@ -501,12 +550,17 @@ status_t jit_uni_reorder_t::execute(const exec_ctx_t &ctx) const {
+     const auto &scratchpad = ctx.get_scratchpad_grantor();
+     auto in = CTX_IN_MEM(const char *, DNNL_ARG_FROM);
+     auto out = CTX_OUT_MEM(char *, DNNL_ARG_TO);
+-    DEFINE_ARG_SCALES_BUFFER(src_scales, DNNL_ARG_SRC);
+-    DEFINE_ARG_SCALES_BUFFER(dst_scales_, DNNL_ARG_DST);
+-
+-    const float *dst_scales = pd()->precompute_scales(
+-            scratchpad, pd()->attr(), pd()->D_mask_, dst_scales_);
+-    assert(dst_scales);
++    const float *src_scales
++            = CTX_IN_MEM(const float *, DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC);
++    const float *dst_scales
++            = CTX_IN_MEM(const float *, DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST);
++
++    VCHECK_ATTR(pd()->attr()->scales_.has_default_values(DNNL_ARG_SRC)
++                    || src_scales != nullptr,
++            "Scales buffer for arg %d is missing", DNNL_ARG_SRC);
++    VCHECK_ATTR(pd()->attr()->scales_.has_default_values(DNNL_ARG_DST)
++                    || dst_scales != nullptr,
++            "Scales buffer for arg %d is missing", DNNL_ARG_DST);
+ 
+     const int32_t *src_zero_points = CTX_IN_MEM(
+             const int32_t *, DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC);
+-- 
+2.43.0
+
