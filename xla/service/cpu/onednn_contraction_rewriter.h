@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "xla/backends/cpu/onednn_support.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
@@ -48,9 +49,6 @@ class OneDnnContractionRewriter : public HloModulePass {
     return "onednn-contraction-rewriter";
   }
 
-  static bool ShouldRewriteDot(const HloInstruction* dot_instr,
-                               bool before_layout_assignment = false);
-  static bool ShouldRewriteConv(const HloInstruction* conv_instr);
   static bool ShouldRewriteInstr(const HloInstruction* instr,
                                  bool before_layout_assignment = false) {
     return ShouldRewriteDot(instr, before_layout_assignment) ||

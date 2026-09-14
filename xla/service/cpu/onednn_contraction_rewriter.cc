@@ -97,10 +97,6 @@ inline bool CompatibleElementType(const HloInstruction* instr) {
   return element_type == BF16 || element_type == F32 || element_type == F16;
 }
 
-inline bool IsRowMajor(const Shape& shape) {
-  return LayoutUtil::IsMonotonicWithDim0Major(shape.layout());
-}
-
 template <typename Pattern>
 inline auto BitcastWithReshapeSemantics(HloInstruction** bitcast,
                                         Pattern pattern) {
@@ -588,118 +584,6 @@ inline auto OptionalConvertAndBitcast(HloInstruction** optional_convert,
 
 }  // namespace
 
-bool OneDnnContractionRewriter::ShouldRewriteDot(
-    const HloInstruction* dot_instr, bool before_layout_assignment) {
-  if (dot_instr->opcode() != HloOpcode::kDot) {
-    return false;
-  }
-  // Blocking control dependencies.
-  if (dot_instr->HasControlDependencies() ||
-      !IsSupportedType(dot_instr->shape().element_type()) ||
-      dot_instr->operands().size() != 2) {
-    return false;
-  }
-
-  // We rewrite when the data type is F32 or BF16. We do not need to check
-  // equality of contraction dim-size of the operands. HLO verifier already does
-  // the job. We, however, need to check if contraction is over only 1 dimension
-  // (i.e., K dimension in matrix-multiplication parlance). We also restrict
-  // that batch dimensions of the operands match.
-  const Shape& lhs_shape = dot_instr->operand(0)->shape();
-  const Shape& rhs_shape = dot_instr->operand(1)->shape();
-  const Shape& output_shape = dot_instr->shape();
-
-  // None of the operands and result should be ZeroElementArray.
-  if (ShapeUtil::IsZeroElementArray(lhs_shape) ||
-      ShapeUtil::IsZeroElementArray(rhs_shape) ||
-      ShapeUtil::IsZeroElementArray(output_shape)) {
-    return false;
-  }
-
-  // OneDNN only supports rank <= kOneDnnMaxNDims and singular non-contracting
-  // dimensions. We should not rewrite if any of these conditions are violated.
-  if (lhs_shape.dimensions().empty() ||
-      lhs_shape.dimensions().size() > kOneDnnMaxNDims ||
-      rhs_shape.dimensions().empty() ||
-      rhs_shape.dimensions().size() > kOneDnnMaxNDims ||
-      output_shape.dimensions().size() >
-          std::min<uint64_t>({lhs_shape.dimensions().size(),
-                              rhs_shape.dimensions().size(),
-                              kOneDnnMaxNDims})) {
-    return false;
-  }
-
-  // Layout should be row-major, contraction dimensions capture transpose
-  // scenarios in the last two dimensions. Col-major layouts are corrected to
-  // row-major for BatchDot operation as part of the layout-assignment pass.
-  // Skip row-major layout check before layout-assignment pass.
-  if (!before_layout_assignment) {
-    bool row_major = IsRowMajor(lhs_shape) && IsRowMajor(rhs_shape) &&
-                     IsRowMajor(output_shape);
-    if (!row_major) {
-      return false;
-    }
-  }
-
-  auto dot_dim_numbers = dot_instr->dot_dimension_numbers();
-  int64_t lhs_dim_k = dot_dim_numbers.lhs_contracting_dimensions(0);
-  int64_t rhs_dim_k = dot_dim_numbers.rhs_contracting_dimensions(0);
-
-  // Supported contraction is only in one of last two dimensions.
-  if (lhs_dim_k + 2 < lhs_shape.dimensions().size() ||
-      rhs_dim_k + 2 < rhs_shape.dimensions().size()) {
-    return false;
-  }
-
-  // OneDNN matmul has scratch allocation and copy overheads. The overheads
-  // can be amortized if there is sufficient number of flops. We don't rewrite
-  // for small cases (determined empirically).
-  // TODO(intel-tf): Relax the condition when more optimizations in oneDNN
-  // matmul is achieved.
-  auto num_flops = xla::HloCostAnalysis::GetDotFlops(lhs_shape, output_shape,
-                                                     dot_dim_numbers);
-  auto rank = output_shape.dimensions().size();
-  auto flops_threshold = (rank <= 2) ? (1 << 24) : (1 << 19);
-  return (num_flops >= flops_threshold);
-}
-
-bool OneDnnContractionRewriter::ShouldRewriteConv(
-    const HloInstruction* conv_instr) {
-  if (conv_instr->opcode() != HloOpcode::kConvolution ||
-      conv_instr->HasControlDependencies() ||
-      !IsSupportedType(conv_instr->shape().element_type()) ||
-      conv_instr->batch_group_count() != 1) {
-    return false;
-  }
-
-  // TODO(intel-tf): Remove this restriction after enabling backward weights
-  // support
-  if (conv_instr->operand(1)->opcode() == HloOpcode::kReverse) {
-    return false;
-  }
-
-  const Shape& inp_shape = conv_instr->operand(0)->shape();
-  const Shape& ker_shape = conv_instr->operand(1)->shape();
-  const Shape& out_shape = conv_instr->shape();
-  if (ShapeUtil::IsZeroElementArray(inp_shape) ||
-      ShapeUtil::IsZeroElementArray(ker_shape) ||
-      ShapeUtil::IsZeroElementArray(out_shape)) {
-    return false;
-  }
-
-  auto dims = conv_instr->window().dimensions().size();
-  if (dims >= 4 || dims <= 0) {
-    return false;
-  }
-
-  if (inp_shape.dimensions().size() != ker_shape.dimensions().size() ||
-      inp_shape.dimensions().size() != out_shape.dimensions().size()) {
-    return false;
-  }
-
-  return true;
-}
-
 class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
  public:
   OneDnnContractionRewriteVisitor(bool graph_enabled)
@@ -719,7 +603,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
 
     ABSL_RETURN_IF_ERROR(
         ValidateDotDimensionNumbers(dot_instr->dot_dimension_numbers()));
-    if (!OneDnnContractionRewriter::ShouldRewriteDot(dot_instr)) {
+    if (!ShouldRewriteDot(dot_instr)) {
       ABSL_RETURN_IF_ERROR(UpcastDotToF32(dot_instr));
       return absl::OkStatus();
     }
@@ -752,7 +636,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleConvolution(HloInstruction* conv) override {
-    if (!OneDnnContractionRewriter::ShouldRewriteConv(conv)) {
+    if (!ShouldRewriteConv(conv)) {
       return absl::OkStatus();
     }
 
@@ -1627,12 +1511,13 @@ absl::StatusOr<bool> OneDnnContractionRewriter::RunImpl(
   XLA_VLOG_LINES(3, "OneDnnContractionRewriter::RunImpl(), before:\n" +
                         module->ToString());
   OneDnnContractionRewriteVisitor visitor(graph_enabled_);
-  ABSL_ASSIGN_OR_RETURN(auto result, visitor.RunOnModule(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(auto result,
+                        visitor.RunOnModule(module, execution_threads));
 
   OneDnnPostRewriteVisitor reorder_visitor(intra_op_parallelism_,
                                            compile_threadpool_);
   ABSL_ASSIGN_OR_RETURN(auto result2,
-                   reorder_visitor.RunOnModule(module, execution_threads));
+                        reorder_visitor.RunOnModule(module, execution_threads));
   XLA_VLOG_LINES(
       3, "OneDnnContractionRewriter::RunImpl(), after:\n" + module->ToString());
   return {result || result2};

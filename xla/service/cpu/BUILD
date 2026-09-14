@@ -1560,6 +1560,7 @@ onednn_cc_library(
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
+        "//xla/backends/cpu:onednn_support",
         "//xla/backends/cpu/runtime/onednn:onednn_threadpool",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
