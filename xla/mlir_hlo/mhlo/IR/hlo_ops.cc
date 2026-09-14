@@ -183,6 +183,20 @@ static T clamp(const T& value, const T& lower, const T& upper) {
   return std::max(lower, std::min(value, upper));
 }
 
+// Clamps an integer index value to the range [0, maxBound], faithfully
+// accounting for signedness of the index type.
+static int64_t clampIndex(const APInt& val, bool isUnsigned, int64_t maxBound) {
+  int64_t upper = std::max(static_cast<int64_t>(0), maxBound);
+  if (isUnsigned) {
+    uint64_t uval = val.getZExtValue();
+    if (uval >= static_cast<uint64_t>(upper)) {
+      return upper;
+    }
+    return static_cast<int64_t>(uval);
+  }
+  return clamp(val.getSExtValue(), static_cast<int64_t>(0), upper);
+}
+
 // Verifies that dimension attribute for the op correctly indexes in operand or
 // result shape.
 template <typename OpT>
@@ -1481,6 +1495,7 @@ struct GatherSlice : public OpRewritePattern<GatherOp> {
         dyn_cast<RankedTensorType>(gather->getOperand(0).getType());
     if (!operandType || !operandType.hasStaticShape()) return failure();
 
+    bool isUnsigned = index.getType().getElementType().isUnsignedInteger();
     auto sliceEnd =
         llvm::to_vector<8>(gather.getSliceSizes().getValues<int64_t>());
     llvm::SmallVector<int64_t, 8> sliceStart(sliceEnd.size(), 0);
@@ -1489,8 +1504,8 @@ struct GatherSlice : public OpRewritePattern<GatherOp> {
       int64_t mapIndex = std::get<0>(it);
       // Clamp the indices within bounds to faithfully mirror gather semantics.
       int64_t offset =
-          clamp(std::get<1>(it).getSExtValue(), static_cast<int64_t>(0),
-                operandType.getDimSize(mapIndex) - sliceEnd[mapIndex]);
+          clampIndex(std::get<1>(it), isUnsigned,
+                     operandType.getDimSize(mapIndex) - sliceEnd[mapIndex]);
       sliceStart[mapIndex] += offset;
       sliceEnd[mapIndex] += offset;
     }
@@ -3541,11 +3556,13 @@ struct DynamicSliceToSlice : public OpRewritePattern<DynamicSliceOp> {
       if (!matchPattern(start, m_ConstantInt(&val))) {
         return failure();
       }
+      bool isUnsigned =
+          getElementTypeOrSelf(start.getType()).isUnsignedInteger();
       // Clamp the indices within bounds to faithfully mirror dynamic slice
       // semantics.
       int64_t clampedStart =
-          clamp(val.getSExtValue(), static_cast<int64_t>(0),
-                inputTensor.getDimSize(index) - sliceSizes[index]);
+          clampIndex(val, isUnsigned,
+                     inputTensor.getDimSize(index) - sliceSizes[index]);
       tempStartIndices.push_back(clampedStart);
     }
 
@@ -6623,12 +6640,14 @@ LogicalResult ScatterOp::fold(
       baseIndex[operandDim] = indexIndex[indicesDim];
     }
     uint64_t indexCount = indexType.getShape()[indexVectorDim];
+    bool isUnsigned = indexType.getElementType().isUnsignedInteger();
     for (uint64_t i = 0; i < indexCount; ++i) {
       uint64_t operandDim =
           getScatterDimensionNumbers().getScatterDimsToOperandDims()[i];
       indexIndex[indexVectorDim] = i;
+      const APInt& idxVal = index.getValues<APInt>()[indexIndex];
       baseIndex[operandDim] +=
-          index.getValues<APInt>()[indexIndex].getSExtValue();
+          isUnsigned ? idxVal.getZExtValue() : idxVal.getSExtValue();
     }
     uint64_t updateWindowDimIndex = 0;
     auto insertedWindowDims =
