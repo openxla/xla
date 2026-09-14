@@ -358,7 +358,8 @@ MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
   // Allocator addresses are keyed directly by their VA. Stale records remain in
   // this map until deferred teardown completes, so expose their backing
   // allocation for diagnostics/reuse checks until the pending operation drains.
-  auto allocation_it = state->records_by_allocator_address.find(addr.opaque());
+  auto allocation_it =
+      state->records_by_allocator_address.find(AddressStart(addr));
   if (allocation_it != state->records_by_allocator_address.end() &&
       allocation_it->second->allocator_matches(addr)) {
     return allocation_it->second->raw_allocation();
@@ -367,7 +368,7 @@ MemoryAllocation* DeviceAddressVmmAllocator::GetRawAllocation(
   // Reservation aliases created by Map() share one index. Only active aliases
   // are exposed; stale or already-unmapped aliases intentionally return
   // nullptr.
-  auto reservation_it = state->reservation_records.find(addr.opaque());
+  auto reservation_it = state->reservation_records.find(AddressStart(addr));
   if (reservation_it != state->reservation_records.end() &&
       reservation_it->second->reservation_active() &&
       reservation_it->second->reservation_matches(addr)) {
@@ -385,7 +386,8 @@ MemoryReservation* DeviceAddressVmmAllocator::GetReservation(
   PerDeviceState* state = *state_or;
   absl::MutexLock lock(state->mu);
 
-  auto allocation_it = state->records_by_allocator_address.find(addr.opaque());
+  auto allocation_it =
+      state->records_by_allocator_address.find(AddressStart(addr));
   if (allocation_it != state->records_by_allocator_address.end() &&
       allocation_it->second->allocator_active() &&
       allocation_it->second->allocator_matches(addr)) {
@@ -447,7 +449,7 @@ DeviceAddressVmmAllocator::TrackAllocatorAddressMappedAllocation(
     std::unique_ptr<MemoryReservation> reservation,
     MemoryReservation::ScopedMapping mapping, int64_t memory_space,
     bool multi_device) {
-  void* va_ptr = allocator_address.opaque();
+  uintptr_t va_ptr = AddressStart(allocator_address);
   CHECK(raw_allocation != nullptr);
   uint64_t physical_size = raw_allocation->address().size();
   auto record = std::make_unique<AllocationRecord>(
@@ -465,7 +467,7 @@ std::optional<DeviceAddressBase>
 DeviceAddressVmmAllocator::TryReuseMappedAllocation(
     PerDeviceState& state, const MappedAllocateRequest& request) {
   auto record_it = state.records_by_allocator_address.find(
-      request.reservation_address.opaque());
+      AddressStart(request.reservation_address));
   if (record_it == state.records_by_allocator_address.end()) {
     return std::nullopt;
   }
@@ -628,7 +630,7 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
         continue;
       }
       auto record_it =
-          state.records_by_allocator_address.find(pending.addr.opaque());
+          state.records_by_allocator_address.find(AddressStart(pending.addr));
       CHECK(record_it != state.records_by_allocator_address.end());
       CHECK(record_it->second->allocator_stale());
       if (record_it->second->memory_space() == reclaim_exempt_memory_space_) {
@@ -685,7 +687,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
         continue;
       }
       auto record_it =
-          state->records_by_allocator_address.find(it->addr.opaque());
+          state->records_by_allocator_address.find(AddressStart(it->addr));
       CHECK(record_it != state->records_by_allocator_address.end());
       AllocationRecord& record = *record_it->second;
       CHECK(record.allocator_stale());
@@ -815,7 +817,7 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
 
   absl::MutexLock lock(state->mu);
 
-  auto record_it = state->records_by_allocator_address.find(mem.opaque());
+  auto record_it = state->records_by_allocator_address.find(AddressStart(mem));
   if (record_it == state->records_by_allocator_address.end() ||
       !record_it->second->allocator_active() ||
       !record_it->second->allocator_matches(mem)) {
@@ -825,7 +827,7 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
         mem.opaque()));
   }
   AllocationRecord& record = *record_it->second;
-  auto reservation_it = state->reservation_records.find(mem.opaque());
+  auto reservation_it = state->reservation_records.find(AddressStart(mem));
   CHECK(reservation_it == state->reservation_records.end() ||
         !reservation_it->second->reservation_active());
   if (record.reservation_active()) {
@@ -902,46 +904,73 @@ DeviceAddressVmmAllocator::FindOverlappingRecord(
     }
   };
 
-  auto check_record = [&](AllocationRecord* record,
-                          DeviceAddressBase tracked_address, bool is_allocator,
-                          bool is_active) -> std::optional<OverlappingRecord> {
-    if (matches(tracked_address)) {
-      return OverlappingRecord{record, tracked_address, is_allocator,
-                               is_active};
+  auto find_in_index =
+      [&](const auto& records, auto get_record,
+          bool is_allocator) -> std::optional<OverlappingRecord> {
+    auto check_record =
+        [&](const auto& entry) -> std::optional<OverlappingRecord> {
+      AllocationRecord* record = get_record(entry.second);
+      CHECK(is_allocator || record->has_reservation_alias());
+      bool is_active = is_allocator ? record->allocator_active()
+                                    : record->reservation_active();
+      if (!(is_active ? include_active : include_stale)) {
+        return std::nullopt;
+      }
+      DeviceAddressBase tracked_address = is_allocator
+                                              ? record->allocator_address()
+                                              : record->reservation_address();
+      if (matches(tracked_address)) {
+        return OverlappingRecord{record, tracked_address, is_allocator,
+                                 is_active};
+      }
+      return std::nullopt;
+    };
+
+    if (overlap_kind == OverlapKind::kExact) {
+      auto it = records.find(AddressStart(address));
+      return it == records.end() ? std::nullopt : check_record(*it);
+    }
+    if (address.is_null() || address.size() == 0) {
+      return std::nullopt;
+    }
+
+    auto it = records.lower_bound(AddressStart(address));
+    // Only the immediate predecessor can extend into the query: tracked ranges
+    // are disjoint, even while stale. Read the current range from the record
+    // because reusing an allocation can change its logical size.
+    if (it != records.begin()) {
+      auto previous = it;
+      --previous;
+      if (auto overlap = check_record(*previous)) {
+        return overlap;
+      }
+    }
+    // With kBoth, the first successor either overlaps, exactly matches (so no
+    // other range overlaps), or starts beyond the query. Filtering by state can
+    // require checking additional successors, but never unrelated ranges.
+    for (; it != records.end() && it->first < AddressEnd(address); ++it) {
+      if (auto overlap = check_record(*it)) {
+        return overlap;
+      }
     }
     return std::nullopt;
   };
 
   if (include_allocator) {
-    for (const auto& [_, record_owner] : state.records_by_allocator_address) {
-      AllocationRecord* record = record_owner.get();
-      bool include_record = (include_active && record->allocator_active()) ||
-                            (include_stale && record->allocator_stale());
-      if (!include_record) {
-        continue;
-      }
-      if (auto overlap =
-              check_record(record, record->allocator_address(),
-                           /*is_allocator=*/true,
-                           /*is_active=*/record->allocator_active())) {
-        return overlap;
-      }
+    if (auto overlap = find_in_index(
+            state.records_by_allocator_address,
+            [](const std::unique_ptr<AllocationRecord>& record) {
+              return record.get();
+            },
+            /*is_allocator=*/true)) {
+      return overlap;
     }
   }
   if (include_reservation) {
-    for (const auto& [_, record] : state.reservation_records) {
-      CHECK(record->has_reservation_alias());
-      bool include_record = (include_active && record->reservation_active()) ||
-                            (include_stale && record->reservation_stale());
-      if (!include_record) {
-        continue;
-      }
-      if (auto overlap = check_record(
-              record, record->reservation_address(), /*is_allocator=*/false,
-              /*is_active=*/record->reservation_active())) {
-        return overlap;
-      }
-    }
+    return find_in_index(
+        state.reservation_records,
+        [](AllocationRecord* record) { return record; },
+        /*is_allocator=*/false);
   }
 
   return std::nullopt;
@@ -952,7 +981,7 @@ DeviceAddressVmmAllocator::ResolveMapSourceRecord(
     PerDeviceState& state, DeviceAddressBase source_address,
     uint64_t size) const {
   auto allocation_it =
-      state.records_by_allocator_address.find(source_address.opaque());
+      state.records_by_allocator_address.find(AddressStart(source_address));
   if (allocation_it == state.records_by_allocator_address.end() ||
       !allocation_it->second->allocator_active() ||
       !allocation_it->second->allocator_matches(source_address)) {
@@ -1090,8 +1119,8 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
             << ", actual=" << mapped.opaque();
 
         source_record->AddActiveReservationAlias(std::move(mapping));
-        auto mapping_insert_result =
-            state.reservation_records.emplace(mapped.opaque(), source_record);
+        auto mapping_insert_result = state.reservation_records.emplace(
+            AddressStart(mapped), source_record);
         CHECK(mapping_insert_result.second);
         return absl::OkStatus();
       }
@@ -1230,7 +1259,7 @@ void DeviceAddressVmmAllocator::ErasePendingDeallocation(
 
 void DeviceAddressVmmAllocator::MoveAllocatorRecordToActive(
     PerDeviceState& state, AllocationRecord& record, uint64_t new_size) {
-  void* allocator_va = record.allocator_key();
+  uintptr_t allocator_va = AddressStart(record.allocator_address());
   auto record_it = state.records_by_allocator_address.find(allocator_va);
   CHECK(record_it != state.records_by_allocator_address.end());
   CHECK_EQ(record_it->second.get(), &record);
@@ -1265,7 +1294,7 @@ void DeviceAddressVmmAllocator::CompleteReadyAllocatorDeallocationsForReclaim(
       continue;
     }
     auto record_it =
-        state.records_by_allocator_address.find(pending.addr.opaque());
+        state.records_by_allocator_address.find(AddressStart(pending.addr));
     if (record_it != state.records_by_allocator_address.end() &&
         record_it->second->memory_space() == reclaim_exempt_memory_space_) {
       continue;
@@ -1295,7 +1324,7 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocationByKey(
 void DeviceAddressVmmAllocator::CompletePendingDeallocation(
     PerDeviceState& state, const PendingDeallocation& pending) {
   if (pending.kind == PendingDeallocationKind::kMap) {
-    auto record_it = state.reservation_records.find(pending.addr.opaque());
+    auto record_it = state.reservation_records.find(AddressStart(pending.addr));
     CHECK(record_it != state.reservation_records.end());
     AllocationRecord& record = *record_it->second;
     CHECK(record.reservation_stale());
@@ -1308,7 +1337,7 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocation(
   }
 
   auto record_it =
-      state.records_by_allocator_address.find(pending.addr.opaque());
+      state.records_by_allocator_address.find(AddressStart(pending.addr));
   CHECK(record_it != state.records_by_allocator_address.end());
   CHECK_EQ(pending.kind, PendingDeallocationKind::kAllocation);
   CHECK(record_it->second->allocator_stale());
@@ -1362,7 +1391,7 @@ absl::Status DeviceAddressVmmAllocator::UnMap(int device_ordinal,
   // UnMap() only accepts the exact active reservation range previously created
   // by Map(). Allocator addresses and subranges are not valid UnMap() inputs.
   auto reservation_it =
-      state->reservation_records.find(reservation_address.opaque());
+      state->reservation_records.find(AddressStart(reservation_address));
   if (reservation_it == state->reservation_records.end()) {
     return absl::NotFoundError(absl::StrFormat(
         "UnMap() requires an exact active reservation range created by Map(): "

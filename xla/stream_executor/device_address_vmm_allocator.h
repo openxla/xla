@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -462,18 +463,22 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // record is reused -- needs no batch bookkeeping at all.
     uint64_t open_deallocation_batch_seqno ABSL_GUARDED_BY(mu) = 0;
     std::deque<PendingDeallocation> pending_deallocations ABSL_GUARDED_BY(mu);
-    // Owns AllocationRecord objects. Key is the allocator address pointer
-    // (`AllocationRecord::allocator_address().opaque()`), including the
-    // reservation-derived allocator address returned by the mapped Allocate()
-    // overload. Allocator-address active/stale state is stored in
+    // Owns AllocationRecord objects. Key is the allocator address as uintptr_t,
+    // including the reservation-derived address returned by the mapped
+    // Allocate() overload. Allocator-address active/stale state is stored in
     // AllocationRecord::allocator_active()/allocator_stale().
-    absl::flat_hash_map<void*, std::unique_ptr<AllocationRecord>>
+    // Both address indexes are ordered by range start. Ranges within each
+    // index are disjoint, including stale ranges retained until deferred
+    // teardown. This permits overlap checks starting at lower_bound() instead
+    // of scanning every allocation. The pointed-to records stay valid when
+    // insertion or erasure invalidates btree iterators.
+    absl::btree_map<uintptr_t, std::unique_ptr<AllocationRecord>>
         records_by_allocator_address ABSL_GUARDED_BY(mu);
 
-    // Reservation-address index. Keys are reservation alias pointers
-    // (`AllocationRecord::reservation_address().opaque()`) created by Map().
+    // Reservation-address index. Keys are reservation alias addresses as
+    // uintptr_t, created by Map().
     // Active/stale state is stored in the record.
-    absl::flat_hash_map<void*, AllocationRecord*> reservation_records
+    absl::btree_map<uintptr_t, AllocationRecord*> reservation_records
         ABSL_GUARDED_BY(mu);
   };
 

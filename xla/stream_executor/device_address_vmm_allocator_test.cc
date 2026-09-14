@@ -18,7 +18,10 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -27,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/mock_platform.h"
@@ -72,6 +76,7 @@ class TestMemoryReservation final : public MemoryReservation {
   }
 
   int active_mapping_count() const { return active_mapping_count_; }
+  int mapping_count() const { return mapping_count_; }
 
  private:
   absl::Status Map(size_t reservation_offset, size_t allocation_offset,
@@ -82,6 +87,7 @@ class TestMemoryReservation final : public MemoryReservation {
       return absl::InvalidArgumentError("mapping range is out of bounds");
     }
     ++active_mapping_count_;
+    ++mapping_count_;
     return absl::OkStatus();
   }
 
@@ -101,6 +107,7 @@ class TestMemoryReservation final : public MemoryReservation {
   std::unique_ptr<uint8_t[]> storage_;
   uint64_t size_;
   int active_mapping_count_ = 0;
+  int mapping_count_ = 0;
 };
 
 class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
@@ -402,6 +409,145 @@ TEST_F(DeviceAddressVmmAllocatorTest,
                           /*retry_on_failure=*/false, /*memory_space=*/0));
   EXPECT_EQ(alias->active_mapping_count(), 0);
   EXPECT_EQ(allocator->allocation_count(), 2);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       OverlapLookupPreservesRangeBoundariesForActiveAndStaleAddresses) {
+  for (bool alias : {false, true}) {
+    for (bool stale : {false, true}) {
+      SCOPED_TRACE(testing::Message()
+                   << "alias=" << alias << " stale=" << stale);
+      TestMemoryReservation reservation(16 * kGranularity);
+      ASSERT_OK_AND_ASSIGN(auto allocator,
+                           TestDeviceAddressVmmAllocator::Create(
+                               &platform_, {Config(UINT64_MAX)}));
+      ASSERT_OK_AND_ASSIGN(
+          auto tracked,
+          alias ? allocator->Allocate(/*device_ordinal=*/0, 4 * kGranularity)
+                : allocator->Allocate(
+                      /*device_ordinal=*/0, 4 * kGranularity,
+                      /*retry_on_failure=*/false, /*memory_space=*/0,
+                      &reservation, 4 * kGranularity, 4 * kGranularity));
+      if (alias) {
+        ASSERT_THAT(allocator->Map(0, tracked.cref(), &reservation,
+                                   4 * kGranularity, 4 * kGranularity),
+                    absl_testing::IsOk());
+      }
+      if (stale) {
+        if (alias) {
+          ASSERT_THAT(allocator->UnMap(0, &reservation, 4 * kGranularity,
+                                       4 * kGranularity),
+                      absl_testing::IsOk());
+        } else {
+          ASSERT_THAT(allocator->Deallocate(0, tracked.Release()),
+                      absl_testing::IsOk());
+        }
+      }
+      ASSERT_OK_AND_ASSIGN(auto source,
+                           allocator->Allocate(0, 16 * kGranularity));
+      struct Range {
+        uint64_t offset;
+        uint64_t size;
+      };
+      // Intersect the successor, lie inside the predecessor, intersect its
+      // end, share its start with a different size, or contain the whole range.
+      const Range partial_overlaps[] = {{2, 3}, {5, 1}, {7, 2},
+                                        {4, 2}, {4, 5}, {2, 8}};
+      for (Range range : partial_overlaps) {
+        SCOPED_TRACE(testing::Message()
+                     << "offset=" << range.offset << " size=" << range.size);
+        EXPECT_THAT(allocator->Map(0, source.cref(), &reservation,
+                                   range.offset * kGranularity,
+                                   range.size * kGranularity),
+                    StatusIs(absl::StatusCode::kFailedPrecondition));
+        EXPECT_THAT(allocator->Allocate(
+                        0, range.size * kGranularity, false, 0, &reservation,
+                        range.offset * kGranularity, range.size * kGranularity),
+                    StatusIs(absl::StatusCode::kFailedPrecondition));
+        // Rejecting an overlap must not drain the stale mapping.
+        EXPECT_EQ(reservation.active_mapping_count(), 1);
+      }
+
+      // Exactly adjacent ranges are disjoint on either side of the record.
+      ASSERT_THAT(
+          allocator->Map(0, source.cref(), &reservation, 0, 4 * kGranularity),
+          absl_testing::IsOk());
+      ASSERT_OK_AND_ASSIGN(
+          auto right,
+          allocator->Allocate(0, 4 * kGranularity, false, 0, &reservation,
+                              8 * kGranularity, 4 * kGranularity));
+      auto exact =
+          allocator->Allocate(0, 4 * kGranularity, false, 0, &reservation,
+                              4 * kGranularity, 4 * kGranularity);
+      if (stale) {
+        ASSERT_THAT(exact, absl_testing::IsOk());
+      } else {
+        EXPECT_THAT(exact, StatusIs(absl::StatusCode::kAlreadyExists));
+      }
+      ASSERT_THAT(allocator->UnMap(0, &reservation, 0, 4 * kGranularity),
+                  absl_testing::IsOk());
+      if (alias && !stale) {
+        ASSERT_THAT(allocator->UnMap(0, &reservation, 4 * kGranularity,
+                                     4 * kGranularity),
+                    absl_testing::IsOk());
+      }
+    }
+  }
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       ManyReservationAliasesReuseAndRemoveOrderedRecords) {
+  constexpr int kCount = 512;
+  TestMemoryReservation reservation((2 * kCount + 1) * kGranularity);
+  ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
+                                           &platform_, {Config(UINT64_MAX)}));
+  std::vector<ScopedDeviceAddress<uint8_t>> sources;
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_OK_AND_ASSIGN(auto source, allocator->Allocate(0, kGranularity));
+    sources.push_back(std::move(source));
+  }
+  // Insert in an order that interleaves low and high addresses, leaving gaps
+  // between aliases. Records must remain valid across index rebalancing.
+  for (int n = 0; n < kCount; ++n) {
+    int i = (n % 2 == 0) ? n / 2 : kCount - 1 - n / 2;
+    ASSERT_THAT(allocator->Map(0, sources[i].cref(), &reservation,
+                               (2 * i + 1) * kGranularity, kGranularity),
+                absl_testing::IsOk());
+  }
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_THAT(allocator->UnMap(0, &reservation, (2 * i + 1) * kGranularity,
+                                 kGranularity),
+                absl_testing::IsOk());
+  }
+  for (int i = kCount - 1; i >= 0; --i) {
+    ASSERT_THAT(allocator->Map(0, sources[i].cref(), &reservation,
+                               (2 * i + 1) * kGranularity, kGranularity),
+                absl_testing::IsOk());
+  }
+  EXPECT_EQ(reservation.active_mapping_count(), kCount);
+  EXPECT_EQ(reservation.mapping_count(), kCount);
+  EXPECT_EQ(allocator->allocation_count(), kCount);
+
+  // A query starting in a gap must still find the next occupied range.
+  ASSERT_OK_AND_ASSIGN(auto source, allocator->Allocate(0, 4 * kGranularity));
+  EXPECT_THAT(allocator->Map(0, source.cref(), &reservation,
+                             kCount * kGranularity, 4 * kGranularity),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_THAT(allocator->UnMap(0, &reservation, (2 * i + 1) * kGranularity,
+                                 kGranularity),
+                absl_testing::IsOk());
+  }
+  ASSERT_THAT(allocator->SynchronizePendingOperations(0), absl_testing::IsOk());
+  EXPECT_EQ(reservation.active_mapping_count(), 0);
+  // The removed alias ranges can now be covered by a larger mapping.
+  ASSERT_THAT(allocator->Map(0, source.cref(), &reservation,
+                             kCount * kGranularity, 4 * kGranularity),
+              absl_testing::IsOk());
+  ASSERT_THAT(allocator->UnMap(0, &reservation, kCount * kGranularity,
+                               4 * kGranularity),
+              absl_testing::IsOk());
 }
 
 }  // namespace
