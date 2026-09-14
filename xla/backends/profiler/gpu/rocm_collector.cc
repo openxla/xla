@@ -148,40 +148,6 @@ uint64_t get_timestamp() {
 }
 }  // namespace
 
-OccupancyStats PerDeviceCollector::GetOccupancy(
-    const RocmDeviceOccupancyParams& params) const {
-  // TODO(rocm-profiler): hipOccupancyMaxActiveBlocksPerMultiprocessor only
-  // return hipSuccess for HIP_API_ID_hipLaunchKernel
-  OccupancyStats stats;
-  int number_of_active_blocks;
-  hipError_t err = hipOccupancyMaxActiveBlocksPerMultiprocessor(
-      &number_of_active_blocks, params.func_ptr, params.block_size,
-      params.dynamic_smem_size);
-
-  if (err != hipError_t::hipSuccess) {
-    return {};
-  }
-
-  stats.occupancy_pct = number_of_active_blocks * params.block_size * 100;
-  // TODO(ROCm): GetOccupancy is currently dead code -- no callers populate
-  // max_waves_per_cu / wave_front_size, so occupancy_pct stays zero.
-  // Wire up agent data when occupancy reporting is enabled.
-  auto max_threads = params.max_waves_per_cu * params.wave_front_size;
-  if (max_threads > 0) {
-    stats.occupancy_pct /= max_threads;
-  }
-
-  err = hipOccupancyMaxPotentialBlockSize(
-      &stats.min_grid_size, &stats.suggested_block_size,
-      static_cast<const void*>(params.func_ptr), params.dynamic_smem_size, 0);
-
-  if (err != hipError_t::hipSuccess) {
-    return {};
-  }
-
-  return stats;
-}
-
 void PerDeviceCollector::CreateXEvent(const RocmTracerEvent& event,
                                       XPlaneBuilder* plane,
                                       uint64_t start_gpu_ns,
