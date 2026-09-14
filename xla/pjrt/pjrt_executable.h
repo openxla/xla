@@ -57,6 +57,8 @@ limitations under the License.
 
 namespace xla {
 
+class CustomOptions;
+
 class PjRtClient;
 
 // Provides configuration for implementations that support compile and execute
@@ -246,6 +248,10 @@ struct ExecuteOptions {
   // multi-host programs are launched in different orders on different hosts,
   // the launch IDs may be used by the runtime to detect the mismatch.
   int32_t launch_id = 0;
+  // If non-null, per-execution custom options passed to the runtime. It is a
+  // caller responsibility to ensure that the custom options are valid for the
+  // duration of the execution.
+  const CustomOptions* custom_options = nullptr;
   // If non-null, an opaque context passed to an execution that may be used to
   // supply additional arguments to a derived class of PjRtExecutable. It is
   // a caller responsibility to ensure that the context is valid for the

@@ -47,6 +47,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "xla/custom_options.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -2337,6 +2338,26 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     execute_context = args->options->context->execute_context;
   }
   options.context = execute_context.get();
+
+  // Custom options are owned by the caller only for the duration of the C API
+  // call, so we copy them and keep alive until the execution completes.
+  std::shared_ptr<xla::CustomOptions> custom_options;
+  if (args->options->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, num_custom_options) &&
+      args->options->num_custom_options > 0) {
+    xla::CustomOptions::Map custom_options_map;
+    for (auto& [name, value] :
+         ConvertFromPjRtNamedValueList(args->options->custom_options,
+                                       args->options->num_custom_options)) {
+      custom_options_map[name] = std::visit(
+          [](auto v) -> xla::CustomOptions::Value { return std::move(v); },
+          std::move(value));
+    }
+    custom_options =
+        std::make_shared<xla::CustomOptions>(std::move(custom_options_map));
+    options.custom_options = custom_options.get();
+  }
+
   options.multi_slice_config = nullptr;
   // TODO(b/485591964): Remove this check after 12week compatibility window.
   if (args->options->struct_size >= PJRT_ExecuteOptions_STRUCT_SIZE &&
@@ -2404,7 +2425,8 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> cpp_buffer_lists;
     if (args->device_complete_events != nullptr ||
         !cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty() ||
-        !cpp_hlo_output_callbacks->empty() || execute_context) {
+        !cpp_hlo_output_callbacks->empty() || execute_context ||
+        custom_options) {
       std::optional<std::vector<xla::Future<>>> returned_futures;
       returned_futures.emplace();
       PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists,
@@ -2416,13 +2438,14 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
       // returned_futures is destroyed first. This is true for the
       // AsyncValue-based implementation of Future.
       if (!cpp_send_callbacks->empty() || !cpp_recv_callbacks->empty() ||
-          !cpp_hlo_output_callbacks->empty() || options.context) {
+          !cpp_hlo_output_callbacks->empty() || options.context ||
+          custom_options) {
         for (int i = 0; i < returned_futures->size(); ++i) {
           (*returned_futures)[i].OnReady(
               [cpp_send_callbacks, cpp_recv_callbacks, cpp_hlo_output_callbacks,
-               execute_context](absl::Status status) {
-                // Keeps C++ callbacks alive until execution completes on all
-                // devices.
+               execute_context, custom_options](absl::Status status) {
+                // Keeps C++ callbacks and custom options alive until execution
+                // completes on all devices.
               });
         }
       }
@@ -2462,7 +2485,8 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
 
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
     std::optional<xla::Future<>> returned_future;
-    bool fill_future = args->device_complete_events != nullptr;
+    bool fill_future =
+        args->device_complete_events != nullptr || custom_options != nullptr;
     PJRT_ASSIGN_OR_RETURN(
         xla::CompileOptions compile_options,
         args->executable->get()->GetExecutable()->GetCompileOptions());
@@ -2483,7 +2507,11 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
       args->output_lists[0][i] = new PJRT_Buffer{std::move(cpp_buffer_list[i]),
                                                  args->executable->client};
     }
-    if (fill_future) {
+    if (custom_options != nullptr) {
+      // Keeps custom options alive until execution completes.
+      returned_future->OnReady([custom_options](absl::Status status) {});
+    }
+    if (args->device_complete_events != nullptr) {
       args->device_complete_events[0] =
           new PJRT_Event{std::move((*returned_future))};
     }
