@@ -41,6 +41,21 @@ _STRING_LITERAL = re.compile(r'"([^"]+)"')
 
 DEFAULT_ALLOWED_RULES = ("cc_library", "xla_test", "xla_cc_test")
 
+# Subtrees bant cannot analyze. Not third_party as a whole, but an in-tree
+# subtree bazel exposes as its own module, today only tsl (see
+# third_party/extensions/tsl.bzl). Its BUILD files reach back into this repo as
+# @xla//..., which bant cannot resolve: it knows external repos by apparent
+# name and has none for the root module, so declared deps are reported missing.
+UNANALYZABLE_ROOTS = ("third_party/tsl",)
+
+
+def is_analyzable(filepath: str) -> bool:
+  """Whether DWYU can produce meaningful findings for a path."""
+  return not any(
+      filepath == root or filepath.startswith(f"{root}/")
+      for root in UNANALYZABLE_ROOTS
+  )
+
 
 def get_diff(base_ref: str) -> str:
   """Run git diff against base_ref and return stdout."""
@@ -63,6 +78,8 @@ def find_packages(changed_files: list[str]) -> set[str]:
   """Find Bazel packages containing the changed files."""
   packages = set()
   for filepath in changed_files:
+    if not is_analyzable(filepath):
+      continue
     dirpath = os.path.dirname(filepath)
     while dirpath:
       if os.path.isfile(os.path.join(dirpath, "BUILD")) or os.path.isfile(
