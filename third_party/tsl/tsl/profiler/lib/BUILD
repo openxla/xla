@@ -343,9 +343,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = select({
         # Remove this once we clean up all the CUDA specific deps.
-        "@xla//xla/tsl:libtpu_on_gce": [":nvtx_utils_external"],
+        "@xla//xla/tsl:libtpu_on_gce": [":nvtx_utils_external"],  # keep: implements nvtx_utils.h
         # Place holder for internal dependencies
-        "//conditions:default": [":nvtx_utils_impl"],
+        "//conditions:default": [":nvtx_utils_impl"],  # keep: implements nvtx_utils.h
     }),
 )
 
