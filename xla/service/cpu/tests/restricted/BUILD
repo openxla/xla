@@ -34,6 +34,7 @@ xla_cc_test(
     srcs = ["cpu_aot_export_test.cc"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/service:compiled_module",
         "//xla/service:compiler",
         "//xla/service:cpu_plugin",
         "//xla/service:executable",
@@ -43,7 +44,6 @@ xla_cc_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tests/restricted:hlo_test_base_legacy",
-        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",

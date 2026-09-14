@@ -208,7 +208,7 @@ _PLATFORM_INFOS = (
             jnp.uint4: 121,
         }),
         default_p_state=None,
-        default_vmem_limit_kib=32 * 1024,
+        default_vmem_limit_kib=16 * 1024,
     ),
     PlatformInfo(
         chip_version=pltpu.ChipVersion.TPU_V5P,
@@ -251,7 +251,7 @@ _PLATFORM_INFOS = (
             jnp.uint4: 121,
         }),
         default_p_state=None,
-        default_vmem_limit_kib=32 * 1024,
+        default_vmem_limit_kib=16 * 1024,
     ),
     PlatformInfo(
         chip_version=pltpu.ChipVersion.TPU_V6E,
@@ -276,7 +276,7 @@ _PLATFORM_INFOS = (
             jnp.int4: 4,
             jnp.uint4: 4,
         }),
-        # Note that GLC doesn't support P states.
+        # Note that v6e doesn't support P states.
         clock_speed_ghz_by_p_state=immutabledict({
             None: 1.75,
         }),

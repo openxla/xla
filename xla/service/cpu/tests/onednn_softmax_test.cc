@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace cpu {
@@ -114,13 +113,13 @@ class OneDnnSoftmaxTest
   // Test pattern match with OneDnnOpsRewriter pass
   void TestSoftmaxPatternMatching(std::string input_hlo_string,
                                   int expected_softmax_axis) {
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(input_hlo_string));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(input_hlo_string));
     OneDnnOpsRewriter softmax_rewrite_pass;
     HloInstruction* onednn_softmax;
     OneDnnSoftmaxConfig softmax_config;
-    TF_ASSERT_OK_AND_ASSIGN(
-        bool changed, this->RunHloPass(&softmax_rewrite_pass, module.get()));
+    ASSERT_OK_AND_ASSIGN(bool changed,
+                         this->RunHloPass(&softmax_rewrite_pass, module.get()));
     EXPECT_TRUE(changed);
     EXPECT_THAT(module->entry_computation()->root_instruction(),
                 GmockMatch(::xla::match::CustomCall(&onednn_softmax,
