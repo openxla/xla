@@ -165,7 +165,7 @@ tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> OneDnnOpThunk::Execute(
     const ExecuteParams& params) {
   Eigen::ThreadPoolInterface* thread_pool =
       params.intra_op_threadpool ? params.intra_op_threadpool->getPool()
-                                 : GetFallbackThreadPool();
+                                 : GetFallbackThreadPoolForOneDnn();
 
   // Create oneDNN runtime for the operation.
   auto runtime = std::make_unique<OneDnnRuntime>(thread_pool, target_);
