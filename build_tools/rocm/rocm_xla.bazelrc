@@ -22,14 +22,11 @@ test:rocm_rbe --remote_executor=grpcs://wardite.cluster.engflow.com
 test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --strategy=TestRunner=remote,local
 
-# Dynamic execution config for ROCm RBE - races local vs remote
+# Remote-first execution config for ROCm RBE - tries remote first, falls back to local only on failure
 build:rocm_rbe_dynamic --config=rocm_rbe
 build:rocm_rbe_dynamic --jobs=50
-build:rocm_rbe_dynamic --internal_spawn_scheduler
-build:rocm_rbe_dynamic --spawn_strategy=dynamic
-build:rocm_rbe_dynamic --dynamic_local_strategy=standalone,local
-build:rocm_rbe_dynamic --dynamic_remote_strategy=remote
-build:rocm_rbe_dynamic --experimental_local_execution_delay=500
+build:rocm_rbe_dynamic --spawn_strategy=remote,local
+build:rocm_rbe_dynamic --remote_download_all
 
 build:tsan --strip=never
 build:tsan --copt -fsanitize=thread

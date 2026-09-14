@@ -127,8 +127,6 @@ jobs:
     container: *rocm_container
     env:
       DOCKER_IMAGE: ${{ needs.rocm-config.outputs.docker-image }}
-      ROCM_DISTRO_URL: ${{ needs.rocm-config.outputs.rocm-distro-url }}
-      ROCM_DISTRO_HASH: ${{ needs.rocm-config.outputs.rocm-distro-hash }}
     defaults:
       run:
         shell: bash
@@ -144,7 +142,7 @@ jobs:
           ROCM_XLA_BRANCH: ${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}
         run: |
           wget -O build_tools/rocm/execute_ci_build_upstream.sh \
-            "https://raw.githubusercontent.com/ROCm/xla/refs/heads/alekstheod-patch-94/build_tools/rocm/execute_ci_build_upstream.sh"
+            "https://raw.githubusercontent.com/ROCm/xla/refs/heads/${ROCM_XLA_BRANCH}/build_tools/rocm/execute_ci_build_upstream.sh"
           chmod +x build_tools/rocm/execute_ci_build_upstream.sh
 
       - name: CPU Info
