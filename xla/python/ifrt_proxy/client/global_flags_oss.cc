@@ -55,9 +55,9 @@ IntType GetIntFromEnv(const char* key, IntType default_value) {
 static GlobalClientFlags DefaultGlobalClientFlags() {
   GlobalClientFlags result;
   result.grpc_max_ongoing_host_buffer_stores =
-      GetIntFromEnv<int>("IFRT_PROXY_GRPC_MAX_ONGOING_HOST_BUFFER_STORES", 0);
+      GetIntFromEnv<int>("IFRT_PROXY_GRPC_MAX_ONGOING_HOST_BUFFER_STORES", 64);
   result.grpc_max_ongoing_host_buffer_lookups =
-      GetIntFromEnv<int>("IFRT_PROXY_GRPC_MAX_ONGOING_HOST_BUFFER_LOOKUPS", 0);
+      GetIntFromEnv<int>("IFRT_PROXY_GRPC_MAX_ONGOING_HOST_BUFFER_LOOKUPS", 64);
   result.grpc_large_transfer_optimization_threshold_bytes =
       GetIntFromEnv<int64_t>(
           "IFRT_PROXY_GRPC_LARGE_TRANSFER_OPTIMIZATION_THRESHOLD_BYTES",
