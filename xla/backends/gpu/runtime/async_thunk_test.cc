@@ -146,6 +146,58 @@ TEST(AsyncThunkTest, ConcurrentMemsets) {
   }
 }
 
+// Test that AsyncStartThunk dispatches to device_to_host_stream when
+// execution_stream_id is kMemcpyD2HStreamId, and to host_to_device_stream
+// when it is kMemcpyH2DStreamId.  We do this by running a no-op thunk on each
+// memcpy stream and confirming execution completes without error.
+TEST(AsyncThunkTest, MemcpyStreamDispatch) {
+  ASSERT_OK_AND_ASSIGN(auto executor, CreateExecutor());
+  ASSERT_OK_AND_ASSIGN(auto main_stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto d2h_stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto h2d_stream, executor->CreateStream());
+
+  Thunk::ThunkInfo d2h_info;
+  d2h_info.thunk_id = ThunkId(10);
+  d2h_info.profile_annotation = "d2h_start";
+
+  Thunk::ThunkInfo h2d_info;
+  h2d_info.thunk_id = ThunkId(11);
+  h2d_info.profile_annotation = "h2d_start";
+
+  ThunkSequence thunks;
+  thunks.Emplace<AsyncStartThunk>(d2h_info, kMemcpyD2HStreamId,
+                                  ThunkSequence{});
+  auto* d2h_start = static_cast<AsyncStartThunk*>(thunks[0].get());
+  thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(), d2h_start->async_execution());
+
+  thunks.Emplace<AsyncStartThunk>(h2d_info, kMemcpyH2DStreamId,
+                                  ThunkSequence{});
+  auto* h2d_start = static_cast<AsyncStartThunk*>(thunks[2].get());
+  thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(), h2d_start->async_execution());
+
+  ThunkExecutor thunk_executor(std::move(thunks));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations({}, 0, &allocator);
+  ServiceExecutableRunOptions run_options;
+  Thunk::ExecutionScopedState state;
+
+  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
+      run_options, allocations, main_stream.get(), main_stream.get(),
+      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr,
+      /*collective_memory=*/nullptr, /*additional_streams=*/{}, &state);
+
+  params.device_to_host_stream = d2h_stream.get();
+  params.host_to_device_stream = h2d_stream.get();
+
+  Thunk::InitializeParams init_params;
+  init_params.executor = executor;
+  init_params.execution_scoped_state = &state;
+  ASSERT_OK(thunk_executor.Initialize(init_params));
+  ASSERT_OK(thunk_executor.ExecuteOnStream(params));
+  ASSERT_OK(main_stream->BlockHostUntilDone());
+}
+
 // Test that AsyncDoneThunk::Record() creates an empty command buffer node and
 // is a no-op on update.
 TEST(AsyncThunkTest, AsyncDoneRecordCommandBuffer) {
