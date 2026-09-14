@@ -1568,6 +1568,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   if (options.context != nullptr) {
     run_options.set_ffi_execution_context(&options.context->ffi_context());
   }
+  run_options.set_custom_options(options.custom_options);
 
   bool execute_inline = executable_->cheap_computation_ ||
                         !raw_client->asynchronous() ||
@@ -1644,6 +1645,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
         cpu::Thunk::ExecuteSession(cpu::Thunk::ExecuteSession::kMaxWorkers,
                                    cpu::Thunk::ExecuteSession::kSplitThreshold),
         static_cast<uint64_t>(static_cast<uint32_t>(run_options.rng_seed())),
+        run_options.custom_options(),
     };
 
     auto thunks_execute_event =

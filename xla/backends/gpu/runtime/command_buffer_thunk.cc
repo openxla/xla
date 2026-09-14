@@ -217,7 +217,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*device_to_host_stream=*/nullptr,
       /*host_to_device_stream=*/nullptr,
       /*send_device_memory_function=*/nullptr,
-      /*recv_device_memory_function=*/nullptr, params.ffi_execution_context,
+      /*recv_device_memory_function=*/nullptr, params.custom_options,
+      params.ffi_execution_context,
       /*additional_compute_streams=*/{}, params.execution_scoped_state,
       /*mock_collectives=*/false, /*execution_id=*/0,
       /*rng_seed=*/0, params.persistent_alloc_indices);
