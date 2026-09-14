@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/log/log.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
@@ -100,7 +99,7 @@ OneDnnOpThunk::OneDnnRuntime::Invoke(
   threadpool->set_thread_pool(thread_pool);
 
   // TODO(intel-tf): Add support for more oneDNN operations as needed.
-  LOG_FIRST_N(INFO, 1) << absl::StreamFormat(
+  VLOG_FIRST_N(0, 1) << absl::StreamFormat(
       "Executing oneDNN thunk with target `%s`: num_args=%d, num_results=%d",
       target, base_resources->arg_memrefs.size(),
       base_resources->result_memrefs.size());
