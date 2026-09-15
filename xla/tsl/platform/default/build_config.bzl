@@ -357,7 +357,7 @@ def tf_additional_lib_hdrs():
     })
 
 def tf_additional_all_protos():
-    return ["//tensorflow/core:protos_all"]
+    return ["//third_party/tensorflow/core:protos_all"]
 
 def tf_protos_profiler_service():
     return [
@@ -368,12 +368,12 @@ def tf_protos_profiler_service():
 
 # TODO(jakeharmon): Move TSL macros that reference TF targets back into TF
 def tf_protos_grappler_impl():
-    return ["//tensorflow/core/grappler/costs:op_performance_data_cc_impl"]
+    return ["//third_party/tensorflow/core/grappler/costs:op_performance_data_cc_impl"]
 
 def tf_protos_grappler():
     return if_static(
         extra_deps = tf_protos_grappler_impl(),
-        otherwise = ["//tensorflow/core/grappler/costs:op_performance_data_cc"],
+        otherwise = ["//third_party/tensorflow/core/grappler/costs:op_performance_data_cc"],
     )
 
 def tf_additional_device_tracer_srcs():
@@ -548,7 +548,7 @@ def tsl_cc_test(
     )
 
 def tf_portable_proto_lib():
-    return ["//tensorflow/core:protos_all_cc_impl", clean_dep("//xla/tsl/protobuf:protos_all_cc_impl")]
+    return ["//third_party/tensorflow/core:protos_all_cc_impl", clean_dep("//xla/tsl/protobuf:protos_all_cc_impl")]
 
 def tf_protobuf_compiler_deps():
     return if_static(
