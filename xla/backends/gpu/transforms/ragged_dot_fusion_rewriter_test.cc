@@ -24,6 +24,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -122,6 +124,24 @@ TEST_F(RaggedDotFusionRewriterUnitTest, TestSupportedRaggedDot) {
                   .WithShape(BF16, {128, 256}));
 }
 
+// Wgrad: contracts over the ragged M dimension, producing dweight [G, K, N].
+// Corresponds to cuDNN moe_grouped_matmul_bwd.
+TEST_F(RaggedDotFusionRewriterUnitTest, TestSupportedRaggedDotWgrad) {
+  RunAndMatch(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = bf16[128,512]{1,0} parameter(0)
+      doutput = bf16[128,256]{1,0} parameter(1)
+      group_sizes = s32[16]{0} parameter(2)
+      ROOT rd = bf16[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+              m::Fusion()
+                  .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                  .WithShape(BF16, {16, 512, 256}));
+}
+
 // This class performs end-to-end integration testing of the RaggedDotRewriter.
 // It verifies that the rewriter works correctly within the full GPU
 // optimization pipeline and produces numerically correct results on hardware.
@@ -145,6 +165,12 @@ class RaggedDotFusionRewriterIntegrationTest
 
   stream_executor::SemanticVersion GetToolkitVersion() const {
     return device_description().runtime_version();
+  }
+
+  // Same runtime cuDNN version check RaggedDotRewriter uses to decide
+  // whether to route the ragged dot wgrad through the cuDNN fusion path.
+  bool SupportsCudnnRaggedDotWgrad() const {
+    return GetDnnVersion() >= kMinCudnnVersionForRaggedDotWgradFusion;
   }
 
   RaggedDotFusionRewriterIntegrationTest()
@@ -196,6 +222,122 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotOnly) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
+// Wgrad: contracts over the ragged M dimension (kRaggedContracting).
+// Uses cuDNN moe_grouped_matmul_bwd to compute dweight[G,K,N].
+TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[128,512]{1,0} parameter(0)
+      doutput = TYPE[128,256]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({7,9,6,10,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
+// Wgrad with K and N sizes that are not 16-byte aligned (not a multiple of 8
+// elements for bf16/f16). cuDNN's wgrad path lowers to a cuBLASLt grouped
+// GEMM, which relies on TMA and requires 16B alignment on the contiguous
+// (K/N) dimensions of each matrix; since K and N are static shapes, XLA is
+// expected to pad them at compile time rather than fail or require runtime
+// padding based on group_sizes.
+TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgradUnalignedKN) {
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[128,510]{1,0} parameter(0)
+      doutput = TYPE[128,254]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,510,254]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+  // K (510) and N (254) are not 16-byte aligned for bf16/f16 (need a
+  // multiple of 8 elements). Verify XLA actually pads them at compile time
+  // to 512/256 rather than silently skipping the padding -- RunAndCompare
+  // below would still pass numerically even if the padding step were
+  // skipped and cuDNN just tolerated the misalignment, so that alone isn't
+  // enough to catch a regression here.
+  EXPECT_THAT(optimized_hlo_string, HasSubstr("pad("));
+  EXPECT_THAT(optimized_hlo_string, HasSubstr("512"));
+  EXPECT_THAT(optimized_hlo_string, HasSubstr("256"));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
+// Wgrad where M (the ragged/contracting dimension) is the leading
+// (fastest-moving/minor) dimension of the lhs/rhs operands instead of K/N,
+// e.g. input[K,M] instead of input[M,K]. Since M's per-group sizes are only
+// known at runtime, XLA is expected to transpose such operands so that K/N
+// becomes the leading dimension instead, and then pad K/N (which are static
+// and thus safe to pad at compile time) up to the required alignment. K and
+// N are also chosen to be unaligned here to exercise both the transpose and
+// the padding together.
+TEST_P(RaggedDotFusionRewriterIntegrationTest,
+       TestRaggedDotWgradTransposeMLeadingDim) {
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[510,128]{1,0} parameter(0)
+      doutput = TYPE[254,128]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,510,254]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={1}, rhs_contracting_dims={1}, lhs_ragged_dims={1}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
   DebugOptions debug_opts = module->config().debug_options();
   debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   module->mutable_config().set_debug_options(debug_opts);
