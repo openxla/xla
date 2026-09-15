@@ -2192,6 +2192,7 @@ absl::Status IrEmitter::HandleFusion(HloInstruction* fusion) {
 }
 
 absl::Status IrEmitter::HandleCall(HloInstruction* call) {
+  ABSL_RETURN_IF_ERROR(CheckGlobalCallee(*call->to_apply()));
   HloComputation* computation = call->to_apply();
 
   ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(call));
@@ -2523,6 +2524,7 @@ absl::Status IrEmitter::HandleCustomCall(HloInstruction* custom_call) {
 }
 
 absl::Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
+  ABSL_RETURN_IF_ERROR(CheckGlobalCallee(*xla_while->while_body()));
   // Precondition: Condition computation must return a scalar bool.
   HloComputation* condition = xla_while->while_condition();
   TF_RET_CHECK(ShapeUtil::IsScalar(condition->root_instruction()->shape()) &&
@@ -3031,6 +3033,7 @@ absl::Status IrEmitter::HandleConcatenate(HloInstruction* concatenate) {
 }
 
 absl::Status IrEmitter::HandleConditional(HloInstruction* conditional) {
+  ABSL_RETURN_IF_ERROR(CheckGlobalCallee(*conditional->branch_computation(0)));
   auto branch_index = conditional->operand(0);
   int num_branches = conditional->branch_count();
   TF_RET_CHECK(ShapeUtil::IsScalar(branch_index->shape()) &&
@@ -3496,10 +3499,17 @@ llvm::Value* IrEmitter::EmitThreadLocalBufferPointer(
       return param_address_untyped;
     }
 
-    // Thread-local allocations should only be assigned a single buffer.
+    // Every value of a thread-local allocation spans the whole allocation
+    // (in-place ops such as dynamic-update-slice share one buffer between
+    // operand and result), so a single alloca serves all of them.
     const auto& assigned_buffers = allocation.assigned_buffers();
-    CHECK_EQ(1, assigned_buffers.size());
+    CHECK(!assigned_buffers.empty());
     const Shape& shape = assigned_buffers.begin()->first->shape();
+    for (const auto& [value, offset_size] : assigned_buffers) {
+      CHECK_EQ(ByteSizeOf(value->shape()), ByteSizeOf(shape))
+          << "Aliased thread-local values differ in size: "
+          << value->ToString();
+    }
 
     std::pair<llvm::Function*, BufferAllocation::Slice> key = {
         compute_function()->function(), slice};
@@ -3749,6 +3759,18 @@ std::vector<llvm::Value*> IrEmitter::EmitThreadLocalCall(
         Load(llvm::cast<llvm::AllocaInst>(addr)->getAllocatedType(), addr));
   }
   return returned_scalars;
+}
+
+absl::Status IrEmitter::CheckGlobalCallee(const HloComputation& callee) {
+  if (absl::c_binary_search(global_computations_, &callee)) {
+    return absl::OkStatus();
+  }
+  // Embedded computations (e.g. sort comparators) are emitted as thread-local
+  // functions, which cannot call the global function of `callee`.
+  return Unimplemented(
+      "Calling computation %s from an embedded computation is not supported "
+      "on CPU.",
+      callee.name());
 }
 
 void IrEmitter::EmitGlobalCall(const HloComputation& callee,
