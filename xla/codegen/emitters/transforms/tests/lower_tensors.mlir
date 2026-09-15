@@ -48,6 +48,18 @@
 // RUN: -xla-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx942:sramecc+:xnack\"}'" \
 // RUN: | FileCheck %s --check-prefix=CHECK-GFX942-MI300
 
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx942:sramecc+:xnack\"} l2_cache_size: 4194304'" \
+// RUN: | FileCheck %s --check-prefix=CHECK-NT
+
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx1250\"} l2_cache_size: 4194304'" \
+// RUN: | FileCheck %s --check-prefix=CHECK-NT
+
+// RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
+// RUN: -xla-lower-tensors="gpu_device_info='cuda_compute_capability {major: 9}'" \
+// RUN: | FileCheck %s --check-prefix=CHECK-NT-CUDA
+
 module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
   func.func private @add(%arg0: f32, %arg1: f32) -> f32 {
     %sum = arith.addf %arg0, %arg1 : f32
@@ -103,6 +115,126 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>
 // CHECK-NEXT:      %[[PTR2:.*]] = llvm.getelementptr inbounds %[[ARG1]][0, 23]
 // CHECK-NEXT:      llvm.store %[[CST]], %[[PTR2]]
 // CHECK-NEXT:      return
+
+// -----
+
+// AMD non-temporal: a streamed-once invariant input in a contiguous-output
+// kernel gets both a non-temporal load and a non-temporal root store.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_copy(
+      %arg0: tensor<1048576xf32> {xla.invariant, xla.streamed_once,
+                                  xla.slice_index = 0},
+      %arg1: tensor<1048576xf32> {xla.slice_index = 1}, %i: index)
+      -> tensor<1048576xf32> attributes {xla.contiguous_output, xla.entry} {
+    %v = tensor.extract %arg0[%i] : tensor<1048576xf32>
+    %out = tensor.insert %v into %arg1[%i] : tensor<1048576xf32>
+    func.return %out : tensor<1048576xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_copy
+// CHECK-NT:          llvm.load {{.*}}nontemporal
+// CHECK-NT:          llvm.store {{.*}}nontemporal
+
+// Non-AMD target: no non-temporal hints on unsupported (non-AMD) targets.
+// CHECK-NT-CUDA-LABEL: @nt_copy
+// CHECK-NT-CUDA-NOT:     nontemporal
+
+// -----
+
+// AMD non-temporal: a streamed-once input in a non-contiguous kernel (e.g. a
+// reduction) gets a non-temporal load, but its store stays temporal.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_streamed_not_contiguous(
+      %arg0: tensor<1048576xf32> {xla.invariant, xla.streamed_once,
+                                  xla.slice_index = 0},
+      %arg1: tensor<1048576xf32> {xla.slice_index = 1}, %i: index)
+      -> tensor<1048576xf32> attributes {xla.entry} {
+    %v = tensor.extract %arg0[%i] : tensor<1048576xf32>
+    %out = tensor.insert %v into %arg1[%i] : tensor<1048576xf32>
+    func.return %out : tensor<1048576xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_streamed_not_contiguous
+// CHECK-NT:          llvm.load {{.*}}nontemporal
+// CHECK-NT-NOT:      llvm.store {{.*}}nontemporal
+
+// -----
+
+// AMD non-temporal: a contiguous-output kernel whose input is not streamed-once
+// (e.g. a broadcast) gets no non-temporal hints.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_contiguous_not_streamed(
+      %arg0: tensor<1048576xf32> {xla.invariant, xla.slice_index = 0},
+      %arg1: tensor<1048576xf32> {xla.slice_index = 1}, %i: index, %j: index)
+      -> tensor<1048576xf32> attributes {xla.contiguous_output, xla.entry} {
+    %a = tensor.extract %arg0[%i] : tensor<1048576xf32>
+    %b = tensor.extract %arg0[%j] : tensor<1048576xf32>
+    %s = arith.addf %a, %b : f32
+    %out = tensor.insert %s into %arg1[%i] : tensor<1048576xf32>
+    func.return %out : tensor<1048576xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_contiguous_not_streamed
+// CHECK-NT-NOT:      nontemporal
+
+// -----
+
+// AMD non-temporal: a kernel carrying neither fact gets no hints.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_no_facts(
+      %arg0: tensor<1048576xf32> {xla.invariant, xla.slice_index = 0},
+      %arg1: tensor<1048576xf32> {xla.slice_index = 1}, %i: index)
+      -> tensor<1048576xf32> attributes {xla.entry} {
+    %v = tensor.extract %arg0[%i] : tensor<1048576xf32>
+    %out = tensor.insert %v into %arg1[%i] : tensor<1048576xf32>
+    func.return %out : tensor<1048576xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_no_facts
+// CHECK-NT-NOT:      nontemporal
+
+// -----
+
+// AMD non-temporal (size path): a non-streamed-once invariant input in a
+// non-contiguous kernel is streamed when its buffer >= 16x L2. L2 = 4 MiB here,
+// so the 64 MiB buffer is marked non-temporal.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_size_gate_above(
+      %arg0: tensor<16777216xf32> {llvm.dereferenceable = 67108864 : index,
+                                   xla.invariant, xla.slice_index = 0},
+      %arg1: tensor<16777216xf32> {xla.slice_index = 1}, %i: index)
+      -> tensor<16777216xf32> attributes {xla.entry} {
+    %v = tensor.extract %arg0[%i] : tensor<16777216xf32>
+    %out = tensor.insert %v into %arg1[%i] : tensor<16777216xf32>
+    func.return %out : tensor<16777216xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_size_gate_above
+// CHECK-NT:          llvm.load {{.*}}nontemporal
+
+// -----
+
+// AMD non-temporal (size path): a buffer below the threshold (32 MiB < 16x4 MiB)
+// stays temporal.
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<index, 32 : i32>>} {
+  func.func @nt_size_gate_below(
+      %arg0: tensor<8388608xf32> {llvm.dereferenceable = 33554432 : index,
+                                  xla.invariant, xla.slice_index = 0},
+      %arg1: tensor<8388608xf32> {xla.slice_index = 1}, %i: index)
+      -> tensor<8388608xf32> attributes {xla.entry} {
+    %v = tensor.extract %arg0[%i] : tensor<8388608xf32>
+    %out = tensor.insert %v into %arg1[%i] : tensor<8388608xf32>
+    func.return %out : tensor<8388608xf32>
+  }
+}
+
+// CHECK-NT-LABEL:  @nt_size_gate_below
+// CHECK-NT-NOT:      nontemporal
 
 // -----
 

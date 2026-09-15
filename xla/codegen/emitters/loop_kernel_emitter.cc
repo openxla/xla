@@ -101,6 +101,9 @@ LoopFusionKernelEmitter::EmitKernelDefinition() {
       emitters::EmitKernelApi(*module, fusion_, buffer_assignment_,
                               buffer_alignment_, entry_function_name_));
   SetBackendKind(&mlir_context_, entry_func, backend_kind_);
+  if (backend_kind_ == BackendKind::kGpu) {
+    SetContiguousOutput(&mlir_context_, entry_func);
+  }
 
   // Loop emitters don't support epilogues.
   emitters::PartitionedComputations computations(

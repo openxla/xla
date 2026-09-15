@@ -12,6 +12,9 @@ bcast {
   ROOT broadcast = bf16[2,16,48]{2,1,0} broadcast(zero), dimensions={}
 }
 // CHECK: func.func @main(%[[ARG0:.*]]: tensor<2x16x48xbf16>
+// The GPU loop emitter marks the entry function as writing its output
+// contiguously.
+// CHECK-GPU-SAME: xla.contiguous_output
 // CHECK-GPU: scf.forall {{.*}} shared_outs(%[[FORALL_ARG0:.*]] = %[[ARG0]])
 // CHECK:   xla.loop ({{.*}})[{{.*}}] -> (%[[RA:.*]], %[[RB:.*]], %[[RC:.*]]) in
 // CHECK-SAME: iter_args(%[[ITER:.*]] =

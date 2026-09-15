@@ -26,6 +26,9 @@ fusion {
 // CHECK-SAME:    %[[ARG_1:[a-zA-Z0-9]*]]: {{[^,]*}},
 // CHECK-SAME:    %[[ARG_2:[a-zA-Z0-9]*]]: {{[^,]*}},
 // CHECK-SAME:    %[[OUTPUT:[a-zA-Z0-9]*]]: {{[^,]*}}
+// The GPU concatenate emitter marks the entry function as writing its output
+// contiguously.
+// CHECK-GPU-SAME: xla.contiguous_output
 
 // CHECK-GPU: %[[WORKGROUP_ID:.*]] = xla.workgroup_id x
 // CHECK-GPU: scf.forall (%[[THREAD_ID:.*]]) in (128)
