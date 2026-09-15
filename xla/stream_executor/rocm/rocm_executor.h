@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_ROCM_EXECUTOR_H_
 #define XLA_STREAM_EXECUTOR_ROCM_ROCM_EXECUTOR_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -56,6 +57,13 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 
 namespace stream_executor::gpu {
+
+namespace internal {
+
+// Returns the same module identity for byte-identical images.
+ModuleHandle ModuleHandleFromImage(absl::Span<const uint8_t> image);
+
+}  // namespace internal
 
 // This class implements GpuExecutor for AMD GPUs that use ROCm libraries.
 class RocmExecutor : public GpuExecutor {
@@ -140,7 +148,8 @@ class RocmExecutor : public GpuExecutor {
   absl::Status InitBlas();
 
   // Loads a module in HSACO format.
-  absl::StatusOr<ModuleHandle> LoadModuleFromHsaco(const char* hsaco)
+  absl::StatusOr<ModuleHandle> LoadModuleFromHsaco(const char* hsaco,
+                                                   size_t size)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
 
   bool UnloadGpuBinary(ModuleHandle module_handle)
