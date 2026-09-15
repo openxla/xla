@@ -116,5 +116,52 @@ TEST_F(DivisibilityCheckTest, DynamicMulIOpAddIsDivisible) {
   EXPECT_TRUE(*result);
 }
 
+// The remainder of a negative constant is reported in [0, divisor).
+TEST_F(DivisibilityCheckTest, NegativeConstantGetRemainder) {
+  Location loc = builder_.getUnknownLoc();
+  auto cm3 = Create<arith::ConstantIndexOp>(loc, -3);
+  auto c8 = Create<arith::ConstantIndexOp>(loc, 8);
+  auto add = Create<arith::AddIOp>(loc, c8, cm3);
+
+  EXPECT_EQ(getRemainder(add, /*divisor=*/8), std::optional<int64_t>(5));
+}
+
+// Pallas computes indices in i32 and casts them to index last: the remainder
+// of (x * 8 + 3) modulo 8 is known through the cast, for a power of two
+// divisor only.
+TEST_F(DivisibilityCheckTest, IndexCastGetRemainder) {
+  Location loc = builder_.getUnknownLoc();
+  Type i32 = builder_.getI32Type();
+  FunctionType func_type = builder_.getFunctionType({i32}, {});
+  auto func = Create<func::FuncOp>(loc, "test_func", func_type);
+  Block* entry = func.addEntryBlock();
+  Value x = entry->getArgument(0);
+
+  builder_.setInsertionPointToStart(entry);
+  auto aligned = Create<tpu::AssumeMultipleOp>(loc, x, /*multiple=*/8);
+  auto c3 = Create<arith::ConstantIntOp>(loc, i32, 3);
+  auto add = Create<arith::AddIOp>(loc, aligned, c3);
+  auto cast = Create<arith::IndexCastOp>(loc, builder_.getIndexType(), add);
+  auto cast_ui =
+      Create<arith::IndexCastUIOp>(loc, builder_.getIndexType(), add);
+
+  EXPECT_EQ(getRemainder(cast, /*divisor=*/8), std::optional<int64_t>(3));
+  EXPECT_EQ(getRemainder(cast_ui, /*divisor=*/8), std::optional<int64_t>(3));
+  EXPECT_EQ(getRemainder(cast, /*divisor=*/3), std::nullopt);
+}
+
+// A cast keeps the low bits of its operand, so a divisor wider than the
+// operand is unknown: the sign extended constant would give 456.
+TEST_F(DivisibilityCheckTest, IndexCastNarrowOperandKeepsItsBits) {
+  Location loc = builder_.getUnknownLoc();
+  auto c200 = Create<arith::ConstantIntOp>(loc, builder_.getI8Type(), 200);
+  auto cast_i8 =
+      Create<arith::IndexCastUIOp>(loc, builder_.getIndexType(), c200);
+
+  EXPECT_EQ(getRemainder(cast_i8, /*divisor=*/256),
+            std::optional<int64_t>(200));
+  EXPECT_EQ(getRemainder(cast_i8, /*divisor=*/512), std::nullopt);
+}
+
 }  // namespace
 }  // namespace mlir::tpu
