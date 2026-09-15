@@ -562,8 +562,7 @@ xla_test(
 
 cc_library(
     name = "sycl_blas_lt_plugin",
-    srcs = ["sycl_blas_lt.cc",
-            "onemkl_util.h"],
+    srcs = ["sycl_blas_lt.cc"],
     hdrs = ["sycl_blas_lt.h"],
     tags = [
         "gpu",
@@ -583,6 +582,21 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
     ],
     alwayslink = True,
+)
+
+cc_library(
+    name = "onemkl_util_headers",
+    hdrs = ["onemkl_util.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@local_config_sycl//sycl:sycl_headers",
+    ],
 )
 
 cc_library(
