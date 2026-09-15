@@ -788,13 +788,13 @@ void* BFCAllocator::FindChunkPtrInCentralGap(size_t rounded_bytes,
              : AllocateChunkFromLowEnd(h, rounded_bytes, num_bytes, alignment);
 }
 
-bool BFCAllocator::ShouldSplitChunk(size_t chunk_size,
+bool BFCAllocator::ShouldSplitChunk(const Chunk* chunk,
                                     size_t rounded_bytes) const {
-  // Split if the chunk can be broken into two reasonably large pieces, or if
-  // keeping it whole would waste more than max_internal_fragmentation_bytes_
-  // on padding.
-  return chunk_size >= rounded_bytes * 2 ||
-         static_cast<int64_t>(chunk_size) -
+  // This heuristic also applies to same-tag holes in partitioned mode, but
+  // must never consume the central gap's remainder as allocation padding.
+  DCHECK_NE(chunk->tag, ChunkTag::kCentralGap);
+  return chunk->size >= rounded_bytes * 2 ||
+         static_cast<int64_t>(chunk->size) -
                  static_cast<int64_t>(rounded_bytes) >=
              max_internal_fragmentation_bytes_;
 }
@@ -820,15 +820,15 @@ void* BFCAllocator::AllocateChunkFromLowEnd(ChunkHandle h, size_t rounded_bytes,
     chunk = ChunkFromHandle(h);
   }
 
-  // Carving from the central gap always splits exactly, so the remainder stays
-  // in the gap for either end and this end's chunk sizes never depend on the
-  // other end's activity. Reusing a lower hole (or any chunk without spatial
-  // partitioning) follows the classic BFC heuristic instead. The trailing
+  // Carving from the central gap returns a chunk of exactly rounded_bytes,
+  // leaving any trailing remainder in the gap for either end. This end's chunk
+  // sizes therefore never depend on the other end's activity. Reusing a lower
+  // hole follows the non-partitioned BFC split heuristic. The trailing
   // remainder keeps the source chunk's tag (the central gap keeps its tag; a
   // lower hole stays lower).
   const bool from_central_gap = chunk->tag == ChunkTag::kCentralGap;
   if (from_central_gap ? chunk->size > rounded_bytes
-                       : ShouldSplitChunk(chunk->size, rounded_bytes)) {
+                       : ShouldSplitChunk(chunk, rounded_bytes)) {
     SplitChunk(h, rounded_bytes);
     chunk = ChunkFromHandle(h);  // Update chunk pointer in case it moved.
   }
@@ -846,14 +846,14 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
   Chunk* chunk = ChunkFromHandle(h);
   uintptr_t chunk_start = absl::bit_cast<uintptr_t>(chunk->ptr);
 
-  // Reusing an upper hole follows the classic BFC heuristic, mirroring the
-  // lower end: when the hole cannot be broken into two reasonably large pieces
-  // and its start already satisfies the alignment, take it whole and keep the
-  // slack as padding instead of splitting off a tiny prefix hole. Carving from
-  // the central gap always splits exactly, so the remainder stays in the gap.
+  // Reusing an upper hole follows the non-partitioned BFC split heuristic,
+  // mirroring the lower end: if the heuristic does not require a split and the
+  // hole's start satisfies the alignment, take it whole and keep the slack as
+  // padding. Central-gap allocations bypass this heuristic and return a chunk
+  // of exactly rounded_bytes, leaving any prefix below its aligned start in the
+  // gap and any alignment padding above it as an upper-owned free hole.
   if (chunk->tag == ChunkTag::kUpper &&
-      !ShouldSplitChunk(chunk->size, rounded_bytes) &&
-      chunk_start % alignment == 0) {
+      !ShouldSplitChunk(chunk, rounded_bytes) && chunk_start % alignment == 0) {
     FinishChunkAllocation(chunk, num_bytes);
     return chunk->ptr;
   }

@@ -893,10 +893,10 @@ TEST(BFCAllocatorTest, SpatialLowerOffsetsStable) {
   }
 }
 
-// Carving from the central gap splits exactly at both ends, even when the
-// classic BFC heuristic would keep the remainder as padding, so the gap stays
-// available to the other end and neither end's chunk sizes depend on the
-// other's activity.
+// Carving from the central gap returns the rounded request size at both ends,
+// even when the non-partitioned BFC heuristic would keep the remainder as
+// padding, so the gap stays available to the other end and neither end's chunk
+// sizes depend on the other's activity.
 TEST(BFCAllocatorTest, SpatialGapCarveSplitsExactlyAtBothEnds) {
   BFCAllocator::Options opts;
   opts.allow_growth = false;
@@ -906,7 +906,8 @@ TEST(BFCAllocatorTest, SpatialGapCarveSplitsExactlyAtBothEnds) {
   {
     // Upper takes half the pool. The 1024-byte gap is less than twice the
     // 768-byte lower request and the 256-byte remainder is far below the
-    // 128 MiB padding cap, so the classic heuristic alone would not split.
+    // 128 MiB padding cap, so the non-partitioned heuristic alone would not
+    // split.
     BFCAllocator alloc(std::make_unique<FakeSubAllocator>(),
                        /*total_memory=*/2048, /*name=*/"lower_carve", opts);
     void* upper = alloc.AllocateRaw(kAlignment, 1024, *kUpper);
@@ -945,9 +946,9 @@ TEST(BFCAllocatorTest, SpatialGapCarveSplitsExactlyAtBothEnds) {
   }
 }
 
-// Reusing an own-tagged hole follows the classic BFC split heuristic at both
-// ends: a hole that cannot be broken into two reasonably large pieces is taken
-// whole, keeping the slack as padding instead of leaving a tiny hole behind.
+// Reusing a same-tag hole follows the non-partitioned BFC split heuristic at
+// both ends: a hole smaller than twice the rounded request size is taken whole
+// if its unused space is below the padding limit.
 TEST(BFCAllocatorTest, SpatialHoleReuseKeepsSlackAtBothEnds) {
   BFCAllocator::Options opts;
   opts.allow_growth = false;

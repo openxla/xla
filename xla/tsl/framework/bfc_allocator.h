@@ -54,6 +54,9 @@ using tensorflow::MemoryDump;
 //
 // See prior art: https://gee.cs.oswego.edu/dl/html/malloc.html
 //
+// By default, BFC operates in non-partitioned mode, where the whole address
+// range is available to all allocation requests.
+//
 // High-level model:
 //
 // - Backing memory comes from the SubAllocator as AllocationRegions. With
@@ -76,9 +79,9 @@ using tensorflow::MemoryDump;
 //   the smallest viable bin, scans upward, and uses the smallest fitting chunk.
 //   Allocated chunks are never in a Bin.
 //
-// - AllocationAttributes::allocation_end controls placement. Without spatial
-//   partitioning all requests use AllocationEnd::kLower, and ordinary free
-//   chunks stay in ChunkTag::kLower, which is classic BFC behavior.
+// - AllocationAttributes::allocation_end controls placement. In non-partitioned
+//   mode all requests use AllocationEnd::kLower, and ordinary free chunks stay
+//   in ChunkTag::kLower.
 //
 // - With Options::enable_spatial_partitioning=true, which requires
 //   Options::allow_growth=false, the fixed address range is split into
@@ -88,11 +91,12 @@ using tensorflow::MemoryDump;
 //   allocated chunks and same-tag interior holes, and kCentralGap for the
 //   central gap. The central gap is tracked by central_gap_ instead of being
 //   inserted into a Bin. Each end first reuses binned holes with its own tag,
-//   then carves from the central gap. Carving from the gap always splits
-//   exactly so the remainder stays in the gap; reusing an own-tagged hole
-//   follows the classic split heuristic at both ends. This keeps each end's
-//   placements independent of activity from the opposite end except when
-//   lower and upper allocations exhaust the central gap.
+//   then carves from the central gap. Carving from the gap returns a chunk of
+//   exactly the rounded request size, leaving the remainder in the gap except
+//   for alignment padding, which becomes a same-tag free hole. Reusing a
+//   same-tag hole follows the non-partitioned split heuristic at both ends.
+//   This keeps each end's placements independent of activity from the opposite
+//   end except when lower and upper allocations exhaust the central gap.
 //
 class BFCAllocator : public Allocator {
  public:
@@ -627,12 +631,12 @@ class BFCAllocator : public Allocator {
                                  AllocationEnd allocation_end)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Classic BFC split heuristic for reusing a free chunk: split when the chunk
-  // can be broken into two reasonably large pieces, or when keeping it whole
-  // would waste more than max_internal_fragmentation_bytes_ on padding.
-  // Carving from the central gap never consults this and always splits
-  // exactly.
-  bool ShouldSplitChunk(size_t chunk_size, size_t rounded_bytes) const
+  // Non-partitioned BFC split heuristic, also used for same-tag free holes in
+  // partitioned mode: split if the chunk is at least twice the rounded request
+  // size, or if keeping it whole would waste at least
+  // max_internal_fragmentation_bytes_ on padding. The chunk must not be the
+  // central gap, whose allocations always use the rounded request size.
+  bool ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Carves an allocation of 'num_bytes' (rounded to 'rounded_bytes') out of the
@@ -671,7 +675,8 @@ class BFCAllocator : public Allocator {
 
   // Adds the chunk 'h' to the free data structure. Spatial partitioning
   // keeps the single central gap out of the bins and bins only lower/upper
-  // interior holes; classic BFC inserts every free chunk into a size bin.
+  // interior holes; non-partitioned BFC inserts every free chunk into a size
+  // bin.
   void InsertFreeChunk(ChunkHandle h) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Removes the chunk 'h' from the free data structure.
@@ -760,9 +765,9 @@ class BFCAllocator : public Allocator {
 
   const Options opts_;
 
-  // Tag assigned to newly-created free chunks. Classic BFC keeps ordinary
-  // free chunks in kLower; spatial partitioning starts each fixed region as
-  // the kCentralGap span.
+  // Tag assigned to newly-created free chunks. Non-partitioned BFC keeps
+  // ordinary free chunks in kLower; spatial partitioning starts each fixed
+  // region as the kCentralGap span.
   const ChunkTag free_chunk_tag_;
 
   // The size of the current region allocation.
