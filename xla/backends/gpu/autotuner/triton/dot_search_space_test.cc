@@ -527,6 +527,27 @@ TEST_F(DotSearchSpaceTest, CudaDoesNotGenerateWavesPerEuConfigs) {
               AllOf(Not(IsEmpty()), Each(WavesPerEuIs(Eq(0)))));
 }
 
+TEST_F(DotSearchSpaceTest, DefaultSearchSpaceUsesSingleCtaClusters) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDefaultDotModule());
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(NumCtasIs(Eq(1)))));
+}
+
+TEST_F(DotSearchSpaceTest, ExhaustiveSearchSpaceConsidersTwoCtaClusters) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDefaultDotModule());
+  auto debug_options = module->config().debug_options();
+  debug_options.set_xla_gpu_exhaustive_tiling_search(true);
+  module->mutable_config().set_debug_options(debug_options);
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Contains(NumCtasIs(Eq(2))), Each(NumCtasIs(AnyOf(1, 2)))));
+}
+
 class RocmDotSearchSpaceTest : public DefaultDeviceDotSearchSpaceTest {
  protected:
   RocmDotSearchSpaceTest() {
@@ -549,6 +570,32 @@ TEST_F(RocmDotSearchSpaceTest, GeneratesWavesPerEuConfigs) {
 
   EXPECT_THAT(configs, AllOf(Not(IsEmpty()), Contains(WavesPerEuIs(Ge(1))),
                              Each(WavesPerEuIs(AnyOf(0, 1, 2, 4)))));
+}
+
+class AmpereDotSearchSpaceTest : public DefaultDeviceDotSearchSpaceTest {
+ protected:
+  AmpereDotSearchSpaceTest() {
+    // A100 SXM parameters.
+    device_description_.set_registers_per_block_limit(64 * 1024);
+    device_description_.set_core_count(108);
+    device_description_.set_threads_per_block_limit(1024);
+    device_description_.set_threads_per_warp(32);
+    device_description_.set_shared_memory_per_block_optin(164 * 1024);
+    device_description_.set_gpu_compute_capability(
+        se::CudaComputeCapability::Ampere());
+  }
+};
+
+TEST_F(AmpereDotSearchSpaceTest, DoesNotGenerateClusterConfigsBeforeHopper) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDefaultDotModule());
+  auto debug_options = module->config().debug_options();
+  debug_options.set_xla_gpu_exhaustive_tiling_search(true);
+  module->mutable_config().set_debug_options(debug_options);
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(NumCtasIs(Eq(1)))));
 }
 
 }  // namespace

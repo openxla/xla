@@ -1022,6 +1022,43 @@ ENTRY entry_computation {
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
+// Parameterized to make sure that a cluster launch also works when TMA is
+// enabled.
+TEST_P(TmaParameterizedTritonEmitterTest, TestDotWithTwoCtaCluster) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
+    GTEST_SKIP() << "Thread block clusters require sm_90+.";
+  }
+  constexpr absl::string_view kHloTextTemplate = R"(
+HloModule m
+
+triton_dot {
+  p0 = bf16[512,512] parameter(0)
+  p1 = bf16[512,512] parameter(1)
+  ROOT dot = f32[512,512] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={sizes:[64]}
+}
+
+ENTRY e {
+  p0 = bf16[512,512] parameter(0)
+  p1 = bf16[512,512] parameter(1)
+  ROOT fusion = f32[512,512] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["128","128"]}],
+        "num_warps":"8",
+        "num_ctas":"2",
+        "num_stages":"3",
+        "is_tma_allowed":"$0"}}}
+})";
+  const bool is_tma_allowed = std::get<0>(GetParam());
+  const std::string hlo_text =
+      absl::Substitute(kHloTextTemplate, is_tma_allowed);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{/*aabs=*/1e-2,
+                                                           /*arel=*/1e-2}));
+}
+
 TEST_P(TritonEmitterTestWithTilingParam,
        TestSliceWithTileElementsNotAllContiguous) {
   constexpr absl::string_view kHloText = R"(
