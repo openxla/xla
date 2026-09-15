@@ -513,7 +513,7 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     // present.
     // TODO: b/491510579 - Check if we can do something better in this case.
     ABSL_ASSIGN_OR_RETURN(NumDevicesForPlatform device_counts,
-                     GetNumDevicesFromPlatform(platform_id));
+                          GetNumDevicesFromPlatform(platform_id));
     num_devices_per_host = device_counts.num_devices_per_host;
     num_devices_per_process = device_counts.num_devices_per_process;
     if (num_devices_per_host > 0) {
@@ -545,7 +545,7 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     target_config_proto.set_platform_name(platform_id->ToName());
     target_config_proto.set_device_description_str(device_description->name());
     ABSL_ASSIGN_OR_RETURN(GpuTargetConfig target_config,
-                     gpu::GpuTargetConfig::FromProto(target_config_proto));
+                          gpu::GpuTargetConfig::FromProto(target_config_proto));
     gpu_target_config = std::move(target_config);
   }
 
@@ -567,7 +567,7 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
   // Populate the number of devices per process if not yet resolved.
   if (stream_exec != nullptr && !num_devices_per_process.has_value()) {
     ABSL_ASSIGN_OR_RETURN(NumDevicesForPlatform device_counts,
-                     GetNumDevicesFromPlatform(platform_id));
+                          GetNumDevicesFromPlatform(platform_id));
     num_devices_per_process = device_counts.num_devices_per_process;
   }
 
@@ -757,7 +757,7 @@ absl::Status RunSPMDPasses(
 
 absl::Status SetHostDeviceType(HloInstruction* instr) {
   ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                   instr->backend_config<GpuBackendConfig>());
+                        instr->backend_config<GpuBackendConfig>());
   backend_config.set_device_type(DEVICE_TYPE_HOST);
   ABSL_RETURN_IF_ERROR(instr->set_backend_config(backend_config));
   return absl::OkStatus();
@@ -765,7 +765,7 @@ absl::Status SetHostDeviceType(HloInstruction* instr) {
 
 absl::Status ClearBackendConfigDeviceType(HloInstruction* instr) {
   ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                   instr->backend_config<GpuBackendConfig>());
+                        instr->backend_config<GpuBackendConfig>());
   backend_config.clear_device_type();
   return instr->set_backend_config(backend_config);
 }
@@ -1410,11 +1410,11 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
   pre_fusion.AddPass<AddTrackingSuffixToInstructionNames>();
   ABSL_RETURN_IF_ERROR(pre_fusion.Run(hlo_module).status());
 
-  ABSL_RETURN_IF_ERROR(FusionPipeline(hlo_module->config().debug_options(),
-                                 shape_size_fn, alias_info, thread_pool,
-                                 gpu_device_info, mlir_context)
-                      .Run(hlo_module, {HloInstruction::kMainExecutionThread})
-                      .status());
+  ABSL_RETURN_IF_ERROR(
+      FusionPipeline(hlo_module->config().debug_options(), shape_size_fn,
+                     alias_info, thread_pool, gpu_device_info, mlir_context)
+          .Run(hlo_module, {HloInstruction::kMainExecutionThread})
+          .status());
 
   if (VLOG_IS_ON(2)) {
     HloFusionStatsVisitor stats;
@@ -1836,7 +1836,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
       gpu_topology.gpu_target_config().device_description;
 
   ABSL_ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
-                   mlir_context_pool_.GetOrCreate());
+                        mlir_context_pool_.GetOrCreate());
   mlir::MLIRContext* mlir_context = borrowed_context->get();
 
   CheckNotScheduled(hlo_module);
@@ -1954,8 +1954,8 @@ absl::Status GpuCompiler::OptimizeHloModule(
       hlo_module, stream_exec, options, gpu_topology.gpu_target_config(),
       alias_info, mlir_context, compilation_stats));
 
-  ABSL_RETURN_IF_ERROR(RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec,
-                                                        compilation_stats));
+  ABSL_RETURN_IF_ERROR(RunCollectiveScheduleLinearizerPasses(
+      hlo_module, stream_exec, compilation_stats));
 
   {
     HloPassPipeline pipeline("invariant-checkers", compilation_stats);
@@ -2324,8 +2324,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     compilation_stats = CompilationStats::MakeNoopStats();
   }
   ABSL_ASSIGN_OR_RETURN(GpuTopology gpu_topology,
-                   InferGpuTopology(module->config(), stream_exec, options,
-                                    debug_opts, platform_id_));
+                        InferGpuTopology(module->config(), stream_exec, options,
+                                         debug_opts, platform_id_));
   if (gpu_topology.slice_size() > 0) {
     module->mutable_config().set_partition_size(gpu_topology.slice_size());
   }
@@ -2350,14 +2350,14 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
       gpu_topology.gpu_target_config().device_description;
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
   ABSL_RETURN_IF_ERROR(OptimizeHloModule(module.get(), stream_exec, options,
-                                    gpu_topology, alias_info.get(),
-                                    compilation_stats.get()));
+                                         gpu_topology, alias_info.get(),
+                                         compilation_stats.get()));
   if (options.early_exit_with_layouts) {
     return std::move(module);
   }
 
-  ABSL_RETURN_IF_ERROR(RunPreSchedulingCopyInsertion(*module, device_description,
-                                                alias_info.get()));
+  ABSL_RETURN_IF_ERROR(RunPreSchedulingCopyInsertion(
+      *module, device_description, alias_info.get()));
 
   uint64_t end_usecs = tsl::Env::Default()->NowMicros();
 
@@ -2790,9 +2790,9 @@ absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
       std::move(cpu_target_machine_options));
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::cpu::NanoRtExecutable> executable,
-                   client.Compile(computation));
+                        client.Compile(computation));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CompiledModule> result,
-                   client.Export(executable.get()));
+                        client.Export(executable.get()));
   xla::cpu::CpuAotCompilationResult* cpu_aot_compilation_result =
       absl::down_cast<cpu::CpuAotCompilationResult*>(result.get());
   return cpu_aot_compilation_result->proto();
@@ -2902,8 +2902,8 @@ GpuCompiler::CompileToBackendResult(
     const CompilationCacheProto& current_cache =
         compile_module_results.kernel_compilation_cache;
     ABSL_RETURN_IF_ERROR(UpdateDiskKernelCache(resolved_path,
-                                          /*do_append=*/cache_file_exists,
-                                          current_cache));
+                                               /*do_append=*/cache_file_exists,
+                                               current_cache));
   }
 
   {
@@ -2970,13 +2970,13 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
 
   ABSL_ASSIGN_OR_RETURN(GpuTopology gpu_topology,
-                   InferGpuTopology(module->config(), stream_exec, options,
-                                    debug_opts, platform_id_));
+                        InferGpuTopology(module->config(), stream_exec, options,
+                                         debug_opts, platform_id_));
 
   BinaryMap dnn_compiled_graphs;
   ABSL_RETURN_IF_ERROR(RunCudnnCompilerPasses(module.get(), stream_exec,
-                                         gpu_topology.gpu_target_config(),
-                                         &dnn_compiled_graphs));
+                                              gpu_topology.gpu_target_config(),
+                                              &dnn_compiled_graphs));
 
   if (DumpingEnabledForHloModule(*module)) {
     std::string textproto;
@@ -3002,7 +3002,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   }
 
   ABSL_ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
-                   mlir_context_pool_.GetOrCreate());
+                        mlir_context_pool_.GetOrCreate());
 
   ABSL_ASSIGN_OR_RETURN(
       CompileResultWithMetadata res,
@@ -3027,9 +3027,10 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
 
-  ABSL_ASSIGN_OR_RETURN(stream_executor::ExecutableAbiVersion executable_abi_version,
-                   stream_executor::ExecutableAbiVersion::FromDeviceDescription(
-                       gpu_device_info));
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::ExecutableAbiVersion executable_abi_version,
+      stream_executor::ExecutableAbiVersion::FromDeviceDescription(
+          gpu_device_info));
 
   std::string buffer_allocations_debug_summary =
       res.compile_module_results.buffer_assignment->ToVerboseString(
@@ -3104,9 +3105,10 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
       options.early_exit_point() ==
       AotCompilationOptions::EarlyExitPoint::kAfterLayoutAssignment;
 
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_hlo_module,
-                   RunHloPassesIfNeeded(std::move(hlo_module),
-                                        options.executor(), compile_options));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> optimized_hlo_module,
+      RunHloPassesIfNeeded(std::move(hlo_module), options.executor(),
+                           compile_options));
 
   if (options.early_exit_point() !=
       AotCompilationOptions::EarlyExitPoint::kNone) {
@@ -3117,8 +3119,8 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                   RunBackend(std::move(optimized_hlo_module),
-                              options.executor(), compile_options));
+                        RunBackend(std::move(optimized_hlo_module),
+                                   options.executor(), compile_options));
 
   std::vector<std::unique_ptr<CompiledModule>> results;
   ABSL_ASSIGN_OR_RETURN(results.emplace_back(), Export(executable.get()));
