@@ -751,6 +751,20 @@ absl::Status AddCopiesForInPlaceOperation(
     int64_t operand_number) {
   VLOG(2) << "Adding copies for in-place operation " << in_place_op->name();
   HloInstruction* operand = in_place_op->mutable_operand(operand_number);
+  // For broadcast operands, TPU lowers broadcasts without allocating physical
+  // HBM memory (materializing values into the consuming loop). Inserting a copy
+  // allocates an unnecessary physical buffer. If the broadcast has multiple
+  // users, cloning it gives the in-place operation a distinct buffer in alias
+  // analysis without incurring physical copy allocation overhead.
+  if (operand->opcode() == HloOpcode::kBroadcast) {
+    if (operand->user_count() > 1) {
+      HloInstruction* cloned_broadcast =
+          in_place_op->parent()->AddInstruction(operand->Clone());
+      ABSL_RETURN_IF_ERROR(operand->ReplaceUseWith(in_place_op, operand_number,
+                                              cloned_broadcast));
+    }
+    return absl::OkStatus();
+  }
   ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
                    in_place_op->parent()->DeepCopyInstruction(operand));
   ABSL_RETURN_IF_ERROR(
