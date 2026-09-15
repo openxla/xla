@@ -188,29 +188,32 @@ absl::Status VerifyConcatenateAlignment(
   // operand that contains the base_offset.
   //
   // The tile grid positions along the concatenate dimension are
-  // `base_offset + k * tile_size` for all integer k. Whether or not a given
-  // tile lands on an operand boundary depends only on the *phase*
-  // `(boundary - base_offset) mod tile_size`, which is invariant under shifting
-  // base_offset by any multiple of tile_size. This is why base_offset is used
-  // purely as a "simple" heuristic anchor to reason about, and the conclusions
-  // generalize to every tile of the tiling. In particular, base_offset may be
-  // negative (e.g. inherited from a pad's edge_padding_low above the
-  // concatenate): a negative anchor merely means the first tile(s) reach before
-  // the concatenated tensor begins. The first tile that touches real
-  // operand data enters operand 0 with a shift of `base_offset mod tile_size`,
-  // exactly the phase captured below.
+  // `base_offset + k * tile_size` for all integer k. A tiling is only valid if
+  // no tile straddles an operand boundary: every operand boundary must line up
+  // with a tile boundary. Whether a given operand boundary lines up with a tile
+  // boundary depends only on whether the distance from base_offset to that
+  // boundary is a multiple of tile_size. This distance is measured from the
+  // true base_offset and is computed the same way whether base_offset is
+  // positive or negative, so all the checks below hold regardless of the sign
+  // of base_offset. In particular, base_offset may be negative (e.g. inherited
+  // from a pad's edge_padding_low above the concatenate): a negative
+  // base_offset merely means the first tile(s) reach before the concatenated
+  // tensor begins, and the same "distance is a multiple of tile_size" alignment
+  // rule still decides whether the tiling is valid.
   //
-  // We enforce (sign-agnostically):
+  // We enforce (regardless of the sign of base_offset):
   // 1. The variable step (offset_expr - base_offset) is divisible by the tile
   //    size. With base_offset being the true constant part, this simplifies to
   //    d[*] * tile_size and guarantees the tile grid steps by whole tiles.
   //    TODO: b/491092362 - why do we need that?
-  // 2. The phase-adjusted remaining size in the located operand,
+  // 2. The remaining size in the located operand,
   //    `remaining_size = (accumulated_offset + current_op_size) - base_offset`,
-  //    is divisible by the tile size (unless it is the last operand). Note this
-  //    value may exceed the operand size when base_offset is negative; that is
-  //    intentional, since only `remaining_size mod tile_size` matters for
-  //    boundary alignment.
+  //    (i.e. the distance from base_offset to the end of that operand) is
+  //    divisible by the tile size (unless it is the last operand), so that the
+  //    end of this operand lines up with a tile boundary. Note this value is
+  //    measured from the true base_offset and may exceed the operand size when
+  //    base_offset is negative; that is intentional, since only whether it is a
+  //    multiple of tile_size matters, independent of the sign of base_offset.
   // 3. All subsequent operand sizes are divisible by the tile size (unless
   //    they are the last operand).
   //
@@ -246,7 +249,8 @@ absl::Status VerifyConcatenateAlignment(
 
   // Keep the true (possibly negative) constant part. A negative base_offset is
   // valid; the operand-location loop below naturally selects operand 0 for it,
-  // and the phase-based `remaining_size % tile_size` check governs correctness.
+  // and the sign-agnostic `remaining_size % tile_size` check (which measures
+  // the distance from base_offset to the operand boundary) governs correctness.
   int64_t base_offset = base_offset_expr.GetValue();
   int64_t base_operand_idx = 0;
   int64_t accumulated_offset = 0;
@@ -269,9 +273,10 @@ absl::Status VerifyConcatenateAlignment(
 
   int64_t current_op_size =
       concatenate.operand(base_operand_idx)->shape().dimensions(concat_dim);
-  // Phase-adjusted remaining size: distance from the (true) base_offset to the
-  // boundary at the end of the located operand. May exceed current_op_size when
-  // base_offset is negative; only its value mod tile_size matters.
+  // Remaining size: distance from the (true, possibly negative) base_offset to
+  // the boundary at the end of the located operand. Measured the same way for
+  // any sign of base_offset; it may exceed current_op_size when base_offset is
+  // negative, but only whether it is a multiple of tile_size matters.
   int64_t remaining_size = (accumulated_offset + current_op_size) - base_offset;
   SymbolicExpr variable_step =
       (offset_expr - CreateSymbolicConstant(base_offset, ctx)).Canonicalize();
@@ -282,6 +287,26 @@ absl::Status VerifyConcatenateAlignment(
         ": The tile size ", tile_size_expr.ToString(), " is not a constant."));
   }
   int64_t tile_size = tile_size_expr.GetValue();
+
+  // A negative base_offset means the anchor tile reaches before operand 0
+  // begins. This is only emittable when operand 0's start lands on a tile
+  // boundary, i.e. base_offset is a whole number of tiles below zero. In that
+  // case the fully-out-of-range prefix consists of entire tiles, which the
+  // emitter masks as whole tiles.
+  if (base_offset < 0) {
+    // The modulo op would give a non-positive value for a negative
+    // base_offset, so we normalize it.
+    int64_t offset_within_tile =
+        ((base_offset % tile_size) + tile_size) % tile_size;
+    if (offset_within_tile != 0) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Tiling propagation rejected for ", concatenate.ToString(),
+          ": The negative base offset ", base_offset,
+          " is not aligned to the tile size ", tile_size,
+          " (base_offset mod tile_size = ", offset_within_tile,
+          "); operand 0 would require an unsupported low-side (left) mask."));
+    }
+  }
 
   if (!variable_step.IsMultipleOf(tile_size)) {
     return absl::FailedPreconditionError(absl::StrCat(
@@ -296,7 +321,7 @@ absl::Status VerifyConcatenateAlignment(
     if (remaining_size % tile_size != 0) {
       return absl::FailedPreconditionError(absl::StrCat(
           "Tiling propagation rejected for ", concatenate.ToString(),
-          ": The phase-adjusted remaining size ", remaining_size,
+          ": The remaining size ", remaining_size,
           " (remaining_size mod tile_size = ", remaining_size % tile_size,
           ") in the concatenate operand ", base_operand_idx,
           " must be a clean multiple of its tile size ", tile_size,
