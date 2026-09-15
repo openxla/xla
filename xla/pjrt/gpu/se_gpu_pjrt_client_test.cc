@@ -2741,7 +2741,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
   // The layout does not depend on the arena size; keep preallocation small.
   options.allocator_config.memory_fraction = 0.05;
   options.allowed_devices = {0};
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
   auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
       absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
@@ -2756,19 +2756,19 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
     return absl::bit_cast<uintptr_t>(memory->opaque());
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> collective0,
       allocator->Allocate(/*device_ordinal=*/0, kBytes,
                           /*retry_on_failure=*/false, kCollective));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> collective1,
       allocator->Allocate(/*device_ordinal=*/0, kBytes,
                           /*retry_on_failure=*/false, kCollective));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> default0,
       allocator->Allocate(/*device_ordinal=*/0, kBytes,
                           /*retry_on_failure=*/false, kDefault));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> default1,
       allocator->Allocate(/*device_ordinal=*/0, kBytes,
                           /*retry_on_failure=*/false, kDefault));
@@ -2795,7 +2795,7 @@ TEST(StreamExecutorGpuClientTest, GrowableBfcServesBothMemorySpaces) {
   options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   options.allocator_config.preallocate = false;
   options.allowed_devices = {0};
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
   auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
       absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
@@ -2807,12 +2807,12 @@ TEST(StreamExecutorGpuClientTest, GrowableBfcServesBothMemorySpaces) {
       static_cast<int>(gpu::MemorySpaceColor::kCollective);
   constexpr uint64_t kBytes = uint64_t{1} << 20;
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> default_memory,
       allocator->Allocate(/*device_ordinal=*/0, kBytes,
                           /*retry_on_failure=*/false, kDefault));
   EXPECT_NE(default_memory->opaque(), nullptr);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> collective_memory,
       allocator->Allocate(/*device_ordinal=*/0, kBytes,
                           /*retry_on_failure=*/false, kCollective));
