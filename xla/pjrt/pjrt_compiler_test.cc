@@ -278,6 +278,33 @@ TEST(PjRtCompilerTest, VariantRegistryLookup) {
   EXPECT_TRUE(absl::IsNotFound(status.status()));
 }
 
+TEST(PjRtCompilerTest, HasCompilerVariant) {
+  const std::string platform = "has_variant_test_platform";
+  const std::string factory_variant = "factory_registered_variant";
+  const std::string compiler_variant = "compiler_registered_variant";
+
+  EXPECT_FALSE(PjRtHasCompilerVariant(platform, factory_variant));
+  EXPECT_FALSE(PjRtHasCompilerVariant(platform, compiler_variant));
+
+  bool factory_called = false;
+  PjRtRegisterCompilerFactory(
+      platform, factory_variant,
+      [&factory_called]() -> absl::StatusOr<std::unique_ptr<PjRtCompiler>> {
+        factory_called = true;
+        return std::make_unique<PjRtDeserializeCompiler>();
+      });
+  PjRtRegisterCompiler(platform, compiler_variant,
+                       std::make_unique<PjRtDeserializeCompiler>());
+
+  EXPECT_TRUE(PjRtHasCompilerVariant(platform, factory_variant));
+  EXPECT_TRUE(PjRtHasCompilerVariant(platform, compiler_variant));
+  // The query must not instantiate the compiler.
+  EXPECT_FALSE(factory_called);
+
+  EXPECT_FALSE(PjRtHasCompilerVariant(platform, "unregistered_variant"));
+  EXPECT_FALSE(PjRtHasCompilerVariant("wrong_platform", factory_variant));
+}
+
 TEST(PjRtTopologyDescriptionTest, DefaultMemorySpaceKindIds) {
   PjRtTestTopology topology;
   EXPECT_THAT(topology.GetMemorySpaceKindIds(), ::testing::ElementsAre(-1));
