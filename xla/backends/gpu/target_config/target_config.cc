@@ -18,6 +18,8 @@ limitations under the License.
 #include <cstddef>
 #include <string>
 
+#include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -125,6 +127,36 @@ absl::StatusOr<stream_executor::GpuTargetConfigProto> GetGpuTargetConfig(
         gpu_model));
   }
   return config;
+}
+
+absl::StatusOr<stream_executor::GpuTargetConfigProto>
+GetGpuTargetConfigFromDeviceKind(absl::string_view device_kind) {
+  using DeviceKindMap =
+        absl::flat_hash_map<std::string, stream_executor::GpuTargetConfigProto>;
+
+  static const absl::NoDestructor<DeviceKindMap> cache([]() -> DeviceKindMap {
+      DeviceKindMap map;
+      const struct FileToc* toc = embed_gpu_specs_create();
+      for (size_t i = 0; i < embed_gpu_specs_size(); ++i) {
+        stream_executor::GpuTargetConfigProto proto;
+        if (google::protobuf::TextFormat::ParseFromString(
+                std::string_view(toc[i].data, toc[i].size), &proto)) {
+          map.emplace(proto.device_description_str(), std::move(proto));
+        }
+      }
+      return map;
+  }());
+
+  auto it = cache->find(device_kind);
+  if (it != cache->end()) {
+    return it->second;
+  }
+
+  return absl::NotFoundError(
+      absl::StrCat(
+          "No GPU spec found for device kind: ", device_kind,
+          ". To add a new GPU spec, please create txtpb file "
+          "in xla/backends/gpu/target_config/specs/"));
 }
 
 GpuTargetConfig::GpuTargetConfig(se::StreamExecutor* s)
