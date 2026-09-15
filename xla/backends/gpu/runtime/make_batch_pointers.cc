@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -36,10 +37,13 @@ absl::Status MakeBatchPointers(se::Stream* stream,
                                size_t stride_bytes, size_t n,
                                se::DeviceAddressBase ptrs_out) {
   se::StreamExecutor* executor = stream->parent();
-  size_t threads_per_block = [&] {
-    if (executor->GetPlatform()->id() ==
-        stream_executor::rocm::kROCmPlatformId) {
+  size_t threads_per_block = [&]() -> size_t {
+    se::PlatformId platform_id = executor->GetPlatform()->id();
+    if (platform_id == stream_executor::rocm::kROCmPlatformId) {
       return 256;
+    } else if (platform_id == stream_executor::sycl::kSyclPlatformId) {
+      return std::min<int64_t>(
+          128, executor->GetDeviceDescription().threads_per_block_limit());
     }
     return 128;
   }();
