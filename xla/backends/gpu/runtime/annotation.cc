@@ -645,14 +645,16 @@ InstructionAnnotation::InstructionAnnotation(
 
 void RangePush(tsl::profiler::ProfilerDomainHandle domain,
                const ModuleAnnotation& annotation) {
-  tsl::profiler::RangePush(domain, annotation.title(), annotation);
+  tsl::profiler::RangePush(domain, annotation.title(),
+                           annotation.title_str_.c_str(), annotation);
 }
 
 void RangePush(tsl::profiler::ProfilerDomainHandle domain,
                const InstructionAnnotation& annotation) {
   std::visit(
       [&](const auto& payload) {
-        tsl::profiler::RangePush(domain, annotation.nvtx_name_, payload);
+        tsl::profiler::RangePush(domain, annotation.nvtx_name_,
+                                 annotation.nvtx_name_str_.c_str(), payload);
       },
       annotation.payload_);
 }

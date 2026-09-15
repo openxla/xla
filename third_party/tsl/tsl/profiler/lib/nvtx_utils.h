@@ -60,9 +60,14 @@ inline void RangePush(ProfilerDomainHandle domain, const std::string& str) {
 }
 
 namespace detail {
+// `title_text` is the same string that was passed to RegisterString to obtain
+// `title`, and must stay alive for the duration of the call. Backends with a
+// string-registration API (NVTX) use `title` and ignore `title_text`; backends
+// without one (roctx) cannot resolve an opaque handle and use `title_text`.
 void RangePush(ProfilerDomainHandle domain, StringHandle title,
-               uint64_t schema_id, const void* payload, size_t payload_size);
-}
+               const char* title_text, uint64_t schema_id, const void* payload,
+               size_t payload_size);
+}  // namespace detail
 
 // More powerful version: pass a registered string instead of a C-style
 // string, and attach a generic payload. The Annotation type must implement a
@@ -70,8 +75,8 @@ void RangePush(ProfilerDomainHandle domain, StringHandle title,
 // payload.
 template <typename Annotation>
 void RangePush(ProfilerDomainHandle domain, StringHandle title,
-               const Annotation& annotation) {
-  return detail::RangePush(domain, title, annotation.NvtxSchemaId(),
+               const char* title_text, const Annotation& annotation) {
+  return detail::RangePush(domain, title, title_text, annotation.NvtxSchemaId(),
                            &annotation, sizeof(Annotation));
 }
 
