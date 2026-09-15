@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
@@ -77,15 +78,12 @@ struct ConversionContext {
       // Nested executors (loops, branches, dynamic slices) are recorded as one
       // command here. Order them against outstanding work on every additional
       // stream they use, and publish their completion on those streams too.
-      std::vector<ExecutionStreamId> nested_streams;
+      absl::flat_hash_set<ExecutionStreamId> nested_streams;
       command->Thunk::Walk([&](const Thunk* thunk) {
         if (thunk->kind() != Thunk::kAsyncStart) return;
         ExecutionStreamId stream =
             static_cast<const AsyncStartThunk*>(thunk)->execution_stream_id();
-        if (std::find(nested_streams.begin(), nested_streams.end(), stream) ==
-            nested_streams.end()) {
-          nested_streams.push_back(stream);
-        }
+        nested_streams.insert(stream);
       });
       Command::ResourceUses dependencies = stream_frontiers[current_stream];
       for (ExecutionStreamId stream : nested_streams) {
