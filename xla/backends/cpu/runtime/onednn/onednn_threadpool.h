@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 
+#include "xla/tsl/platform/logging.h"
 #include "Eigen/ThreadPool"
 #include "oneapi/dnnl/dnnl_threadpool.h"  // IWYU pragma: keep
 #include "oneapi/dnnl/dnnl_threadpool_iface.hpp"
@@ -129,6 +130,14 @@ class OneDnnThreadPool final
   // This is used only when is_async_ is true.
   tsl::AsyncValueRef<tsl::Chain> done_event_;
 };
+
+inline Eigen::ThreadPoolInterface* GetFallbackThreadPoolForOneDnn() {
+  static auto* pool = new Eigen::ThreadPool(1);
+  VLOG_FIRST_N(0, 1)
+      << "No intra-op thread pool available. "
+         "Using fallback single-threaded thread pool for oneDNN execution.";
+  return pool;
+}
 
 }  // namespace xla::cpu
 
