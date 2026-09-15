@@ -755,22 +755,17 @@ TEST(CommandBufferConversionPassTest, DontConvertAsyncsIfUnpairedStart) {
 
   // Expected transformation: {Copy, AsyncStart0, AsyncStart1,
   // AsyncDone0, Copy} -> {CommandBuffer(Copy), AsyncStart0,
-  // AsyncStart1, AsyncDone0, CommandBuffer(Copy)}
+  // AsyncStart1, AsyncDone0, Copy}. The final copy remains inside an open
+  // async region and cannot be captured independently of that region.
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kAsyncStart,
                                     Thunk::kAsyncStart, Thunk::kAsyncDone,
-                                    Thunk::kCommandBuffer));
+                                    Thunk::kCopy));
 
   const auto* command_buffer_thunk0 =
       static_cast<const CommandBufferThunk*>(thunks[0].get());
   const auto& thunks_in_command_buffer0 =
       command_buffer_thunk0->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer0, ThunkKindsAre(Thunk::kCopy));
-
-  const auto* command_buffer_thunk4 =
-      static_cast<const CommandBufferThunk*>(thunks[4].get());
-  const auto& thunks_in_command_buffer4 =
-      command_buffer_thunk4->thunks()->thunks();
-  EXPECT_THAT(thunks_in_command_buffer4, ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest, ConvertsAsyncPairsMixedWithOtherThunks) {
