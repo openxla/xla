@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/index.h"
 #include "xla/python/ifrt/index_domain.h"
+#include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
@@ -836,6 +837,175 @@ TEST(ArrayImplTest, CopyArraysToHostBufferShardsReplicated) {
 
   EXPECT_OK(futures[0].Await());
   EXPECT_THAT(out, ElementsAre(0, 1, 2, 3, 4, 5));
+}
+
+namespace {
+
+// Creates an `Array` of `shape` with tiles of `shard_shape` using
+// `MakeArraysFromHostBufferShards` and copies its addressable shards back to
+// host buffers using `CopyArraysToHostBufferShards`. Returns the output shard
+// buffers (each initialized to `-1.0f` prior to copying).
+absl::StatusOr<std::vector<std::vector<float>>> MakeAndCopyArrayToHost(
+    Client* client, Shape shape, Shape shard_shape, ShardingRef sharding,
+    absl::Span<const std::vector<float>> addressable_shard_data) {
+  DType dtype(DType::kF32);
+
+  Client::MakeArraysFromHostBufferShardsSpec::Buffers make_buffers;
+  make_buffers.reserve(addressable_shard_data.size());
+  for (int i = 0; i < addressable_shard_data.size(); ++i) {
+    make_buffers.push_back(
+        {{i},
+         {addressable_shard_data[i].data(), dtype, shard_shape,
+          /*byte_strides=*/std::nullopt,
+          /*on_done_with_host_buffer=*/nullptr}});
+  }
+
+  std::vector<Client::MakeArraysFromHostBufferShardsSpec> make_specs;
+  make_specs.push_back({
+      /*buffers=*/std::move(make_buffers),
+      /*array_spec=*/{dtype, shape, std::move(sharding), /*layout=*/nullptr},
+  });
+
+  ABSL_ASSIGN_OR_RETURN(std::vector<ArrayRef> arrays,
+                   client->MakeArraysFromHostBufferShards(
+                       absl::MakeSpan(make_specs),
+                       Client::HostBufferSemantics::kImmutableOnlyDuringCall));
+  if (arrays.size() != 1) {
+    return absl::InternalError("Expected exactly 1 array.");
+  }
+
+  int num_output_shards = shape.num_elements() / shard_shape.num_elements();
+  std::vector<std::vector<float>> out_shards(
+      num_output_shards, std::vector<float>(shard_shape.num_elements(), -1.0f));
+
+  Client::CopyArraysToHostBufferShardsSpec::Buffers copy_buffers;
+  copy_buffers.reserve(num_output_shards);
+  for (std::vector<float>& out_shard : out_shards) {
+    copy_buffers.push_back(
+        {out_shard.data(), dtype, shard_shape, /*byte_strides=*/std::nullopt});
+  }
+
+  std::vector<Client::CopyArraysToHostBufferShardsSpec> copy_specs;
+  copy_specs.push_back({
+      /*array=*/arrays[0],
+      /*buffers=*/std::move(copy_buffers),
+  });
+
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<tsl::Future<>> futures,
+      client->CopyArraysToHostBufferShards(absl::MakeSpan(copy_specs),
+                                           ArrayCopySemantics::kAlwaysCopy));
+  if (futures.size() != 1) {
+    return absl::InternalError("Expected exactly 1 future.");
+  }
+  ABSL_RETURN_IF_ERROR(futures[0].Await());
+  return out_shards;
+}
+
+}  // namespace
+
+TEST(ArrayImplTest,
+     CopyArraysToHostBufferShardsFullyReplicatedWithNonAddressableDevice) {
+  ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (non_addressable_devices.empty()) {
+    GTEST_SKIP() << "Skipping test; needs at least 1 non-addressable device.";
+  }
+
+  Shape shape({2, 3});
+  std::vector<Device*> devices = {non_addressable_devices.at(0),
+                                  client->addressable_devices().at(0)};
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList(devices));
+  ShardingRef sharding =
+      ConcreteEvenSharding::Create(std::move(device_list), MemoryKind(), shape,
+                                   /*shard_shape=*/shape,
+                                   /*is_fully_replicated=*/true);
+
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::vector<float>> out_shards,
+      MakeAndCopyArrayToHost(client.get(), shape, /*shard_shape=*/shape,
+                             std::move(sharding), {data}));
+
+  ASSERT_THAT(out_shards, SizeIs(1));
+  EXPECT_THAT(out_shards[0], ElementsAre(0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f));
+}
+
+TEST(ArrayImplTest,
+     CopyArraysToHostBufferShardsFullyShardedWithNonAddressableDevice) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
+
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (non_addressable_devices.empty()) {
+    GTEST_SKIP() << "Skipping test; needs at least 1 non-addressable device.";
+  }
+
+  Shape shape({2, 3});
+  Shape shard_shape({1, 3});
+  std::vector<Device*> devices = {non_addressable_devices.at(0),
+                                  client->addressable_devices().at(0)};
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList(devices));
+  ShardingParam sharding_param{/*dim_shards=*/{2, 1},
+                               {/*permutation=*/{0, 1}, /*axis_sizes=*/{2, 1}}};
+  ASSERT_OK_AND_ASSIGN(
+      ShardingRef sharding,
+      ShardingParamSharding::Create(std::move(sharding_param),
+                                    std::move(device_list), MemoryKind()));
+
+  std::vector<float> data1 = {3.0f, 4.0f, 5.0f};
+  ASSERT_OK_AND_ASSIGN(std::vector<std::vector<float>> out_shards,
+                       MakeAndCopyArrayToHost(client.get(), shape, shard_shape,
+                                              std::move(sharding), {data1}));
+
+  ASSERT_THAT(out_shards, SizeIs(2));
+  EXPECT_THAT(out_shards[0], ElementsAre(-1.0f, -1.0f, -1.0f));
+  EXPECT_THAT(out_shards[1], ElementsAre(3.0f, 4.0f, 5.0f));
+}
+
+TEST(ArrayImplTest,
+     CopyArraysToHostBufferShardsPartiallyReplicatedWithNonAddressableDevice) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
+
+  std::vector<Device*> non_addressable_devices =
+      GetNonAddressableDevices(client.get());
+  if (client->addressable_devices().size() < 2 ||
+      non_addressable_devices.size() < 2) {
+    GTEST_SKIP() << "Skipping test; needs at least 2 addressable and 2 "
+                    "non-addressable devices.";
+  }
+
+  // 2x1 tiling with replication factor 2 across 4 devices:
+  // Tile 0 replicas: devices[0] (non-addressable), devices[1] (addressable)
+  // Tile 1 replicas: devices[2] (non-addressable), devices[3] (addressable)
+  Shape shape({2, 3});
+  Shape shard_shape({1, 3});
+  std::vector<Device*> devices = {
+      non_addressable_devices.at(0), client->addressable_devices().at(0),
+      non_addressable_devices.at(1), client->addressable_devices().at(1)};
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList(devices));
+  ShardingParam sharding_param{/*dim_shards=*/{2, 1},
+                               {/*permutation=*/{0, 1}, /*axis_sizes=*/{2, 2}}};
+  ASSERT_OK_AND_ASSIGN(
+      ShardingRef sharding,
+      ShardingParamSharding::Create(std::move(sharding_param),
+                                    std::move(device_list), MemoryKind()));
+
+  std::vector<float> data0 = {0.0f, 1.0f, 2.0f};
+  std::vector<float> data1 = {3.0f, 4.0f, 5.0f};
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::vector<float>> out_shards,
+      MakeAndCopyArrayToHost(client.get(), shape, shard_shape,
+                             std::move(sharding), {data0, data1}));
+
+  ASSERT_THAT(out_shards, SizeIs(2));
+  EXPECT_THAT(out_shards[0], ElementsAre(0.0f, 1.0f, 2.0f));
+  EXPECT_THAT(out_shards[1], ElementsAre(3.0f, 4.0f, 5.0f));
 }
 
 TEST(ArrayImplTest, MakeArraysFromHostBufferShardsWithDifferentDevices) {
