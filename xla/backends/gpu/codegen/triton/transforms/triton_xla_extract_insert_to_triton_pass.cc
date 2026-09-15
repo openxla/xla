@@ -518,7 +518,7 @@ class RewriteInsert : public mlir::OpRewritePattern<InsertOp> {
           builder, desc_type, op.getDst());
 
       Value src = op.getSrc();
-      // Insert a expand_dims if the source is rank-reduced.
+      // Insert an expand_dims if the source is rank-reduced.
       for (auto dim : reduced_dims) {
         src = ExpandDimsOp::create(builder, src, dim);
       }

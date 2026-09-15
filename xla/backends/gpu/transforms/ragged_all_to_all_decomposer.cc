@@ -219,7 +219,7 @@ HloInstruction* PadOutermostDimension(HloComputation* computation,
 // Returns dense representation of the ragged input tensor.
 //
 // The dense representation is a tuple of slices of the input tensor, where each
-// element of the tuple is an ragged row padded with zeros to the same size as
+// element of the tuple is a ragged row padded with zeros to the same size as
 // the ragged input.
 std::vector<HloInstruction*> RaggedToDense(HloComputation* computation,
                                            HloInstruction* ragged_input,

@@ -70,7 +70,7 @@ class BackendInterface {
 // conforms to the xla::ifrt API.
 class IfrtBackend final : public BackendInterface {
  public:
-  // Creates an returns an IfrtBackend that uses the given IFRT Client to
+  // Creates and returns an IfrtBackend that uses the given IFRT Client to
   // process the incoming proxy client requests. The `ifrt_client` param cannot
   // be a nullptr.
   static absl::StatusOr<std::unique_ptr<IfrtBackend>> Create(

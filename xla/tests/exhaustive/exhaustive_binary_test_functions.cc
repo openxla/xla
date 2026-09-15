@@ -154,7 +154,7 @@ template <typename NativeT, typename NativeRefT>
 double DivCpuAbsErr(NativeT left, NativeT right) {
   NativeRefT output =
       static_cast<NativeRefT>(left) / static_cast<NativeRefT>(right);
-  // Subnormals are flushed to 0 so we add a absolute error margin that is
+  // Subnormals are flushed to 0 so we add an absolute error margin that is
   // larger than any subnormal.
   if (IsSubnormal(output)) {
     return std::numeric_limits<NativeRefT>::min();

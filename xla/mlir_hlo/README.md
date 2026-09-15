@@ -166,7 +166,7 @@ consider ops. It should be easy to move between these and so define a new op
 along with the helper function or autogenerate the helper functions from the
 descriptions of the ops. For the former, a simple approach would be to simply
 consider the context in which the op is being constructed and if an MLIR one,
-construct a op in the client dialect instead of further calls into XlaBuilder.
+construct an op in the client dialect instead of further calls into XlaBuilder.
 The latter could be implemented by adding the op and a legalization of the op to
 other known ops, from which a helper function can get generated that could be
 used as regular.

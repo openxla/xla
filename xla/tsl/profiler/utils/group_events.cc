@@ -425,7 +425,7 @@ bool EventNode::IsEager() const {
   }
 
   // Otherwise, it is eager mode execution of an operation if and only if it is
-  // not a eager mode execution of a compiled function.
+  // not an eager mode execution of a compiled function.
   return !node->IsCompiledFunc();
 }
 

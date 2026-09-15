@@ -422,7 +422,7 @@ absl::StatusOr<HloInstruction*> PartitionGatherIndexPassthroughDimensions(
       .hlo();
 }
 
-// Perform partitioning of Gather when the operand is split in a offset
+// Perform partitioning of Gather when the operand is split in an offset
 // dimension that is passed through (slice size is the same size of the operand
 // dimension).
 absl::StatusOr<HloInstruction*> PartitionGatherOperandPassthroughDimensions(

@@ -128,7 +128,7 @@ TEST(FfiTest, StaticHandlerRegistration) {
             XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
   ASSERT_EQ(handler1->metadata.traits, 0);
 
-  // Check that platform name was canonicalized an we can find handlers
+  // Check that platform name was canonicalized and we can find handlers
   // registered for "Host" platform as "Cpu" handlers.
   TF_ASSERT_OK_AND_ASSIGN(auto handlers, StaticRegisteredHandlers("Cpu"));
   EXPECT_THAT(handlers,

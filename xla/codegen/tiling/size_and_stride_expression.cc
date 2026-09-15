@@ -169,7 +169,7 @@ void DestructureSummationImpl(SymbolicExpr expr,
 //
 // SymbolicExprType::kAdd should be the operation that binds the least tightly,
 // allowing us to simply recursively destructure expressions until we reach an
-// SymbolicExprType that is not an SymbolicExprType::kAdd.
+// SymbolicExprType that is not a SymbolicExprType::kAdd.
 //
 // Note that this will only work correctly for expressions that do no
 // factoring/grouping of summands such as `(d0 + d1) * c` or `(d0 + d1) mod c`.
@@ -217,7 +217,7 @@ SymbolicExpr CombineSizes(
   return product;
 }
 
-// Returns an symbolic expression logically equivalent to
+// Returns a symbolic expression logically equivalent to
 //   `eq_param != 1 ? true_expr : false_expr`.
 // `eq_param` is assumed to be able to be in the inclusive range
 //    {1, 2, ..., eq_param_inclusive_upper_bound}.

@@ -1193,7 +1193,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     return result;
   }
 
-  // Rewrites an gemm+all-to-all into multiple independent partial gemm+a2a's
+  // Rewrites a gemm+all-to-all into multiple independent partial gemm+a2a's
   // to minimize communication overhead. To do this, the original input will be
   // sliced into replica_group size and perform gemm+all-to-all.
   absl::Status HandleAllToAll(HloInstruction* inst) override {
@@ -1364,7 +1364,7 @@ absl::StatusOr<bool> WindowedEinsumHandler::RunImpl(
   std::vector<HloInstruction*> all_windowed_einsum_loops;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
-    // If we have a einsum loop with less than 1 dot, it's not
+    // If we have an einsum loop with less than 1 dot, it's not
     // a loop of interest.
     if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
       continue;

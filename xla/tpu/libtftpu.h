@@ -23,7 +23,7 @@ limitations under the License.
 #endif
 
 // Unfortunately we have to add an Fn suffix because we cannot have the same
-// name for both a function and a element within a struct in the global
+// name for both a function and an element within a struct in the global
 // namespace in gcc. This restriction doesn't exist in clang.
 #define TFTPU_ADD_FN_IN_STRUCT(FnName) decltype(FnName)* FnName##Fn;
 

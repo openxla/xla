@@ -451,7 +451,7 @@ AliasInfo::GetInPlaceInputOutputPairs(const HloInstruction* user) const {
             << "output_index (`" << start_output_index.ToString()
             << "`) in aliasing config for async operations invalid "
                "and ignored, reason:\n"
-            << "it should be an non-empty index pointing to output subshape "
+            << "it should be a non-empty index pointing to output subshape "
                "({1,...})";
       }
     }

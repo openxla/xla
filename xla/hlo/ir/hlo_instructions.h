@@ -102,7 +102,7 @@ class HloBatchNormInstruction : public HloInstruction {
   // represents the index of the feature dimension.
   int64_t feature_index() const { return feature_index_; }
 
-  // Returns a epsilon value associated with the instruction. The is a small
+  // Returns an epsilon value associated with the instruction. The is a small
   // number added to the variance to avoid divide-by-zero error.
   float epsilon() const { return epsilon_; }
 

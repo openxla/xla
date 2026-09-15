@@ -40,7 +40,7 @@ namespace xla {
 absl::StatusOr<bool> CanonicalizeAllGatherForCSE::RunOnComputation(
     HloComputation* comp) {
   bool changed = false;
-  // Helper to find the respective shape input dimension of an shape output
+  // Helper to find the respective shape input dimension of a shape output
   // dimension of a reshape.
   std::vector<HloInstruction*> ordered_hlos = comp->MakeInstructionPostOrder();
   for (HloInstruction* hlo : ordered_hlos) {

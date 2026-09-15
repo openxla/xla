@@ -111,7 +111,7 @@ class HloDataflowAnalysis {
   const HloValueSet& GetValueSet(const HloPosition& position) const;
 
   // Returns the unique value in the HloValueSet at the given instruction and
-  // shape index. CHECKs if the value set does not contain a exactly one value.
+  // shape index. CHECKs if the value set does not contain exactly one value.
   const HloValue& GetUniqueValueAt(const HloInstruction* instruction,
                                    const ShapeIndex& index = {}) const {
     const HloValueSet& value_set = GetValueSet(instruction, index);

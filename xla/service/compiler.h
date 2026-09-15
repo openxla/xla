@@ -194,7 +194,7 @@ class Compiler {
   // facilitate the loading of buffer assignment from proto if available.
 
   // Note: The default implementation of the API here does not utilize the given
-  // buffer assignment. Different backends are a expected to override the
+  // buffer assignment. Different backends are expected to override the
   // following method to achieve this functionality.
   virtual absl::StatusOr<std::unique_ptr<Executable>>
   RunBackendWithBufferAssignment(

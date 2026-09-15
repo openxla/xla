@@ -39,7 +39,7 @@ struct SortDims {
 };
 
 // For trivial sort functors (computation with two parameters that are
-// compared using `LT` or `GT` direction) we can define sort as a enum. We use
+// compared using `LT` or `GT` direction) we can define sort as an enum. We use
 // it for performance optimization to be able to inline the sort function.
 enum class SortDirection {
   kAscending,

@@ -32,7 +32,7 @@ message NewProfileSessionResponse {
   // Auxiliary error_message.
   string error_message = 1;
 
-  // Whether all hosts had returned a empty trace.
+  // Whether all hosts had returned an empty trace.
   bool empty_trace = 2;
 }
 

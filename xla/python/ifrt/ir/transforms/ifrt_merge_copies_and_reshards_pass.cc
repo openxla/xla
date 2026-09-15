@@ -76,7 +76,7 @@ llvm::hash_code GetMergeKey(CopyArraysOp op) {
   hash = llvm::hash_combine(hash, input_type.getDevicesAttr());
   IfrtArrayType output_type = GetArrayType(op.getOutputs().front());
   hash = llvm::hash_combine(hash, output_type.getDevicesAttr());
-  // We can't hash by the bool itself, and `donated` is a optional attr, so
+  // We can't hash by the bool itself, and `donated` is an optional attr, so
   // false can be represented by nullptr or BoolAttr(false). So we
   // explicitly convert to BoolAttr.
   hash = llvm::hash_combine(
@@ -110,7 +110,7 @@ llvm::hash_code GetMergeKey(ReshardOp op) {
   hash = llvm::hash_combine(hash, input_type.getDevicesAttr());
   IfrtArrayType output_type = GetArrayType(op.getOutputs().front());
   hash = llvm::hash_combine(hash, output_type.getDevicesAttr());
-  // We can't hash by the bool itself, and `donated` is a optional attr, so
+  // We can't hash by the bool itself, and `donated` is an optional attr, so
   // false can be represented by nullptr or BoolAttr(false). So we explicitly
   // convert to BoolAttr.
   hash = llvm::hash_combine(

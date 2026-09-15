@@ -3842,7 +3842,7 @@ TEST_F(GatherShapeInferenceTest,
   EXPECT_THAT(
       statusor.status().message(),
       HasSubstr("All components of the offset index in a gather op must either "
-                "be a offset dimension or explicitly collapsed"))
+                "be an offset dimension or explicitly collapsed"))
       << statusor.status();
 }
 

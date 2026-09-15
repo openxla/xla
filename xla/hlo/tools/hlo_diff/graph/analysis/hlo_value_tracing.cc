@@ -47,7 +47,7 @@
 
 namespace xla {
 namespace {
-// CalculatePostOrderSchedule traverses a module and assign a ordinal to each
+// CalculatePostOrderSchedule traverses a module and assign an ordinal to each
 // instruction based the postorder dependency.
 int64_t CalculatePostOrderScheduleHelper(
     const HloComputation* comp, int64_t start_ordinal,

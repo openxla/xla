@@ -3225,7 +3225,7 @@ XlaOp CollectiveBroadcastWithDeviceList(
     const std::optional<ChannelHandle>& channel_id = std::nullopt,
     bool has_dynamic_root = false);
 
-// Enqueues an collective operation that sends and receives data cross replicas.
+// Enqueues a collective operation that sends and receives data cross replicas.
 //
 // - `source_target_pair`: a list of (source_replica_id, target_replica_id)
 // pairs. For each pair, the operand is sent from source replica to target
@@ -3305,11 +3305,11 @@ XlaOp Round(XlaOp operand);
 // Enqueues a round instruction onto the computation, rounding to nearest even
 XlaOp RoundNearestEven(XlaOp operand);
 
-// Enqueues an log instruction (natural logarithm) onto the computation.
+// Enqueues a log instruction (natural logarithm) onto the computation.
 XlaOp Log(XlaOp operand,
           const std::optional<ResultAccuracy>& result_accuracy = std::nullopt);
 
-// Enqueues an log1p instruction (log(x+1)) onto the computation.
+// Enqueues a log1p instruction (log(x+1)) onto the computation.
 XlaOp Log1p(
     XlaOp operand,
     const std::optional<ResultAccuracy>& result_accuracy = std::nullopt);

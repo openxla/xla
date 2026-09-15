@@ -229,7 +229,7 @@ bool Parser::ParseSymbolicExprString(std::string* symbolic_expr_str) {
       symbolic_expr_str->append(current_token_.spelling);
       Advance();
       // Don't add a space if the current token is a variable name and the next
-      // token is a opening parenthesis. This indicates the variable is in fact
+      // token is an opening parenthesis. This indicates the variable is in fact
       // an operation name like `min` or `max`, and there should not be a
       // whitespace between the operation name and the opening parenthesis.
       if (!is_variable || current_token_.kind != Token::Kind::kLParen) {

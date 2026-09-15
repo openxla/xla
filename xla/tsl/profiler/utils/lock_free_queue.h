@@ -267,7 +267,7 @@ class LockFreeQueue final
   using Block = QueueBaseInternal::InternalBlock<T, kBlockSize>;
 
  public:
-  // Pop all events into an normal block storage queue, blocks are directly
+  // Pop all events into a normal block storage queue, blocks are directly
   // moved into new queue except the last block. Those events
   // that are in the last block are in fact copied one by one.
   BlockedQueue<T, kBlockSize> PopAll() {

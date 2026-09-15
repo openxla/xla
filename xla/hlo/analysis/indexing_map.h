@@ -84,7 +84,7 @@ class RangeEvaluator {
   bool use_constraints_;
 };
 
-// Contains an symbolic map with N dimension expressions and M + K symbols:
+// Contains a symbolic map with N dimension expressions and M + K symbols:
 // (d0, ..., d_{N - 1})[s_0, ..., s_{M - 1}]{r_0, ..., r_{K - 1}} -> f(d_i, s_j)
 // Dimensions d_i correspond to the iteration space of the output tensor.
 // Symbols s_j correspond to ranges of the input dimensions.

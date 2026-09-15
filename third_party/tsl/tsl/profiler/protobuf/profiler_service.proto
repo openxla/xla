@@ -26,7 +26,7 @@ import "tsl/profiler/protobuf/xplane.proto";
 service ProfilerService {
   // Starts a profiling session, blocks until it completes, and returns data.
   rpc Profile(ProfileRequest) returns (ProfileResponse) {}
-  // Signal to terminate the Profile rpc for a on-going profiling session,
+  // Signal to terminate the Profile rpc for an on-going profiling session,
   // The Profile rpc will return successfully and prematurely without timeout.
   // This is used by programmatic mode to end the session in workers.
   rpc Terminate(TerminateRequest) returns (TerminateResponse) {}
