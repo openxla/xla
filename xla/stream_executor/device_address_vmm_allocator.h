@@ -292,6 +292,15 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     kMap,
   };
 
+  // Stable identity for one pending operation. A batch shares one sequence
+  // number, so the operation kind and address are also needed to select an
+  // entry after WaitUntilSeqno() temporarily releases state.mu.
+  struct PendingDeallocationKey {
+    PendingDeallocationKind kind;
+    uint64_t seqno;
+    DeviceAddressBase addr;
+  };
+
   // Snapshot of a stream-ordered deferred operation. Copy before unlinking its
   // node: completing the operation can destroy the record that owns the node.
   struct PendingDeallocation {
@@ -314,6 +323,10 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                 DeviceAddressBase(), 0};
     PendingDeallocationNode* previous = nullptr;
     PendingDeallocationNode* next = nullptr;
+
+    PendingDeallocationKey key() const {
+      return {pending.kind, pending.seqno, pending.addr};
+    }
   };
 
   // Lifetime record for one raw physical allocation.
@@ -410,15 +423,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
     uint64_t allocator_stale_seqno_ = 0;
     PendingDeallocationNode allocator_deallocation_;
-  };
-
-  // Stable identity for one pending operation. A batch shares one sequence
-  // number, so the operation kind and address are also needed to select an
-  // entry after WaitUntilSeqno() temporarily releases state.mu.
-  struct PendingDeallocationKey {
-    PendingDeallocationKind kind;
-    uint64_t seqno;
-    DeviceAddressBase addr;
   };
 
   struct PerDeviceState {
@@ -706,10 +710,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                 PendingDeallocationNode& node)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  void MoveAllocatorRecordToActive(PerDeviceState& state,
-                                   AllocationRecord& record, uint64_t new_size)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
-
   // Waits for the device timeline to reach `target_seqno`. Temporarily releases
   // and reacquires state.mu around the blocking wait. This does not complete
   // pending entries by itself.
@@ -722,12 +722,12 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                                      uint64_t completed_seqno)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Completes a pending operation whose stream sequence has passed by dropping
-  // its ScopedMappings, allocator-owned reservation, and raw allocation
-  // reference. This is where VA unmap, reservation release, and PA budget
-  // accounting happen.
+  // Unlinks and completes a pending operation whose stream sequence has passed.
+  // Copies its metadata before releasing the mappings and owning record, which
+  // can destroy the node. This is where VA unmap, reservation release, and PA
+  // budget accounting happen.
   void CompletePendingDeallocation(PerDeviceState& state,
-                                   const PendingDeallocation& pending)
+                                   PendingDeallocationNode& node)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Finds, erases, and completes the selected pending entry if it is still

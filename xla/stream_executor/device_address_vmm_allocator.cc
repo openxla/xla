@@ -275,9 +275,7 @@ DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
       // is allowed to have been destroyed already.
       state->open_deallocation_batch_seqno = 0;
       while (state->pending_head != nullptr) {
-        PendingDeallocation pending = state->pending_head->pending;
-        ErasePendingDeallocation(*state, *state->pending_head);
-        CompletePendingDeallocation(*state, pending);
+        CompletePendingDeallocation(*state, *state->pending_head);
       }
     }
 
@@ -335,9 +333,7 @@ absl::Status DeviceAddressVmmAllocator::DrainPendingDeallocations(
   ABSL_RETURN_IF_ERROR(WaitUntilSeqno(state, target_seqno));
   while (state.pending_head != nullptr &&
          state.pending_head->pending.seqno <= target_seqno) {
-    PendingDeallocation pending = state.pending_head->pending;
-    ErasePendingDeallocation(state, *state.pending_head);
-    CompletePendingDeallocation(state, pending);
+    CompletePendingDeallocation(state, *state.pending_head);
   }
   return absl::OkStatus();
 }
@@ -492,7 +488,7 @@ DeviceAddressVmmAllocator::TryReuseMappedAllocation(
 
   DeviceAddressBase reused_mem(record->allocator_key(), request.size);
   ErasePendingDeallocation(state, record->allocator_deallocation());
-  MoveAllocatorRecordToActive(state, *record, request.size);
+  record->ReactivateAllocator(request.size);
   return reused_mem;
 }
 
@@ -520,16 +516,9 @@ DeviceAddressVmmAllocator::EnsureReservationAvailableForFreshMapping(
       if (stale_overlap.has_value()) {
         CHECK(!stale_overlap->is_active);
         AllocationRecord& record = *stale_overlap->record;
-        if (stale_overlap->is_allocator) {
-          pending_completion_key = PendingDeallocationKey{
-              PendingDeallocationKind::kAllocation,
-              record.allocator_stale_seqno(), record.allocator_address()};
-        } else {
-          CHECK(record.reservation_stale());
-          pending_completion_key = PendingDeallocationKey{
-              PendingDeallocationKind::kMap, record.reservation_stale_seqno(),
-              record.reservation_address()};
-        }
+        pending_completion_key = stale_overlap->is_allocator
+                                     ? record.allocator_deallocation().key()
+                                     : record.reservation_deallocation().key();
       }
     }
     if (!pending_completion_key.has_value()) {
@@ -641,8 +630,7 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
       CHECK_GT(reclaimable_bytes, 0);
       accumulated_size += reclaimable_bytes;
       target_seqno = std::max(target_seqno, pending.seqno);
-      selected.push_back(
-          PendingDeallocationKey{pending.kind, pending.seqno, pending.addr});
+      selected.push_back(node->key());
       if (accumulated_size >= target_size) {
         break;
       }
@@ -710,7 +698,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
 
       DeviceAddressBase reused_mem(record.allocator_key(), size);
       ErasePendingDeallocation(*state, *node);
-      MoveAllocatorRecordToActive(*state, record, size);
+      record.ReactivateAllocator(size);
 
       return reused_mem;
     }
@@ -1071,13 +1059,10 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
       }
 
       if (source_record->reservation_stale()) {
-        CHECK(source_record->has_reservation_alias());
-        if (!source_record->reservation_matches(request.reservation_address)) {
-          pending_completion_key =
-              PendingDeallocationKey{PendingDeallocationKind::kMap,
-                                     source_record->reservation_stale_seqno(),
-                                     source_record->reservation_address()};
-        }
+        // An exact alias was reused above; any remaining source alias must be
+        // retired before mapping the source at a different destination.
+        pending_completion_key =
+            source_record->reservation_deallocation().key();
       }
 
       if (!pending_completion_key.has_value()) {
@@ -1092,9 +1077,7 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
           CHECK(stale_record.has_reservation_alias());
           CHECK(stale_record.reservation_matches(request.reservation_address));
           pending_completion_key =
-              PendingDeallocationKey{PendingDeallocationKind::kMap,
-                                     stale_record.reservation_stale_seqno(),
-                                     stale_record.reservation_address()};
+              stale_record.reservation_deallocation().key();
         }
       }
 
@@ -1103,11 +1086,8 @@ absl::Status DeviceAddressVmmAllocator::ResolveAndMapAlias(
             state, request.reservation_address, AddressRole::kAllocator,
             RecordState::kStale, OverlapKind::kExact);
         if (stale_allocator_overlap.has_value()) {
-          AllocationRecord& stale_record = *stale_allocator_overlap->record;
           pending_completion_key =
-              PendingDeallocationKey{PendingDeallocationKind::kAllocation,
-                                     stale_record.allocator_stale_seqno(),
-                                     stale_record.allocator_address()};
+              stale_allocator_overlap->record->allocator_deallocation().key();
         }
       }
 
@@ -1287,15 +1267,6 @@ void DeviceAddressVmmAllocator::ErasePendingDeallocation(
   node = {};
 }
 
-void DeviceAddressVmmAllocator::MoveAllocatorRecordToActive(
-    PerDeviceState& state, AllocationRecord& record, uint64_t new_size) {
-  uintptr_t allocator_va = AddressStart(record.allocator_address());
-  auto record_it = state.records_by_allocator_address.find(allocator_va);
-  CHECK(record_it != state.records_by_allocator_address.end());
-  CHECK_EQ(record_it->second.get(), &record);
-  record.ReactivateAllocator(new_size);
-}
-
 absl::Status DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
                                                        uint64_t target_seqno) {
   ABSL_RETURN_IF_ERROR(FlushOpenDeallocationBatch(state));
@@ -1331,8 +1302,7 @@ void DeviceAddressVmmAllocator::CompleteReadyAllocatorDeallocationsForReclaim(
         record_it->second->memory_space() == reclaim_exempt_memory_space_) {
       continue;
     }
-    selected.push_back(
-        PendingDeallocationKey{pending.kind, pending.seqno, pending.addr});
+    selected.push_back(node->key());
   }
   for (const PendingDeallocationKey& key : selected) {
     CompletePendingDeallocationByKey(state, key);
@@ -1345,16 +1315,16 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocationByKey(
        node = node->next) {
     if (node->pending.kind == key.kind && node->pending.seqno == key.seqno &&
         node->pending.addr.IsSameAs(key.addr)) {
-      PendingDeallocation pending = node->pending;
-      ErasePendingDeallocation(state, *node);
-      CompletePendingDeallocation(state, pending);
+      CompletePendingDeallocation(state, *node);
       return;
     }
   }
 }
 
 void DeviceAddressVmmAllocator::CompletePendingDeallocation(
-    PerDeviceState& state, const PendingDeallocation& pending) {
+    PerDeviceState& state, PendingDeallocationNode& node) {
+  const PendingDeallocation pending = node.pending;
+  ErasePendingDeallocation(state, node);
   if (pending.kind == PendingDeallocationKind::kMap) {
     auto record_it = state.reservation_records.find(AddressStart(pending.addr));
     CHECK(record_it != state.reservation_records.end());
@@ -1390,10 +1360,8 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocation(
     // sequence numbers are assigned in that same order. Without this invariant
     // the alias could sit in a still-open batch with no stream marker at all.
     CHECK_LE(record.reservation_stale_seqno(), pending.seqno);
-    CompletePendingDeallocationByKey(
-        state, PendingDeallocationKey{PendingDeallocationKind::kMap,
-                                      record.reservation_stale_seqno(),
-                                      record.reservation_address()});
+    CompletePendingDeallocationByKey(state,
+                                     record.reservation_deallocation().key());
     CHECK(!record.has_reservation_alias());
   }
   uint64_t physical_size = record.raw_allocation()->address().size();
