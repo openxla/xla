@@ -32,9 +32,10 @@ namespace sycl {
 // returns a status if failed or an event object if it succeeds. The caller
 // can then check for ok, and use the returend object as needed.
 // Example to call oneapi::mkl::blas::trsm
-//  absl::StatusOr<::sycl::event> status =
-//      ExecMklFunc(AS_LAMBDA(oneapi::mkl::blas::trsm), q, left_right,
-//                  upper_lower, trans, unit_diag, m, n, alpha, a, lda, b, ldb);
+//  absl::StatusOr<::sycl::event> result = ExecMklFunc([&] {
+//    return oneapi::mkl::blas::trsm(q, left_right, upper_lower, trans,
+//                                   unit_diag, m, n, alpha, a, lda, b, ldb);
+//  });
 //
 // if (result.ok()) {
 //   result->DoSomethingCool();
@@ -44,32 +45,25 @@ namespace sycl {
 // For MKL calls that that do not take a queue of their own -- e.g. the DFT
 // ones, which run on the queue their descriptor was committed to -- are
 // called the same way:
-//  absl::Status status =
-//      ExecMklFunc(AS_LAMBDA(oneapi::mkl::dft::compute_forward), descriptor,
-//                  input, output);
+//  absl::Status status = ExecMklFunc([&] {
+//    oneapi::mkl::dft::compute_forward(descriptor, input, output);
+//  });
 // It returns a plain absl::Status.
-
-#define AS_LAMBDA(func)                                            \
-  [](auto&&... args) -> decltype(func(                             \
-                         std::forward<decltype(args)>(args)...)) { \
-    return func(std::forward<decltype(args)>(args)...);            \
-  }
 
 // The type ExecMklFunc() returns for a oneMKL routine returning `R`.
 template <typename R>
-using MklResult =
-    std::conditional_t<std::is_void_v<R>, absl::Status, absl::StatusOr<R>>;
+using MklResult = std::conditional_t<std::is_void_v<R>, absl::Status,
+                                     absl::StatusOr<std::decay_t<R>>>;
 
-template <typename Callable, typename... Args>
-MklResult<std::invoke_result_t<Callable, Args...>> ExecMklFunc(
-    Callable&& mkl_func, Args&&... args) {
-  using Result = std::invoke_result_t<Callable, Args...>;
+template <typename Callable>
+MklResult<std::invoke_result_t<Callable>> ExecMklFunc(Callable&& mkl_func) {
+  using Result = std::invoke_result_t<Callable>;
   try {
     if constexpr (std::is_void_v<Result>) {
-      std::forward<Callable>(mkl_func)(std::forward<Args>(args)...);
+      std::forward<Callable>(mkl_func)();
       return absl::OkStatus();
     } else {
-      return std::forward<Callable>(mkl_func)(std::forward<Args>(args)...);
+      return std::forward<Callable>(mkl_func)();
     }
   } catch (oneapi::mkl::exception const& e) {
     return absl::InternalError(absl::StrCat("Mkl exception: ", e.what()));
