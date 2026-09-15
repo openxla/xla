@@ -127,6 +127,7 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
   }
 
   int allocation_count() const { return allocation_count_; }
+  int timeline_write_count() const { return timeline_write_count_; }
 
  protected:
   absl::Status InitializeDeviceState(PerDeviceState& state) override {
@@ -159,6 +160,7 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
 
   absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
                                            uint64_t seqno) override {
+    ++timeline_write_count_;
     __atomic_store_n(state.pinned_timeline, seqno, __ATOMIC_RELEASE);
     return absl::OkStatus();
   }
@@ -174,6 +176,7 @@ class TestDeviceAddressVmmAllocator final : public DeviceAddressVmmAllocator {
   uint64_t physical_size_padding_;
   std::function<void(int)> on_device_destroy_;
   int allocation_count_ = 0;
+  int timeline_write_count_ = 0;
 };
 
 class DeviceAddressVmmAllocatorTest : public ::testing::Test {
@@ -548,6 +551,122 @@ TEST_F(DeviceAddressVmmAllocatorTest,
   ASSERT_THAT(allocator->UnMap(0, &reservation, kCount * kGranularity,
                                4 * kGranularity),
               absl_testing::IsOk());
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       StaleAliasReuseValidatesSourceAndFullReservationRange) {
+  TestMemoryReservation reservation(2 * kGranularity);
+  ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
+                                           &platform_, {Config(UINT64_MAX)}));
+  ASSERT_OK_AND_ASSIGN(auto source, allocator->Allocate(0, 2 * kGranularity));
+  ASSERT_THAT(allocator->Map(0, source.cref(), &reservation, 0, kGranularity),
+              absl_testing::IsOk());
+  ASSERT_THAT(allocator->UnMap(0, &reservation, 0, kGranularity),
+              absl_testing::IsOk());
+
+  // Matching the start is insufficient: a larger range must still be rejected,
+  // without retiring the stale alias or its pending operation.
+  EXPECT_THAT(
+      allocator->Map(0, source.cref(), &reservation, 0, 2 * kGranularity),
+      StatusIs(absl::StatusCode::kFailedPrecondition));
+  EXPECT_EQ(reservation.active_mapping_count(), 1);
+  EXPECT_EQ(allocator->timeline_write_count(), 0);
+
+  ASSERT_THAT(allocator->Map(0, source.cref(), &reservation, 0, kGranularity),
+              absl_testing::IsOk());
+  EXPECT_THAT(allocator->Map(0, source.cref(), &reservation, 0, kGranularity),
+              StatusIs(absl::StatusCode::kAlreadyExists));
+  ASSERT_THAT(allocator->SynchronizePendingOperations(0), absl_testing::IsOk());
+  EXPECT_EQ(reservation.mapping_count(), 1);
+  EXPECT_EQ(reservation.active_mapping_count(), 1);
+  EXPECT_EQ(allocator->timeline_write_count(), 0);
+
+  ASSERT_THAT(allocator->UnMap(0, &reservation, 0, kGranularity),
+              absl_testing::IsOk());
+  DeviceAddressBase stale_source = source.Release();
+  ASSERT_THAT(allocator->Deallocate(0, stale_source), absl_testing::IsOk());
+  EXPECT_THAT(allocator->Map(0, stale_source, &reservation, 0, kGranularity),
+              StatusIs(absl::StatusCode::kNotFound));
+  ASSERT_THAT(allocator->SynchronizePendingOperations(0), absl_testing::IsOk());
+  EXPECT_EQ(reservation.active_mapping_count(), 0);
+}
+
+TEST_F(DeviceAddressVmmAllocatorTest,
+       MixedPendingOperationsCanBeCancelledAndRequeuedInAnyOrder) {
+  constexpr int kCount = 4;
+  TestMemoryReservation reservation(2 * kCount * kGranularity);
+  ASSERT_OK_AND_ASSIGN(auto allocator, TestDeviceAddressVmmAllocator::Create(
+                                           &platform_, {Config(UINT64_MAX)}));
+  std::vector<ScopedDeviceAddress<uint8_t>> temps;
+  std::vector<ScopedDeviceAddress<uint8_t>> sources;
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_OK_AND_ASSIGN(
+        auto temp, allocator->Allocate(0, kGranularity, false, 0, &reservation,
+                                       i * kGranularity, kGranularity));
+    temps.push_back(std::move(temp));
+    ASSERT_OK_AND_ASSIGN(auto source, allocator->Allocate(0, kGranularity));
+    ASSERT_THAT(allocator->Map(0, source.cref(), &reservation,
+                               (kCount + i) * kGranularity, kGranularity),
+                absl_testing::IsOk());
+    sources.push_back(std::move(source));
+  }
+
+  for (int step = 0; step < 3; ++step) {
+    SCOPED_TRACE(step);
+    // Interleave allocator deallocations and alias unmaps in the same batch.
+    for (int i = 0; i < kCount; ++i) {
+      ASSERT_THAT(allocator->Deallocate(0, temps[i].Release()),
+                  absl_testing::IsOk());
+      ASSERT_THAT(allocator->UnMap(0, &reservation, (kCount + i) * kGranularity,
+                                   kGranularity),
+                  absl_testing::IsOk());
+    }
+    // Cancel from the middle, head, tail, and finally the remaining entries.
+    // The following iteration requeues the same record-owned nodes.
+    for (int i : {1, 0, 3, 2}) {
+      ASSERT_OK_AND_ASSIGN(
+          temps[i], allocator->Allocate(0, kGranularity, false, 0, &reservation,
+                                        i * kGranularity, kGranularity));
+      ASSERT_THAT(allocator->Map(0, sources[i].cref(), &reservation,
+                                 (kCount + i) * kGranularity, kGranularity),
+                  absl_testing::IsOk());
+    }
+    ASSERT_THAT(allocator->SynchronizePendingOperations(0),
+                absl_testing::IsOk());
+    EXPECT_EQ(allocator->timeline_write_count(), 0);
+    EXPECT_EQ(allocator->allocation_count(), 2 * kCount);
+    EXPECT_EQ(reservation.mapping_count(), 2 * kCount);
+    EXPECT_EQ(reservation.active_mapping_count(), 2 * kCount);
+  }
+
+  // Leave one alias pending between cancelled entries. Draining must release
+  // only that alias, then permit a fresh mapping at the same address.
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_THAT(allocator->UnMap(0, &reservation, (kCount + i) * kGranularity,
+                                 kGranularity),
+                absl_testing::IsOk());
+  }
+  for (int i : {3, 0, 2}) {
+    ASSERT_THAT(allocator->Map(0, sources[i].cref(), &reservation,
+                               (kCount + i) * kGranularity, kGranularity),
+                absl_testing::IsOk());
+  }
+  ASSERT_THAT(allocator->SynchronizePendingOperations(0), absl_testing::IsOk());
+  EXPECT_EQ(reservation.active_mapping_count(), 2 * kCount - 1);
+  EXPECT_EQ(allocator->timeline_write_count(), 1);
+  ASSERT_THAT(allocator->Map(0, sources[1].cref(), &reservation,
+                             (kCount + 1) * kGranularity, kGranularity),
+              absl_testing::IsOk());
+
+  for (int i = 0; i < kCount; ++i) {
+    ASSERT_THAT(allocator->UnMap(0, &reservation, (kCount + i) * kGranularity,
+                                 kGranularity),
+                absl_testing::IsOk());
+  }
+  temps.clear();
+  ASSERT_THAT(allocator->SynchronizePendingOperations(0), absl_testing::IsOk());
+  EXPECT_EQ(reservation.active_mapping_count(), 0);
+  EXPECT_EQ(allocator->timeline_write_count(), 2);
 }
 
 }  // namespace

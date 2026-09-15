@@ -17,7 +17,6 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_DEVICE_ADDRESS_VMM_ALLOCATOR_H_
 
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -293,6 +292,30 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     kMap,
   };
 
+  // Snapshot of a stream-ordered deferred operation. Copy before unlinking its
+  // node: completing the operation can destroy the record that owns the node.
+  struct PendingDeallocation {
+    PendingDeallocationKind kind;
+    uint64_t seqno;
+    // Allocator address for allocation deallocations; reservation address for
+    // kMap.
+    DeviceAddressBase addr;
+    // Physical bytes released when this entry completes; 0 for kMap. Store the
+    // bytes charged when enqueuing so open-batch accounting remains consistent.
+    uint64_t reclaimable_bytes;
+  };
+
+  // Intrusive queue node owned by an allocation or its reservation alias.
+  // Records stay at stable addresses while queued, allowing cancellation
+  // without searching the queue or allocating separate queue storage.
+  struct PendingDeallocationNode {
+    // A zero seqno means this node is not queued.
+    PendingDeallocation pending{PendingDeallocationKind::kAllocation, 0,
+                                DeviceAddressBase(), 0};
+    PendingDeallocationNode* previous = nullptr;
+    PendingDeallocationNode* next = nullptr;
+  };
+
   // Lifetime record for one raw physical allocation.
   //
   // The record is owned by records_by_allocator_address while either the
@@ -348,6 +371,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     }
     uint64_t reservation_stale_seqno() const;
 
+    PendingDeallocationNode& allocator_deallocation() {
+      return allocator_deallocation_;
+    }
+    PendingDeallocationNode& reservation_deallocation();
+
     void MarkAllocatorStale(uint64_t seqno);
     void ReactivateAllocator(uint64_t new_size);
 
@@ -362,6 +390,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
       MemoryReservation::ScopedMapping mapping;
       // Zero while active; the deferred UnMap() sequence number while stale.
       uint64_t stale_seqno = 0;
+      PendingDeallocationNode deallocation = {};
     };
 
     Kind kind_;
@@ -380,24 +409,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     std::optional<ReservationAlias> reservation_alias_;
 
     uint64_t allocator_stale_seqno_ = 0;
-  };
-
-  // Queue entry for a stream-ordered deferred operation. The heavy resources
-  // live in AllocationRecord; this entry only says which stale address becomes
-  // safe to complete when the GPU timeline reaches `seqno`.
-  struct PendingDeallocation {
-    PendingDeallocationKind kind;
-    // GPU stream sequence number recorded at deallocation time. When the
-    // pinned_timeline value reaches this seqno, the memory is safe to free.
-    uint64_t seqno;
-    // Allocator address for allocation deallocations; reservation address for
-    // kMap.
-    DeviceAddressBase addr;
-    // Physical bytes released when this entry completes; 0 for kMap, which only
-    // drops a reservation alias. Stored here rather than re-derived from the
-    // AllocationRecord so that open-batch accounting reads exactly the value
-    // that was accounted when the entry was queued.
-    uint64_t reclaimable_bytes;
+    PendingDeallocationNode allocator_deallocation_;
   };
 
   // Stable identity for one pending operation. A batch shares one sequence
@@ -456,13 +468,14 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     //   The next deferred operation opens a new batch with seqno 2.
     //
     // Only the sequence number is stored. The batch's entry and byte totals are
-    // the trailing run of `pending_deallocations` carrying this seqno (entries
+    // the trailing run of the pending queue carrying this seqno (entries
     // are appended in non-decreasing seqno order, so that run is contiguous),
     // and are computed on demand by OpenDeallocationBatchSize(). Keeping them
     // derived means cancelling an entry -- which happens whenever a stale
     // record is reused -- needs no batch bookkeeping at all.
     uint64_t open_deallocation_batch_seqno ABSL_GUARDED_BY(mu) = 0;
-    std::deque<PendingDeallocation> pending_deallocations ABSL_GUARDED_BY(mu);
+    PendingDeallocationNode* pending_head ABSL_GUARDED_BY(mu) = nullptr;
+    PendingDeallocationNode* pending_tail ABSL_GUARDED_BY(mu) = nullptr;
     // Owns AllocationRecord objects. Key is the allocator address as uintptr_t,
     // including the reservation-derived address returned by the mapped
     // Allocate() overload. Allocator-address active/stale state is stored in
@@ -682,10 +695,15 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   absl::Status DrainPendingDeallocations(PerDeviceState& state)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Removes the matching pending entry when a stale record is reused.
+  // Appends a record-owned node in stream sequence order.
+  void EnqueuePendingDeallocation(PerDeviceState& state,
+                                  PendingDeallocationNode& node,
+                                  PendingDeallocation pending)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
+
+  // Unlinks a queued node in constant time, before reusing or completing it.
   void ErasePendingDeallocation(PerDeviceState& state,
-                                PendingDeallocationKind kind,
-                                DeviceAddressBase addr)
+                                PendingDeallocationNode& node)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   void MoveAllocatorRecordToActive(PerDeviceState& state,
