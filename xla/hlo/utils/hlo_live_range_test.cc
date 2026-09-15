@@ -1257,13 +1257,21 @@ ENTRY %main (a: f32[4]) -> f32[4] {
       module_->entry_computation()->GetInstructionWithName("result");
   ASSERT_NE(result, nullptr);
 
+  const HloInstruction* async_start =
+      module_->entry_computation()->GetInstructionWithName("async-start");
+  ASSERT_NE(async_start, nullptr);
+
   auto inner_range = LiveRangeAt(inner_op);
+  auto async_start_time =
+      hlo_live_range_->instruction_schedule().at(async_start);
   auto async_done_time = hlo_live_range_->instruction_schedule().at(async_done);
   auto result_time = hlo_live_range_->instruction_schedule().at(result);
 
-  // Start must equal 0 (outer computation's start), not inner_op's own
-  // position in the flattened schedule (which is > 0).
-  EXPECT_EQ(inner_range.start, 0);
+  // FlattenSchedule places inner-computation instructions before async-start in
+  // the outer schedule. The live range start must be set to async-start's time
+  // (not the inner instruction's FlattenSchedule position and not 0): the
+  // buffer is not actually live until the async computation launches.
+  EXPECT_EQ(inner_range.start, async_start_time);
   // inner_op's HloValue aliases async-done's output (same value propagated via
   // UpdateAsyncChainOutputValueSet), so every user of async-done is also a user
   // of inner_op's value. The last user here is 'result' (add(outer_op,
@@ -1304,7 +1312,9 @@ ENTRY %main (a: f32[4]) -> f32[4] {
       module_->GetComputationWithName("async_wrapped");
   ASSERT_NE(async_wrapped, nullptr);
 
-  // Both the inner parameter and the inner computation result must start at 0.
+  const HloInstruction* async_start =
+      module_->entry_computation()->GetInstructionWithName("async-start");
+  ASSERT_NE(async_start, nullptr);
   const HloInstruction* inner_param =
       async_wrapped->GetInstructionWithName("p");
   const HloInstruction* inner_op =
@@ -1312,19 +1322,29 @@ ENTRY %main (a: f32[4]) -> f32[4] {
   ASSERT_NE(inner_param, nullptr);
   ASSERT_NE(inner_op, nullptr);
 
+  auto async_start_time =
+      hlo_live_range_->instruction_schedule().at(async_start);
+
+  // %p is aliased with %a (the entry parameter) by the dataflow analysis:
+  // async-start forwards %a's value into async_wrapped.  Entry parameters are
+  // live from time 0 across the whole computation, so inner_param.start = 0.
   EXPECT_EQ(LiveRangeAt(inner_param).start, 0);
-  EXPECT_EQ(LiveRangeAt(inner_op).start, 0);
+
+  // inner_op defines a NEW value inside async_wrapped.  Its live range start
+  // must be clamped to async-start's schedule time (not the FlattenSchedule
+  // position, which is before async-start): the buffer is not live until the
+  // async computation actually launches.
+  EXPECT_EQ(LiveRangeAt(inner_op).start, async_start_time);
 }
 
-// The extended start time must cause inner-async buffers to overlap with
-// short-lived outer buffers that precede async-start.  Without the fix those
-// ranges are disjoint, letting the heap simulator alias them — unsafe under
-// async scheduling where the inner async computation can run concurrently with
-// the outer computation.
-TEST_F(HloLiveRangeTest, AsyncInnerBufferOverlapsShortLivedOuterBuffer) {
+// Inner-async buffer start times are set to the async-start instruction's
+// schedule time.  Buffers that end *before* async-start (e.g. %temp below)
+// do not run concurrently with the async computation, so aliasing them with
+// inner buffers is safe — their live ranges are disjoint.
+TEST_F(HloLiveRangeTest, AsyncInnerBufferStartIsAsyncStartTime) {
   // Flattened schedule (FlattenSchedule places async-wrapped insts BEFORE
   // async-start):
-  //   0: %a      (parameter)
+  //   0: %a
   //   1: %temp   (negate of %a)
   //   2: %outer  (negate of %temp — last use of %temp, so temp.end = 2)
   //   3: %p      (async_wrapped parameter)
@@ -1334,9 +1354,10 @@ TEST_F(HloLiveRangeTest, AsyncInnerBufferOverlapsShortLivedOuterBuffer) {
   //   7: %result
   //
   // %temp live range = [1, 2].
-  // %inner_op without fix: start = 4 > 2 → no overlap with %temp → aliasing
-  // allowed (BUG). %inner_op with fix:    start = 0 ≤ 2 → overlaps with %temp →
-  // separate allocation.
+  // %inner_op without async-start clamping: start = 4 (FlattenSchedule pos).
+  // %inner_op with async-start clamping:   start = 5 (async-start time).
+  // Either way, inner_op.start > temp.end → no overlap → aliasing is safe
+  // (they do not run concurrently: %temp is freed before async-start fires).
   const std::string hlo_string = R"(
 HloModule AsyncInnerOverlap, is_scheduled=true
 
@@ -1364,10 +1385,13 @@ ENTRY %main (a: f32[4]) -> f32[4] {
                                          module_->entry_computation()));
   CheckSchedule();
 
+  const HloInstruction* async_start =
+      module_->entry_computation()->GetInstructionWithName("async-start");
   const HloInstruction* temp =
       module_->entry_computation()->GetInstructionWithName("temp");
   HloComputation* async_wrapped =
       module_->GetComputationWithName("async_wrapped");
+  ASSERT_NE(async_start, nullptr);
   ASSERT_NE(temp, nullptr);
   ASSERT_NE(async_wrapped, nullptr);
 
@@ -1375,18 +1399,19 @@ ENTRY %main (a: f32[4]) -> f32[4] {
       async_wrapped->GetInstructionWithName("inner_op");
   ASSERT_NE(inner_op, nullptr);
 
+  auto async_start_time =
+      hlo_live_range_->instruction_schedule().at(async_start);
   auto temp_range = LiveRangeAt(temp);
   auto inner_range = LiveRangeAt(inner_op);
 
-  // %temp is only used by %outer, so it has a short live range.
-  // In the flattened schedule, inner_op appears AFTER %temp, so without the
-  // fix inner_range.start > temp_range.end — no overlap, aliasing allowed.
-  // With the fix inner_range.start = 0, which overlaps with temp_range.
-  EXPECT_EQ(inner_range.start, 0);
+  // inner_op's live range must start at async-start's schedule time.
+  // FlattenSchedule places inner_op before async-start, but the buffer is not
+  // live until the async computation launches.
+  EXPECT_EQ(inner_range.start, async_start_time);
 
-  // Overlap: the two live ranges must intersect.
-  EXPECT_LE(inner_range.start, temp_range.end);
-  EXPECT_LE(temp_range.start, inner_range.end);
+  // %temp ends before async-start fires; the ranges are disjoint.
+  // Aliasing them is correct: they do not run concurrently.
+  EXPECT_GT(inner_range.start, temp_range.end);
 }
 
 }  // namespace

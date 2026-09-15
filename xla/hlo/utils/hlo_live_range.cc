@@ -406,12 +406,19 @@ void HloLiveRange::CalculateBufferStartEndMap() {
             definition_end_time = std::max(
                 definition_end_time, computation_span_times_[computation].end);
           }
-          // Extend start_time backward to the outer computation's start so
-          // that inner async buffers cannot be aliased with buffers from
-          // instructions that precede the async-start in the outer schedule.
-          auto outer_span_it = computation_span_times_.find(caller->parent());
-          if (outer_span_it != computation_span_times_.end()) {
-            start_time = std::min(start_time, outer_span_it->second.start);
+          // Set start_time to the first-fully-bound instruction's schedule
+          // time. FlattenSchedule inlines the async computation's instructions
+          // immediately before the first-fully-bound instruction (async-start
+          // for standard chains, async-update for late-binding chains).
+          // The inner buffer is not live until that instruction fires, so
+          // assigning its schedule time gives the most accurate start.
+          auto is_first_fully_bound =
+              hlo_instruction_utils::async::IsFirstFullyBound(caller);
+          if (is_first_fully_bound.ok() && *is_first_fully_bound) {
+            auto first_bound_it = instruction_schedule_.find(caller);
+            if (first_bound_it != instruction_schedule_.end()) {
+              start_time = first_bound_it->second;
+            }
           }
         }
       }
