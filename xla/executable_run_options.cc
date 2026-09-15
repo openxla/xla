@@ -148,6 +148,16 @@ ExecutableRunOptions::cpu_executable_run_options() const {
   return cpu_executable_run_options_;
 }
 
+ExecutableRunOptions& ExecutableRunOptions::set_custom_options(
+    const CustomOptions* custom_options) {
+  custom_options_ = custom_options;
+  return *this;
+}
+
+const CustomOptions* ExecutableRunOptions::custom_options() const {
+  return custom_options_;
+}
+
 ExecutableRunOptions& ExecutableRunOptions::set_ffi_execution_context(
     const ffi::ExecutionContext* ffi_execution_context) {
   ffi_execution_context_ = ffi_execution_context;

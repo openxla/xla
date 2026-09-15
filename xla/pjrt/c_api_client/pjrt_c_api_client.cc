@@ -46,6 +46,7 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LogicalResult.h"
+#include "xla/custom_options.h"  // IWYU pragma: keep
 #include "xla/ffi/execution_context.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -3440,6 +3441,19 @@ PjRtCApiLoadedExecutable::Execute(
   PJRT_ExecuteOptions c_options = {PJRT_ExecuteOptions_STRUCT_SIZE, nullptr};
   ABSL_ASSIGN_OR_RETURN(c_options.context,
                    ForwardExecuteContext(client_, options.context));
+
+  absl::flat_hash_map<std::string, PjRtValueType> custom_options_storage;
+  std::vector<PJRT_NamedValue> c_custom_options;
+  if (options.custom_options != nullptr) {
+    for (const auto& [name, value] : options.custom_options->map()) {
+      custom_options_storage[name] =
+          std::visit([](auto v) -> PjRtValueType { return v; }, value);
+    }
+    ABSL_ASSIGN_OR_RETURN(c_custom_options, pjrt::ConvertToPjRtNamedValueList(
+                                                custom_options_storage));
+    c_options.custom_options = c_custom_options.data();
+    c_options.num_custom_options = c_custom_options.size();
+  }
 
   // Don't forget to destroy execute context if we created it.
   auto destroy_context = absl::MakeCleanup([&]() {

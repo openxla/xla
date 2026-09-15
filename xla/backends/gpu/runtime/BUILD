@@ -3642,6 +3642,10 @@ xla_cc_test(
     deps = [
         ":thunk",
         ":thunk_proto_cc",
+        "//xla:custom_options",
+        "//xla:executable_run_options",
+        "//xla/service:service_executable_run_options",
+        "//xla/service/gpu:buffer_allocations",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
