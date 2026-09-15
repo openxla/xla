@@ -314,6 +314,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     uint64_t reclaimable_bytes;
   };
 
+  class AllocationRecord;
+
   // Intrusive queue node owned by an allocation or its reservation alias.
   // Records stay at stable addresses while queued, allowing cancellation
   // without searching the queue or allocating separate queue storage.
@@ -323,6 +325,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                 DeviceAddressBase(), 0};
     PendingDeallocationNode* previous = nullptr;
     PendingDeallocationNode* next = nullptr;
+    // Record that owns this node while it is queued, so queue walks can reach
+    // the record without an index lookup. Null while not queued.
+    AllocationRecord* owner = nullptr;
 
     PendingDeallocationKey key() const {
       return {pending.kind, pending.seqno, pending.addr};
@@ -699,9 +704,9 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   absl::Status DrainPendingDeallocations(PerDeviceState& state)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Appends a record-owned node in stream sequence order.
+  // Appends `record`'s node for `pending.kind` in stream sequence order.
   void EnqueuePendingDeallocation(PerDeviceState& state,
-                                  PendingDeallocationNode& node,
+                                  AllocationRecord& record,
                                   PendingDeallocation pending)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
@@ -730,9 +735,11 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
                                    PendingDeallocationNode& node)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
-  // Finds, erases, and completes the selected pending entry if it is still
-  // present. Another thread may already have reused or completed the entry
-  // while state.mu was released.
+  // Completes the selected pending entry if it is still queued. Another thread
+  // may already have reused or completed the entry while state.mu was
+  // released; a reused entry carries a strictly larger sequence number, so the
+  // key no longer matches. Resolves the node through the address index owning
+  // `key.addr` rather than by walking the queue.
   void CompletePendingDeallocationByKey(PerDeviceState& state,
                                         const PendingDeallocationKey& key)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);

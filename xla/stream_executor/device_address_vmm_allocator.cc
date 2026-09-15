@@ -618,15 +618,12 @@ DeviceAddressVmmAllocator::TryWithPendingReclaim(PerDeviceState& state,
       if (pending.kind == PendingDeallocationKind::kMap) {
         continue;
       }
-      auto record_it =
-          state.records_by_allocator_address.find(AddressStart(pending.addr));
-      CHECK(record_it != state.records_by_allocator_address.end());
-      CHECK(record_it->second->allocator_stale());
-      if (record_it->second->memory_space() == reclaim_exempt_memory_space_) {
+      const AllocationRecord& record = *node->owner;
+      CHECK(record.allocator_stale());
+      if (record.memory_space() == reclaim_exempt_memory_space_) {
         continue;
       }
-      uint64_t reclaimable_bytes =
-          record_it->second->raw_allocation()->address().size();
+      uint64_t reclaimable_bytes = record.raw_allocation()->address().size();
       CHECK_GT(reclaimable_bytes, 0);
       accumulated_size += reclaimable_bytes;
       target_seqno = std::max(target_seqno, pending.seqno);
@@ -675,10 +672,7 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
       if (pending.kind != PendingDeallocationKind::kAllocation) {
         continue;
       }
-      auto record_it =
-          state->records_by_allocator_address.find(AddressStart(pending.addr));
-      CHECK(record_it != state->records_by_allocator_address.end());
-      AllocationRecord& record = *record_it->second;
+      AllocationRecord& record = *node->owner;
       CHECK(record.allocator_stale());
       CHECK(record.allocator_matches(pending.addr));
       if (record.kind() != AllocationRecord::Kind::kAllocate) {
@@ -845,7 +839,7 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
   // mapping alive as stale state until the stream reaches `seqno`.
   record.MarkAllocatorStale(seqno);
   EnqueuePendingDeallocation(
-      *state, record.allocator_deallocation(),
+      *state, record,
       PendingDeallocation{PendingDeallocationKind::kAllocation, seqno,
                           record.allocator_address(), reclaimable_bytes});
   return absl::OkStatus();
@@ -1234,11 +1228,16 @@ absl::Status DeviceAddressVmmAllocator::FlushOpenDeallocationBatch(
 }
 
 void DeviceAddressVmmAllocator::EnqueuePendingDeallocation(
-    PerDeviceState& state, PendingDeallocationNode& node,
+    PerDeviceState& state, AllocationRecord& record,
     PendingDeallocation pending) {
+  PendingDeallocationNode& node = pending.kind == PendingDeallocationKind::kMap
+                                      ? record.reservation_deallocation()
+                                      : record.allocator_deallocation();
   CHECK_EQ(node.pending.seqno, 0);
+  CHECK_EQ(node.owner, nullptr);
   CHECK_GT(pending.seqno, 0);
   node.pending = pending;
+  node.owner = &record;
   node.previous = state.pending_tail;
   node.next = nullptr;
   if (state.pending_tail != nullptr) {
@@ -1252,6 +1251,7 @@ void DeviceAddressVmmAllocator::EnqueuePendingDeallocation(
 void DeviceAddressVmmAllocator::ErasePendingDeallocation(
     PerDeviceState& state, PendingDeallocationNode& node) {
   CHECK_GT(node.pending.seqno, 0);
+  CHECK_NE(node.owner, nullptr);
   if (node.previous != nullptr) {
     node.previous->next = node.next;
   } else {
@@ -1288,47 +1288,57 @@ absl::Status DeviceAddressVmmAllocator::WaitUntilSeqno(PerDeviceState& state,
 
 void DeviceAddressVmmAllocator::CompleteReadyAllocatorDeallocationsForReclaim(
     PerDeviceState& state, uint64_t completed_seqno) {
-  std::vector<PendingDeallocationKey> selected;
-  for (const PendingDeallocationNode* node = state.pending_head;
-       node != nullptr; node = node->next) {
-    const PendingDeallocation& pending = node->pending;
-    if (pending.seqno > completed_seqno ||
-        pending.kind == PendingDeallocationKind::kMap) {
-      continue;
+  // The queue is ordered by seqno, so stop at the first entry that is not yet
+  // complete. state.mu is held throughout, so nodes can be completed in place.
+  // Completing an allocator-address node may also complete the same record's
+  // stale reservation alias node, but that node always precedes this one in
+  // the queue (its UnMap() was sequenced before this Deallocate()), so the
+  // saved `next` pointer stays valid.
+  PendingDeallocationNode* node = state.pending_head;
+  while (node != nullptr && node->pending.seqno <= completed_seqno) {
+    PendingDeallocationNode* next = node->next;
+    if (node->pending.kind == PendingDeallocationKind::kAllocation &&
+        node->owner->memory_space() != reclaim_exempt_memory_space_) {
+      CompletePendingDeallocation(state, *node);
     }
-    auto record_it =
-        state.records_by_allocator_address.find(AddressStart(pending.addr));
-    if (record_it != state.records_by_allocator_address.end() &&
-        record_it->second->memory_space() == reclaim_exempt_memory_space_) {
-      continue;
-    }
-    selected.push_back(node->key());
-  }
-  for (const PendingDeallocationKey& key : selected) {
-    CompletePendingDeallocationByKey(state, key);
+    node = next;
   }
 }
 
 void DeviceAddressVmmAllocator::CompletePendingDeallocationByKey(
     PerDeviceState& state, const PendingDeallocationKey& key) {
-  for (PendingDeallocationNode* node = state.pending_head; node != nullptr;
-       node = node->next) {
-    if (node->pending.kind == key.kind && node->pending.seqno == key.seqno &&
-        node->pending.addr.IsSameAs(key.addr)) {
-      CompletePendingDeallocation(state, *node);
+  PendingDeallocationNode* node = nullptr;
+  if (key.kind == PendingDeallocationKind::kMap) {
+    auto record_it = state.reservation_records.find(AddressStart(key.addr));
+    if (record_it == state.reservation_records.end()) {
       return;
     }
+    node = &record_it->second->reservation_deallocation();
+  } else {
+    auto record_it =
+        state.records_by_allocator_address.find(AddressStart(key.addr));
+    if (record_it == state.records_by_allocator_address.end()) {
+      return;
+    }
+    node = &record_it->second->allocator_deallocation();
   }
+  if (node->pending.kind != key.kind || node->pending.seqno != key.seqno ||
+      !node->pending.addr.IsSameAs(key.addr)) {
+    return;
+  }
+  CompletePendingDeallocation(state, *node);
 }
 
 void DeviceAddressVmmAllocator::CompletePendingDeallocation(
     PerDeviceState& state, PendingDeallocationNode& node) {
   const PendingDeallocation pending = node.pending;
+  AllocationRecord* const owner = node.owner;
   ErasePendingDeallocation(state, node);
   if (pending.kind == PendingDeallocationKind::kMap) {
     auto record_it = state.reservation_records.find(AddressStart(pending.addr));
     CHECK(record_it != state.reservation_records.end());
     AllocationRecord& record = *record_it->second;
+    CHECK_EQ(&record, owner);
     CHECK(record.reservation_stale());
     CHECK_EQ(record.reservation_stale_seqno(), pending.seqno);
     CHECK(record.has_reservation_alias());
@@ -1341,6 +1351,7 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocation(
   auto record_it =
       state.records_by_allocator_address.find(AddressStart(pending.addr));
   CHECK(record_it != state.records_by_allocator_address.end());
+  CHECK_EQ(record_it->second.get(), owner);
   CHECK_EQ(pending.kind, PendingDeallocationKind::kAllocation);
   CHECK(record_it->second->allocator_stale());
   CHECK(record_it->second->allocator_matches(pending.addr));
@@ -1360,8 +1371,8 @@ void DeviceAddressVmmAllocator::CompletePendingDeallocation(
     // sequence numbers are assigned in that same order. Without this invariant
     // the alias could sit in a still-open batch with no stream marker at all.
     CHECK_LE(record.reservation_stale_seqno(), pending.seqno);
-    CompletePendingDeallocationByKey(state,
-                                     record.reservation_deallocation().key());
+    CHECK_NE(record.reservation_deallocation().pending.seqno, 0);
+    CompletePendingDeallocation(state, record.reservation_deallocation());
     CHECK(!record.has_reservation_alias());
   }
   uint64_t physical_size = record.raw_allocation()->address().size();
@@ -1427,7 +1438,7 @@ absl::Status DeviceAddressVmmAllocator::UnMap(int device_ordinal,
   uint64_t seqno = GetOrCreateOpenDeallocationBatchSeqno(*state);
   record->MarkReservationStale(seqno);
   EnqueuePendingDeallocation(
-      *state, record->reservation_deallocation(),
+      *state, *record,
       PendingDeallocation{PendingDeallocationKind::kMap, seqno,
                           reservation_address, /*reclaimable_bytes=*/0});
   return absl::OkStatus();
