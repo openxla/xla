@@ -4029,6 +4029,95 @@ ENTRY test {
               -std::numeric_limits<float>::infinity()))));
 }
 
+TEST_F(AlgebraicSimplifierTest, TrivialReduceWindowWithNegativePad) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+ENTRY test {
+  p = f32[16,32] parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce-window = f32[15,30] reduce-window(p, constant), window={size=1x1 pad=-1_0x0_-2}, to_apply=add
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Slice(m::AddAnyOrder(m::Parameter(),
+                                  m::Broadcast(m::ConstantEffectiveScalar(0))))
+              .WithShape(F32, {15, 30})));
+}
+
+TEST_F(AlgebraicSimplifierTest, TrivialReduceWindowWithMixedSignPad) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+ENTRY test {
+  p = f32[16,32] parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce-window = f32[15,35] reduce-window(p, constant), window={size=1x1 pad=-2_1x0_3}, to_apply=add
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Slice(m::Pad(m::AddAnyOrder(
+                              m::Parameter(),
+                              m::Broadcast(m::ConstantEffectiveScalar(0))),
+                          m::ConstantEffectiveScalar(0))
+                       .WithShape(F32, {17, 35}))
+              .WithShape(F32, {15, 35})));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       TrivialReduceWindowWithNegativePadFeedingPaddedReduceWindow) {
+  // The crop must not be folded into the padding of the consumer.
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+ENTRY test {
+  p = f32[16,32] parameter(0)
+  constant = f32[] constant(0)
+  crop = f32[15,32] reduce-window(p, constant), window={size=1x1 pad=-1_0x0_0}, to_apply=add
+  ROOT reduce-window = f32[15,32] reduce-window(crop, constant), window={size=2x1 pad=1_0x0_0}, to_apply=add
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              GmockMatch(m::ReduceWindow(m::Slice().WithShape(F32, {15, 32}),
+                                         m::ConstantEffectiveScalar(0))));
+  EXPECT_EQ(root->window().dimensions(0).padding_low(), 1);
+}
+
 TEST_F(AlgebraicSimplifierTest, TrivialReduceWindowWithUnsupported) {
   constexpr absl::string_view hlo_string = R"(
 HloModule test

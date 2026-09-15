@@ -9464,18 +9464,41 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
                                    MakeBroadcastHlo(init_value, broadcast_dims,
                                                     operand->shape())));
 
-    if (absl::c_any_of(window.dimensions(), [](const WindowDimension& dim) {
-          return dim.padding_low() > 0 || dim.padding_high() > 0;
-        })) {
-      PaddingConfig padding_config;
-      for (const WindowDimension& window_dim : window.dimensions()) {
-        auto& padding_dim = *padding_config.add_dimensions();
-        padding_dim.set_edge_padding_low(window_dim.padding_low());
-        padding_dim.set_edge_padding_high(window_dim.padding_high());
-        padding_dim.set_interior_padding(0);
-      }
+    // Negative window padding crops the operand: apply the positive amounts
+    // with a pad and the negative amounts with a slice.
+    PaddingConfig padding_config;
+    bool has_positive_padding = false;
+    bool has_negative_padding = false;
+    for (const WindowDimension& window_dim : window.dimensions()) {
+      auto& padding_dim = *padding_config.add_dimensions();
+      padding_dim.set_edge_padding_low(
+          std::max<int64_t>(window_dim.padding_low(), 0));
+      padding_dim.set_edge_padding_high(
+          std::max<int64_t>(window_dim.padding_high(), 0));
+      padding_dim.set_interior_padding(0);
+      has_positive_padding |=
+          window_dim.padding_low() > 0 || window_dim.padding_high() > 0;
+      has_negative_padding |=
+          window_dim.padding_low() < 0 || window_dim.padding_high() < 0;
+    }
+    if (has_positive_padding) {
       ABSL_ASSIGN_OR_RETURN(new_op,
                             MakePadHlo(new_op, init_value, padding_config));
+    }
+    if (has_negative_padding) {
+      std::vector<int64_t> start_indices;
+      std::vector<int64_t> limit_indices;
+      for (int64_t i = 0; i < window.dimensions_size(); ++i) {
+        const WindowDimension& window_dim = window.dimensions(i);
+        start_indices.push_back(
+            std::max<int64_t>(-window_dim.padding_low(), 0));
+        limit_indices.push_back(
+            new_op->shape().dimensions(i) +
+            std::min<int64_t>(window_dim.padding_high(), 0));
+      }
+      std::vector<int64_t> strides(start_indices.size(), 1);
+      ABSL_ASSIGN_OR_RETURN(
+          new_op, MakeSliceHlo(new_op, start_indices, limit_indices, strides));
     }
 
     return ReplaceInstruction(reduce_window, new_op);
