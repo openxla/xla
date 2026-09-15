@@ -242,7 +242,8 @@ absl::Status HloLiveRange::FlattenSchedule(
           instruction->opcode() == HloOpcode::kConditional) {
         for (const HloComputation* called_computation :
              instruction->called_computations()) {
-          ABSL_RETURN_IF_ERROR(FlattenSchedule(*called_computation, async_context));
+          ABSL_RETURN_IF_ERROR(
+              FlattenSchedule(*called_computation, async_context));
         }
       } else if (instruction->IsAsynchronous()) {
         // For async operations, the async wrapped computation is flattened
@@ -369,7 +370,15 @@ void HloLiveRange::CalculateBufferStartEndMap() {
                              : entry.second;
 
     // If the instruction is in an asynchronous context, extend the live range
-    // until the end of the async-done instruction.
+    // to cover the full async window: from the start of the outer computation
+    // to the end of the async-done instruction.
+    //
+    // The start is extended backward because LHS-style schedulers can fire
+    // async-start as an independent source node, meaning the inner computation
+    // runs concurrently with instructions that precede the async-start in the
+    // sequential HLO schedule. Treating inner buffers as live from the outer
+    // computation's start prevents the heap simulator from aliasing them with
+    // buffers from those earlier outer instructions.
     auto async_context_it = computations_in_async_context_.find(computation);
     if (async_context_it != computations_in_async_context_.end()) {
       const HloComputation* async_context = async_context_it->second;
@@ -397,10 +406,26 @@ void HloLiveRange::CalculateBufferStartEndMap() {
             definition_end_time = std::max(
                 definition_end_time, computation_span_times_[computation].end);
           }
+          // Set start_time to the first-fully-bound instruction's schedule
+          // time. FlattenSchedule inlines the async computation's instructions
+          // immediately before the first-fully-bound instruction (async-start
+          // for standard chains, async-update for late-binding chains).
+          // The inner buffer is not live until that instruction fires, so
+          // assigning its schedule time gives the most accurate start.
+          auto is_first_fully_bound =
+              hlo_instruction_utils::async::IsFirstFullyBound(caller);
+          if (is_first_fully_bound.ok() && *is_first_fully_bound) {
+            auto first_bound_it = instruction_schedule_.find(caller);
+            if (first_bound_it != instruction_schedule_.end()) {
+              start_time = first_bound_it->second;
+            }
+          }
         }
       }
       VLOG(2) << "Setting the definition end time for op in async context: "
               << definition_end_time;
+      VLOG(2) << "Setting the definition start time for op in async context: "
+              << start_time;
     }
 
     for (const HloValue* value :

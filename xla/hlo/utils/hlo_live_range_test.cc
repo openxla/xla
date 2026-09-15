@@ -1202,5 +1202,217 @@ ENTRY entry {
   EXPECT_FALSE(root_buffers.empty());
   EXPECT_TRUE(HloLiveRange::BufferLivesOut(*root_buffers[0], *aa, entry));
 }
+// Tests for the async inner buffer live-range start extension.
+//
+// Under async scheduling, async-start can fire as an independent source node,
+// meaning the inner computation runs concurrently with instructions that
+// precede async-start in the sequential HLO schedule. To prevent the heap
+// simulator from aliasing inner-async buffers with those earlier outer
+// buffers, CalculateBufferStartEndMap extends the start time of every value
+// defined inside an async-wrapped computation backward to the outer
+// computation's start time (mirroring the existing extension of end times to
+// async-done).
+
+// The live range start of an instruction inside an async-wrapped computation
+// must equal the outer computation's start time (0 for the entry computation),
+// not the instruction's own position in the flattened schedule.
+TEST_F(HloLiveRangeTest, AsyncInnerBufferStartExtendedToOuterStart) {
+  const std::string hlo_string = R"(
+HloModule AsyncInnerBufferStart, is_scheduled=true
+
+%async_wrapped (p: f32[4]) -> f32[4] {
+  %p = f32[4] parameter(0)
+  ROOT %inner_op = f32[4] negate(%p)
+}
+
+ENTRY %main (a: f32[4]) -> f32[4] {
+  %a = f32[4] parameter(0)
+  %outer_op = f32[4] negate(%a)
+  %async-start = ((f32[4]), f32[4], u32[]) async-start(%outer_op),
+    calls=%async_wrapped
+  %async-done = f32[4] async-done(%async-start)
+  ROOT %result = f32[4] add(%outer_op, %async-done)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                          HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  TF_ASSERT_OK_AND_ASSIGN(
+      hlo_live_range_, HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  HloComputation* async_wrapped =
+      module_->GetComputationWithName("async_wrapped");
+  ASSERT_NE(async_wrapped, nullptr);
+  const HloInstruction* inner_op =
+      async_wrapped->GetInstructionWithName("inner_op");
+  ASSERT_NE(inner_op, nullptr);
+
+  const HloInstruction* async_done =
+      module_->entry_computation()->GetInstructionWithName("async-done");
+  ASSERT_NE(async_done, nullptr);
+  const HloInstruction* result =
+      module_->entry_computation()->GetInstructionWithName("result");
+  ASSERT_NE(result, nullptr);
+
+  const HloInstruction* async_start =
+      module_->entry_computation()->GetInstructionWithName("async-start");
+  ASSERT_NE(async_start, nullptr);
+
+  auto inner_range = LiveRangeAt(inner_op);
+  auto async_start_time =
+      hlo_live_range_->instruction_schedule().at(async_start);
+  auto async_done_time = hlo_live_range_->instruction_schedule().at(async_done);
+  auto result_time = hlo_live_range_->instruction_schedule().at(result);
+
+  // FlattenSchedule places inner-computation instructions before async-start in
+  // the outer schedule. The live range start must be set to async-start's time
+  // (not the inner instruction's FlattenSchedule position and not 0): the
+  // buffer is not actually live until the async computation launches.
+  EXPECT_EQ(inner_range.start, async_start_time);
+  // inner_op's HloValue aliases async-done's output (same value propagated via
+  // UpdateAsyncChainOutputValueSet), so every user of async-done is also a user
+  // of inner_op's value. The last user here is 'result' (add(outer_op,
+  // async-done)), so the live range end reaches result_time, not just
+  // async_done_time.
+  EXPECT_GT(result_time, async_done_time);
+  EXPECT_EQ(inner_range.end, result_time);
+}
+
+// Inner async parameter buffers must also have their start time extended.
+TEST_F(HloLiveRangeTest, AsyncInnerParameterStartExtendedToOuterStart) {
+  const std::string hlo_string = R"(
+HloModule AsyncInnerParamStart, is_scheduled=true
+
+%async_wrapped (p: f32[4]) -> f32[4] {
+  %p = f32[4] parameter(0)
+  ROOT %inner_op = f32[4] negate(%p)
+}
+
+ENTRY %main (a: f32[4]) -> f32[4] {
+  %a = f32[4] parameter(0)
+  %async-start = ((f32[4]), f32[4], u32[]) async-start(%a),
+    calls=%async_wrapped
+  %async-done = f32[4] async-done(%async-start)
+  ROOT %result = f32[4] negate(%async-done)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                          HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  TF_ASSERT_OK_AND_ASSIGN(
+      hlo_live_range_, HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  HloComputation* async_wrapped =
+      module_->GetComputationWithName("async_wrapped");
+  ASSERT_NE(async_wrapped, nullptr);
+
+  const HloInstruction* async_start =
+      module_->entry_computation()->GetInstructionWithName("async-start");
+  ASSERT_NE(async_start, nullptr);
+  const HloInstruction* inner_param =
+      async_wrapped->GetInstructionWithName("p");
+  const HloInstruction* inner_op =
+      async_wrapped->GetInstructionWithName("inner_op");
+  ASSERT_NE(inner_param, nullptr);
+  ASSERT_NE(inner_op, nullptr);
+
+  auto async_start_time =
+      hlo_live_range_->instruction_schedule().at(async_start);
+
+  // %p is aliased with %a (the entry parameter) by the dataflow analysis:
+  // async-start forwards %a's value into async_wrapped.  Entry parameters are
+  // live from time 0 across the whole computation, so inner_param.start = 0.
+  EXPECT_EQ(LiveRangeAt(inner_param).start, 0);
+
+  // inner_op defines a NEW value inside async_wrapped.  Its live range start
+  // must be clamped to async-start's schedule time (not the FlattenSchedule
+  // position, which is before async-start): the buffer is not live until the
+  // async computation actually launches.
+  EXPECT_EQ(LiveRangeAt(inner_op).start, async_start_time);
+}
+
+// Inner-async buffer start times are set to the async-start instruction's
+// schedule time.  Buffers that end *before* async-start (e.g. %temp below)
+// do not run concurrently with the async computation, so aliasing them with
+// inner buffers is safe — their live ranges are disjoint.
+TEST_F(HloLiveRangeTest, AsyncInnerBufferStartIsAsyncStartTime) {
+  // Flattened schedule (FlattenSchedule places async-wrapped insts BEFORE
+  // async-start):
+  //   0: %a
+  //   1: %temp   (negate of %a)
+  //   2: %outer  (negate of %temp — last use of %temp, so temp.end = 2)
+  //   3: %p      (async_wrapped parameter)
+  //   4: %inner_op
+  //   5: %async-start
+  //   6: %async-done
+  //   7: %result
+  //
+  // %temp live range = [1, 2].
+  // %inner_op without async-start clamping: start = 4 (FlattenSchedule pos).
+  // %inner_op with async-start clamping:   start = 5 (async-start time).
+  // Either way, inner_op.start > temp.end → no overlap → aliasing is safe
+  // (they do not run concurrently: %temp is freed before async-start fires).
+  const std::string hlo_string = R"(
+HloModule AsyncInnerOverlap, is_scheduled=true
+
+%async_wrapped (p: f32[4]) -> f32[4] {
+  %p = f32[4] parameter(0)
+  ROOT %inner_op = f32[4] negate(%p)
+}
+
+ENTRY %main (a: f32[4]) -> f32[4] {
+  %a = f32[4] parameter(0)
+  %temp = f32[4] negate(%a)
+  %outer = f32[4] negate(%temp)
+  %async-start = ((f32[4]), f32[4], u32[]) async-start(%outer),
+    calls=%async_wrapped
+  %async-done = f32[4] async-done(%async-start)
+  ROOT %result = f32[4] negate(%async-done)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                          HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  TF_ASSERT_OK_AND_ASSIGN(
+      hlo_live_range_, HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  const HloInstruction* async_start =
+      module_->entry_computation()->GetInstructionWithName("async-start");
+  const HloInstruction* temp =
+      module_->entry_computation()->GetInstructionWithName("temp");
+  HloComputation* async_wrapped =
+      module_->GetComputationWithName("async_wrapped");
+  ASSERT_NE(async_start, nullptr);
+  ASSERT_NE(temp, nullptr);
+  ASSERT_NE(async_wrapped, nullptr);
+
+  const HloInstruction* inner_op =
+      async_wrapped->GetInstructionWithName("inner_op");
+  ASSERT_NE(inner_op, nullptr);
+
+  auto async_start_time =
+      hlo_live_range_->instruction_schedule().at(async_start);
+  auto temp_range = LiveRangeAt(temp);
+  auto inner_range = LiveRangeAt(inner_op);
+
+  // inner_op's live range must start at async-start's schedule time.
+  // FlattenSchedule places inner_op before async-start, but the buffer is not
+  // live until the async computation launches.
+  EXPECT_EQ(inner_range.start, async_start_time);
+
+  // %temp ends before async-start fires; the ranges are disjoint.
+  // Aliasing them is correct: they do not run concurrently.
+  EXPECT_GT(inner_range.start, temp_range.end);
+}
+
 }  // namespace
 }  // namespace xla
