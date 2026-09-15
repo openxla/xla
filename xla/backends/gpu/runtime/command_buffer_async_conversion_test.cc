@@ -21,7 +21,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
@@ -37,11 +36,11 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla::gpu {
 namespace {
 
-using ::absl_testing::IsOkAndHolds;
 using ::testing::ElementsAre;
 using ::testing::Pointee;
 
@@ -117,7 +116,8 @@ TEST_F(CommandBufferAsyncConversionTest, KeepsUnsupportedRegionsIntact) {
     Done(thunks, crossed ? inner : outer);
     AddCommand(thunks);
 
-    ASSERT_THAT(Convert(thunks), IsOkAndHolds(true));
+    ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+    EXPECT_TRUE(changed);
     // Capturing the inner start/done alone would drop its stream ordering
     // against the unsupported outer operation. Capture resumes after both
     // joins, and ordinary commands before the region can still be captured.
@@ -143,7 +143,8 @@ TEST_F(CommandBufferAsyncConversionTest, KeepsControlFlowInsideOpenRegion) {
   Done(thunks, start);
   AddCommand(thunks);
 
-  ASSERT_THAT(Convert(thunks), IsOkAndHolds(true));
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kWhile,
                                     Thunk::kAsyncDone, Thunk::kCommandBuffer));
   EXPECT_THAT(loop_ptr->body_executor().thunks(),
@@ -159,7 +160,8 @@ TEST_F(CommandBufferAsyncConversionTest, KeepsTailAfterUnmatchedStart) {
   Done(thunks, inner);
   AddCommand(thunks);
 
-  ASSERT_THAT(Convert(thunks), IsOkAndHolds(true));
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kAsyncStart,
                                     Thunk::kReplicaId, Thunk::kAsyncStart,
                                     Thunk::kAsyncDone, Thunk::kReplicaId));
@@ -176,8 +178,31 @@ TEST_F(CommandBufferAsyncConversionTest, MatchesCanonicalAsyncExecution) {
       canonical->async_execution()));
   Done(thunks, canonical);
 
-  ASSERT_THAT(Convert(thunks), IsOkAndHolds(true));
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+}
+
+TEST_F(CommandBufferAsyncConversionTest,
+       DoesNotConvertOverlappingSharedExecution) {
+  ThunkSequence thunks;
+  auto* canonical = Start(thunks);
+  ThunkSequence body;
+  AddCommand(body);
+  thunks.push_back(std::make_unique<AsyncStartThunk>(
+      Info(), ComputationStreamId(0), std::move(body),
+      canonical->async_execution()));
+  Done(thunks, canonical);
+  Done(thunks, canonical);
+  AddCommand(thunks);
+
+  // Runtime permits only one outstanding start per AsyncExecution. Do not
+  // close and capture a region at the first done when a duplicate start exists.
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_FALSE(changed);
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
+                                    Thunk::kAsyncDone, Thunk::kAsyncDone,
+                                    Thunk::kReplicaId));
 }
 
 }  // namespace

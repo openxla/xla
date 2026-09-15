@@ -478,10 +478,16 @@ size_t AsyncRegionSize(absl::Span<const std::unique_ptr<Thunk>> thunks) {
   for (size_t i = 0; i < thunks.size(); ++i) {
     auto& thunk = thunks[i];
 
-    // Pipelined starts can share the canonical start's execution state.
+    // Pipelined starts can share the canonical start's execution state, but
+    // AsyncExecution requires Done before that state can be started again.
     if (thunk->kind() == Thunk::kAsyncStart) {
-      unpaired_executions.insert(
-          static_cast<const AsyncStartThunk&>(*thunk).async_execution().get());
+      if (!unpaired_executions
+               .insert(static_cast<const AsyncStartThunk&>(*thunk)
+                           .async_execution()
+                           .get())
+               .second) {
+        return 0;  // Duplicate outstanding start: do not capture this region.
+      }
     }
     if (thunk->kind() == Thunk::kAsyncDone) {
       auto* execution =

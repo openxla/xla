@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -25,26 +26,32 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_slice_fusion_v2_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/execution_graph.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla::gpu {
 namespace {
@@ -1175,6 +1182,145 @@ TEST_F(AsyncCommandBufferCmdEmitterTest,
     EXPECT_THAT(graph->nodes_defs()[3].in_edges, ElementsAre(HasEdgeTo(2)));
     EXPECT_THAT(graph->nodes_defs()[4].in_edges,
                 UnorderedElementsAre(HasEdgeTo(1), HasEdgeTo(3)));
+  }
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest,
+       OrdersSharedStreamsAcrossDynamicSliceExecutors) {
+  for (Thunk::Kind wrapper :
+       {Thunk::kDynamicSliceFusion, Thunk::kWhile, Thunk::kConditional}) {
+    SCOPED_TRACE(Thunk::KindToString(wrapper));
+    BufferAllocation result_allocation(1, 1024, 0);
+    BufferAllocation predicate(2, sizeof(int32_t), 0);
+    ThunkSequence thunks;
+    ThunkSequence first;
+    Kernel(first, "first", 1);
+    AsyncStartThunk* first_start =
+        Start(thunks, ComputationStreamId(0), std::move(first));
+    ThunkSequence independent;
+    Kernel(independent, "independent", 0);
+    AsyncStartThunk* independent_start =
+        Start(thunks, CommunicationStreamId(0), std::move(independent));
+
+    // The private allocation deliberately has the same index and offset as
+    // "independent". It must not become a buffer dependency in the outer graph.
+    std::vector<BufferAllocation> embedded_allocations;
+    embedded_allocations.emplace_back(0, 1024, 0);
+    BufferAllocation::Slice embedded_slice(&embedded_allocations[0], 0, 1024);
+    ThunkSequence embedded_body;
+    embedded_body.Emplace<FakeKernelThunk>(NextThunkInfo("embedded"),
+                                           embedded_slice);
+    ThunkSequence embedded;
+    AsyncStartThunk* embedded_start =
+        Start(embedded, ComputationStreamId(0), std::move(embedded_body));
+    Done(embedded, embedded_start, "embedded_done");
+
+    Shape shape = ShapeUtil::MakeShape(F32, {256});
+    ThunkSequence nested;
+    nested.Emplace<DynamicSliceFusionV2Thunk>(
+        NextThunkInfo("dynamic_slice"),
+        std::vector<DynamicSliceFusion::Parameter>{},
+        std::vector<DynamicSliceFusion::Result>{
+            {std::nullopt, 0, shape, shape}},
+        std::vector<BufferAllocation::Slice>{},
+        std::vector<BufferAllocation::Slice>{
+            BufferAllocation::Slice(&result_allocation, 0, 1024)},
+        std::move(embedded_allocations), std::move(embedded));
+
+    // Also discover the hidden stream when the fusion is inside control flow.
+    if (wrapper == Thunk::kWhile) {
+      ThunkSequence body = std::move(nested);
+      nested.Emplace<WhileThunk>(
+          NextThunkInfo("while"), BufferAllocation::Slice(&predicate, 0, 1),
+          ThunkSequence{}, std::move(body), /*trip_count=*/1);
+    } else if (wrapper == Thunk::kConditional) {
+      std::vector<ThunkSequence> branches;
+      branches.push_back(std::move(nested));
+      nested.Emplace<ConditionalThunk>(
+          NextThunkInfo("conditional"),
+          ShapedSlice{BufferAllocation::Slice(&predicate, 0, sizeof(int32_t)),
+                      ShapeUtil::MakeShape(S32, {})},
+          std::move(branches));
+    }
+
+    // Running the outer executor on a different async stream ensures that
+    // "last" cannot accidentally inherit its completion from the main stream.
+    AsyncStartThunk* outer_start =
+        Start(thunks, ComputationStreamId(1), std::move(nested));
+    ThunkSequence last;
+    Kernel(last, "last", 3);
+    AsyncStartThunk* last_start =
+        Start(thunks, ComputationStreamId(0), std::move(last));
+    Done(thunks, first_start, "first_done");
+    Done(thunks, outer_start, "outer_done");
+    Done(thunks, last_start, "last_done");
+    Done(thunks, independent_start, "independent_done");
+
+    ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                         ConvertToCommands(thunks, options_));
+    ASSERT_EQ(commands.size(), 8);
+    // Top-level nodes: first, independent, nested executor, last, four joins.
+    // Same-stream ordering requires first -> nested executor -> last, while
+    // the unrelated communication stream only joins at its own done.
+    auto graph = commands.execution_graph();
+    EXPECT_THAT(graph->nodes_defs()[2].in_edges, ElementsAre(HasEdgeTo(0)));
+    EXPECT_THAT(graph->nodes_defs()[3].in_edges, ElementsAre(HasEdgeTo(2)));
+    EXPECT_THAT(graph->nodes_defs()[1].out_edges, ElementsAre(HasEdgeTo(7)));
+  }
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, RejectsOverlappingSharedExecution) {
+  for (Thunk::Kind wrapper :
+       {Thunk::kSequential, Thunk::kAsyncStart, Thunk::kWhile,
+        Thunk::kConditional, Thunk::kDynamicSliceFusion}) {
+    SCOPED_TRACE(Thunk::KindToString(wrapper));
+    auto canonical = std::make_unique<AsyncStartThunk>(
+        NextThunkInfo("canonical"), ComputationStreamId(0), ThunkSequence{});
+    ThunkSequence inner;
+    inner.Emplace<AsyncStartThunk>(NextThunkInfo("second"),
+                                   ComputationStreamId(0), ThunkSequence{},
+                                   canonical->async_execution());
+    Done(inner, canonical.get(), "second_done");
+
+    BufferAllocation predicate(1, sizeof(int32_t), 0);
+    ThunkSequence body;
+    if (wrapper == Thunk::kAsyncStart) {
+      body = std::move(inner);
+    } else if (wrapper == Thunk::kWhile) {
+      body.Emplace<WhileThunk>(
+          NextThunkInfo("while"), BufferAllocation::Slice(&predicate, 0, 1),
+          ThunkSequence{}, std::move(inner), /*trip_count=*/1);
+    } else if (wrapper == Thunk::kConditional) {
+      std::vector<ThunkSequence> branches;
+      branches.push_back(std::move(inner));
+      body.Emplace<ConditionalThunk>(
+          NextThunkInfo("conditional"),
+          ShapedSlice{BufferAllocation::Slice(&predicate, 0, sizeof(int32_t)),
+                      ShapeUtil::MakeShape(S32, {})},
+          std::move(branches));
+    } else if (wrapper == Thunk::kDynamicSliceFusion) {
+      body.Emplace<DynamicSliceFusionV2Thunk>(
+          NextThunkInfo("dynamic_slice"),
+          std::vector<DynamicSliceFusion::Parameter>{},
+          std::vector<DynamicSliceFusion::Result>{},
+          std::vector<BufferAllocation::Slice>{},
+          std::vector<BufferAllocation::Slice>{},
+          std::vector<BufferAllocation>{}, std::move(inner));
+    }
+
+    ThunkSequence thunks;
+    thunks.Emplace<AsyncStartThunk>(NextThunkInfo("first"),
+                                    ComputationStreamId(1), std::move(body),
+                                    canonical->async_execution());
+    if (wrapper == Thunk::kSequential) {
+      thunks.Emplace<SequentialThunk>(NextThunkInfo("sequential"),
+                                      std::move(inner));
+    }
+    Done(thunks, canonical.get(), "first_done");
+
+    EXPECT_THAT(ConvertToCommands(thunks, options_),
+                StatusIs(absl::StatusCode::kInternal,
+                         HasSubstr("Async execution already started")));
   }
 }
 

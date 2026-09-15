@@ -57,9 +57,33 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
+
+// Collect stream identities without exposing dynamic-slice private allocations
+// to the generic traversal used for buffer dependencies.
+void CollectNestedStreams(const Thunk& thunk,
+                          absl::flat_hash_set<ExecutionStreamId>& streams) {
+  thunk.Walk([&](const Thunk* nested) {
+    if (nested->kind() == Thunk::kAsyncStart) {
+      streams.insert(
+          static_cast<const AsyncStartThunk*>(nested)->execution_stream_id());
+    } else if (nested->kind() == Thunk::kDynamicSliceFusion) {
+      // DynamicSliceFusionV2Thunk intentionally hides its embedded thunks from
+      // Thunk::Walk because their buffer allocation namespace is private.
+      const auto& fusion =
+          static_cast<const DynamicSliceFusionV2Thunk&>(*nested);
+      for (const std::unique_ptr<Thunk>& embedded : fusion.thunks()) {
+        CollectNestedStreams(*embedded, streams);
+      }
+    }
+  });
+}
+
 // A context for tracking thunks to commands conversion details.
 struct ConversionContext {
   std::vector<Command::ResourceUses> extra_resources;
+
+  // Enclosing converter, used to check open async scopes across executors.
+  const ConversionContext* parent = nullptr;
 
   // LHS dependencies must be collected before flattening async regions. A
   // frontier describes the work a stream must wait for before its next command.
@@ -71,6 +95,11 @@ struct ConversionContext {
   absl::flat_hash_map<const AsyncExecution*, Command::ResourceUses>
       async_completions;
 
+  bool IsAsyncExecutionOpen(const AsyncExecution* execution) const {
+    return async_completions.contains(execution) ||
+           (parent != nullptr && parent->IsAsyncExecutionOpen(execution));
+  }
+
   void Append(CommandSequence& commands, Command* command,
               const ConvertToCommandsOptions& options) {
     if (options.synchronization_mode ==
@@ -79,12 +108,7 @@ struct ConversionContext {
       // command here. Order them against outstanding work on every additional
       // stream they use, and publish their completion on those streams too.
       absl::flat_hash_set<ExecutionStreamId> nested_streams;
-      command->Thunk::Walk([&](const Thunk* thunk) {
-        if (thunk->kind() != Thunk::kAsyncStart) return;
-        ExecutionStreamId stream =
-            static_cast<const AsyncStartThunk*>(thunk)->execution_stream_id();
-        nested_streams.insert(stream);
-      });
+      CollectNestedStreams(*command, nested_streams);
       Command::ResourceUses dependencies = stream_frontiers[current_stream];
       for (ExecutionStreamId stream : nested_streams) {
         const Command::ResourceUses& frontier = stream_frontiers[stream];
@@ -159,7 +183,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
 // command. Keep that identity when an inner async region reuses the stream.
 static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options,
-    std::optional<ExecutionStreamId> current_stream);
+    const ConversionContext* parent);
 
 //===----------------------------------------------------------------------===//
 // Conversions from Thunk to Command
@@ -167,15 +191,15 @@ static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
 
 static absl::Status SetOrUpdateCommandBufferExecutors(
     WhileThunk& thunk, const ConvertToCommandsOptions& options,
-    std::optional<ExecutionStreamId> current_stream) {
+    const ConversionContext* parent) {
   VLOG(1) << "WhileThunk: " << thunk.profile_annotation();
   ABSL_ASSIGN_OR_RETURN(
       CommandExecutor cond_cmds,
       ConvertToCommandsImpl(thunk.condition_executor().thunks(), options,
-                            current_stream));
-  ABSL_ASSIGN_OR_RETURN(CommandExecutor body_cmds,
-                        ConvertToCommandsImpl(thunk.body_executor().thunks(),
-                                              options, current_stream));
+                            parent));
+  ABSL_ASSIGN_OR_RETURN(
+      CommandExecutor body_cmds,
+      ConvertToCommandsImpl(thunk.body_executor().thunks(), options, parent));
 
   return thunk.SetOrUpdateCommandBufferExecutors(
       std::move(cond_cmds), std::move(body_cmds), options.enable_loop_unroll);
@@ -183,7 +207,7 @@ static absl::Status SetOrUpdateCommandBufferExecutors(
 
 static absl::Status SetOrUpdateCommandBufferBranchExecutors(
     ConditionalThunk& thunk, const ConvertToCommandsOptions& options,
-    std::optional<ExecutionStreamId> current_stream) {
+    const ConversionContext* parent) {
   std::vector<CommandExecutor> branch_cmds;
   branch_cmds.reserve(thunk.branch_executors().size());
   if (thunk.branch_index_is_bool()) {
@@ -193,16 +217,16 @@ static absl::Status SetOrUpdateCommandBufferBranchExecutors(
     ABSL_ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommandsImpl(thunk.branch_executors()[1].thunks(), options,
-                              current_stream));
+                              parent));
     ABSL_ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommandsImpl(thunk.branch_executors()[0].thunks(), options,
-                              current_stream));
+                              parent));
   } else {
     for (const ThunkExecutor& branch_thunk : thunk.branch_executors()) {
-      ABSL_ASSIGN_OR_RETURN(CommandExecutor cmds,
-                            ConvertToCommandsImpl(branch_thunk.thunks(),
-                                                  options, current_stream));
+      ABSL_ASSIGN_OR_RETURN(
+          CommandExecutor cmds,
+          ConvertToCommandsImpl(branch_thunk.thunks(), options, parent));
       branch_cmds.emplace_back(std::move(cmds));
     }
   }
@@ -216,7 +240,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     case Thunk::Kind::kConditional: {
       auto& conditional_thunk = static_cast<ConditionalThunk&>(thunk);
       ABSL_RETURN_IF_ERROR(SetOrUpdateCommandBufferBranchExecutors(
-          conditional_thunk, options, ctx.current_stream));
+          conditional_thunk, options, &ctx));
       ctx.Append(cmd_sequence, &conditional_thunk, options);
       return absl::OkStatus();
     }
@@ -242,8 +266,8 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     }
     case Thunk::Kind::kWhile: {
       auto& while_thunk = static_cast<WhileThunk&>(thunk);
-      ABSL_RETURN_IF_ERROR(SetOrUpdateCommandBufferExecutors(
-          while_thunk, options, ctx.current_stream));
+      ABSL_RETURN_IF_ERROR(
+          SetOrUpdateCommandBufferExecutors(while_thunk, options, &ctx));
       ctx.Append(cmd_sequence, &while_thunk, options);
       return absl::OkStatus();
     }
@@ -253,7 +277,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       ABSL_ASSIGN_OR_RETURN(
           CommandExecutor cmds,
           ConvertToCommandsImpl(dynamic_slice_fusion_thunk.thunks(), options,
-                                ctx.current_stream));
+                                &ctx));
       ABSL_RETURN_IF_ERROR(
           dynamic_slice_fusion_thunk.SetOrUpdateCommandBufferExecutor(
               std::move(cmds)));
@@ -273,6 +297,13 @@ static absl::Status AppendCommands(ConversionContext& ctx,
           CommandExecutor::SynchronizationMode::kLHS) {
         return AppendCommands(ctx, cmd_sequence, start.thunks(), options);
       }
+      // Match AsyncExecution::Start: one shared execution can have only one
+      // outstanding start. Mark it open before walking the body so a nested
+      // start cannot reuse the same execution either.
+      const AsyncExecution* execution = start.async_execution().get();
+      TF_RET_CHECK(!ctx.IsAsyncExecutionOpen(execution))
+          << "Async execution already started: " << start.profile_annotation();
+      ctx.async_completions.emplace(execution, Command::ResourceUses{});
       std::optional<ExecutionStreamId> parent_stream = ctx.current_stream;
       // Copy before inserting into the map, which can invalidate references.
       Command::ResourceUses parent_frontier =
@@ -287,7 +318,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       // Snapshot the completion event, not the stream's eventual tail: another
       // region on this stream can start before this region's done is reached.
       // Use the shared execution identity for pipelined start/done pairs.
-      ctx.async_completions[start.async_execution().get()] =
+      ctx.async_completions[execution] =
           ctx.stream_frontiers[ctx.current_stream];
       ctx.current_stream = parent_stream;
       return absl::OkStatus();
@@ -659,12 +690,14 @@ static absl::Status AppendCommands(ConversionContext& ctx,
 
 static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options,
-    std::optional<ExecutionStreamId> current_stream) {
+    const ConversionContext* parent) {
   VLOG(3) << absl::StreamFormat(
       "Convert thunk sequence to command executor: synchronization_mode=%v",
       options.synchronization_mode);
   ConversionContext ctx;
-  ctx.current_stream = current_stream;
+  ctx.parent = parent;
+  ctx.current_stream =
+      parent != nullptr ? parent->current_stream : std::nullopt;
   CommandSequence cmd_sequence;
   ABSL_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
   TF_RET_CHECK(ctx.async_completions.empty())
@@ -683,7 +716,7 @@ static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
 
 absl::StatusOr<CommandExecutor> ConvertToCommands(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options) {
-  return ConvertToCommandsImpl(sequence, options, std::nullopt);
+  return ConvertToCommandsImpl(sequence, options, nullptr);
 }
 
 }  // namespace xla::gpu
