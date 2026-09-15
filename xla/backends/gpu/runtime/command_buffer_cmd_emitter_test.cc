@@ -25,11 +25,14 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -40,15 +43,17 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::AllOf;
 using ::testing::ElementsAre;
 using ::testing::Field;
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::UnorderedElementsAre;
 
@@ -855,4 +860,336 @@ TEST_F(CommandBufferCmdEmitterTest, ConcurrentRegionsForwardDependencies) {
   EXPECT_THAT(nodes[name_to_ids["d"]].out_edges, IsEmpty());
 }
 
+class AsyncCommandBufferCmdEmitterTest : public CommandBufferCmdEmitterTest {
+ protected:
+  void Kernel(ThunkSequence& thunks, absl::string_view name, int64_t slot) {
+    thunks.Emplace<FakeKernelThunk>(
+        NextThunkInfo(name),
+        BufferAllocation::Slice(&allocation_, slot * 1024, 1024));
+  }
+
+  AsyncStartThunk* Start(ThunkSequence& thunks, ExecutionStreamId stream,
+                         ThunkSequence body) {
+    auto start = std::make_unique<AsyncStartThunk>(NextThunkInfo("start"),
+                                                   stream, std::move(body));
+    AsyncStartThunk* result = start.get();
+    thunks.push_back(std::move(start));
+    return result;
+  }
+
+  void Done(ThunkSequence& thunks, const AsyncStartThunk* start,
+            absl::string_view name) {
+    thunks.Emplace<AsyncDoneThunk>(NextThunkInfo(name),
+                                   start->async_execution());
+  }
+
+  // Check reachability rather than direct edges: graph construction can remove
+  // redundant edges without changing the execution order.
+  bool HappensBefore(CommandExecutor& commands, const std::string& before,
+                     const std::string& after) {
+    auto ids = NamesToNodeIds(commands);
+    if (ids.find(before) == ids.end() || ids.find(after) == ids.end())
+      return false;
+    auto graph = commands.execution_graph();
+    std::vector<bool> reachable(commands.size(), false);
+    reachable[ids.at(before)] = true;
+    for (int64_t i = ids.at(before); i < static_cast<int64_t>(commands.size());
+         ++i) {
+      if (!reachable[i]) continue;
+      for (const auto& edge : graph->nodes_defs()[i].out_edges) {
+        reachable[edge.id] = true;
+      }
+    }
+    return reachable[ids.at(after)];
+  }
+
+  const ConvertToCommandsOptions options_ = {
+      CommandExecutor::SynchronizationMode::kLHS};
+
+ private:
+  BufferAllocation allocation_{0, 16 * 1024, 0};
+};
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, PreservesForkBodyOrderAndJoin) {
+  ThunkSequence thunks;
+  Kernel(thunks, "before", 0);
+  ThunkSequence body;
+  Kernel(body, "async_a", 1);
+  ThunkSequence nested;
+  Kernel(nested, "async_b", 2);
+  body.Emplace<SequentialThunk>(NextThunkInfo("sequential"), std::move(nested));
+  AsyncStartThunk* start =
+      Start(thunks, CommunicationStreamId(0), std::move(body));
+  Kernel(thunks, "main_a", 3);
+  Kernel(thunks, "main_b", 4);
+  Done(thunks, start, "done");
+  Kernel(thunks, "after", 5);
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  EXPECT_EQ(commands.size(), 7);
+  EXPECT_TRUE(HappensBefore(commands, "before", "async_a"));
+  EXPECT_TRUE(HappensBefore(commands, "before", "main_a"));
+  EXPECT_TRUE(HappensBefore(commands, "async_a", "async_b"));
+  EXPECT_TRUE(HappensBefore(commands, "main_a", "main_b"));
+  EXPECT_TRUE(HappensBefore(commands, "async_b", "done"));
+  EXPECT_TRUE(HappensBefore(commands, "main_b", "done"));
+  EXPECT_TRUE(HappensBefore(commands, "done", "after"));
+  EXPECT_FALSE(HappensBefore(commands, "async_b", "main_a"));
+  EXPECT_FALSE(HappensBefore(commands, "main_b", "async_a"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest,
+       SameStreamOrdersRegionsButJoinsSnapshot) {
+  ThunkSequence thunks;
+  ThunkSequence first;
+  Kernel(first, "first", 0);
+  AsyncStartThunk* start_a =
+      Start(thunks, ComputationStreamId(0), std::move(first));
+  ThunkSequence second;
+  Kernel(second, "second", 1);
+  AsyncStartThunk* start_b =
+      Start(thunks, ComputationStreamId(0), std::move(second));
+  Done(thunks, start_a, "done_a");
+  Kernel(thunks, "main", 2);
+  Done(thunks, start_b, "done_b");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 5);
+  EXPECT_TRUE(HappensBefore(commands, "first", "second"));
+  EXPECT_TRUE(HappensBefore(commands, "first", "done_a"));
+  EXPECT_TRUE(HappensBefore(commands, "done_a", "main"));
+  EXPECT_TRUE(HappensBefore(commands, "second", "done_b"));
+  EXPECT_TRUE(HappensBefore(commands, "main", "done_b"));
+  EXPECT_FALSE(HappensBefore(commands, "second", "done_a"));
+  EXPECT_FALSE(HappensBefore(commands, "main", "second"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest,
+       DistinguishesComputeAndCommunicationStreams) {
+  ThunkSequence thunks;
+  ThunkSequence compute;
+  Kernel(compute, "compute", 0);
+  AsyncStartThunk* start_a =
+      Start(thunks, ComputationStreamId(0), std::move(compute));
+  ThunkSequence communication;
+  Kernel(communication, "communication", 1);
+  AsyncStartThunk* start_b =
+      Start(thunks, CommunicationStreamId(0), std::move(communication));
+  Done(thunks, start_a, "done_a");
+  Done(thunks, start_b, "done_b");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 4);
+  EXPECT_FALSE(HappensBefore(commands, "compute", "communication"));
+  EXPECT_FALSE(HappensBefore(commands, "communication", "compute"));
+  EXPECT_TRUE(HappensBefore(commands, "compute", "done_a"));
+  EXPECT_TRUE(HappensBefore(commands, "communication", "done_b"));
+  EXPECT_TRUE(HappensBefore(commands, "done_a", "done_b"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, PreservesNestedAsyncRegions) {
+  ThunkSequence thunks;
+  ThunkSequence outer;
+  Kernel(outer, "outer_before", 0);
+  ThunkSequence inner;
+  Kernel(inner, "inner", 1);
+  AsyncStartThunk* inner_start =
+      Start(outer, CommunicationStreamId(0), std::move(inner));
+  Kernel(outer, "outer_during", 2);
+  Done(outer, inner_start, "inner_done");
+  Kernel(outer, "outer_after", 3);
+  AsyncStartThunk* outer_start =
+      Start(thunks, ComputationStreamId(0), std::move(outer));
+  Kernel(thunks, "main", 4);
+  Done(thunks, outer_start, "outer_done");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 7);
+  EXPECT_TRUE(HappensBefore(commands, "outer_before", "inner"));
+  EXPECT_TRUE(HappensBefore(commands, "outer_before", "outer_during"));
+  EXPECT_FALSE(HappensBefore(commands, "inner", "outer_during"));
+  EXPECT_TRUE(HappensBefore(commands, "inner", "inner_done"));
+  EXPECT_TRUE(HappensBefore(commands, "outer_during", "inner_done"));
+  EXPECT_TRUE(HappensBefore(commands, "inner_done", "outer_after"));
+  EXPECT_TRUE(HappensBefore(commands, "outer_after", "outer_done"));
+  EXPECT_TRUE(HappensBefore(commands, "main", "outer_done"));
+  EXPECT_FALSE(HappensBefore(commands, "outer_after", "main"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, EmptyRegionCarriesStreamWaits) {
+  ThunkSequence thunks;
+  ThunkSequence first;
+  Kernel(first, "first", 3);
+  AsyncStartThunk* first_start =
+      Start(thunks, ComputationStreamId(0), std::move(first));
+  Kernel(thunks, "before", 0);
+  AsyncStartThunk* empty = Start(thunks, ComputationStreamId(0), {});
+  ThunkSequence body;
+  Kernel(body, "async", 1);
+  AsyncStartThunk* start =
+      Start(thunks, ComputationStreamId(0), std::move(body));
+  Done(thunks, empty, "empty_done");
+  Kernel(thunks, "main", 2);
+  Done(thunks, start, "done");
+  Done(thunks, first_start, "first_done");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 7);
+  EXPECT_FALSE(HappensBefore(commands, "first", "before"));
+  EXPECT_TRUE(HappensBefore(commands, "first", "async"));
+  EXPECT_TRUE(HappensBefore(commands, "first", "empty_done"));
+  EXPECT_TRUE(HappensBefore(commands, "before", "async"));
+  EXPECT_TRUE(HappensBefore(commands, "before", "empty_done"));
+  EXPECT_TRUE(HappensBefore(commands, "empty_done", "main"));
+  EXPECT_FALSE(HappensBefore(commands, "async", "empty_done"));
+  EXPECT_TRUE(HappensBefore(commands, "async", "done"));
+  EXPECT_TRUE(HappensBefore(commands, "main", "done"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, MatchesSharedAsyncExecution) {
+  ThunkSequence thunks;
+  ThunkSequence first;
+  Kernel(first, "first", 0);
+  AsyncStartThunk* canonical =
+      Start(thunks, CommunicationStreamId(0), std::move(first));
+  Done(thunks, canonical, "first_done");
+  ThunkSequence second;
+  Kernel(second, "second", 1);
+  thunks.Emplace<AsyncStartThunk>(NextThunkInfo("pipelined_start"),
+                                  CommunicationStreamId(0), std::move(second),
+                                  canonical->async_execution());
+  Done(thunks, canonical, "second_done");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 4);
+  EXPECT_TRUE(HappensBefore(commands, "first", "first_done"));
+  EXPECT_TRUE(HappensBefore(commands, "first_done", "second"));
+  EXPECT_TRUE(HappensBefore(commands, "second", "second_done"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, RetainsBufferHazardsAcrossStreams) {
+  ThunkSequence thunks;
+  ThunkSequence body;
+  Kernel(body, "async", 0);
+  AsyncStartThunk* start =
+      Start(thunks, ComputationStreamId(0), std::move(body));
+  Kernel(thunks, "main", 0);
+  Done(thunks, start, "done");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 3);
+  EXPECT_TRUE(HappensBefore(commands, "async", "main"));
+  EXPECT_TRUE(HappensBefore(commands, "main", "done"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest,
+       NestedRegionOnCurrentStreamStaysOrdered) {
+  ThunkSequence thunks;
+  ThunkSequence outer;
+  ThunkSequence inner;
+  Kernel(inner, "inner", 0);
+  AsyncStartThunk* inner_start =
+      Start(outer, ComputationStreamId(0), std::move(inner));
+  Kernel(outer, "outer", 1);
+  Done(outer, inner_start, "inner_done");
+  AsyncStartThunk* outer_start =
+      Start(thunks, ComputationStreamId(0), std::move(outer));
+  Done(thunks, outer_start, "outer_done");
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 4);
+  EXPECT_TRUE(HappensBefore(commands, "inner", "outer"));
+  EXPECT_TRUE(HappensBefore(commands, "outer", "inner_done"));
+  EXPECT_TRUE(HappensBefore(commands, "inner_done", "outer_done"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, KeepsOrdinaryCommandsOrdered) {
+  ThunkSequence thunks;
+  Kernel(thunks, "first", 0);
+  ThunkSequence nested;
+  Kernel(nested, "second", 1);
+  thunks.Emplace<SequentialThunk>(NextThunkInfo("sequential"),
+                                  std::move(nested));
+  Kernel(thunks, "third", 2);
+
+  ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                       ConvertToCommands(thunks, options_));
+  ASSERT_EQ(commands.size(), 3);
+  EXPECT_TRUE(commands.execution_graph()->is_sequential());
+  EXPECT_TRUE(HappensBefore(commands, "first", "second"));
+  EXPECT_TRUE(HappensBefore(commands, "second", "third"));
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest,
+       OrdersSharedStreamsAcrossNestedExecutors) {
+  for (bool use_while : {false, true}) {
+    SCOPED_TRACE(use_while);
+    BufferAllocation predicate(1, sizeof(int32_t), 0);
+    BufferAllocation::Slice predicate_slice(&predicate, 0, sizeof(int32_t));
+    ThunkSequence thunks;
+    ThunkSequence first;
+    Kernel(first, "first", 0);
+    AsyncStartThunk* first_start =
+        Start(thunks, ComputationStreamId(0), std::move(first));
+    ThunkSequence independent;
+    Kernel(independent, "independent", 1);
+    AsyncStartThunk* independent_start =
+        Start(thunks, CommunicationStreamId(0), std::move(independent));
+
+    ThunkSequence nested;
+    ThunkSequence body;
+    Kernel(body, "nested", 2);
+    AsyncStartThunk* nested_start =
+        Start(nested, ComputationStreamId(0), std::move(body));
+    Done(nested, nested_start, "nested_done");
+    if (use_while) {
+      thunks.Emplace<WhileThunk>(NextThunkInfo("while"), predicate_slice,
+                                 ThunkSequence{}, std::move(nested));
+    } else {
+      std::vector<ThunkSequence> branches;
+      branches.push_back(std::move(nested));
+      thunks.Emplace<ConditionalThunk>(
+          NextThunkInfo("conditional"),
+          ShapedSlice{predicate_slice, ShapeUtil::MakeShape(S32, {})},
+          std::move(branches));
+    }
+    Done(thunks, first_start, "first_done");
+    Done(thunks, independent_start, "independent_done");
+
+    ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
+                         ConvertToCommands(thunks, options_));
+    ASSERT_EQ(commands.size(), 5);
+    // Top-level nodes: first, independent, nested executor, two joins.
+    // The nested executor must wait for earlier work on its computation stream,
+    // while the unrelated communication stream can continue concurrently.
+    auto graph = commands.execution_graph();
+    EXPECT_THAT(graph->nodes_defs()[2].in_edges, ElementsAre(HasEdgeTo(0)));
+    EXPECT_THAT(graph->nodes_defs()[3].in_edges, ElementsAre(HasEdgeTo(2)));
+    EXPECT_THAT(graph->nodes_defs()[4].in_edges,
+                UnorderedElementsAre(HasEdgeTo(1), HasEdgeTo(3)));
+  }
+}
+
+TEST_F(AsyncCommandBufferCmdEmitterTest, RejectsUnmatchedAsyncBoundaries) {
+  ThunkSequence start_only;
+  AsyncStartThunk* start = Start(start_only, ComputationStreamId(0), {});
+  EXPECT_THAT(ConvertToCommands(start_only, options_),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Async start has no matching done")));
+  ThunkSequence done_only;
+  Done(done_only, start, "done");
+  EXPECT_THAT(ConvertToCommands(done_only, options_),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Async done has no matching start")));
+}
+
+}  // namespace
 }  // namespace xla::gpu
