@@ -88,9 +88,11 @@ using tensorflow::MemoryDump;
 //   allocated chunks and same-tag interior holes, and kCentralGap for the
 //   central gap. The central gap is tracked by central_gap_ instead of being
 //   inserted into a Bin. Each end first reuses binned holes with its own tag,
-//   then carves from the central gap. This keeps each end's placements
-//   independent of activity from the opposite end except when lower and upper
-//   allocations exhaust the central gap.
+//   then carves from the central gap. Carving from the gap always splits
+//   exactly so the remainder stays in the gap; reusing an own-tagged hole
+//   follows the classic split heuristic at both ends. This keeps each end's
+//   placements independent of activity from the opposite end except when
+//   lower and upper allocations exhaust the central gap.
 //
 class BFCAllocator : public Allocator {
  public:
@@ -623,6 +625,14 @@ class BFCAllocator : public Allocator {
   void* FindChunkPtrInCentralGap(size_t rounded_bytes, size_t num_bytes,
                                  size_t alignment, uint64_t freed_before,
                                  AllocationEnd allocation_end)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Classic BFC split heuristic for reusing a free chunk: split when the chunk
+  // can be broken into two reasonably large pieces, or when keeping it whole
+  // would waste more than max_internal_fragmentation_bytes_ on padding.
+  // Carving from the central gap never consults this and always splits
+  // exactly.
+  bool ShouldSplitChunk(size_t chunk_size, size_t rounded_bytes) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Carves an allocation of 'num_bytes' (rounded to 'rounded_bytes') out of the
