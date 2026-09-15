@@ -29,8 +29,11 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/logical_buffer.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
@@ -680,6 +683,156 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param ? "mosaic_uses_collective_metadata"
                         : "mosaic_does_not_use_collective_metadata";
     });
+
+// A dynamic-slice fusion wraps a Mosaic GPU collective custom call together
+// with its sliced operands. The fusion boundary must not hide the collective
+// hero from the collective memory coloring: the fused operands and results
+// that back the hero's inputs and outputs must be colored kCollective, exactly
+// like they would be if the custom call was left unfused.
+TEST_F(GpuMemorySpaceAssignmentTest,
+       DynamicSliceFusionWrappingMosaicCollectiveColorsOperandsAndResults) {
+  constexpr absl::string_view kHloModule = R"(
+    HloModule m
+
+    %dynamic-slice-fusion {
+      bp0 = f32[19,256]{1,0} parameter(0)
+      bp1 = s32[1]{0} parameter(1)
+      slice.4 = f32[15,256]{1,0} slice(bp0), slice={[0:15], [0:256]}
+      ROOT hero.5 = (f32[15,256]{1,0}, s32[1]{0}) custom-call(slice.4, bp1),
+        custom_call_target="mosaic_gpu_v2",
+        api_version=API_VERSION_TYPED_FFI,
+        backend_config={"xla_symmetric_memory_parameters"}
+    }
+
+    ENTRY main {
+      p0 = f32[19,256]{1,0} parameter(0)
+      p1 = s32[1]{0} parameter(1)
+      ROOT dsf.6 = (f32[15,256]{1,0}, s32[1]{0}) fusion(p0, p1),
+        kind=kCustom,
+        calls=%dynamic-slice-fusion,
+        backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_slice_fusion"}}}
+    }
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  EXPECT_OK(colorer(alias_analysis.get(), ordering));
+
+  const HloInstruction* p0 =
+      module->entry_computation()->GetInstructionWithName("p0");
+  const HloInstruction* p1 =
+      module->entry_computation()->GetInstructionWithName("p1");
+  const HloInstruction* dsf =
+      module->entry_computation()->GetInstructionWithName("dsf.6");
+
+  auto get_color = [&](const HloInstruction* instr, const ShapeIndex& index) {
+    const HloBuffer& buffer = alias_analysis->GetUniqueBufferAt(instr, index);
+    return buffer.values()[0]->color();
+  };
+
+  // The fusion operands back the Mosaic hero's inputs (the sliced buffer and
+  // the token), so they must be colored kCollective.
+  EXPECT_EQ(get_color(p0, {}), (int)MemorySpaceColor::kCollective);
+  EXPECT_EQ(get_color(p1, {}), (int)MemorySpaceColor::kCollective);
+  // The fusion results back the Mosaic hero's outputs.
+  EXPECT_EQ(get_color(dsf, {0}), (int)MemorySpaceColor::kCollective);
+  EXPECT_EQ(get_color(dsf, {1}), (int)MemorySpaceColor::kCollective);
+  // The tuple pointer itself is never colored.
+  EXPECT_EQ(get_color(dsf, {}), (int)MemorySpaceColor::kDefault);
+}
+
+// Buffer assignment must give the fused dynamic-slice collective's operands
+// and results their own collective-memory allocations, disjoint from the
+// default-memory allocations of concurrently-live buffers. Otherwise the
+// buffers would alias into the default arena and symmetric memory registration
+// (e.g. NCCL symmetric window) would fail at execution time.
+TEST_F(GpuMemorySpaceAssignmentTest,
+       DynamicSliceFusionCollectiveBuffersGetDisjointAllocations) {
+  constexpr absl::string_view kHloModule = R"(
+    HloModule m
+
+    %dynamic-slice-fusion {
+      bp0 = f32[19,256]{1,0} parameter(0)
+      bp1 = s32[1]{0} parameter(1)
+      slice.4 = f32[15,256]{1,0} slice(bp0), slice={[0:15], [0:256]}
+      ROOT hero.5 = (f32[15,256]{1,0}, s32[1]{0}) custom-call(slice.4, bp1),
+        custom_call_target="mosaic_gpu_v2",
+        api_version=API_VERSION_TYPED_FFI,
+        backend_config={"xla_symmetric_memory_parameters"}
+    }
+
+    ENTRY main {
+      p0 = f32[19,256]{1,0} parameter(0)
+      p1 = s32[1]{0} parameter(1)
+      p2 = f32[8,8]{1,0} parameter(2)
+      gemm.7 = f32[19,256]{1,0} custom-call(p0), custom_call_target="my_gemm"
+      dsf.6 = (f32[15,256]{1,0}, s32[1]{0}) fusion(gemm.7, p1),
+        kind=kCustom,
+        calls=%dynamic-slice-fusion,
+        backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_slice_fusion"}}}
+      gte.8 = f32[15,256]{1,0} get-tuple-element(dsf.6), index=0
+      ROOT tuple.9 = (f32[15,256]{1,0}, f32[8,8]{1,0}) tuple(gte.8, p2)
+    }
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+  AliasInfo alias_info;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.colorer = CreateColorer(config.debug_options());
+
+  auto buffer_size = [](const BufferValue& buffer) {
+    return ShapeUtil::ByteSizeOf(buffer.shape(), sizeof(void*));
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+          buffer_size, &alias_info, [](LogicalBuffer::Color) { return 1; },
+          std::move(opts)));
+
+  const HloInstruction* gemm =
+      module->entry_computation()->GetInstructionWithName("gemm.7");
+  const HloInstruction* dsf =
+      module->entry_computation()->GetInstructionWithName("dsf.6");
+  const HloInstruction* p2 =
+      module->entry_computation()->GetInstructionWithName("p2");
+
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice gemm_slice,
+                       assignment->GetUniqueSlice(gemm, {}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice dsf_0_slice,
+                       assignment->GetUniqueSlice(dsf, {0}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice dsf_1_slice,
+                       assignment->GetUniqueSlice(dsf, {1}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice p2_slice,
+                       assignment->GetUniqueSlice(p2, {}));
+
+  // The GEMM output consumed through the fusion boundary and the fusion
+  // results are assigned to collective-memory allocations.
+  EXPECT_EQ(gemm_slice.allocation()->color(),
+            (int)MemorySpaceColor::kCollective);
+  EXPECT_EQ(dsf_0_slice.allocation()->color(),
+            (int)MemorySpaceColor::kCollective);
+  EXPECT_EQ(dsf_1_slice.allocation()->color(),
+            (int)MemorySpaceColor::kCollective);
+  // The unrelated default-memory buffer stays in default memory.
+  EXPECT_EQ(p2_slice.allocation()->color(), (int)MemorySpaceColor::kDefault);
+  // Collective-memory buffers never share an allocation with default-memory
+  // buffers that are live at the same time.
+  EXPECT_NE(gemm_slice.allocation(), p2_slice.allocation());
+  EXPECT_NE(dsf_0_slice.allocation(), p2_slice.allocation());
+  EXPECT_NE(dsf_1_slice.allocation(), p2_slice.allocation());
+}
 
 }  // namespace
 }  // namespace xla::gpu
