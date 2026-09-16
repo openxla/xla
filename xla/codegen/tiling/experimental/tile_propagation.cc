@@ -303,8 +303,7 @@ absl::Status VerifyConcatenateAlignment(
           "Tiling propagation rejected for ", concatenate.ToString(),
           ": The negative base offset ", base_offset,
           " is not aligned to the tile size ", tile_size,
-          " (base_offset mod tile_size = ", offset_within_tile,
-          "); operand 0 would require an unsupported low-side (left) mask."));
+          " ; operand 0 would require an unsupported low-side (left) mask."));
     }
   }
 
@@ -321,11 +320,9 @@ absl::Status VerifyConcatenateAlignment(
     if (remaining_size % tile_size != 0) {
       return absl::FailedPreconditionError(absl::StrCat(
           "Tiling propagation rejected for ", concatenate.ToString(),
-          ": The remaining size ", remaining_size,
-          " (remaining_size mod tile_size = ", remaining_size % tile_size,
-          ") in the concatenate operand ", base_operand_idx,
-          " must be a clean multiple of its tile size ", tile_size,
-          " so that an operand boundary lands on a tile boundary."));
+          ": The remaining operand size ", remaining_size % tile_size,
+          " (in concatenate operand ", base_operand_idx,
+          ") is not divisible by the selected tile size ", tile_size, "."));
     }
   }
 

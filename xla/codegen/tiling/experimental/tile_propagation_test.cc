@@ -1043,12 +1043,10 @@ TEST_F(TilePropagationTest,
 
   EXPECT_THAT(
       PropagateTileToInput(*tiling_space, *concat, concat_tile, 0).status(),
-      StatusIs(
-          absl::StatusCode::kFailedPrecondition,
-          ::testing::HasSubstr(
-              "The remaining size 17 (remaining_size mod "
-              "tile_size = 2) in the concatenate operand 1 must be a clean "
-              "multiple of its tile size 5")));
+      StatusIs(absl::StatusCode::kFailedPrecondition,
+               ::testing::HasSubstr(
+                   "The remaining operand size 2 (in concatenate operand 1) is "
+                   "not divisible by the selected tile size 5")));
 }
 
 // Regression test for b/491092362. A concatenate nested below an op whose tile
@@ -1151,7 +1149,8 @@ TEST_F(TilePropagationTest, ConcatenateRejectsNegativeMisalignedOffset) {
       StatusIs(absl::StatusCode::kFailedPrecondition,
                ::testing::HasSubstr(
                    "The negative base offset -4 is not aligned to the tile "
-                   "size 16 (base_offset mod tile_size = 12)")));
+                   "size 16 ; operand 0 would require an unsupported low-side "
+                   "(left) mask.")));
 }
 
 // The verdict for a negative base_offset is invariant under shifting it by a
@@ -1187,7 +1186,8 @@ TEST_F(TilePropagationTest, ConcatenateNegativeOffsetVerdictIsPeriodic) {
       StatusIs(absl::StatusCode::kFailedPrecondition,
                ::testing::HasSubstr(
                    "The negative base offset -20 is not aligned to the tile "
-                   "size 16 (base_offset mod tile_size = 12)")));
+                   "size 16 ; operand 0 would require an unsupported low-side "
+                   "(left) mask.")));
 }
 
 // A negative, tile-aligned base_offset is still rejected if an interior
