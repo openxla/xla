@@ -36,10 +36,10 @@ exit:
 ; CHECK: vector.body:
 ; CHECK: load <{{[0-9]+}} x float>, ptr
 ; CHECK: load <{{[0-9]+}} x float>, ptr
-; CHECK: fadd contract <{{[0-9]+}} x float>
+; CHECK: fadd <{{[0-9]+}} x float>
 ; CHECK: store <{{[0-9]+}} x float>
 
 ; Also check that original scalar loop still exists (for remainder iterations)
 ; CHECK: load float, ptr
-; CHECK: fadd contract float
+; CHECK: fadd float
 ; CHECK: store float
