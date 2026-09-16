@@ -514,6 +514,30 @@ TEST_F(HloInstructionTest, DeriveComputeTypeAttribute) {
   EXPECT_FALSE(instr1.has_frontend_attributes());
 }
 
+TEST_F(HloInstructionTest,
+       DeriveComputeTypeAttributeSparseOffloadPreservedOnSameOpcode) {
+  HloConstantInstruction instr0(ShapeUtil::MakeShape(U32, {3, 2}));
+  instr0.add_frontend_attribute(kXlaComputeTypeAttr,
+                                kXlaComputeTypeSparseOffload);
+  HloConstantInstruction instr1(ShapeUtil::MakeShape(U32, {3, 2}));
+  instr0.SetupDerivedInstruction(&instr1);
+  EXPECT_TRUE(instr1.has_frontend_attributes());
+  auto it = instr1.frontend_attributes().map().find(kXlaComputeTypeAttr);
+  ASSERT_NE(it, instr1.frontend_attributes().map().end());
+  EXPECT_EQ(it->second, kXlaComputeTypeSparseOffload);
+}
+
+TEST_F(HloInstructionTest,
+       DeriveComputeTypeAttributeSparseOffloadErasedOnDifferentOpcode) {
+  HloConstantInstruction instr0(ShapeUtil::MakeShape(U32, {3, 2}));
+  instr0.add_frontend_attribute(kXlaComputeTypeAttr,
+                                kXlaComputeTypeSparseOffload);
+  auto instr1 =
+      HloInstruction::CreateIota(ShapeUtil::MakeShape(U32, {3, 2}), 0);
+  instr0.SetupDerivedInstruction(instr1.get());
+  EXPECT_FALSE(instr1->has_frontend_attributes());
+}
+
 TEST_F(HloInstructionTest, CloneImplScheduledAsyncOp) {
   constexpr absl::string_view kHlo = R"(
 HloModule main, is_scheduled=true
