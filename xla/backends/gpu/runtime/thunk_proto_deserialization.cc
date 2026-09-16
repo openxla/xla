@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_group_thunk.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
+#include "xla/backends/gpu/runtime/collective_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_reorder_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
@@ -115,7 +116,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
     const std::optional<xla::cpu::TargetMachineOptions>&
         cpu_target_machine_options) {
   ABSL_ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
-                   Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
+                        Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
   auto deserializer = [&](const ThunkProto& thunk_proto) {
     return DeserializeThunkProtoImpl(
         thunk_proto, buffer_allocations, hlo_module, platform_name,
@@ -300,6 +301,10 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
     case ThunkProto::kCollectiveBroadcastThunk:
       return CollectiveBroadcastThunk::FromProto(
           std::move(thunk_info), thunk_proto.collective_broadcast_thunk(),
+          buffer_allocations);
+    case ThunkProto::kCollectiveReduceThunk:
+      return CollectiveReduceThunk::FromProto(
+          std::move(thunk_info), thunk_proto.collective_reduce_thunk(),
           buffer_allocations);
     case ThunkProto::kCollectiveGroupThunk:
       return CollectiveGroupThunk::FromProto(
