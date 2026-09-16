@@ -427,9 +427,11 @@ llvm::Value* UpcastF16ToF32(llvm::IRBuilderBase* b, llvm::Value* input,
 static constexpr absl::string_view kExpV4F32Sym = "__xla_cpu_ExpV4F32";
 static constexpr absl::string_view kExpV8F32Sym = "__xla_cpu_ExpV8F32";
 static constexpr absl::string_view kExpV16F32Sym = "__xla_cpu_ExpV16F32";
+static constexpr absl::string_view kExpV32F32Sym = "__xla_cpu_ExpV32F32";
 
 static constexpr absl::string_view kExpV8F16Sym = "__xla_cpu_ExpV8F16";
 static constexpr absl::string_view kExpV16F16Sym = "__xla_cpu_ExpV16F16";
+static constexpr absl::string_view kExpV32F16Sym = "__xla_cpu_ExpV32F16";
 
 std::vector<llvm::VecDesc> ExpVectorization() {
   return {
@@ -448,6 +450,11 @@ std::vector<llvm::VecDesc> ExpVectorization() {
       {"llvm.exp.f32", kExpV16F32Sym, llvm::ElementCount::getFixed(16), false,
        GetVfabiPrefix(16), std::nullopt},
 
+      {"expf", kExpV32F32Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
+      {"llvm.exp.f32", kExpV32F32Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
+
       {"expf", kExpV8F16Sym, llvm::ElementCount::getFixed(8), false,
        GetVfabiPrefix(8), std::nullopt},
       {"llvm.exp.f16", kExpV8F16Sym, llvm::ElementCount::getFixed(8), false,
@@ -457,6 +464,11 @@ std::vector<llvm::VecDesc> ExpVectorization() {
        GetVfabiPrefix(16), std::nullopt},
       {"llvm.exp.f16", kExpV16F16Sym, llvm::ElementCount::getFixed(16), false,
        GetVfabiPrefix(16), std::nullopt},
+
+      {"expf", kExpV32F16Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
+      {"llvm.exp.f16", kExpV32F16Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
   };
 }
 
@@ -467,9 +479,11 @@ std::vector<llvm::VecDesc> ExpVectorization() {
 static constexpr absl::string_view kLogV4F32Sym = "__xla_cpu_LogV4F32";
 static constexpr absl::string_view kLogV8F32Sym = "__xla_cpu_LogV8F32";
 static constexpr absl::string_view kLogV16F32Sym = "__xla_cpu_LogV16F32";
+static constexpr absl::string_view kLogV32F32Sym = "__xla_cpu_LogV32F32";
 
 static constexpr absl::string_view kLogV8F16Sym = "__xla_cpu_LogV8F16";
 static constexpr absl::string_view kLogV16F16Sym = "__xla_cpu_LogV16F16";
+static constexpr absl::string_view kLogV32F16Sym = "__xla_cpu_LogV32F16";
 
 std::vector<llvm::VecDesc> LogVectorization() {
   return {
@@ -488,6 +502,11 @@ std::vector<llvm::VecDesc> LogVectorization() {
       {"llvm.log.f32", kLogV16F32Sym, llvm::ElementCount::getFixed(16), false,
        GetVfabiPrefix(16), std::nullopt},
 
+      {"logf", kLogV32F32Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
+      {"llvm.log.f32", kLogV32F32Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
+
       {"logf", kLogV8F16Sym, llvm::ElementCount::getFixed(8), false,
        GetVfabiPrefix(8), std::nullopt},
       {"llvm.log.f16", kLogV8F16Sym, llvm::ElementCount::getFixed(8), false,
@@ -497,6 +516,11 @@ std::vector<llvm::VecDesc> LogVectorization() {
        GetVfabiPrefix(16), std::nullopt},
       {"llvm.log.f16", kLogV16F16Sym, llvm::ElementCount::getFixed(16), false,
        GetVfabiPrefix(16), std::nullopt},
+
+      {"logf", kLogV32F16Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
+      {"llvm.log.f16", kLogV32F16Sym, llvm::ElementCount::getFixed(32), false,
+       GetVfabiPrefix(32), std::nullopt},
   };
 }
 
@@ -530,9 +554,11 @@ void RewriteToPolynomialApproximations(llvm::Module* module,
   rewrite_calls("llvm.exp.v4f32", GenerateVF32Exp, /*vector_width=*/4);
   rewrite_calls("llvm.exp.v8f32", GenerateVF32Exp, /*vector_width=*/8);
   rewrite_calls("llvm.exp.v16f32", GenerateVF32Exp, /*vector_width=*/16);
+  rewrite_calls("llvm.exp.v32f32", GenerateVF32Exp, /*vector_width=*/32);
   rewrite_calls(kExpV4F32Sym, GenerateVF32Exp, /*vector_width=*/4);
   rewrite_calls(kExpV8F32Sym, GenerateVF32Exp, /*vector_width=*/8);
   rewrite_calls(kExpV16F32Sym, GenerateVF32Exp, /*vector_width=*/16);
+  rewrite_calls(kExpV32F32Sym, GenerateVF32Exp, /*vector_width=*/32);
 
   rewrite_calls("llvm.exp.f16", UpcastF16ToF32<GenerateVF32Exp>,
                 /*vector_width=*/1);
@@ -540,6 +566,8 @@ void RewriteToPolynomialApproximations(llvm::Module* module,
                 /*vector_width=*/8);
   rewrite_calls(kExpV16F16Sym, UpcastF16ToF32<GenerateVF32Exp>,
                 /*vector_width=*/16);
+  rewrite_calls(kExpV32F16Sym, UpcastF16ToF32<GenerateVF32Exp>,
+                /*vector_width=*/32);
 
   //===----------------------------------------------------------------===//
   // Log
@@ -551,9 +579,11 @@ void RewriteToPolynomialApproximations(llvm::Module* module,
   rewrite_calls("llvm.log.v4f32", GenerateVF32Log, /*vector_width=*/4);
   rewrite_calls("llvm.log.v8f32", GenerateVF32Log, /*vector_width=*/8);
   rewrite_calls("llvm.log.v16f32", GenerateVF32Log, /*vector_width=*/16);
+  rewrite_calls("llvm.log.v32f32", GenerateVF32Log, /*vector_width=*/32);
   rewrite_calls(kLogV4F32Sym, GenerateVF32Log, /*vector_width=*/4);
   rewrite_calls(kLogV8F32Sym, GenerateVF32Log, /*vector_width=*/8);
   rewrite_calls(kLogV16F32Sym, GenerateVF32Log, /*vector_width=*/16);
+  rewrite_calls(kLogV32F32Sym, GenerateVF32Log, /*vector_width=*/32);
 
   rewrite_calls("llvm.log.f16", UpcastF16ToF32<GenerateVF32Log>,
                 /*vector_width=*/1);
@@ -561,6 +591,8 @@ void RewriteToPolynomialApproximations(llvm::Module* module,
                 /*vector_width=*/8);
   rewrite_calls(kLogV16F16Sym, UpcastF16ToF32<GenerateVF32Log>,
                 /*vector_width=*/16);
+  rewrite_calls(kLogV32F16Sym, UpcastF16ToF32<GenerateVF32Log>,
+                /*vector_width=*/32);
 }
 
 }  // namespace xla::cpu

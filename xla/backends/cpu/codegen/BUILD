@@ -403,6 +403,25 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "polynomial_approximations_test",
+    srcs = ["polynomial_approximations_test.cc"],
+    deps = [
+        ":polynomial_approximations",
+        "//xla:util",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
 cc_library(
     name = "target_machine_features",
     srcs = ["target_machine_features.cc"],
