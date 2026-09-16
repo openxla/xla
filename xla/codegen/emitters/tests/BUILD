@@ -13,8 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
-load("//xla:lit.bzl", "lit_test_suite")
+load("//xla:lit.bzl", "copy_binary", "lit_test_suite")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
@@ -26,22 +25,18 @@ package(
     licenses = ["notice"],
 )
 
-copy_file(
+copy_binary(
     name = "cpu_fusion_to_mlir_copy",
     testonly = True,
     src = "//xla/backends/cpu/codegen/tools:fusion_to_mlir",
     out = "cpu_fusion_to_mlir",
-    allow_symlink = True,
-    is_executable = True,
 )
 
-copy_file(
+copy_binary(
     name = "gpu_fusion_to_mlir_copy",
     testonly = True,
     src = "//xla/backends/gpu/codegen/tools:fusion_to_mlir",
     out = "gpu_fusion_to_mlir",
-    allow_symlink = True,
-    is_executable = True,
 )
 
 #Need no gpu to run

@@ -36,6 +36,53 @@ load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 visibility(DEFAULT_LOAD_VISIBILITY)
 
+def _copy_binary_impl(ctx):
+    """Copy a binary and forward its runfiles.
+
+    This is like copy_file but properly forwards runfiles from the source,
+    which is necessary for --dynamic_mode=fully to work correctly.
+    """
+    # The output file name comes from the out attribute
+    output = ctx.outputs.out
+
+    # Create symlink to the source binary
+    ctx.actions.symlink(
+        output = output,
+        target_file = ctx.file.src,
+        is_executable = True,
+    )
+
+    # Forward runfiles from the source binary
+    src_runfiles = ctx.attr.src[DefaultInfo].default_runfiles
+    return [DefaultInfo(
+        files = depset([output]),
+        runfiles = src_runfiles,
+        executable = output,
+    )]
+
+copy_binary = rule(
+    implementation = _copy_binary_impl,
+    executable = True,
+    attrs = {
+        "src": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            executable = True,
+            cfg = "target",
+        ),
+        "out": attr.output(
+            mandatory = True,
+            doc = "The output file name",
+        ),
+    },
+    doc = """Copy a binary while preserving its runfiles.
+
+    Unlike copy_file, this rule forwards runfiles from the source binary,
+    which is essential for binaries built with --dynamic_mode=fully that
+    depend on shared libraries in the _solib directory.
+    """,
+)
+
 def enforce_glob(files, **kwargs):
     """A utility to enforce that a list matches a glob expression.
 
@@ -492,7 +539,11 @@ def _tools_on_path_impl(ctx):
     runfiles = ctx.runfiles()
 
     # For Bazel 4.x support. Drop when Bazel 4.x is no longer supported
+    # Merge runfiles from both srcs (the tools) and deps.
+    # This ensures that shared libraries from --dynamic_mode=fully are included
+    # when tools forward runfiles from their source binaries.
     to_merge = [d[DefaultInfo].default_runfiles for d in ctx.attr.srcs]
+    to_merge += [d[DefaultInfo].default_runfiles for d in ctx.attr.deps if DefaultInfo in d]
     if hasattr(runfiles, "merge_all"):
         runfiles = runfiles.merge_all(to_merge)
     else:
@@ -514,22 +565,27 @@ def _tools_on_path_impl(ctx):
         runfiles_symlinks[bin_path] = exe
 
     # The loop below symlinks the libraries that are used by the tools.
-    for dep in ctx.attr.deps:
+    # Extract libraries from both explicit deps and the tools themselves.
+    all_deps = ctx.attr.deps + ctx.attr.srcs
+    for dep in all_deps:
+        if not CcInfo in dep:
+            continue
+
         linker_inputs = dep[CcInfo].linking_context.linker_inputs.to_list()
         for linker_input in linker_inputs:
-            if len(linker_input.libraries) == 0:
-                continue
-            lib = linker_input.libraries[0].dynamic_library
-            if not lib:
-                continue
-            lib_path = paths.join(ctx.attr.lib_dir, lib.basename)
-            if lib_path in runfiles_symlinks:
-                if runfiles_symlinks[lib_path] == lib:
+            # Process ALL libraries in this linker_input, not just the first one
+            for library in linker_input.libraries:
+                lib = library.dynamic_library
+                if not lib:
                     continue
-                fail("All libs used by lit tests must have unique basenames, as" +
-                     " they are added to the path." +
-                     " {} and {} conflict".format(runfiles_symlinks[lib_path], lib))
-            runfiles_symlinks[lib_path] = lib
+                lib_path = paths.join(ctx.attr.lib_dir, lib.basename)
+                if lib_path in runfiles_symlinks:
+                    if runfiles_symlinks[lib_path] == lib:
+                        continue
+                    fail("All libs used by lit tests must have unique basenames, as" +
+                         " they are added to the path." +
+                         " {} and {} conflict".format(runfiles_symlinks[lib_path], lib))
+                runfiles_symlinks[lib_path] = lib
 
     return [
         DefaultInfo(runfiles = ctx.runfiles(
