@@ -895,14 +895,17 @@ class AsyncCommandBufferCmdEmitterTest : public CommandBufferCmdEmitterTest {
   bool HappensBefore(CommandExecutor& commands, const std::string& before,
                      const std::string& after) {
     auto ids = NamesToNodeIds(commands);
-    if (ids.find(before) == ids.end() || ids.find(after) == ids.end())
+    if (ids.find(before) == ids.end() || ids.find(after) == ids.end()) {
       return false;
+    }
     auto graph = commands.execution_graph();
     std::vector<bool> reachable(commands.size(), false);
     reachable[ids.at(before)] = true;
     for (int64_t i = ids.at(before); i < static_cast<int64_t>(commands.size());
          ++i) {
-      if (!reachable[i]) continue;
+      if (!reachable[i]) {
+        continue;
+      }
       for (const auto& edge : graph->nodes_defs()[i].out_edges) {
         reachable[edge.id] = true;
       }

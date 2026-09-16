@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
+#include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
@@ -89,9 +90,26 @@ class CommandBufferAsyncConversionTest : public testing::Test {
     thunks.Emplace<AsyncDoneThunk>(Info(), start->async_execution());
   }
 
-  absl::StatusOr<bool> Convert(ThunkSequence& thunks) {
+  WhileThunk* Loop(ThunkSequence& thunks, ThunkSequence body) {
+    auto loop = std::make_unique<WhileThunk>(
+        Info(), BufferAllocation::Slice(&allocation_, 0, 1), ThunkSequence{},
+        std::move(body), /*trip_count=*/1);
+    auto* result = loop.get();
+    thunks.push_back(std::move(loop));
+    return result;
+  }
+
+  const ThunkSequence& CommandBufferThunks(const Thunk& thunk) {
+    return static_cast<const CommandBufferThunk&>(thunk).thunks()->thunks();
+  }
+
+  absl::StatusOr<bool> Convert(ThunkSequence& thunks,
+                               bool enable_while = false) {
     DebugOptions options;
     options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+    if (enable_while) {
+      options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+    }
     options.set_xla_gpu_graph_min_graph_size(1);
     options.set_xla_gpu_command_buffer_scheduling_mode(DebugOptions::LHS);
     se::DeviceDescription device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
@@ -128,30 +146,110 @@ TEST_F(CommandBufferAsyncConversionTest, KeepsUnsupportedRegionsIntact) {
   }
 }
 
-TEST_F(CommandBufferAsyncConversionTest, KeepsControlFlowInsideOpenRegion) {
+TEST_F(CommandBufferAsyncConversionTest, ConvertsPlainCommandsInOpenRegion) {
   ThunkSequence thunks;
-  auto* start = Start(thunks);
-  ThunkSequence body;
-  AddCommand(body);
-  // WHILE conversion is disabled, but converting its body in isolation would
-  // still be possible if the enclosing async boundary were discarded.
-  auto loop = std::make_unique<WhileThunk>(
-      Info(), BufferAllocation::Slice(&allocation_, 0, 1), ThunkSequence{},
-      std::move(body), /*trip_count=*/1);
-  auto* loop_ptr = loop.get();
-  thunks.push_back(std::move(loop));
+  auto* start = Start(thunks, /*convertible=*/false);
+  AddCommand(thunks);
+  AddCommand(thunks);
   Done(thunks, start);
   AddCommand(thunks);
 
   ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
   EXPECT_TRUE(changed);
-  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kWhile,
+  // Commands between the unsupported start and its done execute on the main
+  // stream, exactly as their thunks would, so they can still be captured.
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kCommandBuffer,
                                     Thunk::kAsyncDone, Thunk::kCommandBuffer));
-  EXPECT_THAT(loop_ptr->body_executor().thunks(),
-              ThunkKindsAre(Thunk::kReplicaId));
+  EXPECT_THAT(CommandBufferThunks(*thunks[1]),
+              ThunkKindsAre(Thunk::kReplicaId, Thunk::kReplicaId));
 }
 
-TEST_F(CommandBufferAsyncConversionTest, KeepsTailAfterUnmatchedStart) {
+TEST_F(CommandBufferAsyncConversionTest, KeepsNestedRegionsInOpenRegion) {
+  ThunkSequence thunks;
+  auto* outer = Start(thunks, /*convertible=*/false);
+  auto* inner = Start(thunks);
+  AddCommand(thunks);
+  Done(thunks, inner);
+  AddCommand(thunks);
+  Done(thunks, outer);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
+  // Capturing the inner pair would run its body in a graph on the main stream
+  // and lose stream order with the outstanding outer operation. Its start and
+  // done stay thunks while the plain commands around them are captured.
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
+                                    Thunk::kCommandBuffer, Thunk::kAsyncDone,
+                                    Thunk::kCommandBuffer, Thunk::kAsyncDone));
+}
+
+TEST_F(CommandBufferAsyncConversionTest, ConvertsLoopBodiesInOpenRegion) {
+  for (bool body_has_async : {false, true}) {
+    SCOPED_TRACE(body_has_async);
+    ThunkSequence thunks;
+    auto* start = Start(thunks);
+    ThunkSequence body;
+    if (body_has_async) {
+      auto* inner = Start(body);
+      Done(body, inner);
+    }
+    AddCommand(body);
+    // WHILE conversion is disabled, so the loop keeps the region open and its
+    // body is converted recursively under the open-region rules.
+    WhileThunk* loop = Loop(thunks, std::move(body));
+    Done(thunks, start);
+    AddCommand(thunks);
+
+    ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+    EXPECT_TRUE(changed);
+    EXPECT_THAT(thunks,
+                ThunkKindsAre(Thunk::kAsyncStart, Thunk::kWhile,
+                              Thunk::kAsyncDone, Thunk::kCommandBuffer));
+    if (body_has_async) {
+      EXPECT_THAT(loop->body_executor().thunks(),
+                  ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncDone,
+                                Thunk::kCommandBuffer));
+    } else {
+      EXPECT_THAT(loop->body_executor().thunks(),
+                  ThunkKindsAre(Thunk::kCommandBuffer));
+    }
+  }
+}
+
+TEST_F(CommandBufferAsyncConversionTest,
+       DoesNotCaptureLoopWithAsyncInOpenRegion) {
+  for (bool open_region : {false, true}) {
+    SCOPED_TRACE(open_region);
+    ThunkSequence thunks;
+    AsyncStartThunk* start = nullptr;
+    if (open_region) {
+      start = Start(thunks, /*convertible=*/false);
+    }
+    ThunkSequence body;
+    auto* inner = Start(body);
+    Done(body, inner);
+    WhileThunk* loop = Loop(thunks, std::move(body));
+    if (open_region) {
+      Done(thunks, start);
+    }
+
+    ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks, /*enable_while=*/true));
+    if (open_region) {
+      // A convertible loop whose body starts async work on a stream with an
+      // outstanding operation must not become a graph on the main stream.
+      EXPECT_FALSE(changed);
+      EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kWhile,
+                                        Thunk::kAsyncDone));
+      EXPECT_THAT(loop->body_executor().thunks(),
+                  ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncDone));
+    } else {
+      EXPECT_TRUE(changed);
+      EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
+    }
+  }
+}
+
+TEST_F(CommandBufferAsyncConversionTest, ConvertsTailAfterUnmatchedStart) {
   ThunkSequence thunks;
   AddCommand(thunks);
   Start(thunks);  // Its done can belong to a different pipelined computation.
@@ -162,9 +260,11 @@ TEST_F(CommandBufferAsyncConversionTest, KeepsTailAfterUnmatchedStart) {
 
   ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
   EXPECT_TRUE(changed);
+  // The region stays open until the end of the sequence: nested pairs remain
+  // thunks while plain commands are still captured.
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kAsyncStart,
-                                    Thunk::kReplicaId, Thunk::kAsyncStart,
-                                    Thunk::kAsyncDone, Thunk::kReplicaId));
+                                    Thunk::kCommandBuffer, Thunk::kAsyncStart,
+                                    Thunk::kAsyncDone, Thunk::kCommandBuffer));
 }
 
 TEST_F(CommandBufferAsyncConversionTest, MatchesCanonicalAsyncExecution) {
@@ -184,7 +284,7 @@ TEST_F(CommandBufferAsyncConversionTest, MatchesCanonicalAsyncExecution) {
 }
 
 TEST_F(CommandBufferAsyncConversionTest,
-       DoesNotConvertOverlappingSharedExecution) {
+       KeepsOverlappingSharedExecutionIntact) {
   ThunkSequence thunks;
   auto* canonical = Start(thunks);
   ThunkSequence body;
@@ -197,12 +297,13 @@ TEST_F(CommandBufferAsyncConversionTest,
   AddCommand(thunks);
 
   // Runtime permits only one outstanding start per AsyncExecution. Do not
-  // close and capture a region at the first done when a duplicate start exists.
+  // close and capture a region at the first done when a duplicate start
+  // exists; the trailing command is still captured on its own.
   ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
-  EXPECT_FALSE(changed);
+  EXPECT_TRUE(changed);
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
                                     Thunk::kAsyncDone, Thunk::kAsyncDone,
-                                    Thunk::kReplicaId));
+                                    Thunk::kCommandBuffer));
 }
 
 }  // namespace

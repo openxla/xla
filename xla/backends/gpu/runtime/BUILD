@@ -4878,6 +4878,7 @@ xla_cc_test(
     deps = [
         ":async_thunk",
         ":command_buffer_conversion_pass",
+        ":command_buffer_thunk",
         ":execution_stream_id",
         ":memset_thunk",
         ":replica_id_thunk",
