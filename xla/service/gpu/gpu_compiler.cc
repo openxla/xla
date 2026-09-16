@@ -148,6 +148,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/sanitize_constant_names.h"
 #include "xla/backends/gpu/transforms/scalar_constant_sinker.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
+#include "xla/backends/gpu/transforms/scan_rewriter_triton.h"
 #include "xla/backends/gpu/transforms/scatter_determinism_expander.h"
 #include "xla/backends/gpu/transforms/scatter_expander.h"
 #include "xla/backends/gpu/transforms/scatter_slice_simplifier.h"
@@ -929,6 +930,13 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<LogisticExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
+
+  // Wrap eligible scans into Triton fusions before AssociativeScanRewriter
+  // expands the remaining ones into a reduce-window tree.
+  if (IsTritonEnabled(gpu_version) &&
+      debug_options.xla_gpu_experimental_enable_triton_scan()) {
+    pipeline.AddPass<ScanRewriterTriton>(gpu_target_config.device_description);
+  }
 
   int64_t rw_length = debug_options.xla_reduce_window_rewrite_base_length();
   pipeline.AddPass<HloPassFix<AssociativeScanRewriter>>(rw_length);
