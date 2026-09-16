@@ -167,6 +167,15 @@ absl::Status RocmTracer::Enable(const RocmTracerOptions& options,
   // Clear per-session state while holding collector_mutex_ so no in-flight
   // callback can race between the clear and the new session start.
   annotation_map_.Clear();
+  // Applied immediately after Clear() and, like it, before
+  // rocprofiler_start_context() below: the new capacity has to take effect on
+  // an empty map and before any callback thread can Add() to it. Note the two
+  // calls take map_.mutex separately, so a straggler callback from the previous
+  // session -- rocprofiler_stop_context() closes the gate without joining
+  // threads already past it -- could still land between them under the old
+  // capacity. Closing that needs a single locked Reset(max_size); it is out of
+  // scope for making gpu_max_annotation_strings reachable.
+  annotation_map_.SetMaxSize(options.max_annotation_strings);
   // ROCTX frames live on thread_local stacks this thread cannot reach, so
   // isolate by generation instead of clearing: any frame pushed before this
   // point is now stale and will be dropped at pop rather than emitted into
