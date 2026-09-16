@@ -199,8 +199,7 @@ std::optional<ExecutionScopeKind> AsyncHostMemcpyDirection(
     // DUS writes to its first operand (the base buffer) and the result has
     // the same shape.  DS reads from its first operand.
     if (IsHostShape(inner->shape())) return ExecutionScopeKind::kMemcpyD2H;
-    if (!inner->operands().empty() &&
-        IsHostShape(inner->operand(0)->shape())) {
+    if (!inner->operands().empty() && IsHostShape(inner->operand(0)->shape())) {
       return ExecutionScopeKind::kMemcpyH2D;
     }
     return std::nullopt;
@@ -212,8 +211,7 @@ std::optional<ExecutionScopeKind> AsyncHostMemcpyDirection(
     return ExecutionScopeKind::kMemcpyD2H;
   }
   if (inner->opcode() == HloOpcode::kDynamicSlice &&
-      !inner->operands().empty() &&
-      IsHostShape(inner->operand(0)->shape())) {
+      !inner->operands().empty() && IsHostShape(inner->operand(0)->shape())) {
     return ExecutionScopeKind::kMemcpyH2D;
   }
   return std::nullopt;
@@ -226,7 +224,8 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
   if (auto* start = DynCast<HloAsyncStartInstruction>(hlo)) {
     // Collective operations run on communication streams.
     if (IsWrappedCollective(start) || IsCustomCollectiveOp(start) ||
-        start->frontend_attributes().map().contains(kCollectiveGroupMarkerAttr)) {
+        start->frontend_attributes().map().contains(
+            kCollectiveGroupMarkerAttr)) {
       return ExecutionScopeKind::kCommunication;
     }
     // Host↔device memcpy (DUS/DS wrapping host memory) runs on dedicated

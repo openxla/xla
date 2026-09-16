@@ -185,8 +185,7 @@ absl::StatusOr<ThunkProto> AsyncStartThunk::ToProto() const {
     start_proto->set_computation_stream_id(
         execution_stream_id_.computation_id().value());
   } else if (execution_stream_id_.is_memcpy()) {
-    start_proto->set_memcpy_stream_id(
-        execution_stream_id_.memcpy_id().value());
+    start_proto->set_memcpy_stream_id(execution_stream_id_.memcpy_id().value());
   } else {
     start_proto->set_communication_stream_id(
         execution_stream_id_.communication_id().value());

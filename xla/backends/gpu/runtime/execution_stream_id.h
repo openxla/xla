@@ -95,9 +95,7 @@ class ExecutionStreamId {
     return std::holds_alternative<CommunicationStreamId>(id_);
   }
 
-  bool is_memcpy() const {
-    return std::holds_alternative<MemcpyStreamId>(id_);
-  }
+  bool is_memcpy() const { return std::holds_alternative<MemcpyStreamId>(id_); }
 
   ComputationStreamId computation_id() const {
     return std::get<ComputationStreamId>(id_);
@@ -107,9 +105,7 @@ class ExecutionStreamId {
     return std::get<CommunicationStreamId>(id_);
   }
 
-  MemcpyStreamId memcpy_id() const {
-    return std::get<MemcpyStreamId>(id_);
-  }
+  MemcpyStreamId memcpy_id() const { return std::get<MemcpyStreamId>(id_); }
 
   friend bool operator==(const ExecutionStreamId& a,
                          const ExecutionStreamId& b) {

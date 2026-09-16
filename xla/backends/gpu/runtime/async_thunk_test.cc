@@ -168,12 +168,14 @@ TEST(AsyncThunkTest, MemcpyStreamDispatch) {
   thunks.Emplace<AsyncStartThunk>(d2h_info, kMemcpyD2HStreamId,
                                   ThunkSequence{});
   auto* d2h_start = static_cast<AsyncStartThunk*>(thunks[0].get());
-  thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(), d2h_start->async_execution());
+  thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(),
+                                 d2h_start->async_execution());
 
   thunks.Emplace<AsyncStartThunk>(h2d_info, kMemcpyH2DStreamId,
                                   ThunkSequence{});
   auto* h2d_start = static_cast<AsyncStartThunk*>(thunks[2].get());
-  thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(), h2d_start->async_execution());
+  thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(),
+                                 h2d_start->async_execution());
 
   ThunkExecutor thunk_executor(std::move(thunks));
 

@@ -1349,7 +1349,8 @@ TEST(ThunkProtoDeserializationTest, AsyncStartThunkMemcpyStreamRoundTrip) {
     start_info.profile_annotation = "memcpy_async_start";
 
     AsyncStartThunk start_thunk(start_info, stream_id, ThunkSequence{});
-    AsyncDoneThunk done_thunk(Thunk::ThunkInfo(), start_thunk.async_execution());
+    AsyncDoneThunk done_thunk(Thunk::ThunkInfo(),
+                              start_thunk.async_execution());
 
     TF_ASSERT_OK_AND_ASSIGN(ThunkProto start_proto, start_thunk.ToProto());
     TF_ASSERT_OK_AND_ASSIGN(ThunkProto done_proto, done_thunk.ToProto());
@@ -1605,11 +1606,11 @@ TEST(ThunkProtoDeserializationTest, ConcurrentRegionIdPreserved) {
   SequentialThunk thunk(thunk_info, ThunkSequence{});
   EXPECT_EQ(thunk.concurrent_region_id(), 42);
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
+  ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
   EXPECT_TRUE(proto.thunk_info().has_concurrent_region_id());
   EXPECT_EQ(proto.thunk_info().concurrent_region_id(), 42);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Thunk> deserialized,
       DeserializeThunkProto(proto, /*buffer_allocations=*/{},
                             /*hlo_module=*/nullptr, kTestPlatformName,
