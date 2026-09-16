@@ -294,6 +294,84 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperand
   ];
 }
 
+// tpu.compress_store_vreg performs a masked, compressed store of a single
+// vreg. It is the physical (vreg-level) counterpart of
+// tpu.vector_compress_store.
+//
+// In contrast to tpu.store, which has non-compressed semantics (masked-out
+// elements leave gaps in memory), masked-out elements are skipped entirely
+// when striding through memory: the i-th **enabled** element of `valueToStore`
+// is written to the i-th consecutive position along the minormost dimension of
+// `base`, counting from `base[indices]`.
+//
+// For example, storing [A, B, C, D] with mask [true, false, true, false]
+// writes A to base[indices] and C to base[indices + 1].
+//
+//  valueToStore: The vreg to store.
+//  base        : Memref to store to.
+//  indices     : Scalar indices into `base`, identifying the position of the
+//                first stored element. Must be of the same rank as the base
+//                memref shape.
+//  mask        : Elementwise mask. The mask is always 1-D.
+//  add         : If true, the enabled elements are added to the values already
+//                in memory instead of overwriting them.
+def TPU_CompressStoreVregOp : TPU_Op<"compress_store_vreg", [DefaultMemWrite]> {
+  let arguments = (ins
+    TPU_Vreg:$valueToStore,
+    MemRefOf<[I32, F32]>:$base,
+    Variadic<Index>:$indices,
+    VectorOfNonZeroRankOf<[I1]>:$mask,
+    DefaultValuedAttr<BoolAttr, "false">:$add
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore `,` $mask attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
+// tpu.vector_compress_store performs a masked, compressed store of a vector.
+//
+// In an uncompressed store, `base[indices + i]` corresponds to
+// `valueToStore[i]`. In contrast to tpu.vector_store, which has
+// non-compressed semantics (masked-out elements leave gaps in memory),
+// masked-out elements are skipped entirely when striding along `compress_dim`:
+// within each slice of `valueToStore` along `compress_dim`, the j-th enabled
+// element is written to the j-th contiguous position along `compress_dim`,
+// counting from `base[indices]`. The correspondence along all other dimensions
+// is unaffected.
+//
+// For example, for a rank-1 `valueToStore` (and hence `compress_dim` = 0),
+// storing [A, B, C, D] with mask [true, false, true, false] writes A to
+// base[indices] and C to base[indices + 1].
+//
+//  valueToStore: The vector to store. Must be of the same rank as the base
+//                memref shape.
+//  base        : Memref to store to.
+//  indices     : Scalar indices into `base`, identifying the position of the
+//                first stored element. Must be of the same rank as the base
+//                memref shape.
+//  mask        : Elementwise mask of the same shape as `valueToStore`.
+//  compress_dim: The dimension along which the enabled elements are written
+//                consecutively.
+//  add         : If true, the enabled elements are added to the values already
+//                in memory instead of overwriting them.
+def TPU_VectorCompressStoreOp : TPU_Op<"vector_compress_store", [DefaultMemWrite]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$valueToStore,
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    VectorOfNonZeroRankOf<[I1]>:$mask,
+    I32Attr:$compress_dim,
+    DefaultValuedAttr<BoolAttr, "false">:$add
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore `,` $mask attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 // tpu.vector_load loads a vector from memory into a register.
 //
 //  base   : Memref to load from.

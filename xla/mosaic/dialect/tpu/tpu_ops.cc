@@ -1125,6 +1125,37 @@ void VectorStoreOp::build(OpBuilder& builder, OperationState& state,
         /*strides=*/builder.getDenseI32ArrayAttr({}), mask, add);
 }
 
+LogicalResult CompressStoreVregOp::verify() {
+  if (getValueToStore().getType().getRank() != 1) {
+    return emitOpError("Expected valueToStore to have rank 1. Got: ")
+           << getValueToStore().getType().getRank() << ".";
+  }
+  MemRefType ref_ty = getBase().getType();
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices.";
+  }
+  return verifyStoreOp(*this);
+}
+
+LogicalResult VectorCompressStoreOp::verify() {
+  MemRefType ref_ty = getBase().getType();
+  const int64_t rank = ref_ty.getRank();
+  if (getValueToStore().getType().getRank() != rank) {
+    return emitOpError("Expected valueToStore to have the same rank as base (")
+           << rank << "). Got: " << getValueToStore().getType().getRank()
+           << ".";
+  }
+  if (llvm::size(getIndices()) != rank) {
+    return emitOpError("Expected ") << rank << " indices.";
+  }
+  const int32_t compress_dim = getCompressDim();
+  if (compress_dim < 0 || compress_dim >= rank) {
+    return emitOpError("Expected compress_dim to be in [0, ")
+           << rank << "). Got: " << compress_dim << ".";
+  }
+  return verifyStoreOp(*this);
+}
+
 template <typename Op>
 LogicalResult verifyLoadOp(Op op) {
   MemRefType ref_ty = op.getBase().getType();
