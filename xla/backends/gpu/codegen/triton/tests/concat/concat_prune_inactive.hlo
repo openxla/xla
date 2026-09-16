@@ -17,7 +17,7 @@
 // sign-agnostic boundary-alignment check from b/491092362 (the old check
 // rejected purely on the negative sign with a different message).
 // TODO: b/528277610 - fix tiling emitter.
-// CHECK-ERROR: Tiling propagation rejected for %inner_concat = f32[1,32,10]{2,1,0} concatenate(%param_1, %param_2), dimensions={1}: The remaining size 80 (remaining_size mod tile_size = 16) in the concatenate operand 0 must be a clean multiple of its tile size 64
+// CHECK-ERROR: Tiling propagation rejected for %inner_concat = f32[1,32,10]{2,1,0} concatenate(%param_1, %param_2), dimensions={1}: The remaining operand size 16 (in concatenate operand 0) is not divisible by the selected tile size 64
 
 HloModule min_repro, is_scheduled=true, entry_computation_layout={(f32[64,10]{1,0}, f32[1,16,10]{2,1,0}, f32[1,16,10]{2,1,0})->f32[64,10]{1,0}}
 
