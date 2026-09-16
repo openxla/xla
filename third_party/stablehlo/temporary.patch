@@ -1236,7 +1236,7 @@ diff --ruN a/stablehlo/build_tools/lit_test_suite.bzl b/stablehlo/build_tools/li
 +
 +"""Defines the `lit_test_suite` macro."""
 +
-+load("//third_party/llvm/build_defs:lit.bzl", "lit_test")
++load("@llvm-project//llvm:lit_test.bzl", "lit_test")
 +
 +def lit_test_suite(
 +        name,
@@ -1268,18 +1268,18 @@ diff --ruN a/stablehlo/build_tools/lit_test_suite.bzl b/stablehlo/build_tools/li
 +    for src in srcs:
 +        test_name = "%s.test" % src
 +        lit_test(
-+            # copybara:uncomment name = test_name,
-+            name = src,  # copybara:comment
-+            # copybara:uncomment srcs = [src],
-+            src = src,  # copybara:comment
++            name = test_name,
++            # name = src,  # copybara:comment
++            srcs = [src],
++            # src = src,  # copybara:comment
 +            args = args,
 +            data = data + native.glob(
 +                ["%s.bc" % src],
 +                # Allow empty since not all `.mlir` tests have `.mlir.bc` files.
 +                allow_empty = True,
 +            ),
-+            # copybara:uncomment deps = ["@rules_python//python/runfiles"],
-+            driver = "//third_party/llvm/llvm-project/mlir:run_lit.sh",  # copybara:comment
++            deps = ["@rules_python//python/runfiles"],
++            # driver = "//third_party/llvm/llvm-project/mlir:run_lit.sh",  # copybara:comment
 +            tags = tags,
 +            size = size_per_test,
 +        )
@@ -1978,6 +1978,45 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/BUILD.bazel b/stablehlo/
 +    size_per_test = "small",
      tags = ["stablehlo_tosa_tests"],
  )
+diff --ruN a/stablehlo/stablehlo/dialect/ChloEnums.td b/stablehlo/stablehlo/dialect/ChloEnums.td
+--- stablehlo/stablehlo/dialect/ChloEnums.td
++++ stablehlo/stablehlo/dialect/ChloEnums.td
+@@ -46,7 +46,9 @@
+   let cppNamespace = "::mlir::chlo";
+ }
+ 
+-def CHLO_ComparisonDirectionAttr : EnumAttr<CHLO_Dialect, CHLO_ComparisonDirection, "comparison_direction">;
++def CHLO_ComparisonDirectionAttr : EnumAttr<CHLO_Dialect, CHLO_ComparisonDirection, "comparison_direction"> {
++  let assemblyFormat = "$value";
++}
+ 
+ def CHLO_DEFAULT_COMPARISON_TYPE : NativeCodeCall<"::mlir::chlo::ComparisonTypeAttr()">;
+ def CHLO_COMPARISON_TYPE_NOTYPE : I32EnumAttrCase<"NOTYPE", 0>;
+@@ -68,7 +70,9 @@
+   let cppNamespace = "::mlir::chlo";
+ }
+ 
+-def CHLO_ComparisonTypeAttr : EnumAttr<CHLO_Dialect, CHLO_ComparisonType, "comparison_type">;
++def CHLO_ComparisonTypeAttr : EnumAttr<CHLO_Dialect, CHLO_ComparisonType, "comparison_type"> {
++  let assemblyFormat = "$value";
++}
+ 
+ //===----------------------------------------------------------------------===//
+ // Ragged dot op definitions.
+@@ -90,9 +94,12 @@
+   let cppNamespace = "::mlir::chlo";
+ }
+ 
+-def CHLO_PrecisionAttr : EnumAttr<CHLO_Dialect, CHLO_Precision, "precision">;
++def CHLO_PrecisionAttr : EnumAttr<CHLO_Dialect, CHLO_Precision, "precision"> {
++  let assemblyFormat = "$value";
++}
+ 
+ def CHLO_PrecisionConfigAttr:
+   TypedArrayAttrBase<CHLO_PrecisionAttr, "Precision Config attribute">;
+ 
++
+ #endif // STABLEHLO_DIALECT_CHLO_ENUMS
 diff --ruN a/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp b/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
 --- stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
 +++ stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
@@ -2274,6 +2313,97 @@ diff --ruN a/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp b/stablehlo/stabl
  }
  
  }  // namespace stablehlo
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloEnums.td b/stablehlo/stablehlo/dialect/StablehloEnums.td
+--- stablehlo/stablehlo/dialect/StablehloEnums.td
++++ stablehlo/stablehlo/dialect/StablehloEnums.td
+@@ -40,7 +40,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_PrecisionAttr : EnumAttr<StableHLO_Dialect, StableHLO_Precision, "precision">;
++def StableHLO_PrecisionAttr : EnumAttr<StableHLO_Dialect, StableHLO_Precision, "precision"> {
++  let assemblyFormat = "$value";
++}
+ 
+ // TODO(b/129153247) See if it's possible to also validate the size.
+ def StableHLO_PrecisionConfigAttr:
+@@ -91,7 +93,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_FftTypeAttr : EnumAttr<StableHLO_Dialect, StableHLO_FftType, "fft_type">;
++def StableHLO_FftTypeAttr : EnumAttr<StableHLO_Dialect, StableHLO_FftType, "fft_type"> {
++  let assemblyFormat = "$value";
++}
+ 
+ //===----------------------------------------------------------------------===//
+ // Custom call enum definitions.
+@@ -146,7 +150,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_ComparisonDirectionAttr : EnumAttr<StableHLO_Dialect, StableHLO_ComparisonDirection, "comparison_direction">;
++def StableHLO_ComparisonDirectionAttr : EnumAttr<StableHLO_Dialect, StableHLO_ComparisonDirection, "comparison_direction"> {
++  let assemblyFormat = "$value";
++}
+ 
+ def STABLEHLO_DEFAULT_COMPARISON_TYPE : NativeCodeCall<"::mlir::stablehlo::ComparisonTypeAttr()">;
+ def STABLEHLO_COMPARISON_TYPE_NOTYPE : I32EnumAttrCase<"NOTYPE", 0>;
+@@ -168,7 +174,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_ComparisonTypeAttr : EnumAttr<StableHLO_Dialect, StableHLO_ComparisonType, "comparison_type">;
++def StableHLO_ComparisonTypeAttr : EnumAttr<StableHLO_Dialect, StableHLO_ComparisonType, "comparison_type"> {
++  let assemblyFormat = "$value";
++}
+ 
+ // These mirror the XLA Transpose enum in Triangular Solve options.
+ def STABLEHLO_TRANSPOSE_INVALID : I32EnumAttrCase<"TRANSPOSE_INVALID", 0>;
+@@ -188,7 +196,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_TransposeAttr : EnumAttr<StableHLO_Dialect, StableHLO_Transpose, "transpose">;
++def StableHLO_TransposeAttr : EnumAttr<StableHLO_Dialect, StableHLO_Transpose, "transpose"> {
++  let assemblyFormat = "$value";
++}
+ 
+ def STABLEHLO_RNG_DISTRIBUTION_UNIFORM : I32EnumAttrCase<"UNIFORM", 1>;
+ def STABLEHLO_RNG_DISTRIBUTION_NORMAL : I32EnumAttrCase<"NORMAL", 2>;
+@@ -203,7 +213,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_RngDistributionAttr : EnumAttr<StableHLO_Dialect, StableHLO_RngDistribution, "rng_distribution">;
++def StableHLO_RngDistributionAttr : EnumAttr<StableHLO_Dialect, StableHLO_RngDistribution, "rng_distribution"> {
++  let assemblyFormat = "$value";
++}
+ 
+ def STABLEHLO_RNG_ALGORITHM_DEFAULT : I32EnumAttrCase<"DEFAULT", 0>;
+ def STABLEHLO_RNG_ALGORITHM_THREE_FRY : I32EnumAttrCase<"THREE_FRY", 1>;
+@@ -220,6 +232,9 @@
+   let cppNamespace = "::mlir::stablehlo";
+ }
+ 
+-def StableHLO_RngAlgorithmAttr : EnumAttr<StableHLO_Dialect, StableHLO_RngAlgorithm, "rng_algorithm">;
++def StableHLO_RngAlgorithmAttr : EnumAttr<StableHLO_Dialect, StableHLO_RngAlgorithm, "rng_algorithm"> {
++  let assemblyFormat = "$value";
++}
+ 
+ #endif // STABLEHLO_DIALECT_STABLEHLO_ENUMS
++
+diff --ruN a/stablehlo/stablehlo/dialect/VhloEnums.td b/stablehlo/stablehlo/dialect/VhloEnums.td
+--- stablehlo/stablehlo/dialect/VhloEnums.td
++++ stablehlo/stablehlo/dialect/VhloEnums.td
+@@ -43,6 +43,7 @@
+ 
+ class VHLO_EnumAttr<EnumAttrInfo enumInfo, string name, string minVersion, string maxVersion>
+   : EnumAttr<VHLO_Dialect, enumInfo, name, [VHLO_VersionedAttrInterface]> {
++  let assemblyFormat = "$value";
+   let extraClassDeclaration = [{
+     mlir::vhlo::Version getMinVersion() {
+       return mlir::vhlo::Version(}] # !subst(".", ", ", minVersion) # [{);
 diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/BUILD.bazel b/stablehlo/stablehlo/integrations/cpp/builder/BUILD.bazel
 --- stablehlo/stablehlo/integrations/cpp/builder/BUILD.bazel
 +++ stablehlo/stablehlo/integrations/cpp/builder/BUILD.bazel
@@ -3037,7 +3167,12 @@ diff --ruN a/stablehlo/stablehlo/tests/interpret/reduce_scatter.mlir b/stablehlo
 diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir b/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
 --- stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
 +++ stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
-@@ -5,7 +5,7 @@
+@@ -1,11 +1,11 @@
+-// RUN: stablehlo-opt %s -stablehlo-compatibility-expander="target=1.14.0" -allow-unregistered-dialect | FileCheck %s
++// RUN: stablehlo-opt %s -stablehlo-compatibility-expander="target=1.14.0" | FileCheck %s
+ 
+ module {
+ 
  
    // CHECK-LABEL: @all_reduce_rgv3
    func.func @all_reduce_rgv3(%arg0: tensor<4xf32>) -> tensor<4xf32> {
@@ -3064,7 +3199,12 @@ diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compat
      %0 = "stablehlo.all_to_all"(%arg0) {
        concat_dimension = 0 : i64,
        split_dimension = 0 : i64,
-@@ -44,7 +44,7 @@
+@@ -40,11 +40,11 @@
+ 
+     return %0 : tensor<4xf32>
+   }
+-  "sdy.mesh"() {sym_name = "sdy_mesh", stablehlo.mesh = {axes = [{name = "x", size = 2 : i64}, {name = "y", size = 2 : i64}]}} : () -> ()
++  func.func private @sdy_mesh() attributes {stablehlo.mesh = {axes = [{name = "x", size = 2 : i64}, {name = "y", size = 2 : i64}]}}
  
    // CHECK-LABEL: @all_reduce_sdy_mesh
    func.func @all_reduce_sdy_mesh(%arg0: tensor<4xf32>) -> tensor<4xf32> {
@@ -3073,7 +3213,12 @@ diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compat
      %0 = "stablehlo.all_reduce"(%arg0) ({
      ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
        %1 = "stablehlo.add"(%arg1, %arg2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
-@@ -59,7 +59,7 @@
+@@ -55,11 +55,11 @@
+     return %0 : tensor<4xf32>
+   }
+ 
+-  "sdy.mesh"() {sym_name = "sdy_mesh_dev", stablehlo.mesh = {axes = [{name = "x", size = 2 : i64}, {name = "y", size = 2 : i64}], device_ids = dense<[0, 2, 1, 3]> : tensor<4xi64>}} : () -> ()
++  func.func private @sdy_mesh_dev() attributes {stablehlo.mesh = {axes = [{name = "x", size = 2 : i64}, {name = "y", size = 2 : i64}], device_ids = dense<[0, 2, 1, 3]> : tensor<4xi64>}}
  
    // CHECK-LABEL: @all_reduce_sdy_mesh_dev
    func.func @all_reduce_sdy_mesh_dev(%arg0: tensor<4xf32>) -> tensor<4xf32> {
@@ -3082,6 +3227,15 @@ diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compat
      %0 = "stablehlo.all_reduce"(%arg0) ({
      ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
        %1 = "stablehlo.add"(%arg1, %arg2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
+@@ -70,7 +70,7 @@
+     return %0 : tensor<4xf32>
+   }
+ 
+-  "sdy.mesh"() {sym_name = "sdy_mesh_max", stablehlo.mesh = {axes = [], device_ids = dense<0> : tensor<1xi64>}} : () -> ()
++  func.func private @sdy_mesh_max() attributes {stablehlo.mesh = {axes = [], device_ids = dense<0> : tensor<1xi64>}}
+ 
+   // CHECK-LABEL: @all_reduce_sdy_mesh_max
+   func.func @all_reduce_sdy_mesh_max(%arg0: tensor<4xf32>) -> tensor<4xf32> {
 @@ -84,4 +84,56 @@
      } : (tensor<4xf32>) -> tensor<4xf32>
      return %0 : tensor<4xf32>

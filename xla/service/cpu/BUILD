@@ -213,6 +213,8 @@ cc_library(
         "//xla/hlo/transforms:shape_canonicalizer",
         "//xla/hlo/transforms:strip_memory_placement_annotations",
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
+        "//xla/hlo/transforms/collectives:all_reduce_promotion",
+        "//xla/hlo/transforms/collectives:all_to_all_decomposer",
         "//xla/hlo/transforms/collectives:async_collective_replacer",
         "//xla/hlo/transforms/collectives:collective_permute_cse",
         "//xla/hlo/transforms/expanders:bitcast_dtypes_expander",
@@ -260,8 +262,6 @@ cc_library(
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:transforms_passes",
-        "//xla/service:all_reduce_promotion",
-        "//xla/service:all_to_all_decomposer",
         "//xla/service:async_collective_custom_call_rewriter",
         "//xla/service:batched_gather_scatter_normalizer",
         "//xla/service:batchnorm_expander",
@@ -295,6 +295,7 @@ cc_library(
         "//xla/service:logical_buffer",
         "//xla/service:map_inliner",
         "//xla/service:multi_module_driver",
+        "//xla/service:nullary_function_wrap_inliner",
         "//xla/service:scan_expander",
         "//xla/service:scatter_expander",
         "//xla/service:scatter_simplifier",
@@ -1382,6 +1383,7 @@ tf_proto_library(
         ":onednn_config_proto",
         "//xla/backends/cpu:xnn_fusion_options_proto",
         "//xla/backends/cpu:ynn_fusion_options_proto",
+        "//xla/codegen/xtile:xtile_config_proto",
     ],
 )
 
@@ -1659,6 +1661,7 @@ cc_library(
     hdrs = ["cpu_symbol_repository.h"],
     deps = [
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/service:symbol_repository",
     ],
 )

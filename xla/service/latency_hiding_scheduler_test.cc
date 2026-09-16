@@ -6315,5 +6315,165 @@ TEST_F(LatencyHidingSchedulerTest, NoOOMWithManyComputationsAndBuffers) {
   EXPECT_OK(scheduler->Run(hlo_module.get()));
 }
 
+TEST_F(LatencyHidingSchedulerTest, FindStartAndFindDoneHelperTest) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+async_comp {
+  p = f32[8] parameter(0)
+  ROOT r = f32[8] negate(p)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  token0 = token[] after-all()
+
+  async_start = ((f32[8]), f32[8], s32[]) async-start(p0), calls=async_comp
+  async_done = f32[8] async-done(async_start)
+
+  copy_start = (f32[8], f32[8], u32[]) copy-start(p1)
+  copy_done = f32[8] copy-done(copy_start)
+
+  send = (f32[8], u32[], token[]) send(p0, token0), channel_id=1
+  send_done = token[] send-done(send), channel_id=1
+
+  recv = (f32[8], u32[], token[]) recv(token0), channel_id=2
+  recv_done = (f32[8], token[]) recv-done(recv), channel_id=2
+
+  ag_start = (f32[8], f32[16]) all-gather-start(p0), replica_groups={{0,1}}, dimensions={0}
+  ag_done = f32[16] all-gather-done(ag_start)
+
+  barrier_async_start = ((f32[8]), f32[8], s32[]) async-start(p0), calls=async_comp
+  barrier_tuple = tuple(barrier_async_start)
+  barrier = (((f32[8]), f32[8], s32[])) opt-barrier(barrier_tuple)
+  barrier_gte = ((f32[8]), f32[8], s32[]) get-tuple-element(barrier), index=0
+  barrier_async_done = f32[8] async-done(barrier_gte)
+
+  ROOT result = (f32[8], f32[8], token[], (f32[8], token[]), f32[16], f32[8]) tuple(async_done, copy_done, send_done, recv_done, ag_done, barrier_async_done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(hlo_string));
+  HloComputation* entry = module->entry_computation();
+
+  HloInstruction* async_start = entry->GetInstructionWithName("async_start");
+  HloInstruction* async_done = entry->GetInstructionWithName("async_done");
+  HloInstruction* copy_start = entry->GetInstructionWithName("copy_start");
+  HloInstruction* copy_done = entry->GetInstructionWithName("copy_done");
+  HloInstruction* send = entry->GetInstructionWithName("send");
+  HloInstruction* send_done = entry->GetInstructionWithName("send_done");
+  HloInstruction* recv = entry->GetInstructionWithName("recv");
+  HloInstruction* recv_done = entry->GetInstructionWithName("recv_done");
+  HloInstruction* ag_start = entry->GetInstructionWithName("ag_start");
+  HloInstruction* ag_done = entry->GetInstructionWithName("ag_done");
+  HloInstruction* barrier_async_start =
+      entry->GetInstructionWithName("barrier_async_start");
+  HloInstruction* barrier_async_done =
+      entry->GetInstructionWithName("barrier_async_done");
+  HloInstruction* p0 = entry->GetInstructionWithName("p0");
+
+  // Test nullptr
+  EXPECT_EQ(FindStart(static_cast<const HloInstruction*>(nullptr)), nullptr);
+  EXPECT_EQ(FindStart(static_cast<HloInstruction*>(nullptr)), nullptr);
+  EXPECT_EQ(FindDone(static_cast<const HloInstruction*>(nullptr)), nullptr);
+  EXPECT_EQ(FindDone(static_cast<HloInstruction*>(nullptr)), nullptr);
+
+  // Test FindStart
+  EXPECT_EQ(FindStart(async_done), async_start);
+  EXPECT_EQ(FindStart(copy_done), copy_start);
+  EXPECT_EQ(FindStart(send_done), send);
+  EXPECT_EQ(FindStart(recv_done), recv);
+  EXPECT_EQ(FindStart(ag_done), ag_start);
+  EXPECT_EQ(FindStart(barrier_async_done), barrier_async_start);
+  EXPECT_EQ(FindStart(p0), nullptr);
+
+  // Test const overload of FindStart
+  const HloInstruction* const_async_done = async_done;
+  const HloInstruction* const_copy_done = copy_done;
+  const HloInstruction* const_send_done = send_done;
+  const HloInstruction* const_recv_done = recv_done;
+  const HloInstruction* const_ag_done = ag_done;
+  const HloInstruction* const_barrier_async_done = barrier_async_done;
+  EXPECT_EQ(FindStart(const_async_done), async_start);
+  EXPECT_EQ(FindStart(const_copy_done), copy_start);
+  EXPECT_EQ(FindStart(const_send_done), send);
+  EXPECT_EQ(FindStart(const_recv_done), recv);
+  EXPECT_EQ(FindStart(const_ag_done), ag_start);
+  EXPECT_EQ(FindStart(const_barrier_async_done), barrier_async_start);
+
+  // Test FindDone
+  EXPECT_EQ(FindDone(async_start), async_done);
+  EXPECT_EQ(FindDone(copy_start), copy_done);
+  EXPECT_EQ(FindDone(send), send_done);
+  EXPECT_EQ(FindDone(recv), recv_done);
+  EXPECT_EQ(FindDone(ag_start), ag_done);
+  EXPECT_EQ(FindDone(barrier_async_start), barrier_async_done);
+  EXPECT_EQ(FindDone(p0), nullptr);
+
+  // Test const overload of FindDone
+  const HloInstruction* const_async_start = async_start;
+  const HloInstruction* const_copy_start = copy_start;
+  const HloInstruction* const_send = send;
+  const HloInstruction* const_recv = recv;
+  const HloInstruction* const_ag_start = ag_start;
+  const HloInstruction* const_barrier_async_start = barrier_async_start;
+  EXPECT_EQ(FindDone(const_async_start), async_done);
+  EXPECT_EQ(FindDone(const_copy_start), copy_done);
+  EXPECT_EQ(FindDone(const_send), send_done);
+  EXPECT_EQ(FindDone(const_recv), recv_done);
+  EXPECT_EQ(FindDone(const_ag_start), ag_done);
+  EXPECT_EQ(FindDone(const_barrier_async_start), barrier_async_done);
+}
+
+TEST_F(LatencyHidingSchedulerTest, FindStartPipelinedWhileLoopTest) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+async_comp {
+  p = f32[8] parameter(0)
+  ROOT r = f32[8] negate(p)
+}
+
+while_cond {
+  state = (s32[], ((f32[8]), f32[8], s32[])) parameter(0)
+  iter = s32[] get-tuple-element(state), index=0
+  limit = s32[] constant(4)
+  ROOT cmp = pred[] compare(iter, limit), direction=LT
+}
+
+while_body {
+  state = (s32[], ((f32[8]), f32[8], s32[])) parameter(0)
+  iter = s32[] get-tuple-element(state), index=0
+  c1 = s32[] constant(1)
+  next_iter = s32[] add(iter, c1)
+  pipelined_ctx = ((f32[8]), f32[8], s32[]) get-tuple-element(state), index=1
+  done = f32[8] async-done(pipelined_ctx), calls=async_comp
+  next_start = ((f32[8]), f32[8], s32[]) async-start(done), calls=async_comp
+  ROOT next_state = (s32[], ((f32[8]), f32[8], s32[])) tuple(next_iter, next_start)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  c0 = s32[] constant(0)
+  prologue_start = ((f32[8]), f32[8], s32[]) async-start(p0), calls=async_comp
+  init_state = (s32[], ((f32[8]), f32[8], s32[])) tuple(c0, prologue_start)
+  loop = (s32[], ((f32[8]), f32[8], s32[])) while(init_state), condition=while_cond, body=while_body
+  epilogue_ctx = ((f32[8]), f32[8], s32[]) get-tuple-element(loop), index=1
+  ROOT epilogue_done = f32[8] async-done(epilogue_ctx), calls=async_comp
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(hlo_string));
+  HloComputation* while_body = module->GetComputationWithName("while_body");
+  HloInstruction* done = while_body->GetInstructionWithName("done");
+  HloInstruction* pipelined_ctx =
+      while_body->GetInstructionWithName("pipelined_ctx");
+  // `done` consumes `pipelined_ctx` inside `while_body`, whose corresponding
+  // `async-start` (`prologue_start`) is in `ENTRY main`. Because
+  // LatencyHidingScheduler builds per-computation HloScheduleGraphs,
+  // `FindStart(done)` must return `pipelined_ctx` within `while_body` rather
+  // than crossing the loop boundary into `ENTRY main`.
+  EXPECT_EQ(FindStart(done), pipelined_ctx);
+}
+
 }  // namespace
 }  // namespace xla
