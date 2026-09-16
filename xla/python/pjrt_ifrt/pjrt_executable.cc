@@ -417,10 +417,16 @@ std::vector<PjRtHloOutputLoadedHostCallback*> GatherHloOutputCallbacks(
   return hlo_output_callbacks;
 }
 
+// Converts IFRT custom options to XLA custom options forwarded to the runtime.
+// Options consumed by the PjRt-IFRT layer itself are not forwarded.
 xla::CustomOptions::Map ToCustomOptionsMap(const AttributeMap& attribute_map) {
   xla::CustomOptions::Map custom_options;
   attribute_map.ForEach([&](const std::string& name,
                             const AttributeMap::Value& value) {
+    if (name == "use_output_arena" ||
+        name == PjRtCompatibleLoadedExecutable::kCallLocation) {
+      return;
+    }
     std::visit([&](const auto& v) { custom_options[name] = v.value; }, value);
   });
   return custom_options;
@@ -1004,11 +1010,13 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
     opts.context = context.get();
   }
 
-  std::unique_ptr<xla::CustomOptions> custom_options;
   if (options.custom_options.has_value()) {
-    custom_options = std::make_unique<xla::CustomOptions>(
-        ToCustomOptionsMap(*options.custom_options));
-    opts.custom_options = custom_options.get();
+    xla::CustomOptions::Map custom_options =
+        ToCustomOptionsMap(*options.custom_options);
+    if (!custom_options.empty()) {
+      opts.custom_options =
+          std::make_shared<const xla::CustomOptions>(std::move(custom_options));
+    }
   }
 
   // When using host callbacks on CPU, we need to use synchronous dispatch to
@@ -1071,18 +1079,17 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
     status = JoinFutures(absl::MakeSpan(*returned_pjrt_futures));
   }
 
-  if (!all_loaded_host_callbacks_->empty() || custom_options != nullptr) {
-    // For host callbacks and custom options to work, returned futures must be
-    // supported so that we can use the futures to extend the lifetime of the
-    // host callbacks and custom options until the execution finishes.
-    status.OnReady(
-        [all_loaded_host_callbacks = all_loaded_host_callbacks_,
-         host_callback_states = std::move(host_callback_states),
-         context = std::move(context), ffi_callbacks = std::move(ffi_callbacks),
-         callbacks = std::move(callbacks),
-         custom_options = std::move(custom_options)](absl::Status) mutable {
-          all_loaded_host_callbacks.reset();
-        });
+  if (!all_loaded_host_callbacks_->empty()) {
+    // For host callbacks to work, returned futures must be supported so that we
+    // can use the futures to extend the lifetime of the host callbacks until
+    // the execution finishes.
+    status.OnReady([all_loaded_host_callbacks = all_loaded_host_callbacks_,
+                    host_callback_states = std::move(host_callback_states),
+                    context = std::move(context),
+                    ffi_callbacks = std::move(ffi_callbacks),
+                    callbacks = std::move(callbacks)](absl::Status) mutable {
+      all_loaded_host_callbacks.reset();
+    });
   }
 
   // Convert 2-level PjRtBuffer vectors into an Array vector.

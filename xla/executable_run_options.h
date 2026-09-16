@@ -251,9 +251,9 @@ class ExecutableRunOptions {
       const gpu::GpuExecutableRunOptions* gpu_executable_run_options);
   const gpu::GpuExecutableRunOptions* gpu_executable_run_options() const;
 
-  // Per-execution custom options. It's a caller responsibility to ensure that
-  // the custom options stay alive while the executable is running.
-  ExecutableRunOptions& set_custom_options(const CustomOptions* custom_options);
+  // Per-execution custom options.
+  ExecutableRunOptions& set_custom_options(
+      std::shared_ptr<const CustomOptions> custom_options);
   const CustomOptions* custom_options() const;
 
   // XLA FFI specific execution context that allows to pass auxiliary data to
@@ -292,7 +292,7 @@ class ExecutableRunOptions {
   RunId run_id_{0};
   const cpu::CpuExecutableRunOptions* cpu_executable_run_options_ = nullptr;
   const gpu::GpuExecutableRunOptions* gpu_executable_run_options_ = nullptr;
-  const CustomOptions* custom_options_ = nullptr;
+  std::shared_ptr<const CustomOptions> custom_options_;
   const ffi::ExecutionContext* ffi_execution_context_ = nullptr;
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys_ = nullptr;
 };

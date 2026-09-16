@@ -248,10 +248,6 @@ struct ExecuteOptions {
   // multi-host programs are launched in different orders on different hosts,
   // the launch IDs may be used by the runtime to detect the mismatch.
   int32_t launch_id = 0;
-  // If non-null, per-execution custom options passed to the runtime. It is a
-  // caller responsibility to ensure that the custom options are valid for the
-  // duration of the execution.
-  const CustomOptions* custom_options = nullptr;
   // If non-null, an opaque context passed to an execution that may be used to
   // supply additional arguments to a derived class of PjRtExecutable. It is
   // a caller responsibility to ensure that the context is valid for the
@@ -313,6 +309,9 @@ struct ExecuteOptions {
   // executed in program order.  Executions with different execution stream IDs
   // may be executed in any order and concurrently.
   int64_t execution_stream_id = 0;
+
+  // If non-null, per-execution custom options passed to the runtime.
+  std::shared_ptr<const CustomOptions> custom_options;
 
   // The `call_location` field is used to pass down call site location
   // information from higher-level frameworks like JAX and PyTorch to the PJRT

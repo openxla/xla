@@ -32,8 +32,7 @@ namespace xla {
 
 // Custom options are per-execution key/value options passed by the caller to
 // the XLA runtime. Unlike compile-time options, they can be different for every
-// execution of the same executable. It is a caller responsibility to keep
-// custom options alive for the duration of the execution.
+// execution of the same executable.
 class CustomOptions {
  public:
   using Value =
@@ -73,10 +72,11 @@ absl::StatusOr<T> CustomOptions::Get(absl::string_view name) const {
   if (value == nullptr) {
     return NotFound("Custom option %s not found", name);
   }
-  if (const T* typed = std::get_if<T>(value)) {
-    return *typed;
+  const T* typed = std::get_if<T>(value);
+  if (typed == nullptr) {
+    return InvalidArgument("Custom option %s has an unexpected type", name);
   }
-  return InvalidArgument("Custom option %s has an unexpected type", name);
+  return *typed;
 }
 
 }  // namespace xla

@@ -96,10 +96,11 @@ TEST(ThunkTest, WalksInPreAndPostOrder) {
 }
 
 TEST(ThunkTest, ExecuteParamsForwardCustomOptions) {
-  CustomOptions custom_options({{"value", int64_t{42}}});
+  auto custom_options = std::make_shared<const CustomOptions>(
+      CustomOptions::Map{{"value", int64_t{42}}});
 
   ServiceExecutableRunOptions run_options;
-  run_options.mutable_run_options()->set_custom_options(&custom_options);
+  run_options.mutable_run_options()->set_custom_options(custom_options);
 
   BufferAllocations buffer_allocations(/*buffers=*/{}, /*device_ordinal=*/0,
                                        /*memory_allocator=*/nullptr);
@@ -107,13 +108,13 @@ TEST(ThunkTest, ExecuteParamsForwardCustomOptions) {
       run_options, buffer_allocations, /*stream=*/nullptr,
       /*command_buffer_trace_stream=*/nullptr, /*collective_params=*/nullptr,
       /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
-  EXPECT_EQ(params.custom_options, &custom_options);
+  EXPECT_EQ(params.custom_options, custom_options.get());
   EXPECT_EQ(params.WithComputeStream(/*stream=*/nullptr).custom_options,
-            &custom_options);
+            custom_options.get());
   EXPECT_EQ(
       Thunk::ExecuteParams::CloneWithNewAllocations(params, buffer_allocations)
           .custom_options,
-      &custom_options);
+      custom_options.get());
 }
 
 TEST(ThunkTest, GetMetadataProto) {

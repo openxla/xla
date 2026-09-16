@@ -330,6 +330,11 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
       commands_, *params.persistent_alloc_indices);
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(
       commands_, params, *params.persistent_alloc_indices);
+
+  // TODO(ezhulenev): Commands captured into the command buffer can't depend on
+  // `params.custom_options` as they can change between executions without
+  // triggering an update. Commands that read custom options must currently
+  // set `requires_update_on_execute()`.
   bool needs_update =
       commands_.requires_update_on_execute() || !updated_allocs.empty();
 

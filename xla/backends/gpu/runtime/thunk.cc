@@ -99,13 +99,9 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
 
 Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
     se::Stream* stream) const {
-  return ExecuteParams(
-      buffer_allocations, stream, command_buffer_trace_stream,
-      collective_params, collective_cliques, collective_memory,
-      device_to_host_stream, host_to_device_stream, send_device_memory_function,
-      recv_device_memory_function, custom_options, ffi_execution_context,
-      additional_compute_streams, execution_scoped_state, mock_collectives,
-      execution_id, rng_seed, persistent_alloc_indices);
+  ExecuteParams params = *this;
+  params.stream = stream;
+  return params;
 }
 
 Thunk::ExecuteParams::ExecuteParams(
