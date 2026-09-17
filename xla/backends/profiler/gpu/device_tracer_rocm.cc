@@ -96,7 +96,6 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
 
   options.max_callback_api_events = max_events;
   options.max_activity_api_events = max_events;
-  options.max_annotation_strings = max_events;
   return options;
 }
 
