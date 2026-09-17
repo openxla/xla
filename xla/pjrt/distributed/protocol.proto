@@ -101,6 +101,11 @@ message DeviceProto {
   // amount of shared memory per thread block" row of this table:
   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/#id401:~:text=100%20KB-,Maximum%20amount%20of%20shared%20memory%20per%20thread%20block,-35
   int32 shared_memory_per_block_optin = 13;
+
+  // Maximum amount of shared memory available per multiprocessor (SM/CU) in
+  // bytes. Mirrors CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR on
+  // CUDA and hipDeviceAttributeMaxSharedMemoryPerMultiprocessor on ROCm.
+  int32 shared_memory_per_core = 16;
 }
 
 message LocalTopologyProto {

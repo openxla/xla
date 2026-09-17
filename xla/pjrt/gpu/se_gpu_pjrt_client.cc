@@ -1614,6 +1614,7 @@ absl::StatusOr<PjRtDevicesAndTopology> BuildDistributedDevices(
     device_proto->set_device_memory_bytes_limit(desc->device_memory_size());
     device_proto->set_shared_memory_per_block_optin(
         desc->shared_memory_per_block_optin());
+    device_proto->set_shared_memory_per_core(desc->shared_memory_per_core());
     device_proto->set_numa_node(desc->numa_node());
     const se::DeviceInterconnectInfo& info = desc->device_interconnect_info();
     if (info.is_in_cluster() && !info.clique_id.empty()) {
@@ -1753,7 +1754,8 @@ absl::StatusOr<PjRtDevicesAndTopology> BuildDistributedDevices(
           device_proto.compute_capability(), device_proto.core_count(),
           device_proto.device_memory_bytes_limit(),
           device_proto.shared_memory_per_block_optin(),
-          device_proto.partition_index(), device_proto.fabric_uuid());
+          device_proto.shared_memory_per_core(), device_proto.partition_index(),
+          device_proto.fabric_uuid());
       description->SetPlatformName(platform_name);
       bool is_addressable = local_device != nullptr;
       auto device = std::make_unique<CommonPjRtDevice>(

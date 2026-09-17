@@ -1442,15 +1442,19 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceMemoryLimit) {
 }
 
 TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   for (const auto& device : client->devices()) {
-    auto value = device->description()
-                     .Attributes()
-                     .find("shared_memory_per_block_optin")
-                     ->second;
-    int64_t shared_memory_per_block_optin = std::get<int64_t>(value);
+    const auto& attributes = device->description().Attributes();
+    auto optin_it = attributes.find("shared_memory_per_block_optin");
+    ASSERT_NE(optin_it, attributes.end());
+    int64_t shared_memory_per_block_optin = std::get<int64_t>(optin_it->second);
     EXPECT_GT(shared_memory_per_block_optin, 0);
+
+    auto per_core_it = attributes.find("shared_memory_per_core");
+    ASSERT_NE(per_core_it, attributes.end());
+    int64_t shared_memory_per_core = std::get<int64_t>(per_core_it->second);
+    EXPECT_GE(shared_memory_per_core, shared_memory_per_block_optin);
   }
 }
 

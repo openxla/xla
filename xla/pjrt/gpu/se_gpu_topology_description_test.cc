@@ -211,5 +211,26 @@ TEST(PjRtTopologyUtilsGPUTest, GetDeviceCoordsMultipleHostScopedPartition) {
   ASSERT_EQ(core_id3, 0);
 }
 
+TEST(StreamExecutorGpuTopologyDescriptionTest,
+     SetupDeviceDescriptionAttributes) {
+  PjRtStreamExecutorDeviceDescription desc(
+      /*id=*/0, /*local_device_id=*/0, /*process_index=*/0,
+      /*process_index_in_partition=*/0, /*partition_index=*/0,
+      /*device_kind=*/"NVIDIA H100");
+  StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
+      desc, /*device_vendor=*/"NVIDIA Corporation",
+      /*compute_capability=*/"9.0", /*core_count=*/132,
+      /*device_memory_bytes_limit=*/80LL << 30,
+      /*shared_memory_per_block_optin=*/227 * 1024,
+      /*shared_memory_per_core=*/228 * 1024,
+      /*partition_index=*/0, /*fabric_uuid=*/"");
+  const auto& attrs = desc.Attributes();
+  ASSERT_TRUE(attrs.contains("shared_memory_per_block_optin"));
+  EXPECT_EQ(std::get<int64_t>(attrs.at("shared_memory_per_block_optin")),
+            227 * 1024);
+  ASSERT_TRUE(attrs.contains("shared_memory_per_core"));
+  EXPECT_EQ(std::get<int64_t>(attrs.at("shared_memory_per_core")), 228 * 1024);
+}
+
 }  // namespace
 }  // namespace xla

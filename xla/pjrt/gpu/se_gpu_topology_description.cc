@@ -69,8 +69,8 @@ REGISTER_PJRT_TOPOLOGY_DESERIALIZER(
     PjRtStreamExecutorDeviceDescription& description,
     const std::string& device_vendor, const std::string& compute_capability,
     int core_count, int64_t device_memory_bytes_limit,
-    int64_t shared_memory_per_block_optin, int partition_index,
-    const std::string& fabric_uuid) {
+    int64_t shared_memory_per_block_optin, int64_t shared_memory_per_core,
+    int partition_index, const std::string& fabric_uuid) {
   std::vector<int64_t> v_coords(description.coords().begin(),
                                 description.coords().end());
 
@@ -84,6 +84,7 @@ REGISTER_PJRT_TOPOLOGY_DESERIALIZER(
       {"compute_capability", xla::PjRtDeviceAttribute(compute_capability)},
       {"device_memory_bytes_limit", device_memory_bytes_limit},
       {"shared_memory_per_block_optin", shared_memory_per_block_optin},
+      {"shared_memory_per_core", shared_memory_per_core},
       {"core_count", static_cast<int64_t>(core_count)},
       {"fabric_uuid", fabric_uuid},
   };
@@ -163,6 +164,7 @@ StreamExecutorGpuTopologyDescription::CreateDeviceDescription(
         target_config_->gpu_device_info().core_count(),
         target_config_->gpu_device_info().device_memory_size(),
         target_config_->gpu_device_info().shared_memory_per_block_optin(),
+        target_config_->gpu_device_info().shared_memory_per_core(),
         /*partition_index=*/0, /*fabric_uuid=*/"");
   }
   return description;
