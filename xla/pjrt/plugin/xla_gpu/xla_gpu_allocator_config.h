@@ -25,6 +25,19 @@ limitations under the License.
 
 namespace xla {
 
+// Settings for experimental append-only growth of the shared GPU BFC arena.
+struct GpuBfcGrowthOptions {
+  // Reserve VA up to total device memory minus this headroom. Also check
+  // currently free device memory before every physical allocation. Neither
+  // check reserves headroom against allocations by other device users.
+  int64_t device_headroom_bytes = int64_t{1} << 30;
+  int64_t increment_bytes = 64 << 20;
+  // Zero grows only on exhaustion. A nonzero value preserves shared space
+  // for later collectives, at the cost of earlier growth or default-space
+  // OOM.
+  int64_t collective_gap_reserve_bytes = 0;
+};
+
 struct GpuAllocatorConfig {
   enum class Kind {
     kDefault,   // Client picks the best option for the platform.
@@ -65,18 +78,7 @@ struct GpuAllocatorConfig {
   // Experimental, CUDA-only growth of the shared spatial BFC arena. The
   // memory_fraction (or gpu_system_memory_size) remains the initial shared
   // allocation. Only default memory may use extensions. Requires preallocate.
-  struct BfcGrowthOptions {
-    // Reserve VA up to total device memory minus this headroom. Also check
-    // currently free device memory before every physical allocation. Neither
-    // check reserves headroom against allocations by other device users.
-    int64_t device_headroom_bytes = int64_t{1} << 30;
-    int64_t increment_bytes = 64 << 20;
-    // Zero grows only on exhaustion. A nonzero value preserves shared space
-    // for later collectives, at the cost of earlier growth or default-space
-    // OOM.
-    int64_t collective_gap_reserve_bytes = 0;
-  };
-  std::optional<BfcGrowthOptions> bfc_growth;
+  std::optional<GpuBfcGrowthOptions> bfc_growth;
 
   // Amount of collective memory (ncclMemAlloc) to preallocate. If this value is
   // 0, collective memory space will be grown as needed to fit the application's
