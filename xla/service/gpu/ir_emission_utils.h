@@ -153,6 +153,14 @@ bool IsCustomCallToTopK(const HloInstruction& hlo);
 // implementation.
 bool IsCustomCallToPtxKernel(const HloInstruction& hlo);
 
+// Returns the hero instruction wrapped by a dynamic-slice fusion, or `instr`
+// itself if it is not a dynamic-slice fusion. Dynamic-slice fusions wrap a
+// hero custom call (e.g. a Mosaic GPU collective kernel) together with its
+// sliced operands and results, and the fusion boundary hides the hero from
+// analyses that reason about custom-call properties such as the required
+// collective memory space.
+const HloInstruction& UnwrapDynamicSliceFusion(const HloInstruction& instr);
+
 // Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
 // with parameter uses symmetric memory.
 bool IsMosaicWithSymmetricParameter(const HloInstruction& hlo);
