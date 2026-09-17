@@ -49,10 +49,12 @@ limitations under the License.
 #include "xla/codegen/emitters/type_util.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/frontend_attributes.h"
+#include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
 #include "xla/runtime/work_dimensions.h"
@@ -138,6 +140,72 @@ static std::vector<IndexingMap::Variable> DimVarsFromWorkDimensions(
                              static_cast<int64_t>(num_work_groups.z)});
 }
 
+// Returns, for each operand of a fusion instruction, whether the operand is
+// read exactly once per output element with no reuse. The predicate is a
+// conservative, size-independent structural check on the operand's indexing
+// maps (unioned across all fusion roots):
+//   - exactly one indexing map (multiple maps => multi-path reuse),
+//   - the map is defined,
+//   - no range variables (reduction / windowed re-read) and no runtime
+//     variables (dynamic access),
+//   - every output dimension is used (a dropped dimension means a broadcast,
+//     i.e. many-to-one reads of the same element).
+// For non-fusion instructions the result is all-false (treated as not
+// streamed-once, which is the conservative default).
+static std::vector<bool> ComputeStreamedOnceOperands(
+    const HloInstruction& hlo_instruction, mlir::MLIRContext* mlir_context) {
+  const auto* fusion = DynCast<HloFusionInstruction>(&hlo_instruction);
+  if (fusion == nullptr) {
+    return {};
+  }
+
+  // The indexing analysis builds SymbolicExprs, which require the storage to be
+  // registered on the context. This is idempotent and normally happens when the
+  // Xla dialect is loaded, but register it here to be independent of dialect
+  // load ordering relative to this call.
+  RegisterSymbolicExprStorage(mlir_context);
+
+  const int64_t num_operands = fusion->operand_count();
+  const int64_t num_outputs = fusion->shape().IsTuple()
+                                  ? fusion->shape().tuple_shapes().size()
+                                  : 1;
+
+  // Union the per-operand indexing sets across all roots.
+  std::vector<OperandIndexingSet> combined(num_operands);
+  for (int64_t output_id = 0; output_id < num_outputs; ++output_id) {
+    HloInstructionIndexing indexing =
+        ComputeOutputToInputIndexing(fusion, output_id, mlir_context);
+    for (int64_t operand_id = 0;
+         operand_id < static_cast<int64_t>(indexing.indexing_maps.size()) &&
+         operand_id < num_operands;
+         ++operand_id) {
+      const OperandIndexingSet& operand_set = indexing.indexing_maps[operand_id];
+      combined[operand_id].insert(operand_set.begin(), operand_set.end());
+    }
+  }
+
+  std::vector<bool> streamed_once(num_operands, false);
+  for (int64_t operand_id = 0; operand_id < num_operands; ++operand_id) {
+    const OperandIndexingSet& operand_set = combined[operand_id];
+    if (operand_set.size() != 1) {
+      continue;
+    }
+    const IndexingMap& map = operand_set.begin()->map();
+    if (map.IsUndefined() || map.GetRangeVarsCount() != 0 ||
+        map.GetRTVarsCount() != 0) {
+      continue;
+    }
+    const SymbolicMap& symbolic_map = map.GetSymbolicMap();
+    const int64_t num_dims = symbolic_map.GetNumDims();
+    UsedParameters used =
+        GetUsedParameters(symbolic_map.GetResults(), num_dims);
+    if (static_cast<int64_t>(used.dimension_ids.size()) == num_dims) {
+      streamed_once[operand_id] = true;
+    }
+  }
+  return streamed_once;
+}
+
 absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
     mlir::ModuleOp module, const HloInstruction& hlo_instruction,
     const BufferAssignment* buffer_assignment,
@@ -154,6 +222,12 @@ absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
         args, KernelArguments::Create(*buffer_assignment, buffer_alignment,
                                       &hlo_instruction));
   }
+  // Per-operand reuse fact used to drive streaming (non-temporal) loads. Index
+  // into this by operand id; result args are never streamed-once.
+  const std::vector<bool> streamed_once =
+      ComputeStreamedOnceOperands(hlo_instruction, context);
+  const int64_t num_operands = hlo_instruction.operands().size();
+
   // Annotate tensors with the buffer indices. This way, the buffer propagation
   // pass can clean them up later.
   auto get_arg_attrs = [&](int index) -> mlir::Attribute {
@@ -180,6 +254,11 @@ absl::StatusOr<mlir::func::FuncOp> EmitKernelApi(
         attrs.push_back(
             builder.getNamedAttr(kXlaNotInvariantAttr, builder.getUnitAttr()));
       }
+    }
+    if (index < num_operands && index < static_cast<int>(streamed_once.size()) &&
+        streamed_once[index]) {
+      attrs.push_back(
+          builder.getNamedAttr(kXlaStreamedOnceAttr, builder.getUnitAttr()));
     }
     return builder.getDictionaryAttr(attrs);
   };
