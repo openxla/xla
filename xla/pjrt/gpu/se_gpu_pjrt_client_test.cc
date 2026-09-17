@@ -2758,7 +2758,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
 
   ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> collective0,
-      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+      allocator->Allocate(/*device_ordinal=*/0, 8 * kBytes,
                           /*retry_on_failure=*/false, kCollective));
   ASSERT_OK_AND_ASSIGN(
       se::ScopedDeviceAddress<uint8_t> collective1,
@@ -2779,6 +2779,46 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
   EXPECT_GT(address(default0), address(default1));
   // ... and every collective buffer sits below every default buffer.
   EXPECT_LT(address(collective1), address(default1));
+
+  // Collective hole reuse keeps exact splitting after the direction swap.
+  // The live collective1 allocation keeps collective0's hole out of the gap.
+  const uintptr_t collective_hole = address(collective0);
+  ASSERT_OK(collective0.Free());
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective_reuse,
+      allocator->Allocate(/*device_ordinal=*/0, 6 * kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  EXPECT_EQ(address(collective_reuse), collective_hole);
+  ASSERT_OK_AND_ASSIGN(
+      tsl::Allocator * bfc,
+      absl::down_cast<se::MultiDeviceAdapter*>(allocator)->GetAllocator(0));
+  EXPECT_EQ(bfc->AllocatedSize(collective_reuse->opaque()), 6 * kBytes);
+
+  // Equal-size default holes prefer the high address, leaving the hole next
+  // to the central boundary available to coalesce with a later boundary free.
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default2,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default3,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  const uintptr_t default_hole = address(default0);
+  const uintptr_t default_boundary = address(default3);
+  ASSERT_OK(default0.Free());
+  ASSERT_OK(default2.Free());
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_reuse,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  EXPECT_EQ(address(default_reuse), default_hole);
+  ASSERT_OK(default3.Free());
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_coalesced,
+      allocator->Allocate(/*device_ordinal=*/0, 2 * kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  EXPECT_EQ(address(default_coalesced), default_boundary);
 }
 
 // Without preallocation there is no shared partitioned pool: default memory

@@ -788,13 +788,15 @@ void* BFCAllocator::FindChunkPtrInCentralGap(size_t rounded_bytes,
              : AllocateChunkFromLowEnd(h, rounded_bytes, num_bytes, alignment);
 }
 
-bool BFCAllocator::ShouldSplitChunk(const Chunk* chunk,
-                                    size_t rounded_bytes) const {
+bool BFCAllocator::ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes,
+                                    size_t alignment_padding) const {
   // This heuristic also applies to same-tag holes in partitioned mode, but
   // must never consume the central gap's remainder as allocation padding.
   DCHECK_NE(chunk->tag, ChunkTag::kCentralGap);
-  return chunk->size >= rounded_bytes * 2 ||
-         static_cast<int64_t>(chunk->size) -
+  DCHECK_LE(alignment_padding, chunk->size);
+  const size_t aligned_size = chunk->size - alignment_padding;
+  return aligned_size >= rounded_bytes * 2 ||
+         static_cast<int64_t>(aligned_size) -
                  static_cast<int64_t>(rounded_bytes) >=
              max_internal_fragmentation_bytes_;
 }
@@ -823,12 +825,14 @@ void* BFCAllocator::AllocateChunkFromLowEnd(ChunkHandle h, size_t rounded_bytes,
   // Carving from the central gap returns a chunk of exactly rounded_bytes,
   // leaving any trailing remainder in the gap for either end. This end's chunk
   // sizes therefore never depend on the other end's activity. Reusing a lower
-  // hole follows the non-partitioned BFC split heuristic. The trailing
-  // remainder keeps the source chunk's tag (the central gap keeps its tag; a
-  // lower hole stays lower).
-  const bool from_central_gap = chunk->tag == ChunkTag::kCentralGap;
-  if (from_central_gap ? chunk->size > rounded_bytes
-                       : ShouldSplitChunk(chunk, rounded_bytes)) {
+  // hole follows its configured split policy. The trailing remainder keeps
+  // the source chunk's tag (the central gap keeps its tag; a lower hole stays
+  // lower).
+  const bool split_exactly =
+      chunk->tag == ChunkTag::kCentralGap ||
+      opts_.lower_end_policy.hole_split_policy == HoleSplitPolicy::kExact;
+  if (split_exactly ? chunk->size > rounded_bytes
+                    : ShouldSplitChunk(chunk, rounded_bytes)) {
     SplitChunk(h, rounded_bytes);
     chunk = ChunkFromHandle(h);  // Update chunk pointer in case it moved.
   }
@@ -846,21 +850,22 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
   Chunk* chunk = ChunkFromHandle(h);
   uintptr_t chunk_start = absl::bit_cast<uintptr_t>(chunk->ptr);
 
-  // Reusing an upper hole follows the non-partitioned BFC split heuristic,
-  // mirroring the lower end: if the heuristic does not require a split and the
-  // hole's start satisfies the alignment, take it whole and keep the slack as
-  // padding. Central-gap allocations bypass this heuristic and return a chunk
-  // of exactly rounded_bytes, leaving any prefix below its aligned start in the
-  // gap and any alignment padding above it as an upper-owned free hole.
-  if (chunk->tag == ChunkTag::kUpper &&
-      !ShouldSplitChunk(chunk, rounded_bytes) && chunk_start % alignment == 0) {
-    FinishChunkAllocation(chunk, num_bytes);
-    return chunk->ptr;
-  }
-
-  const uintptr_t aligned_start =
+  const bool split_exactly =
+      chunk->tag == ChunkTag::kCentralGap ||
+      opts_.upper_end_policy.hole_split_policy == HoleSplitPolicy::kExact;
+  uintptr_t aligned_start =
       HighEndAlignedStart(chunk_start, chunk->size, rounded_bytes, alignment);
   CHECK_GE(aligned_start, chunk_start);  // Crash OK
+
+  // For heuristic hole reuse, first check whether the aligned portion can be
+  // taken whole. Exclude any unavoidable alignment prefix from the decision,
+  // just as the lower-end path does. Otherwise carve from the high end.
+  if (!split_exactly) {
+    const size_t align_padding = LowEndAlignmentPadding(chunk_start, alignment);
+    if (!ShouldSplitChunk(chunk, rounded_bytes, align_padding)) {
+      aligned_start = chunk_start + align_padding;
+    }
+  }
   const size_t prefix_size = aligned_start - chunk_start;
 
   // Split off everything below the aligned start as a free prefix, so the
@@ -875,10 +880,12 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
     chunk = ChunkFromHandle(h);
   }
 
-  // Split off any aligned-up suffix as a free remainder. Set the tag before
-  // splitting so the suffix inherits kUpper directly.
+  // Central-gap and exact-policy allocations leave every suffix free. For
+  // heuristic hole reuse, keep small alignment suffixes as allocation padding.
+  // Set the tag before splitting so a free suffix inherits kUpper directly.
   chunk->tag = ChunkTag::kUpper;
-  if (chunk->size > rounded_bytes) {
+  if (split_exactly ? chunk->size > rounded_bytes
+                    : ShouldSplitChunk(chunk, rounded_bytes)) {
     SplitChunk(h, rounded_bytes);
     chunk = ChunkFromHandle(h);
   }

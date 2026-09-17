@@ -75,9 +75,9 @@ using tensorflow::MemoryDump;
 //   adjacent free chunks to repair fragmentation.
 //
 // - Free chunks are indexed by size-class Bins. Each Bin stores ChunkHandles in
-//   a FreeChunkSet ordered by chunk size and then address. Allocation starts in
-//   the smallest viable bin, scans upward, and uses the smallest fitting chunk.
-//   Allocated chunks are never in a Bin.
+//   a FreeChunkSet ordered by size, ownership, and the configured address
+//   order. Allocation starts in the smallest viable bin, scans upward, and uses
+//   the smallest fitting chunk. Allocated chunks are never in a Bin.
 //
 // - AllocationAttributes::allocation_end controls placement. In non-partitioned
 //   mode all requests use AllocationEnd::kLower, and ordinary free chunks stay
@@ -94,12 +94,23 @@ using tensorflow::MemoryDump;
 //   then carves from the central gap. Carving from the gap returns a chunk of
 //   exactly the rounded request size, leaving the remainder in the gap except
 //   for alignment padding, which becomes a same-tag free hole. Reusing a
-//   same-tag hole follows the non-partitioned split heuristic at both ends.
+//   same-tag hole uses that end's configured allocation policy. Hole ordering
+//   and splitting are independent of placement direction, so clients can keep
+//   a memory space's policy when changing the end that serves it.
 //   This keeps each end's placements independent of activity from the opposite
 //   end except when lower and upper allocations exhaust the central gap.
 //
 class BFCAllocator : public Allocator {
  public:
+  enum class HoleOrder { kAscendingAddress, kDescendingAddress };
+  enum class HoleSplitPolicy { kBfc, kExact };
+
+  struct AllocationPolicy {
+    // Best fit always compares sizes first; this only breaks equal-size ties.
+    HoleOrder hole_order = HoleOrder::kAscendingAddress;
+    HoleSplitPolicy hole_split_policy = HoleSplitPolicy::kBfc;
+  };
+
   struct Options {
     bool allow_growth = true;
 
@@ -134,8 +145,9 @@ class BFCAllocator : public Allocator {
     // other end's tagged interior holes. When a buffer at either end of the
     // central gap is freed it rejoins the gap, growing it, and adjacent holes
     // with the same tag cascade back in turn -- so e.g. allocating 100% lower,
-    // freeing it, then allocating 100% upper is fully supported. The only
-    // failure is true exhaustion: lower and upper meeting with no gap left.
+    // freeing it, then allocating 100% upper is fully supported. A request can
+    // still fail if neither an own-tag hole nor the central gap fits, even if
+    // free memory remains in fragmented or opposite-tag holes.
     //
     // Because neither end ever carves the other's interior holes, each end's
     // placement is a pure function of that end's request sequence and is never
@@ -146,6 +158,13 @@ class BFCAllocator : public Allocator {
     //
     // Requires allow_growth=false (a single fixed address range).
     bool enable_spatial_partitioning = false;
+
+    // Policies for reusing owned holes, independent of placement direction.
+    // Central-gap carves always split exactly, regardless of these policies.
+    // Non-partitioned allocations use lower_end_policy; the defaults preserve
+    // non-partitioned BFC behavior.
+    AllocationPolicy lower_end_policy;
+    AllocationPolicy upper_end_policy;
   };
 
   BFCAllocator(std::unique_ptr<SubAllocator> sub_allocator, size_t total_memory,
@@ -380,13 +399,24 @@ class BFCAllocator : public Allocator {
      public:
       explicit ChunkComparator(BFCAllocator* allocator)
           : allocator_(allocator) {}
-      // Sort first by size and then use pointer address as a tie breaker.
+      // Sort first by size, then ownership, then the configured address order.
+      // Ownership must precede address so policies with opposite address orders
+      // still define a strict ordering over a bin containing both tags.
       bool operator()(const ChunkHandle ha, const ChunkHandle hb) const
           ABSL_NO_THREAD_SAFETY_ANALYSIS {
         const Chunk* a = allocator_->ChunkFromHandle(ha);
         const Chunk* b = allocator_->ChunkFromHandle(hb);
         if (a->size != b->size) {
           return a->size < b->size;
+        }
+        if (a->tag != b->tag) {
+          return a->tag < b->tag;
+        }
+        const AllocationPolicy& policy =
+            a->tag == ChunkTag::kLower ? allocator_->opts_.lower_end_policy
+                                       : allocator_->opts_.upper_end_policy;
+        if (policy.hole_order == HoleOrder::kDescendingAddress) {
+          return a->ptr > b->ptr;
         }
         return a->ptr < b->ptr;
       }
@@ -631,12 +661,14 @@ class BFCAllocator : public Allocator {
                                  AllocationEnd allocation_end)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Non-partitioned BFC split heuristic, also used for same-tag free holes in
-  // partitioned mode: split if the chunk is at least twice the rounded request
-  // size, or if keeping it whole would waste at least
+  // Non-partitioned BFC split heuristic, also available for same-tag free holes
+  // in partitioned mode: split if the chunk is at least twice the rounded
+  // request size, or if keeping it whole would waste at least
   // max_internal_fragmentation_bytes_ on padding. The chunk must not be the
   // central gap, whose allocations always use the rounded request size.
-  bool ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes) const
+  // alignment_padding excludes a prefix that must be split off for alignment.
+  bool ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes,
+                        size_t alignment_padding = 0) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Carves an allocation of 'num_bytes' (rounded to 'rounded_bytes') out of the

@@ -169,6 +169,17 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
   tsl::BFCAllocator::Options opts;
   opts.allow_growth = !preallocate;
   opts.enable_spatial_partitioning = enable_spatial_partitioning;
+  if (enable_spatial_partitioning) {
+    // Collective memory keeps exact hole splitting when moving to the lower
+    // end; default memory keeps the BFC heuristic when moving to the upper end.
+    // Mirror both address tie-breaks to preserve each memory space's preference
+    // relative to the central boundary. Size remains the primary best-fit key.
+    // Both ends split central-gap carves exactly to retain shared capacity.
+    opts.lower_end_policy = {tsl::BFCAllocator::HoleOrder::kDescendingAddress,
+                             tsl::BFCAllocator::HoleSplitPolicy::kExact};
+    opts.upper_end_policy = {tsl::BFCAllocator::HoleOrder::kDescendingAddress,
+                             tsl::BFCAllocator::HoleSplitPolicy::kBfc};
+  }
   return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,
       absl::StrCat("GPU_", device_ordinal, "_bfc"), opts);
