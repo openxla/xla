@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -40,7 +42,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -63,7 +64,8 @@ std::string CompilerVariantToString(PjRtCompilerVariant variant) {
 namespace {
 bool RegisterTestVariantPicker() {
   PjRtRegisterCompilerVariantPicker("tpu", []() -> absl::StatusOr<std::string> {
-    ABSL_ASSIGN_OR_RETURN(PjRtCompilerVariant variant, PickTpuCompilerVariant());
+    ABSL_ASSIGN_OR_RETURN(PjRtCompilerVariant variant,
+                          PickTpuCompilerVariant());
     return CompilerVariantToString(variant);
   });
   return true;

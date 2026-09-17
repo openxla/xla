@@ -118,7 +118,8 @@ absl::StatusOr<bool> ReshapeBroadcastForwarding(HloInstruction* reshape) {
     return false;
   }
 
-  ABSL_RETURN_IF_ERROR(reshape->ReplaceAllUsesWith(broadcast->mutable_operand(0)));
+  ABSL_RETURN_IF_ERROR(
+      reshape->ReplaceAllUsesWith(broadcast->mutable_operand(0)));
 
   return true;
 }
@@ -136,7 +137,8 @@ absl::StatusOr<bool> ReshapeReshapeForwarding(HloInstruction* reshape) {
   if (!Shape::Equal()(reshape->shape(), reshape_2->operand(0)->shape())) {
     return false;
   }
-  ABSL_RETURN_IF_ERROR(reshape->ReplaceAllUsesWith(reshape_2->mutable_operand(0)));
+  ABSL_RETURN_IF_ERROR(
+      reshape->ReplaceAllUsesWith(reshape_2->mutable_operand(0)));
 
   return true;
 }
@@ -192,7 +194,8 @@ absl::StatusOr<bool> DynamicDimensionSimplifier::RunImpl(
 
   for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
     for (auto* inst : comp->MakeInstructionPostOrder()) {
-      ABSL_ASSIGN_OR_RETURN(bool local_changed, ReshapeBroadcastForwarding(inst));
+      ABSL_ASSIGN_OR_RETURN(bool local_changed,
+                            ReshapeBroadcastForwarding(inst));
       changed |= local_changed;
     }
   }

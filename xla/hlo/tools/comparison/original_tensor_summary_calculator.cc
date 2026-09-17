@@ -94,7 +94,7 @@ ParseInstructionNameAsRelativeScopedTensorKey(
     scope_instructions.reserve(parts.size() - 1);
     for (int64_t i = 0; i < parts.size() - 1; ++i) {
       ABSL_ASSIGN_OR_RETURN(ScopeInstruction scope_instr,
-                       ParseScopeInstruction(parts[i]));
+                            ParseScopeInstruction(parts[i]));
       scope_instructions.push_back(std::move(scope_instr));
     }
   }
@@ -895,7 +895,23 @@ OriginalTensorSummaryCalculator::ConstructOriginalTensorKey(
       if (mapped_original_scopes.empty()) {
         continue;
       }
-      if (scope.iteration_index != 0) {
+      // Check if any of the mapped original scopes contains a placeholder (-2)
+      // waiting to be bound to the runtime iteration index.
+      bool found_while_loop = false;
+      for (int64_t i = 0; i < mapped_original_scopes.size(); ++i) {
+        auto& original_scope = combined_scopes[combined_scopes.size() - i - 1];
+        // -2 indicates the iteration index of the scope instruction should be
+        // replaced by the actual iteration index at runtime.
+        if (original_scope.iteration_index == -2) {
+          original_scope.iteration_index = scope.iteration_index;
+          found_while_loop = true;
+          break;
+        }
+      }
+
+      // If no explicit placeholder was present and runtime iteration index is
+      // non-zero, use legacy fallbacks to propagate the iteration index.
+      if (!found_while_loop && scope.iteration_index != 0) {
         // If there is only one mapped original scope instruction, we assume it
         // is the while loop and set its iteration index to the actual iteration
         // index at runtime.
@@ -903,42 +919,28 @@ OriginalTensorSummaryCalculator::ConstructOriginalTensorKey(
           combined_scopes.back().iteration_index = scope.iteration_index;
           continue;
         }
-        bool found_while_loop = false;
+
+        // Fallback 1: Check if any of the added scopes start with "while.".
         for (int64_t i = 0; i < mapped_original_scopes.size(); ++i) {
           auto& original_scope =
-              combined_scopes[combined_scopes.size() - i - 1];
-          // -2 indicates the iteration index of the scope instruction should be
-          // replaced by the actual iteration index at runtime.
-          if (original_scope.iteration_index == -2) {
+              combined_scopes[combined_scopes.size() -
+                              mapped_original_scopes.size() + i];
+          if (absl::StartsWith(original_scope.instruction_name, "while.")) {
             original_scope.iteration_index = scope.iteration_index;
             found_while_loop = true;
+            LOG(WARNING)
+                << "While loop not found for optimized scope instruction: "
+                << scope.instruction_name
+                << ". The mapped original scope instructions are: "
+                << absl::StrJoin(
+                       mapped_original_scopes, "/",
+                       [](std::string* out, const ScopeInstruction& s) {
+                         out->append(s.ToString());
+                       })
+                << ". Using instruction " << original_scope.instruction_name
+                << " as the while instruction because it looks like a while "
+                   "instruction.";
             break;
-          }
-        }
-
-        if (!found_while_loop) {
-          // Fallback 1: Check if any of the added scopes start with "while.".
-          for (int64_t i = 0; i < mapped_original_scopes.size(); ++i) {
-            auto& original_scope =
-                combined_scopes[combined_scopes.size() -
-                                mapped_original_scopes.size() + i];
-            if (absl::StartsWith(original_scope.instruction_name, "while.")) {
-              original_scope.iteration_index = scope.iteration_index;
-              found_while_loop = true;
-              LOG(WARNING)
-                  << "While loop not found for optimized scope instruction: "
-                  << scope.instruction_name
-                  << ". The mapped original scope instructions are: "
-                  << absl::StrJoin(
-                         mapped_original_scopes, "/",
-                         [](std::string* out, const ScopeInstruction& s) {
-                           out->append(s.ToString());
-                         })
-                  << ". Using instruction " << original_scope.instruction_name
-                  << " as the while instruction because it looks like a while "
-                     "instruction.";
-              break;
-            }
           }
         }
 
@@ -1109,9 +1111,9 @@ absl::Status OriginalTensorSummaryCalculator::ProcessShardSummary(
 
   for (const auto& original_tensor_info : original_tensor_infos) {
     ABSL_ASSIGN_OR_RETURN(AbsoluteScopedTensorKey original_tensor_key,
-                     ConstructOriginalTensorKey(
-                         optimized_tensor_position.scope_instructions,
-                         original_tensor_info.original_scoped_tensor_key));
+                          ConstructOriginalTensorKey(
+                              optimized_tensor_position.scope_instructions,
+                              original_tensor_info.original_scoped_tensor_key));
     if (completed_tensor_keys_.find(original_tensor_key) !=
         completed_tensor_keys_.end()) {
       continue;
@@ -1162,9 +1164,9 @@ absl::Status OriginalTensorSummaryCalculator::ProcessShardSummary(
   bool all_completed = true;
   for (const auto& original_tensor_info : original_tensor_infos) {
     ABSL_ASSIGN_OR_RETURN(AbsoluteScopedTensorKey original_tensor_key,
-                     ConstructOriginalTensorKey(
-                         optimized_tensor_position.scope_instructions,
-                         original_tensor_info.original_scoped_tensor_key));
+                          ConstructOriginalTensorKey(
+                              optimized_tensor_position.scope_instructions,
+                              original_tensor_info.original_scoped_tensor_key));
     if (completed_tensor_keys_.find(original_tensor_key) ==
         completed_tensor_keys_.end()) {
       all_completed = false;

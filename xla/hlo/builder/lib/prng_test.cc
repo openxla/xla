@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/prng.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/builder/lib/constants.h"

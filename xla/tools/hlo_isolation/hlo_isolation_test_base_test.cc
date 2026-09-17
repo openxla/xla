@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/tools/hlo_isolation/hlo_isolation_test_base.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest-spi.h>
+
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -25,8 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest-spi.h>
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/array2d.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -58,7 +60,6 @@ limitations under the License.
 #include "xla/tools/hlo_isolation/hlo_isolation_api.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace hlo_isolation {
@@ -736,8 +737,8 @@ ENTRY main.1 {
          absl::Span<const Literal> input_data,
          const RunModuleOptions& run_opts) -> absl::StatusOr<Literal> {
     const bool should_inject = (m->name() == "sine_abs_fusion");
-    ABSL_ASSIGN_OR_RETURN(Literal output,
-                     RunModule(std::move(m), runner, input_data, run_opts));
+    ABSL_ASSIGN_OR_RETURN(
+        Literal output, RunModule(std::move(m), runner, input_data, run_opts));
     if (should_inject) {
       // Flip an exponent bit in the first element to guarantee a mismatch.
       // Using untyped_data handles all primitive types without crashing.
@@ -762,10 +763,10 @@ ENTRY main.1 {
                          RunIsolationPipeline(*module, &test_runner,
                                               &reference_runner, options));
   }
-  // We expect 2 failures:
-  // 1. TPU_VS_DEFUSED_TPU mismatch.
-  // 2. TPU_VS_INTERPRETER mismatch.
-  EXPECT_EQ(failures.size(), 2);
+  // Both TPU_VS_DEFUSED_TPU and TPU_VS_INTERPRETER mismatch, but they are
+  // reported together in a single failure at the final verdict rather than one
+  // failure per check.
+  EXPECT_EQ(failures.size(), 1);
   EXPECT_GT(test_runner.last_hlo_output_callbacks_size_, 0);
 
   // Check the pipeline results contains our mismatch results.
@@ -883,7 +884,7 @@ ENTRY main {
 
     std::string module_name = std::string(m->name());
     ABSL_ASSIGN_OR_RETURN(Literal output,
-                     RunModule(std::move(m), r, input_data, run_opts));
+                          RunModule(std::move(m), r, input_data, run_opts));
 
     // Inject mismatch on main test runner run to trigger stage 1 and stage 2
     // failures
@@ -1415,6 +1416,60 @@ ENTRY main {
   EXPECT_TRUE(found_fusion);
   EXPECT_TRUE(found_add1);
   EXPECT_TRUE(found_sin);
+}
+
+TEST_F(HloIsolationTest, ResNet50SoftmaxCrossEntropyFusionNoInfOrNan) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule ResNet50SoftmaxCrossEntropyFusion
+
+%add_bf16 (x: bf16[], y: bf16[]) -> bf16[] {
+  %x = bf16[] parameter(0)
+  %y = bf16[] parameter(1)
+  ROOT %add = bf16[] add(%x, %y)
+}
+
+ENTRY %fusion.660 (parameter.0: bf16[2], parameter.1: bf16[2], parameter.2: bf16[2],
+                   parameter.3: bf16[2,4], parameter.4: bf16[4], parameter.5: f32[2,4],
+                   parameter.6: bf16[], parameter.7: bf16[2]) -> (bf16[2,4], bf16[4], bf16[2]) {
+  %parameter.1 = bf16[2]{0} parameter(1)
+  %broadcast.1 = bf16[2,4]{1,0} broadcast(%parameter.1), dimensions={0}
+  %parameter.3 = bf16[2,4]{1,0} parameter(3)
+  %parameter.4 = bf16[4]{0} parameter(4)
+  %broadcast.4 = bf16[2,4]{1,0} broadcast(%parameter.4), dimensions={1}
+  %add.logits = bf16[2,4]{1,0} add(%parameter.3, %broadcast.4)
+  %parameter.2 = bf16[2]{0} parameter(2)
+  %broadcast.2 = bf16[2,4]{1,0} broadcast(%parameter.2), dimensions={0}
+  %subtract.max = bf16[2,4]{1,0} subtract(%add.logits, %broadcast.2)
+  %exponential = bf16[2,4]{1,0} exponential(%subtract.max)
+  %parameter.0 = bf16[2]{0} parameter(0)
+  %broadcast.0 = bf16[2,4]{1,0} broadcast(%parameter.0), dimensions={0}
+  %divide.norm = bf16[2,4]{1,0} divide(%exponential, %broadcast.0)
+  %parameter.5 = f32[2,4]{1,0} parameter(5)
+  %convert.labels = bf16[2,4]{1,0} convert(%parameter.5)
+  %subtract.probs = bf16[2,4]{1,0} subtract(%divide.norm, %convert.labels)
+  %multiply.grad = bf16[2,4]{1,0} multiply(%broadcast.1, %subtract.probs)
+  %parameter.6 = bf16[] parameter(6)
+  %reduce.bias = bf16[4]{0} reduce(%multiply.grad, %parameter.6), dimensions={0}, to_apply=%add_bf16
+  %negate = bf16[2,4]{1,0} negate(%convert.labels)
+  %parameter.7 = bf16[2]{0} parameter(7)
+  %broadcast.7 = bf16[2,4]{1,0} broadcast(%parameter.7), dimensions={0}
+  %subtract.logprobs = bf16[2,4]{1,0} subtract(%subtract.max, %broadcast.7)
+  %multiply.loss = bf16[2,4]{1,0} multiply(%negate, %subtract.logprobs)
+  %reduce.loss = bf16[2]{0} reduce(%multiply.loss, %parameter.6), dimensions={1}, to_apply=%add_bf16
+  ROOT %tuple = (bf16[2,4]{1,0}, bf16[4]{0}, bf16[2]{0}) tuple(%multiply.grad, %reduce.bias, %reduce.loss)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> args,
+                       MakeFakeArguments(module.get()));
+  std::vector<const Literal*> arg_ptrs;
+  arg_ptrs.reserve(args.size());
+  for (const auto& arg : args) {
+    arg_ptrs.push_back(&arg);
+  }
+  ASSERT_OK_AND_ASSIGN(Literal output, Execute(std::move(module), arg_ptrs));
+  EXPECT_FALSE(LiteralContainsInfOrNan(output));
 }
 
 }  // namespace

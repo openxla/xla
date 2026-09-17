@@ -25,9 +25,9 @@ class TypeConverter;
 
 /// Collects a set of patterns that bufferize operations from the standard and
 /// other dialects.
-void populateExtraBufferizePatterns(MLIRContext *context,
-                                    TypeConverter *converter,
-                                    RewritePatternSet *patterns);
+void populateExtraBufferizePatterns(MLIRContext* context,
+                                    TypeConverter* converter,
+                                    RewritePatternSet* patterns);
 
 }  // namespace mlir
 

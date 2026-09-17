@@ -15,22 +15,23 @@ limitations under the License.
 
 #include "xla/service/executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_execution_profile.h"
 #include "xla/service/service_executable_run_options.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {

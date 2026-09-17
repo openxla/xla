@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
@@ -68,7 +69,6 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace stream_executor::sycl {
 
@@ -128,7 +128,7 @@ absl::StatusOr<ze_module_handle_t> LoadLevelZeroModule(
     SyclContext* context, const char* spirv_binary, const size_t spirv_size) {
   const sycl::context& sycl_context = context->context();
   ABSL_ASSIGN_OR_RETURN(sycl::device sycl_device,
-                   SyclDevicePool::GetDevice(context->device_ordinal()));
+                        SyclDevicePool::GetDevice(context->device_ordinal()));
   auto lz_device =
       sycl::get_native<sycl::backend::ext_oneapi_level_zero>(sycl_device);
   auto lz_context =
@@ -277,8 +277,8 @@ absl::Status GetModuleSymbol(SyclContext* context, ze_module_handle_t module,
 
 absl::Status SynchronousMemsetUint32(SyclContext* context, void* location,
                                      uint32_t value, size_t uint32_count) {
-  ABSL_RETURN_IF_ERROR(SyclMemfillDevice(context->device_ordinal(), location, value,
-                                    uint32_count));
+  ABSL_RETURN_IF_ERROR(SyclMemfillDevice(context->device_ordinal(), location,
+                                         value, uint32_count));
   VLOG(2) << absl::StrFormat(
       "Completed synchronous memset32: %u uint32s at %p with value 0x%08x on "
       "device %d",
@@ -299,8 +299,8 @@ absl::Status SynchronousMemsetUint8(SyclContext* context, void* location,
 
 absl::Status SyclSynchronousMemcpyH2D(SyclContext* context, void* gpu_dst,
                                       const void* host_src, uint64_t size) {
-  ABSL_RETURN_IF_ERROR(SyclMemcpyHostToDevice(context->device_ordinal(), gpu_dst,
-                                         host_src, size));
+  ABSL_RETURN_IF_ERROR(SyclMemcpyHostToDevice(context->device_ordinal(),
+                                              gpu_dst, host_src, size));
   VLOG(2) << absl::StrFormat(
       "Completed synchronous host-to-device memcpy: %u bytes to %p", size,
       gpu_dst);
@@ -309,8 +309,8 @@ absl::Status SyclSynchronousMemcpyH2D(SyclContext* context, void* gpu_dst,
 
 absl::Status SyclSynchronousMemcpyD2H(SyclContext* context, void* host_dst,
                                       void* gpu_src, uint64_t size) {
-  ABSL_RETURN_IF_ERROR(SyclMemcpyDeviceToHost(context->device_ordinal(), host_dst,
-                                         gpu_src, size));
+  ABSL_RETURN_IF_ERROR(SyclMemcpyDeviceToHost(context->device_ordinal(),
+                                              host_dst, gpu_src, size));
   VLOG(2) << absl::StrFormat(
       "Completed synchronous device-to-host memcpy: %u bytes to %p", size,
       host_dst);
@@ -368,7 +368,7 @@ absl::StatusOr<void*> HostAllocate(SyclContext* context, int device_ordinal,
 absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
     SyclContext* sycl_context, int device_ordinal, uint64_t size) {
   ABSL_ASSIGN_OR_RETURN(void* host_mem,
-                   HostAllocate(sycl_context, device_ordinal, size));
+                        HostAllocate(sycl_context, device_ordinal, size));
   VLOG(2) << "Allocated host memory for ptr " << host_mem
           << " using device ordinal " << device_ordinal << " for " << size
           << " bytes";
@@ -673,7 +673,7 @@ SyclExecutor::CreateMemoryAllocator(MemoryType type) {
               -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
             // Shared memory is visible to both CPU and GPU.
             ABSL_ASSIGN_OR_RETURN(void* ptr,
-                             SyclMallocShared(device_ordinal(), size));
+                                  SyclMallocShared(device_ordinal(), size));
             VLOG(2) << "Allocated shared memory for ptr " << ptr
                     << " using device_ordinal " << device_ordinal() << " for "
                     << size << " bytes";
@@ -696,7 +696,7 @@ SyclExecutor::CreateMemoryAllocator(MemoryType type) {
             // At the allocation level, collective memory is the same as device
             // memory.
             ABSL_ASSIGN_OR_RETURN(void* ptr,
-                             SyclMallocDevice(device_ordinal(), size));
+                                  SyclMallocDevice(device_ordinal(), size));
             VLOG(2) << "Allocated collective/device memory for ptr " << ptr
                     << " using device_ordinal " << device_ordinal() << " for "
                     << size << " bytes";
@@ -777,8 +777,9 @@ SyclExecutor::CreateDeviceDescription(int device_ordinal) {
 absl::StatusOr<std::unique_ptr<Stream>> SyclExecutor::CreateStream(
     bool enable_multiple_streams,
     std::optional<std::variant<StreamPriority, int>> priority) {
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SyclStream> stream,
-                   SyclStream::Create(this, enable_multiple_streams, priority));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<SyclStream> stream,
+      SyclStream::Create(this, enable_multiple_streams, priority));
   absl::MutexLock l(&alive_gpu_streams_mu_);
   alive_gpu_streams_[stream->stream_handle()] = stream.get();
   return std::move(stream);
@@ -1014,9 +1015,9 @@ absl::StatusOr<DeviceAddressBase> SyclExecutor::GetSymbol(
         return absl::NotFoundError(absl::StrFormat(
             "SyclExecutor::GetSymbol: Module handle not found in cache."));
       }
-      ABSL_RETURN_IF_ERROR(GetModuleSymbol(sycl_context_.get(), it->second.first,
-                                      symbol_name.c_str(), &device_ptr,
-                                      &symbol_size));
+      ABSL_RETURN_IF_ERROR(
+          GetModuleSymbol(sycl_context_.get(), it->second.first,
+                          symbol_name.c_str(), &device_ptr, &symbol_size));
       return DeviceAddressBase(device_ptr, symbol_size);
     }
   }
@@ -1030,8 +1031,8 @@ absl::Status SyclExecutor::InitBlas() {
   absl::MutexLock lock(&mu_);
   PluginRegistry* registry = PluginRegistry::Instance();
   ABSL_ASSIGN_OR_RETURN(auto factory,
-                   registry->GetFactory<PluginRegistry::BlasFactory>(
-                       stream_executor::sycl::kSyclPlatformId));
+                        registry->GetFactory<PluginRegistry::BlasFactory>(
+                            stream_executor::sycl::kSyclPlatformId));
   blas_.reset(factory(this));
   return absl::OkStatus();
 }

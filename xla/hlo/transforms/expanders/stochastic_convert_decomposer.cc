@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
@@ -31,8 +33,6 @@ limitations under the License.
 #include "xla/service/shape_inference.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -50,8 +50,8 @@ absl::Status DecomposeStochasticConvert(HloComputation* comp,
   PrimitiveType random_type = random->shape().element_type();
   PrimitiveType to_type = instruction->shape().element_type();
   ABSL_RETURN_IF_ERROR(ShapeInference::InferStochasticConvertShape(
-                      operand->shape(), random->shape(), to_type)
-                      .status());
+                           operand->shape(), random->shape(), to_type)
+                           .status());
   VLOG(1) << "Decomposing instruction: " << instruction->ToString();
 
   // For converting floats to integers, the fractional bits of the operands
@@ -63,14 +63,15 @@ absl::Status DecomposeStochasticConvert(HloComputation* comp,
   // rounded down.
   if (primitive_util::IsSignedIntegralType(to_type)) {
     ABSL_ASSIGN_OR_RETURN(HloInstruction * operand_sign,
-                     MakeUnaryHlo(HloOpcode::kSign, operand));
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * should_neg,
-                     MakeCompareHlo(Comparison::Direction::kLt, operand_sign,
-                                    MakeScalarLike(operand_sign, 0)));
+                          MakeUnaryHlo(HloOpcode::kSign, operand));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * should_neg,
+        MakeCompareHlo(Comparison::Direction::kLt, operand_sign,
+                       MakeScalarLike(operand_sign, 0)));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * operand_abs,
-                     MakeUnaryHlo(HloOpcode::kAbs, operand));
+                          MakeUnaryHlo(HloOpcode::kAbs, operand));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * truncated_fp,
-                     MakeUnaryHlo(HloOpcode::kFloor, operand_abs));
+                          MakeUnaryHlo(HloOpcode::kFloor, operand_abs));
     ABSL_ASSIGN_OR_RETURN(
         HloInstruction * fractional,
         MakeBinaryHlo(HloOpcode::kSubtract, operand_abs, truncated_fp));
@@ -116,16 +117,16 @@ absl::Status DecomposeStochasticConvert(HloComputation* comp,
         (static_cast<uint64_t>(1) + ~static_cast<uint64_t>(1))
         << (to_bits - 1));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * is_min,
-                     MakeCompareHlo(Comparison::Direction::kLe, operand,
-                                    MakeScalarLike(operand, min)));
+                          MakeCompareHlo(Comparison::Direction::kLe, operand,
+                                         MakeScalarLike(operand, min)));
     ABSL_ASSIGN_OR_RETURN(
         result, MakeSelectHlo(is_min, MakeScalarLike(result, min), result));
     // Deals with max values
     auto max =
         static_cast<int64_t>((static_cast<uint64_t>(1) << (to_bits - 1)) - 1);
     ABSL_ASSIGN_OR_RETURN(HloInstruction * is_max,
-                     MakeCompareHlo(Comparison::Direction::kGe, operand,
-                                    MakeScalarLike(operand, max)));
+                          MakeCompareHlo(Comparison::Direction::kGe, operand,
+                                         MakeScalarLike(operand, max)));
     ABSL_ASSIGN_OR_RETURN(
         result, MakeSelectHlo(is_max, MakeScalarLike(result, max), result));
 
@@ -136,8 +137,7 @@ absl::Status DecomposeStochasticConvert(HloComputation* comp,
 
   // TODO(b/232442915): Add support for converting to floats.
   return Internal("Unsupported stochastic convert: from %s to %s",
-                       PrimitiveType_Name(from_type),
-                       PrimitiveType_Name(to_type));
+                  PrimitiveType_Name(from_type), PrimitiveType_Name(to_type));
 }
 
 absl::StatusOr<bool> StochasticConvertDecomposer::RunImpl(
@@ -151,7 +151,8 @@ absl::StatusOr<bool> StochasticConvertDecomposer::RunImpl(
       if (instruction->opcode() != HloOpcode::kStochasticConvert) {
         continue;
       }
-      ABSL_RETURN_IF_ERROR(DecomposeStochasticConvert(computation, instruction));
+      ABSL_RETURN_IF_ERROR(
+          DecomposeStochasticConvert(computation, instruction));
       changed = true;
     }
   }

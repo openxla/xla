@@ -18,16 +18,16 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/subprocess/subprocess_profiling_session.h"
 #include "xla/backends/profiler/subprocess/subprocess_registry.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/profiler/utils/profiler_options_util.h"
-#include "tsl/profiler/lib/profiler_factory.h"
-#include "tsl/profiler/lib/profiler_interface.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

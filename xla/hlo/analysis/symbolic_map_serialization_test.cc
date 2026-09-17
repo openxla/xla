@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/analysis/symbolic_map_serialization.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/base/log_severity.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/strings/ascii.h"

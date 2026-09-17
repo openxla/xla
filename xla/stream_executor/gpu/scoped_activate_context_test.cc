@@ -17,10 +17,11 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "xla/stream_executor/gpu/mock_context.h"
+
 #include "tsl/platform/env.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/threadpool.h"
+#include "xla/stream_executor/gpu/mock_context.h"
 
 using testing::Return;
 
@@ -34,7 +35,9 @@ TEST(ScopedActivateContextTest, SetsActiveOnceForSameContextWorks) {
   EXPECT_CALL(context, IsActive).WillRepeatedly(Return(true));
   {
     ScopedActivateContext scoped_activate_context1(&context);
-    { ScopedActivateContext scoped_activate_context2(&context); }
+    {
+      ScopedActivateContext scoped_activate_context2(&context);
+    }
   }
 }
 
@@ -49,7 +52,9 @@ TEST(ScopedActivateContextTest, TwoDifferentContextsWorks) {
   EXPECT_CALL(context2, IsActive).WillRepeatedly(Return(true));
   {
     ScopedActivateContext scoped_activate_context1(&context1);
-    { ScopedActivateContext scoped_activate_context2(&context2); }
+    {
+      ScopedActivateContext scoped_activate_context2(&context2);
+    }
   }
 }
 

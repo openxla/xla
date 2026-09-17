@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/util/embedded_constant_buffers.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/TargetSelect.h"

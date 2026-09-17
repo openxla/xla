@@ -12,10 +12,10 @@
 
 #include "xla/tsl/util/safe_reinterpret_cast.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
-
-#include <gtest/gtest.h>
 
 namespace tsl {
 namespace {

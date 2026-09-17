@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/service/pattern_matcher.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <sstream>
 #include <string>
 
-#include <gmock/gmock.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/test.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -34,7 +36,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

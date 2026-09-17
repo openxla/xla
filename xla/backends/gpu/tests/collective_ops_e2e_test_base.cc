@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
 
+#include <gmock/gmock.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -96,15 +97,15 @@ CollectiveOpsE2ETestBase::ExecuteReplicated(
   ExecutionResult execution_result;
 
   ABSL_ASSIGN_OR_RETURN(execution_result.executable,
-                   CreateExecutable(std::move(module), run_hlo_passes));
+                        CreateExecutable(std::move(module), run_hlo_passes));
 
   ABSL_ASSIGN_OR_RETURN(
       execution_result.optimized_module,
       test_runner().HloModuleFromWrapped(execution_result.executable.get()));
 
   ABSL_ASSIGN_OR_RETURN(execution_result.results,
-                   ExecuteReplicated(execution_result.executable.get(),
-                                     arguments, run_hlo_passes));
+                        ExecuteReplicated(execution_result.executable.get(),
+                                          arguments, run_hlo_passes));
 
   return execution_result;
 }
@@ -114,7 +115,7 @@ CollectiveOpsE2ETestBase::ExecuteReplicated(
     OpaqueExecutable* executable,
     const std::vector<std::vector<Literal*>>& arguments, bool run_hlo_passes) {
   ABSL_ASSIGN_OR_RETURN(const HloModule* module,
-                   test_runner().HloModuleFromWrapped(executable));
+                        test_runner().HloModuleFromWrapped(executable));
 
   int64_t num_replicas = module->config().replica_count();
   int64_t num_partitions = module->config().num_partitions();
@@ -185,7 +186,7 @@ CollectiveOpsWithFlagsBase::CreateExecutable(absl::string_view hlo_string,
       GetModuleConfigForTest(/*replica_count=*/num_replicas);
 
   ABSL_ASSIGN_OR_RETURN(auto module,
-                   ParseAndReturnVerifiedModule(hlo_string, config));
+                        ParseAndReturnVerifiedModule(hlo_string, config));
   return test_runner().CreateExecutable(std::move(module),
                                         /*run_hlo_passes=*/true);
 }

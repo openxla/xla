@@ -141,7 +141,6 @@ class ConfigAssignerPass : public HloModulePass {
   bool enable_sharding_ = false;
 };
 
-
 }  // namespace gpu
 }  // namespace xla
 

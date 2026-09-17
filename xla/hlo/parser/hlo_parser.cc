@@ -30,6 +30,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
@@ -51,7 +52,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "google/protobuf/descriptor.h"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
@@ -7580,11 +7580,15 @@ bool HloParserImpl::ParseShape(Shape* result,
       return false;
     }
     if (layout.minor_to_major().size() != result->dimensions().size()) {
-      return Error(
-          lexer_.GetLoc(),
-          StrFormat("Dimensions size is %ld, but minor to major size is %ld.",
-                    result->dimensions().size(),
-                    layout.minor_to_major().size()));
+      if (layout.minor_to_major().empty() && layout.memory_space() != 0) {
+        // AUTO layout with non-default memory space.
+      } else {
+        return Error(
+            lexer_.GetLoc(),
+            StrFormat("Dimensions size is %ld, but minor to major size is %ld.",
+                      result->dimensions().size(),
+                      layout.minor_to_major().size()));
+      }
     }
     if (layout.has_physical_shape()) {
       return Error(

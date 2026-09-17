@@ -32,6 +32,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/status.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
@@ -40,11 +45,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

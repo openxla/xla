@@ -28,12 +28,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"     // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_emitter.h"
 #include "xla/codegen/kernel_source.h"
@@ -52,7 +52,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal.h"
 #include "xla/python/nb_absl_inlined_vector.h"  // IWYU pragma: keep
-#include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/python/nb_absl_span.h"            // IWYU pragma: keep
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"

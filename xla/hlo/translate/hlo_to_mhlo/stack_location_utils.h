@@ -25,8 +25,8 @@ namespace mlir {
 namespace hlo {
 // Construct MLIR location from frame index.
 // Returns unknown location if frame is not presented.
-mlir::Location GetLocationFromFrameIndex(int frame_id, mlir::Builder &builder,
-                                         const xla::HloModule *hlo_module);
+mlir::Location GetLocationFromFrameIndex(int frame_id, mlir::Builder& builder,
+                                         const xla::HloModule* hlo_module);
 
 }  // namespace hlo
 }  // namespace mlir

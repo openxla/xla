@@ -19,9 +19,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"

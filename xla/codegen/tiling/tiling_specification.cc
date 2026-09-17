@@ -79,7 +79,7 @@ absl::StatusOr<FlatTiling> Tiling::Flatten(
   flat_tile_sizes.reserve(tiling_specification.num_parameters());
   for (const auto& mapping : tiling_specification.parameter_mapping()) {
     ABSL_ASSIGN_OR_RETURN(absl::Span<const int64_t> tile_sizes,
-                     TileSizesForInstruction(mapping.instruction));
+                          TileSizesForInstruction(mapping.instruction));
     if (tile_sizes.size() != mapping.num_tiling_parameters) {
       return absl::FailedPreconditionError(
           absl::StrCat("Instruction ", mapping.instruction->ToString(),

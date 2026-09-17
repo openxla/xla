@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
+#include "tsl/platform/stacktrace_handler.h"
 #include "xla/backends/cpu/benchmarks/aot_benchmark_helper.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/stacktrace_handler.h"
 
 ABSL_FLAG(std::string, shapes, "{(f32[1024,1024], s32[1,0])}",
           "List of shapes encoding reductions (ab)using the shape parser.");

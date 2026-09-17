@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/memory_space_propagation.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"

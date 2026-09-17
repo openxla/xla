@@ -332,15 +332,15 @@ absl::StatusOr<BufferAllocations> GpuExecutableVaRemapAllocator::
           allocation.index());
     }
     ABSL_ASSIGN_OR_RETURN(uint64_t va_offset,
-                     remapping_->GetReservationOffset(allocation.index()));
+                          remapping_->GetReservationOffset(allocation.index()));
     ABSL_ASSIGN_OR_RETURN(uint64_t mapping_size,
-                     remapping_->GetMappingSize(allocation.index()));
+                          remapping_->GetMappingSize(allocation.index()));
     // Map() reactivates a matching stale mapping from the previous execution,
     // so an input/output that keeps its address across executions performs no
     // VMM driver calls here.
     ABSL_RETURN_IF_ERROR(vmm_allocator_->Map(device_ordinal, buffer,
-                                        remapping_->va_reservation.get(),
-                                        va_offset, mapping_size));
+                                             remapping_->va_reservation.get(),
+                                             va_offset, mapping_size));
     RecordStepAlias(device_ordinal, va_offset, mapping_size);
     execution_allocations.GetMutableDeviceAddress(index) =
         ReservationSlice(va_offset, mapping_size);
@@ -353,7 +353,7 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::AllocateBuffer(
     int device_ordinal, const BufferAllocation& allocation,
     int64_t buffer_size) {
   ABSL_ASSIGN_OR_RETURN(uint64_t va_offset,
-                   remapping_->GetReservationOffset(allocation.index()));
+                        remapping_->GetReservationOffset(allocation.index()));
   uint64_t mapping_size = RoundUpToGranularity(
       static_cast<uint64_t>(buffer_size), remapping_->granularity);
   return vmm_allocator_->Allocate(
@@ -371,8 +371,9 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::AllocateTransientBuffer(
     return ExecutionScope::AllocateTransientBuffer(
         device_ordinal, allocation, buffer_size, memory_allocator);
   }
-  ABSL_ASSIGN_OR_RETURN(se::ScopedDeviceAddress<uint8_t> buffer,
-                   AllocateBuffer(device_ordinal, allocation, buffer_size));
+  ABSL_ASSIGN_OR_RETURN(
+      se::ScopedDeviceAddress<uint8_t> buffer,
+      AllocateBuffer(device_ordinal, allocation, buffer_size));
   return buffer.Release();
 }
 
@@ -638,7 +639,7 @@ GpuExecutableVaRemapAllocator::CreateExecutionScope(
   }
 
   ABSL_ASSIGN_OR_RETURN(se::Stream * allocator_stream,
-                   vmm_allocator->GetStream(device_ordinal));
+                        vmm_allocator->GetStream(device_ordinal));
   if (allocator_stream != run_options->stream()) {
     return Internal(
         "Command buffer VA remapping requires the VMM allocator stream "

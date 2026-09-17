@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tools/cost_model/gpu_bandwidth_benchmark.h"
 
-#include <vector>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <vector>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 

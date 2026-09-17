@@ -16,10 +16,11 @@ limitations under the License.
 #include "xla/pjrt/semaphore.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/synchronization/notification.h"
-#include "xla/hlo/testlib/test.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/threadpool.h"
+#include "xla/hlo/testlib/test.h"
 
 namespace xla {
 namespace {
@@ -47,8 +48,12 @@ TEST(SemaphoreTest, UnthreadedTests) {
   {
     auto a = semaphore.ScopedAcquire(1);
     EXPECT_EQ(a.amount(), 1);
-    { auto b = semaphore.ScopedAcquire(1); }
-    { auto c = semaphore.ScopedAcquire(1); }
+    {
+      auto b = semaphore.ScopedAcquire(1);
+    }
+    {
+      auto c = semaphore.ScopedAcquire(1);
+    }
   }
   {
     auto d = semaphore.ScopedAcquire(2);

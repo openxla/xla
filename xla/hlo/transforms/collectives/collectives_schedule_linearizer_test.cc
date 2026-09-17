@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/collectives_schedule_linearizer.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -195,13 +196,13 @@ ENTRY entry {
   InsertCollectivesSchedule(module.get());
   EXPECT_EQ(CountControlEdges(*module->entry_computation()), 1);
 
-  const HloInstruction *root = module->entry_computation()->root_instruction();
-  const HloInstruction *ard0 = root->operand(0);
-  const HloInstruction *ard1 = root->operand(1);
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* ard0 = root->operand(0);
+  const HloInstruction* ard1 = root->operand(1);
   EXPECT_EQ(ard0->opcode(), HloOpcode::kAllReduceDone);
   EXPECT_EQ(ard1->opcode(), HloOpcode::kAllReduceDone);
 
-  const HloInstruction *ars1 = ard1->operand(0);
+  const HloInstruction* ars1 = ard1->operand(0);
   EXPECT_EQ(ars1->opcode(), HloOpcode::kAllReduceStart);
 
   // verify control dependency is inserted from all-reduce-done to
@@ -237,27 +238,27 @@ ENTRY entry {
   InsertCollectivesSchedule(module.get());
   EXPECT_EQ(CountControlEdges(*module->entry_computation()), 2);
 
-  const HloInstruction *root = module->entry_computation()->root_instruction();
-  const HloInstruction *t = root->operand(0);   // t = add(c1, c2)
-  const HloInstruction *c3 = root->operand(1);  // c3 = all-reduce(i2)...
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* t = root->operand(0);   // t = add(c1, c2)
+  const HloInstruction* c3 = root->operand(1);  // c3 = all-reduce(i2)...
   EXPECT_EQ(t->opcode(), HloOpcode::kAdd);
   EXPECT_EQ(c3->opcode(), HloOpcode::kAllReduce);
 
-  const HloInstruction *c1 = t->operand(0);
-  const HloInstruction *c2 = t->operand(1);
+  const HloInstruction* c1 = t->operand(0);
+  const HloInstruction* c2 = t->operand(1);
   EXPECT_EQ(c1->opcode(), HloOpcode::kAllReduce);
   EXPECT_EQ(c2->opcode(), HloOpcode::kAllReduce);
 
   bool found_i0 = false;
   // Verify that i0 is before c1.
-  for (const auto &instruction : module->entry_computation()->instructions()) {
+  for (const auto& instruction : module->entry_computation()->instructions()) {
     if (instruction->name() == "c1") EXPECT_TRUE(found_i0);
     if (instruction->name() == "i0") found_i0 = true;
   }
   // Calling MakeInstructionPostOrder() again to verify idempotence.
   auto post_order = module->entry_computation()->MakeInstructionPostOrder();
   found_i0 = false;
-  for (HloInstruction *instruction : post_order) {
+  for (HloInstruction* instruction : post_order) {
     if (instruction->name() == "c1") EXPECT_TRUE(found_i0);
     if (instruction->name() == "i0") found_i0 = true;
   }

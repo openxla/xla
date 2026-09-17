@@ -16,8 +16,8 @@ limitations under the License.
 #include <cassert>
 #include <utility>
 
-#include "mhlo/IR/hlo_ops.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
 #include "mlir/Dialect/Math/IR/Math.h"

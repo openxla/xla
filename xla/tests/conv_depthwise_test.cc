@@ -92,17 +92,16 @@ TEST_P(DepthwiseConvolution2DTest, DoIt) {
   const DepthwiseConvolution2DSpec& spec = ::testing::get<0>(GetParam());
   bool use_bfloat16 = ::testing::get<1>(GetParam());
 
-
   const std::string hlo_text =
       BuildHloTextDepthwiseConvolution2D(spec, use_bfloat16);
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{0.01, 0.01},
-                            [](HloModule* module) -> absl::Status {
-                              BFloat16MixedPrecisionRemoval remover;
-                              ABSL_RETURN_IF_ERROR(remover.Run(module).status());
-                              Despecializer despecializer;
-                              return despecializer.Run(module).status();
-                            }));
+  EXPECT_TRUE(RunAndCompare(
+      hlo_text, ErrorSpec{0.01, 0.01}, [](HloModule* module) -> absl::Status {
+        BFloat16MixedPrecisionRemoval remover;
+        ABSL_RETURN_IF_ERROR(remover.Run(module).status());
+        Despecializer despecializer;
+        return despecializer.Run(module).status();
+      }));
 }
 
 INSTANTIATE_TEST_CASE_P(

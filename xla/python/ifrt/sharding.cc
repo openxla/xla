@@ -751,7 +751,7 @@ absl::StatusOr<std::vector<IndexDomain>> ShardingParamSharding::IndexDomains(
     SingleDeviceShardSemantics single_device_shard_semantics) const {
   DCHECK(this);
   ABSL_ASSIGN_OR_RETURN(std::vector<IndexDomain> index_domains,
-                   sharding_spec_->IndexDomains(shape));
+                        sharding_spec_->IndexDomains(shape));
   DCHECK_EQ(index_domains.size(), devices_->size());
   if (single_device_shard_semantics == SingleDeviceShardSemantics::kAllShards) {
     return index_domains;

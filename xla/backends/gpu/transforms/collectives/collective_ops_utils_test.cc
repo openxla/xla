@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 
-#include <optional>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <optional>
+
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

@@ -133,7 +133,7 @@ absl::StatusOr<bool> HloModuleSplitter::RunImpl(
         std::vector<HloInstruction*> operands;
         for (HloInstruction* operand : inst->operands()) {
           ABSL_ASSIGN_OR_RETURN(HloInstruction * copy,
-                           CreateBoundaryCopy(comp, operand));
+                                CreateBoundaryCopy(comp, operand));
           operands.push_back(copy);
         }
 
@@ -152,8 +152,8 @@ absl::StatusOr<bool> HloModuleSplitter::RunImpl(
         ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(inst, custom_call));
         changed = true;
       }
-      }
     }
+  }
 
   return changed;
 }

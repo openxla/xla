@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/python/ifrt_proxy/server/ifrt_backend_user_context.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "xla/python/ifrt/user_context.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"

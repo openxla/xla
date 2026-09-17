@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/while_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -77,8 +78,9 @@ struct DummyThunk : public Thunk {
   BufferUses buffer_uses() const override { return {}; }
   static absl::StatusOr<std::unique_ptr<DummyThunk>> FromProto(
       const ThunkProto& thunk_proto, Thunk::Kind kind) {
-    ABSL_ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
-                     Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
+    ABSL_ASSIGN_OR_RETURN(
+        Thunk::ThunkInfo thunk_info,
+        Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
     return std::make_unique<DummyThunk>(kind, std::move(thunk_info));
   }
 
@@ -217,12 +219,13 @@ class IterationLoggerThunk : public Thunk {
 class KnownTripCountWhileThunkTest : public HloTestBase {
  protected:
   absl::Status ExecuteThunk(Thunk& thunk) {
-    ABSL_ASSIGN_OR_RETURN(auto name, PlatformUtil::CanonicalPlatformName("gpu"));
+    ABSL_ASSIGN_OR_RETURN(auto name,
+                          PlatformUtil::CanonicalPlatformName("gpu"));
     ABSL_ASSIGN_OR_RETURN(auto* platform,
-                     se::PlatformManager::PlatformWithName(name));
+                          se::PlatformManager::PlatformWithName(name));
     ABSL_ASSIGN_OR_RETURN(auto* executor, platform->ExecutorForDevice(0));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                     executor->CreateStream());
+                          executor->CreateStream());
     stream_executor::StreamExecutorAddressAllocator allocator(executor);
     Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
         ServiceExecutableRunOptions(), BufferAllocations({}, 0, &allocator),
@@ -393,9 +396,10 @@ TEST(WhileThunkTest, RecordCreatesAndUpdatesCommandBufferWhile) {
             std::vector<const se::CommandBuffer::Command*> body_commands,
             create_body(body_command_buffer->command_buffer.get(),
                         /*dependencies=*/{}));
-        ABSL_RETURN_IF_ERROR(create_cond(body_command_buffer->command_buffer.get(),
-                                    body_commands)
-                            .status());
+        ABSL_RETURN_IF_ERROR(
+            create_cond(body_command_buffer->command_buffer.get(),
+                        body_commands)
+                .status());
         ABSL_RETURN_IF_ERROR(body_command_buffer->command_buffer->Finalize());
         return &while_se_command;
       });
@@ -417,23 +421,26 @@ TEST(WhileThunkTest, RecordCreatesAndUpdatesCommandBufferWhile) {
       command_buffer,
       UpdateWhile(&while_se_command, ::testing::A<se::DeviceAddress<bool>>(),
                   ::testing::_, ::testing::_))
-      .WillOnce([&](const se::CommandBuffer::Command* command,
-                    se::DeviceAddress<bool>,
-                    se::CommandBuffer::UpdateCommands update_cond,
-                    se::CommandBuffer::UpdateCommands update_body)
-                    -> absl::Status {
-        ++update_while_calls;
-        if (command != &while_se_command) {
-          return absl::InternalError("unexpected while command");
-        }
+      .WillOnce(
+          [&](const se::CommandBuffer::Command* command,
+              se::DeviceAddress<bool>,
+              se::CommandBuffer::UpdateCommands update_cond,
+              se::CommandBuffer::UpdateCommands update_body) -> absl::Status {
+            ++update_while_calls;
+            if (command != &while_se_command) {
+              return absl::InternalError("unexpected while command");
+            }
 
-        ABSL_RETURN_IF_ERROR(update_cond(&command_buffer));
-        ABSL_RETURN_IF_ERROR(body_command_buffer->command_buffer->Update());
-        ABSL_RETURN_IF_ERROR(update_body(body_command_buffer->command_buffer.get()));
-        ABSL_RETURN_IF_ERROR(update_cond(body_command_buffer->command_buffer.get()));
-        ABSL_RETURN_IF_ERROR(body_command_buffer->command_buffer->Finalize());
-        return absl::OkStatus();
-      });
+            ABSL_RETURN_IF_ERROR(update_cond(&command_buffer));
+            ABSL_RETURN_IF_ERROR(body_command_buffer->command_buffer->Update());
+            ABSL_RETURN_IF_ERROR(
+                update_body(body_command_buffer->command_buffer.get()));
+            ABSL_RETURN_IF_ERROR(
+                update_cond(body_command_buffer->command_buffer.get()));
+            ABSL_RETURN_IF_ERROR(
+                body_command_buffer->command_buffer->Finalize());
+            return absl::OkStatus();
+          });
 
   ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_while_command,

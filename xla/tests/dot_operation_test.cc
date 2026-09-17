@@ -18,13 +18,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
+#include "Eigen/Core"
 #include "absl/log/check.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/client/client_library.h"
@@ -45,10 +45,10 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
-#include "tsl/platform/ml_dtypes.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -63,19 +63,12 @@ class DotOperationTest : public ClientLibraryTestRunnerMixin<
   ErrorSpec error_spec_{0.0001, 1e-5};
 };
 
-using TypesF16F32 = ::testing::Types<
-    Eigen::half,
-    float>;
+using TypesF16F32 = ::testing::Types<Eigen::half, float>;
 
-using TypesF16F32F64 = ::testing::Types<
-    Eigen::half,
-    double,
-    float>;
+using TypesF16F32F64 = ::testing::Types<Eigen::half, double, float>;
 
-using TypesF16F32F64CF64 = ::testing::Types<
-    Eigen::half,
-    double, complex64,
-    float>;
+using TypesF16F32F64CF64 =
+    ::testing::Types<Eigen::half, double, complex64, float>;
 
 #if GOOGLE_CUDA
 using TypesF8 = ::testing::Types<tsl::float8_e4m3fn>;

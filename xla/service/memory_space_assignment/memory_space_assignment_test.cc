@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -29,8 +32,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -89,7 +91,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace memory_space_assignment {
@@ -13647,37 +13648,40 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
 
     // Update schedule_to_class with the instructions we care about.
     int slices_start_after_index;
-    ABSL_ASSIGN_OR_RETURN(slices_start_after_index,
-                     FindScheduleIndexOfInstruction(
-                         entry_schedule, slices_start_after_instruction_name,
-                         InstructionClass::kStartAfterNonCopy));
+    ABSL_ASSIGN_OR_RETURN(
+        slices_start_after_index,
+        FindScheduleIndexOfInstruction(entry_schedule,
+                                       slices_start_after_instruction_name,
+                                       InstructionClass::kStartAfterNonCopy));
     schedule_to_class[slices_start_after_index] =
         InstructionClass::kStartAfterNonCopy;
     int slices_done_before_index;
-    ABSL_ASSIGN_OR_RETURN(slices_done_before_index,
-                     FindScheduleIndexOfInstruction(
-                         entry_schedule, slices_done_before_instruction_name,
-                         InstructionClass::kDoneBeforeNonCopy));
+    ABSL_ASSIGN_OR_RETURN(
+        slices_done_before_index,
+        FindScheduleIndexOfInstruction(entry_schedule,
+                                       slices_done_before_instruction_name,
+                                       InstructionClass::kDoneBeforeNonCopy));
     schedule_to_class[slices_done_before_index] =
         InstructionClass::kDoneBeforeNonCopy;
     int concat_bitcast_index;
     ABSL_ASSIGN_OR_RETURN(concat_bitcast_index,
-                     FindScheduleIndexOfInstruction(
-                         entry_schedule, concat_bitcast->name(),
-                         InstructionClass::kRelatedConcatBitcast));
+                          FindScheduleIndexOfInstruction(
+                              entry_schedule, concat_bitcast->name(),
+                              InstructionClass::kRelatedConcatBitcast));
     schedule_to_class[concat_bitcast_index] =
         InstructionClass::kRelatedConcatBitcast;
     for (const HloInstruction* slice : concat_bitcast->operands()) {
       int done_index;
-      ABSL_ASSIGN_OR_RETURN(done_index, FindScheduleIndexOfInstruction(
-                                       entry_schedule, slice->name(),
-                                       InstructionClass::kRelatedSliceDone));
+      ABSL_ASSIGN_OR_RETURN(
+          done_index,
+          FindScheduleIndexOfInstruction(entry_schedule, slice->name(),
+                                         InstructionClass::kRelatedSliceDone));
       schedule_to_class[done_index] = InstructionClass::kRelatedSliceDone;
       int start_index;
       ABSL_ASSIGN_OR_RETURN(start_index,
-                       FindScheduleIndexOfInstruction(
-                           entry_schedule, slice->operand(0)->name(),
-                           InstructionClass::kRelatedSliceStart));
+                            FindScheduleIndexOfInstruction(
+                                entry_schedule, slice->operand(0)->name(),
+                                InstructionClass::kRelatedSliceStart));
       schedule_to_class[start_index] = InstructionClass::kRelatedSliceStart;
     }
 
@@ -14797,7 +14801,7 @@ ENTRY main {
           absl::string_view hlo_text) -> absl::StatusOr<ModuleAndAssignments> {
     ModuleAndAssignments module_and_assignments;
     ABSL_ASSIGN_OR_RETURN(module_and_assignments.module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     VLOG(1) << "Original module:\n"
             << module_and_assignments.module->ToString(
                    HloPrintOptions::ShortParsable());
@@ -19742,6 +19746,70 @@ ENTRY %Entry (k_base: bf16[4,384,128], o_base: bf16[4,384,128], update_slice: bf
       HloPosition{root_tuple, {2, 0, 1}}, *alias_analysis));
   EXPECT_FALSE(IsAsyncPipelinedWhileAlternateMemoryPosition(
       HloPosition{root_tuple, {2, 1}}, *alias_analysis));
+}
+
+// Test subclass of MsaAlgorithm that simulates an empty candidate list from
+// FindChunkCandidates.
+class EmptyChunkCandidatesMsaAlgorithm : public MsaAlgorithm {
+ public:
+  using MsaAlgorithm::FindBestChunkCandidates;
+  using MsaAlgorithm::MsaAlgorithm;
+
+  std::vector<Chunk> FindChunkCandidates(
+      const SlicedBufferInterval& sliced_buffer_interval,
+      int64_t preferred_offset) const override {
+    return {};
+  }
+};
+
+// Tests that FindBestChunkCandidates handles empty chunk candidates safely
+// without dereferencing past-the-end iterators (preventing ASAN container
+// overflows).
+TEST_F(MemorySpaceAssignmentTest, FindBestChunkCandidatesEmptyChunkCandidates) {
+  auto module = CreateNewVerifiedModule();
+  HloComputation::Builder builder(TestName());
+  Shape shape = ShapeUtil::MakeShape(F32, {4});
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  HloComputation* computation = module->AddEntryComputation(builder.Build());
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(computation, {p0});
+  ASSERT_OK(module->set_schedule(schedule));
+
+  AllocationSequence allocations;
+  Options options = DefaultMemorySpaceOptions();
+  ASSERT_OK_AND_ASSIGN(auto alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(auto hlo_live_range,
+                       HloLiveRange::Run(module->schedule(), *alias_analysis,
+                                         module->entry_computation()));
+
+  EmptyChunkCandidatesMsaAlgorithm algorithm(module.get(), &allocations,
+                                             options, *alias_analysis,
+                                             &alias_info_, *hlo_live_range);
+
+  AllocationRequest request;
+  request.end_time = 10;
+  AliasedOffset preferred_offset{/*offset=*/16};
+
+  GlobalDecreasingSizeBestFitHeap<HloValue>::BufferInterval buffer_interval;
+  buffer_interval.buffer = nullptr;
+  buffer_interval.size = 16;
+  buffer_interval.start = 0;
+  buffer_interval.end = 10;
+  buffer_interval.need_allocation = true;
+
+  using SlicedBufferInterval =
+      GlobalDecreasingSizeBestFitHeap<HloValue>::SlicedBufferInterval;
+  auto sliced_interval =
+      SlicedBufferInterval::CreateMutableInterval(buffer_interval);
+
+  // Without the bounds check in FindBestChunkCandidates, an empty
+  // chunk_candidates vector results in absl::c_min_element dereferencing an
+  // end() iterator, triggering an AddressSanitizer container-overflow/crash.
+  std::vector<Chunk> result = algorithm.FindBestChunkCandidates(
+      request, &preferred_offset, &sliced_interval);
+  EXPECT_THAT(result, ::testing::IsEmpty());
 }
 
 }  // namespace

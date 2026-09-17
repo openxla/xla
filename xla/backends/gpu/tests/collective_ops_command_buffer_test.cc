@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -20,12 +22,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -41,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {

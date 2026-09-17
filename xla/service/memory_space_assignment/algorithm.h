@@ -492,6 +492,27 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // allocations to the largest contiguous open space available.
   void ExtendScopedAlternateMemoryAllocations();
 
+  // The same as FindBestChunkCandidate() but allocates the request in slices.
+  // The ith returned chunk should be allocated at slice time i.
+  std::vector<Chunk> FindBestChunkCandidates(
+      const AllocationRequest& request, const AliasedOffset* preferred_offset,
+      SlicedBufferInterval* alternate_mem_interval) const;
+
+  // Virtual wrapper for FindChunkCandidates to allow testing subclasses to
+  // simulate candidate placement results.
+  virtual std::vector<Chunk> FindChunkCandidates(
+      const SlicedBufferInterval& sliced_buffer_interval,
+      int64_t preferred_offset) const {
+    return GlobalDecreasingSizeBestFitHeap<HloValue>::FindChunkCandidates(
+        sliced_buffer_interval, preferred_offset);
+  }
+
+  // Convenience overload for FindChunkCandidates without a preferred offset.
+  std::vector<Chunk> FindChunkCandidates(
+      const SlicedBufferInterval& sliced_buffer_interval) const {
+    return FindChunkCandidates(sliced_buffer_interval, -1);
+  }
+
  private:
   // Pins all scalar buffers in alternate memory. If a buffer has DMA like
   // uses that can be asyncified, we need to make sure the buffer is live until
@@ -1086,23 +1107,37 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
                                           const Allocation& aliased_allocation,
                                           AliasedOffset* offset);
 
-  // Returns true if a buffer is allocated in the alternate memory space
-  // throughout the live range of a conditional and used in the conditional.
-  // The uses inside the conditional read the buffer from mirrored
-  // allocation.
-  bool NeedsMirroredAllocation(
+  // Returns true if an `allocation_value` satisfies a set of conditions
+  // indicating that nested allocation values should reuse the alternate memory
+  // allocated for `allocation_value` between `previous_use` and `current_use`,
+  // by deploying a MirroredAllocation.
+  bool ShouldBeMirrored(
       const AllocationValue& allocation_value,
       const AllocationValue::Use& current_use,
       // We check if the previous use is a conditional operand.
       const AllocationValue::Use* previous_use) const;
 
-  // If a buffer is allocated in the alternate memory space throughout the live
-  // range of a conditional, the uses of the buffer inside the conditional
-  // should read the buffer from a mirrored allocation.
+  // Does the work of ShouldBeMirrored for nested conditionals.
+  bool ShouldBeMirroredByNestedConditionals(
+      const AllocationValue& allocation_value,
+      const AllocationValue::Use& current_use,
+      const AllocationValue::Use* previous_use) const;
+
+  // If `allocation_value` ShouldBeMirrored, create all necessary
+  // MirroredAllocations.
   void CreateMirroredAllocations(
       AllocationValue& allocation_value,
       const AllocationValue::Use& current_use,
       // We check if the previous use is a conditional operand.
+      const AllocationValue::Use* previous_use,
+      absl::Span<AllocationValue> allocation_values,
+      absl::flat_hash_set<AllocationValue*>&
+          already_processed_allocation_values_inside_a_conditional);
+
+  // Does the work of CreateMirroredAllocations for nested conditionals.
+  void CreateMirroredAllocationsForNestedConditionals(
+      AllocationValue& allocation_value,
+      const AllocationValue::Use& current_use,
       const AllocationValue::Use* previous_use,
       absl::Span<AllocationValue> allocation_values,
       // A set of allocation values inside the conditional, that may get a
@@ -1310,11 +1345,6 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   std::optional<Chunk> FindBestChunkCandidate(
       const AllocationRequest& request, const AliasedOffset* preferred_offset,
       MsaBufferInterval* alternate_mem_interval) const;
-  // The same as FindBestChunkCandidate() but allocates the request in slices.
-  // The ith returned chunk should be allocated at slice time i.
-  std::vector<Chunk> FindBestChunkCandidates(
-      const AllocationRequest& request, const AliasedOffset* preferred_offset,
-      SlicedBufferInterval* alternate_mem_interval) const;
 
   // Returns the corrected schedule time of an HloUse. The corrected time is
   // equivalent to the actual time of the use instructions for all instructions

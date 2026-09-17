@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"      // IWYU pragma: keep
 #include "xla/service/xla_transform.h"
 
 namespace xla {

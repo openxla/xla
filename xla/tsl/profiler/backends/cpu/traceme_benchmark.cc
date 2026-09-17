@@ -29,12 +29,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "benchmark/benchmark.h"
-#include "xla/tsl/profiler/utils/trace_filter_utils.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/profiler/utils/trace_filter_utils.h"
 
 namespace tsl {
 namespace profiler {

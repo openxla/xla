@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/hash/hash_testing.h"
 #include "xla/python/ifrt/index.h"
 #include "xla/python/ifrt/index_domain.pb.h"

@@ -218,11 +218,12 @@ absl::StatusOr<TmaDescriptor> TmaDescriptor::Create(
   }
 
   ABSL_RETURN_IF_ERROR(ValidateRank(global_dims, global_strides, box_dims,
-                               element_strides, interleave));
+                                    element_strides, interleave));
   ABSL_RETURN_IF_ERROR(ValidateGlobalDims(global_dims));
   ABSL_RETURN_IF_ERROR(
       ValidateGlobalStrides(global_dims, global_strides, interleave));
-  ABSL_RETURN_IF_ERROR(ValidateBoxDims(box_dims, element_byte_width, interleave));
+  ABSL_RETURN_IF_ERROR(
+      ValidateBoxDims(box_dims, element_byte_width, interleave));
   ABSL_RETURN_IF_ERROR(ValidateElementStrides(element_strides));
   ABSL_RETURN_IF_ERROR(ValidateInterleaveAndSwizzleCombos(
       interleave, swizzle, box_dims, element_byte_width));
@@ -454,7 +455,7 @@ absl::StatusOr<TmaMetadata> TmaMetadata::FromProto(
   TmaMetadata metadata;
   for (const auto& [arg_index, tma_info] : proto.arg_index_to_tma_info()) {
     ABSL_ASSIGN_OR_RETURN(TmaDescriptor descriptor,
-                     TmaDescriptor::FromProto(tma_info));
+                          TmaDescriptor::FromProto(tma_info));
     metadata.arg_index_to_tma_info.insert({arg_index, std::move(descriptor)});
   }
   return metadata;
@@ -523,11 +524,11 @@ absl::Status IsTmaCompatible(absl::Span<const int64_t> global_shape,
 
   // Attempt to construct a TmaDescriptor with the default values. If this
   // fails, then TMA is not compatible.
-  ABSL_ASSIGN_OR_RETURN(auto tma_desc,
-                   TmaDescriptor::Create(
-                       normalized_global_shape, global_strides, box_dims,
-                       element_strides, element_byte_size, default_interleave,
-                       default_swizzle, default_l2_promotion));
+  ABSL_ASSIGN_OR_RETURN(
+      auto tma_desc, TmaDescriptor::Create(
+                         normalized_global_shape, global_strides, box_dims,
+                         element_strides, element_byte_size, default_interleave,
+                         default_swizzle, default_l2_promotion));
 
   return absl::OkStatus();
 }

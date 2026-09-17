@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -32,8 +34,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -85,8 +85,8 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
     // equivalent.
     const Shape context_shape = ShapeUtil::MakeScalarShape(U32);
     ABSL_ASSIGN_OR_RETURN(HloInstruction * async_done,
-                     dynamic_slice->parent()->CreateAsyncInstructions(
-                         dynamic_slice, {context_shape}));
+                          dynamic_slice->parent()->CreateAsyncInstructions(
+                              dynamic_slice, {context_shape}));
     VLOG(1) << "DynamicSlice \"" << dynamic_slice->ToString()
             << "\" is slicing from host memory. Converting to async "
             << async_done->ToString();
@@ -141,9 +141,10 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
     // Everything is as expected. Replace this dynamic-update-slice with the
     // async equivalent.
     const Shape context_shape = ShapeUtil::MakeScalarShape(U32);
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * async_done,
-                     dynamic_update_slice->parent()->CreateAsyncInstructions(
-                         dynamic_update_slice, {context_shape}));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * async_done,
+        dynamic_update_slice->parent()->CreateAsyncInstructions(
+            dynamic_update_slice, {context_shape}));
     VLOG(1) << "DynamicUpdateSlice \"" << dynamic_update_slice->ToString()
             << "\" is slicing into host memory space. Converting to async "
             << async_done->ToString();

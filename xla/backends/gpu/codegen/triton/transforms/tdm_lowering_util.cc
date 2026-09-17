@@ -31,10 +31,10 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
-#include "xla/backends/gpu/codegen/triton/lowering_util.h"
-#include "xla/service/decision.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
+#include "xla/backends/gpu/codegen/triton/lowering_util.h"
+#include "xla/service/decision.h"
 
 namespace mlir::triton::xla {
 

@@ -55,6 +55,7 @@ limitations under the License.
 #include "mlir/Support/WalkResult.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "tsl/platform/random.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -77,7 +78,6 @@ limitations under the License.
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/platform/random.h"
 
 namespace xla {
 namespace ifrt {
@@ -175,8 +175,8 @@ IfrtCompileAtomProgramPass::GetXlaCompileOptions(CallOp call_op,
   if (auto compile_options_key =
           call_op->getAttrOfType<mlir::StringAttr>(kIfrtCompileOptionsKey)) {
     ABSL_ASSIGN_OR_RETURN(XlaCompileOptions * compile_options_override,
-                     GetModuleXlaCompileOverrides(compile_options_key,
-                                                  compile_options_overrides_));
+                          GetModuleXlaCompileOverrides(
+                              compile_options_key, compile_options_overrides_));
 
     if (compile_options_override != nullptr) {
       return compile_options_override;
@@ -246,7 +246,7 @@ std::vector<tsl::RCReference<LoadedHostCallback>> GetAtomProgramCallbacks(
 absl::StatusOr<AtomProgramCompileResult> IfrtCompileAtomProgramPass::CompileXla(
     CallOp call_op, mlir::ModuleOp module_op) {
   ABSL_ASSIGN_OR_RETURN(XlaCompileOptions * xla_compile_options,
-                   GetXlaCompileOptions(call_op, module_op));
+                        GetXlaCompileOptions(call_op, module_op));
 
   std::vector<tsl::RCReference<LoadedHostCallback>> filtered_callbacks =
       GetAtomProgramCallbacks(module_op, xla_compile_options);
@@ -262,8 +262,9 @@ absl::StatusOr<AtomProgramCompileResult> IfrtCompileAtomProgramPass::CompileXla(
   //    because MLIR printing takes different paths depending on if a ModuleOp
   //    has a parent or not. Thus, by cloning the module we ensure that the
   //    module's string representation is maintained.
-  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> cloned_module,
-                   CloneModuleIntoContext(module_op, *hlo_program_context_));
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> cloned_module,
+      CloneModuleIntoContext(module_op, *hlo_program_context_));
   auto hlo_program = std::make_unique<HloProgram>(hlo_program_context_,
                                                   std::move(cloned_module));
   AtomProgramCompileResult result;
@@ -294,7 +295,7 @@ IfrtCompileAtomProgramPass::CompileMpmdReshard(mlir::ModuleOp module_op) {
   for (const mlir::Type arg_type : main_func.getArgumentTypes()) {
     IfrtArrayType array_type = GetArrayType(arg_type);
     ABSL_ASSIGN_OR_RETURN(DType dtype,
-                     ToIfrtDType(array_type.getShape().getElementType()));
+                          ToIfrtDType(array_type.getShape().getElementType()));
     dtypes.push_back(std::move(dtype));
     shapes.push_back(Shape(array_type.getShape().getShape()));
     in_arrays_types.push_back(array_type);

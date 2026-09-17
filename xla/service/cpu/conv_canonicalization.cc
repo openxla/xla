@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace cpu {
@@ -146,10 +146,11 @@ absl::StatusOr<bool> ConvCanonicalization::RunImpl(
               hlo->window(), new_dnums, hlo->precision_config()));
 
       // Reshape the output back to the shape of the original convolution.
-      ABSL_RETURN_IF_ERROR(module->entry_computation()->ReplaceWithNewInstruction(
-          hlo, HloInstruction::CreateTranspose(
-                   hlo->shape(), new_conv,
-                   InversePermutation(new_output_dim_order))));
+      ABSL_RETURN_IF_ERROR(
+          module->entry_computation()->ReplaceWithNewInstruction(
+              hlo, HloInstruction::CreateTranspose(
+                       hlo->shape(), new_conv,
+                       InversePermutation(new_output_dim_order))));
       changed = true;
     }
   }

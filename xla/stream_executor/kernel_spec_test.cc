@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_spec.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -241,10 +242,7 @@ TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
       ParseTextProtoOrDie<KernelArgsPackingSpecProto>(
           R"pb(
             kernel_arguments {
-              relocations {
-                kind: KIND_BITS64_ABSOLUTE
-                argument_index: 0
-              }
+              relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
             }
             kernel_arguments { data: "\x34\x12\x00\x00" }
           )pb");
@@ -263,10 +261,7 @@ TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
                 arity: 42
                 kernel_args_packing_spec {
                   kernel_arguments {
-                    relocations {
-                      kind: KIND_BITS64_ABSOLUTE
-                      argument_index: 0
-                    }
+                    relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
                   }
                   kernel_arguments { data: "\x34\x12\x00\x00" }
                 }

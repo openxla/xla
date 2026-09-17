@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/spirv_backend.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <set>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"

@@ -82,8 +82,8 @@ SubprocessCompilationProvider::CompileToRelocatableModule(
     const CudaComputeCapability& cc, absl::string_view ptx,
     const CompilationOptions& options) const {
   ABSL_ASSIGN_OR_RETURN(auto assembly,
-                   CompileHelper(path_to_ptxas_, cc, ptx, options,
-                                 /*compile_to_relocatable_module=*/true));
+                        CompileHelper(path_to_ptxas_, cc, ptx, options,
+                                      /*compile_to_relocatable_module=*/true));
   return RelocatableModule{std::move(assembly.cubin),
                            std::move(assembly.compilation_log)};
 }
@@ -92,6 +92,11 @@ absl::StatusOr<Assembly> SubprocessCompilationProvider::CompileAndLink(
     const CudaComputeCapability& cc,
     absl::Span<const RelocatableModuleOrPtx> inputs,
     const CompilationOptions& options) const {
+  if (path_to_nvlink_.empty()) {
+    return absl::FailedPreconditionError(
+        "Can't link PTX because no nvlink binary was found.");
+  }
+
   std::vector<std::vector<uint8_t>> images;
   for (const auto& input : inputs) {
     if (std::holds_alternative<RelocatableModule>(input)) {
@@ -105,7 +110,8 @@ absl::StatusOr<Assembly> SubprocessCompilationProvider::CompileAndLink(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto cubin, LinkUsingNvlink(path_to_nvlink_, cc, images));
+  ABSL_ASSIGN_OR_RETURN(auto cubin,
+                        LinkUsingNvlink(path_to_nvlink_, cc, images));
   return Assembly{std::move(cubin)};
 }
 

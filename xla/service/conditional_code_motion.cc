@@ -62,37 +62,87 @@ namespace xla {
 
 namespace conditional_opt {
 
+// Updates or preserves the OriginalValue of an instruction whose shape was
+// modified during conditional code motion (e.g. widening conditional branch
+// parameters or tuples), maintaining structural consistency with
+// instruction->shape().
+//
+// `instruction`: The instruction whose shape was modified and whose
+//   OriginalValue needs to be updated.
+// `operand_source`: An optional source instruction from which to inherit the
+//   OriginalValue. For example, when moving an operand into a branch
+//   (MoveOperandIntoBranch), the branch parameter's shape is widened to match
+//   the newly created caller argument tuple passed to the conditional. Passing
+//   that argument tuple as `operand_source` allows the branch parameter to
+//   directly inherit the caller argument's OriginalValue via CopyOriginalValue.
+//   When operand_source is null or has no OriginalValue, the instruction's
+//   existing OriginalValue leaves are re-indexed into the new shape.
 void UpdateInstructionOriginalValue(HloInstruction* instruction,
                                     HloInstruction* operand_source = nullptr) {
-  if (instruction->original_value() == nullptr && operand_source == nullptr) {
+  // If the instruction is a tuple or GTE, derive the OriginalValue from its
+  // operands if possible.
+  if (instruction->opcode() == HloOpcode::kTuple ||
+      instruction->opcode() == HloOpcode::kGetTupleElement) {
+    if (auto created = OriginalValue::CreateFromInstruction(instruction)) {
+      instruction->set_original_value(created);
+      return;
+    }
+  }
+
+  if (instruction->original_value() != nullptr &&
+      instruction->original_value()->is_synthetic_call()) {
     return;
   }
-  if (operand_source != nullptr) {
+
+  // If an operand source with an OriginalValue is provided (e.g. caller
+  // argument tuple with compatible shape), copy its OriginalValue directly.
+  if (operand_source != nullptr &&
+      operand_source->original_value() != nullptr) {
     CopyOriginalValue(operand_source, instruction, /*clone=*/true,
                       /*issue_warning=*/false);
     return;
   }
-  if (instruction->opcode() == HloOpcode::kTuple ||
-      instruction->opcode() == HloOpcode::kGetTupleElement) {
-    instruction->set_original_value(
-        OriginalValue::CreateFromInstruction(instruction));
+
+  // If neither the instruction nor operand_source has an OriginalValue,
+  // nothing to update.
+  if (instruction->original_value() == nullptr) {
     return;
   }
+
+  // Handle tuple-to-scalar or shape changes for non-tuple instructions.
+  if (!instruction->shape().IsTuple()) {
+    auto old_ov = instruction->original_value();
+    auto new_ov = std::make_shared<OriginalValue>(instruction->shape());
+    if (old_ov->IsTuple()) {
+      if (old_ov->tree().find({0}) != old_ov->tree().end()) {
+        new_ov->mutable_tree()->CopySubtreeFrom(old_ov->tree(), {0}, {});
+      }
+    } else {
+      new_ov->mutable_tree()->CopySubtreeFrom(old_ov->tree(), {}, {});
+    }
+    instruction->set_original_value(new_ov);
+    return;
+  }
+
+  // Handle scalar-to-tuple transition or tuple widening/re-indexing.
+  absl::flat_hash_map<int64_t, int64_t> old_to_new_map;
   if (!instruction->original_value()->IsTuple()) {
     auto old_ov = instruction->original_value();
     auto new_ov = std::make_shared<OriginalValue>(instruction->shape());
     new_ov->mutable_tree()->CopySubtreeFrom(old_ov->tree(), {}, {0});
     instruction->set_original_value(new_ov);
-    return;
-  }
-  absl::flat_hash_map<int64_t, int64_t> old_to_new_map;
-  for (const auto& [shape_index, _] :
-       instruction->original_value()->original_arrays()) {
-    if (!shape_index.empty()) {
-      old_to_new_map[shape_index[0]] = shape_index[0];
+  } else {
+    // Re-index existing leaves into a new OriginalValue matching the new shape.
+    // Any newly added elements will be initialized to std::nullopt.
+    for (const auto& [shape_index, _] :
+         instruction->original_value()->original_arrays()) {
+      if (!shape_index.empty() &&
+          shape_index[0] < instruction->shape().tuple_shapes().size()) {
+        old_to_new_map[shape_index[0]] = shape_index[0];
+      }
     }
+    CopyOriginalValue(instruction, instruction, old_to_new_map);
   }
-  CopyOriginalValue(instruction, instruction, old_to_new_map);
 }
 
 HloInstruction* CloneNestedTuples(HloInstruction* tuple) {
@@ -572,7 +622,8 @@ absl::Status RestructureConditionalInstruction(HloComputation* computation,
       }
     }
     for (auto new_tuple_user : new_tuple_users) {
-      ABSL_RETURN_IF_ERROR(conditional->ReplaceUseWith(new_tuple_user, new_tuple));
+      ABSL_RETURN_IF_ERROR(
+          conditional->ReplaceUseWith(new_tuple_user, new_tuple));
     }
   }
   VLOG(2) << "computation after root restructure:\n" << computation->ToString();
@@ -1212,7 +1263,8 @@ class MoveOperandIntoBranch {
         op_map_[new_operands[i]] = i;
       }
       user = new_input;
-      ABSL_RETURN_IF_ERROR(input->ReplaceUseWithDifferentShape(cond, new_input));
+      ABSL_RETURN_IF_ERROR(
+          input->ReplaceUseWithDifferentShape(cond, new_input));
     }
     TF_RET_CHECK(cond->opcode() == HloOpcode::kConditional)
         << "User has non-conditional users";
@@ -2241,8 +2293,8 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
     if (final_d == Decision::Direction::kMoveOutOfBranch) {
       CHECK(to_move_out.size() == new_boundaries_for_moveout.size());
       for (int i = 0; i < to_move_out.size(); ++i) {
-        ABSL_ASSIGN_OR_RETURN(bool result,
-                         MoveInstructionOut(conditional, to_move_out[i],
+        ABSL_ASSIGN_OR_RETURN(
+            bool result, MoveInstructionOut(conditional, to_move_out[i],
                                             new_boundaries_for_moveout[i]));
         changed |= result;
       }
@@ -2267,14 +2319,14 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
           VLOG(1) << "Modifying code---number of operand boundaries to move in:"
                   << to_move_in[i].size() << "\n";
           ABSL_ASSIGN_OR_RETURN(bool result, MoveOperandInstructionsIn(
-                                            conditional, to_move_in[i]));
+                                                 conditional, to_move_in[i]));
           changed |= result;
         } else {
           VLOG(1) << "Modifying code---number of user boundaries to move in:"
                   << to_move_in[i].size() << "\n";
           CHECK(to_move_in[i][0].IsOutsideBranchUser());
-          ABSL_ASSIGN_OR_RETURN(bool result,
-                           MoveUserInstructionsIn(conditional, to_move_in[i]));
+          ABSL_ASSIGN_OR_RETURN(
+              bool result, MoveUserInstructionsIn(conditional, to_move_in[i]));
           changed |= result;
         }
         VLOG(2) << "Before removing instructions:"
@@ -2310,8 +2362,9 @@ absl::StatusOr<bool> ConditionalCodeMotion::RunImpl(
       // cloning has been done by the earlier analysis.
       // TOOD[b/165848866]: extend solution to handle cloning for special
       // move.
-      ABSL_ASSIGN_OR_RETURN(bool convert_result,
-                       ConvertSpecialMove(conditional, is_layout_sensitive_));
+      ABSL_ASSIGN_OR_RETURN(
+          bool convert_result,
+          ConvertSpecialMove(conditional, is_layout_sensitive_));
       if (convert_result) {
         VLOG(2) << "Done special moving of convert\n";
         if (!ConsumeFuel("conditional_code_motion", [&] {

@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/constant_deferring.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"

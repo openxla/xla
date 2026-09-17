@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/value_range.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"

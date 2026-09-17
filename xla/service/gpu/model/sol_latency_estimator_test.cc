@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/model/sol_latency_estimator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -779,7 +780,7 @@ class IsSolLatencyEstimatorEnabledTest : public HloTestBaseLegacy {
     HloInstruction* call =
         entry->AddInstruction(HloInstruction::CreateCall(shape, dummy_operand));
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig new_backend_config,
-                     call->backend_config<GpuBackendConfig>());
+                          call->backend_config<GpuBackendConfig>());
     new_backend_config.set_device_type(DEVICE_TYPE_HOST);
     return call->set_backend_config(new_backend_config);
   }

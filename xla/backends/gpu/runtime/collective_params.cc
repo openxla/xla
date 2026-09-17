@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -90,7 +90,7 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
                            : nullptr;
 
   ABSL_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
-                   GetGlobalDeviceId(device_id_map, local_device_id));
+                        GetGlobalDeviceId(device_id_map, local_device_id));
 
   return CollectiveParams(
       collectives, run_options.stream()->parent(),

@@ -40,7 +40,7 @@ struct BufferizeConstantOp : public OpConversionPattern<arith::ConstantOp> {
 
   LogicalResult matchAndRewrite(
       arith::ConstantOp op, OpAdaptor /*adaptor*/,
-      ConversionPatternRewriter &rewriter) const final {
+      ConversionPatternRewriter& rewriter) const final {
     // We only need to bufferize tensor constants.
     Location loc = op.getLoc();
     auto resultType = mlir::dyn_cast<RankedTensorType>(op.getType());
@@ -77,7 +77,7 @@ struct BufferizeConstantOp : public OpConversionPattern<arith::ConstantOp> {
     if (allSameElems)
       value = makeConstant(elementsAttr.getSplatValue<mlir::Attribute>(),
                            elementType);
-    for (const auto &en :
+    for (const auto& en :
          llvm::enumerate(elementsAttr.getValues<Attribute>())) {
       if (!allSameElems) value = makeConstant(en.value(), elementType);
       Value index = arith::ConstantIndexOp::create(rewriter, loc, en.index());
@@ -95,7 +95,7 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
 
   LogicalResult matchAndRewrite(
       mhlo::MinimumBroadcastShapesOp broadcastShapesOp, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
+      ConversionPatternRewriter& rewriter) const override {
     auto loc = broadcastShapesOp.getLoc();
     ImplicitLocOpBuilder lb(loc, rewriter);
     Value zero = arith::ConstantIndexOp::create(lb, 0);
@@ -340,7 +340,7 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
   }
 
  private:
-  Value countLeadingOnes(ImplicitLocOpBuilder &lb, Value extentMemref,
+  Value countLeadingOnes(ImplicitLocOpBuilder& lb, Value extentMemref,
                          Value rank) const {
     // Count leading 1's. Use two iteration variables for that: one with a
     // boolean flag for whether every size so far was 1, one with the number of
@@ -364,7 +364,7 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
     return leadingOnesLoop.getResults()[1];
   }
 
-  Value removeLeadingOnesFrom1DMemref(ImplicitLocOpBuilder &lb,
+  Value removeLeadingOnesFrom1DMemref(ImplicitLocOpBuilder& lb,
                                       Value extentMemref, Value rank) const {
     Value leadingOnes = countLeadingOnes(lb, extentMemref, rank);
     Value newRank = arith::SubIOp::create(lb, rank, leadingOnes);
@@ -394,9 +394,9 @@ struct BufferizeAndConvertMinimumBroadcastShapesOp
 
 }  // namespace
 
-void populateExtraBufferizePatterns(MLIRContext *context,
-                                    TypeConverter *converter,
-                                    RewritePatternSet *patterns) {
+void populateExtraBufferizePatterns(MLIRContext* context,
+                                    TypeConverter* converter,
+                                    RewritePatternSet* patterns) {
   // clang-format off
   patterns->add<
       BufferizeAndConvertMinimumBroadcastShapesOp,

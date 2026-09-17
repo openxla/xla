@@ -21,9 +21,9 @@ limitations under the License.
 #include <limits>
 #include <type_traits>
 
+#include "Eigen/Core"  // IWYU pragma: export
 #include "absl/numeric/int128.h"
 #include "absl/strings/str_cat.h"
-#include "Eigen/Core"  // IWYU pragma: export
 #include "ml_dtypes/include/intn.h"
 #include "tsl/platform/ml_dtypes.h"  // IWYU pragma: export
 

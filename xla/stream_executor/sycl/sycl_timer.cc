@@ -56,7 +56,7 @@ absl::StatusOr<float> GetEventElapsedTime(StreamExecutor* executor,
   // We assume that all SYCL devices have the same frequency and mask, so
   // we use kDefaultDeviceOrdinal.
   ABSL_ASSIGN_OR_RETURN(SyclTimerProperties timer_props,
-                   SyclGetTimerProperties(kDefaultDeviceOrdinal));
+                        SyclGetTimerProperties(kDefaultDeviceOrdinal));
 
   const uint64_t kernel_start_time = start_timestamp.global.kernelStart;
   const uint64_t kernel_end_time = end_timestamp.global.kernelEnd;
@@ -92,8 +92,8 @@ absl::StatusOr<absl::Duration> SyclTimer::GetElapsedDuration() {
   }
   ABSL_RETURN_IF_ERROR(stream_->RecordEvent(&stop_event_));
   ABSL_ASSIGN_OR_RETURN(float elapsed_milliseconds,
-                   GetEventElapsedTime(executor_, start_event_.GetEvent(),
-                                       stop_event_.GetEvent()));
+                        GetEventElapsedTime(executor_, start_event_.GetEvent(),
+                                            stop_event_.GetEvent()));
   is_timer_stopped_ = true;
   return absl::Milliseconds(elapsed_milliseconds);
 }

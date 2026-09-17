@@ -879,7 +879,6 @@ cc_library(
         ":kernel_args",
         ":kernel_args_packing_spec",
         ":kernel_spec_proto_cc",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -1329,7 +1328,6 @@ xla_cc_test(
         "//xla/stream_executor/host:host_platform",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/types:span",
         "@com_google_benchmark//:benchmark",
         "@com_google_googletest//:gtest",
@@ -1421,7 +1419,6 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )

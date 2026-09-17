@@ -26,9 +26,9 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "tsl/platform/platform.h"  // IWYU pragma: keep
 #if !defined(IS_MOBILE_PLATFORM)
 #include "xla/tsl/profiler/utils/traceme_global_flags.h"
 #endif

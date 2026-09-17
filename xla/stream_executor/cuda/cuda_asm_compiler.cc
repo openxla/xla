@@ -46,13 +46,14 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsm(
   if (IsLibNvPtxCompilerSupported()) {
     VLOG(3) << "Compiling GPU ASM with libnvptxcompiler";
     ABSL_ASSIGN_OR_RETURN(auto assembly,
-                     CompileGpuAsmUsingLibNvPtxCompiler(cc, ptx, options));
+                          CompileGpuAsmUsingLibNvPtxCompiler(cc, ptx, options));
     return std::move(assembly.cubin);
   }
 
   VLOG(3) << "Compiling GPU ASM with PTXAS. Libnvptxcompiler compilation "
              "not supported.";
-  ABSL_ASSIGN_OR_RETURN(auto assembly, CompileGpuAsmUsingPtxAs(cc, ptx, options));
+  ABSL_ASSIGN_OR_RETURN(auto assembly,
+                        CompileGpuAsmUsingPtxAs(cc, ptx, options));
   return std::move(assembly.cubin);
 }
 

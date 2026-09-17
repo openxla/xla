@@ -24,9 +24,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "tsl/platform/numa.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "tsl/platform/numa.h"
 
 namespace tsl {
 
@@ -105,8 +105,8 @@ struct AllocatorStats {
   std::optional<int64_t> bytes_limit;
 
   // Stats for reserved memory usage.
-  int64_t bytes_reserved;       // Number of bytes reserved.
-  int64_t peak_bytes_reserved;  // The peak number of bytes reserved.
+  int64_t bytes_reserved;        // Number of bytes reserved.
+  int64_t peak_bytes_reserved;   // The peak number of bytes reserved.
   int64_t peak_allocated_bytes;  // Peak of reserved and in-use bytes.
   // The upper limit on the number bytes of reservable memory,
   // if such a limit is known.
@@ -284,7 +284,7 @@ class Allocator {
   //  true if implemented.
   //
   // REQUIRES: GetStats is overridden.
-  virtual bool ClearStats() TF_MUST_USE_RESULT { return false; }
+  TF_MUST_USE_RESULT virtual bool ClearStats() { return false; }
 
   virtual void SetSafeFrontier(uint64_t count) {}
 

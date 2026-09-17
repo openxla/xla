@@ -36,7 +36,7 @@ const bool kUnused =
            xla::CpuClientOptions options;
            options.cpu_device_count = 4;
            ABSL_ASSIGN_OR_RETURN(auto pjrt_client,
-                            xla::GetXlaPjrtCpuClient(std::move(options)));
+                                 xla::GetXlaPjrtCpuClient(std::move(options)));
 
            // Creates a client with two global processes. The local process acts
            // as task 1, and any attempt to use non-addressable devices on task

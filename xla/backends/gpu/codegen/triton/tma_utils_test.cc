@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/tma_utils.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "llvm/ADT/SmallVector.h"

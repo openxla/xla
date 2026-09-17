@@ -31,6 +31,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/profiler_lock.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -44,9 +47,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/profiler_lock.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::gpu {
 
@@ -199,7 +199,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   }
 
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                   GetOrCreateCommandBuffer(params.executor));
+                        GetOrCreateCommandBuffer(params.executor));
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // If there are no thunks, or command buffer does not require warmup,
@@ -264,7 +264,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
                                            std::move(updated_allocs),
                                            /*is_initialization=*/true};
     ABSL_RETURN_IF_ERROR(commands_.Record(execute_params, record_params,
-                                     cmd_buffer->command_buffer.get()));
+                                          cmd_buffer->command_buffer.get()));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     VLOG(3) << "Initialized command buffer on device #"
@@ -310,7 +310,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   se::StreamExecutor* executor = params.stream->parent();
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                   GetOrCreateCommandBuffer(executor));
+                        GetOrCreateCommandBuffer(executor));
 
   absl::MutexLock lock(cmd_buffer->mutex);
 
@@ -356,7 +356,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
         cmd_buffer->state, std::move(updated_allocs),
         /*is_initialization=*/is_first_record && !has_dynamic_allocations};
     ABSL_RETURN_IF_ERROR(commands_.Record(params, record_params,
-                                     cmd_buffer->command_buffer.get()));
+                                          cmd_buffer->command_buffer.get()));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     XLA_VLOG_DEVICE(3, executor->device_ordinal())
@@ -393,8 +393,9 @@ CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor) {
   }
 
   // Create a new empty command buffer.
-  ABSL_ASSIGN_OR_RETURN(auto command_buffer, executor->CreateCommandBuffer(
-                                            se::CommandBuffer::Mode::kPrimary));
+  ABSL_ASSIGN_OR_RETURN(
+      auto command_buffer,
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
   auto emplaced = state_->command_buffers.emplace(
       executor,
       std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer)));

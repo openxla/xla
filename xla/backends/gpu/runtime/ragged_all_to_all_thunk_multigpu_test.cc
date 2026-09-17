@@ -17,13 +17,14 @@ limitations under the License.
 // Requires two GPUs and CUDA 12.9+ driver/toolkit for CreateChildCommand /
 // UpdateChildCommand support.
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
@@ -167,8 +168,8 @@ static absl::Status PrepareInputs(
     int device_ordinal, int phase) {
   ABSL_RETURN_IF_ERROR(
       FillDeviceBuffer(stream, buffers[0], InputValues(device_ordinal, phase)));
-  ABSL_RETURN_IF_ERROR(FillDeviceBuffer(stream, buffers[1],
-                                   std::vector<float>(kNumElements, -1.0f)));
+  ABSL_RETURN_IF_ERROR(FillDeviceBuffer(
+      stream, buffers[1], std::vector<float>(kNumElements, -1.0f)));
   ABSL_RETURN_IF_ERROR(
       WriteBuffer(stream, buffers[2], std::vector<int64_t>{0, 1, 2, 3}));
   ABSL_RETURN_IF_ERROR(
@@ -184,7 +185,7 @@ static absl::Status VerifyOutput(se::Stream& stream,
                                  se::DeviceAddressBase buffer,
                                  int device_ordinal, int phase) {
   ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadDeviceBuffer(stream, buffer, kNumElements));
+                        ReadDeviceBuffer(stream, buffer, kNumElements));
   std::vector<float> expected = ExpectedValues(device_ordinal, phase);
   for (int i = 0; i < output.size(); ++i) {
     if (output[i] != expected[i]) {
@@ -247,7 +248,7 @@ static absl::Status RunUpdatePhase(DeviceTestSlot& slot,
   Thunk::ExecuteParams execute_params = MakeExecuteParams(slot, allocations);
 
   ABSL_RETURN_IF_ERROR(RecordCommandBufferUpdate(slot, thunk, execute_params,
-                                            AllAllocationIndices()));
+                                                 AllAllocationIndices()));
   ABSL_RETURN_IF_ERROR(SubmitCommandBuffer(slot));
   return VerifyOutput(*slot.stream, slot.update_buffers[1], device_ordinal,
                       phase);
@@ -268,7 +269,8 @@ TEST(RaggedAllToAllThunkMultiGpuTest, ExecuteOnStream) {
 
   ASSERT_OK(
       RunOnDevices(kNumDevices, "ragged_execute", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         allocs[d] = std::make_unique<BufferAllocations>(
             MakeBufferAllocations(slots[d], slots[d].create_buffers));
         return RunExecuteOnStreamPhase(slots[d], thunk, *allocs[d], d,
@@ -294,7 +296,8 @@ TEST(RaggedAllToAllThunkMultiGpuTest, RecordCommandBufferCreate) {
 
   ASSERT_OK(
       RunOnDevices(kNumDevices, "ragged_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         allocs[d] = std::make_unique<BufferAllocations>(
             MakeBufferAllocations(slots[d], slots[d].create_buffers));
         return RunCreatePhase(slots[d], thunk, *allocs[d], d, /*phase=*/1);
@@ -320,7 +323,8 @@ TEST(RaggedAllToAllThunkMultiGpuTest, RecordCommandBufferUpdate) {
 
   ASSERT_OK(
       RunOnDevices(kNumDevices, "ragged_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         create_allocs[d] = std::make_unique<BufferAllocations>(
             MakeBufferAllocations(slots[d], slots[d].create_buffers));
         return RunCreatePhase(slots[d], thunk, *create_allocs[d], d,

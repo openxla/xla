@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/ragged_dot_fusion_rewriter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <initializer_list>
 #include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"

@@ -532,8 +532,8 @@ struct scalar_product_op<QInt32, double> : binary_op_base<QInt32, double> {
 #ifdef EIGEN_SCALAR_BINARY_OP_PLUGIN
   scalar_product_op(){EIGEN_SCALAR_BINARY_OP_PLUGIN}
 #endif
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE result_type
-  operator()(const QInt32& a, const double& b) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
+      result_type operator()(const QInt32 & a, const double& b) const {
     return a * b;
   }
 

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 
@@ -84,7 +84,7 @@ absl::StatusOr<ProfileResult> CpuProfiler::Profile(
   {
     // Warm up run.
     ABSL_RETURN_IF_ERROR(Execute(executable, literal_backed_buffers.buffers,
-                            /*profile=*/nullptr));
+                                 /*profile=*/nullptr));
   }
 
   ExecutionProfile profile;

@@ -15,16 +15,17 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/convolution_4d_expander.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

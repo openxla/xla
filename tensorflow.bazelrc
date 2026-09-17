@@ -143,7 +143,7 @@ common --incompatible_enforce_config_setting_visibility
 # common --incompatible_config_setting_private_default_visibility
 
 # Print a stacktrace when a test is killed
-test --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
+build --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 
 
 # Default options should come above this line.
@@ -338,10 +338,6 @@ common:macos --copt=-w
 common:macos --host_copt=-w
 common:windows --copt=/W0
 common:windows --host_copt=/W0
-common:windows --copt=/clang:-ftemplate-depth=1024
-common:windows --copt=/clang:-fbracket-depth=1024
-common:windows --host_copt=/clang:-ftemplate-depth=1024
-common:windows --host_copt=/clang:-fbracket-depth=1024
 
 # Linux ARM64 specific options
 common:linux_arm64 --copt="-mtune=generic" --copt="-march=armv8-a" --copt="-O3"
@@ -456,10 +452,6 @@ common:win_clang_base --linkopt=/demangle:no --host_linkopt=/demangle:no
 common:win_clang_base --linkopt=/errorlimit:0 --host_linkopt=/errorlimit:0
 common:win_clang_base --copt=/clang:-Weverything
 common:win_clang_base --host_copt=/clang:-Weverything
-common:win_clang_base --copt=/clang:-ftemplate-depth=1024
-common:win_clang_base --copt=/clang:-fbracket-depth=1024
-common:win_clang_base --host_copt=/clang:-ftemplate-depth=1024
-common:win_clang_base --host_copt=/clang:-fbracket-depth=1024
 common:win_clang_base --compiler=clang-cl
 common:win_clang_base --linkopt=/FORCE:MULTIPLE
 common:win_clang_base --host_linkopt=/FORCE:MULTIPLE
@@ -523,7 +515,7 @@ common:rbe_base --spawn_strategy=remote,worker,standalone,local
 # Attempt to minimize the amount of data transfer between bazel and the remote
 # workers:
 common:rbe_base --remote_download_toplevel
-test:rbe_base --test_env=USER=anon
+build:rbe_base --test_env=USER=anon
 
 # TODO(kanglan): Check if we want to merge rbe_linux into rbe_linux_cpu.
 common:rbe_linux --config=rbe_base

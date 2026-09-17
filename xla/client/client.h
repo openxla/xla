@@ -100,7 +100,6 @@ class Client {
       const ExecutionOptions* execution_options = nullptr,
       ExecutionProfile* execution_profile = nullptr);
 
-
   // Executes a list XlaComputationInstances and returns global data produced
   // from each computation.
   //

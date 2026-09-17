@@ -230,6 +230,11 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
     return absl::OkStatus();
   }
 
+  if (layout.minor_to_major().empty() && layout.memory_space() != 0) {
+    // AUTO layout with non-default memory space is allowed.
+    return absl::OkStatus();
+  }
+
   if (layout.minor_to_major().size() != shape.dimensions().size()) {
     return InvalidArgument(
         "layout minor_to_major field contains %d elements, "
@@ -401,6 +406,33 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
   return shape.has_layout();
 }
 
+/* static */ bool LayoutUtil::HasMinorToMajorSetInLayout(const Shape& shape) {
+  if (shape.IsTuple()) {
+    return absl::c_all_of(shape.tuple_shapes(), [](const Shape& s) {
+      return HasMinorToMajorSetInLayout(s);
+    });
+  }
+  if (!shape.IsArray()) {
+    return true;
+  }
+  return shape.has_layout() && (shape.dimensions().empty() ||
+                                !shape.layout().minor_to_major().empty());
+}
+
+/* static */ bool LayoutUtil::HasAnyMinorToMajorSetInLayout(
+    const Shape& shape) {
+  if (shape.IsTuple()) {
+    return absl::c_any_of(shape.tuple_shapes(), [](const Shape& s) {
+      return HasAnyMinorToMajorSetInLayout(s);
+    });
+  }
+  if (!shape.IsArray()) {
+    return true;
+  }
+  return shape.has_layout() && (shape.dimensions().empty() ||
+                                !shape.layout().minor_to_major().empty());
+}
+
 /* static */ bool LayoutUtil::HasLayout(const ProgramShape& program_shape) {
   for (auto& parameter_shape : program_shape.parameters()) {
     if (!LayoutUtil::HasLayout(parameter_shape)) {
@@ -462,14 +494,15 @@ absl::Status CopyLayoutInternal(const Shape& src, Shape* dst) {
     }
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(src); ++i) {
       ABSL_RETURN_IF_ERROR(CopyLayoutInternal(src.tuple_shapes(i),
-                                         dst->mutable_tuple_shapes(i)));
+                                              dst->mutable_tuple_shapes(i)));
     }
   } else if (src.IsArray()) {
     if (src.has_layout()) {
       if (src.dimensions().size() != dst->dimensions().size()) {
         return InvalidArgument("cannot copy layout from shape: ranks differs");
       }
-      ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
+      ABSL_RETURN_IF_ERROR(
+          LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
       *dst->mutable_layout() = src.layout();
     } else {
       dst->clear_layout();

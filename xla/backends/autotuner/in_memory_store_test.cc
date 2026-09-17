@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/autotuner/in_memory_store.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"

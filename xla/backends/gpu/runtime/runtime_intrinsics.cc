@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/ffi/ffi.h"
 #include "xla/layout_util.h"
@@ -51,8 +53,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -72,7 +72,8 @@ absl::Status AssertionCustomCall(se::Stream* stream, ffi::BufferR0<PRED> buffer,
   int8_t expected = false;
   int64_t byte_size = sizeof(int8_t);
   CHECK_EQ(byte_size, ShapeUtil::ByteSizeOfPrimitiveType(PrimitiveType::PRED));
-  ABSL_RETURN_IF_ERROR(stream->Memcpy(&expected, buffer.device_memory(), byte_size));
+  ABSL_RETURN_IF_ERROR(
+      stream->Memcpy(&expected, buffer.device_memory(), byte_size));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   if (!static_cast<bool>(expected)) {
     return Internal("%s", error_msg);
@@ -96,7 +97,7 @@ absl::StatusOr<Literal> ConvertToLiteral(se::Stream* stream,
 
   int64_t size_bytes = arg.size_bytes();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::MemoryAllocation> host_buffer,
-                   stream->parent()->HostMemoryAllocate(size_bytes));
+                        stream->parent()->HostMemoryAllocate(size_bytes));
   ABSL_RETURN_IF_ERROR(
       stream->Memcpy(literal.untyped_data(), arg.device_memory(), size_bytes));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
@@ -131,7 +132,7 @@ absl::Status DebugPrintCustomCall(se::Stream* stream, ffi::RemainingArgs args,
           "Missing formatter for argument $0 in debug print custom call", i));
     }
     ABSL_ASSIGN_OR_RETURN(Literal literal,
-                     ConvertToLiteral(stream, args_buffers[i]));
+                          ConvertToLiteral(stream, args_buffers[i]));
 
     formatted =
         absl::StrReplaceAll(formatted, {{to_substitute, literal.ToString()}});

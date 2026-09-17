@@ -21,7 +21,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
@@ -36,6 +35,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
@@ -1083,6 +1083,34 @@ ENTRY main.2 {
       {{{1.0, 1.1}, {2.0, 2.1}}, {{3.0, 3.1}, {4.0, 4.1}}});
 
   RunTest(hlo_text, {&updates});
+}
+
+TEST_F(ScatterTest, EmptyIndexVector) {
+  const std::string hlo_text = R"(
+HloModule ScatterEmptyIndexVector
+
+mul_s32 (lhs: s32[], rhs: s32[]) -> s32[] {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT mul = s32[] multiply(lhs, rhs)
+}
+
+ENTRY main {
+  operand = s32[1]{0} parameter(0)
+  indices = s32[2,0]{1,0} parameter(1)
+  updates = s32[2,1]{1,0} parameter(2)
+  ROOT scatter = s32[1]{0} scatter(operand, indices, updates),
+      update_window_dims={1},
+      inserted_window_dims={},
+      scatter_dims_to_operand_dims={},
+      index_vector_dim=1,
+      to_apply=mul_s32
+}
+)";
+  Literal operand = LiteralUtil::CreateR1<int32_t>({1});
+  Literal scatter_indices(ShapeUtil::MakeShape(S32, {2, 0}));
+  Literal updates = LiteralUtil::CreateR2<int32_t>({{2}, {3}});
+  RunTest(hlo_text, &operand, &scatter_indices, &updates);
 }
 
 // Test min/max/add scatters with edge-case values.

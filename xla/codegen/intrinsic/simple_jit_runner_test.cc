@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/simple_jit_runner.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"

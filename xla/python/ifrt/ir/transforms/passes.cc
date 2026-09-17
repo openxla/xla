@@ -28,12 +28,12 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Transforms/Passes.h"
+#include "tsl/platform/path.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.pb.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace ifrt {

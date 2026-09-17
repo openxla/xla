@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/autotuner/config_assigner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -120,8 +121,8 @@ absl::StatusOr<std::unique_ptr<ConfigAssigner>> CreateConfigAssigner(
     tsl::thread::ThreadPool* thread_pool = nullptr,
     CodegenOrchestrator::Options orchestrator_options = {}) {
   ABSL_ASSIGN_OR_RETURN(auto orchestrator,
-                   CodegenOrchestrator::Create(std::move(codegen_backends),
-                                               orchestrator_options));
+                        CodegenOrchestrator::Create(std::move(codegen_backends),
+                                                    orchestrator_options));
 
   if (cache == nullptr) {
     cache = std::make_unique<NoOpAutotunerCache>();

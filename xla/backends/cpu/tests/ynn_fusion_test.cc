@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -21,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
@@ -713,6 +714,7 @@ static YnnUnaryOpTestParams unary_op_test_params[] = {
 
     {HloOpcode::kAbs, F32, F32},
     {HloOpcode::kCeil, F32, F32},
+    {HloOpcode::kCos, F32, F32, ErrorSpec{/*aabs=*/0, /*arel=*/3e-7}},
     {HloOpcode::kErf, F32, F32, ErrorSpec{/*aabs=*/2e-7, /*arel=*/3e-7}},
     {HloOpcode::kExp, F32, F32, ErrorSpec{/*aabs=*/2e-38, /*arel=*/4e-6}},
     {HloOpcode::kExpm1, F32, F32, ErrorSpec{/*aabs=*/2e-38, /*arel=*/4e-6}},
@@ -731,11 +733,14 @@ static YnnUnaryOpTestParams unary_op_test_params[] = {
     {HloOpcode::kRoundNearestEven, F32, F32},
     {HloOpcode::kRsqrt, F32, F32, F32_ErrorSpec},
     {HloOpcode::kSign, F32, F32},
+    {HloOpcode::kSin, F32, F32, ErrorSpec{/*aabs=*/0, /*arel=*/3e-7}},
     {HloOpcode::kSqrt, F32, F32, F32_ErrorSpec},
+    {HloOpcode::kTan, F32, F32, ErrorSpec{/*aabs=*/0, /*arel=*/3e-7}},
     {HloOpcode::kTanh, F32, F32, ErrorSpec{/*aabs=*/2e-7, /*arel=*/4e-7}},
 
     {HloOpcode::kAbs, F64, F64},
     {HloOpcode::kCeil, F64, F64},
+    {HloOpcode::kCos, F64, F64, F64_ErrorSpec},
     {HloOpcode::kErf, F64, F64, F64_ErrorSpec},
     {HloOpcode::kExp, F64, F64, ErrorSpec(/*aabs=*/2e-308, /*arel=*/4e-14)},
     {HloOpcode::kExpm1, F64, F64, F64_ErrorSpec},
@@ -747,7 +752,9 @@ static YnnUnaryOpTestParams unary_op_test_params[] = {
     {HloOpcode::kRoundNearestEven, F64, F64},
     {HloOpcode::kRsqrt, F64, F64, F64_ErrorSpec},
     {HloOpcode::kSign, F64, F64},
+    {HloOpcode::kSin, F64, F64, F64_ErrorSpec},
     {HloOpcode::kSqrt, F64, F64, F64_ErrorSpec},
+    {HloOpcode::kTan, F64, F64, F64_ErrorSpec},
     {HloOpcode::kTanh, F64, F64, F64_ErrorSpec},
 };
 

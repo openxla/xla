@@ -61,13 +61,14 @@ limitations under the License.
 #ifndef XLA_TSL_UTIL_PROTO_PROTO_MATCHERS_H_
 #define XLA_TSL_UTIL_PROTO_PROTO_MATCHERS_H_
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <ostream>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "tsl/platform/protobuf.h"

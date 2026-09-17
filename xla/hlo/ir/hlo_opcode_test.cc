@@ -15,11 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_opcode.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <vector>
-
-#include <gtest/gtest.h>
 
 namespace xla {
 namespace {

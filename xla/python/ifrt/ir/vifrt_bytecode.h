@@ -23,7 +23,7 @@ class VifrtDialect;
 
 // Add the interface necessary for encoding and decoding VIFRT dialect
 // types and attributes in bytecode.
-void addBytecodeInterface(VifrtDialect *dialect);
+void addBytecodeInterface(VifrtDialect* dialect);
 
 }  // namespace ifrt
 }  // namespace xla

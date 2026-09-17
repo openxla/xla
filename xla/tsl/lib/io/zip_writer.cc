@@ -172,11 +172,11 @@ absl::Status ZipWriter::AddFile(std::string name, absl::string_view content) {
   }
 
   ABSL_RETURN_IF_ERROR(Append32(0x04034b50));  // Local file header signature
-  ABSL_RETURN_IF_ERROR(Append16(20));          // Version needed to extract (2.0)
-  ABSL_RETURN_IF_ERROR(Append16(0));           // General purpose bit flag
-  ABSL_RETURN_IF_ERROR(Append16(8));           // Compression method (8 = DEFLATE)
-  ABSL_RETURN_IF_ERROR(Append16(0));           // Last mod file time
-  ABSL_RETURN_IF_ERROR(Append16(0));           // Last mod file date
+  ABSL_RETURN_IF_ERROR(Append16(20));  // Version needed to extract (2.0)
+  ABSL_RETURN_IF_ERROR(Append16(0));   // General purpose bit flag
+  ABSL_RETURN_IF_ERROR(Append16(8));   // Compression method (8 = DEFLATE)
+  ABSL_RETURN_IF_ERROR(Append16(0));   // Last mod file time
+  ABSL_RETURN_IF_ERROR(Append16(0));   // Last mod file date
   ABSL_RETURN_IF_ERROR(Append32(crc));
   ABSL_RETURN_IF_ERROR(Append32(compressed.size()));
   ABSL_RETURN_IF_ERROR(Append32(content.size()));
@@ -199,7 +199,7 @@ absl::Status ZipWriter::FinishInternal() {
   uint32_t cd_offset = static_cast<uint32_t>(current_offset_);
   for (const auto& file : files_) {
     ABSL_RETURN_IF_ERROR(
-        Append32(0x02014b50));      // Central directory header signature
+        Append32(0x02014b50));           // Central directory header signature
     ABSL_RETURN_IF_ERROR(Append16(20));  // Version made by
     ABSL_RETURN_IF_ERROR(Append16(20));  // Version needed to extract
     ABSL_RETURN_IF_ERROR(Append16(0));   // General purpose bit flag
@@ -223,10 +223,12 @@ absl::Status ZipWriter::FinishInternal() {
   }
   uint32_t cd_size = static_cast<uint32_t>(current_offset_ - cd_offset);
 
-  ABSL_RETURN_IF_ERROR(Append32(0x06054b50));  // End of central directory signature
-  ABSL_RETURN_IF_ERROR(Append16(0));           // Number of this disk
-  ABSL_RETURN_IF_ERROR(Append16(0));           // Disk where central directory starts
-  ABSL_RETURN_IF_ERROR(Append16(files_.size()));  // Number of records on this disk
+  ABSL_RETURN_IF_ERROR(
+      Append32(0x06054b50));          // End of central directory signature
+  ABSL_RETURN_IF_ERROR(Append16(0));  // Number of this disk
+  ABSL_RETURN_IF_ERROR(Append16(0));  // Disk where central directory starts
+  ABSL_RETURN_IF_ERROR(
+      Append16(files_.size()));  // Number of records on this disk
   ABSL_RETURN_IF_ERROR(Append16(files_.size()));  // Total number of records
   ABSL_RETURN_IF_ERROR(Append32(cd_size));
   ABSL_RETURN_IF_ERROR(Append32(cd_offset));

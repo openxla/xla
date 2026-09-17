@@ -19,7 +19,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "cub/version.cuh"
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -27,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "cub/version.cuh"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"

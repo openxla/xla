@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/string_deduper.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 
 namespace xla {
