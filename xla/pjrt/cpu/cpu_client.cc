@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_async_execution_tracker.h"
 #include "xla/pjrt/cpu/cpu_device_memory.h"
 #include "xla/pjrt/cpu/cpu_event.h"
+#include "xla/pjrt/cpu/execution_stream_event_map.h"
 #include "xla/pjrt/cpu/raw_buffer.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
@@ -457,10 +458,12 @@ PjRtCpuRawClient::PjRtCpuRawClient(
       eigen_intraop_device_(
           new Eigen::ThreadPoolDevice(eigen_intraop_pool_->AsEigenThreadPool(),
                                       eigen_intraop_pool_->NumThreads())),
-      async_work_runner_(std::make_unique<ThreadPoolAsyncWorkRunner>(
-          tsl::Env::Default(), "XLAPjRtCpuClient", num_threads)) {}
+      compile_thread_pool_(std::make_unique<tsl::thread::ThreadPool>(
+          tsl::Env::Default(), GetThreadOptions(), "XLACompile", num_threads)),
+      async_work_runner_(std::make_unique<UnboundedAsyncWorkRunner>(
+          "XLAPjRtCpuClient", GetThreadOptions())) {}
 
-PjRtCpuRawClient::~PjRtCpuRawClient() {}
+PjRtCpuRawClient::~PjRtCpuRawClient() = default;
 
 PjRtPluginAttributes GetDefaultCpuPluginAttributes() {
   PjRtPluginAttributes attrs;
@@ -991,7 +994,7 @@ PjRtCpuRawClient::CompileInternal(
   params.layout_canonicalization_callback =
       std::move(layout_canonicalization_callback);
   params.num_threads = num_threads;
-  params.compile_thread_pool = async_work_runner()->thread_pool();
+  params.compile_thread_pool = compile_thread_pool_.get();
   params.aot_options = aot_options;
   params.process_index = process_index;
   params.collectives_exists = (collectives() != nullptr);
