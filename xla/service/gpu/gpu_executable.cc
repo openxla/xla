@@ -252,9 +252,10 @@ static GpuExecutable::NumAdditionalStreams GetNumAdditionalStreams(
         ExecutionStreamId id = async_start->execution_stream_id();
         if (id.is_computation()) {
           compute = std::max<int>(compute, id.computation_id().value() + 1);
-        } else {
+        } else if (id.is_communication()) {
           comm = std::max<int>(comm, id.communication_id().value() + 1);
         }
+        // Memcpy streams are fixed singletons and don't need pool sizing.
       }
     });
   }
