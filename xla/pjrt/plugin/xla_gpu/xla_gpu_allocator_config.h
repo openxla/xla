@@ -43,14 +43,15 @@ struct GpuAllocatorConfig {
   Kind kind = Kind::kDefault;
 
   // Only used if kind == kBFC. The maximum fraction of available memory to
-  // allocate. This is the default value of XLA_CLIENT_MEM_FRACTION.
+  // allocate, or the initial shared fraction when bfc_growth is enabled.
+  // This is the default value of XLA_CLIENT_MEM_FRACTION.
   //
   // If `gpu_system_memory_size` is set, it determines memory allocation.
   // `memory_fraction` won't be used in this case.
   double memory_fraction = 0.75;
 
   // Only used if kind == kBFC. The absolute size of reserved memory space for
-  // GPU system in bytes.
+  // GPU system in bytes (the initial shared allocation with bfc_growth).
   //
   // If null, the default value `memory_fraction` will be used.
   std::optional<int64_t> gpu_system_memory_size = std::nullopt;
@@ -60,6 +61,22 @@ struct GpuAllocatorConfig {
   // fragmentation, allowing more of the total memory to be used. If false, the
   // allocator will allocate more memory as allocations are requested.
   bool preallocate = true;
+
+  // Experimental, CUDA-only growth of the shared spatial BFC arena. The
+  // memory_fraction (or gpu_system_memory_size) remains the initial shared
+  // allocation. Only default memory may use extensions. Requires preallocate.
+  struct BfcGrowthOptions {
+    // Reserve VA up to total device memory minus this headroom. Also check
+    // currently free device memory before every physical allocation. Neither
+    // check reserves headroom against allocations by other device users.
+    int64_t device_headroom_bytes = int64_t{1} << 30;
+    int64_t increment_bytes = 64 << 20;
+    // Zero grows only on exhaustion. A nonzero value preserves shared space
+    // for later collectives, at the cost of earlier growth or default-space
+    // OOM.
+    int64_t collective_gap_reserve_bytes = 0;
+  };
+  std::optional<BfcGrowthOptions> bfc_growth;
 
   // Amount of collective memory (ncclMemAlloc) to preallocate. If this value is
   // 0, collective memory space will be grown as needed to fit the application's
