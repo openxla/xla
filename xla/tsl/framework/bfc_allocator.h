@@ -102,8 +102,22 @@ using tensorflow::MemoryDump;
 //
 class BFCAllocator : public Allocator {
  public:
-  enum class HoleOrder { kAscendingAddress, kDescendingAddress };
-  enum class HoleSplitPolicy { kBfc, kExact };
+  // Address preference for equal-size holes owned by the same end. Size remains
+  // the primary best-fit key; this order is independent of placement direction.
+  enum class HoleOrder {
+    kAscendingAddress,   // Prefer the lowest-address fitting hole.
+    kDescendingAddress,  // Prefer the highest-address fitting hole.
+  };
+
+  // Splitting policy for owned-hole reuse. Central-gap carves always split
+  // exactly, regardless of this policy.
+  enum class HoleSplitPolicy {
+    // Apply the BFC size/fragmentation heuristic, retaining small remainders as
+    // allocation padding instead of creating additional free chunks.
+    kBfc,
+    // Allocate exactly the rounded request size and leave any remainder free.
+    kExact,
+  };
 
   struct AllocationPolicy {
     // Best fit always compares sizes first; this only breaks equal-size ties.
