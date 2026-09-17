@@ -1299,6 +1299,12 @@ GetStreamExecutorGpuDeviceAllocator(
     effective_kind = GpuAllocatorConfig::Kind::kVmm;
   }
 
+  if (allocator_config.bfc_growth &&
+      effective_kind != GpuAllocatorConfig::Kind::kDefault &&
+      effective_kind != GpuAllocatorConfig::Kind::kBFC) {
+    return InvalidArgument("Spatial BFC growth requires the BFC allocator.");
+  }
+
   // Set when a single preallocated BFC allocator serves both default and
   // collective memory via spatial partitioning; suppresses the separate
   // collective allocator below.
@@ -1330,8 +1336,8 @@ GetStreamExecutorGpuDeviceAllocator(
       // Collective memory is anchored at the lower end: symmetric NCCL windows
       // need identical offsets across ranks, and the base of a preallocated
       // range is the one address that can never move. Default memory is served
-      // from the upper end, so the top of the range is the only boundary that
-      // would have to move if the range were ever extended.
+      // from the upper end. Optional BFC growth appends default-only memory
+      // above the initial region without changing the collective anchor.
       shared_collective_pool =
           allocator_config.preallocate &&
           debug_options.xla_gpu_enable_allocator_spatial_partitioning();
@@ -1343,14 +1349,14 @@ GetStreamExecutorGpuDeviceAllocator(
       for (const auto& ordinal_and_device : addressable_devices) {
         ABSL_ASSIGN_OR_RETURN(
             auto bfc_allocator,
-            CreateBFCAllocator(ordinal_and_device.second->executor(),
-                               allocator_config.memory_fraction,
-                               allocator_config.preallocate,
-                               allocator_config.gpu_system_memory_size,
-                               allocator_config.sub_allocator_alloc_visitors,
-                               allocator_config.sub_allocator_free_visitors,
-                               /*enable_spatial_partitioning=*/
-                               shared_collective_pool));
+            CreateBFCAllocator(
+                ordinal_and_device.second->executor(),
+                allocator_config.memory_fraction, allocator_config.preallocate,
+                allocator_config.gpu_system_memory_size,
+                allocator_config.sub_allocator_alloc_visitors,
+                allocator_config.sub_allocator_free_visitors,
+                /*enable_spatial_partitioning=*/
+                shared_collective_pool, allocator_config.bfc_growth));
         allocators.push_back(
             {bfc_allocator, ordinal_and_device.second->compute_stream(),
              /*memory_space=*/
@@ -1546,7 +1552,7 @@ CreateAllocatorMemoryRegistration(GpuAllocatorConfig* allocator_config) {
   // Automatic memory registration is only safe for preallocated BFC arenas.
   // If BFC grows later, ranks may not see a consistent set of registered
   // backing allocations, which can lead to undefined behavior or deadlocks.
-  if (!allocator_config->preallocate) {
+  if (!allocator_config->preallocate || allocator_config->bfc_growth) {
     return nullptr;
   }
 
@@ -1913,6 +1919,26 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   EnablePeerAccess(xla_client->backend().stream_executors());
 
   GpuAllocatorConfig allocator_config = options.allocator_config;
+  bool enable_bfc_growth;
+  ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar(
+      "XLA_PJRT_GPU_BFC_ALLOW_GROWTH", allocator_config.bfc_growth.has_value(),
+      &enable_bfc_growth));
+  if (enable_bfc_growth) {
+    if (!allocator_config.bfc_growth) allocator_config.bfc_growth.emplace();
+    auto& growth = *allocator_config.bfc_growth;
+    ABSL_RETURN_IF_ERROR(tsl::ReadInt64FromEnvVar(
+        "XLA_PJRT_GPU_BFC_DEVICE_HEADROOM_BYTES", growth.device_headroom_bytes,
+        &growth.device_headroom_bytes));
+    ABSL_RETURN_IF_ERROR(tsl::ReadInt64FromEnvVar(
+        "XLA_PJRT_GPU_BFC_GROWTH_INCREMENT_BYTES", growth.increment_bytes,
+        &growth.increment_bytes));
+    ABSL_RETURN_IF_ERROR(tsl::ReadInt64FromEnvVar(
+        "XLA_PJRT_GPU_BFC_COLLECTIVE_GAP_RESERVE_BYTES",
+        growth.collective_gap_reserve_bytes,
+        &growth.collective_gap_reserve_bytes));
+  } else {
+    allocator_config.bfc_growth.reset();
+  }
   bool preallocate_device_memory = allocator_config.preallocate;
   auto memory_registration =
       CreateAllocatorMemoryRegistration(&allocator_config);
