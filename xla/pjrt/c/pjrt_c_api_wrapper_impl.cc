@@ -47,9 +47,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/custom_options.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -91,6 +88,9 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace pjrt {
 
@@ -2347,21 +2347,15 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   if (args->options->struct_size >=
           PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, num_custom_options) &&
       args->options->num_custom_options > 0) {
-    xla::CustomOptions::Map custom_options;
-    for (auto& [name, value] :
-         ConvertFromPjRtNamedValueList(args->options->custom_options,
-                                       args->options->num_custom_options)) {
-      custom_options[name] = std::visit(
-          [](auto v) -> xla::CustomOptions::Value { return std::move(v); },
-          std::move(value));
-    }
-    options.custom_options =
-        std::make_shared<const xla::CustomOptions>(std::move(custom_options));
+    options.custom_options = std::make_shared<const xla::CustomOptions>(
+        ConvertFromPjRtNamedValueList(args->options->custom_options,
+                                      args->options->num_custom_options));
   }
 
   options.multi_slice_config = nullptr;
   // TODO(b/485591964): Remove this check after 12week compatibility window.
-  if (args->options->struct_size >= PJRT_ExecuteOptions_STRUCT_SIZE &&
+  if (args->options->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, multi_slice_config) &&
       args->options->multi_slice_config != nullptr) {
     options.multi_slice_config =
         args->options->multi_slice_config->config.get();

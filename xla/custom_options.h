@@ -35,8 +35,11 @@ namespace xla {
 // execution of the same executable.
 class CustomOptions {
  public:
+  // The order of the alternatives matches `xla::PjRtValueType` so that the two
+  // maps are layout-compatible: `bool` comes before `std::string` to avoid
+  // pybind conversion ambiguity (see `xla/pjrt/pjrt_common.h`).
   using Value =
-      std::variant<bool, int64_t, float, std::string, std::vector<int64_t>>;
+      std::variant<std::string, bool, int64_t, std::vector<int64_t>, float>;
   using Map = absl::flat_hash_map<std::string, Value>;
 
   CustomOptions() = default;

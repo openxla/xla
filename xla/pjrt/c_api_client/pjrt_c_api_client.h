@@ -998,7 +998,6 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
       std::vector<int64_t>& non_donatable_input_indices_storage,
       std::vector<int>& task_ids_storage,
       std::vector<int64_t>& incarnation_ids_storage,
-      absl::flat_hash_map<std::string, PjRtValueType>& custom_options_storage,
       std::vector<PJRT_NamedValue>& c_custom_options) const;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
