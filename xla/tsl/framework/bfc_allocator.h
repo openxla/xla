@@ -91,14 +91,13 @@ using tensorflow::MemoryDump;
 //   allocated chunks and same-tag interior holes, and kCentralGap for the
 //   central gap. The central gap is tracked by central_gap_ instead of being
 //   inserted into a Bin. Each end first reuses binned holes with its own tag,
-//   then carves from the central gap. Carving from the gap returns a chunk of
-//   exactly the rounded request size, leaving the remainder in the gap except
-//   for alignment padding, which becomes a same-tag free hole. Reusing a
-//   same-tag hole uses that end's configured allocation policy. Hole ordering
-//   and splitting are independent of placement direction, so clients can keep
-//   a memory space's policy when changing the end that serves it.
-//   This keeps each end's placements independent of activity from the opposite
-//   end except when lower and upper allocations exhaust the central gap.
+//   then carves from the central gap. Each end has separate splitting policies
+//   for owned holes and central-gap carves, independent of placement direction.
+//   Exact gap splitting leaves the remainder shared, except for alignment
+//   padding outside the gap, which becomes a same-tag free hole. Heuristic gap
+//   splitting may retain small remainders as allocation padding. An end using
+//   exact gap splitting has placements independent of activity from the other
+//   end, except when the central gap cannot satisfy its requests.
 //
 class BFCAllocator : public Allocator {
  public:
@@ -109,9 +108,8 @@ class BFCAllocator : public Allocator {
     kDescendingAddress,  // Prefer the highest-address fitting hole.
   };
 
-  // Splitting policy for owned-hole reuse. Central-gap carves always split
-  // exactly, regardless of this policy.
-  enum class HoleSplitPolicy {
+  // Splitting policy, configured separately for owned holes and central gaps.
+  enum class SplitPolicy {
     // Apply the BFC size/fragmentation heuristic, retaining small remainders as
     // allocation padding instead of creating additional free chunks.
     kBfc,
@@ -122,7 +120,11 @@ class BFCAllocator : public Allocator {
   struct AllocationPolicy {
     // Best fit always compares sizes first; this only breaks equal-size ties.
     HoleOrder hole_order = HoleOrder::kAscendingAddress;
-    HoleSplitPolicy hole_split_policy = HoleSplitPolicy::kBfc;
+    SplitPolicy hole_split_policy = SplitPolicy::kBfc;
+    // Exact gap splitting keeps this end's chunk sizes independent of the
+    // opposite end's activity. The BFC heuristic may absorb shared capacity
+    // as allocation padding instead.
+    SplitPolicy gap_split_policy = SplitPolicy::kExact;
   };
 
   struct Options {
@@ -163,18 +165,19 @@ class BFCAllocator : public Allocator {
     // still fail if neither an own-tag hole nor the central gap fits, even if
     // free memory remains in fragmented or opposite-tag holes.
     //
-    // Because neither end ever carves the other's interior holes, each end's
-    // placement is a pure function of that end's request sequence and is never
-    // perturbed by activity from the opposite end, except when lower and upper
-    // allocations exhaust the central gap. That makes offsets reproducible
-    // across processes that issue the same requests for that end in the same
-    // order, e.g. symmetric collective buffers across ranks.
+    // Neither end carves the other's interior holes. With exact gap splitting,
+    // an end's placements depend only on its own request sequence, except when
+    // the central gap cannot satisfy a request. This makes offsets reproducible
+    // across processes issuing the same requests for that end, e.g. symmetric
+    // collective buffers across ranks. Heuristic gap splitting can make chunk
+    // sizes depend on the opposite end's activity through the gap size.
     //
     // Requires allow_growth=false (a single fixed address range).
     bool enable_spatial_partitioning = false;
 
-    // Policies for reusing owned holes, independent of placement direction.
-    // Central-gap carves always split exactly, regardless of these policies.
+    // Policies for owned-hole reuse and gap carves, independent of placement
+    // direction. By default, owned holes use the BFC heuristic and gap carves
+    // split exactly.
     // Non-partitioned allocations use lower_end_policy; the defaults preserve
     // non-partitioned BFC behavior.
     AllocationPolicy lower_end_policy;
@@ -675,11 +678,10 @@ class BFCAllocator : public Allocator {
                                  AllocationEnd allocation_end)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Non-partitioned BFC split heuristic, also available for same-tag free holes
+  // BFC split heuristic, also available for owned holes and central-gap carves
   // in partitioned mode: split if the chunk is at least twice the rounded
   // request size, or if keeping it whole would waste at least
-  // max_internal_fragmentation_bytes_ on padding. The chunk must not be the
-  // central gap, whose allocations always use the rounded request size.
+  // max_internal_fragmentation_bytes_ on padding.
   // alignment_padding excludes a prefix that must be split off for alignment.
   bool ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes,
                         size_t alignment_padding = 0) const
