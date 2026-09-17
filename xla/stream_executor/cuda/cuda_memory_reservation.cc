@@ -131,14 +131,9 @@ CudaMemoryReservation::~CudaMemoryReservation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  // Attempt to unmap the full range before freeing the virtual address space.
-  // Sub-ranges already unmapped by ScopedMapping destructors will cause this
-  // call to fail; the error is logged and the address range is freed anyway.
-  auto unmap_status =
-      cuda::ToStatus(cuMemUnmap(ptr_, size_), "Error unmapping CUDA memory");
-  if (!unmap_status.ok()) {
-    LOG(ERROR) << unmap_status.message();
-  }
+  // ScopedMapping owns each unmap and must be destroyed before the reservation.
+  // A reservation can include unbacked pages, so unmapping its whole range is
+  // neither necessary nor valid after the mappings have been released.
   auto free_status = cuda::ToStatus(cuMemAddressFree(ptr_, size_),
                                     "Error freeing CUDA address range");
   if (!free_status.ok()) {
