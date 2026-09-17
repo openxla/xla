@@ -3405,6 +3405,10 @@ cc_library(
     name = "cuda_contiguous_sub_allocator",
     srcs = ["cuda_contiguous_sub_allocator.cc"],
     hdrs = ["cuda_contiguous_sub_allocator.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_device_allocator",
         ":cuda_memory_reservation",
