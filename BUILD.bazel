@@ -22,6 +22,11 @@ package(
 
 licenses(["notice"])
 
+exports_files(
+    [".bant-macros"],
+    visibility = ["//build_tools/lint:__pkg__"],
+)
+
 license(
     name = "license",
     package_name = "xla",

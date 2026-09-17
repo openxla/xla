@@ -150,7 +150,33 @@ cc_library(name = "unrelated", srcs = ["unrelated.cc"])
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
+
+  def test_project_macros_handle_binary_rules(self):
+    macros = pathlib.Path(__file__).resolve().parents[2] / ".bant-macros"
+    self.write_file(".bant-macros", macros.read_text())
+    self.write_file(
+        "xla/consumer/BUILD",
+        """\
+cc_binary(
+    name = "native_binary",
+    srcs = ["consumer.cc"],
+    deps = ["//xla/platform:errors"],
+)
+xla_cc_binary(
+    name = "wrapped_binary",
+    srcs = ["consumer.cc"],
+    deps = ["//xla/platform:errors"],
+)
+""",
+    )
+    result = self.check_targets(
+        "//xla/consumer:native_binary", "//xla/consumer:wrapped_binary"
+    )
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    self.assertEqual(result.stdout, "")
+    self.assertIn("Checked DWYU on 2 targets.", result.stderr)
 
   def test_benign_tsl_change_has_no_false_positive(self):
     result = self.check_targets("@tsl//tsl/profiler:controller")

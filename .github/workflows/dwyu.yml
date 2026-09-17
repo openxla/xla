@@ -62,8 +62,9 @@ jobs:
             echo "No targets to check."
             exit 0
           fi
-          echo "Checking targets: $TARGETS"
           mapfile -t TARGET_ARRAY <<< "$TARGETS"
+          printf 'Checking targets:\n'
+          printf '  %s\n' "${TARGET_ARRAY[@]}"
           # Analysis-only builds do not create the checkout's bazel-out symlink.
           OUTPUT_BASE=$(bazelisk info output_base)
           python3 build_tools/lint/run_dwyu.py \

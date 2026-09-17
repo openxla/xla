@@ -117,6 +117,7 @@ pytype_strict_library(
 py_test(
     name = "run_dwyu_test",
     srcs = ["run_dwyu_test.py"],
+    data = ["//:.bant-macros"],
     deps = [
         ":run_dwyu",
     ],
