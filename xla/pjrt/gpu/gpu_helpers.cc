@@ -117,12 +117,10 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
                << status.message();
   }
 
-  if (allow_growth &&
-      (!preallocate || !enable_spatial_partitioning || enable_unified_memory)) {
-    return InvalidArgument(
-        "BFC growth requires a preallocated spatial pool without unified "
-        "memory.");
-  }
+  // This option extends preallocated spatial device-memory pools. Other modes
+  // retain their existing relationship between preallocation and growth.
+  allow_growth =
+      allow_growth && enable_spatial_partitioning && !enable_unified_memory;
   if (allow_growth &&
       ((!gpu_system_memory_size &&
         (!std::isfinite(memory_fraction) || memory_fraction <= 0 ||

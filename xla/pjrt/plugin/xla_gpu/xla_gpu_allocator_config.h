@@ -47,7 +47,8 @@ struct GpuAllocatorConfig {
   //
   // If `gpu_system_memory_size` is set, it determines memory allocation.
   // `memory_fraction` won't be used in this case.
-  // With bfc_allow_growth, this sets the initial allocation instead of the cap.
+  // With bfc_allow_growth in a spatial device-memory pool, this sets the
+  // initial allocation instead of the cap.
   double memory_fraction = 0.75;
 
   // Only used if kind == kBFC. The absolute size of reserved memory space for
@@ -65,8 +66,9 @@ struct GpuAllocatorConfig {
   // Let upper-end/default allocations extend a preallocated spatial BFC pool
   // after its holes and central gap cannot fit a request. The fraction (or
   // absolute size) above sets the initial shared region; total device memory
-  // is the cap. Collective allocations remain in the initial region.
-  bool bfc_allow_growth = false;
+  // is the cap. Collective allocations remain in the initial region. Enabled
+  // by default; only applies to spatial BFC pools using device memory.
+  bool bfc_allow_growth = true;
 
   // Amount of collective memory (ncclMemAlloc) to preallocate. If this value is
   // 0, collective memory space will be grown as needed to fit the application's

@@ -1299,12 +1299,6 @@ GetStreamExecutorGpuDeviceAllocator(
     effective_kind = GpuAllocatorConfig::Kind::kVmm;
   }
 
-  if (allocator_config.bfc_allow_growth &&
-      effective_kind != GpuAllocatorConfig::Kind::kDefault &&
-      effective_kind != GpuAllocatorConfig::Kind::kBFC) {
-    return InvalidArgument("Spatial BFC growth requires the BFC allocator.");
-  }
-
   // Set when a single preallocated BFC allocator serves both default and
   // collective memory via spatial partitioning; suppresses the separate
   // collective allocator below.
@@ -1552,7 +1546,9 @@ CreateAllocatorMemoryRegistration(GpuAllocatorConfig* allocator_config) {
   // Automatic memory registration is only safe for preallocated BFC arenas.
   // If BFC grows later, ranks may not see a consistent set of registered
   // backing allocations, which can lead to undefined behavior or deadlocks.
-  if (!allocator_config->preallocate || allocator_config->bfc_allow_growth) {
+  if (!allocator_config->preallocate ||
+      (allocator_config->bfc_allow_growth &&
+       debug_options.xla_gpu_enable_allocator_spatial_partitioning())) {
     return nullptr;
   }
 
@@ -1919,9 +1915,6 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   EnablePeerAccess(xla_client->backend().stream_executors());
 
   GpuAllocatorConfig allocator_config = options.allocator_config;
-  ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar(
-      "XLA_PJRT_GPU_BFC_ALLOW_GROWTH", allocator_config.bfc_allow_growth,
-      &allocator_config.bfc_allow_growth));
   bool preallocate_device_memory = allocator_config.preallocate;
   auto memory_registration =
       CreateAllocatorMemoryRegistration(&allocator_config);

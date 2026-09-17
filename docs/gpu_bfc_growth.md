@@ -1,10 +1,9 @@
 # Spatial BFC growth after allocation failure
 
-Enable experimental GPU BFC growth with
-`XLA_PJRT_GPU_BFC_ALLOW_GROWTH=true`, or set
-`GpuAllocatorConfig::bfc_allow_growth`. It requires preallocation and spatial
-partitioning, and is incompatible with unified memory and allocator modes that
-select the separate remapping VMM allocator.
+Preallocated spatial GPU BFC pools grow by default when using device memory.
+C++ clients can set `GpuAllocatorConfig::bfc_allow_growth=false` to keep the
+initial shared pool fixed. Non-spatial pools, unified memory, and other
+allocator kinds retain their existing allocation behavior.
 
 The memory fraction (or absolute memory setting) determines the initial shared
 region. That region must be allocated in full. S(1) uses its lower end and S(0)
