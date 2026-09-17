@@ -111,7 +111,7 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
     bool enable_spatial_partitioning,
-    std::optional<GpuAllocatorConfig::BfcGrowthOptions> growth) {
+    std::optional<GpuBfcGrowthOptions> growth) {
   if (enable_spatial_partitioning && !preallocate) {
     return InvalidArgument(
         "Spatial partitioning of the BFC allocator requires preallocate=true.");
