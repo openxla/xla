@@ -21,9 +21,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/retrying_utils.h"
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>

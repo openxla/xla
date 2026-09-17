@@ -32,12 +32,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "google/protobuf/message.h"
 #include "google/protobuf/message_lite.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/file_statistics.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/macros.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/protobuf.h"
 
 // Delete leaked Windows definitions.
 #ifdef PLATFORM_WINDOWS

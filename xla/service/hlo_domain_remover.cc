@@ -55,7 +55,7 @@ class HloDomainRemover::RunContext {
 absl::Status HloDomainRemover::RunContext::VerifyAndNormalizeDomain(
     const DomainMetadata::Domain& domain) {
   ABSL_ASSIGN_OR_RETURN(const DomainMetadata* ref_metadata,
-                   HloDomainVerifier::VerifyDomain(domain));
+                        HloDomainVerifier::VerifyDomain(domain));
   if (ref_metadata != nullptr) {
     VLOG(4) << "Applying domain normalization: " << ref_metadata->ToString();
     ABSL_RETURN_IF_ERROR(remover_->normalizer_(domain, ref_metadata));
@@ -76,7 +76,7 @@ absl::StatusOr<bool> HloDomainRemover::RunContext::Run(
     // First create the domain instruction sets. A domain instruction set is
     // the set of instructions whose edges never cross a kDomain instruction.
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDomainMap> domain_map,
-                     HloDomainMap::Create(computation, remover_->kind_));
+                          HloDomainMap::Create(computation, remover_->kind_));
     // Verify and normalize every domain populated within the map.
     for (auto& domain : domain_map->GetDomains()) {
       ABSL_RETURN_IF_ERROR(VerifyAndNormalizeDomain(*domain));

@@ -23,8 +23,8 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
-#include "xla/service/decision.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/service/decision.h"
 
 namespace mlir::triton::xla {
 

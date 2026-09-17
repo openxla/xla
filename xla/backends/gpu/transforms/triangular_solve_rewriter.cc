@@ -78,7 +78,7 @@ absl::StatusOr<bool> TriangularSolveRewriter::RunImpl(
 
       // Get the actual result out of the custom call's tuple.
       ABSL_ASSIGN_OR_RETURN(HloInstruction * gte,
-                       MakeGetTupleElementHlo(custom_call, 0));
+                            MakeGetTupleElementHlo(custom_call, 0));
       ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(instr, gte));
       changed = true;
     }

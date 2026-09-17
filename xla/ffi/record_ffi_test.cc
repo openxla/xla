@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/ffi/record_ffi.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <initializer_list>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/ffi/api/c_api.h"

@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -209,7 +210,7 @@ TEST(CustomKernelThunkTest, FromProto) {
 
 static absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
   ABSL_ASSIGN_OR_RETURN(std::string name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
   ABSL_ASSIGN_OR_RETURN(
       se::Platform * platform,
       se::PlatformManager::PlatformWithName(absl::AsciiStrToUpper(name)));

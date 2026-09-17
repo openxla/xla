@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/shape.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"

@@ -14,11 +14,12 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/transforms/collectives/collective_backend_assigner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -43,7 +44,7 @@ class CollectiveBackendAssignerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<DebugOptions::CollectivesMode> GetCollectivesMode(
       const HloInstruction* instr) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     instr->backend_config<GpuBackendConfig>());
+                          instr->backend_config<GpuBackendConfig>());
     return gpu_config.collective_backend_config().collectives_mode();
   }
 };

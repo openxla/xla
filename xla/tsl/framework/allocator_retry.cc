@@ -22,9 +22,9 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/framework/metrics.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace tsl {
 

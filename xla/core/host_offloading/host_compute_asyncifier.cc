@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,7 +37,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 
@@ -125,7 +125,8 @@ absl::StatusOr<bool> HostComputeAsyncifier::RunImpl(
 
       VLOG(1) << "Replacing" << call_instr_no_constants->name() << " with "
               << async_done->name();
-      ABSL_RETURN_IF_ERROR(call_instr_no_constants->ReplaceAllUsesWith(async_done));
+      ABSL_RETURN_IF_ERROR(
+          call_instr_no_constants->ReplaceAllUsesWith(async_done));
 
       RemoveTilesAndMemorySpaces(host_computation);
 

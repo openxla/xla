@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/TargetParser/Triple.h"

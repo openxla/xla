@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/custom_call_target.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/service/shaped_slice.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
-#include "tsl/platform/platform.h"
 
 namespace xla::gpu {
 
@@ -189,12 +189,12 @@ absl::StatusOr<ThunkProto> LegacyCustomCallThunk::ToProto() const {
 
   for (const NullableShapedSlice& operand : operands_) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_custom_call_thunk()->add_operands(),
-                     operand.ToProto());
+                          operand.ToProto());
   }
 
   for (const NullableShapedSlice& result : results_) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_custom_call_thunk()->add_results(),
-                     result.ToProto());
+                          result.ToProto());
   }
 
   return proto;

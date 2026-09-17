@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -26,7 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"

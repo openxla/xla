@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
@@ -28,6 +29,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/tstring.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -39,8 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/testing/temporary_directory.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/tstring.h"
 
 namespace xla {
 namespace gpu {
@@ -77,7 +78,8 @@ ReadTFRecordIOLiteral(const std::string& dir) {
       ABSL_RETURN_IF_ERROR(status);
 
       ABSL_RETURN_IF_ERROR(reader.ReadRecord(&offset, &record));
-      ABSL_ASSIGN_OR_RETURN(Literal literal, Literal::DeserializeFromString(record));
+      ABSL_ASSIGN_OR_RETURN(Literal literal,
+                            Literal::DeserializeFromString(record));
       result.emplace_back(metadata, std::move(literal));
     }
   }

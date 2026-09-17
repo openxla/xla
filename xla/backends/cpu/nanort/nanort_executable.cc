@@ -30,6 +30,9 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
@@ -54,9 +57,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 #define EIGEN_USE_THREADS
 
@@ -157,8 +157,8 @@ static absl::StatusOr<std::vector<size_t>> ResolveResultMapping(
 
         const HloValue* value = sources.values().front();
         ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice slice,
-                         buffer_assignment.GetUniqueSlice(value->instruction(),
-                                                          value->index()));
+                              buffer_assignment.GetUniqueSlice(
+                                  value->instruction(), value->index()));
 
         DCHECK_EQ(slice.size(), slice.allocation()->size())
             << "Result slice size must match result allocation size";

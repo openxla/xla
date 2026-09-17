@@ -36,8 +36,8 @@ namespace gpu {
 absl::StatusOr<std::unique_ptr<HostMemoryPool>> HostMemoryPool::Create(
     se::StreamExecutor* executor, PrimitiveType type) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::MemoryAllocation> allocation,
-                   executor->HostMemoryAllocate(
-                       kNumElems * primitive_util::ByteWidth(type)));
+                        executor->HostMemoryAllocate(
+                            kNumElems * primitive_util::ByteWidth(type)));
   return absl::WrapUnique(new HostMemoryPool(std::move(allocation), type));
 }
 

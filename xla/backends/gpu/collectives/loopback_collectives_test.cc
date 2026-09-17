@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/loopback_collectives.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -74,7 +75,8 @@ CreateCommunicators(LoopbackCollectives* collectives,
     device_ranks.emplace_back(&devices[i], RankId(i));
   }
 
-  ABSL_ASSIGN_OR_RETURN(CliqueId clique_id, collectives->CreateUniqueCliqueId());
+  ABSL_ASSIGN_OR_RETURN(CliqueId clique_id,
+                        collectives->CreateUniqueCliqueId());
   CliqueIds clique_ids;
   clique_ids.Add(clique_id);
 
@@ -82,8 +84,8 @@ CreateCommunicators(LoopbackCollectives* collectives,
   GpuCollectives::Config config;
 
   ABSL_ASSIGN_OR_RETURN(auto comms,
-                   collectives->CreateCommunicators(clique_key, clique_ids,
-                                                    device_ranks, config));
+                        collectives->CreateCommunicators(clique_key, clique_ids,
+                                                         device_ranks, config));
 
   std::vector<std::unique_ptr<GpuCommunicator>> gpu_comms;
   gpu_comms.reserve(comms.size());
@@ -122,8 +124,8 @@ SplitCommunicators(
   GpuCollectives::Config config;
 
   ABSL_ASSIGN_OR_RETURN(auto comms, collectives->SplitCommunicators(
-                                   existing_comms_ptrs, /*color=*/0, keys,
-                                   config, device_ranks));
+                                        existing_comms_ptrs, /*color=*/0, keys,
+                                        config, device_ranks));
 
   std::vector<std::unique_ptr<GpuCommunicator>> gpu_comms;
   gpu_comms.reserve(comms.size());

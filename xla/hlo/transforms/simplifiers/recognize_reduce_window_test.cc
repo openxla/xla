@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/recognize_reduce_window.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

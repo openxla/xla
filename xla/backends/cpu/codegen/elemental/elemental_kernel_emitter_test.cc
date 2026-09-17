@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/elemental/elemental_kernel_emitter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/LLVMContext.h"

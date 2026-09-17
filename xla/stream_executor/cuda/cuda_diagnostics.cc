@@ -48,8 +48,8 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "xla/tsl/platform/env.h"
 #include "tsl/platform/host_info.h"
+#include "xla/tsl/platform/env.h"
 
 namespace stream_executor {
 namespace cuda {
@@ -67,7 +67,7 @@ std::string DriverVersionStatusToString(absl::StatusOr<DriverVersion> version) {
   return DriverVersionToString(version.value());
 }
 
-absl::StatusOr<DriverVersion> StringToDriverVersion(const std::string &value) {
+absl::StatusOr<DriverVersion> StringToDriverVersion(const std::string& value) {
   std::vector<std::string> pieces = absl::StrSplit(value, '.');
   if (pieces.size() < 2 || pieces.size() > 4) {
     return absl::InvalidArgumentError(absl::StrFormat(
@@ -105,12 +105,12 @@ absl::StatusOr<DriverVersion> StringToDriverVersion(const std::string &value) {
 }
 
 void PrintLdLibraryPathIntoVlog() {
-  const char *value = std::getenv("LD_LIBRARY_PATH");
+  const char* value = std::getenv("LD_LIBRARY_PATH");
   std::string library_path = value == nullptr ? "" : value;
   VLOG(1) << "LD_LIBRARY_PATH is: \"" << library_path << "\"";
 
   std::vector<std::string> pieces = absl::StrSplit(library_path, ':');
-  for (const auto &piece : pieces) {
+  for (const auto& piece : pieces) {
     if (piece.empty()) {
       continue;
     }
@@ -121,16 +121,16 @@ void PrintLdLibraryPathIntoVlog() {
       VLOG(1) << "could not open \"" << piece << "\": " << status;
       continue;
     }
-    for (const std::string &filename : dir_children) {
+    for (const std::string& filename : dir_children) {
       VLOG(1) << piece << " :: " << filename;
     }
   }
 }
 
 #if !defined(PLATFORM_WINDOWS)
-static const char *kDriverVersionPath = "/proc/driver/nvidia/version";
+static const char* kDriverVersionPath = "/proc/driver/nvidia/version";
 #else
-static const char *kDriverVersionPath = "NO NVIDIA DRIVER VERSION FILE";
+static const char* kDriverVersionPath = "NO NVIDIA DRIVER VERSION FILE";
 #endif
 
 // -- class Diagnostician
@@ -155,7 +155,7 @@ void Diagnostician::LogDiagnosticInformation() {
   }
 #endif
 
-  const char *visible_devices_env = std::getenv("CUDA_VISIBLE_DEVICES");
+  const char* visible_devices_env = std::getenv("CUDA_VISIBLE_DEVICES");
   if (visible_devices_env != nullptr) {
     LOG(INFO) << "env: CUDA_VISIBLE_DEVICES=\"" << visible_devices_env << "\"";
     std::set<std::string> common_disable_gpu_values = {"", "-1", "none"};
@@ -210,8 +210,8 @@ absl::StatusOr<DriverVersion> Diagnostician::FindDsoVersion() {
 #if !defined(PLATFORM_WINDOWS) && !defined(ANDROID_TEGRA)
   // Callback used when iterating through DSOs. Looks for the driver-interfacing
   // DSO and yields its version number into the callback data, when found.
-  auto iterate_phdr = [](struct dl_phdr_info *info, size_t size,
-                         void *data) -> int {
+  auto iterate_phdr = [](struct dl_phdr_info* info, size_t size,
+                         void* data) -> int {
     if (!strstr(info->dlpi_name, "libcuda.so.1")) {
       return 0;
     }
@@ -237,7 +237,7 @@ absl::StatusOr<DriverVersion> Diagnostician::FindDsoVersion() {
         resolved_path.substr(dot + so_suffix.size());
     absl::string_view stripped_dso_version =
         absl::StripSuffix(dso_version, ".ld64");
-    auto result = static_cast<absl::StatusOr<DriverVersion> *>(data);
+    auto result = static_cast<absl::StatusOr<DriverVersion>*>(data);
     *result = cuda::StringToDriverVersion(std::string(stripped_dso_version));
     return 1;
   };
@@ -249,8 +249,8 @@ absl::StatusOr<DriverVersion> Diagnostician::FindDsoVersion() {
 }
 
 absl::StatusOr<DriverVersion> Diagnostician::FindKernelModuleVersion(
-    const std::string &driver_version_file_contents) {
-  static const char *kDriverFilePrelude = "Kernel Module";
+    const std::string& driver_version_file_contents) {
+  static const char* kDriverFilePrelude = "Kernel Module";
   size_t offset = driver_version_file_contents.find(kDriverFilePrelude);
   if (offset == std::string::npos) {
     return absl::NotFoundError(
@@ -258,7 +258,7 @@ absl::StatusOr<DriverVersion> Diagnostician::FindKernelModuleVersion(
                      "driver version file contents: \"",
                      driver_version_file_contents, "\""));
   }
-  static const char *kDriverVersionPrelude = "  ";
+  static const char* kDriverVersionPrelude = "  ";
   offset = driver_version_file_contents.find(kDriverVersionPrelude, offset);
   if (offset == std::string::npos) {
     return absl::NotFoundError(
@@ -293,7 +293,7 @@ void Diagnostician::WarnOnDsoKernelMismatch(
 }
 
 absl::StatusOr<DriverVersion> Diagnostician::FindKernelDriverVersion() {
-  FILE *driver_version_file = fopen(kDriverVersionPath, "r");
+  FILE* driver_version_file = fopen(kDriverVersionPath, "r");
   if (driver_version_file == nullptr) {
     return absl::PermissionDeniedError(
         absl::StrCat("could not open driver version path for reading: ",

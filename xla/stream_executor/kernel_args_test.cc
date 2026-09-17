@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_args.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
 #include "xla/stream_executor/device_address.h"

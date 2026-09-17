@@ -102,10 +102,12 @@ absl::StatusOr<Metadata> GetSchedulingMetadata(
     const GpuAliasInfo* alias_info) {
   std::unique_ptr<HloModule> cloned_module = module.Clone();
   AnnotateCollectives(cloned_module.get());
-  ABSL_RETURN_IF_ERROR(RunAsyncCollectivesConversionPasses(cloned_module.get()));
-  ABSL_ASSIGN_OR_RETURN(ScheduleMetadata schedule_metadata,
-                   ScheduleGpuModule(cloned_module.get(), pointer_size,
-                                     device_info, mlir_context, alias_info));
+  ABSL_RETURN_IF_ERROR(
+      RunAsyncCollectivesConversionPasses(cloned_module.get()));
+  ABSL_ASSIGN_OR_RETURN(
+      ScheduleMetadata schedule_metadata,
+      ScheduleGpuModule(cloned_module.get(), pointer_size, device_info,
+                        mlir_context, alias_info));
   ABSL_RETURN_IF_ERROR(AnnotateSyncCollectives(cloned_module.get()));
   return Metadata{schedule_metadata.peak_memory_usage,
                   SyncCollectiveIds(*cloned_module)};
@@ -126,9 +128,10 @@ int64_t MaxAvailableMemory(const HloModule& module,
 absl::StatusOr<bool> CollectiveCombinerAnnotator::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_ASSIGN_OR_RETURN(Metadata metadata,
-                   GetSchedulingMetadata(*module, pointer_size_, device_info_,
-                                         mlir_context_, alias_info_));
+  ABSL_ASSIGN_OR_RETURN(
+      Metadata metadata,
+      GetSchedulingMetadata(*module, pointer_size_, device_info_, mlir_context_,
+                            alias_info_));
   int64_t combiner_threshold =
       MaxAvailableMemory(*module, device_info_) - metadata.peak_memory_bytes;
   if (combiner_threshold <= 0) {

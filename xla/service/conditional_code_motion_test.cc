@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/conditional_code_motion.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"

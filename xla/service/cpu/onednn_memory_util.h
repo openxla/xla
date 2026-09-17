@@ -22,11 +22,11 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
-#include "oneapi/dnnl/dnnl.hpp"
-#include "oneapi/dnnl/dnnl_common_types.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
+#include "oneapi/dnnl/dnnl.hpp"
+#include "oneapi/dnnl/dnnl_common_types.h"
 #include "xla/literal.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/shape.h"

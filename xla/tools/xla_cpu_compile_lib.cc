@@ -50,7 +50,7 @@ absl::StatusOr<std::string> AotCompileCpuExecutable(
     *result->mutable_hlo_module() = executables[0]->module().ToProto();
   }
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CompiledModule> aot_result,
-                   cpu_compiler.Export(executables[0].get()));
+                        cpu_compiler.Export(executables[0].get()));
   return aot_result->SerializeAsString();
 }
 

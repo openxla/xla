@@ -168,7 +168,8 @@ absl::StatusOr<dnnl::memory> AllocateDnnlBuffer(
     const dnnl::memory::desc& desc, const dnnl::engine& engine,
     ScratchAllocator* scratch_allocator) {
   stream_executor::DeviceMemory<uint8_t> buffer;
-  ABSL_ASSIGN_OR_RETURN(buffer, scratch_allocator->AllocateBytes(desc.get_size()));
+  ABSL_ASSIGN_OR_RETURN(buffer,
+                        scratch_allocator->AllocateBytes(desc.get_size()));
   return CreateDnnlMemory(desc, engine, buffer.opaque());
 }
 
@@ -325,11 +326,11 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
                    dilation_dims.begin(), [](int64_t d) { return d - 1; });
     dnnl::memory::format_tag src_fmt, weight_fmt, dst_fmt;
     ABSL_ASSIGN_OR_RETURN(src_fmt, ToOneDnnDataFormatTag(input_dl, is_conv3d));
-    ABSL_ASSIGN_OR_RETURN(weight_fmt, ToOneDnnFilterFormatTag(filter_dl, is_conv3d,
-                                                         is_group_conv));
+    ABSL_ASSIGN_OR_RETURN(weight_fmt, ToOneDnnFilterFormatTag(
+                                          filter_dl, is_conv3d, is_group_conv));
     ABSL_ASSIGN_OR_RETURN(dst_fmt, ToOneDnnDataFormatTag(output_dl, is_conv3d));
     ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type data_type,
-                     ToOneDnnDataType(input_type));
+                          ToOneDnnDataType(input_type));
 
     dnnl::memory::desc src_md =
         dnnl::memory::desc({src_dims}, data_type, src_fmt);
@@ -340,7 +341,7 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
 
     bool use_plain_weight = false;
     ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar("ONEDNN_PLAIN_WEIGHT", false,
-                                            &use_plain_weight));
+                                                 &use_plain_weight));
     dnnl::memory::desc filter_md_prefer = dnnl::memory::desc(
         {filter_dims}, data_type, dnnl::memory::format_tag::any);
     if (use_plain_weight) {

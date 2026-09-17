@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/layout_assignment.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -537,8 +538,8 @@ class OperandsMustBeTheSameLayoutAssignment : public LayoutAssignment {
         continue;
       }
       ABSL_RETURN_IF_ERROR(SetArrayOperandLayout(buffer_constraint.layout(),
-                                            instruction, operand_no,
-                                            /*mandatory=*/true));
+                                                 instruction, operand_no,
+                                                 /*mandatory=*/true));
     }
     return PropagateBufferConstraintToUses(buffer_constraint, constraints);
   }

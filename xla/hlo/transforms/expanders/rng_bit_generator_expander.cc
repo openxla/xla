@@ -88,8 +88,9 @@ RngBitGeneratorExpander::GetGeneratorComputation(const Shape& data_shape,
       ConcatInDim(&builder, {Reshape(key_op, {1}), output.state}, 0);
   Tuple(&builder, {final_state, output.value});
   ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
-  ABSL_ASSIGN_OR_RETURN(HloComputation * new_computation,
-                   XlaComputationToHloComputation(xla_computation, module));
+  ABSL_ASSIGN_OR_RETURN(
+      HloComputation * new_computation,
+      XlaComputationToHloComputation(xla_computation, module));
   computation_cache_.emplace(cache_key, new_computation);
   return new_computation;
 }

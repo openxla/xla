@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/mlir/tools/mlir_interpreter/framework/tensor_or_memref.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_join.h"
 #include "llvm/ADT/STLExtras.h"

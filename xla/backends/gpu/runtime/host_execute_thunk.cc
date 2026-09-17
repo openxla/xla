@@ -37,6 +37,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/host_offloading/gpu_host_offloading_allocator.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -65,8 +67,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -388,8 +388,8 @@ absl::Status HostExecuteCallFrame::RecordPublishResult(
     }
 
     ABSL_ASSIGN_OR_RETURN(auto _, command_buffer->CreateMemcpyH2D(
-                                 &result_buffer, buffer.opaque_base(),
-                                 buffer.size_in_bytes(), {dep}));
+                                      &result_buffer, buffer.opaque_base(),
+                                      buffer.size_in_bytes(), {dep}));
   }
 
   return absl::OkStatus();
@@ -405,7 +405,8 @@ HostExecuteAsyncEvents::CreateEvent(se::StreamExecutor* executor,
   VLOG(6) << "Adding event for executor at address " << executor
           << " and event id " << run_id.ToInt();
 
-  ABSL_ASSIGN_OR_RETURN(auto host_to_device_stream_event, executor->CreateEvent());
+  ABSL_ASSIGN_OR_RETURN(auto host_to_device_stream_event,
+                        executor->CreateEvent());
 
   auto event = tsl::MakeConstructedAsyncValueRef<std::unique_ptr<se::Event>>(
       std::move(host_to_device_stream_event));
@@ -466,8 +467,9 @@ absl::Status HostExecuteStartThunk::LoadExecutable() {
         "compilation result.");
   }
 
-  ABSL_ASSIGN_OR_RETURN(executable_, HostOffloadingNanoRtExecutable::LoadFromProto(
-                                    executable_proto_));
+  ABSL_ASSIGN_OR_RETURN(
+      executable_,
+      HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_));
   return absl::OkStatus();
 }
 
@@ -513,12 +515,12 @@ absl::StatusOr<ThunkProto> HostExecuteStartThunk::ToProto() const {
 
   for (const ShapedSlice& slice : args_) {
     ABSL_ASSIGN_OR_RETURN(*host_execute_start_thunk_proto->add_args(),
-                     slice.ToProto());
+                          slice.ToProto());
   }
 
   for (const ShapedSlice& slice : results_) {
     ABSL_ASSIGN_OR_RETURN(*host_execute_start_thunk_proto->add_results(),
-                     slice.ToProto());
+                          slice.ToProto());
   }
 
   auto async_events_unique_id = GetAsyncEventsUniqueId();
@@ -541,12 +543,12 @@ HostExecuteStartThunk::FromProto(
 
   for (const ShapedSliceProto& proto : proto.args()) {
     ABSL_ASSIGN_OR_RETURN(ShapedSlice slice,
-                     ShapedSlice::FromProto(proto, buffer_allocations));
+                          ShapedSlice::FromProto(proto, buffer_allocations));
     args.push_back(slice);
   }
   for (const ShapedSliceProto& proto : proto.results()) {
     ABSL_ASSIGN_OR_RETURN(ShapedSlice slice,
-                     ShapedSlice::FromProto(proto, buffer_allocations));
+                          ShapedSlice::FromProto(proto, buffer_allocations));
     results.push_back(slice);
   }
 
@@ -586,11 +588,12 @@ absl::Status HostExecuteStartThunk::Initialize(const InitializeParams& params) {
     }
   });
 
-  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<HostExecuteCallFrame> call_frame,
-                   HostExecuteCallFrame::Create(
-                       params.stream, params.buffer_allocations, *allocator_,
-                       absl::MakeSpan(args_), absl::MakeSpan(results_),
-                       executable_->program_shape()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<HostExecuteCallFrame> call_frame,
+      HostExecuteCallFrame::Create(params.stream, params.buffer_allocations,
+                                   *allocator_, absl::MakeSpan(args_),
+                                   absl::MakeSpan(results_),
+                                   executable_->program_shape()));
 
   (*params.execution_scoped_state)[thunk_info().thunk_id] =
       std::move(call_frame);
@@ -692,8 +695,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> HostExecuteStartThunk::Record(
       *tsl::any_cast<std::shared_ptr<HostExecuteCallFrame>>(&it->second);
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::CommandBuffer> nested,
-                   execute_params.stream->parent()->CreateCommandBuffer(
-                       se::CommandBuffer::Mode::kNested));
+                        execute_params.stream->parent()->CreateCommandBuffer(
+                            se::CommandBuffer::Mode::kNested));
 
   auto execute = [&, call_frame,
                   device_ordinal =
@@ -729,7 +732,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> HostExecuteStartThunk::Record(
                                       absl::MakeSpan(args_)));
 
   ABSL_ASSIGN_OR_RETURN(const stream_executor::CommandBuffer::Command* host_cmd,
-                   nested->CreateHost(std::move(execute), copy_deps));
+                        nested->CreateHost(std::move(execute), copy_deps));
   ABSL_RETURN_IF_ERROR(call_frame->RecordPublishResult(
       nested.get(), host_cmd, execute_params.buffer_allocations));
 
@@ -805,7 +808,7 @@ HostExecuteDoneThunk::FromProto(
   results.reserve(proto.results().size());
   for (const ShapedSliceProto& proto : proto.results()) {
     ABSL_ASSIGN_OR_RETURN(ShapedSlice slice,
-                     ShapedSlice::FromProto(proto, buffer_allocations));
+                          ShapedSlice::FromProto(proto, buffer_allocations));
     results.push_back(slice);
   }
 
@@ -820,8 +823,8 @@ absl::Status HostExecuteDoneThunk::Initialize(const InitializeParams& params) {
 absl::Status HostExecuteDoneThunk::ExecuteOnStream(
     const ExecuteParams& params) {
   ABSL_ASSIGN_OR_RETURN(auto event, async_events_->ExtractEvent(
-                                   params.host_to_device_stream->parent(),
-                                   RunId(params.execution_id)));
+                                        params.host_to_device_stream->parent(),
+                                        RunId(params.execution_id)));
 
   tsl::BlockUntilReady(event);
   if (event.IsError()) {

@@ -72,7 +72,8 @@ absl::StatusOr<bool> DegenerateDimensionRewriter::RunImpl(
                   hlo->shape(),
                   ReplaceElementwiseGroupSurroundedByReshapesAndBroadcasts(
                       shape_to_use, hlo, computation, &replacements)));
-          ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(hlo, reshaped_hlo));
+          ABSL_RETURN_IF_ERROR(
+              computation->ReplaceInstruction(hlo, reshaped_hlo));
           cpo.RecordChange(true);
           changed = true;
         }

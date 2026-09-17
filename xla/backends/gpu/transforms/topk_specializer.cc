@@ -384,7 +384,7 @@ class SpecializeTopkVisitor : public DfsHloRewriteVisitor {
     if (is_cuda && enable_raft_for_stable_topk &&
         ShouldRewriteStableTopKToUint64(topk)) {
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_topk,
-                       RewriteStableTopKToUint64(topk));
+                            RewriteStableTopKToUint64(topk));
       return ReplaceInstruction(topk, new_topk);
     }
 

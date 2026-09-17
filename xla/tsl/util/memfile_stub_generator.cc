@@ -18,9 +18,9 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/init_main.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 int main(int argc, char** argv) {
   std::string generated_file;

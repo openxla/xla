@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/select_k_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -65,9 +66,10 @@ using ::tsl::proto_testing::EqualsProto;
 
 absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
   ABSL_ASSIGN_OR_RETURN(std::string canonical_name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
   std::string name = absl::AsciiStrToUpper(canonical_name);
-  ABSL_ASSIGN_OR_RETURN(auto* platform, se::PlatformManager::PlatformWithName(name));
+  ABSL_ASSIGN_OR_RETURN(auto* platform,
+                        se::PlatformManager::PlatformWithName(name));
   return platform->ExecutorForDevice(0);
 }
 

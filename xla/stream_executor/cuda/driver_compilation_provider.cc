@@ -179,14 +179,14 @@ absl::StatusOr<Assembly> DriverCompilationProvider::CompileAndLink(
   // Return status can be CUDA_SUCCESS with error in the log.
   VLOG(3) << "Driver compilation error log output: " << error_log_buffer;
   ABSL_RETURN_IF_ERROR(CreateErrorFromPTXASLog(error_log_buffer, architecture,
-                                          options.cancel_if_reg_spill));
+                                               options.cancel_if_reg_spill));
   if (result != CUDA_SUCCESS) {
     return cuda::ToStatus(result, error_log_buffer);
   }
 
   VLOG(3) << "Driver compilation info log output: " << info_log_buffer;
   ABSL_RETURN_IF_ERROR(CreateErrorFromPTXASLog(info_log_buffer, architecture,
-                                          options.cancel_if_reg_spill));
+                                               options.cancel_if_reg_spill));
 
   std::vector<uint8_t> cubin(static_cast<uint8_t*>(cubin_out),
                              static_cast<uint8_t*>(cubin_out) + cubin_size);

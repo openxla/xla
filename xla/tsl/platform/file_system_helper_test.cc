@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tsl/platform/file_system_helper.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"

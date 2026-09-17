@@ -433,7 +433,7 @@ ConfigAssignerPass::GetEnabledBackends(
 
   auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
   ABSL_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
-                   registry.FindObject<GetCodegenBackends>(platform_id));
+                        registry.FindObject<GetCodegenBackends>(platform_id));
   std::vector<std::unique_ptr<CodegenBackend>> backends = get_codegen_backends(
       stream_exec, device_allocator, &debug_options, compiler, target_config,
       alias_info, mlir_context, shape_size_fn, autotune_backends);
@@ -452,7 +452,7 @@ absl::StatusOr<std::unique_ptr<ConfigAssignerPass>> ConfigAssignerPass::Create(
     se::DeviceAddressAllocator* allocator,
     MultiProcessKeyValueStore key_value_store) {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                   get_backends_fn());
+                        get_backends_fn());
 
   InstructionFilterFn should_assign_config_to =
       GetShouldAssignConfigToInstructionFn(debug_options, gpu_version);
@@ -471,34 +471,34 @@ absl::StatusOr<std::unique_ptr<ConfigAssignerPass>> ConfigAssignerPass::Create(
 
   std::unique_ptr<Autotuner> autotuner = nullptr;
   if (!is_deviceless) {
-      // TODO(intel-tf): Enable buffer checking for SYCL once
-      // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
-      // SYCL platform.
-      bool is_buffer_check_supported = stream_executor->GetPlatform()->id() !=
-                                       stream_executor::sycl::kSyclPlatformId;
-      std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
-          stream_executor,
-          GetProfileOptions(debug_options, is_buffer_check_supported),
-          allocator);
-      Autotuner::Options autotuner_options =
-          GetAutotunerOptions(debug_options, is_buffer_check_supported);
-      autotuner_options.cache_context = AutotuneCacheContext::Create(
-          target_config->device_description, orchestrator->codegen_backends());
+    // TODO(intel-tf): Enable buffer checking for SYCL once
+    // BufferComparatorKernel and RedzoneAllocatorKernel are registered for
+    // SYCL platform.
+    bool is_buffer_check_supported = stream_executor->GetPlatform()->id() !=
+                                     stream_executor::sycl::kSyclPlatformId;
+    std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
+        stream_executor,
+        GetProfileOptions(debug_options, is_buffer_check_supported), allocator);
+    Autotuner::Options autotuner_options =
+        GetAutotunerOptions(debug_options, is_buffer_check_supported);
+    autotuner_options.cache_context = AutotuneCacheContext::Create(
+        target_config->device_description, orchestrator->codegen_backends());
 
-      std::vector<std::unique_ptr<Profiler>> profilers;
-      profilers.push_back(std::move(profiler));
+    std::vector<std::unique_ptr<Profiler>> profilers;
+    profilers.push_back(std::move(profiler));
 
-      ABSL_ASSIGN_OR_RETURN(autotuner,
-                       Autotuner::Create(*orchestrator, std::move(profilers),
-                                         autotuner_options, thread_pool));
+    ABSL_ASSIGN_OR_RETURN(autotuner,
+                          Autotuner::Create(*orchestrator, std::move(profilers),
+                                            autotuner_options, thread_pool));
   }
 
   VLOG(1) << "ConfigAssigner options: " << assigner_options.ToString();
 
-  ABSL_ASSIGN_OR_RETURN(auto config_assigner,
-                   ConfigAssigner::Create(assigner_options, std::move(cache),
-                                          std::move(orchestrator),
-                                          std::move(autotuner), thread_pool));
+  ABSL_ASSIGN_OR_RETURN(
+      auto config_assigner,
+      ConfigAssigner::Create(assigner_options, std::move(cache),
+                             std::move(orchestrator), std::move(autotuner),
+                             thread_pool));
 
   return absl::WrapUnique(new ConfigAssignerPass(
       debug_options, std::move(config_assigner),

@@ -17,13 +17,14 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform_manager.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 
 namespace stream_executor::gpu {
 namespace {

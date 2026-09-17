@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/python/ifrt/mlir/fingerprint_utils.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"

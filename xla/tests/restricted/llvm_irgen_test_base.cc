@@ -15,22 +15,23 @@ limitations under the License.
 
 #include "xla/tests/restricted/llvm_irgen_test_base.h"
 
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/service/executable.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 
@@ -39,9 +40,9 @@ LlvmIrGenTestBase::CompileToExecutable(std::unique_ptr<HloModule> hlo_module,
                                        bool run_optimization_passes) {
   if (run_optimization_passes) {
     ABSL_ASSIGN_OR_RETURN(hlo_module, backend().compiler()->RunHloPasses(
-                                     std::move(hlo_module),
-                                     backend().default_stream_executor(),
-                                     /*device_allocator=*/nullptr));
+                                          std::move(hlo_module),
+                                          backend().default_stream_executor(),
+                                          /*device_allocator=*/nullptr));
   }
   return backend().compiler()->RunBackend(std::move(hlo_module),
                                           backend().default_stream_executor(),

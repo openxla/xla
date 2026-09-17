@@ -19,8 +19,8 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/status/status.h"
-#include "xla/tsl/platform/types.h"
 #include "tsl/platform/cord.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 namespace io {

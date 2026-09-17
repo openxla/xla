@@ -61,6 +61,8 @@ limitations under the License.
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Scalar.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
@@ -75,8 +77,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu::nvptx {
 
@@ -153,7 +153,7 @@ absl::StatusOr<std::unique_ptr<llvm::TargetMachine>> NVPTXGetTargetMachine(
     llvm::Triple target_triple, se::CudaComputeCapability compute_capability,
     const DebugOptions& debug_options) {
   ABSL_ASSIGN_OR_RETURN(int llvm_max_ptx_version,
-                   GetMaxPtxVersionSupportedByLlvm(target_triple));
+                        GetMaxPtxVersionSupportedByLlvm(target_triple));
 
   absl::StatusOr<stream_executor::SemanticVersion> runtime_cuda_version =
       stream_executor::GetAsmCompilerVersion(
@@ -381,9 +381,10 @@ absl::StatusOr<std::string> CompileToPtx(
 
     llvm::Triple default_target_triple("nvptx64-unknown-unknown");
     // Construct LLVM TargetMachine for NVPTX.
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::TargetMachine> target_machine,
-                     NVPTXGetTargetMachine(default_target_triple,
-                                           *compute_capability, debug_options));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<llvm::TargetMachine> target_machine,
+        NVPTXGetTargetMachine(default_target_triple, *compute_capability,
+                              debug_options));
 
     // Apply target machine configuration from call-back if available.
     if (configure_target) {

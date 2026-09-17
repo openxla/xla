@@ -17,6 +17,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/status/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/client/local_client.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal.h"
@@ -24,7 +25,6 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/local_client_test_base.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

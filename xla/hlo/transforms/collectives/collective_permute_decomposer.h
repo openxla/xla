@@ -26,7 +26,6 @@ limitations under the License.
 
 namespace xla {
 
-
 // CollectivePermuteDecomposer is a pass that (1) converts CollectivePermute
 // operations without any cycle in their (source, target) relationship to
 // Send/Recv, and (2) annotates the Send/Recv for pipelining with a frontend

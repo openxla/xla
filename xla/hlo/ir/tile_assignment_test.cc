@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/ir/tile_assignment.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"

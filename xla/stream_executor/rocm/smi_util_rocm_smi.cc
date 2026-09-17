@@ -77,7 +77,8 @@ absl::StatusOr<std::vector<SmiDeviceHandle>> EnumerateDevices() {
 }
 
 absl::StatusOr<SmiDeviceHandle> FindDevice(const BdfComponents& target_bdf) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices, EnumerateDevices());
+  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices,
+                        EnumerateDevices());
 
   for (SmiDeviceHandle device : devices) {
     uint64_t bdfid = 0;

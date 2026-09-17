@@ -86,8 +86,8 @@ HloInstruction* AllGatherDecomposer::TranslateAllGatherToAllReducePerOperand(
 absl::Status AllGatherDecomposer::DecomposeAllGather(
     HloAllGatherInstruction* ag, HloComputation* comp) {
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(ag->channel_id().has_value(),
-                                            ag->use_global_device_ids()));
+                        GetCollectiveOpGroupMode(ag->channel_id().has_value(),
+                                                 ag->use_global_device_ids()));
   if (ag->operand_count() > 1) {
     std::vector<HloInstruction*> tuple_inputs;
     for (int i = 0; i < ag->operand_count(); ++i) {

@@ -214,8 +214,8 @@ absl::Duration SolGPUCostModel::TransferDuration(
 absl::StatusOr<absl::Duration> SolGPUCostModel::RingLatency(
     const int64_t buff_size_bytes, const int num_nodes,
     const CollectiveType& coll_type, const int num_communicators) const {
-  ABSL_ASSIGN_OR_RETURN(int num_gpus,
-                   NumGpusPerComm(num_nodes, coll_type, num_communicators));
+  ABSL_ASSIGN_OR_RETURN(
+      int num_gpus, NumGpusPerComm(num_nodes, coll_type, num_communicators));
 
   int64_t per_gpu_msg_size_bytes;
   if (coll_type == CollectiveType::kSendRecv) {

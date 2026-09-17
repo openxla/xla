@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/cpu/small_while_loop_hoisting_pass.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"

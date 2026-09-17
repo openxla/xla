@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/executor_cache.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/stream_executor/stream.h"
@@ -34,8 +35,8 @@ TEST(ExecutorCacheTest, GetOnEmptyCacheFails) {
 
 TEST(ExecutorCacheTest, GetReturnsExpectedExecutor) {
   ExecutorCache cache;
-  StreamExecutor *executor0 = nullptr;
-  StreamExecutor *executor1 = nullptr;
+  StreamExecutor* executor0 = nullptr;
+  StreamExecutor* executor1 = nullptr;
   auto factory = [&executor0, &executor1]() {
     auto executor = std::make_unique<MockStreamExecutor>();
     if (executor0 == nullptr) {

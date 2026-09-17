@@ -22,9 +22,9 @@ limitations under the License.
 
 // TODO(cwhipkey): remove this when callers use annotations directly.
 #include "absl/base/macros.h"
+#include "tsl/platform/platform.h"
 #include "xla/tsl/platform/dynamic_annotations.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/platform.h"
 
 namespace tsl {
 namespace port {

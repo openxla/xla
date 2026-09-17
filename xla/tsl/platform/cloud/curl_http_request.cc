@@ -31,12 +31,12 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/scanner.h"
+#include "tsl/platform/strcat.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/platform/scanner.h"
-#include "tsl/platform/strcat.h"
 
 #define CHECK_CURL_OK(expr) CHECK_EQ(expr, CURLE_OK)
 

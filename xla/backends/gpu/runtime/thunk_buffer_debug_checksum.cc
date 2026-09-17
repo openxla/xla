@@ -152,7 +152,7 @@ absl::Status DumpBufferDebugChecksumLog(
       se::gpu::BufferDebugLog<BufferDebugLogEntry>::FromDeviceAddressUnchecked(
           log_buffer.device_memory());
   ABSL_ASSIGN_OR_RETURN(std::vector<BufferDebugLogEntry> log_entries,
-                   buffer_debug_log.ReadFromDevice(*stream));
+                        buffer_debug_log.ReadFromDevice(*stream));
   BufferDebugLogProto buffer_debug_log_proto =
       metadata_store->EntriesToProto(log_entries);
 
@@ -223,11 +223,11 @@ absl::Status RunChecksumPassInternal(
       std::make_shared<BufferDebugLogEntryMetadataStore>();
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation * log_alloc,
-                   allocator.NewEmptyAllocation(kLogSizeBytes));
+                        allocator.NewEmptyAllocation(kLogSizeBytes));
   BufferAllocation::Slice log_slice(log_alloc, 0, log_alloc->size());
 
   ABSL_ASSIGN_OR_RETURN(auto buffer_debug_init_thunk,
-                   CreateDebugInitThunk(log_slice, hlo_module));
+                        CreateDebugInitThunk(log_slice, hlo_module));
 
   ABSL_ASSIGN_OR_RETURN(
       auto buffer_debug_dump_thunk,

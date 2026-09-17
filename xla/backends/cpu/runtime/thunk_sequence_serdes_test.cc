@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
@@ -80,7 +82,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {
@@ -136,20 +137,22 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     ThunkSequence thunk_sequence;
 
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateAllGatherThunk(collective_thunk_resources.at(
-                         CollectiveThunk::CollectiveKind::kAllGather)));
+                          CreateAllGatherThunk(collective_thunk_resources.at(
+                              CollectiveThunk::CollectiveKind::kAllGather)));
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateAllReduceThunk(collective_thunk_resources.at(
-                         CollectiveThunk::CollectiveKind::kAllReduce)));
+                          CreateAllReduceThunk(collective_thunk_resources.at(
+                              CollectiveThunk::CollectiveKind::kAllReduce)));
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateAllToAllThunk(collective_thunk_resources.at(
-                         CollectiveThunk::CollectiveKind::kAllToAll)));
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateReduceScatterThunk(collective_thunk_resources.at(
-                         CollectiveThunk::CollectiveKind::kReduceScatter)));
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateCollectivePermuteThunk(collective_thunk_resources.at(
-                         CollectiveThunk::CollectiveKind::kCollectivePermute)));
+                          CreateAllToAllThunk(collective_thunk_resources.at(
+                              CollectiveThunk::CollectiveKind::kAllToAll)));
+    ABSL_ASSIGN_OR_RETURN(
+        thunk_sequence.emplace_back(),
+        CreateReduceScatterThunk(collective_thunk_resources.at(
+            CollectiveThunk::CollectiveKind::kReduceScatter)));
+    ABSL_ASSIGN_OR_RETURN(
+        thunk_sequence.emplace_back(),
+        CreateCollectivePermuteThunk(collective_thunk_resources.at(
+            CollectiveThunk::CollectiveKind::kCollectivePermute)));
 
     return thunk_sequence;
   }
@@ -158,29 +161,37 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     // NOTE create buffer allocations using thunk_testlib
     ThunkSequence thunk_sequence;
 
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllGatherThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllReduceThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateAllReduceThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateAllToAllThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateReduceScatterThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateReduceScatterThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCallThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateCollectivePermuteThunk());
+                          CreateCollectivePermuteThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCopyThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConditionalThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateCustomCallThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateConditionalThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateCustomCallThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateDotThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateFftThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateInfeedThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateOutfeedThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreatePartitionIdThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateReplicaIdThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
-                     CreateRngGetAndUpdateStateThunk());
+                          CreatePartitionIdThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateReplicaIdThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateRngGetAndUpdateStateThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateTopKThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateWhileThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateWhileThunk(1));
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateKernelThunk());
-    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateConvolutionThunk());
+    ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(),
+                          CreateConvolutionThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateSortThunk());
     ABSL_ASSIGN_OR_RETURN(thunk_sequence.emplace_back(), CreateRngSeedThunk());
     return thunk_sequence;
@@ -356,9 +367,12 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateCallThunk() {
     ThunkSequence called_sequence;
-    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllGatherThunk());
-    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllReduceThunk());
-    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllToAllThunk());
+    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
+                          CreateAllGatherThunk());
+    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
+                          CreateAllReduceThunk());
+    ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
+                          CreateAllToAllThunk());
     return CallThunk::Create(Thunk::Info(),
                              /*called_sequence=*/std::move(called_sequence));
   }
@@ -413,9 +427,12 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
     std::vector<ThunkSequence> branch_sequences;
     for (int i = 0; i < 2; ++i) {
       ThunkSequence called_sequence;
-      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllGatherThunk());
-      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllReduceThunk());
-      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(), CreateAllToAllThunk());
+      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
+                            CreateAllGatherThunk());
+      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
+                            CreateAllReduceThunk());
+      ABSL_ASSIGN_OR_RETURN(called_sequence.emplace_back(),
+                            CreateAllToAllThunk());
       branch_sequences.push_back(std::move(called_sequence));
     }
 
@@ -570,8 +587,7 @@ class ThunkSequenceSerdesTest : public ::testing::Test {
             buffer_allocations_[buffer_allocations_.size() - 1]),
         /*batch_size=*/1,
         /*input_size=*/1,
-        /*k=*/2
-    );
+        /*k=*/2);
   }
 
   absl::StatusOr<std::unique_ptr<Thunk>> CreateWhileThunk(

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/btree_map.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/runtime/device_id.h"

@@ -780,9 +780,10 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
       if (operand->IsDead() &&
           operand->parent()->IsSafelyRemovable(
               operand, ignore_control_dependencies, computation_callers)) {
-        ABSL_RETURN_IF_ERROR(operand->parent()->RemoveInstructionAndUnusedOperands(
-            operand, cleanup, ignore_control_dependencies,
-            computation_callers));
+        ABSL_RETURN_IF_ERROR(
+            operand->parent()->RemoveInstructionAndUnusedOperands(
+                operand, cleanup, ignore_control_dependencies,
+                computation_callers));
       }
     }
   }
@@ -1328,10 +1329,11 @@ HloComputation::CreateFromProto(
   int64_t parameter_count = 0;
 
   for (const HloInstructionProto& instruction_proto : proto.instructions()) {
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloInstruction> instruction,
-                     HloInstruction::CreateFromProto(
-                         instruction_proto, instruction_map, computation_map,
-                         prohibit_empty_literal, backend_configs));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloInstruction> instruction,
+        HloInstruction::CreateFromProto(instruction_proto, instruction_map,
+                                        computation_map, prohibit_empty_literal,
+                                        backend_configs));
     if (instruction->opcode() == HloOpcode::kParameter) {
       parameter_count++;
     }
@@ -1591,7 +1593,7 @@ absl::StatusOr<HloInstruction*> HloComputation::DeepCopyHelper(
 
       index->push_back(i);
       ABSL_ASSIGN_OR_RETURN(HloInstruction * element,
-                       DeepCopyHelper(gte, index, copy_leaf));
+                            DeepCopyHelper(gte, index, copy_leaf));
       elements.push_back(element);
       index->pop_back();
     }
@@ -1785,8 +1787,8 @@ absl::StatusOr<bool> HloComputation::ReplaceInstruction(
 absl::Status HloComputation::ReplaceInstruction(
     HloInstruction* old_instruction, HloInstruction* new_instruction) {
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   ReplaceInstruction(old_instruction, new_instruction,
-                                      /*preserve_sharding=*/false));
+                        ReplaceInstruction(old_instruction, new_instruction,
+                                           /*preserve_sharding=*/false));
   DCHECK(changed);
   return absl::OkStatus();
 }
@@ -1802,7 +1804,8 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
     return false;
   }
   if (relay_control_dependency) {
-    ABSL_RETURN_IF_ERROR(new_instruction->CopyAllControlDepsFrom(old_instruction));
+    ABSL_RETURN_IF_ERROR(
+        new_instruction->CopyAllControlDepsFrom(old_instruction));
     ABSL_RETURN_IF_ERROR(old_instruction->DropAllControlDeps());
   } else if (old_instruction->HasControlDependencies()) {
     VLOG(10) << "Skipping replacement because old instruction has "
@@ -1866,8 +1869,8 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
 absl::Status HloComputation::ReplaceInstructionWithDifferentShape(
     HloInstruction* old_instruction, HloInstruction* new_instruction) {
   ABSL_ASSIGN_OR_RETURN(bool changed, ReplaceInstructionWithDifferentShape(
-                                     old_instruction, new_instruction,
-                                     /*preserve_sharding=*/false));
+                                          old_instruction, new_instruction,
+                                          /*preserve_sharding=*/false));
   DCHECK(changed);
   return absl::OkStatus();
 }
@@ -1894,8 +1897,9 @@ absl::Status HloComputation::AcceptWithOperandOrder(
   // visited root, which would invalidate iterators if the unreachable roots
   // weren't computed ahead of time.
   for (HloInstruction* root : CollectUnreachableRoots()) {
-    ABSL_RETURN_IF_ERROR(root->AcceptWithOperandOrder(visitor, operand_order,
-                                                 /*call_finish_visit=*/false));
+    ABSL_RETURN_IF_ERROR(
+        root->AcceptWithOperandOrder(visitor, operand_order,
+                                     /*call_finish_visit=*/false));
   }
   // Visit the computation root instruction last.
   return root_instruction()->AcceptWithOperandOrder(visitor, operand_order,

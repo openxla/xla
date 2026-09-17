@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_original_value.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/hash/hash_testing.h"
 #include "xla/hlo/ir/hlo_instruction.h"

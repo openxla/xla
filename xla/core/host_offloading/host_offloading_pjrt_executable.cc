@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/core/host_offloading/host_offloading_buffer.h"
 #include "xla/core/host_offloading/host_offloading_executable.h"
 #include "xla/core/host_offloading/host_offloading_executable.pb.h"
@@ -59,7 +60,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -123,7 +123,7 @@ absl::StatusOr<PjRtClient*> GetHostOffloadingPjRtClient() {
 
   VLOG(1) << "Create host offloading PjRt client for a current process";
   ABSL_ASSIGN_OR_RETURN(auto owned_client,
-                   xla::GetXlaPjrtCpuClient(std::move(options)));
+                        xla::GetXlaPjrtCpuClient(std::move(options)));
   return client = owned_client.release();
 }
 
@@ -153,9 +153,10 @@ HostOffloadingPjRtExecutable::LoadFromProto(
       HloInputOutputAliasConfig::CreateFromProto(
           program_shape.result(), proto.hlo_module().input_output_alias()));
 
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   HloModule::CreateFromProto(proto.hlo_module(),
-                                              HloModuleConfig(program_shape)));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> hlo_module,
+      HloModule::CreateFromProto(proto.hlo_module(),
+                                 HloModuleConfig(program_shape)));
 
   ABSL_RETURN_IF_ERROR(RewriteToDestinationPassingStyle(
       hlo_module.get(), program_shape, alias_config));
@@ -227,9 +228,9 @@ HostOffloadingPjRtExecutable::Execute(
       // If parameter is aliased with output we create a mutable zero-copy
       // buffer so that PjRtClient can write result into it.
       ABSL_RETURN_IF_ERROR(add_argument(shape, buffer,
-                                   alias_config_.GetAliasedOutput(i, index)
-                                       ? kMutableZeroCopy
-                                       : kImmutableZeroCopy));
+                                        alias_config_.GetAliasedOutput(i, index)
+                                            ? kMutableZeroCopy
+                                            : kImmutableZeroCopy));
     }
   }
 
@@ -264,8 +265,8 @@ HostOffloadingPjRtExecutable::Execute(
   // We immediately throw away result buffers because all of them must be
   // aliased with parameters or result buffers passed in arguments.
   ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<PjRtBuffer>> results,
-                   executable_->ExecuteSharded(arguments_handles, device,
-                                               pjrt_execute_options));
+                        executable_->ExecuteSharded(arguments_handles, device,
+                                                    pjrt_execute_options));
 
   return tsl::MakeAvailableAsyncValueRef<ExecuteEvent>();
 }

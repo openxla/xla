@@ -26,9 +26,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 

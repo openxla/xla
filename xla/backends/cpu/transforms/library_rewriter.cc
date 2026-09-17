@@ -81,9 +81,9 @@ absl::StatusOr<HloFusionInstruction*> CreateLibraryFusion(
 
   // Replace the instruction.
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   computation->ReplaceInstructionWithDifferentShape(
-                       instr, fusion, /*preserve_sharding=*/false,
-                       /*relay_control_dependency=*/true));
+                        computation->ReplaceInstructionWithDifferentShape(
+                            instr, fusion, /*preserve_sharding=*/false,
+                            /*relay_control_dependency=*/true));
   if (!changed) {
     return absl::InternalError("Failed to replace instruction with fusion");
   }
@@ -140,9 +140,9 @@ absl::StatusOr<HloInstruction*> FuseConsumerInstruction(
   }
 
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   fusion->parent()->ReplaceInstructionWithDifferentShape(
-                       to_fuse, fusion, /*preserve_sharding=*/false,
-                       /*relay_control_dependency=*/true));
+                        fusion->parent()->ReplaceInstructionWithDifferentShape(
+                            to_fuse, fusion, /*preserve_sharding=*/false,
+                            /*relay_control_dependency=*/true));
   if (!changed) {
     return absl::InternalError("Failed to fuse consumer instruction");
   }
@@ -286,9 +286,9 @@ absl::StatusOr<bool> LibraryRewriter::FuseNeighbors(
         fusion->fused_instruction_count() +
                 Cast<HloFusionInstruction>(instr)->fused_instruction_count() <=
             lib->MaxFusionSize()) {
-      ABSL_ASSIGN_OR_RETURN(fusion,
-                       MergeFusionInstructions(
-                           fusion, Cast<HloFusionInstruction>(instr), dir));
+      ABSL_ASSIGN_OR_RETURN(
+          fusion, MergeFusionInstructions(
+                      fusion, Cast<HloFusionInstruction>(instr), dir));
       changed = true;
       continue;
     }
@@ -304,7 +304,7 @@ absl::StatusOr<bool> LibraryRewriter::FuseNeighbors(
 
     // Fuse `instr` into `fusion` according to the travel direction.
     ABSL_ASSIGN_OR_RETURN(HloInstruction * new_instr,
-                     GrowFusion(fusion, instr, dir));
+                          GrowFusion(fusion, instr, dir));
     ABSL_RETURN_IF_ERROR(
         InsertConvertIfNecessary(new_instr, lib->LibraryOpOutputType(instr)));
     changed = true;
@@ -358,8 +358,8 @@ absl::StatusOr<bool> LibraryRewriter::ProcessComputation(
     fused_.insert(centroid);
     VLOG(3) << "Starting a fusion with: " << centroid->ToString();
     ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * fusion,
-                     CreateLibraryFusion(centroid, lib->fusion_prefix(),
-                                         lib->fusion_kind()));
+                          CreateLibraryFusion(centroid, lib->fusion_prefix(),
+                                              lib->fusion_kind()));
     ABSL_RETURN_IF_ERROR(InsertConvertIfNecessary(
         fusion->fused_expression_root(), lib->LibraryOpOutputType(centroid)));
 

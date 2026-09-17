@@ -23,10 +23,11 @@ limitations under the License.
 // The fusions under test are produced by the real ConvKindAssignment +
 // ConvFusionRewriter passes, so they cannot drift from pipeline output.
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -78,7 +79,7 @@ class CudnnFusionCompilerDevicelessTest
   static absl::StatusOr<GpuTargetConfig> DevicelessTargetConfig(
       GpuModel model) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto proto,
-                     GetGpuTargetConfig(model));
+                          GetGpuTargetConfig(model));
     return GpuTargetConfig::FromProto(proto);
   }
 
@@ -90,7 +91,7 @@ class CudnnFusionCompilerDevicelessTest
       absl::string_view hlo_text, const se::DeviceDescription& device_info,
       se::dnn::VersionInfo dnn_version, ConvolutionKind expected_kind) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     ConvKindAssignment kind_assignment(device_info.gpu_compute_capability(),
                                        dnn_version);
     ABSL_RETURN_IF_ERROR(RunHloPass(&kind_assignment, module.get()).status());

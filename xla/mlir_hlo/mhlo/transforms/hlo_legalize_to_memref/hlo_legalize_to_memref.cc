@@ -50,25 +50,25 @@ using bufferization::replaceOpWithNewBufferizedOp;
 struct ReshapeOpInterface
     : public BufferizableOpInterface::ExternalModel<ReshapeOpInterface,
                                                     mhlo::ReshapeOp> {
-  bool bufferizesToMemoryRead(Operation * /*op*/, OpOperand & /*opOperand*/,
-                              const AnalysisState & /*state*/) const {
+  bool bufferizesToMemoryRead(Operation* /*op*/, OpOperand& /*opOperand*/,
+                              const AnalysisState& /*state*/) const {
     return false;
   }
 
-  bool bufferizesToMemoryWrite(Operation * /*op*/, OpOperand & /*opOperand*/,
-                               const AnalysisState & /*state*/) const {
+  bool bufferizesToMemoryWrite(Operation* /*op*/, OpOperand& /*opOperand*/,
+                               const AnalysisState& /*state*/) const {
     return false;
   }
 
-  AliasingValueList getAliasingValues(Operation *op, OpOperand & /*opOperand*/,
-                                      const AnalysisState & /*state*/) const {
+  AliasingValueList getAliasingValues(Operation* op, OpOperand& /*opOperand*/,
+                                      const AnalysisState& /*state*/) const {
     return {{op->getResult(0), BufferRelation::Equivalent}};
   }
 
   LogicalResult bufferize(
-      Operation *op, RewriterBase &rewriter,
-      const BufferizationOptions &options,
-      const bufferization::BufferizationState &state) const {
+      Operation* op, RewriterBase& rewriter,
+      const BufferizationOptions& options,
+      const bufferization::BufferizationState& state) const {
     auto reshapeOp = cast<mhlo::ReshapeOp>(op);
     auto unrankedOperandType =
         mlir::dyn_cast<UnrankedTensorType>(reshapeOp.getOperand().getType());
@@ -91,25 +91,25 @@ struct ReshapeOpInterface
 struct DynamicReshapeOpInterface
     : public BufferizableOpInterface::ExternalModel<DynamicReshapeOpInterface,
                                                     mhlo::DynamicReshapeOp> {
-  bool bufferizesToMemoryRead(Operation * /*op*/, OpOperand & /*opOperand*/,
-                              const AnalysisState & /*state*/) const {
+  bool bufferizesToMemoryRead(Operation* /*op*/, OpOperand& /*opOperand*/,
+                              const AnalysisState& /*state*/) const {
     return false;
   }
 
-  bool bufferizesToMemoryWrite(Operation * /*op*/, OpOperand & /*opOperand*/,
-                               const AnalysisState & /*state*/) const {
+  bool bufferizesToMemoryWrite(Operation* /*op*/, OpOperand& /*opOperand*/,
+                               const AnalysisState& /*state*/) const {
     return false;
   }
 
-  AliasingValueList getAliasingValues(Operation *op, OpOperand & /*opOperand*/,
-                                      const AnalysisState & /*state*/) const {
+  AliasingValueList getAliasingValues(Operation* op, OpOperand& /*opOperand*/,
+                                      const AnalysisState& /*state*/) const {
     return {{op->getResult(0), BufferRelation::Equivalent}};
   }
 
   LogicalResult bufferize(
-      Operation *op, RewriterBase &rewriter,
-      const BufferizationOptions &options,
-      const bufferization::BufferizationState &state) const {
+      Operation* op, RewriterBase& rewriter,
+      const BufferizationOptions& options,
+      const bufferization::BufferizationState& state) const {
     auto reshapeOp = cast<mhlo::DynamicReshapeOp>(op);
 
     // The buffer still has the old (pre-reshape) type.
@@ -153,9 +153,9 @@ struct DynamicReshapeOpInterface
 // and size of the target dimension if size-1 dimension expansion is
 // necessary.
 FailureOr<Value> insertDynamicMemrefCastOp(
-    mhlo::DynamicBroadcastInDimOp op, Value operand, RewriterBase &rewriter,
-    const BufferizationOptions &options,
-    const bufferization::BufferizationState &state) {
+    mhlo::DynamicBroadcastInDimOp op, Value operand, RewriterBase& rewriter,
+    const BufferizationOptions& options,
+    const bufferization::BufferizationState& state) {
   auto loc = op.getLoc();
   auto operandType = mlir::cast<MemRefType>(operand.getType());
   auto operandShape = operandType.getShape();
@@ -193,7 +193,7 @@ FailureOr<Value> insertDynamicMemrefCastOp(
   strides.reserve(resultRank);
 
   DenseMap<int, int> outputToInputDim;
-  for (const auto &dim : llvm::enumerate(op.getBroadcastDimensions())) {
+  for (const auto& dim : llvm::enumerate(op.getBroadcastDimensions())) {
     outputToInputDim[dim.value().getSExtValue()] = dim.index();
   }
   for (int i = 0; i < resultRank; ++i) {
@@ -252,25 +252,25 @@ FailureOr<Value> insertDynamicMemrefCastOp(
 struct DynamicBroadcastInDimOpInterface
     : public BufferizableOpInterface::ExternalModel<
           DynamicBroadcastInDimOpInterface, mhlo::DynamicBroadcastInDimOp> {
-  bool bufferizesToMemoryRead(Operation * /*op*/, OpOperand & /*opOperand*/,
-                              const AnalysisState & /*state*/) const {
+  bool bufferizesToMemoryRead(Operation* /*op*/, OpOperand& /*opOperand*/,
+                              const AnalysisState& /*state*/) const {
     return true;
   }
 
-  bool bufferizesToMemoryWrite(Operation * /*op*/, OpOperand & /*opOperand*/,
-                               const AnalysisState & /*state*/) const {
+  bool bufferizesToMemoryWrite(Operation* /*op*/, OpOperand& /*opOperand*/,
+                               const AnalysisState& /*state*/) const {
     return false;
   }
 
-  AliasingValueList getAliasingValues(Operation *op, OpOperand & /*opOperand*/,
-                                      const AnalysisState & /*state*/) const {
+  AliasingValueList getAliasingValues(Operation* op, OpOperand& /*opOperand*/,
+                                      const AnalysisState& /*state*/) const {
     return {{op->getResult(0), BufferRelation::Unknown}};
   }
 
   LogicalResult bufferize(
-      Operation *op, RewriterBase &rewriter,
-      const BufferizationOptions &options,
-      const bufferization::BufferizationState &state) const {
+      Operation* op, RewriterBase& rewriter,
+      const BufferizationOptions& options,
+      const bufferization::BufferizationState& state) const {
     auto broadcastInDimOp = cast<mhlo::DynamicBroadcastInDimOp>(op);
     auto resultType =
         mlir::dyn_cast<RankedTensorType>(broadcastInDimOp.getType());
@@ -290,8 +290,8 @@ struct DynamicBroadcastInDimOpInterface
 
 }  // namespace
 
-void registerBufferizableOpInterfaceExternalModels(DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *ctx, MhloDialect * /*dialect*/) {
+void registerBufferizableOpInterfaceExternalModels(DialectRegistry& registry) {
+  registry.addExtension(+[](MLIRContext* ctx, MhloDialect* /*dialect*/) {
     ReshapeOp::attachInterface<ReshapeOpInterface>(*ctx);
     DynamicReshapeOp::attachInterface<DynamicReshapeOpInterface>(*ctx);
     DynamicBroadcastInDimOp::attachInterface<DynamicBroadcastInDimOpInterface>(

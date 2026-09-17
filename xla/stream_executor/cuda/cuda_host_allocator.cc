@@ -23,14 +23,14 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/numbers.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/numbers.h"
 
 namespace stream_executor::gpu {
 

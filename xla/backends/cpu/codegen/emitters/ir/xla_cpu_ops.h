@@ -17,11 +17,11 @@ limitations under the License.
 #define XLA_BACKENDS_CPU_CODEGEN_EMITTERS_IR_XLA_CPU_OPS_H_
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"  // IWYU pragma: keep
-#include "mlir/IR/Attributes.h"  // IWYU pragma: keep
-#include "mlir/IR/BuiltinAttributes.h"  // IWYU pragma: keep
-#include "mlir/IR/BuiltinTypes.h"  // IWYU pragma: keep
-#include "mlir/IR/OpDefinition.h"  // IWYU pragma: keep
-#include "mlir/IR/OpImplementation.h"  // IWYU pragma: keep
+#include "mlir/IR/Attributes.h"                 // IWYU pragma: keep
+#include "mlir/IR/BuiltinAttributes.h"          // IWYU pragma: keep
+#include "mlir/IR/BuiltinTypes.h"               // IWYU pragma: keep
+#include "mlir/IR/OpDefinition.h"               // IWYU pragma: keep
+#include "mlir/IR/OpImplementation.h"           // IWYU pragma: keep
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_types.h"  // IWYU pragma: keep
 #include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
 

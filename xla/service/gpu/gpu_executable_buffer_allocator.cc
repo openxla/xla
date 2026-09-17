@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -179,7 +179,7 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
   }
   if (allocation.is_entry_computation_parameter()) {
     ABSL_ASSIGN_OR_RETURN(ParameterBuffer registered_buffer,
-                     get_parameter_buffer(allocation));
+                          get_parameter_buffer(allocation));
     if (registered_buffer.buffer.is_null() &&
         registered_buffer.buffer.size() > 0 &&
         !registered_buffer.allow_null_buffer) {
@@ -205,9 +205,9 @@ GpuExecutableBufferAllocator::ExecutionScope::BufferForAllocation(
   int64_t buffer_size = allocation.size();
   se::DeviceAddressBase buffer_address;
   if (buffer_size > 0) {
-    ABSL_ASSIGN_OR_RETURN(buffer_address,
-                     AllocateTransientBuffer(device_ordinal, allocation,
-                                             buffer_size, memory_allocator));
+    ABSL_ASSIGN_OR_RETURN(
+        buffer_address, AllocateTransientBuffer(device_ordinal, allocation,
+                                                buffer_size, memory_allocator));
   }
   return buffer_address;
 }

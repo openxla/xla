@@ -22,14 +22,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "xla/backends/profiler/plugin/plugin_metadata.h"
-#include "xla/backends/profiler/plugin/profiler_c_api.h"
-#include "xla/backends/profiler/plugin/profiler_error.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/profiler/lib/profiler_collection.h"
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/backends/profiler/plugin/plugin_metadata.h"
+#include "xla/backends/profiler/plugin/profiler_c_api.h"
+#include "xla/backends/profiler/plugin/profiler_error.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace xla {
 namespace profiler {

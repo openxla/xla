@@ -89,7 +89,8 @@ DeviceAddressBase MemoryReservation::ScopedMapping::mapped_address() const {
 absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
     size_t reservation_offset, size_t allocation_offset, size_t size,
     MemoryAllocation& allocation) {
-  ABSL_RETURN_IF_ERROR(Map(reservation_offset, allocation_offset, size, allocation));
+  ABSL_RETURN_IF_ERROR(
+      Map(reservation_offset, allocation_offset, size, allocation));
 
   auto cleanup = absl::MakeCleanup([&] {
     absl::Status unmap_status = UnMap(reservation_offset, size);
@@ -137,7 +138,7 @@ absl::StatusOr<MemoryReservation::ScopedMapping> MemoryReservation::MapTo(
 
   for (const MappingDescriptor& desc : mappings) {
     ABSL_RETURN_IF_ERROR(Map(desc.reservation_offset, desc.allocation_offset,
-                        desc.size, *desc.allocation));
+                             desc.size, *desc.allocation));
     total_size += desc.size;
   }
 
@@ -278,7 +279,7 @@ MemoryReservation::ScopedMapping::Remap(
   // Phase 1: unmap the slices whose backing physical handle changed.
   const absl::Time t_unmap0 = absl::Now();
   ABSL_ASSIGN_OR_RETURN(const int changed_count,
-                   UnmapChangedRuns(reservation, mappings, slice_mapped));
+                        UnmapChangedRuns(reservation, mappings, slice_mapped));
   const bool any_remapped = changed_count > 0;
 
   // Phase 2: map each changed slice to its new physical handle.

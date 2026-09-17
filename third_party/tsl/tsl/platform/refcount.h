@@ -22,8 +22,8 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/thread_annotations.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace core {

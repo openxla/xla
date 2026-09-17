@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/primitive_util.h"
@@ -36,7 +37,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -506,7 +506,8 @@ XlaOp ConvertRandomBitsToUniformFloatingPoint(XlaOp bits, XlaOp minval,
                                               XlaOp maxval) {
   XlaBuilder* builder = bits.builder();
   return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
-    ABSL_ASSIGN_OR_RETURN(const Shape* minval_shape, builder->GetShapePtr(minval));
+    ABSL_ASSIGN_OR_RETURN(const Shape* minval_shape,
+                          builder->GetShapePtr(minval));
     ABSL_ASSIGN_OR_RETURN(const Shape* bits_shape, builder->GetShapePtr(bits));
     PrimitiveType value_type = minval_shape->element_type();
     PrimitiveType bit_type = bits_shape->element_type();

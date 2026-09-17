@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/cpu/fusion_wrapper.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"

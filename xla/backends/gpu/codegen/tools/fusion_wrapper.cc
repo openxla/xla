@@ -18,9 +18,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/init_main.h"
 #include "xla/codegen/tools/test_lib.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace gpu {

@@ -92,7 +92,7 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
   output.set_matrix_unit_operand_precision(matrix_unit_operand_precision);
   output.set_parameter_is_tupled_arguments(parameter_is_tupled_arguments);
   ABSL_ASSIGN_OR_RETURN(*output.mutable_executable_build_options(),
-                   executable_build_options.ToProto());
+                        executable_build_options.ToProto());
   output.set_compile_portable_executable(compile_portable_executable);
   output.set_profile_version(profile_version);
   std::vector<int> sorted_individually_defined_output_indices(
@@ -153,7 +153,7 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
       proto.individually_defined_output_indices().begin(),
       proto.individually_defined_output_indices().end());
   ABSL_ASSIGN_OR_RETURN(output.env_option_overrides,
-                   LoadEnvOptionOverrides(proto.env_option_overrides()));
+                        LoadEnvOptionOverrides(proto.env_option_overrides()));
 
   if (proto.has_target_config()) {
     ABSL_ASSIGN_OR_RETURN(
@@ -429,7 +429,7 @@ PjRtExecutable::GetOutputDimensions() const {
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtExecutable::GetParameterLayouts() const {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   GetHloModules());
+                        GetHloModules());
   if (hlo_modules.size() > 1) {
     return Unimplemented(
         "PjRtExecutable::GetParameterLayouts doesn't support MPMD "
@@ -442,7 +442,7 @@ PjRtExecutable::GetParameterLayouts() const {
   }
   ComputationLayout comp_layout = hlo_modules[0]->entry_computation_layout();
   ABSL_ASSIGN_OR_RETURN(std::vector<Layout> layouts,
-                   xla::FlattenedParameterLayouts(comp_layout));
+                        xla::FlattenedParameterLayouts(comp_layout));
   std::vector<std::shared_ptr<const PjRtLayout>> result;
   result.reserve(layouts.size());
   for (const Layout& layout : layouts) {
@@ -454,7 +454,7 @@ PjRtExecutable::GetParameterLayouts() const {
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtExecutable::GetOutputLayouts() const {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   GetHloModules());
+                        GetHloModules());
   if (hlo_modules.size() > 1) {
     return Unimplemented(
         "PjRtExecutable::GetOutputLayouts doesn't support MPMD "
@@ -467,7 +467,7 @@ PjRtExecutable::GetOutputLayouts() const {
   }
   ComputationLayout comp_layout = hlo_modules[0]->entry_computation_layout();
   ABSL_ASSIGN_OR_RETURN(std::vector<Layout> layouts,
-                   xla::FlattenedResultLayouts(comp_layout));
+                        xla::FlattenedResultLayouts(comp_layout));
   std::vector<std::shared_ptr<const PjRtLayout>> result;
   result.reserve(layouts.size());
   for (const Layout& layout : layouts) {
@@ -480,7 +480,7 @@ absl::StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
 PjRtExecutableUtil::RunHloCostAnalysis(const PjRtExecutable& executable,
                                        HloCostAnalysis* hlo_cost_analysis) {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> modules,
-                   executable.GetHloModules());
+                        executable.GetHloModules());
   if (modules.empty()) {
     return NotFound(
         "Executable '%s' did not have an HloModule to generate "

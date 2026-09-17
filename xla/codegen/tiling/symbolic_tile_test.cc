@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/codegen/tiling/symbolic_tile.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/indexing_analysis.h"

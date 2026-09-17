@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/tiled/tiled_fusion_emitter.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::gpu {
 namespace {
@@ -52,7 +52,7 @@ using ::xla::xtile::BlockLevelParameters;
 
 absl::Status RealMain(absl::string_view input_file) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   xla::LoadModuleFromFile(std::string(input_file)));
+                        xla::LoadModuleFromFile(std::string(input_file)));
 
   const HloInstruction& fusion =
       *hlo_module->entry_computation()->root_instruction();

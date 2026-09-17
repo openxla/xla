@@ -558,13 +558,14 @@ absl::StatusOr<DeviceAddressBase>
 DeviceAddressVmmAllocator::CreateMappedAllocation(
     PerDeviceState& state, const MappedAllocateRequest& request) {
   uint64_t physical_size = 0;
-  ABSL_ASSIGN_OR_RETURN(auto raw_alloc, AllocatePhysicalWithinBudget(
-                                       state, request.size, physical_size));
+  ABSL_ASSIGN_OR_RETURN(
+      auto raw_alloc,
+      AllocatePhysicalWithinBudget(state, request.size, physical_size));
 
   ABSL_ASSIGN_OR_RETURN(auto allocator_address_mapping,
-                   request.reservation->MapTo(request.reservation_offset,
-                                              /*allocation_offset=*/0,
-                                              request.size, *raw_alloc));
+                        request.reservation->MapTo(request.reservation_offset,
+                                                   /*allocation_offset=*/0,
+                                                   request.size, *raw_alloc));
 
   TrackAllocatorAddressMappedAllocation(
       state, AllocationRecord::Kind::kAllocateAndMap,
@@ -717,11 +718,11 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
     state->mu.AssertHeld();
     uint64_t physical_size = 0;
-    ABSL_ASSIGN_OR_RETURN(auto raw_alloc,
-                     AllocatePhysicalWithinBudget(*state, size, physical_size));
+    ABSL_ASSIGN_OR_RETURN(auto raw_alloc, AllocatePhysicalWithinBudget(
+                                              *state, size, physical_size));
 
     ABSL_ASSIGN_OR_RETURN(auto reservation,
-                     CreateReservation(state->executor, size));
+                          CreateReservation(state->executor, size));
 
     ABSL_ASSIGN_OR_RETURN(
         auto scoped_mapping,
@@ -737,8 +738,9 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
     return absl::StatusOr<DeviceAddressBase>(allocator_address);
   };
 
-  ABSL_ASSIGN_OR_RETURN(DeviceAddressBase result,
-                   TryWithPendingReclaim(*state, size, try_reuse, try_fresh));
+  ABSL_ASSIGN_OR_RETURN(
+      DeviceAddressBase result,
+      TryWithPendingReclaim(*state, size, try_reuse, try_fresh));
 
   VLOG(3) << absl::StreamFormat(
       "Allocated virtual address %p (%uB) on device ordinal %d",
@@ -789,7 +791,8 @@ DeviceAddressVmmAllocator::Allocate(
   };
   auto try_fresh = [&]() -> absl::StatusOr<DeviceAddressBase> {
     state->mu.AssertHeld();
-    ABSL_RETURN_IF_ERROR(EnsureReservationAvailableForFreshMapping(*state, request));
+    ABSL_RETURN_IF_ERROR(
+        EnsureReservationAvailableForFreshMapping(*state, request));
     return CreateMappedAllocation(*state, request);
   };
 

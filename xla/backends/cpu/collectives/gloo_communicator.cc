@@ -116,8 +116,8 @@ Future<> GlooCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
   // options.setTag(tag);
   switch (dtype) {
     case S8:
-      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<int8_t>(reduction_kind, send_buffer,
-                                                  recv_buffer, count, options));
+      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<int8_t>(
+          reduction_kind, send_buffer, recv_buffer, count, options));
       break;
     case PRED:
     case U8:
@@ -157,12 +157,12 @@ Future<> GlooCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
           reduction_kind, send_buffer, recv_buffer, count, options));
       break;
     case F32:
-      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<float>(reduction_kind, send_buffer,
-                                                 recv_buffer, count, options));
+      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<float>(
+          reduction_kind, send_buffer, recv_buffer, count, options));
       break;
     case F64:
-      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<double>(reduction_kind, send_buffer,
-                                                  recv_buffer, count, options));
+      ABSL_RETURN_IF_ERROR(SetAllReduceOptions<double>(
+          reduction_kind, send_buffer, recv_buffer, count, options));
       break;
     case C64:
       ABSL_RETURN_IF_ERROR(SetAllReduceOptions<std::complex<float>>(
@@ -381,40 +381,40 @@ Future<> GlooCommunicator::ReduceScatter(se::DeviceAddressBase send_buffer,
   switch (dtype) {
     case S8:
       ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int8_t>(context_, reduction_kind,
-                                                  temp.get(), count));
+                                                       temp.get(), count));
       break;
     case PRED:
     case U8:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint8_t>(context_, reduction_kind,
-                                                   temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint8_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case S16:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int16_t>(context_, reduction_kind,
-                                                   temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int16_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case U16:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint16_t>(context_, reduction_kind,
-                                                    temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint16_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case S32:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int32_t>(context_, reduction_kind,
-                                                   temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int32_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case U32:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint32_t>(context_, reduction_kind,
-                                                    temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint32_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case S64:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int64_t>(context_, reduction_kind,
-                                                   temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<int64_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case U64:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint64_t>(context_, reduction_kind,
-                                                    temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<uint64_t>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case BF16:
-      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<bfloat16>(context_, reduction_kind,
-                                                    temp.get(), count));
+      ABSL_RETURN_IF_ERROR(ReduceScatterHelper<bfloat16>(
+          context_, reduction_kind, temp.get(), count));
       break;
     case F16:
       ABSL_RETURN_IF_ERROR(ReduceScatterHelper<gloo::float16>(
@@ -422,11 +422,11 @@ Future<> GlooCommunicator::ReduceScatter(se::DeviceAddressBase send_buffer,
       break;
     case F32:
       ABSL_RETURN_IF_ERROR(ReduceScatterHelper<float>(context_, reduction_kind,
-                                                 temp.get(), count));
+                                                      temp.get(), count));
       break;
     case F64:
       ABSL_RETURN_IF_ERROR(ReduceScatterHelper<double>(context_, reduction_kind,
-                                                  temp.get(), count));
+                                                       temp.get(), count));
       break;
     case C64:
       ABSL_RETURN_IF_ERROR(ReduceScatterHelper<std::complex<float>>(

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_kernel_strategy_annotator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -91,7 +92,7 @@ class CollectiveKernelStrategyAnnotatorTest
         ->set_active_links(1);
     target_config_proto.set_platform_name("CUDA");
     ABSL_ASSIGN_OR_RETURN(gpu::GpuTargetConfig target_config,
-                     gpu::GpuTargetConfig::FromProto(target_config_proto));
+                          gpu::GpuTargetConfig::FromProto(target_config_proto));
     return std::make_unique<GpuTopology>(
         "platform_version", /*num_partitions=*/1,
         /*num_hosts_per_partition=*/1,
@@ -104,7 +105,7 @@ class CollectiveKernelStrategyAnnotatorTest
       for (HloInstruction* instr : comp->instructions()) {
         if (instr->opcode() == opcode) {
           ABSL_ASSIGN_OR_RETURN(GpuBackendConfig cfg,
-                           instr->backend_config<GpuBackendConfig>());
+                                instr->backend_config<GpuBackendConfig>());
           return cfg.collective_backend_config().kernel_strategy();
         }
       }

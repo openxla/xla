@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -45,7 +46,8 @@ class ReshapeMoverTest : public HloHardwareIndependentTestBase {
   absl::Status RunPass(HloModule* module, bool change_expected,
                        ReshapeMoverOptions options = ReshapeMoverOptions{},
                        bool run_algsimp = false) {
-    ABSL_ASSIGN_OR_RETURN(bool changed, RunHloPass(ReshapeMover(options), module));
+    ABSL_ASSIGN_OR_RETURN(bool changed,
+                          RunHloPass(ReshapeMover(options), module));
     SCOPED_TRACE(module->ToString());
     EXPECT_EQ(changed, change_expected);
     TF_EXPECT_OK(RunHloPass(HloVerifier(HloVerifierOpts()), module).status());

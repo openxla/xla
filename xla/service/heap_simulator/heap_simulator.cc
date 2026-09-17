@@ -260,9 +260,9 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<HloLiveRange> hlo_live_range,
       HloLiveRange::Run(schedule, alias_analysis, entry_computation));
-  ABSL_RETURN_IF_ERROR(heap.RunComputation(*entry_computation, instruction_sequence,
-                                      alias_analysis, alias_info,
-                                      hlo_live_range.get()));
+  ABSL_RETURN_IF_ERROR(heap.RunComputation(*entry_computation,
+                                           instruction_sequence, alias_analysis,
+                                           alias_info, hlo_live_range.get()));
   return heap.Finish();
 }
 
@@ -278,12 +278,13 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
                      /*schedule=*/nullptr);
   HloSchedule schedule(computation.parent());
   schedule.set_sequence(&computation, instruction_sequence);
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> hlo_live_range,
-                   HloLiveRange::Run(schedule, alias_analysis, &computation,
-                                     /*module_scoped_analysis=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloLiveRange> hlo_live_range,
+      HloLiveRange::Run(schedule, alias_analysis, &computation,
+                        /*module_scoped_analysis=*/false));
   ABSL_RETURN_IF_ERROR(heap.RunComputation(computation, instruction_sequence,
-                                      alias_analysis, alias_info,
-                                      hlo_live_range.get()));
+                                           alias_analysis, alias_info,
+                                           hlo_live_range.get()));
   return heap.Finish();
 }
 
@@ -297,11 +298,12 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     const HloSchedule* schedule, const Options& options) {
   HeapSimulator heap(std::move(algorithm), size_fn, options,
                      /*schedule=*/schedule);
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> hlo_live_range,
-                   HloLiveRange::Run(*schedule, alias_analysis, &computation));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloLiveRange> hlo_live_range,
+      HloLiveRange::Run(*schedule, alias_analysis, &computation));
   ABSL_RETURN_IF_ERROR(heap.RunComputation(computation, instruction_sequence,
-                                      alias_analysis, alias_info,
-                                      hlo_live_range.get()));
+                                           alias_analysis, alias_info,
+                                           hlo_live_range.get()));
   return heap.Finish();
 }
 
@@ -605,7 +607,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Finish() {
 
   // Fragmentation is the difference between the actual and ideal sizes.
   ABSL_ASSIGN_OR_RETURN(const Result<HloValue> no_frag_result,
-                   no_fragmentation_stats_->Finish());
+                        no_fragmentation_stats_->Finish());
   result.fragmentation_size = result.heap_size - no_frag_result.heap_size;
 
   // Copy the debug trace we collected to the final result.
