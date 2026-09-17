@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 from build_tools.lint import run_dwyu
@@ -158,18 +159,20 @@ cc_library(name = "unrelated", srcs = ["unrelated.cc"])
     self.write_file(".bant-macros", macros.read_text())
     self.write_file(
         "xla/consumer/BUILD",
-        """\
-cc_binary(
-    name = "native_binary",
-    srcs = ["consumer.cc"],
-    deps = ["//xla/platform:errors"],
-)
-xla_cc_binary(
-    name = "wrapped_binary",
-    srcs = ["consumer.cc"],
-    deps = ["//xla/platform:errors"],
-)
-""",
+        textwrap.dedent(
+            """\
+            cc_binary(
+                name = "native_binary",
+                srcs = ["consumer.cc"],
+                deps = ["//xla/platform:errors"],
+            )
+            xla_cc_binary(
+                name = "wrapped_binary",
+                srcs = ["consumer.cc"],
+                deps = ["//xla/platform:errors"],
+            )
+            """
+        ),
     )
     result = self.check_targets(
         "//xla/consumer:native_binary", "//xla/consumer:wrapped_binary"
