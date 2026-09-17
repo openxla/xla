@@ -1352,8 +1352,8 @@ TEST(ThunkProtoDeserializationTest, AsyncStartThunkMemcpyStreamRoundTrip) {
     AsyncDoneThunk done_thunk(Thunk::ThunkInfo(),
                               start_thunk.async_execution());
 
-    TF_ASSERT_OK_AND_ASSIGN(ThunkProto start_proto, start_thunk.ToProto());
-    TF_ASSERT_OK_AND_ASSIGN(ThunkProto done_proto, done_thunk.ToProto());
+    ASSERT_OK_AND_ASSIGN(ThunkProto start_proto, start_thunk.ToProto());
+    ASSERT_OK_AND_ASSIGN(ThunkProto done_proto, done_thunk.ToProto());
 
     // The proto must have used the memcpy_stream_id field.
     EXPECT_EQ(start_proto.async_start_thunk().execution_stream_id_case(),
@@ -1364,7 +1364,7 @@ TEST(ThunkProtoDeserializationTest, AsyncStartThunkMemcpyStreamRoundTrip) {
     ThunkSequenceProto thunk_protos;
     *thunk_protos.add_thunks() = start_proto;
     *thunk_protos.add_thunks() = done_proto;
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         ThunkSequence sequence,
         DeserializeThunkSequenceProto(thunk_protos, /*buffer_allocations=*/{},
                                       /*hlo_module=*/nullptr, kTestPlatformName,
@@ -1377,8 +1377,8 @@ TEST(ThunkProtoDeserializationTest, AsyncStartThunkMemcpyStreamRoundTrip) {
     EXPECT_TRUE(deserialized_start->execution_stream_id().is_memcpy());
     EXPECT_EQ(deserialized_start->execution_stream_id().memcpy_id(), stream_id);
 
-    TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_start,
-                            deserialized_start->ToProto());
+    ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_start,
+                         deserialized_start->ToProto());
     EXPECT_THAT(round_trip_start, EqualsProto(start_proto));
   }
 }
@@ -1429,13 +1429,13 @@ TEST(ThunkProtoDeserializationTest, SendThunk) {
       BufferAllocation(/*index=*/0, /*size=*/1024, /*color=*/0),
       BufferAllocation(/*index=*/1, /*size=*/1024, /*color=*/0)};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Thunk> thunk,
       DeserializeThunkProto(proto, buffer_allocations, /*hlo_module=*/nullptr,
                             kTestPlatformName, se::GpuComputeCapability()));
   auto* send_thunk = dynamic_cast<SendThunk*>(thunk.get());
   ASSERT_NE(send_thunk, nullptr);
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, send_thunk->ToProto());
+  ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, send_thunk->ToProto());
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
