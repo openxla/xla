@@ -35,6 +35,23 @@ class ScopedActivateContext : public ActivateContext {
   Context* to_restore_ = nullptr;
 };
 
+// Ensures no GPU context is current on this thread for the duration of a
+// scope, regardless of what (if anything) was left active by prior,
+// unrelated work on this thread. Restores whatever was previously active
+// (if anything tracked via ScopedActivateContext) on destruction.
+//
+// Use this before calling into APIs that infer "no device available" from
+// the absence of a current context (e.g. deviceless/AOT compilation paths),
+// so that behavior doesn't depend on incidental thread-local leftovers.
+class ScopedDeactivateContext : public ActivateContext {
+ public:
+  ScopedDeactivateContext();
+  ~ScopedDeactivateContext() override;
+
+ private:
+  Context* to_restore_ = nullptr;
+};
+
 }  // namespace stream_executor::gpu
 
 #endif  // XLA_STREAM_EXECUTOR_GPU_SCOPED_ACTIVATE_CONTEXT_H_

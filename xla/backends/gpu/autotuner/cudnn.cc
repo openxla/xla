@@ -89,7 +89,7 @@ absl::Status ApplyConfigAndUpdateWorkspaceInOutputTuple(
   new_call->SetAndSanitizeName(instr.name());
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   CudnnConvBackendConfig* cudnn_conv_config =
       gpu_backend_config.mutable_cudnn_conv_backend_config();
   *cudnn_conv_config->mutable_algorithm() = config;
@@ -115,6 +115,7 @@ absl::Status ApplyConfigAndUpdateWorkspaceInOutputTuple(
 }
 
 bool IsSupportedCudnnFusion(const HloInstruction& instr,
+                            se::StreamExecutor* stream_exec,
                             const GpuTargetConfig& target_config,
                             const DebugOptions& debug_options) {
   const HloComputation* computation = instr.fused_instructions_computation();
@@ -122,8 +123,28 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
       *computation, {HloOpcode::kDot, HloOpcode::kConvolution,
                      HloOpcode::kScaledDot, HloOpcode::kRaggedDot});
   if (hero == nullptr) {
-    VLOG(1) << "Fusion does not contain a dot or convolution.";
-    return false;
+    if (debug_options.xla_gpu_cudnn_non_gemm_fusion_level() < 1) {
+      return false;
+    }
+    // Don't reclaim a fusion another pass has already committed to a
+    // specific custom kind (e.g. a legacy custom-fusion match).
+    if (instr.fusion_kind() == HloInstruction::FusionKind::kCustom) {
+      return false;
+    }
+    if (target_config.device_description.dnn_version() <
+        se::SemanticVersion(9, 26, 0)) {
+      VLOG(1) << "Cudnn version is too old for cudnn non-gemm fusion.";
+      return false;
+    }
+    absl::StatusOr<bool> is_supported =
+        CuDnnFusionCompiler::IsSupportedNonGemmFusion(
+            stream_exec, target_config.device_description,
+            *Cast<HloFusionInstruction>(&instr));
+    if (!is_supported.ok()) {
+      VLOG(1) << "Fusion is not supported by cudnn: " << is_supported.status();
+      return false;
+    }
+    return *is_supported;
   }
 
   PrecisionConfig::Algorithm algorithm = PrecisionConfig::ALG_UNSET;
@@ -281,9 +302,9 @@ GetCudnnFusionConfigs(const HloInstruction& instr,
         "compilation is disabled.");
   }
   ABSL_ASSIGN_OR_RETURN(int plan_count,
-                   CuDnnFusionCompiler::GetAvailablePlanCount(
-                       stream_executor, target_config.device_description,
-                       *DynCast<HloFusionInstruction>(&instr)));
+                        CuDnnFusionCompiler::GetAvailablePlanCount(
+                            stream_executor, target_config.device_description,
+                            *DynCast<HloFusionInstruction>(&instr)));
 
   VLOG(2) << "Found " << plan_count << " plans for cudnn fusion.";
   configs.reserve(plan_count);
@@ -304,8 +325,9 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
   ABSL_ASSIGN_OR_RETURN(GpuConvConfig gpu_conv_config, GetGpuConvConfig(instr));
   se::dnn::ConvolutionKind conv_kind =
       CudnnConvKindToProto(gpu_conv_config.kind);
-  ABSL_ASSIGN_OR_RETURN(se::dnn::DataType input_type,
-                   GetDNNDataTypeFromPrimitiveType(gpu_conv_config.input_type));
+  ABSL_ASSIGN_OR_RETURN(
+      se::dnn::DataType input_type,
+      GetDNNDataTypeFromPrimitiveType(gpu_conv_config.input_type));
   ABSL_ASSIGN_OR_RETURN(
       se::dnn::DataType output_type,
       GetDNNDataTypeFromPrimitiveType(gpu_conv_config.output_type));
@@ -313,8 +335,9 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
   auto allocator =
       std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
           stream_executor);
-  ABSL_ASSIGN_OR_RETURN(se::Stream * stream,
-                   allocator->GetStream(stream_executor->device_ordinal()));
+  ABSL_ASSIGN_OR_RETURN(
+      se::Stream * stream,
+      allocator->GetStream(stream_executor->device_ordinal()));
   bool allow_tf32 = absl::c_all_of(
       instr->precision_config().operand_precision(),
       [](int precision) { return precision <= PrecisionConfig::HIGH; });
@@ -350,7 +373,7 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
 absl::Status ApplyConfigToCudnnFusion(HloInstruction& instr,
                                       const CudnnBackendConfig& config) {
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   FusionBackendConfig* backend_config =
       gpu_config.mutable_fusion_backend_config();
   backend_config->set_kind(kCuDnnFusionKind);
@@ -365,7 +388,7 @@ absl::Status ApplyConfigToCudnnCustomCall(HloInstruction& instr,
     return ApplyConfigAndUpdateWorkspaceInOutputTuple(instr, config);
   }
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   CudnnConvBackendConfig* cudnn_conv_config =
       gpu_config.mutable_cudnn_conv_backend_config();
   *cudnn_conv_config->mutable_algorithm() = config;
@@ -377,7 +400,8 @@ absl::Status ApplyConfigToCudnnCustomCall(HloInstruction& instr,
 
 bool CudnnBackend::IsSupported(const HloInstruction& instr) {
   if (instr.opcode() == HloOpcode::kFusion) {
-    return IsSupportedCudnnFusion(instr, target_config(), debug_options());
+    return IsSupportedCudnnFusion(instr, stream_executor(), target_config(),
+                                  debug_options());
   }
 
   if (instr.opcode() == HloOpcode::kCustomCall) {
@@ -402,10 +426,12 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CudnnBackend::GetDefaultConfig(
         "and custom call instructions");
   }
 
-  if (IsSupportedCudnnFusion(instr, target_config(), debug_options())) {
-    ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<BackendConfig>> configs,
-                     GetCudnnFusionConfigs(instr, stream_executor(),
-                                           target_config(), debug_options()));
+  if (IsSupportedCudnnFusion(instr, stream_executor(), target_config(),
+                             debug_options())) {
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<BackendConfig>> configs,
+        GetCudnnFusionConfigs(instr, stream_executor(), target_config(),
+                              debug_options()));
     if (!configs.empty()) {
       return std::move(configs[0]);
     }
