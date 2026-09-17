@@ -243,9 +243,9 @@ ENTRY test_computation {
   ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
                        ConvertToCommands(thunk_sequence, conv_options));
 
-  // AsyncStart inlines its nested thunk as a command, and AsyncDone
-  // with no control predecessors is a no-op, so we get 1 command.
-  EXPECT_EQ(cb_cmd_executor.size(), 1);
+  // AsyncStart inlines its nested thunk as a command, and in LHS mode
+  // AsyncDone is kept as a join command, so we get 2 commands.
+  EXPECT_EQ(cb_cmd_executor.size(), 2);
 }
 
 TEST_F(GpuCollectivePermuteTest,

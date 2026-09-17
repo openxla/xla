@@ -66,6 +66,16 @@ class CommandBufferConversionPass : public ThunkPassInterface {
   };
 
  private:
+  // Implementation of `Run`. `inside_open_async_region` is true when
+  // `thunk_sequence` is the body of a loop or branch nested in an async region
+  // that is not captured as a whole; see the comment in `RunImpl`.
+  absl::StatusOr<bool> RunImpl(ThunkSequence* thunk_sequence,
+                               const DebugOptions& debug_options,
+                               const HloModule* absl_nullable hlo_module,
+                               const se::DeviceDescription& device_info,
+                               ThunkPassBufferAllocator& allocator,
+                               bool inside_open_async_region);
+
   std::string module_name_;
 };
 

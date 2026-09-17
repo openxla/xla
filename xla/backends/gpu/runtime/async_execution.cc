@@ -138,9 +138,8 @@ absl::StatusOr<AsyncExecution::ExecutionGuard> AsyncExecution::Start(
   // Wait for all prior operations on `stream` before launching operations on
   // `async_stream`. We use a stream-level wait (not the shared event) so that
   // the event remains exclusively used for the async→main completion signal.
-  // This is critical for pipelined send/recv where multiple Start() calls can
-  // happen before Done() (the event is safely overwritten on the async stream
-  // because the stream is ordered).
+  // Shared executions reuse the completion event only after Done has enqueued
+  // the wait for the previous execution.
   ABSL_RETURN_IF_ERROR(async_stream->WaitFor(stream));
 
   return ExecutionGuard(event, async_stream);
