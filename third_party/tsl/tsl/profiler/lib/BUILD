@@ -1,4 +1,4 @@
-load("@xla//xla/tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_headers")
+load("@xla//xla/tsl:tsl.bzl", "if_google", "if_not_android", "internal_visibility", "nvtx_headers")
 load("@xla//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@xla//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
 load("@xla//xla/tsl/platform:build_config_root.bzl", "if_static")
@@ -6,6 +6,13 @@ load("@xla//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@xla//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+    "is_cuda_configured",
+)
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+    "is_rocm_configured",
+    if_cuda_or_rocm_is_configured = "if_cuda_or_rocm",
 )
 load(
     "@xla//xla/tsl/profiler/builds:build_config.bzl",
@@ -14,6 +21,20 @@ load(
 )
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
+
+# :range_annotations_backend concatenates three independent `_is_configured`
+# branches rather than nesting them, so a tree with both CUDA and ROCm
+# configured would take two of them and link two backends that define the same
+# symbols. That configuration has never been supported; fail with a readable
+# message instead of a duplicate-symbol dump from the linker.
+#
+# An `if` expression rather than a statement because BUILD files allow only the
+# former; fail() aborts loading, so the name is never actually bound.
+_GPU_BACKEND_IS_UNAMBIGUOUS = None if not (is_cuda_configured() and is_rocm_configured()) else fail(
+    "tsl/profiler/lib: CUDA and ROCm cannot both be configured. " +
+    ":range_annotations_backend would link both nvtx_range_annotations " +
+    "and roctx_range_annotations, which define the same symbols.",
+)
 
 cc_library(
     name = "context_types_hdrs",
@@ -31,7 +52,7 @@ cc_library(
 filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
-        "nvtx_utils_stub.cc",  #Include the stub implementation here since CUDA isn't relevant to Android.
+        "range_annotations_stub.cc",  #Include the stub implementation here since CUDA isn't relevant to Android.
         "scoped_memory_debug_annotation.cc",
     ],
     compatible_with = get_compatible_with_portable(),
@@ -41,7 +62,7 @@ filegroup(
 filegroup(
     name = "mobile_hdrs_no_runtime",
     srcs = [
-        "nvtx_utils.h",
+        "range_annotations.h",
         "scoped_annotation.h",
         "scoped_memory_debug_annotation.h",
         "traceme.h",
@@ -319,34 +340,93 @@ cc_library(
     ]),
 )
 
+# Header-only leaf shared by every backend implementation below, so that none of
+# them has to depend on the public dispatcher (which would be circular).
 cc_library(
-    name = "nvtx_utils_impl",
-    srcs = if_cuda_is_configured(
-        ["nvtx_utils.cc"],
-        ["nvtx_utils_stub.cc"],
+    name = "range_annotations_hdrs",
+    hdrs = ["range_annotations.h"],
+    visibility = ["//visibility:private"],
+)
+
+# Backend implementations. None of these contains an `if_*_is_configured` macro;
+# the selection happens exactly once, in :range_annotations_backend below.
+cc_library(
+    name = "nvtx_range_annotations",
+    srcs = ["nvtx_range_annotations.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "manual",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [":range_annotations_hdrs"] + nvtx_headers(),
+)
+
+cc_library(
+    name = "roctx_range_annotations",
+    srcs = ["roctx_range_annotations.cc"],
+    tags = [
+        "gpu",
+        "manual",
+        "rocm-only",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":range_annotations_hdrs",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:node_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:logging",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/util:env_var",
+    ],
+)
+
+cc_library(
+    name = "range_annotations_stub",
+    srcs = ["range_annotations_stub.cc"],
+    visibility = ["//visibility:private"],
+    deps = [":range_annotations_hdrs"],
+)
+
+# Picks exactly one backend. Separate from :range_annotations because these
+# macros expand to select()s, which cannot nest; adding them instead keeps all
+# three at the top level.
+#
+# All three must stay `_is_configured` variants, resolved at repository
+# configuration time. A build-configuration macro here would select the stub and
+# a real backend together in a GPU-configured tree built without
+# --config=cuda/rocm, duplicating every symbol in the header.
+cc_library(
+    name = "range_annotations_backend",
+    visibility = ["//visibility:private"],
+    deps = if_cuda_or_rocm_is_configured(
+        [],
+        [":range_annotations_stub"],
+    ) + if_rocm_is_configured(
+        [":roctx_range_annotations"],
+    ) + if_cuda_is_configured(
+        [":nvtx_range_annotations"],
     ),
-    hdrs = ["nvtx_utils.h"],
-    visibility = ["//visibility:public"],
-    deps = if_cuda_is_configured(nvtx_headers()),
 )
 
+# The public entry point. `hdrs` is required here and not just on
+# :range_annotations_hdrs: layering_check only admits headers from direct
+# dependencies, and consumers depend on this target.
 cc_library(
-    name = "nvtx_utils_external",
-    srcs = ["nvtx_utils_stub.cc"],
-    hdrs = ["nvtx_utils.h"],
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name = "nvtx_utils",
-    hdrs = ["nvtx_utils.h"],
+    name = "range_annotations",
+    hdrs = ["range_annotations.h"],
     visibility = ["//visibility:public"],
     deps = select({
         # Remove this once we clean up all the CUDA specific deps.
-        "@xla//xla/tsl:libtpu_on_gce": [":nvtx_utils_external"],
+        "@xla//xla/tsl:libtpu_on_gce": [":range_annotations_stub"],
+        "@xla//xla/tsl:chromiumos": [":range_annotations_stub"],
         # Place holder for internal dependencies
-        "@xla//xla/tsl:chromiumos": [":nvtx_utils_external"],
-        "//conditions:default": [":nvtx_utils_impl"],
+        "//conditions:default": [":range_annotations_backend"],
     }),
 )
 
@@ -357,7 +437,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":nvtx_utils",
+        ":range_annotations",
         "//tsl/platform",
         "@com_google_absl//absl/strings",
         "@xla//xla/tsl/platform:macros",
@@ -377,6 +457,106 @@ tsl_cc_test(
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/platform:test_benchmark",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
+    ],
+)
+
+tsl_cc_test(
+    name = "roctx_range_annotations_test",
+    size = "small",
+    srcs = ["roctx_range_annotations_test.cc"],
+    # Pinned OFF rather than left absent, so a stray --test_env cannot silently
+    # retarget these assertions at the enabled path.
+    env = {"XLA_ROCM_ENABLE_ROCTX": "0"},
+    # "gpu" for the link-time ROCm dependency; no GPU device is touched.
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # Only run internally if ROCm config is enabled.
+        "manual",
+    ]),
+    deps = [
+        ":range_annotations",
+        ":scoped_annotation",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:test",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
+    ],
+)
+
+tsl_cc_test(
+    name = "roctx_range_annotations_default_test",
+    size = "small",
+    srcs = ["roctx_range_annotations_default_test.cc"],
+    # Deliberately no `env`: this is the only target that exercises the
+    # ReadBoolFromEnvVar default, which the two pinned binaries never reach.
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # Only run internally if ROCm config is enabled.
+        "manual",
+    ]),
+    deps = [
+        ":range_annotations",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:test",
+    ],
+)
+
+tsl_cc_test(
+    name = "roctx_range_annotations_badenv_test",
+    size = "small",
+    srcs = ["roctx_range_annotations_badenv_test.cc"],
+    # A value ReadBoolFromEnvVar rejects. No other target ever hands it one, so
+    # without this binary the error branch could enable ROCTX unnoticed.
+    env = {"XLA_ROCM_ENABLE_ROCTX": "yes"},
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # Only run internally if ROCm config is enabled.
+        "manual",
+    ]),
+    deps = [
+        ":range_annotations",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:test",
+    ],
+)
+
+tsl_cc_test(
+    name = "roctx_range_annotations_enabled_test",
+    size = "small",
+    srcs = ["roctx_range_annotations_enabled_test.cc"],
+    # A second binary rather than a filter over roctx_range_annotations_test:
+    # DefaultProfilerDomain() latches on first call, so one process can only
+    # observe one configuration.
+    env = {"XLA_ROCM_ENABLE_ROCTX": "1"},
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # Only run internally if ROCm config is enabled.
+        "manual",
+    ]),
+    deps = [
+        ":range_annotations",
+        ":scoped_annotation",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk_roctx",
+        "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
     ],
