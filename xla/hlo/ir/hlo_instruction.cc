@@ -2575,8 +2575,16 @@ void HloInstruction::SetupDerivedInstruction(
       derived_instruction->set_result_accuracy(ResultAccuracy());
     }
     derived_instruction->set_frontend_attributes(frontend_attributes());
-    // Offload annotations should not be implicitly derived.
-    derived_instruction->erase_frontend_attribute(kXlaComputeTypeAttr);
+    // Offload annotations should not be implicitly derived, except for
+    // sparseoffload when preserving the same operation.
+    auto it = frontend_attributes().map().find(kXlaComputeTypeAttr);
+    if (it != frontend_attributes().map().end() &&
+        it->second == kXlaComputeTypeSparseOffload &&
+        opcode() == derived_instruction->opcode()) {
+      // Keep sparseoffload on the same operation.
+    } else {
+      derived_instruction->erase_frontend_attribute(kXlaComputeTypeAttr);
+    }
     derived_instruction->set_statistics_viz(statistics_viz());
   } else if (derived_instruction->has_rare()) {
     derived_instruction->set_result_accuracy(ResultAccuracy());
