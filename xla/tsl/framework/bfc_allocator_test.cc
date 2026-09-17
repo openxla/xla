@@ -59,12 +59,13 @@ static const absl::NoDestructor<AllocationAttributes> kLower(
     /*freed_by_func=*/nullptr, AllocationEnd::kLower);
 
 // The shared GPU pool serves collective memory below default memory, while
-// keeping each memory space's hole splitting and mirrored reuse preference.
+// keeping each memory space's hole splitting and preferring equal-size holes
+// nearest its outer arena boundary.
 BFCAllocator::Options SharedGpuPoolOptions() {
   BFCAllocator::Options opts;
   opts.allow_growth = false;
   opts.enable_spatial_partitioning = true;
-  opts.lower_end_policy = {BFCAllocator::HoleOrder::kDescendingAddress,
+  opts.lower_end_policy = {BFCAllocator::HoleOrder::kAscendingAddress,
                            BFCAllocator::HoleSplitPolicy::kExact};
   opts.upper_end_policy = {BFCAllocator::HoleOrder::kDescendingAddress,
                            BFCAllocator::HoleSplitPolicy::kBfc};
@@ -1007,37 +1008,43 @@ TEST(BFCAllocatorTest, SpatialHoleReuseKeepsSlackAtBothEnds) {
   alloc.DeallocateRaw(lower_guard);
 }
 
-TEST(BFCAllocatorTest, SpatialDefaultHoleOrderPreservesCoalescing) {
+TEST(BFCAllocatorTest, SpatialHoleOrderPreservesCoalescing) {
   constexpr size_t kMiB = size_t{1} << 20;
-  BFCAllocator alloc(std::make_unique<FakeSubAllocator>(), 4 * kMiB, "default",
-                     SharedGpuPoolOptions());
-  auto allocate = [&](size_t bytes) {
-    return alloc.AllocateRaw(kAlignment, bytes, *kUpper);
-  };
-  void* a = allocate(kMiB);
-  void* b = allocate(kMiB);
-  void* c = allocate(kMiB);
-  void* d = allocate(kMiB);
-  ASSERT_NE(a, nullptr);
-  ASSERT_NE(b, nullptr);
-  ASSERT_NE(c, nullptr);
-  ASSERT_NE(d, nullptr);
+  for (const AllocationAttributes* attrs : {&*kLower, &*kUpper}) {
+    SCOPED_TRACE(static_cast<int>(attrs->allocation_end));
+    const bool collective = attrs->allocation_end == AllocationEnd::kLower;
+    const size_t block_size = collective ? 2 * kMiB : kMiB;
+    const size_t alignment = collective ? 2 * kMiB : kAlignment;
+    BFCAllocator alloc(std::make_unique<FakeSubAllocator>(), 4 * block_size,
+                       "coalescing", SharedGpuPoolOptions());
+    auto allocate = [&](size_t bytes) {
+      return alloc.AllocateRaw(alignment, bytes, *attrs);
+    };
+    void* a = allocate(block_size);
+    void* b = allocate(block_size);
+    void* c = allocate(block_size);
+    void* d = allocate(block_size);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    ASSERT_NE(c, nullptr);
+    ASSERT_NE(d, nullptr);
 
-  alloc.DeallocateRaw(a);
-  alloc.DeallocateRaw(c);
-  void* e = allocate(kMiB);
-  ASSERT_NE(e, nullptr);
-  // Prefer the hole nearest the upper arena boundary, mirroring the old
-  // lower-end default memory policy. Reusing C instead would strand A.
-  EXPECT_EQ(e, a);
-  alloc.DeallocateRaw(d);
-  void* f = allocate(2 * kMiB);
-  ASSERT_NE(f, nullptr);
-  EXPECT_EQ(f, d);
+    alloc.DeallocateRaw(a);
+    alloc.DeallocateRaw(c);
+    void* e = allocate(block_size);
+    ASSERT_NE(e, nullptr);
+    // Prefer A, nearest this space's outer arena boundary, so freeing D lets
+    // C and D coalesce. Reusing C instead would leave A and D separated.
+    EXPECT_EQ(e, a);
+    alloc.DeallocateRaw(d);
+    void* f = allocate(2 * block_size);
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(f, collective ? c : d);
 
-  alloc.DeallocateRaw(f);
-  alloc.DeallocateRaw(e);
-  alloc.DeallocateRaw(b);
+    alloc.DeallocateRaw(f);
+    alloc.DeallocateRaw(e);
+    alloc.DeallocateRaw(b);
+  }
 }
 
 TEST(BFCAllocatorTest, SpatialCollectiveHoleRemainderRemainsUsable) {
@@ -1095,13 +1102,13 @@ TEST(BFCAllocatorTest, SpatialHoleOrderKeepsBestFit) {
     alloc.DeallocateRaw(small0);
     alloc.DeallocateRaw(small1);
 
-    // All holes share a bin. Size must win before the descending address
-    // tie-break, for both default and collective memory.
+    // All holes share a bin. Size must win before the address tie-break, which
+    // prefers lower addresses for collective memory and higher for default
+    // memory. In both cases small0 is the equal-size hole nearest the outer
+    // arena boundary; large is even closer but must lose on size.
     void* reused = allocate(1280);
     ASSERT_NE(reused, nullptr);
-    EXPECT_EQ(absl::bit_cast<uintptr_t>(reused),
-              std::max(absl::bit_cast<uintptr_t>(small0),
-                       absl::bit_cast<uintptr_t>(small1)));
+    EXPECT_EQ(reused, small0);
     EXPECT_EQ(alloc.AllocatedSize(reused), 1280);
     alloc.DeallocateRaw(reused);
     alloc.DeallocateRaw(guard0);

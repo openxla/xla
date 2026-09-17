@@ -60,8 +60,9 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> GetGpuHostAllocator(
 // is set, the allocator serves collective (lower-end) and default (upper-end)
 // requests from one shared address range; this requires preallocate=true.
 // Collective holes split exactly; default holes use the BFC split heuristic.
-// Equal-size holes prefer higher addresses in both spaces, and central-gap
-// carves split exactly in both spaces.
+// Equal-size holes prefer lower addresses for collective memory and higher
+// addresses for default memory. Central-gap carves split exactly in both
+// spaces.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction, bool preallocate,
     std::optional<int64_t> gpu_system_memory_size,

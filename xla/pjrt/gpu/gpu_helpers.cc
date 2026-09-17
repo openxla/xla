@@ -172,10 +172,11 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
   if (enable_spatial_partitioning) {
     // Collective memory keeps exact hole splitting when moving to the lower
     // end; default memory keeps the BFC heuristic when moving to the upper end.
-    // Mirror both address tie-breaks to preserve each memory space's preference
-    // relative to the central boundary. Size remains the primary best-fit key.
+    // Break equal-size ties toward each space's outer arena boundary: lower
+    // addresses for collective memory, higher addresses for default memory.
+    // Size remains the primary best-fit key.
     // Both ends split central-gap carves exactly to retain shared capacity.
-    opts.lower_end_policy = {tsl::BFCAllocator::HoleOrder::kDescendingAddress,
+    opts.lower_end_policy = {tsl::BFCAllocator::HoleOrder::kAscendingAddress,
                              tsl::BFCAllocator::HoleSplitPolicy::kExact};
     opts.upper_end_policy = {tsl::BFCAllocator::HoleOrder::kDescendingAddress,
                              tsl::BFCAllocator::HoleSplitPolicy::kBfc};
