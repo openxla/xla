@@ -57,6 +57,12 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
       GTEST_SKIP() << "Requires two CUDA devices";
     for (int rank = 0; rank < 2; ++rank) {
       ASSERT_OK_AND_ASSIGN(executors_[rank], platform->ExecutorForDevice(rank));
+    }
+    if (!executors_[0]->CanEnablePeerAccessTo(executors_[1]) ||
+        !executors_[1]->CanEnablePeerAccessTo(executors_[0])) {
+      GTEST_SKIP() << "Symmetric-window test requires CUDA peer access";
+    }
+    for (int rank = 0; rank < 2; ++rank) {
       ASSERT_OK_AND_ASSIGN(auto sub, CreateCudaContiguousSubAllocator(
                                          executors_[rank], 128 << 20, 0));
       if (rank == 0) page_ = sub->granularity();
