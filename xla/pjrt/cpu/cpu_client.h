@@ -117,8 +117,12 @@ class PjRtCpuRawClient : public PjRtRawClient {
 
   CpuDeviceMemory::Allocator* allocator() const { return allocator_.get(); }
 
-  ThreadPoolAsyncWorkRunner* async_work_runner() const override {
+  UnboundedAsyncWorkRunner* async_work_runner() const override {
     return async_work_runner_.get();
+  }
+
+  tsl::thread::ThreadPool* compile_thread_pool() const {
+    return compile_thread_pool_.get();
   }
 
   tsl::thread::ThreadPool* eigen_intraop_pool() const {
@@ -289,7 +293,8 @@ class PjRtCpuRawClient : public PjRtRawClient {
   // the member variables of this class that are already destroyed.
   std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool_;
   std::unique_ptr<Eigen::ThreadPoolDevice> eigen_intraop_device_;
-  std::unique_ptr<ThreadPoolAsyncWorkRunner> async_work_runner_;
+  std::unique_ptr<tsl::thread::ThreadPool> compile_thread_pool_;
+  std::unique_ptr<UnboundedAsyncWorkRunner> async_work_runner_;
 };
 
 // Standalone factory that creates a CommonPjRtClientImpl for CPU using the
