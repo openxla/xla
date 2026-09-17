@@ -287,7 +287,8 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
 }
 
 absl::StatusOr<std::unique_ptr<CollectiveInterpolator>>
-CreateCollectiveInterpolator(int num_devices_per_host, const HloModule& module,
+CreateCollectiveInterpolator(int num_devices_per_partition,
+                             const HloModule& module,
                              const se::DeviceDescription& device_info,
                              const GpuHloCostAnalysis& analysis) {
   absl::StatusOr<HloInstructionProfileList> collective_profiles =
@@ -297,10 +298,11 @@ CreateCollectiveInterpolator(int num_devices_per_host, const HloModule& module,
                    device_info);
   std::unique_ptr<CollectiveInterpolator> collective_interpolator;
   if (collective_profiles.ok()) {
-    return CollectiveInterpolator::Create(
-        num_devices_per_host, *collective_profiles, device_info, &analysis);
+    return CollectiveInterpolator::Create(num_devices_per_partition,
+                                          *collective_profiles, device_info,
+                                          &analysis);
   }
-  return CollectiveInterpolator::Create(num_devices_per_host, device_info,
+  return CollectiveInterpolator::Create(num_devices_per_partition, device_info,
                                         &analysis);
 }
 
@@ -426,9 +428,9 @@ SolLatencyEstimator::Create(
       SolGPUCostModel::GetConfig(computation->parent(), gpu_info);
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<CollectiveInterpolator> collective_interpolator,
-      CreateCollectiveInterpolator(sol_config.gpus_per_node,
-                                   *computation->parent(), gpu_info,
-                                   *cost_analysis));
+      CreateCollectiveInterpolator(
+          GetPartitionSize(*computation->root_instruction(), sol_config),
+          *computation->parent(), gpu_info, *cost_analysis));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MatmulInterpolator> matmul_interpolator,
                    CreateMatmulInterpolator(*computation->parent(), gpu_info));
   return std::unique_ptr<SolLatencyEstimator>(new SolLatencyEstimator(
