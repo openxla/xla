@@ -82,8 +82,8 @@ class RocmBlasLtTest : public ::testing::Test {
         compute_type                      // compute_type
     };
 
-    ASSERT_OK_AND_ASSIGN(
-        auto plan, blas_lt_->GetMatmulPlan(cfg, gpu::BlasLt::Epilogue::kDefault));
+    ASSERT_OK_AND_ASSIGN(auto plan, blas_lt_->GetMatmulPlan(
+                                        cfg, gpu::BlasLt::Epilogue::kDefault));
 
     const size_t workspace_size = 32 * 1024 * 1024;  // 32 MB
     ASSERT_OK_AND_ASSIGN(auto algorithms,
