@@ -24,14 +24,14 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
-#include "xla/stream_executor/cuda/cuda_contiguous_sub_allocator.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
-#include "xla/stream_executor/integrations/contiguous_sub_allocator.h"
+#include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/bfc_allocator.h"
+#include "xla/tsl/framework/device_id.h"
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"
@@ -63,17 +63,17 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
       GTEST_SKIP() << "Symmetric-window test requires CUDA peer access";
     }
     for (int rank = 0; rank < 2; ++rank) {
-      ASSERT_OK_AND_ASSIGN(auto sub, CreateCudaContiguousSubAllocator(
-                                         executors_[rank], 128 << 20, 0));
-      if (rank == 0) page_ = sub->granularity();
-      ASSERT_EQ(sub->granularity(), page_);
-      ASSERT_LE(16 * page_, sub->capacity());
+      ASSERT_OK_AND_ASSIGN(uint64_t granularity,
+                           executors_[rank]->GetCollectiveMemoryGranularity());
+      if (rank == 0) page_ = granularity;
+      ASSERT_EQ(granularity, page_);
+      auto sub = std::make_unique<DeviceMemAllocator>(
+          executors_[rank], tsl::PlatformDeviceId(rank));
       tsl::BFCAllocator::Options opts;
       opts.allow_growth = true;
       opts.allow_retry_on_failure = false;
       opts.enable_spatial_partitioning = true;
       opts.initial_region_bytes = 4 * page_;
-      opts.growth_increment_bytes = 2 * page_;
       opts.lower_end_policy = {tsl::BFCAllocator::HoleOrder::kAscendingAddress,
                                tsl::BFCAllocator::SplitPolicy::kExact,
                                tsl::BFCAllocator::SplitPolicy::kExact};
@@ -84,8 +84,12 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
           std::move(sub), 16 * page_, "symmetric_growth", opts);
       buffers_[rank][0] = allocators_[rank]->AllocateRaw(page_, page_, lower_);
       ASSERT_NE(buffers_[rank][0], nullptr);
-      ASSERT_NE(allocators_[rank]->AllocateRaw(256, page_, upper_), nullptr);
+      ordinary_[rank] = allocators_[rank]->AllocateRaw(256, page_, upper_);
+      ASSERT_NE(ordinary_[rank], nullptr);
       auto activation = executors_[rank]->Activate();
+      ASSERT_EQ(
+          cuMemsetD32(reinterpret_cast<CUdeviceptr>(ordinary_[rank]), 1234, 1),
+          CUDA_SUCCESS);
       ASSERT_EQ(cuStreamCreate(&streams_[rank], CU_STREAM_NON_BLOCKING),
                 CUDA_SUCCESS);
     }
@@ -156,6 +160,7 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
   std::array<std::unique_ptr<tsl::BFCAllocator>, 2> allocators_;
   std::array<ncclComm_t, 2> comms_ = {};
   std::array<CUstream, 2> streams_ = {};
+  std::array<void*, 2> ordinary_ = {};
   std::array<std::array<void*, 2>, 2> buffers_ = {};
   std::array<std::array<ncclWindow_t, 2>, 2> windows_ = {};
   const tsl::AllocationAttributes lower_{false, false, nullptr,
@@ -173,6 +178,20 @@ TEST_F(CudaBfcSymmetricGrowthTest, WindowsSurviveAsymmetricGrowth) {
   EXPECT_GT(allocators_[0]->GetStats()->pool_bytes.value(), 4 * page_);
   EXPECT_EQ(allocators_[1]->GetStats()->pool_bytes.value(), 4 * page_);
   ASSERT_NO_FATAL_FAILURE(AllReduce(0));
+  {
+    auto activation = executors_[0]->Activate();
+    uint32_t value;
+    ASSERT_EQ(cuMemcpyDtoH(&value, reinterpret_cast<CUdeviceptr>(ordinary_[0]),
+                           sizeof(value)),
+              CUDA_SUCCESS);
+    EXPECT_EQ(value, 1234);
+    ASSERT_EQ(cuMemsetD32(reinterpret_cast<CUdeviceptr>(extension), 5678, 1),
+              CUDA_SUCCESS);
+    ASSERT_EQ(cuMemcpyDtoH(&value, reinterpret_cast<CUdeviceptr>(extension),
+                           sizeof(value)),
+              CUDA_SUCCESS);
+    EXPECT_EQ(value, 5678);
+  }
   for (int rank = 0; rank < 2; ++rank) {
     buffers_[rank][1] = allocators_[rank]->AllocateRaw(page_, page_, lower_);
     ASSERT_NE(buffers_[rank][1], nullptr);
@@ -183,6 +202,8 @@ TEST_F(CudaBfcSymmetricGrowthTest, WindowsSurviveAsymmetricGrowth) {
   ASSERT_NO_FATAL_FAILURE(Register(1));
   ASSERT_NO_FATAL_FAILURE(AllReduce(1));
   allocators_[0]->DeallocateRaw(extension);
+  // The released extension remains unavailable to collective allocations.
+  EXPECT_EQ(allocators_[0]->AllocateRaw(page_, 2 * page_, lower_), nullptr);
 }
 
 }  // namespace

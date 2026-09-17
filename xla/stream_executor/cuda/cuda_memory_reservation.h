@@ -36,10 +36,9 @@ namespace stream_executor::gpu {
 class CudaMemoryReservation : public MemoryReservation {
  public:
   // Reserves a virtual address range of at least `size` bytes using
-  // cuMemAddressReserve, with at least the requested alignment (zero uses the
-  // device granularity). StreamExecutor is used only for context activation.
+  // cuMemAddressReserve. StreamExecutor is used only for context activation.
   static absl::StatusOr<std::unique_ptr<CudaMemoryReservation>> Create(
-      StreamExecutor* executor, uint64_t size, size_t alignment = 0);
+      StreamExecutor* executor, uint64_t size);
 
   // Returns the base address and padded size of the reserved virtual range.
   DeviceAddressBase address() const override;

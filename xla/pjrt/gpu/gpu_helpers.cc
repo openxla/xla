@@ -36,7 +36,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/integrations/stream_executor_allocator.h"
@@ -50,11 +49,6 @@ limitations under the License.
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 #include "tsl/platform/numbers.h"
-
-#if GOOGLE_CUDA
-#include "xla/stream_executor/cuda/cuda_contiguous_sub_allocator.h"
-#include "xla/stream_executor/integrations/contiguous_sub_allocator.h"
-#endif
 
 namespace xla {
 
@@ -110,8 +104,7 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
-    bool enable_spatial_partitioning,
-    std::optional<GpuBfcGrowthOptions> growth) {
+    bool enable_spatial_partitioning, bool allow_growth) {
   if (enable_spatial_partitioning && !preallocate) {
     return InvalidArgument(
         "Spatial partitioning of the BFC allocator requires preallocate=true.");
@@ -124,22 +117,20 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
                << status.message();
   }
 
-  if (growth &&
-      (!enable_spatial_partitioning || !preallocate || enable_unified_memory)) {
+  if (allow_growth &&
+      (!preallocate || !enable_spatial_partitioning || enable_unified_memory)) {
     return InvalidArgument(
-        "BFC growth requires a preallocated spatial arena without unified "
+        "BFC growth requires a preallocated spatial pool without unified "
         "memory.");
   }
-  if (growth &&
-      (growth->device_headroom_bytes < 0 || growth->increment_bytes <= 0 ||
-       growth->collective_gap_reserve_bytes < 0 ||
-       (!gpu_system_memory_size &&
+  if (allow_growth &&
+      ((!gpu_system_memory_size &&
         (!std::isfinite(memory_fraction) || memory_fraction <= 0 ||
          memory_fraction > 1)) ||
        (gpu_system_memory_size && *gpu_system_memory_size <= 0))) {
-    return InvalidArgument(
-        "Invalid BFC growth sizes or initial memory fraction.");
+    return InvalidArgument("Invalid initial BFC allocation size or fraction.");
   }
+
   int device_ordinal = executor->device_ordinal();
   std::unique_ptr<tsl::SubAllocator> sub_allocator;
 
@@ -206,45 +197,16 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
                              tsl::BFCAllocator::SplitPolicy::kBfc,
                              tsl::BFCAllocator::SplitPolicy::kBfc};
   }
-  if (growth) {
-#if GOOGLE_CUDA
-    if (growth->device_headroom_bytes >= total_memory) {
+  if (allow_growth) {
+    if (allocator_memory == 0 || allocator_memory > total_memory) {
       return InvalidArgument(
-          "BFC headroom must be smaller than device memory.");
-    }
-    ABSL_ASSIGN_OR_RETURN(
-        auto contiguous,
-        se::gpu::CreateCudaContiguousSubAllocator(
-            executor, total_memory - growth->device_headroom_bytes,
-            growth->device_headroom_bytes, sub_allocator_alloc_visitors,
-            sub_allocator_free_visitors));
-    const size_t granularity = contiguous->granularity();
-    opts.initial_region_bytes =
-        RoundUpTo<size_t>(allocator_memory, granularity);
-    if (opts.initial_region_bytes == 0 ||
-        opts.initial_region_bytes > contiguous->capacity() ||
-        growth->collective_gap_reserve_bytes > opts.initial_region_bytes) {
-      return InvalidArgument(
-          "Initial BFC allocation must fit below the growth cap, "
-          "and the collective gap reserve must fit in the initial allocation.");
+          "Initial BFC allocation must fit in device memory.");
     }
     opts.allow_growth = true;
-    opts.growth_increment_bytes =
-        RoundUpTo<size_t>(growth->increment_bytes, granularity);
-    opts.lower_end_gap_reserve_bytes =
-        RoundUpTo<size_t>(growth->collective_gap_reserve_bytes,
-                          tsl::BFCAllocator::kMinAllocationSize);
-    allocator_memory = contiguous->capacity();
-    sub_allocator = std::move(contiguous);
-    LOG(INFO) << "BFC spatial growth enabled: initial="
-              << opts.initial_region_bytes << ", cap=" << allocator_memory
-              << ", headroom=" << growth->device_headroom_bytes
-              << ", increment=" << opts.growth_increment_bytes
-              << ", collective gap reserve="
-              << opts.lower_end_gap_reserve_bytes;
-#else
-    return absl::UnimplementedError("Spatial BFC growth requires CUDA VMM.");
-#endif
+    opts.initial_region_bytes = allocator_memory;
+    allocator_memory = total_memory;
+    LOG(INFO) << "BFC may extend with default-only regions up to "
+              << allocator_memory << " bytes on device " << device_ordinal;
   }
   return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,
