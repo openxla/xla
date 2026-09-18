@@ -33,9 +33,9 @@ extern "C" {
 // window to FFI handlers.
 // `request_communicator` requests a clique in the Prepare stage;
 // `get_communicator` returns the handle once cliques are acquired.
-// `register_window` registers a batch of already-allocated buffers with the
-// clique in Prepare; `get_window` returns the corresponding window handle
-// once collective memory is acquired.
+// `request_window` requests window registration for a batch of already-
+// allocated buffers with the clique in Prepare; `get_window` returns the
+// corresponding window handle once collective memory is acquired.
 // The communicator and window are backend-defined and passed as opaque
 // pointers (a handler on XLA:GPU reinterprets `XLA_FFI_Communicator*` as
 // `ncclComm_t` and `XLA_FFI_Window*` as `ncclWindow_t`).
@@ -115,10 +115,10 @@ typedef XLA_FFI_Error* XLA_FFI_Communicator_Get(
 // Collective memory window
 //===----------------------------------------------------------------------===//
 //
-// Handlers register a batch of already-allocated buffers with the clique via
-// `register_window` in Prepare, then look up an opaque `XLA_FFI_Window` per
-// buffer via `get_window` in Init/Execute. Handlers
-// reinterpret the window and call the backend's collective device APIs
+// Handlers request window registration for a batch of already-allocated
+// buffers with the clique via `request_window` in Prepare, then look up an
+// opaque `XLA_FFI_Window` per buffer via `get_window` in Init/Execute.
+// Handlers reinterpret the window and call the backend's collective device APIs
 // directly to obtain local, peer, and multicast pointers.
 
 // Opaque, non-owning collective memory window handle. The backend defines the
@@ -128,9 +128,10 @@ typedef struct XLA_FFI_Window XLA_FFI_Window;
 typedef struct XLA_FFI_CollectiveMemoryRegion {
   const void* buffer;
   size_t byte_size;
+  uint64_t flags;
 } XLA_FFI_CollectiveMemoryRegion;
 
-typedef struct XLA_FFI_Window_Register_Args {
+typedef struct XLA_FFI_Window_Request_Args {
   size_t struct_size;
   XLA_FFI_InternalExtension* extension_start;
 
@@ -141,15 +142,16 @@ typedef struct XLA_FFI_Window_Register_Args {
 
   const XLA_FFI_CollectiveMemoryRegion* regions;
   size_t num_regions;
-} XLA_FFI_Window_Register_Args;
+} XLA_FFI_Window_Request_Args;
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Window_Register_Args, num_regions);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Window_Request_Args, num_regions);
 
-// Registers a batch of already-allocated buffers with the clique. Prepare
-// stage only.
-typedef XLA_FFI_Error* XLA_FFI_Window_Register(
+// Requests window registration for a batch of already-allocated buffers with
+// the clique. Actual registration happens later once the clique is acquired;
+// look up the resulting window handle with `get_window`. Prepare stage only.
+typedef XLA_FFI_Error* XLA_FFI_Window_Request(
     const XLA_FFI_Collectives_Extension* self,
-    XLA_FFI_Window_Register_Args* args);
+    XLA_FFI_Window_Request_Args* args);
 
 typedef struct XLA_FFI_Window_Get_Args {
   size_t struct_size;
@@ -167,9 +169,10 @@ typedef struct XLA_FFI_Window_Get_Args {
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Window_Get_Args, window_offset);
 
-// Returns the non-owning collective memory window handle for a previously-
-// registered buffer, along with the byte offset of `buffer` within that
-// window. Valid once collective memory is acquired (Initialize/Execute stages).
+// Returns the non-owning collective memory window handle for a buffer whose
+// registration was previously requested via `request_window`, along with the
+// byte offset of `buffer` within that window. Valid once collective memory is
+// acquired (Initialize/Execute stages).
 typedef XLA_FFI_Error* XLA_FFI_Window_Get(
     const XLA_FFI_Collectives_Extension* self, XLA_FFI_Window_Get_Args* args);
 
@@ -185,7 +188,7 @@ struct XLA_FFI_Collectives_Extension {
   XLA_FFI_Communicator_Request* request_communicator;
   XLA_FFI_Communicator_Get* get_communicator;
 
-  XLA_FFI_Window_Register* register_window;
+  XLA_FFI_Window_Request* request_window;
   XLA_FFI_Window_Get* get_window;
 };
 

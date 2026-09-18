@@ -37,6 +37,7 @@ enum class GroupMode {
 struct CollectiveMemoryRegion {
   const void* buffer;
   size_t byte_size;
+  uint64_t flags = 0;
 };
 
 struct WindowLookup {
@@ -102,28 +103,25 @@ class CommunicatorContextBase {
   // Collective memory window
   //===--------------------------------------------------------------------===//
   //
-  // Register a batch of already-allocated buffers in Prepare; look up an
-  // opaque backend-defined window handle per buffer in Init/Execute. The
-  // handler reinterprets the window and calls the backend's collective device
-  // APIs directly to obtain local, peer, and multicast pointers. Allocation
-  // stays on the JAX-side. Added in collectives extension v0.2 — handlers that
-  // want to run against older runtimes should probe SupportsWindow() first.
+  // Request window registration for a batch of already-allocated buffers in
+  // Prepare; look up an opaque backend-defined window handle per buffer in
+  // Init/Execute. The handler reinterprets the window and calls the backend's
+  // collective device APIs directly to obtain local, peer, and multicast
+  // pointers. Allocation stays on the JAX-side.
 
-  // True iff the runtime supports the collective-memory window API
-  // (RegisterWindow / GetWindow). Added in collectives extension v0.2.
   bool SupportsWindow() const {
     return ext_->extension_base.id.minor_version >= 2 &&
-           ext_->register_window != nullptr && ext_->get_window != nullptr;
+           ext_->request_window != nullptr && ext_->get_window != nullptr;
   }
 
-  Status RegisterWindow(GroupMode group_mode,
-                        const std::vector<std::vector<int64_t>>& groups,
-                        int64_t communication_id,
-                        const std::vector<CollectiveMemoryRegion>& regions) {
+  Status RequestWindow(GroupMode group_mode,
+                       const std::vector<std::vector<int64_t>>& groups,
+                       int64_t communication_id,
+                       const std::vector<CollectiveMemoryRegion>& regions) {
     if (!SupportsWindow()) {
       return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_UNIMPLEMENTED,
-          "Collective memory window API (register_window) requires runtime "
+          "Collective memory window API (request_window) requires runtime "
           "collectives FFI extension >= v0.2");
     }
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
@@ -131,10 +129,10 @@ class CommunicatorContextBase {
     raw_regions.reserve(regions.size());
     for (const CollectiveMemoryRegion& r : regions) {
       raw_regions.push_back(
-          XLA_FFI_CollectiveMemoryRegion{r.buffer, r.byte_size});
+          XLA_FFI_CollectiveMemoryRegion{r.buffer, r.byte_size, r.flags});
     }
-    XLA_FFI_Window_Register_Args args;
-    args.struct_size = XLA_FFI_Window_Register_Args_STRUCT_SIZE;
+    XLA_FFI_Window_Request_Args args;
+    args.struct_size = XLA_FFI_Window_Request_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
     args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
     args.groups = raw_groups.data();
@@ -142,7 +140,7 @@ class CommunicatorContextBase {
     args.communication_id = communication_id;
     args.regions = raw_regions.data();
     args.num_regions = raw_regions.size();
-    if (XLA_FFI_Error* err = ext_->register_window(ext_, &args)) {
+    if (XLA_FFI_Error* err = ext_->request_window(ext_, &args)) {
       return ErrorPolicy::TakeError(api_, err);
     }
     return ErrorPolicy::Ok();
