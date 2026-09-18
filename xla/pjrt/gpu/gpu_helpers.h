@@ -63,7 +63,8 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> GetGpuHostAllocator(
 // heuristic, for both owned-hole reuse and central-gap carves.
 // Equal-size holes prefer lower addresses for collective memory and higher
 // addresses for default memory. By default, spatial device-memory pools can
-// add default-only regions beyond the initial allocation, up to device memory.
+// grow default memory beyond the initial allocation, up to device memory. On
+// CUDA, growth appends mappings to one reserved virtual address range.
 // Set allow_growth=false to keep the spatial pool fixed. This option does not
 // affect non-spatial or unified-memory pools.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(

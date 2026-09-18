@@ -83,10 +83,7 @@ BFCAllocator::BFCAllocator(std::unique_ptr<SubAllocator> sub_allocator,
     : opts_(opts),
       free_chunk_tag_(opts.enable_spatial_partitioning ? ChunkTag::kCentralGap
                                                        : ChunkTag::kLower),
-      // Keep extra regions separate from the fixed shared region, including
-      // when the suballocator happens to return adjacent addresses.
-      coalesce_regions_(!opts.enable_spatial_partitioning &&
-                        sub_allocator->SupportsCoalescing()),
+      coalesce_regions_(sub_allocator->SupportsCoalescing()),
       sub_allocator_(std::move(sub_allocator)),
       name_(name),
       unused_chunk_handle_head_(kInvalidChunkHandle),
@@ -182,6 +179,24 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   const bool initial_spatial_region =
       opts_.enable_spatial_partitioning && opts_.allow_growth && first_region;
   if (initial_spatial_region) rounded_bytes = opts_.initial_region_bytes;
+  if (opts_.enable_spatial_partitioning && coalesce_regions_ && !first_region) {
+    // A contiguous extension can complete a free tail, even when the remaining
+    // capacity alone is smaller than the request. Count only immediately safe
+    // space that upper allocations may use, including mandatory alignment.
+    const AllocationRegion& region = region_manager_.regions().front();
+    ChunkHandle tail = region.get_handle(region.ptr());
+    while (ChunkFromHandle(tail)->next != kInvalidChunkHandle) {
+      tail = ChunkFromHandle(tail)->next;
+    }
+    const Chunk* c = ChunkFromHandle(tail);
+    if (!c->in_use() && c->freed_at_count == 0 && c->tag != ChunkTag::kLower) {
+      const size_t padding =
+          LowEndAlignmentPadding(absl::bit_cast<uintptr_t>(c->ptr), alignment);
+      const size_t usable = c->size - std::min(c->size, padding);
+      rounded_bytes -= std::min(rounded_bytes, usable);
+      if (rounded_bytes == 0) return false;
+    }
+  }
   size_t available_bytes = memory_limit_ - *stats_.pool_bytes;
   // Rounds available_bytes down to the nearest multiple of kMinAllocationSize.
   available_bytes = (available_bytes / kMinAllocationSize) * kMinAllocationSize;
@@ -207,7 +222,7 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   void* mem_addr = sub_allocator_->Alloc(alignment, bytes, &bytes_received);
   if (mem_addr == nullptr) {
     // All ranks must start with the configured shared capacity. Backpedaling
-    // remains available for later upper-only regions.
+    // remains available for later upper-only capacity.
     if (initial_spatial_region) return false;
     static constexpr float kBackpedalFactor = 0.9;
 
@@ -232,7 +247,9 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   if (opts_.enable_spatial_partitioning &&
       (bytes_received > available_bytes ||
        (initial_spatial_region &&
-        bytes_received != opts_.initial_region_bytes))) {
+        bytes_received != opts_.initial_region_bytes) ||
+       (!first_region && coalesce_regions_ &&
+        mem_addr != region_manager_.regions().front().end_ptr()))) {
     sub_allocator_->Free(mem_addr, bytes_received);
     return false;
   }
@@ -303,7 +320,8 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   }
 
   // Maybe merge adjacent chunks and insert the chunk into the right free
-  // structure. Only the first spatial region becomes the central gap.
+  // structure. Contiguous spatial extensions can merge with the central gap;
+  // lower-end allocations still obey the initial region limit.
   InsertFreeChunk(TryToCoalesce(h, /*ignore_freed_at=*/false));
 
   return true;
@@ -815,7 +833,16 @@ void* BFCAllocator::FindChunkPtrInCentralGap(size_t rounded_bytes,
     }
   } else {
     const size_t align_padding = LowEndAlignmentPadding(chunk_start, alignment);
-    if (ABSL_PREDICT_FALSE(chunk->size < rounded_bytes + align_padding)) {
+    size_t available = chunk->size;
+    if (opts_.allow_growth) {
+      // Coalescing may grow the gap into the extension. Only its prefix within
+      // the initial shared region is available to the lower end.
+      const uintptr_t offset = chunk_start - spatial_region_start_;
+      if (offset >= opts_.initial_region_bytes) return nullptr;
+      available = std::min(available, opts_.initial_region_bytes - offset);
+    }
+    if (ABSL_PREDICT_FALSE(align_padding > available ||
+                           rounded_bytes > available - align_padding)) {
       return nullptr;
     }
   }
@@ -826,10 +853,10 @@ void* BFCAllocator::FindChunkPtrInCentralGap(size_t rounded_bytes,
              : AllocateChunkFromLowEnd(h, rounded_bytes, num_bytes, alignment);
 }
 
-bool BFCAllocator::ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes,
+bool BFCAllocator::ShouldSplitChunk(size_t chunk_size, size_t rounded_bytes,
                                     size_t alignment_padding) const {
-  DCHECK_LE(alignment_padding, chunk->size);
-  const size_t aligned_size = chunk->size - alignment_padding;
+  DCHECK_LE(alignment_padding, chunk_size);
+  const size_t aligned_size = chunk_size - alignment_padding;
   return aligned_size >= rounded_bytes * 2 ||
          static_cast<int64_t>(aligned_size) -
                  static_cast<int64_t>(rounded_bytes) >=
@@ -865,9 +892,22 @@ void* BFCAllocator::AllocateChunkFromLowEnd(ChunkHandle h, size_t rounded_bytes,
       (chunk->tag == ChunkTag::kCentralGap
            ? policy.gap_split_policy
            : policy.hole_split_policy) == SplitPolicy::kExact;
-  if (split_exactly ? chunk->size > rounded_bytes
-                    : ShouldSplitChunk(chunk, rounded_bytes)) {
-    SplitChunk(h, rounded_bytes);
+  size_t available = chunk->size;
+  if (opts_.enable_spatial_partitioning && opts_.allow_growth) {
+    const uintptr_t offset =
+        absl::bit_cast<uintptr_t>(chunk->ptr) - spatial_region_start_;
+    DCHECK_LT(offset, opts_.initial_region_bytes);
+    available = std::min(available, opts_.initial_region_bytes - offset);
+  }
+  // Apply the lower policy to its eligible capacity only. Even heuristic
+  // padding must stop at the fixed lower-end limit; the suffix remains free
+  // for upper allocations, which may span physical mapping boundaries.
+  const size_t allocation_size =
+      split_exactly || ShouldSplitChunk(available, rounded_bytes)
+          ? rounded_bytes
+          : available;
+  if (chunk->size > allocation_size) {
+    SplitChunk(h, allocation_size);
     chunk = ChunkFromHandle(h);  // Update chunk pointer in case it moved.
   }
 
@@ -898,7 +938,7 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
   // just as the lower-end path does. Otherwise carve from the high end.
   if (!split_exactly) {
     const size_t align_padding = LowEndAlignmentPadding(chunk_start, alignment);
-    if (!ShouldSplitChunk(chunk, rounded_bytes, align_padding)) {
+    if (!ShouldSplitChunk(chunk->size, rounded_bytes, align_padding)) {
       aligned_start = chunk_start + align_padding;
     }
   }
@@ -921,7 +961,7 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
   // Set the tag before splitting so a free suffix inherits kUpper directly.
   chunk->tag = ChunkTag::kUpper;
   if (split_exactly ? chunk->size > rounded_bytes
-                    : ShouldSplitChunk(chunk, rounded_bytes)) {
+                    : ShouldSplitChunk(chunk->size, rounded_bytes)) {
     SplitChunk(h, rounded_bytes);
     chunk = ChunkFromHandle(h);
   }
@@ -1159,9 +1199,10 @@ void BFCAllocator::ReturnBoundaryChunkToGap(BFCAllocator::ChunkHandle h) {
   }
   Chunk* c = ChunkFromHandle(h);
   CHECK(!c->in_use());  // Crash OK
-  // Extra regions remain upper-owned even when their boundary chunks are
-  // freed. Unsigned subtraction also excludes regions below the shared base.
-  if (opts_.allow_growth &&
+  // Noncontiguous extensions cannot join the original gap. With contiguous
+  // backing, a free span may cross the initial limit: lower-end carving
+  // enforces that limit, while upper allocations can use the entire span.
+  if (opts_.allow_growth && !coalesce_regions_ &&
       absl::bit_cast<uintptr_t>(c->ptr) - spatial_region_start_ >=
           opts_.initial_region_bytes) {
     return;

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -37,7 +38,8 @@ limitations under the License.
 namespace stream_executor::gpu {
 
 absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
-CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
+CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size,
+                              size_t alignment) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   CUdevice device;
@@ -55,8 +57,8 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
   CUdeviceptr ptr;
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(
-      cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
+  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemAddressReserve(
+      &ptr, padded_size, std::max(granularity, alignment), 0, 0)));
 
   return std::unique_ptr<CudaMemoryReservation>(
       new CudaMemoryReservation(executor, ptr, padded_size));
@@ -129,14 +131,9 @@ CudaMemoryReservation::~CudaMemoryReservation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  // Attempt to unmap the full range before freeing the virtual address space.
-  // Sub-ranges already unmapped by ScopedMapping destructors will cause this
-  // call to fail; the error is logged and the address range is freed anyway.
-  auto unmap_status =
-      cuda::ToStatus(cuMemUnmap(ptr_, size_), "Error unmapping CUDA memory");
-  if (!unmap_status.ok()) {
-    LOG(ERROR) << unmap_status.message();
-  }
+  // ScopedMapping owns each unmap and must be destroyed before the reservation.
+  // A reservation can include unbacked pages, so unmapping its whole range is
+  // neither necessary nor valid after the mappings have been released.
   auto free_status = cuda::ToStatus(cuMemAddressFree(ptr_, size_),
                                     "Error freeing CUDA address range");
   if (!free_status.ok()) {

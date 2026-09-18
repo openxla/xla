@@ -1330,8 +1330,9 @@ GetStreamExecutorGpuDeviceAllocator(
       // Collective memory is anchored at the lower end: symmetric NCCL windows
       // need identical offsets across ranks, and the base of a preallocated
       // range is the one address that can never move. Default memory is served
-      // from the upper end. Optional growth adds separate default-only regions
-      // without changing the shared range or collective offsets.
+      // from the upper end. Growth adds default-only capacity without changing
+      // existing addresses or the fixed collective limit. On CUDA, appended
+      // mappings extend the same virtual arena.
       shared_collective_pool =
           allocator_config.preallocate &&
           debug_options.xla_gpu_enable_allocator_spatial_partitioning();
