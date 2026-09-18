@@ -1117,7 +1117,8 @@ BFCAllocator::ChunkTag BFCAllocator::MergedChunkTag(ChunkTag a,
   // Two free holes with the same tag keep that tag (an interior hole still
   // belongs to its end). Any other combination -- a hole merging with the
   // central gap, or lower-end and upper-end holes meeting after the gap is
-  // exhausted -- yields a kCentralGap span reusable by either end.
+  // exhausted -- yields a kCentralGap span reusable by either end, subject to
+  // its allocation address limit.
   return a == b ? a : ChunkTag::kCentralGap;
 }
 

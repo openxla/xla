@@ -101,8 +101,8 @@ TEST_F(CudaMemoryReservationTest, MapToSingleAllocation) {
   EXPECT_EQ(mapping.mapped_address().opaque(), res->address().opaque());
   EXPECT_EQ(mapping.mapped_address().size(), alloc_size);
   // ScopedMapping destructor: cuMemUnmap.
-  // CudaMemoryReservation destructor: cuMemUnmap (logs error, already unmapped)
-  // + cuMemAddressFree. Allocation destructor: cuMemRelease.
+  // CudaMemoryReservation destructor: cuMemAddressFree.
+  // Allocation destructor: cuMemRelease.
 }
 
 // Verifies that ScopedMapping unmaps the range on destruction, allowing a
