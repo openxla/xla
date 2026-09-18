@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -43,7 +44,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
-#include "tsl/platform/protobuf.h"
+#include "xla/custom_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/future.h"
@@ -96,6 +97,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -413,6 +415,21 @@ std::vector<PjRtHloOutputLoadedHostCallback*> GatherHloOutputCallbacks(
     }
   }
   return hlo_output_callbacks;
+}
+
+// Converts IFRT custom options to XLA custom options forwarded to the runtime.
+// Options consumed by the PjRt-IFRT layer itself are not forwarded.
+xla::CustomOptions::Map ToCustomOptionsMap(const AttributeMap& attribute_map) {
+  xla::CustomOptions::Map custom_options;
+  attribute_map.ForEach([&](const std::string& name,
+                            const AttributeMap::Value& value) {
+    if (name == "use_output_arena" ||
+        name == PjRtCompatibleLoadedExecutable::kCallLocation) {
+      return;
+    }
+    std::visit([&](const auto& v) { custom_options[name] = v.value; }, value);
+  });
+  return custom_options;
 }
 
 }  // namespace
@@ -991,6 +1008,15 @@ PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
     ffi::TypeRegistry::TypeId type_id(FfiLoadedHostCallbacks::id.type_id);
     CHECK_OK(context->ffi_context().Insert(type_id, ffi_callbacks.get()));
     opts.context = context.get();
+  }
+
+  if (options.custom_options.has_value()) {
+    xla::CustomOptions::Map custom_options =
+        ToCustomOptionsMap(*options.custom_options);
+    if (!custom_options.empty()) {
+      opts.custom_options =
+          std::make_shared<const xla::CustomOptions>(std::move(custom_options));
+    }
   }
 
   // When using host callbacks on CPU, we need to use synchronous dispatch to
