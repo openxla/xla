@@ -584,6 +584,21 @@ cc_library(
 )
 
 cc_library(
+    name = "onemkl_util_headers",
+    hdrs = ["onemkl_util.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@local_config_sycl//sycl:sycl_headers",
+    ],
+)
+
+cc_library(
     name = "onednn_util",
     srcs = ["onednn_util.cc"],
     hdrs = ["onednn_util.h"],
