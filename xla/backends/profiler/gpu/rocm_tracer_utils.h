@@ -174,7 +174,7 @@ struct RoctxFrame {
   // TODO(rocm-profiler): carry a reference into AnnotationMap's intern pool
   // instead of owning a copy. Blocked on lifetime, not on the generation
   // check: the generation guards *emission*, but Enable() calls
-  // annotation_map_.Clear() while frames pushed before it are still live on
+  // annotation_map_.Reset() while frames pushed before it are still live on
   // some other thread's stack, so a reference would dangle even though the
   // frame is correctly dropped at pop. Needs the pool to outlive the session
   // (or a per-frame refcount) before the copy can go.
@@ -188,22 +188,52 @@ struct RoctxFrame {
   uint64_t generation;
 };
 
+struct RocmTracerOptions {
+  // Maximum number of annotation strings that AnnotationMap in RocmTracer can
+  // store. GpuTracer::BuildOptions is the single source of truth; callers that
+  // value-initialize this struct (e.g. RocmTracerOptions{}) will get 0, which
+  // is a valid value meaning "retain no annotations". Always set this field
+  // explicitly before passing the struct to Enable().
+  uint64_t max_annotation_strings;
+};
+
 struct RocmTraceCollectorOptions {
-  // Maximum number of events to collect from callback API; if -1, no limit.
-  // if 0, the callback API is enabled to build a correlation map, but no
-  // events are collected.
+  // Maximum number of events to collect from the callback API. 0 does not mean
+  // "host rows off, GPU timeline on": RocmTraceCollectorImpl matches each
+  // activity event to the API event sharing its correlation id and drops the
+  // ones it cannot match, so an empty callback map empties the whole trace.
+  // (CUPTI spares its correlation map via auxiliary events; on ROCm that path
+  // is dead, both AddEvent call sites pass is_auxiliary=false.)
+  //
+  // There is no "no limit" encoding: the field is unsigned, and the CUPTI
+  // comment this one is descended from ("if -1, no limit") never applied here.
+  // The counters this is compared against are std::atomic<int>, so a value
+  // above INT32_MAX is reached by overflow rather than by counting.
+  // rocm_tracer_options_utils.cc rejects negatives and clamps to the same
+  // ceiling as --xla_gpu_rocm_max_trace_events.
   uint64_t max_callback_api_events;
-  // Maximum number of events to collect from activity API; if -1, no limit.
+  // Maximum number of events to collect from the activity API. Same range
+  // rules as max_callback_api_events above.
   uint64_t max_activity_api_events;
   // Maximum number of annotation strings that we can accommodate.
   uint64_t max_annotation_strings;
-  // Number of GPUs involved.
+  // Number of GPUs involved. No default: 0 silently produces an empty profile
+  // (RocmTraceCollectorImpl drops every event when num_gpus_==0), which is why
+  // rocm_tracer_options_utils.cc resolves a user-supplied 0 to the device count
+  // rather than passing it through.
   uint32_t num_gpus;
 };
 
 class AnnotationMap {
  public:
-  explicit AnnotationMap(uint64_t max_size) : max_size_(max_size) {}
+  // Capacity used when the singleton is queried before the first Enable()
+  // call (e.g. by a test that calls annotation_map() directly). Enable()
+  // always calls Reset(options.max_annotation_strings) before opening the
+  // profiling gate, so this value is never the production annotation budget.
+  static constexpr uint64_t kPreSessionCapacity = 1024 * 1024;
+
+  explicit AnnotationMap(uint64_t initial_max_size = kPreSessionCapacity)
+      : max_size_(initial_max_size) {}
   void Add(uint64_t correlation_id, const std::string& annotation,
            absl::string_view roctx_range = {},
            absl::Span<const int64_t> scope_range_ids = {});
@@ -211,7 +241,12 @@ class AnnotationMap {
   absl::string_view LookUpRoctxRange(uint64_t correlation_id);
   int64_t LookUpScopeRangeId(uint64_t correlation_id);
   ScopeRangeIdTree TakeScopeRangeIdTree();
-  void Clear();
+
+  // Clears all entries and sets the new capacity for the coming session.
+  // Both operations are performed under a single acquisition of map_.mutex,
+  // so there is no window in which a straggler Add() from the previous session
+  // can observe the map in a partially-reset state.
+  void Reset(uint64_t max_size);
 
  private:
   struct AnnotationMapImpl {
@@ -231,8 +266,8 @@ class AnnotationMap {
         ABSL_GUARDED_BY(mutex);
     ScopeRangeIdTree scope_range_id_tree ABSL_GUARDED_BY(mutex);
   };
-  const uint64_t max_size_;
   AnnotationMapImpl map_;
+  uint64_t max_size_ ABSL_GUARDED_BY(map_.mutex);
 
  public:
   // Disable copy and move.
