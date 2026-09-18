@@ -492,11 +492,7 @@ def _tools_on_path_impl(ctx):
     runfiles = ctx.runfiles()
 
     # For Bazel 4.x support. Drop when Bazel 4.x is no longer supported
-    # Merge runfiles from both srcs (the tools) and deps.
-    # This ensures that shared libraries from --dynamic_mode=fully are included
-    # when tools forward runfiles from their source binaries.
     to_merge = [d[DefaultInfo].default_runfiles for d in ctx.attr.srcs]
-    to_merge += [d[DefaultInfo].default_runfiles for d in ctx.attr.deps if DefaultInfo in d]
     if hasattr(runfiles, "merge_all"):
         runfiles = runfiles.merge_all(to_merge)
     else:
@@ -518,27 +514,22 @@ def _tools_on_path_impl(ctx):
         runfiles_symlinks[bin_path] = exe
 
     # The loop below symlinks the libraries that are used by the tools.
-    # Extract libraries from both explicit deps and the tools themselves.
-    all_deps = ctx.attr.deps + ctx.attr.srcs
-    for dep in all_deps:
-        if not CcInfo in dep:
-            continue
-
+    for dep in ctx.attr.deps:
         linker_inputs = dep[CcInfo].linking_context.linker_inputs.to_list()
         for linker_input in linker_inputs:
-            # Process ALL libraries in this linker_input, not just the first one
-            for library in linker_input.libraries:
-                lib = library.dynamic_library
-                if not lib:
+            if len(linker_input.libraries) == 0:
+                continue
+            lib = linker_input.libraries[0].dynamic_library
+            if not lib:
+                continue
+            lib_path = paths.join(ctx.attr.lib_dir, lib.basename)
+            if lib_path in runfiles_symlinks:
+                if runfiles_symlinks[lib_path] == lib:
                     continue
-                lib_path = paths.join(ctx.attr.lib_dir, lib.basename)
-                if lib_path in runfiles_symlinks:
-                    if runfiles_symlinks[lib_path] == lib:
-                        continue
-                    fail("All libs used by lit tests must have unique basenames, as" +
-                         " they are added to the path." +
-                         " {} and {} conflict".format(runfiles_symlinks[lib_path], lib))
-                runfiles_symlinks[lib_path] = lib
+                fail("All libs used by lit tests must have unique basenames, as" +
+                     " they are added to the path." +
+                     " {} and {} conflict".format(runfiles_symlinks[lib_path], lib))
+            runfiles_symlinks[lib_path] = lib
 
     return [
         DefaultInfo(runfiles = ctx.runfiles(
