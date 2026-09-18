@@ -29,7 +29,6 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "cub/version.cuh"
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/casts.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
+#include "cub/version.cuh"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
@@ -68,7 +68,9 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_host_allocator.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
+#include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
@@ -98,6 +100,7 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
@@ -842,9 +845,12 @@ absl::StatusOr<size_t> CudaExecutor::GetVmmGranularity() const {
 absl::StatusOr<DeviceAddressBase> CudaExecutor::GetAllocationRange(
     void* ptr) const {
   uint64_t alloc_start, alloc_size;
+  // RANGE_* describes the whole VA reservation, which can include unmapped
+  // addresses and multiple physical allocations. Fabric transfers need the
+  // bounds of the mapping backed by the handle containing ptr.
   CUpointer_attribute attrs[2] = {
-      CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
-      CU_POINTER_ATTRIBUTE_RANGE_SIZE,
+      CU_POINTER_ATTRIBUTE_MAPPING_BASE_ADDR,
+      CU_POINTER_ATTRIBUTE_MAPPING_SIZE,
   };
   void* results[2] = {&alloc_start, &alloc_size};
   ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuPointerGetAttributes(
@@ -870,7 +876,9 @@ absl::StatusOr<std::string> CudaExecutor::ExportFabricHandle(void* ptr) const {
       static_cast<CUmemGenericAllocationHandle>(handle.handle()),
       CU_MEM_HANDLE_TYPE_FABRIC, 0)));
 
-  CUpointer_attribute attrs[1] = {CU_POINTER_ATTRIBUTE_RANGE_SIZE};
+  // Import only the mapped allocation exported by this handle, not the larger
+  // VA reservation that a growing arena may have reserved around it.
+  CUpointer_attribute attrs[1] = {CU_POINTER_ATTRIBUTE_MAPPING_SIZE};
   void* results[1] = {&fabric_handle.size};
   ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuPointerGetAttributes(
       1, attrs, results, reinterpret_cast<CUdeviceptr>(ptr))));
@@ -960,6 +968,16 @@ CudaExecutor::CreateMemoryAllocator(MemorySpace type) {
 
   return absl::UnimplementedError(
       absl::StrFormat("Unsupported memory type %d", type));
+}
+
+absl::StatusOr<std::unique_ptr<MemoryReservation>>
+CudaExecutor::CreateMemoryReservation(uint64_t size) {
+  return CudaMemoryReservation::Create(this, size);
+}
+
+absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+CudaExecutor::CreatePhysicalMemoryAllocation(uint64_t size) {
+  return CudaRawMemoryAllocation::Create(this, size);
 }
 
 absl::Status CudaExecutor::Init() {

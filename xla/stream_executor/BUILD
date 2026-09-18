@@ -699,6 +699,7 @@ cc_library(
         ":kernel_spec",
         ":memory_allocation",
         ":memory_allocator",
+        ":memory_reservation",
         ":memory_space",
         ":module_spec",
         ":platform",

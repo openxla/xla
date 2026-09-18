@@ -1057,14 +1057,23 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
         desc.Clear();
         desc.set_buffer_index(i);
         if (mem->mem().size() > 0) {
+          ABSL_ASSIGN_OR_RETURN(auto range,
+                           executor->GetAllocationRange(mem->mem().opaque()));
+          const uintptr_t buffer_offset =
+              reinterpret_cast<intptr_t>(mem->mem().opaque()) -
+              reinterpret_cast<intptr_t>(range.opaque());
+          // A growing BFC buffer may span physical mappings. This descriptor
+          // carries only one fabric handle, so it cannot represent that span.
+          if (buffer_offset > range.size() ||
+              mem->mem().size() > range.size() - buffer_offset) {
+            return Unimplemented(
+                "Cross-host fabric transfer of a buffer spanning physical "
+                "allocations is not supported.");
+          }
           ABSL_ASSIGN_OR_RETURN(
               *desc.mutable_buffer_handle(),
               GetOrExportFabricHandle(executor, mem->mem().opaque()));
-          ABSL_ASSIGN_OR_RETURN(auto range,
-                           executor->GetAllocationRange(mem->mem().opaque()));
-          desc.set_buffer_offset(
-              reinterpret_cast<intptr_t>(mem->mem().opaque()) -
-              reinterpret_cast<intptr_t>(range.opaque()));
+          desc.set_buffer_offset(buffer_offset);
         }
         desc.set_rendezvous_key(rendezvous_key);
 
@@ -1330,8 +1339,9 @@ GetStreamExecutorGpuDeviceAllocator(
       // Collective memory is anchored at the lower end: symmetric NCCL windows
       // need identical offsets across ranks, and the base of a preallocated
       // range is the one address that can never move. Default memory is served
-      // from the upper end, so the top of the range is the only boundary that
-      // would have to move if the range were ever extended.
+      // from the upper end. On CUDA, growth maps additional backing into the
+      // reserved VA range and advances the upper end without changing existing
+      // mappings or the collective allocation limit.
       shared_collective_pool =
           allocator_config.preallocate &&
           debug_options.xla_gpu_enable_allocator_spatial_partitioning();
@@ -1343,14 +1353,14 @@ GetStreamExecutorGpuDeviceAllocator(
       for (const auto& ordinal_and_device : addressable_devices) {
         ABSL_ASSIGN_OR_RETURN(
             auto bfc_allocator,
-            CreateBFCAllocator(ordinal_and_device.second->executor(),
-                               allocator_config.memory_fraction,
-                               allocator_config.preallocate,
-                               allocator_config.gpu_system_memory_size,
-                               allocator_config.sub_allocator_alloc_visitors,
-                               allocator_config.sub_allocator_free_visitors,
-                               /*enable_spatial_partitioning=*/
-                               shared_collective_pool));
+            CreateBFCAllocator(
+                ordinal_and_device.second->executor(),
+                allocator_config.memory_fraction, allocator_config.preallocate,
+                allocator_config.gpu_system_memory_size,
+                allocator_config.sub_allocator_alloc_visitors,
+                allocator_config.sub_allocator_free_visitors,
+                /*enable_spatial_partitioning=*/
+                shared_collective_pool, allocator_config.bfc_allow_growth));
         allocators.push_back(
             {bfc_allocator, ordinal_and_device.second->compute_stream(),
              /*memory_space=*/
@@ -1546,7 +1556,9 @@ CreateAllocatorMemoryRegistration(GpuAllocatorConfig* allocator_config) {
   // Automatic memory registration is only safe for preallocated BFC arenas.
   // If BFC grows later, ranks may not see a consistent set of registered
   // backing allocations, which can lead to undefined behavior or deadlocks.
-  if (!allocator_config->preallocate) {
+  if (!allocator_config->preallocate ||
+      (allocator_config->bfc_allow_growth &&
+       debug_options.xla_gpu_enable_allocator_spatial_partitioning())) {
     return nullptr;
   }
 

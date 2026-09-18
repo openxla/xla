@@ -62,13 +62,17 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> GetGpuHostAllocator(
 // Collective allocations split exactly; default allocations use the BFC split
 // heuristic, for both owned-hole reuse and central-gap carves.
 // Equal-size holes prefer lower addresses for collective memory and higher
-// addresses for default memory.
+// addresses for default memory. By default, spatial device-memory pools can
+// add default-only backing beyond the initial allocation, up to device memory.
+// CUDA reserves the cap in VA and extends the mapped prefix without moving it.
+// Set allow_growth=false to keep the spatial pool fixed. This option does not
+// affect non-spatial or unified-memory pools.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction, bool preallocate,
     std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
-    bool enable_spatial_partitioning = false);
+    bool enable_spatial_partitioning = false, bool allow_growth = true);
 
 // Builds a BFCAllocator for all local GPUs that uses collective memory.
 absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(

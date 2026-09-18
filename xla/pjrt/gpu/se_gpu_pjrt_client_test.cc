@@ -2821,6 +2821,43 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
   EXPECT_EQ(address(default_coalesced), default_boundary);
 }
 
+TEST(StreamExecutorGpuClientTest, SharedPoolGrowsByDefault) {
+  const DebugOptions debug_options = GetDebugOptionsFromFlags();
+  if (!debug_options.xla_gpu_enable_allocator_spatial_partitioning() ||
+      debug_options.xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::ALWAYS_UPDATE) {
+    GTEST_SKIP() << "Requires the shared spatial BFC pool.";
+  }
+  constexpr int kDefault = static_cast<int>(gpu::MemorySpaceColor::kDefault);
+  constexpr int kCollective =
+      static_cast<int>(gpu::MemorySpaceColor::kCollective);
+  constexpr int64_t kInitialBytes = 8 << 20;
+  for (bool disable_growth : {false, true}) {
+    SCOPED_TRACE(disable_growth);
+    GpuClientOptions options;
+    options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+    options.allocator_config.gpu_system_memory_size = kInitialBytes;
+    options.allowed_devices = {0};
+    if (disable_growth) options.allocator_config.bfc_allow_growth = false;
+    ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+    auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+        absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+    auto* allocator = raw_client->allocator();
+    ASSERT_OK_AND_ASSIGN(
+        auto collective,
+        allocator->Allocate(0, kInitialBytes,
+                            /*retry_on_failure=*/false, kCollective));
+    // The initial shared region is full. The default configuration extends
+    // for ordinary memory, while an explicitly fixed pool reports OOM.
+    auto ordinary = allocator->Allocate(0, 4 << 20,
+                                        /*retry_on_failure=*/false, kDefault);
+    EXPECT_EQ(ordinary.ok(), !disable_growth) << ordinary.status();
+    EXPECT_FALSE(
+        allocator->Allocate(0, 2 << 20, /*retry_on_failure=*/false, kCollective)
+            .ok());
+  }
+}
+
 // Without preallocation there is no shared partitioned pool: default memory
 // comes from a growable BFC allocator that only serves its lower end, and
 // collective memory comes from a separate allocator. Both must keep working.
@@ -3280,6 +3317,49 @@ TEST(StreamExecutorGpuClientTest, MemoryRegistrationEnabledWithFlag) {
               "--xla_gpu_enable_nccl_user_buffers_in_default_space=true", 1);
   ResetFlagValues();
   ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+
+  GpuAllocatorConfig config;
+  config.bfc_allow_growth = false;
+  auto registration = CreateAllocatorMemoryRegistration(&config);
+  EXPECT_NE(registration, nullptr);
+  EXPECT_FALSE(config.sub_allocator_alloc_visitors.empty());
+  EXPECT_FALSE(config.sub_allocator_free_visitors.empty());
+}
+
+TEST(StreamExecutorGpuClientTest, SpatialGrowthDisablesMemoryRegistration) {
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  tsl::setenv("XLA_FLAGS",
+              "--xla_gpu_enable_nccl_user_buffers_in_default_space=true", 1);
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+
+  GpuAllocatorConfig config;
+  auto registration = CreateAllocatorMemoryRegistration(&config);
+  EXPECT_EQ(registration, nullptr);
+  EXPECT_TRUE(config.sub_allocator_alloc_visitors.empty());
+  EXPECT_TRUE(config.sub_allocator_free_visitors.empty());
+}
+
+TEST(StreamExecutorGpuClientTest, NonSpatialPoolKeepsMemoryRegistration) {
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  tsl::setenv("XLA_FLAGS",
+              "--xla_gpu_enable_nccl_user_buffers_in_default_space=true "
+              "--xla_gpu_enable_allocator_spatial_partitioning=false",
+              1);
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+  absl::Cleanup reset_flags = [] {
+    int* pargc;
+    std::vector<char*>* pargv;
+    ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+    tsl::unsetenv("XLA_FLAGS");
+    ResetFlagValues();
+    ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+  };
 
   GpuAllocatorConfig config;
   auto registration = CreateAllocatorMemoryRegistration(&config);
