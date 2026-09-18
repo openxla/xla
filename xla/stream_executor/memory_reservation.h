@@ -29,8 +29,7 @@ namespace stream_executor {
 
 // A MemoryReservation represents a reserved virtual address range on a
 // StreamExecutor device. The range is not backed by physical memory until
-// physical allocations are mapped into it via MapTo. A reservation must outlive
-// all ScopedMappings created from it.
+// physical allocations are mapped into it via MapTo.
 //
 // MemoryReservation is the base class for platform-specific implementations
 // (e.g. CUDA virtual memory management via cuMemAddressReserve).

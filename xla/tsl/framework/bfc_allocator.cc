@@ -179,27 +179,35 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   const bool initial_spatial_region =
       opts_.enable_spatial_partitioning && opts_.allow_growth && first_region;
   if (initial_spatial_region) rounded_bytes = opts_.initial_region_bytes;
-  if (opts_.enable_spatial_partitioning && coalesce_regions_ && !first_region) {
-    // A contiguous extension can complete a free tail, even when the remaining
-    // capacity alone is smaller than the request. Count only immediately safe
-    // space that upper allocations may use, including mandatory alignment.
-    const AllocationRegion& region = region_manager_.regions().front();
-    ChunkHandle tail = region.get_handle(region.ptr());
-    while (ChunkFromHandle(tail)->next != kInvalidChunkHandle) {
-      tail = ChunkFromHandle(tail)->next;
-    }
-    const Chunk* c = ChunkFromHandle(tail);
-    if (!c->in_use() && c->freed_at_count == 0 && c->tag != ChunkTag::kLower) {
-      const size_t padding =
-          LowEndAlignmentPadding(absl::bit_cast<uintptr_t>(c->ptr), alignment);
-      const size_t usable = c->size - std::min(c->size, padding);
-      rounded_bytes -= std::min(rounded_bytes, usable);
-      if (rounded_bytes == 0) return false;
-    }
-  }
   size_t available_bytes = memory_limit_ - *stats_.pool_bytes;
   // Rounds available_bytes down to the nearest multiple of kMinAllocationSize.
   available_bytes = (available_bytes / kMinAllocationSize) * kMinAllocationSize;
+  if (rounded_bytes > available_bytes && opts_.enable_spatial_partitioning &&
+      coalesce_regions_ && !first_region) {
+    // At the cap, a smaller allocation can still complete a free tail if the
+    // suballocator returns adjacent memory. SupportsCoalescing does not promise
+    // adjacency: when capacity permits, request the full size so a separate
+    // region can also satisfy the allocation.
+    size_t required_extension = rounded_bytes;
+    for (const AllocationRegion& region : region_manager_.regions()) {
+      ChunkHandle tail = region.get_handle(region.ptr());
+      while (ChunkFromHandle(tail)->next != kInvalidChunkHandle) {
+        tail = ChunkFromHandle(tail)->next;
+      }
+      const Chunk* c = ChunkFromHandle(tail);
+      if (!c->in_use() && c->freed_at_count == 0 &&
+          c->tag != ChunkTag::kLower) {
+        const size_t padding = LowEndAlignmentPadding(
+            absl::bit_cast<uintptr_t>(c->ptr), alignment);
+        const size_t usable = c->size - std::min(c->size, padding);
+        required_extension =
+            std::min(required_extension,
+                     rounded_bytes - std::min(rounded_bytes, usable));
+      }
+    }
+    if (required_extension == 0) return false;
+    rounded_bytes = required_extension;
+  }
 
   // Do we have enough space to handle the client's request?
   // If not, fail immediately.
@@ -247,9 +255,7 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   if (opts_.enable_spatial_partitioning &&
       (bytes_received > available_bytes ||
        (initial_spatial_region &&
-        bytes_received != opts_.initial_region_bytes) ||
-       (!first_region && coalesce_regions_ &&
-        mem_addr != region_manager_.regions().front().end_ptr()))) {
+        bytes_received != opts_.initial_region_bytes))) {
     sub_allocator_->Free(mem_addr, bytes_received);
     return false;
   }
@@ -1200,12 +1206,12 @@ void BFCAllocator::ReturnBoundaryChunkToGap(BFCAllocator::ChunkHandle h) {
   }
   Chunk* c = ChunkFromHandle(h);
   CHECK(!c->in_use());  // Crash OK
-  // Noncontiguous extensions cannot join the original gap. With contiguous
-  // backing, a free span may cross the initial limit: lower-end carving
-  // enforces that limit, while upper allocations can use the entire span.
-  if (opts_.allow_growth && !coalesce_regions_ &&
-      absl::bit_cast<uintptr_t>(c->ptr) - spatial_region_start_ >=
-          opts_.initial_region_bytes) {
+  // Only the region containing the original shared allocation can have a
+  // central gap. That region may extend past the fixed lower-end limit, but
+  // separate regions stay upper-owned even if they support coalescing.
+  if (opts_.allow_growth &&
+      absl::bit_cast<uintptr_t>(region_manager_.RegionStart(c->ptr)) !=
+          spatial_region_start_) {
     return;
   }
   if (ABSL_PREDICT_TRUE(c->tag == ChunkTag::kLower)) {

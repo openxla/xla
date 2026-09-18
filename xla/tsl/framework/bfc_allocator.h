@@ -99,11 +99,11 @@ using tensorflow::MemoryDump;
 //   end, except when the central gap cannot satisfy its requests.
 //
 // - Spatial growth uses the usual Extend fallback after neither an owned hole
-//   nor the central gap fits. A coalescing suballocator must append contiguous
-//   backing, extending one region without moving existing buffers. Lower-end
-//   allocations, including padding, stay inside initial_region_bytes even when
-//   a coalesced free span crosses that limit. Noncoalescing suballocators can
-//   instead supply separate upper-only regions.
+//   nor the central gap fits. Adjacent regions can merge when the existing
+//   suballocator supports coalescing; otherwise, growth adds separate
+//   upper-only regions. Lower-end allocations, including padding, always stay
+//   inside initial_region_bytes, even when a coalesced free span crosses that
+//   limit.
 //
 class BFCAllocator : public Allocator {
  public:
@@ -179,9 +179,9 @@ class BFCAllocator : public Allocator {
     // sizes depend on the opposite end's activity through the gap size.
     //
     // With allow_growth=true, only upper-end requests can extend the arena.
-    // SupportsCoalescing() suballocators must extend contiguously; others add
-    // separate upper-only regions. Lower-end requests are always bounded by
-    // initial_region_bytes, even when the central free span extends past it.
+    // Adjacent allocations may coalesce when SupportsCoalescing() permits it;
+    // other allocations become upper-only regions. Lower requests are bounded
+    // by initial_region_bytes, even when the central free span extends past it.
     // This mode requires initial_region_bytes and garbage_collection=false.
     bool enable_spatial_partitioning = false;
 
@@ -606,6 +606,8 @@ class BFCAllocator : public Allocator {
     void erase(const void* p) { return MutableRegionFor(p)->erase(p); }
 
     const std::vector<AllocationRegion>& regions() const { return regions_; }
+
+    void* RegionStart(const void* p) const { return RegionFor(p)->ptr(); }
 
    private:
     static bool Comparator(const void* ptr, const AllocationRegion& other) {

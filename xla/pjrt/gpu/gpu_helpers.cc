@@ -50,11 +50,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/numbers.h"
 
-#if GOOGLE_CUDA
-#include "xla/stream_executor/cuda/cuda_contiguous_sub_allocator.h"
-#include "xla/stream_executor/integrations/contiguous_sub_allocator.h"
-#endif
-
 namespace xla {
 
 static size_t RoundUpGpuMemoryLimit(size_t allocator_memory) {
@@ -208,23 +203,8 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     opts.allow_growth = true;
     opts.initial_region_bytes = allocator_memory;
     allocator_memory = total_memory;
-#if GOOGLE_CUDA
-    ABSL_ASSIGN_OR_RETURN(
-        auto contiguous,
-        se::gpu::CreateCudaContiguousSubAllocator(executor, total_memory,
-                                                  sub_allocator_alloc_visitors,
-                                                  sub_allocator_free_visitors));
-    opts.initial_region_bytes =
-        RoundUpTo<size_t>(opts.initial_region_bytes, contiguous->granularity());
-    allocator_memory = contiguous->capacity();
-    if (opts.initial_region_bytes > allocator_memory) {
-      return InvalidArgument(
-          "Initial BFC allocation exceeds aligned capacity.");
-    }
-    sub_allocator = std::move(contiguous);
-#endif
-    LOG(INFO) << "BFC may extend default memory up to " << allocator_memory
-              << " bytes on device " << device_ordinal;
+    LOG(INFO) << "BFC may extend with default-only regions up to "
+              << allocator_memory << " bytes on device " << device_ordinal;
   }
   return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,

@@ -1,49 +1,50 @@
-# Contiguous GPU BFC growth after allocation failure
+# GPU BFC growth through the existing suballocator
 
 Preallocated spatial GPU BFC pools grow by default when using device memory.
 C++ clients can set `GpuAllocatorConfig::bfc_allow_growth=false` to keep the
-initial shared pool fixed. Non-spatial pools, unified memory, and other
-allocator kinds retain their existing allocation behavior.
+initial shared pool fixed. The memory fraction or absolute size determines the
+initial allocation, which must succeed in full. Total device memory is the cap
+across all regions. Non-spatial pools, unified memory, and other allocator kinds
+retain their existing behavior.
 
-On CUDA, reserve one virtual address range up to total device memory, rounded
-down to mapping granularity. The memory fraction (or absolute memory setting)
-determines the initial physical backing. That initial allocation must succeed
-in full. Later growth maps new physical allocations at the current backed end;
-existing mappings, backing handles, and buffer addresses never change.
+An S(0) allocation first tries its owned holes and the central gap. On a miss,
+BFC calls its existing `Extend` path and suballocator, using normal growth sizing
+and backpedaling. Only upper-end/S(0) requests can grow after the initial
+allocation. No new allocator class or virtual-address reservation path is added.
 
-S(1) uses the lower end and remains bounded by the initial allocation forever.
-S(0) uses the upper end and may use all mapped capacity. Both spaces keep their
-existing policies: S(1) splits exactly and prefers ascending equal-size holes;
-S(0) keeps the BFC heuristic for both holes and gap carves and prefers descending
-equal-size holes.
+The existing GPU `DeviceMemAllocator` returns separate regions and does not
+support coalescing. Extra regions therefore remain S(0)-only, even when their
+addresses happen to be adjacent. They never join the collective central gap.
+Each buffer must fit in one region; this path does not guarantee a contiguous
+virtual arena.
 
 ```text
-Initial: | S(1) -> | gap | <- S(0) |             unmapped             |
-Grown:   | S(1) -> | gap | <- S(0) | additional S(0) |    unmapped     |
-         ^                       ^                 ^                ^
-      fixed base         fixed S(1) limit     backed end        reserved cap
+Initial: | S(1) -> | shared gap | <- S(0) |
+Extra:   |             S(0) only         |
 ```
 
-When neither an S(0) hole nor the central gap fits, BFC's existing `Extend` path
-obtains more backing and extends the same allocation region. Immediately safe
-free space at the old end contributes to the request, so only the missing
-capacity must be allocated. Growth uses normal BFC sizing and backpedaling;
-S(1) requests cannot trigger growth.
+BFC also supports adjacent region extension when its suballocator advertises
+`SupportsCoalescing()`. This capability permits merging; it does not promise
+that allocations will be adjacent. Nonadjacent allocations remain separate
+upper-owned regions. When capacity permits, BFC requests enough memory for the
+whole buffer so a separate region can satisfy it. Near the cap, BFC can try a
+smaller extension if it could complete an immediately safe free tail.
 
-Free chunks can coalesce across physical mapping boundaries, allowing one
-ordinary buffer to span multiple backing allocations. A coalesced central free
-span may cross the original end; S(1) carving and allocation padding are checked
-against the fixed initial limit. This avoids creating an artificial free-space
-boundary while keeping the collective capacity unchanged. Other backends keep
-the existing separate-region fallback when their suballocator cannot coalesce.
+When an adjacent allocation extends the initial region, BFC updates that
+region's end and coalesces free chunks normally. An S(0) buffer can then span
+the old end. S(1), including alignment and padding, remains confined to the
+original allocation even when a free span crosses that limit. Only the region
+containing the initial allocation may have a central gap.
 
-The collective registration path remains unchanged. Optional automatic
-registration of default-space backing allocations is disabled because ranks
-can grow independently. Custom suballocator visitors still run per physical
-allocation and must not assume matching backing allocations across ranks.
+Allocation policy remains attached to the memory space: S(1) uses ascending
+equal-size holes and exact splitting; S(0) uses descending equal-size holes and
+the BFC heuristic for both holes and gap carves.
 
-Growth does not reserve future S(1) capacity or recover space occupied by live
-S(0) buffers. It adds no device-headroom policy; physical allocation may fail
-because other GPU users have consumed memory. Fragmentation between live
-buffers can still cause OOM. Freeing buffers returns memory to BFC; backing
-mappings are released only at allocator destruction.
+Ranks may grow independently. Optional automatic registration of ordinary
+backing allocations is disabled for growing pools; collective-window
+registration continues to use the fixed S(1) range. Existing buffers never
+move or change backing.
+
+Growth adds no headroom or future collective-gap reservation. Live S(0)
+buffers can still occupy initial capacity needed by a later S(1) request.
+Freed buffers return to BFC; backing allocations remain until destruction.

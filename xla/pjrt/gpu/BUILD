@@ -41,7 +41,6 @@ cc_library(
     name = "gpu_helpers",
     srcs = ["gpu_helpers.cc"],
     hdrs = ["gpu_helpers.h"],
-    defines = if_cuda(["GOOGLE_CUDA=1"]),
     visibility = internal_visibility(["//xla/pjrt:friends"]),
     deps = [
         "//xla:types",
@@ -68,10 +67,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:numbers",
-    ] + if_cuda([
-        "//xla/stream_executor/cuda:cuda_contiguous_sub_allocator",
-        "//xla/stream_executor/integrations:contiguous_sub_allocator",
-    ]),
+    ],
 )
 
 cc_library(
