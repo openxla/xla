@@ -49,6 +49,7 @@ def repo():
         patch_file = [
             "//third_party/mkl_dnn:onednn_async_aarch64_pr_5790.patch",
             "//third_party/mkl_dnn:onednn_async_aarch64_pr_5828.patch",
+            "//third_party/mkl_dnn:onednn_async_aarch64_pr_6033.patch",
         ],
         sha256 = "cceec79d37474df43589eb951602f1a820eedbbb61e58021dce2faaff1da827b",
         strip_prefix = "oneDNN-80fb15f600887e22c0c7989ce6201723e6c11536",
