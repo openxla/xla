@@ -160,33 +160,3 @@ xla_cc_test(
         "//xla/tsl/framework:allocator",
     ]),
 )
-
-cc_library(
-    name = "contiguous_sub_allocator",
-    srcs = ["contiguous_sub_allocator.cc"],
-    hdrs = ["contiguous_sub_allocator.h"],
-    deps = [
-        "//xla/stream_executor:device_address",
-        "//xla/stream_executor:memory_allocation",
-        "//xla/stream_executor:memory_reservation",
-        "//xla/tsl/framework:allocator",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-xla_cc_test(
-    name = "contiguous_sub_allocator_test",
-    srcs = ["contiguous_sub_allocator_test.cc"],
-    deps = [
-        ":contiguous_sub_allocator",
-        "//xla/stream_executor:device_address",
-        "//xla/stream_executor:memory_allocation",
-        "//xla/stream_executor:memory_reservation",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
