@@ -155,6 +155,7 @@ jobs:
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci_hermetic \
             --config=rocm_rbe_dynamic \
+            --spawn_strategy=local \
             --config=ci_single_gpu \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
             --repo_env=ROCM_PATH="" \
@@ -174,6 +175,7 @@ jobs:
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci_hermetic \
             --config=rocm_rbe_dynamic \
+            --spawn_strategy=local \
             --config=ci_rocm_cpu \
             --local_test_jobs=200 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
