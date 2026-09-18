@@ -59,7 +59,7 @@ static const absl::NoDestructor<AllocationAttributes> kLower(
     /*freed_by_func=*/nullptr, AllocationEnd::kLower);
 
 // The shared GPU pool serves collective memory below default memory, while
-// keeping each memory space's hole splitting and preferring equal-size holes
+// keeping each memory space's splitting policy and preferring equal-size holes
 // nearest its outer arena boundary.
 BFCAllocator::Options SharedGpuPoolOptions() {
   BFCAllocator::Options opts;
@@ -69,8 +69,8 @@ BFCAllocator::Options SharedGpuPoolOptions() {
                            BFCAllocator::SplitPolicy::kExact,
                            BFCAllocator::SplitPolicy::kExact};
   opts.upper_end_policy = {BFCAllocator::HoleOrder::kDescendingAddress,
-                           BFCAllocator::SplitPolicy::kBfc,
-                           BFCAllocator::SplitPolicy::kBfc};
+                           BFCAllocator::SplitPolicy::kRetainPadding,
+                           BFCAllocator::SplitPolicy::kRetainPadding};
   return opts;
 }
 

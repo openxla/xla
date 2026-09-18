@@ -108,11 +108,31 @@ class BFCAllocator : public Allocator {
     kDescendingAddress,  // Prefer the highest-address fitting hole.
   };
 
-  // Splitting policy, configured separately for owned holes and central gaps.
+  // Splitting policy, configured separately for owned holes and central-gap
+  // carves, independently of placement direction.
+  //
+  // Coalescing can only join adjacent free chunks; it cannot move a live
+  // allocation out of their way. Retaining a small remainder as allocation
+  // padding trades internal fragmentation for potentially less external
+  // fragmentation. For example, splitting an 8 MiB hole for a 6 MiB request
+  // allows a longer-lived allocation to occupy the 2 MiB remainder and prevent
+  // the original hole from reforming when the 6 MiB allocation is freed.
+  // Retaining that remainder as padding returns all 8 MiB together. This is a
+  // workload-dependent heuristic, not a BFC correctness requirement. See
+  // Wilson et al., "Dynamic Storage Allocation: A Survey and Critical Review,"
+  // section 3.5, "Splitting":
+  // https://www.cs.hmc.edu/~oneill/gc-library/Wilson-Alloc-Survey-1995.pdf#page=32
+  //
+  // Exact splitting avoids this optional padding. In particular, the central
+  // gap's size depends on allocations from both ends. Retaining its remainder
+  // as padding can make this end's chunk sizes and subsequent placements depend
+  // on opposite-end activity. Exact gap splitting preserves that independence
+  // as long as the gap can satisfy the requests. Both policies round request
+  // sizes and honor alignment; neither eliminates external fragmentation.
   enum class SplitPolicy {
     // Apply the BFC size/fragmentation heuristic, retaining small remainders as
     // allocation padding instead of creating additional free chunks.
-    kBfc,
+    kRetainPadding,
     // Allocate exactly the rounded request size and leave any remainder free.
     kExact,
   };
@@ -120,10 +140,7 @@ class BFCAllocator : public Allocator {
   struct AllocationPolicy {
     // Best fit always compares sizes first; this only breaks equal-size ties.
     HoleOrder hole_order = HoleOrder::kAscendingAddress;
-    SplitPolicy hole_split_policy = SplitPolicy::kBfc;
-    // Exact gap splitting keeps this end's chunk sizes independent of the
-    // opposite end's activity. The BFC heuristic may absorb shared capacity
-    // as allocation padding instead.
+    SplitPolicy hole_split_policy = SplitPolicy::kRetainPadding;
     SplitPolicy gap_split_policy = SplitPolicy::kExact;
   };
 

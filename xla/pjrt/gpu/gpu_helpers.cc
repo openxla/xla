@@ -170,9 +170,22 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
   opts.allow_growth = !preallocate;
   opts.enable_spatial_partitioning = enable_spatial_partitioning;
   if (enable_spatial_partitioning) {
-    // Collective memory keeps exact splitting when moving to the lower end;
-    // default memory keeps the BFC heuristic when moving to the upper end.
-    // Each policy applies to both owned holes and central-gap carves.
+    // Default memory (S(0), upper end) mixes buffers with different lifetimes.
+    // Keep the BFC padding-retention heuristic for both owned holes and
+    // central-gap carves: retaining a small remainder as padding can prevent a
+    // longer-lived allocation in that remainder from blocking coalescing later.
+    // This trades immediate internal fragmentation for potentially less
+    // external fragmentation; it does not guarantee better memory utilization.
+    //
+    // Collective memory (S(1), lower end) is expected to be primarily transient
+    // temporaries, with less mixing of lifetimes to justify retaining padding.
+    // Keep exact splitting for both owned holes and central-gap carves so
+    // usable remainders remain free. Exact gap splitting also keeps collective
+    // chunk sizes independent of default-memory activity while the gap has
+    // capacity, as required for reproducible NCCL symmetric-window offsets. The
+    // transient lifetime pattern is an expectation, not an allocator invariant;
+    // collective memory can still suffer external fragmentation.
+    //
     // Break equal-size ties toward each space's outer arena boundary: lower
     // addresses for collective memory, higher addresses for default memory.
     // Size remains the primary best-fit key.
@@ -180,8 +193,8 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
                              tsl::BFCAllocator::SplitPolicy::kExact,
                              tsl::BFCAllocator::SplitPolicy::kExact};
     opts.upper_end_policy = {tsl::BFCAllocator::HoleOrder::kDescendingAddress,
-                             tsl::BFCAllocator::SplitPolicy::kBfc,
-                             tsl::BFCAllocator::SplitPolicy::kBfc};
+                             tsl::BFCAllocator::SplitPolicy::kRetainPadding,
+                             tsl::BFCAllocator::SplitPolicy::kRetainPadding};
   }
   return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,

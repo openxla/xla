@@ -110,7 +110,7 @@ BFCAllocator::BFCAllocator(std::unique_ptr<SubAllocator> sub_allocator,
   stats_.bytes_limit = static_cast<int64_t>(total_memory);
 
   // Cap on how much a chunk may exceed the requested size before we split it.
-  // If the user did not set a fraction, default to 128MB.
+  // If the user did not set a fraction, default to 128 MiB.
   max_internal_fragmentation_bytes_ =
       (opts.fragmentation_fraction > 0.0)
           ? opts.fragmentation_fraction * memory_limit_
@@ -792,6 +792,11 @@ bool BFCAllocator::ShouldSplitChunk(const Chunk* chunk, size_t rounded_bytes,
                                     size_t alignment_padding) const {
   DCHECK_LE(alignment_padding, chunk->size);
   const size_t aligned_size = chunk->size - alignment_padding;
+  // After excluding the unavoidable alignment prefix, split if the remainder
+  // is at least as large as the request (so another similar request could use
+  // it), or retaining it as padding would reach the internal-fragmentation
+  // threshold. Otherwise, kRetainPadding keeps the aligned portion together
+  // until the allocation is freed; see SplitPolicy for the lifetime tradeoff.
   return aligned_size >= rounded_bytes * 2 ||
          static_cast<int64_t>(aligned_size) -
                  static_cast<int64_t>(rounded_bytes) >=
@@ -820,8 +825,8 @@ void* BFCAllocator::AllocateChunkFromLowEnd(ChunkHandle h, size_t rounded_bytes,
   }
 
   // Select the splitting policy for the source: an owned hole or the central
-  // gap. Any free trailing remainder keeps the source chunk's tag; a heuristic
-  // split may instead retain that remainder as allocation padding.
+  // gap. Any free trailing remainder keeps the source chunk's tag;
+  // kRetainPadding may instead keep that remainder as allocation padding.
   const AllocationPolicy& policy = opts_.lower_end_policy;
   const bool split_exactly =
       (chunk->tag == ChunkTag::kCentralGap
@@ -878,9 +883,10 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
     chunk = ChunkFromHandle(h);
   }
 
-  // Exact-policy allocations leave every suffix free. For heuristic splitting,
-  // keep small alignment suffixes as allocation padding.
-  // Set the tag before splitting so a free suffix inherits kUpper directly.
+  // kExact leaves every suffix free; kRetainPadding may keep a small alignment
+  // suffix as allocation padding. A free suffix is above the upper allocation,
+  // even when carving the central gap, so it must be upper-owned. Set the tag
+  // before splitting so the suffix inherits kUpper instead of kCentralGap.
   chunk->tag = ChunkTag::kUpper;
   if (split_exactly ? chunk->size > rounded_bytes
                     : ShouldSplitChunk(chunk, rounded_bytes)) {
@@ -888,8 +894,6 @@ void* BFCAllocator::AllocateChunkFromHighEnd(ChunkHandle h,
     chunk = ChunkFromHandle(h);
   }
 
-  // The in-use chunk gets the upper tag.
-  chunk->tag = ChunkTag::kUpper;
   FinishChunkAllocation(chunk, num_bytes);
   return chunk->ptr;
 }
