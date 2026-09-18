@@ -425,7 +425,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       collective_cliques, collective_memory, execution_context,
       computation_streams);
   GpuCollectivesState collectives_state{
-      collective_params, collective_clique_requests, collective_cliques};
+      collective_params, collective_clique_requests, collective_memory_requests,
+      collective_cliques, collective_memory};
   XLA_FFI_Collectives_Extension collectives =
       MakeCollectivesExtension(&collectives_state);
   collectives.extension_base.next = extension_start;
@@ -457,7 +458,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       collective_cliques, collective_memory, execution_context,
       computation_streams);
   GpuCollectivesState collectives_state{
-      collective_params, collective_clique_requests, collective_cliques};
+      collective_params, collective_clique_requests, collective_memory_requests,
+      collective_cliques, collective_memory};
   XLA_FFI_Collectives_Extension collectives =
       MakeCollectivesExtension(&collectives_state);
   collectives.extension_base.next = extension_start;

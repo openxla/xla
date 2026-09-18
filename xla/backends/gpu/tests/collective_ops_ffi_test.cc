@@ -76,6 +76,14 @@ absl::Status CommunicatorAllReduceU32(se::Stream* stream,
                                       const void* send_buffer,
                                       void* recv_buffer, int64_t count);
 
+// Defined in `collective_ops_ffi_communicator_{cuda,default}.cc` and selected
+// at link time. The CUDA variant extracts LSA peer pointers from the window
+// via `ncclGetPeerDevicePointer` and launches `Peer2AllReduce`. The default
+// translation unit returns Unimplemented.
+absl::Status WindowPeerAllReduceU32(se::Stream* stream, XLA_FFI_Window* window,
+                                    size_t window_offset, void* recv_buffer,
+                                    int64_t count);
+
 struct SynchronizationSignals {
   absl::Mutex mutex;
   absl::BlockingCounter finished_kernels_counter;
@@ -362,6 +370,35 @@ absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   return CommunicatorAllReduceU32(
       stream, communicator, src.device_memory().opaque(),
       dst->device_memory().opaque(), src.element_count());
+}
+
+absl::Status PreparePublicApiWindow(ffi::BufferR0<U32> src,
+                                    ffi::Result<ffi::BufferR0<U32>> dst,
+                                    ffi::Communicator comm) {
+  ABSL_RETURN_IF_ERROR(comm.RequestCommunicator(ffi::GroupMode::kFlattenedId,
+                                                PublicApiReplicaGroups(),
+                                                /*communication_id=*/0));
+  std::vector<ffi::CollectiveMemoryRegion> regions = {
+      {src.device_memory().opaque(), src.device_memory().size()}};
+  return comm.RegisterWindow(ffi::GroupMode::kFlattenedId,
+                             PublicApiReplicaGroups(),
+                             /*communication_id=*/0, regions);
+}
+
+absl::Status PublicApiWindow(se::Stream* stream, ffi::BufferR0<U32> src,
+                             ffi::Result<ffi::BufferR0<U32>> dst,
+                             ffi::Communicator comm) {
+  ABSL_ASSIGN_OR_RETURN(
+      ffi::WindowLookup lookup,
+      comm.GetWindow(ffi::GroupMode::kFlattenedId, PublicApiReplicaGroups(),
+                     /*communication_id=*/0, src.device_memory().opaque()));
+  TF_RET_CHECK(lookup.window != nullptr);
+  TF_RET_CHECK(lookup.offset == 0)
+      << "Expected offset 0 for a registered base pointer, got "
+      << lookup.offset;
+  return WindowPeerAllReduceU32(stream, lookup.window, lookup.offset,
+                                dst->device_memory().opaque(),
+                                src.element_count());
 }
 }  // namespace
 
@@ -843,6 +880,19 @@ XLA_FFI_DEFINE_HANDLER(kPublicApiAllReduce, PublicApiAllReduce,
                            .Ret<ffi::BufferR0<U32>>()  // dst
                            .Ctx<ffi::Extension<ffi::Collectives>>());
 
+XLA_FFI_DEFINE_HANDLER(kPreparePublicApiWindow, PreparePublicApiWindow,
+                       ffi::Ffi::BindPrepare()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::Extension<ffi::Collectives>>());
+
+XLA_FFI_DEFINE_HANDLER(kPublicApiWindow, PublicApiWindow,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::Extension<ffi::Collectives>>());
+
 // Preprocessor fails to parse comma inside macro call, introduce an alias to
 // request multiple comm streams for test.
 using CommunicationStreams = ffi::CommunicationStream<0, 1>;
@@ -1011,6 +1061,16 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
                              /*prepare=*/kPreparePublicApiAllReduce,
                              /*initialize=*/nullptr,
                              /*execute=*/kPublicApiAllReduce,
+                         });
+
+// Register handler bundle for the public collectives FFI window test.
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$public_api_window",
+                         "gpu",
+                         XLA_FFI_Handler_Bundle{
+                             /*instantiate=*/nullptr,
+                             /*prepare=*/kPreparePublicApiWindow,
+                             /*initialize=*/nullptr,
+                             /*execute=*/kPublicApiWindow,
                          });
 
 // Register handler bundle for the custom all-reduce operation with
@@ -1208,6 +1268,48 @@ TEST_F(CollectiveOpsTestFFI, PublicApiAllReduce) {
 
   // Each replica contributes its replica id, so the all-reduce sum is
   // sum [0, kNumReplicas).
+  const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
+  }
+}
+
+TEST_F(CollectiveOpsTestFFI, PublicApiWindow) {
+  if (!Capability().IsCuda()) {
+    GTEST_SKIP() << "Communicator all-reduce is not implemented for this "
+                    "platform";
+  }
+  if (device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << device_count() << " available)";
+  }
+  if (!IsHopperAndHigher()) {
+    GTEST_SKIP() << "NCCL symmetric memory requires Hopper+";
+  }
+
+  constexpr absl::string_view hlo_string = R"hlo(
+      HloModule m, replica_count=2
+      ENTRY test_computation {
+        id = u32[] replica-id()
+        in = u32[]{:S(1)} copy(id)
+        ar = u32[]{:S(1)} custom-call(in),
+          custom_call_target="__xla_test$$public_api_window",
+          api_version=API_VERSION_TYPED_FFI
+        ROOT out = u32[] copy(ar)
+      }
+    )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
+
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module),
+                                         /*arguments=*/std::vector<Literal*>(),
+                                         /*run_hlo_passes=*/false));
+
+  absl::Span<const Literal> results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+
   const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
   for (int i = 0; i < kNumReplicas; ++i) {
     LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
