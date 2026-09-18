@@ -118,10 +118,7 @@ class BFCAllocator : public Allocator {
   // allows a longer-lived allocation to occupy the 2 MiB remainder and prevent
   // the original hole from reforming when the 6 MiB allocation is freed.
   // Retaining that remainder as padding returns all 8 MiB together. This is a
-  // workload-dependent heuristic, not a BFC correctness requirement. See
-  // Wilson et al., "Dynamic Storage Allocation: A Survey and Critical Review,"
-  // section 3.5, "Splitting":
-  // https://www.cs.hmc.edu/~oneill/gc-library/Wilson-Alloc-Survey-1995.pdf#page=32
+  // workload-dependent heuristic, not a BFC correctness requirement.
   //
   // Exact splitting avoids this optional padding. In particular, the central
   // gap's size depends on allocations from both ends. Retaining its remainder
