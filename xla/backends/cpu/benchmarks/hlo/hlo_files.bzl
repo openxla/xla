@@ -32,6 +32,7 @@ REGULAR_HLO_FILES = [
     "dlrm_keras_jax_f32_test_step.hlo",
     "dlrm_keras_jax_f32_train_step.hlo",
     "dynamic_slice_loop_1x2048x768_bf16.hlo",
+    "graphsage_tf.hlo",
     "in_place_dynamic_update_slice_fusion.hlo",
     "jax.b380442861.hlo",
     "jax.issue.33666.linx.frag_0100.module_0005.hlo",
@@ -49,11 +50,14 @@ REGULAR_HLO_FILES = [
     "mha_block_1x12x128x64_bf16.hlo",
     "resnet50_keras_jax_f32.hlo",
     "sort_full_1024x4096_bf16.hlo",
+    "ssd_mobilenet_tf.hlo",
+    "stable_diffusion_tf.hlo",
     "sum_axis_1x4096x1024_bf16.hlo",
     "topk_logits_k10_1x50000_bf16.hlo",
     "vit_keras_jax_bf16.hlo",
     "xnn.parallel_dots.optimized.hlo",
     "xnn.sequential_dots.optimized.hlo",
+    "yolov5_tf.hlo",
     # go/keep-sorted end
 ]
 
