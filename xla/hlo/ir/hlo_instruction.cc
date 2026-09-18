@@ -1395,6 +1395,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       case HloOpcode::kCos:
       case HloOpcode::kCosh:
       case HloOpcode::kErf:
+      case HloOpcode::kErfc:
       case HloOpcode::kExp:
       case HloOpcode::kExpm1:
       case HloOpcode::kLog:
@@ -1608,6 +1609,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kCos:
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
+    case HloOpcode::kErfc:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
     case HloOpcode::kLog:
@@ -2930,6 +2932,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kCos:
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
+    case HloOpcode::kErfc:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
     case HloOpcode::kImag:
@@ -3446,6 +3449,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kDivide:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kErf:
+    case HloOpcode::kErfc:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
@@ -4078,6 +4082,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kCos:
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
+    case HloOpcode::kErfc:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
@@ -4935,6 +4940,8 @@ absl::Status HloInstruction::Visit(
         return visitor->HandleBatchNormGrad(this);
       case HloOpcode::kErf:
         return visitor->HandleErf(this);
+      case HloOpcode::kErfc:
+        return visitor->HandleErfc(this);
       case HloOpcode::kLogistic:
         return visitor->HandleLogistic(this);
       case HloOpcode::kSign:
@@ -5654,6 +5661,7 @@ bool IsUnaryOpWithResultAccuracy(HloOpcode opcode) {
     opcode == HloOpcode::kCos ||
     opcode == HloOpcode::kCosh ||
     opcode == HloOpcode::kErf ||
+    opcode == HloOpcode::kErfc ||
     opcode == HloOpcode::kExp ||
     opcode == HloOpcode::kExpm1 ||
     opcode == HloOpcode::kLog ||
