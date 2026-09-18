@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tsl/platform/fingerprint.h"
@@ -177,25 +178,33 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
 
   // Creates a NanoArray that owns underlying data.
   NanoArray(NanoIfrtClient* client, ifrt::DType dtype, const ifrt::Shape& shape,
-            OwnedDataPtr owned_data, ifrt::ShardingRef sharding)
+            OwnedDataPtr owned_data, ifrt::ShardingRef sharding,
+            std::optional<absl::InlinedVector<int64_t, 4>> minor_to_major =
+                std::nullopt)
       : NanoArray(client, dtype, shape, owned_data.get(), std::move(owned_data),
-                  std::move(sharding)) {}
+                  std::move(sharding), std::move(minor_to_major)) {}
 
   // Creates a NanoArray that does not own underlying data.
   NanoArray(NanoIfrtClient* client, ifrt::DType dtype, const ifrt::Shape& shape,
-            void* data, ifrt::ShardingRef sharding)
-      : NanoArray(client, dtype, shape, data, nullptr, std::move(sharding)) {}
+            void* data, ifrt::ShardingRef sharding,
+            std::optional<absl::InlinedVector<int64_t, 4>> minor_to_major =
+                std::nullopt)
+      : NanoArray(client, dtype, shape, data, nullptr, std::move(sharding),
+                  std::move(minor_to_major)) {}
 
   // Allocates a new array of the given type and shape.
   static absl::StatusOr<tsl::RCReference<NanoArray>> Allocate(
       NanoIfrtClient* client, ifrt::DType dtype, const ifrt::Shape& shape,
-      ifrt::ShardingRef sharding) {
+      ifrt::ShardingRef sharding,
+      std::optional<absl::InlinedVector<int64_t, 4>> minor_to_major =
+          std::nullopt) {
     TF_RET_CHECK(dtype.byte_size().has_value());
     ABSL_ASSIGN_OR_RETURN(
         OwnedDataPtr owned_data,
         AllocateData(dtype.byte_size().value() * shape.num_elements()));
-    return tsl::TakeRef(new NanoArray(
-        client, dtype, shape, std::move(owned_data), std::move(sharding)));
+    return tsl::TakeRef(
+        new NanoArray(client, dtype, shape, std::move(owned_data),
+                      std::move(sharding), std::move(minor_to_major)));
   }
 
   // Creates an array from a host buffer. The buffer will be used directly
@@ -458,19 +467,26 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
     // future once.
     return Ready([&]() -> absl::Status {
       ABSL_RETURN_IF_ERROR(ValidateNotDeleted());
-      ABSL_ASSIGN_OR_RETURN(PrimitiveType xla_dtype,
-                            ifrt::ToPrimitiveType(dtype()));
-      if (ABSL_PREDICT_TRUE(!byte_strides.has_value() ||
-                            HasMajorToMinorLayout(xla_dtype, shape().dims(),
-                                                  *byte_strides))) {
+      ABSL_ASSIGN_OR_RETURN(
+          auto xla_strides,
+          DenseByteStrides(
+              dtype(), shape(),
+              minor_to_major_.has_value()
+                  ? std::make_optional(absl::MakeSpan(*minor_to_major_))
+                  : std::nullopt));
+      absl::InlinedVector<int64_t, 4> out_strides;
+      if (byte_strides.has_value()) {
+        out_strides.assign(byte_strides->begin(), byte_strides->end());
+      } else {
+        ABSL_ASSIGN_OR_RETURN(out_strides, DenseByteStrides(dtype(), shape()));
+      }
+      if (ABSL_PREDICT_TRUE(xla_strides == out_strides)) {
         memcpy(data, data_,
                dtype().byte_size().value() * shape().num_elements());
       } else {
-        ABSL_ASSIGN_OR_RETURN(auto in_strides,
-                              DenseByteStrides(dtype(), shape()));
         ABSL_RETURN_IF_ERROR(CopyWithByteStrides(
-            reinterpret_cast<std::byte*>(data), *byte_strides,
-            reinterpret_cast<std::byte*>(data_), in_strides, shape().dims(),
+            reinterpret_cast<std::byte*>(data), out_strides,
+            reinterpret_cast<std::byte*>(data_), xla_strides, shape().dims(),
             dtype().byte_size().value()));
       }
       return absl::OkStatus();
@@ -483,11 +499,14 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
   friend class ::xla::cpu::NanoIfrtClient;
 
   NanoArray(NanoIfrtClient* client, ifrt::DType dtype, const ifrt::Shape& shape,
-            void* data, OwnedDataPtr owned_data, ifrt::ShardingRef sharding)
+            void* data, OwnedDataPtr owned_data, ifrt::ShardingRef sharding,
+            std::optional<absl::InlinedVector<int64_t, 4>> minor_to_major =
+                std::nullopt)
       : NanoValue<NanoArray, ifrt::Array>(client),
         array_spec_(ifrt::ArraySpec{dtype, shape, std::move(sharding)}),
         data_(data),
-        owned_data_(std::move(owned_data)) {
+        owned_data_(std::move(owned_data)),
+        minor_to_major_(std::move(minor_to_major)) {
     if (owned_data_) {
       DCHECK_EQ(data_, owned_data_.get())
           << "`data_` must point to the buffer owned by `owned_data_`";
@@ -513,12 +532,20 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
     return HasMajorToMinorLayout(*xla_dtype, shape.dims(), *byte_strides);
   }
 
-  // Returns the byte strides for a dense array with the given type and shape.
+  // Returns the byte strides for a dense array with the given type, shape, and
+  // optional physical layout.
   static absl::StatusOr<absl::InlinedVector<int64_t, 4>> DenseByteStrides(
-      ifrt::DType dtype, ifrt::Shape shape) {
+      ifrt::DType dtype, ifrt::Shape shape,
+      std::optional<absl::Span<const int64_t>> minor_to_major = std::nullopt) {
     ABSL_ASSIGN_OR_RETURN(PrimitiveType xla_dtype,
                           ifrt::ToPrimitiveType(dtype));
-    auto xla_shape = ShapeUtil::MakeShape(xla_dtype, shape.dims());
+    xla::Shape xla_shape;
+    if (minor_to_major.has_value()) {
+      xla_shape = ShapeUtil::MakeShapeWithDenseLayout(xla_dtype, shape.dims(),
+                                                      *minor_to_major);
+    } else {
+      xla_shape = ShapeUtil::MakeShape(xla_dtype, shape.dims());
+    }
     auto strides = ShapeUtil::ByteStrides(xla_shape);
     if (!strides.has_value()) {
       return InvalidArgument("Couldn't compute byte strides for shape: %s",
@@ -576,6 +603,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
   // copy view of an external array with a lifetime managed by the user.
   void* data_;
   OwnedDataPtr owned_data_;
+  std::optional<absl::InlinedVector<int64_t, 4>> minor_to_major_;
 };
 
 [[maybe_unused]] char NanoArray::ID = 'A';  // NOLINT
@@ -1200,9 +1228,16 @@ class NanoExecutable final
       ABSL_ASSIGN_OR_RETURN(auto ifrt_type,
                             ifrt::ToDType(result_shapes[i].element_type()));
       ifrt::Shape ifrt_shape(result_shapes[i].dimensions());
-      ABSL_ASSIGN_OR_RETURN(result_arrays.emplace_back(),
-                            NanoArray::Allocate(client_, ifrt_type, ifrt_shape,
-                                                output_shardings_[i]));
+      std::optional<absl::InlinedVector<int64_t, 4>> minor_to_major;
+      if (result_shapes[i].has_layout()) {
+        minor_to_major = absl::InlinedVector<int64_t, 4>(
+            result_shapes[i].layout().minor_to_major().begin(),
+            result_shapes[i].layout().minor_to_major().end());
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          result_arrays.emplace_back(),
+          NanoArray::Allocate(client_, ifrt_type, ifrt_shape,
+                              output_shardings_[i], std::move(minor_to_major)));
     }
 
     return result_arrays;
