@@ -64,6 +64,7 @@ cc_library(
     hdrs = [
         "grpc_credentials_possibly_insecure_wrapper.h",
     ],
+    copts = ["-DIFRT_PROXY_GOOGLE_INTERNAL_ALLOW_INSECURE"],
     visibility = ["//xla/python/ifrt_proxy:__subpackages__"],
     deps = [
         ":grpc_credentials",
