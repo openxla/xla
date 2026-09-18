@@ -19,12 +19,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/backends/autotuner/autotune_fingerprint.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/tsl/util/sorted_range.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace {

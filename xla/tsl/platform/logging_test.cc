@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/tsl/platform/logging.h"
 
+#include <gtest/gtest.h>
+
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -22,15 +24,14 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/stacktrace_handler.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/stacktrace_handler.h"
 
 // Make sure popen and pclose are available on Windows.
 #ifdef PLATFORM_WINDOWS

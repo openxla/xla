@@ -35,9 +35,13 @@ extern "C" {
 // CrossHostSendBuffers and CrossHostReceiveBuffers. These methods allow PjRt
 // clients to implement various optimizations for cross-host transfers.
 
-#define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 6
+#define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 7
 // Version 6 adds descriptor_destructor callback to CopyToRemoteDevice to fix
 // memory management across C API boundary.
+// Version 7 adds allow_cancel_notifier to
+// PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args. The
+// cancellation notifier only takes effect if allow_cancel_notifier is set to
+// true.
 
 // ---------------------------------- Methods ----------------------------------
 
@@ -51,7 +55,7 @@ struct PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args {
   size_t num_buffers;
   PJRT_Buffer** buffers;
   const xla::GlobalDeviceId* dst_global_device_ids;  // Has size num_buffers.
-  const xla::CrossHostTransferKey* transfer_keys;  // Has size num_buffers.
+  const xla::CrossHostTransferKey* transfer_keys;    // Has size num_buffers.
   PJRT_Event** send_events;  // Output; has size num_buffers.
 };
 
@@ -71,8 +75,8 @@ struct PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args {
   PJRT_Buffer_Type* element_types;
   PJRT_Buffer_MemoryLayout** layouts;
   PJRT_Device* device;
-  const xla::GlobalDeviceId* src_global_device_ids;      // Has size num_shapes.
-  const xla::CrossHostTransferKey* transfer_keys;        // Has size num_shapes.
+  const xla::GlobalDeviceId* src_global_device_ids;  // Has size num_shapes.
+  const xla::CrossHostTransferKey* transfer_keys;    // Has size num_shapes.
   PJRT_Buffer** buffers;  // Output; has size num_shapes.
 };
 
@@ -119,9 +123,14 @@ struct PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args {
   PJRT_Transfers_CrossHostRecvNotifierInfo notifier;
   PJRT_Buffer** buffers;  // out
   size_t num_buffers;     // out
+  // If true, enables and allows the cancellation notifier to take effect.
+  // The backend owns and manages the lifetime of cancel_notifier_user_arg.
+  // Added in version 7.
+  bool allow_cancel_notifier;
 };
 PJRT_DEFINE_STRUCT_TRAITS(
-    PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args, num_buffers);
+    PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args,
+    allow_cancel_notifier);
 
 typedef PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
     PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args* args);

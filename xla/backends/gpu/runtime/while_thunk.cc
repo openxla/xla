@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/host_memory_pool.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -201,14 +201,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileThunk::Record(
       ScopedWhileLoop loop("record_fn", trip_count_);
       for (int64_t i = 0; i < *trip_count_; loop.IncLoopIteration(), ++i) {
         CommandExecutor::RecordId record_id(i);
-        ABSL_ASSIGN_OR_RETURN(dependencies,
-                         command_condition_executor_->RecordCreate(
-                             execute_params, new_record_params,
-                             child_command_buffer, dependencies, record_id));
-        ABSL_ASSIGN_OR_RETURN(dependencies,
-                         command_body_executor_->RecordCreate(
-                             execute_params, new_record_params,
-                             child_command_buffer, dependencies, record_id));
+        ABSL_ASSIGN_OR_RETURN(
+            dependencies, command_condition_executor_->RecordCreate(
+                              execute_params, new_record_params,
+                              child_command_buffer, dependencies, record_id));
+        ABSL_ASSIGN_OR_RETURN(
+            dependencies, command_body_executor_->RecordCreate(
+                              execute_params, new_record_params,
+                              child_command_buffer, dependencies, record_id));
       }
 
       return absl::OkStatus();
@@ -379,7 +379,7 @@ absl::StatusOr<ThunkProto> WhileThunk::ToProto() const {
 
   auto* while_proto = proto.mutable_while_thunk();
   ABSL_ASSIGN_OR_RETURN(*while_proto->mutable_condition_result_buffer_index(),
-                   condition_result_buffer_index_.ToProto());
+                        condition_result_buffer_index_.ToProto());
 
   {
     ThunkSequenceProto condition_proto;

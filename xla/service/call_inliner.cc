@@ -101,7 +101,7 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     // Account for control edges.
     for (HloInstruction* control_predecessor : hlo->control_predecessors()) {
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_control_predecessor,
-                       Resolve(control_predecessor));
+                            Resolve(control_predecessor));
       ABSL_RETURN_IF_ERROR(
           new_control_predecessor->AddControlDependencyTo(new_hlo_pointer));
     }
@@ -135,13 +135,19 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     // We must relay the control dependencies from this call instruction to
     // the successors too after inlining. The will now depend on the newly
     // inlined root.
+    // If new_root is an operand of call_ (e.g. an identity function call(x) ->
+    // x), do not propagate call-level frontend attributes backward onto
+    // existing caller operands. Otherwise, newly cloned instructions inherit
+    // the call's frontend attributes.
     auto result =
         outer_
             ->ReplaceInstruction(
                 /*old_instruction=*/call_, /*new_instruction=*/new_root,
                 /*preserve_sharding=*/false,
                 /*relay_control_dependency=*/true,
-                /*remove_unused_operands=*/false)
+                /*remove_unused_operands=*/false,
+                /*preserve_frontend_attributes=*/
+                !absl::c_linear_search(call_->operands(), new_root))
             .status();
     // Restores the original value of the new root, which gets overwritten
     // when it's used to replace the call instruction.
@@ -404,7 +410,7 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
       // callee computation beforehand, so we can find its schedule.
       HloComputation* callee = instruction->to_apply();
       ABSL_ASSIGN_OR_RETURN(InlinedInstructionMap inline_map_cur_call,
-                       Inline(instruction, propagate_metadata_));
+                            Inline(instruction, propagate_metadata_));
       if (module->has_schedule()) {
         for (HloInstruction* inlined_instruction :
              module->schedule().sequence(callee).instructions()) {

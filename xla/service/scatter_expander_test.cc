@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/scatter_expander.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"

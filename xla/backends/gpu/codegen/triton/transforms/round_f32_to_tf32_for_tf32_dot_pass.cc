@@ -42,13 +42,13 @@ namespace {
 
 class Tf32DotPattern : public OpRewritePattern<mt::DotOp> {
  public:
-  explicit Tf32DotPattern(MLIRContext *context)
+  explicit Tf32DotPattern(MLIRContext* context)
       : OpRewritePattern<mt::DotOp>(context) {}
 
   using OpRewritePattern<mt::DotOp>::OpRewritePattern;
 
   mlir::LogicalResult matchAndRewrite(
-      mt::DotOp op, PatternRewriter &rewriter) const override {
+      mt::DotOp op, PatternRewriter& rewriter) const override {
     constexpr auto tf32_args_rounded = "tf32_arguments_rounded";
     if (op.getInputPrecision() != mt::InputPrecision::TF32) {
       return failure();

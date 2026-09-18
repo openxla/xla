@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/raw_coding.h"
+#include "tsl/platform/tstring.h"
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/lib/io/buffered_inputstream.h"
 #include "xla/tsl/lib/io/compression.h"
@@ -35,8 +37,6 @@ limitations under the License.
 #include "xla/tsl/lib/io/zlib_inputstream.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/raw_coding.h"
-#include "tsl/platform/tstring.h"
 
 namespace tsl {
 namespace io {

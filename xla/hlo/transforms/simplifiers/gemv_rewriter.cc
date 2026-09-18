@@ -111,8 +111,9 @@ class GemvRewriterVisitor : public DfsHloRewriteVisitor {
                                               lhs_dimensions.end());
       new_lhs_dimensions.push_back(1);
       Shape new_lhs_shape(lhs_shape.element_type(), new_lhs_dimensions);
-      ABSL_ASSIGN_OR_RETURN(*new_lhs_shape.mutable_layout(),
-                       GetLayoutWithNewMinorMostDimension(lhs_shape.layout()));
+      ABSL_ASSIGN_OR_RETURN(
+          *new_lhs_shape.mutable_layout(),
+          GetLayoutWithNewMinorMostDimension(lhs_shape.layout()));
       new_lhs = computation->AddInstruction(
           is_layout_sensitive_
               ? HloInstruction::CreateBitcast(new_lhs_shape, lhs)
@@ -127,8 +128,9 @@ class GemvRewriterVisitor : public DfsHloRewriteVisitor {
                                               rhs_dimensions.end());
       new_rhs_dimensions.push_back(1);
       Shape new_rhs_shape(rhs_shape.element_type(), new_rhs_dimensions);
-      ABSL_ASSIGN_OR_RETURN(*new_rhs_shape.mutable_layout(),
-                       GetLayoutWithNewMinorMostDimension(rhs_shape.layout()));
+      ABSL_ASSIGN_OR_RETURN(
+          *new_rhs_shape.mutable_layout(),
+          GetLayoutWithNewMinorMostDimension(rhs_shape.layout()));
       new_rhs = computation->AddInstruction(
           is_layout_sensitive_
               ? HloInstruction::CreateBitcast(new_rhs_shape, rhs)
@@ -151,8 +153,9 @@ class GemvRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     Shape new_out_shape(dot->shape().element_type(), new_out_dimensions);
-    ABSL_ASSIGN_OR_RETURN(*new_out_shape.mutable_layout(),
-                     GetLayoutWithNewMinorMostDimension(dot->shape().layout()));
+    ABSL_ASSIGN_OR_RETURN(
+        *new_out_shape.mutable_layout(),
+        GetLayoutWithNewMinorMostDimension(dot->shape().layout()));
 
     HloInstruction* new_dot =
         computation->AddInstruction(HloInstruction::CreateDot(

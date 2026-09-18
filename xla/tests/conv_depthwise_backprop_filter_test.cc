@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -171,7 +172,6 @@ std::string BuildHloTextBatchGroupedConvolution2D(
 TEST_P(BatchGroupedConvolution2DTest, DoIt) {
   const BatchGroupedConvolution2DSpec& spec = ::testing::get<0>(GetParam());
   bool use_bfloat16 = ::testing::get<1>(GetParam());
-
 
   const std::string hlo_text = BuildHloTextBatchGroupedConvolution2D(
       spec, use_bfloat16, /*scheduled=*/false);

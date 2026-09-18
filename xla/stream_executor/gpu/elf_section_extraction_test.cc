@@ -15,12 +15,12 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/elf_section_extraction.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/base/casts.h"
-#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/tsl/platform/statusor.h"
 

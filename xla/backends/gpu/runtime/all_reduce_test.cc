@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_reduce.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -164,8 +165,8 @@ class AllReduceKernelTest : public ::testing::Test,
       TF_RET_CHECK(!signal_flags_buffers[i].is_null());
       ABSL_RETURN_IF_ERROR(
           streams[i]->MemZero(&signal_flags_buffers[i], aligned_signal_size));
-      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(&input_buffers[i],
-                                         input_data[i].data(), input_size));
+      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(
+          &input_buffers[i], input_data[i].data(), input_size));
       XLA_VLOG_DEVICE(1, i)
           << "Allocated buffer: " << allocated_buffers[i].opaque()
           << ", Input buffer: " << input_buffers[i].opaque()
@@ -253,10 +254,10 @@ class AllReduceKernelTest : public ::testing::Test,
       metadata.param_to_peers =
           reinterpret_cast<void**>(param_to_peers_ptrs_buffer.opaque());
       ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(&param_to_peers_ptrs_buffer,
-                                         param_to_peers_ptrs.data(),
-                                         param_to_peers_size_bytes));
-      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(&metadata_buffers[i], &metadata,
-                                         sizeof(CollectiveKernelMetadata)));
+                                              param_to_peers_ptrs.data(),
+                                              param_to_peers_size_bytes));
+      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(
+          &metadata_buffers[i], &metadata, sizeof(CollectiveKernelMetadata)));
     }
 
     for (int i = 0; i < num_ranks; ++i) {

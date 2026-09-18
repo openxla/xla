@@ -15,21 +15,22 @@ limitations under the License.
 
 #include "xla/backends/cpu/lite_aot/xla_aot_function.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/lite_aot/tests/add_aot_example_lib.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
 
 namespace xla::cpu {
 namespace {

@@ -16,6 +16,8 @@ limitations under the License.
 // Tests of 2+D convolution with trivial kernels and no special variations (like
 // strides and padding).
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <numeric>
 #include <string>
@@ -23,12 +25,10 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
+#include "Eigen/Core"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
-#include "Eigen/Core"
 #include "xla/array2d.h"
 #include "xla/array4d.h"
 #include "xla/error_spec.h"
@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/types.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"

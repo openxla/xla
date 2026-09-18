@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/python/ifrt/mlir/fingerprint_utils.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -30,7 +31,7 @@ namespace ifrt {
 namespace {
 
 TEST(FingerprintUtilsTest, IdenticalModulesHaveSameFingerprint) {
-  static constexpr absl::string_view kModule = R"(
+  static constexpr absl::string_view kModule = R"mlir(
 module {
   func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
     %0 = stablehlo.constant dense<1.000000e+00> : tensor<f32>
@@ -38,7 +39,7 @@ module {
     return %1 : tensor<f32>
   }
 }
-)";
+)mlir";
   mlir::MLIRContext context;
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
                        xla::ParseMlirModuleString(kModule, context));
@@ -48,7 +49,7 @@ module {
 }
 
 TEST(FingerprintUtilsTest, DistinctStablehloModulesHaveDifferentFingerprints) {
-  static constexpr absl::string_view kModule1 = R"(
+  static constexpr absl::string_view kModule1 = R"mlir(
 module {
   func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
     %0 = stablehlo.constant dense<1.000000e+00> : tensor<f32>
@@ -56,8 +57,8 @@ module {
     return %1 : tensor<f32>
   }
 }
-)";
-  static constexpr absl::string_view kModule2 = R"(
+)mlir";
+  static constexpr absl::string_view kModule2 = R"mlir(
 module {
   func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
     %0 = stablehlo.constant dense<2.000000e+00> : tensor<f32>
@@ -65,7 +66,7 @@ module {
     return %1 : tensor<f32>
   }
 }
-)";
+)mlir";
   mlir::MLIRContext context;
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module1,
                        xla::ParseMlirModuleString(kModule1, context));
@@ -77,20 +78,20 @@ module {
 }
 
 TEST(FingerprintUtilsTest, IgnoresDebugLocations) {
-  static constexpr absl::string_view kModule1 = R"(
+  static constexpr absl::string_view kModule1 = R"mlir(
 module @foo {
   func.func @main(%arg0: tensor<2x3xi32>) -> tensor<2x3xi32> {
     return %arg0 : tensor<2x3xi32> loc("foo")
   }
 }
-)";
-  static constexpr absl::string_view kModule2 = R"(
+)mlir";
+  static constexpr absl::string_view kModule2 = R"mlir(
 module @foo {
   func.func @main(%arg0: tensor<2x3xi32>) -> tensor<2x3xi32> {
     return %arg0 : tensor<2x3xi32> loc("bar")
   }
 }
-)";
+)mlir";
   mlir::MLIRContext context;
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module1,
                        xla::ParseMlirModuleString(kModule1, context));
@@ -102,20 +103,20 @@ module @foo {
 }
 
 TEST(FingerprintUtilsTest, IgnoresDebugLocationStructure) {
-  static constexpr absl::string_view kModule1 = R"(
+  static constexpr absl::string_view kModule1 = R"mlir(
 module @foo {
   func.func @main(%arg0: tensor<2x3xi32> loc("foo")) -> tensor<2x3xi32> {
     return %arg0 : tensor<2x3xi32> loc("foo")
   } loc("foo")
 } loc("foo")
-)";
-  static constexpr absl::string_view kModule2 = R"(
+)mlir";
+  static constexpr absl::string_view kModule2 = R"mlir(
 module @foo {
   func.func @main(%arg0: tensor<2x3xi32> loc("bar")) -> tensor<2x3xi32> {
     return %arg0 : tensor<2x3xi32> loc("baz")
   } loc("qux")
 } loc("quux")
-)";
+)mlir";
   mlir::MLIRContext context;
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module1,
                        xla::ParseMlirModuleString(kModule1, context));

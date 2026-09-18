@@ -271,8 +271,9 @@ absl::Status OriginalTensorSummaryPropagator::Process(
   }
 
   for (const auto& w : wildcards_to_process) {
-    ABSL_RETURN_IF_ERROR(Process(w.original_tensor_key, w.pending_transformation,
-                            w.original_tensor_summary));
+    ABSL_RETURN_IF_ERROR(Process(w.original_tensor_key,
+                                 w.pending_transformation,
+                                 w.original_tensor_summary));
   }
 
   HloInstruction* instruction = nullptr;
@@ -407,7 +408,8 @@ OriginalTensorSummaryPropagator::PropagateConstantsAndParameters() {
               if (!ShouldPropagateTo(instruction, index)) {
                 return absl::OkStatus();
               }
-              ABSL_ASSIGN_OR_RETURN(Literal sub_literal, Literal::Make(subshape));
+              ABSL_ASSIGN_OR_RETURN(Literal sub_literal,
+                                    Literal::Make(subshape));
               ABSL_RETURN_IF_ERROR(sub_literal.CopyFrom(
                   LiteralSlice(instruction->literal(), index)));
               absl::StatusOr<FloatSummary> stats_or =
@@ -439,7 +441,7 @@ OriginalTensorSummaryPropagator::PropagateConstantsAndParameters() {
           continue;
         }
         ABSL_ASSIGN_OR_RETURN(Literal iota_literal,
-                         Literal::Make(instruction->shape()));
+                              Literal::Make(instruction->shape()));
         const int64_t iota_dimension =
             Cast<HloIotaInstruction>(instruction)->iota_dimension();
         ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
@@ -475,10 +477,12 @@ OriginalTensorSummaryPropagator::PropagateConstantsAndParameters() {
         summary.summaries.push_back(*std::move(stats_or));
         AbsoluteScopedTensorKey scoped_key =
             GetCurrentAbsoluteScopedTensorKey(instruction->name(), {});
-        ABSL_RETURN_IF_ERROR(InvokePropagatedCallback(scoped_key, nullptr, summary));
+        ABSL_RETURN_IF_ERROR(
+            InvokePropagatedCallback(scoped_key, nullptr, summary));
         call_stack_.back().propagated_tensors.insert(
             TensorKey::Create(instruction->name(), {}));
-        ABSL_RETURN_IF_ERROR(PropagateForward(instruction, {}, nullptr, summary));
+        ABSL_RETURN_IF_ERROR(
+            PropagateForward(instruction, {}, nullptr, summary));
         break;
       }
       case HloOpcode::kParameter: {
@@ -574,8 +578,8 @@ absl::Status OriginalTensorSummaryPropagator::PropagateForward(
           continue;
         }
         ABSL_RETURN_IF_ERROR(DoPropagateForward(user, new_shape_index,
-                                           pending_transformation,
-                                           original_tensor_summary));
+                                                pending_transformation,
+                                                original_tensor_summary));
       }
       continue;
     }
@@ -590,8 +594,8 @@ absl::Status OriginalTensorSummaryPropagator::PropagateForward(
           continue;
         }
         ABSL_RETURN_IF_ERROR(DoPropagateForward(user, new_shape_index,
-                                           pending_transformation,
-                                           original_tensor_summary));
+                                                pending_transformation,
+                                                original_tensor_summary));
       }
     } else {
       // Non-tuple-shaped instruction, non-call-like user.
@@ -818,8 +822,8 @@ absl::Status OriginalTensorSummaryPropagator::DoPropagateBackward(
   AbsoluteScopedTensorKey scoped_key =
       GetCurrentAbsoluteScopedTensorKey(instruction->name(), shape_index);
   call_stack_.back().propagated_tensors.insert(tensor_key);
-  ABSL_RETURN_IF_ERROR(PropagateBackward(instruction, shape_index, transformation,
-                                    original_tensor_summary));
+  ABSL_RETURN_IF_ERROR(PropagateBackward(
+      instruction, shape_index, transformation, original_tensor_summary));
   // Here we invoke the callback after backward propagation is done so that
   // the callback is invoked in the order of execution.
   return InvokePropagatedCallback(scoped_key, transformation,
@@ -836,7 +840,7 @@ absl::Status OriginalTensorSummaryPropagator::DoPropagateForward(
   AbsoluteScopedTensorKey scoped_key =
       GetCurrentAbsoluteScopedTensorKey(instruction->name(), shape_index);
   ABSL_RETURN_IF_ERROR(InvokePropagatedCallback(scoped_key, transformation,
-                                           original_tensor_summary));
+                                                original_tensor_summary));
   call_stack_.back().propagated_tensors.insert(tensor_key);
   return PropagateForward(instruction, shape_index, transformation,
                           original_tensor_summary);

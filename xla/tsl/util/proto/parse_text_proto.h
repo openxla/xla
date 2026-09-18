@@ -32,9 +32,9 @@ class ParseTextProtoHelper {
   explicit ParseTextProtoHelper(absl::string_view text_proto)
       : text_proto_(text_proto) {}
 
-  template <typename T,
-            typename = std::enable_if_t<std::is_base_of_v<google::protobuf::Message, T> &&
-                                        std::is_same_v<T, std::decay_t<T>>>>
+  template <typename T, typename = std::enable_if_t<
+                            std::is_base_of_v<google::protobuf::Message, T> &&
+                            std::is_same_v<T, std::decay_t<T>>>>
   operator T() const {  // NOLINT(google-explicit-constructor)
     std::decay_t<T> proto;
     CHECK(google::protobuf::TextFormat::ParseFromString(text_proto_, &proto))

@@ -220,7 +220,7 @@ absl::StatusOr<bool> CollectiveSelectFolder::RunImpl(
   for (HloComputation* comp : module->computations()) {
     for (HloInstruction* inst : comp->instructions()) {
       ABSL_ASSIGN_OR_RETURN(bool local_changed,
-                       TryFoldColectivePermuteOfSelect(inst));
+                            TryFoldColectivePermuteOfSelect(inst));
       changed |= local_changed;
     }
   }

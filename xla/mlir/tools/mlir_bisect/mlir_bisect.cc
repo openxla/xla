@@ -49,6 +49,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/Passes.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/init_main.h"
 #include "xla/literal.h"
 #include "xla/mlir/tools/mlir_bisect/bisect_lib.h"
 #include "xla/mlir/tools/mlir_bisect/test_passes.h"
@@ -58,8 +60,6 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/hlo.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/init_main.h"
 
 struct Options {
   llvm::cl::opt<std::string> input_filename{llvm::cl::Positional,

@@ -19,8 +19,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
 
 def repo(name):
     """Imports LLVM."""
-    LLVM_COMMIT = "979b722373384babff6ea2befe17c5c1c93b64bd"
-    LLVM_SHA256 = "7636cec02212fd0a0bb80b9a66d7582704126fe5ae21bd4dbe16a666e601603f"
+    LLVM_COMMIT = "0038be81b8b5361112faf82e69d4590364ee81b9"
+    LLVM_SHA256 = "6675de5b328d62a6bbbef606720ab110d32c55e4645d4fa503e1cfab15bfe878"
 
     tf_http_archive(
         name = name,

@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"

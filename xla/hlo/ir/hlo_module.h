@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -65,7 +66,6 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -1079,11 +1079,8 @@ class HloModule {
   // Topological ordering of the computations in this module.
   // The topological order only contains computations whose parent() is this
   // module.
-  // TODO(phawkins): unique_id_ may not be as dense as we might like for this
-  // data structure.
-  TopologicalSort<HloComputation, int64_t,
-                  &HloComputation::topological_sort_node_,
-                  &HloComputation::unique_id_, HloComputation::NeighborIterator,
+  TopologicalSort<HloComputation, int32_t, &HloComputation::index_in_module_,
+                  HloComputation::NeighborIterator,
                   &HloComputation::callers_begin, &HloComputation::callers_end,
                   HloComputation::NeighborIterator,
                   &HloComputation::callees_begin, &HloComputation::callees_end>
@@ -1235,6 +1232,8 @@ class HloModule {
   debug_attributes() const {
     return debug_attributes_;
   }
+
+  bool IsEntryComputationUnboundedDynamic() const;
 
  private:
   absl::flat_hash_map<OriginalArray, std::vector<DebugAttributes>>

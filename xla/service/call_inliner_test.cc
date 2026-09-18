@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/call_inliner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
@@ -1657,6 +1658,58 @@ TEST_F(CallInlinerTest, InlineDoubleDiamondOverride) {
   )"));
   EXPECT_TRUE(filecheck_result);
   EXPECT_EQ(module->computation_count(), 5);
+}
+
+TEST_F(CallInlinerTest, InliningDoesNotPropagateFrontendAttributesToOperands) {
+  absl::string_view hlo_string = R"(
+HloModule test
+
+%identity (p: f32[]) -> f32[] {
+  ROOT %p = f32[] parameter(0)
+}
+
+ENTRY %main (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %call = f32[] call(%param), to_apply=%identity, frontend_attributes={_xla_compute_type="host"}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  CallInliner call_inliner;
+  ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  EXPECT_TRUE(mutated);
+
+  auto* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kParameter);
+  EXPECT_TRUE(root->frontend_attributes().map().empty());
+}
+
+TEST_F(CallInlinerTest,
+       InliningPropagatesFrontendAttributesToClonedInstructions) {
+  absl::string_view hlo_string = R"(
+HloModule test
+
+%add (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %add = f32[] add(%p0, %p1)
+}
+
+ENTRY %main (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %call = f32[] call(%p0, %p1), to_apply=%add, frontend_attributes={_xla_compute_type="host"}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  CallInliner call_inliner;
+  ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  EXPECT_TRUE(mutated);
+
+  auto* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kAdd);
+  EXPECT_EQ(root->frontend_attributes().map().at("_xla_compute_type"), "host");
 }
 
 }  // namespace

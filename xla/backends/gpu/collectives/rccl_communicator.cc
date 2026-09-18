@@ -106,7 +106,7 @@ absl::StatusOr<std::unique_ptr<RcclCommunicator>> RcclCommunicator::Create(
   // single threaded executor.
   auto executor = std::make_unique<SingleThreadedExecutor>(env);
   ABSL_ASSIGN_OR_RETURN(ncclComm_t comm,
-                   MakeFutureOn<ncclComm_t>(*executor, f).Await());
+                        MakeFutureOn<ncclComm_t>(*executor, f).Await());
   return absl::WrapUnique(
       new RcclCommunicator(comm, std::move(executor), std::move(cancel)));
 }

@@ -220,8 +220,8 @@ DeepCopyAndAddControlEdges(HloInstruction* from, HloInstruction* to,
   ShapeTree<HloInstruction*> from_copy_tree(from->shape(),
                                             /*init_value=*/nullptr);
   ABSL_ASSIGN_OR_RETURN(HloInstruction * from_deep_copy,
-                   from->parent()->DeepCopyInstruction(from, &indices_to_copy,
-                                                       &from_copy_tree));
+                        from->parent()->DeepCopyInstruction(
+                            from, &indices_to_copy, &from_copy_tree));
 
   ShapeTree<HloInstruction*> to_copy_tree(to->shape(), /*init_value=*/nullptr);
   ABSL_ASSIGN_OR_RETURN(
@@ -571,14 +571,15 @@ bool IsDisjointInPlaceWhileTupleIndex(const HloInstruction* while_instr,
             instr->operand_count() == 1);
   };
 
-  // Ensure param_gte has no competing readers: only a single path of wrappers
-  // leading to the in-place update operation.
+  // Ensure param_gte has no competing readers inside the loop body unless the
+  // loop is explicitly annotated as disjoint.
   const HloInstruction* single_reader = param_gte;
   while (single_reader->user_count() == 1 &&
          is_transparent_wrapper(single_reader->users()[0])) {
     single_reader = single_reader->users()[0];
   }
-  if (single_reader->user_count() != 1) {
+  if (single_reader->user_count() != 1 &&
+      !HasDisjointReadWriteRegionsAttr(while_instr)) {
     return false;
   }
 
@@ -680,9 +681,10 @@ absl::Status AddCopiesForWhile(const HloAliasAnalysis& alias_analysis,
           });
       if (need_copy) {
         ABSL_ASSIGN_OR_RETURN(HloInstruction * while_init_copy,
-                         xla_while->parent()->DeepCopyInstruction(
-                             while_init, &init_indices_to_copy));
-        ABSL_RETURN_IF_ERROR(while_init->ReplaceUseWith(xla_while, while_init_copy));
+                              xla_while->parent()->DeepCopyInstruction(
+                                  while_init, &init_indices_to_copy));
+        ABSL_RETURN_IF_ERROR(
+            while_init->ReplaceUseWith(xla_while, while_init_copy));
       }
     }
   }
@@ -729,8 +731,8 @@ absl::Status AddCopiesForWhile(const HloAliasAnalysis& alias_analysis,
   // deep copy).
   std::vector<HloInstruction*> param_users = param->users();
 
-  ABSL_ASSIGN_OR_RETURN(auto pair,
-                   DeepCopyAndAddControlEdges(param, root, indices_to_copy));
+  ABSL_ASSIGN_OR_RETURN(
+      auto pair, DeepCopyAndAddControlEdges(param, root, indices_to_copy));
 
   HloInstruction* param_copy = pair.first;
   HloInstruction* root_copy = pair.second;
@@ -751,7 +753,7 @@ absl::Status AddCopiesForInPlaceOperation(
   VLOG(2) << "Adding copies for in-place operation " << in_place_op->name();
   HloInstruction* operand = in_place_op->mutable_operand(operand_number);
   ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
-                   in_place_op->parent()->DeepCopyInstruction(operand));
+                        in_place_op->parent()->DeepCopyInstruction(operand));
   ABSL_RETURN_IF_ERROR(
       operand->ReplaceUseWith(in_place_op, operand_number, deep_copy));
   return absl::OkStatus();
@@ -804,8 +806,8 @@ absl::Status AddCopiesForAliasedInputOutputs(
     ShapeTree<HloInstruction*> param_copy_tree(param->shape(),
                                                /*init_value=*/nullptr);
     ABSL_ASSIGN_OR_RETURN(HloInstruction * copied,
-                     entry->DeepCopyInstruction(param, &param_indices_to_copy,
-                                                &param_copy_tree));
+                          entry->DeepCopyInstruction(
+                              param, &param_indices_to_copy, &param_copy_tree));
     if (param == root) {
       entry->set_root_instruction(copied);
       root = copied;
@@ -826,26 +828,27 @@ absl::Status AddCopiesForAliasedInputOutputs(
                                               /*init_value=*/nullptr);
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * root_copied,
-                   root->parent()->DeepCopyInstruction(
-                       root, &output_indices_to_copy, &output_copy_tree));
+                        root->parent()->DeepCopyInstruction(
+                            root, &output_indices_to_copy, &output_copy_tree));
 
   // Add control dependencies between the input/output copies.
-  ABSL_RETURN_IF_ERROR(module->input_output_alias_config().ForEachAliasWithStatus(
-      [&](const ShapeIndex& output_index,
-          const HloInputOutputAliasConfig::Alias& alias) -> absl::Status {
-        if (!copied_parameters[alias.parameter_number]) {
-          return absl::OkStatus();
-        }
-        HloInstruction* from =
-            copied_parameters[alias.parameter_number]->element(
-                alias.parameter_index);
-        HloInstruction* to = output_copy_tree.element(output_index);
+  ABSL_RETURN_IF_ERROR(
+      module->input_output_alias_config().ForEachAliasWithStatus(
+          [&](const ShapeIndex& output_index,
+              const HloInputOutputAliasConfig::Alias& alias) -> absl::Status {
+            if (!copied_parameters[alias.parameter_number]) {
+              return absl::OkStatus();
+            }
+            HloInstruction* from =
+                copied_parameters[alias.parameter_number]->element(
+                    alias.parameter_index);
+            HloInstruction* to = output_copy_tree.element(output_index);
 
-        TF_RET_CHECK(from != nullptr);
-        TF_RET_CHECK(to != nullptr);
-        ABSL_RETURN_IF_ERROR(from->AddControlDependencyTo(to));
-        return absl::OkStatus();
-      }));
+            TF_RET_CHECK(from != nullptr);
+            TF_RET_CHECK(to != nullptr);
+            ABSL_RETURN_IF_ERROR(from->AddControlDependencyTo(to));
+            return absl::OkStatus();
+          }));
 
   entry->set_root_instruction(root_copied);
 
@@ -888,8 +891,9 @@ absl::Status CopyInsertion::AddCopiesForConditional(
   for (HloComputation* computation : conditional->branch_computations()) {
     HloInstruction* root = computation->root_instruction();
     std::vector<HloInstruction*> users = root->users();
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
-                     computation->DeepCopyInstruction(root, &indices_to_copy));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * deep_copy,
+        computation->DeepCopyInstruction(root, &indices_to_copy));
     for (HloInstruction* user : users) {
       ABSL_RETURN_IF_ERROR(root->ReplaceUseWith(user, deep_copy));
     }
@@ -1305,9 +1309,17 @@ HloInstruction* FindEndOpForRotatedNonCopyableChain(
 absl::Status AddCopiesForNonCopyableTransitionsRotatedCase(
     HloInstruction* chain_start, HloInstruction* chain_end) {
   HloComputation* while_body = chain_start->parent();
+  bool disable_loop_copies = false;
+  for (const HloInstruction* caller :
+       while_body->caller_instructions(HloOpcode::kWhile)) {
+    if (HasDisableWhileLoopCopiesAttr(caller)) {
+      disable_loop_copies = true;
+      break;
+    }
+  }
   // Handle aliasing input for the op, where we transition from copyable to
   // non-copyable.
-  if (!chain_start->operands().empty()) {
+  if (!chain_start->operands().empty() && !disable_loop_copies) {
     // A chain_start may have multiple operands, but we assume only the first
     // operand is a buffer aliasing with the output, which is true currently.
     HloInstruction* operand = chain_start->mutable_operand(0);
@@ -1332,9 +1344,10 @@ absl::Status AddCopiesForNonCopyableTransitionsRotatedCase(
     return absl::OkStatus();
   }
   ShapeTree<HloInstruction*> copies_added(chain_end->shape());
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * copy,
-                   while_body->DeepCopyInstruction(
-                       chain_end, /*indices_to_copy=*/nullptr, &copies_added));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * copy,
+      while_body->DeepCopyInstruction(chain_end, /*indices_to_copy=*/nullptr,
+                                      &copies_added));
   for (auto [shape_index, instr] : copies_added) {
     if (instr != nullptr) {
       ABSL_RETURN_IF_ERROR(instr->AddControlDependencyTo(chain_start));
@@ -1394,8 +1407,8 @@ absl::Status CopyInsertion::AddCopiesForNonCopyableTransitions(
   if (!IsImplicitNonCopyable(chain_start)) {
     if (chain_start->IsCustomCall(kPinCustomCallTarget) ||
         chain_start->IsCustomCall(kCreateBufferCustomCallTarget)) {
-      ABSL_RETURN_IF_ERROR(AddCopiesForExplicitNonCopyableTransitions(alias_analysis,
-                                                                 chain_start));
+      ABSL_RETURN_IF_ERROR(AddCopiesForExplicitNonCopyableTransitions(
+          alias_analysis, chain_start));
     }
     return absl::OkStatus();
   }
@@ -1425,6 +1438,9 @@ absl::Status CopyInsertion::AddCopiesForNonCopyableTransitions(
       unique_user->opcode() == HloOpcode::kTuple &&
       unique_user->users().size() == 1 &&
       unique_user->users().front()->opcode() == HloOpcode::kWhile) {
+    if (HasDisableWhileLoopCopiesAttr(unique_user->users().front())) {
+      return absl::OkStatus();
+    }
     HloInstruction* operand = chain_start->mutable_operand(0);
     HloInstruction* copied_operand =
         parent->AddInstruction(HloInstruction::CreateUnary(
@@ -1456,7 +1472,7 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                   HloAliasAnalysis::Run(module, alias_info_));
+                        HloAliasAnalysis::Run(module, alias_info_));
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     if (computation->IsAsyncComputation()) {
@@ -1467,7 +1483,8 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
       if (instruction->opcode() == HloOpcode::kWhile) {
         ABSL_RETURN_IF_ERROR(AddCopiesForWhile(*alias_analysis, instruction));
       } else if (instruction->opcode() == HloOpcode::kConditional) {
-        ABSL_RETURN_IF_ERROR(AddCopiesForConditional(*alias_analysis, instruction));
+        ABSL_RETURN_IF_ERROR(
+            AddCopiesForConditional(*alias_analysis, instruction));
       } else if (IsNonCopyable(instruction)) {
         // We currently assume that we don't have a custom-call with
         // output-to-operand aliases for both buffers and non-buffers.
@@ -1538,19 +1555,30 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
             continue;
           }
 
-          // Skip copies for aliasing input/output pairs iff:
-          // *) Instruction has frontend attribute which indicates that the
-          //    write region of the input/output aliased buffer updated by
-          //    'instruction' is disjoint from the read region of the shared
-          //    buffer.
-          // *) All uses of the operand are 'instruction'.
-          if (HasDisjointReadWriteRegionsAttr(instruction) &&
-              absl::c_all_of(
-                  instruction->operand(operand_index_in_this_intr)->users(),
-                  [&instruction](const HloInstruction* user) {
-                    return user == instruction ||
-                           HasDisjointReadWriteRegionsAttr(user);
-                  })) {
+          // Skip copies for aliasing input/output pairs when the instruction or
+          // its enclosing while loop is annotated with
+          // xla_disjoint_read_write_regions, as fusion may wrap companion
+          // dynamic-slice readers into fusions without preserving the
+          // attribute on every user.
+          bool has_disjoint_loop = false;
+          if (instruction->parent() != nullptr) {
+            for (const HloInstruction* caller :
+                 instruction->parent()->caller_instructions(
+                     HloOpcode::kWhile)) {
+              if (HasDisjointReadWriteRegionsAttr(caller)) {
+                has_disjoint_loop = true;
+                break;
+              }
+            }
+          }
+          if (has_disjoint_loop ||
+              (HasDisjointReadWriteRegionsAttr(instruction) &&
+               absl::c_all_of(
+                   instruction->operand(operand_index_in_this_intr)->users(),
+                   [&instruction](const HloInstruction* user) {
+                     return user == instruction ||
+                            HasDisjointReadWriteRegionsAttr(user);
+                   }))) {
             continue;
           }
           if ((instruction->opcode() == HloOpcode::kAsyncDone ||
@@ -1566,7 +1594,8 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
     }
   }
 
-  ABSL_RETURN_IF_ERROR(AddCopiesForAliasedInputOutputs(module, execution_threads));
+  ABSL_RETURN_IF_ERROR(
+      AddCopiesForAliasedInputOutputs(module, execution_threads));
   return absl::OkStatus();
 }
 
@@ -1584,7 +1613,7 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     HloModule* module, CustomBufferAnalysisFn custom_buffer_analysis) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                   HloAliasAnalysis::Run(module, alias_info_));
+                        HloAliasAnalysis::Run(module, alias_info_));
 
   // Identify which shape indices of which instructions need to be copied. Store
   // these results in 'instructions_to_copy'.
@@ -1752,8 +1781,8 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
     ShapeTree<HloInstruction*> copies_added(indices_to_copy.shape());
     std::vector<HloInstruction*> users = instruction->users();
     ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
-                     instruction->parent()->DeepCopyInstruction(
-                         instruction, &indices_to_copy, &copies_added));
+                          instruction->parent()->DeepCopyInstruction(
+                              instruction, &indices_to_copy, &copies_added));
     for (HloInstruction* user : users) {
       ABSL_RETURN_IF_ERROR(instruction->ReplaceUseWith(user, deep_copy));
     }
@@ -1796,7 +1825,7 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                   HloAliasAnalysis::Run(module, alias_info_));
+                        HloAliasAnalysis::Run(module, alias_info_));
   CopyRemover copy_remover(*module, *alias_analysis, alias_info_,
                            ordering.get(), execution_threads);
   if (VLOG_IS_ON(3)) {
@@ -1894,7 +1923,8 @@ absl::StatusOr<bool> CopyInsertion::RunImpl(
 
   int64_t num_copies_before = GetNumExistingCopies(module, execution_threads);
 
-  ABSL_RETURN_IF_ERROR(AddCopiesToResolveInterference(module, execution_threads));
+  ABSL_RETURN_IF_ERROR(
+      AddCopiesToResolveInterference(module, execution_threads));
 
   // Simplify the tuple structures introduced by the deep copies. This should be
   // done before removing copies (RemoveUnnecessaryCopies) because tuple
@@ -1903,7 +1933,8 @@ absl::StatusOr<bool> CopyInsertion::RunImpl(
   // instructions introduced by tuple simplification.
   TupleSimplifier tuple_simplifier;
   HloDCE dce;
-  ABSL_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads).status());
+  ABSL_RETURN_IF_ERROR(
+      tuple_simplifier.Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
   DumpHloModuleDuringPassIfEnabled(
       name(), "after adding copies to resolve interference", *module);
@@ -1911,12 +1942,14 @@ absl::StatusOr<bool> CopyInsertion::RunImpl(
   ABSL_RETURN_IF_ERROR(RemoveUnnecessaryCopies(module, execution_threads));
   DumpHloModuleDuringPassIfEnabled(name(), "after removing unnecessary copies",
                                    *module);
-  ABSL_RETURN_IF_ERROR(AddSpecialCaseCopies(*call_graph, execution_threads, module,
-                                       /*custom_buffer_analysis=*/nullptr));
+  ABSL_RETURN_IF_ERROR(
+      AddSpecialCaseCopies(*call_graph, execution_threads, module,
+                           /*custom_buffer_analysis=*/nullptr));
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
 
-  ABSL_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads).status());
+  ABSL_RETURN_IF_ERROR(
+      tuple_simplifier.Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
 
   VLOG(1) << "Num copies before copy-insertion: " << num_copies_before;

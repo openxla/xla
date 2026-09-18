@@ -188,8 +188,9 @@ void HloTestBaseLegacy::MatchOptimizedHlo(absl::string_view hlo,
 
 absl::StatusOr<std::unique_ptr<HloModule>>
 HloTestBaseLegacy::GetOptimizedModule(absl::string_view hlo) {
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   ParseAndReturnVerifiedModule(hlo, GetModuleConfigForTest()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(hlo, GetModuleConfigForTest()));
   // TODO - b/391868033: Remove calls to UpdateEntryComputationLayout.
   UpdateEntryComputationLayout(module.get());
   return backend().compiler()->RunHloPasses(

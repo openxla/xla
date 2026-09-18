@@ -17,13 +17,14 @@ limitations under the License.
 
 #include "xla/debug_options_parsers.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -620,6 +621,35 @@ TEST(ParseRepeatedEnumFlagsTest, AutotuneBackend) {
   // It should still contain CUDNN (which was in defaults).
   EXPECT_THAT(debug_options.xla_gpu_experimental_autotune_backends(),
               Contains(autotuner::Backend::CUDNN));
+}
+
+TEST(PreferredBackendParsingTest, CaseInsensitive) {
+  DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
+  std::vector<tsl::Flag> flag_objects;
+  MakeDebugOptionsFlags(&flag_objects, &debug_options);
+
+  EXPECT_EQ(debug_options.xla_autotuner_preferred_backend(),
+            autotuner::Backend::UNSPECIFIED_BACKEND);
+
+  SetXlaFlagsEnvVar("--xla_autotuner_preferred_backend=cudnn");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_autotuner_preferred_backend(),
+            autotuner::Backend::CUDNN);
+
+  SetXlaFlagsEnvVar("--xla_autotuner_preferred_backend=TRITON");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_autotuner_preferred_backend(),
+            autotuner::Backend::TRITON);
+
+  SetXlaFlagsEnvVar("--xla_autotuner_preferred_backend=block_level_emitter");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_autotuner_preferred_backend(),
+            autotuner::Backend::BLOCK_LEVEL_EMITTER);
+
+  SetXlaFlagsEnvVar("--xla_autotuner_preferred_backend=none");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_autotuner_preferred_backend(),
+            autotuner::Backend::UNSPECIFIED_BACKEND);
 }
 
 TEST(CollectivesModeParsingTest, CaseInsensitive) {

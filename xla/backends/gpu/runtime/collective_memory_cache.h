@@ -64,8 +64,6 @@ class CollectiveMemoryCache {
       const GpuCliqueKey& clique, stream_executor::DeviceAddressBase addr,
       tsl::TiedRef<stream_executor::gpu::MulticastMemory> multicast_memory);
 
-
-
  private:
   using Key = std::pair<GpuCliqueKey, stream_executor::DeviceAddressBase>;
 

@@ -16,11 +16,6 @@ limitations under the License.
 #include <utility>
 
 #include "cuda_tile/Dialect/CudaTile/IR/Dialect.h"
-#include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
-#include "mlir/Tools/mlir-translate/Translation.h"
-#include "tensor_ir/Compiler/CudaTile/Pipelines.h"
-#include "tensor_ir/Conversion/TensorToCudaTile/Options.h"
-#include "tensor_ir/Dialect/TensorIR.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -32,6 +27,11 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
+#include "mlir/Tools/mlir-translate/Translation.h"
+#include "tensor_ir/Compiler/CudaTile/Pipelines.h"
+#include "tensor_ir/Conversion/TensorToCudaTile/Options.h"
+#include "tensor_ir/Dialect/TensorIR.h"
 #include "xla/backends/gpu/codegen/tensor_ir/conversion.h"
 #include "xla/backends/gpu/codegen/tensor_ir/support.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

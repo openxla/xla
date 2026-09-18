@@ -152,7 +152,7 @@ absl::Status SetupCollectiveThunksDevice(
   }
 
   ABSL_ASSIGN_OR_RETURN(state.collective_cliques,
-                   AcquireCollectiveCliques(params, clique_requests));
+                        AcquireCollectiveCliques(params, clique_requests));
 
   Thunk::InitializeParams init_params;
   init_params.executor = state.executor;
@@ -202,9 +202,9 @@ absl::Status RecordCommandBufferCreate(
 
   Command::RecordParams record_params = {state.state_manager};
   ABSL_ASSIGN_OR_RETURN(state.command,
-                   thunk.Record(execute_params, record_params,
-                                Command::RecordCreate{/*dependencies=*/{}},
-                                state.command_buffer.get()));
+                        thunk.Record(execute_params, record_params,
+                                     Command::RecordCreate{/*dependencies=*/{}},
+                                     state.command_buffer.get()));
   if (state.command == nullptr) {
     return absl::InternalError("Record(create) returned null command node");
   }
@@ -221,9 +221,9 @@ absl::Status RecordCommandBufferUpdate(
 
   ABSL_RETURN_IF_ERROR(state.command_buffer->Update());
   ABSL_ASSIGN_OR_RETURN(const se::CommandBuffer::Command* updated_command,
-                   thunk.Record(execute_params, record_params,
-                                Command::RecordUpdate{state.command},
-                                state.command_buffer.get()));
+                        thunk.Record(execute_params, record_params,
+                                     Command::RecordUpdate{state.command},
+                                     state.command_buffer.get()));
 
   if (updated_command != state.command) {
     return absl::InternalError(
@@ -249,7 +249,8 @@ absl::Status FillDeviceBuffer(se::Stream& stream, se::DeviceAddressBase buffer,
 absl::StatusOr<std::vector<float>> ReadDeviceBuffer(
     se::Stream& stream, se::DeviceAddressBase buffer, int64_t length) {
   std::vector<float> data(length);
-  ABSL_RETURN_IF_ERROR(stream.Memcpy(data.data(), buffer, sizeof(float) * length));
+  ABSL_RETURN_IF_ERROR(
+      stream.Memcpy(data.data(), buffer, sizeof(float) * length));
   ABSL_RETURN_IF_ERROR(stream.BlockHostUntilDone());
   return data;
 }

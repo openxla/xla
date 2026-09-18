@@ -366,17 +366,18 @@ absl::StatusOr<AllReduceInfo> BuildAllReduceInfo(
         "Collective kernels are only supported on devices with NVLink/UALink "
         "support.");
   }
-  ABSL_RETURN_IF_ERROR(IsAllReduceKernelSupported(is_collective_kernel_enabled,  //
-                                             device_info,                   //
-                                             num_operands,                  //
-                                             reduction_kind,                //
-                                             num_devices,                   //
-                                             num_elements,                  //
-                                             element_type,                  //
-                                             is_local,                      //
-                                             is_multimem_enabled,           //
-                                             all_reduce->replica_groups()   //
-                                             ));
+  ABSL_RETURN_IF_ERROR(IsAllReduceKernelSupported(
+      is_collective_kernel_enabled,  //
+      device_info,                   //
+      num_operands,                  //
+      reduction_kind,                //
+      num_devices,                   //
+      num_elements,                  //
+      element_type,                  //
+      is_local,                      //
+      is_multimem_enabled,           //
+      all_reduce->replica_groups()   //
+      ));
   return AllReduceInfo{
       /*.reduction_kind=*/*reduction_kind,
       /*.num_devices =*/num_devices,
@@ -402,8 +403,8 @@ absl::Status RunAllReduceKernel(
     uint32_t signal_value,                          //
     se::DeviceAddressBase metadata) {
   ABSL_RETURN_IF_ERROR(IsAllReduceKernelSupported(num_ranks, num_elements,
-                                             element_type, reduction_kind,
-                                             all_reduce_strategy));
+                                                  element_type, reduction_kind,
+                                                  all_reduce_strategy));
   const auto launch_kernel_impl = [&](auto tag) -> absl::Status {
     return LaunchTypedKernel(
         tag, stream, launch_dimensions, symmetric_input_buffer,

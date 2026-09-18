@@ -50,7 +50,7 @@ absl::StatusOr<bool> DynamicSliceAnnotator::RunImpl(
       }
 
       ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                       instr->backend_config<GpuBackendConfig>());
+                            instr->backend_config<GpuBackendConfig>());
       auto* ds_config = backend_config.mutable_dynamic_slice_config();
       if (descriptor->loop_index.has_value()) {
         ds_config->set_loop_index(*descriptor->loop_index);

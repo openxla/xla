@@ -21,8 +21,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
-#include "xla/types.h"
 #include "tsl/platform/env.h"
+#include "xla/types.h"
 
 namespace xla {
 
@@ -39,7 +39,7 @@ class NoopStats : public CompilationStats {
   int GetPassesSize() override { return 0; }
 
   void RecordPassError(absl::string_view pass_name,
-                       absl::string_view err) override{};
+                       absl::string_view err) override {};
 };
 
 class Stats : public CompilationStats {
@@ -55,7 +55,7 @@ class Stats : public CompilationStats {
   int GetPassesSize() override;
 
   void RecordPassError(absl::string_view pass_name,
-                       absl::string_view err) override{};
+                       absl::string_view err) override {};
 
  private:
   struct PassInfo {

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/separate_compilation/hlo_module_splitting.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"

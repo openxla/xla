@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status_macros.h"
@@ -37,9 +38,9 @@ namespace {
 
 absl::StatusOr<StreamExecutor*> GetGpuExecutor(int64_t device_ordinal) {
   ABSL_ASSIGN_OR_RETURN(Platform * platform,
-                   PlatformManager::PlatformWithName(GpuPlatformName()));
+                        PlatformManager::PlatformWithName(GpuPlatformName()));
   ABSL_ASSIGN_OR_RETURN(StreamExecutor * executor,
-                   platform->ExecutorForDevice(device_ordinal));
+                        platform->ExecutorForDevice(device_ordinal));
   return executor;
 }
 

@@ -123,7 +123,7 @@ absl::StatusOr<ExecutionOutput> InterpreterExecutableBase::ExecuteAsyncOnStream(
   }
 
   ABSL_ASSIGN_OR_RETURN(TransferManager * transfer_manager,
-                   TransferManager::GetForPlatform(platform));
+                        TransferManager::GetForPlatform(platform));
 
   // Transform the ShapedBuffer arguments into literals which the evaluator
   // consumes.
@@ -132,8 +132,8 @@ absl::StatusOr<ExecutionOutput> InterpreterExecutableBase::ExecuteAsyncOnStream(
   arg_literals.reserve(num_parameters);
   for (int64_t p = 0; p < num_parameters; ++p) {
     ABSL_ASSIGN_OR_RETURN(Literal arg_literal,
-                     transfer_manager->TransferLiteralFromDevice(
-                         run_options->stream(), argument_buffers[p]));
+                          transfer_manager->TransferLiteralFromDevice(
+                              run_options->stream(), argument_buffers[p]));
     const auto& expected_shape = computation->parameter_instruction(p)->shape();
     if (expected_shape.is_dynamic()) {
       // Expand the input literal to expected shape.
@@ -143,7 +143,7 @@ absl::StatusOr<ExecutionOutput> InterpreterExecutableBase::ExecuteAsyncOnStream(
   }
 
   ABSL_ASSIGN_OR_RETURN(Literal result_literal,
-                   Evaluate(run_options, *computation, arg_literals));
+                        Evaluate(run_options, *computation, arg_literals));
   // Shrink the generated dynamic shape into static shape.
   result_literal = result_literal.ToStatic();
 
@@ -152,9 +152,9 @@ absl::StatusOr<ExecutionOutput> InterpreterExecutableBase::ExecuteAsyncOnStream(
       has_module() ? module().input_output_alias_config()
                    : HloInputOutputAliasConfig();
   ABSL_ASSIGN_OR_RETURN(ExecutionOutput result,
-                   AllocateOutputMemoryWithInputReuse(
-                       result_literal.shape(), alias_config,
-                       run_options->allocator(), &arguments, stream));
+                        AllocateOutputMemoryWithInputReuse(
+                            result_literal.shape(), alias_config,
+                            run_options->allocator(), &arguments, stream));
 
   ABSL_RETURN_IF_ERROR(transfer_manager->TransferLiteralToDevice(
       run_options->stream(), result_literal, result.Result()));
@@ -197,7 +197,7 @@ InterpreterExecutableBase::AllocateOutputMemoryWithInputReuse(
   se::StreamExecutor* executor = stream->parent();
   const se::Platform* platform = executor->GetPlatform();
   ABSL_ASSIGN_OR_RETURN(TransferManager * transfer_manager,
-                   TransferManager::GetForPlatform(platform));
+                        TransferManager::GetForPlatform(platform));
 
   ExecutionOutput result(shape, allocator, executor->device_ordinal());
   for (auto& pair : result.MutableResult()->buffers()) {

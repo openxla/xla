@@ -26,8 +26,8 @@ limitations under the License.
 #include "oneapi/dnnl/dnnl_threadpool.h"
 #include "oneapi/dnnl/dnnl_threadpool_iface.hpp"
 #include "oneapi/dnnl/dnnl_version.h"
-#include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/cpu_info.h"
+#include "xla/tsl/platform/threadpool.h"
 
 namespace tsl {
 

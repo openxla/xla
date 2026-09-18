@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_types.h"
 
-#include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
+#include "llvm/ADT/TypeSwitch.h"            // IWYU pragma: keep
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"  // IWYU pragma: keep
 

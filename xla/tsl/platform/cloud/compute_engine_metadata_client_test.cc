@@ -20,12 +20,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/cloud/http_request.h"
 #include "xla/tsl/platform/cloud/http_request_fake.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/retrying_utils.h"
 
 namespace tsl {
 

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tools/matmul_perf_table_gen.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"

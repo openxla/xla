@@ -210,7 +210,8 @@ tsl::AsyncValueRef<OneDnnFusionThunk::ExecuteEvent> OneDnnFusionThunk::Execute(
       params.intra_op_threadpool->getPool();
 
   // Borrow oneDNN runtime from the pool.
-  ABSL_ASSIGN_OR_RETURN(auto runtime, onednn_runtime_pool_.GetOrCreate(thread_pool));
+  ABSL_ASSIGN_OR_RETURN(auto runtime,
+                        onednn_runtime_pool_.GetOrCreate(thread_pool));
   auto executed =
       runtime->Invoke(thread_pool, absl::MakeSpan(arguments_buffers),
                       absl::MakeSpan(results_buffers));

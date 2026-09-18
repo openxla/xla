@@ -30,7 +30,7 @@ namespace stablehlo_ext {
 #define GEN_PASS_DECL
 #include "stablehlo_ext/transforms/passes.h.inc"
 
-void createChloLegalizeToStablehloPipeline(OpPassManager &pm);
+void createChloLegalizeToStablehloPipeline(OpPassManager& pm);
 
 #define GEN_PASS_REGISTRATION
 #include "stablehlo_ext/transforms/passes.h.inc"

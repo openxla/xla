@@ -67,7 +67,8 @@ absl::StatusOr<bool> FusionWrapperBase::RunImpl(
       module->schedule().replace_instruction(computation, instruction,
                                              fusion_instruction);
     }
-    ABSL_RETURN_IF_ERROR(fusion_instruction->CopyAllControlDepsFrom(instruction));
+    ABSL_RETURN_IF_ERROR(
+        fusion_instruction->CopyAllControlDepsFrom(instruction));
     ABSL_RETURN_IF_ERROR(instruction->DropAllControlDeps());
     ABSL_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(fusion_instruction));
     ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));

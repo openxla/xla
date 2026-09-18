@@ -32,10 +32,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/backends/profiler/gpu/string_deduper.h"
 #include "xla/tsl/profiler/utils/buffer_pool.h"
 #include "xla/tsl/profiler/utils/lock_free_queue.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace xla {
 namespace profiler {
@@ -260,7 +260,6 @@ struct CuptiTracerEvent {
     EnvironmentDetails environment_info;
   };
 };
-
 
 // AnnotationMap keep the map from a correlation id to its corresponding
 // annotation and nvtx_range. During Add(), unseen input string view will

@@ -117,7 +117,6 @@ class CallInliner : public HloModulePass {
       absl::Span<HloInstruction* const> instruction_sequence,
       std::optional<InlinedInstructionMap*> inline_map);
 
-
   bool single_call_site_;
   bool update_domain_;
   absl::flat_hash_set<std::string> composites_to_preserve_;

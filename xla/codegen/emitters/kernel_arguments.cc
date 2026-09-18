@@ -160,7 +160,7 @@ absl::StatusOr<KernelArguments> CreateKernelArguments(
 
   for (auto [op_idx, operand] : llvm::enumerate(hlo_instruction->operands())) {
     ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                     buffer_assignment.GetUniqueSlice(operand, {}));
+                          buffer_assignment.GetUniqueSlice(operand, {}));
     KernelArgument arg(operand->shape(), slice);
     if (no_invariant_operands.contains(op_idx)) {
       arg.set_invariant(false);
@@ -168,8 +168,9 @@ absl::StatusOr<KernelArguments> CreateKernelArguments(
     kernel_arguments.emplace_back(std::move(arg));
   }
 
-  ABSL_ASSIGN_OR_RETURN(OutputArguments output_result,
-                   ExtractOutputArguments(buffer_assignment, hlo_instruction));
+  ABSL_ASSIGN_OR_RETURN(
+      OutputArguments output_result,
+      ExtractOutputArguments(buffer_assignment, hlo_instruction));
 
   absl::c_move(output_result.output_arguments,
                std::back_inserter(kernel_arguments));
@@ -213,8 +214,9 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
 
   const auto& operands = hlo_instruction->operands();
 
-  ABSL_ASSIGN_OR_RETURN(OutputArguments output_result,
-                   ExtractOutputArguments(buffer_assignment, hlo_instruction));
+  ABSL_ASSIGN_OR_RETURN(
+      OutputArguments output_result,
+      ExtractOutputArguments(buffer_assignment, hlo_instruction));
   auto& [output_arguments, buffers_written] = output_result;
 
   // Check bounds: all output indices must be valid positions
@@ -247,8 +249,9 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
         return absl::InvalidArgumentError(
             "Not enough inputs for remaining positions");
       }
-      ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                       buffer_assignment.GetUniqueSlice(operands[arg_idx], {}));
+      ABSL_ASSIGN_OR_RETURN(
+          BufferAllocation::Slice slice,
+          buffer_assignment.GetUniqueSlice(operands[arg_idx], {}));
       kernel_arguments.emplace_back(
           KernelArgument(operands[arg_idx]->shape(), slice));
       ++arg_idx;

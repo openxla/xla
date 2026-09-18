@@ -33,12 +33,12 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/TypeID.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/translate/register.h"
 #include "xla/hlo/translate/stablehlo.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace sdy {
@@ -51,7 +51,7 @@ using ::mlir::StringRef;
 // Converts a StableHLO module to an HLO module.
 absl::StatusOr<std::unique_ptr<HloModule>> toHlo(ModuleOp module) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hloModule,
-                   xla::ConvertStablehloToHlo(module));
+                        xla::ConvertStablehloToHlo(module));
   hloModule->mutable_config().set_use_spmd_partitioning(true);
   return hloModule;
 }

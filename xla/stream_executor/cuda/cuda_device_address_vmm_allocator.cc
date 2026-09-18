@@ -147,7 +147,7 @@ absl::Status CudaDeviceAddressVmmAllocator::InitializeDeviceState(
   }
 
   ABSL_ASSIGN_OR_RETURN(CudaDeviceAllocator::Options device_allocator_options,
-                   QueryDeviceAllocatorOptions(cu_device));
+                        QueryDeviceAllocatorOptions(cu_device));
   CUmemAllocationProp alloc_props =
       BuildVmmAllocationProp(cu_device, device_allocator_options);
   size_t granularity = 0;

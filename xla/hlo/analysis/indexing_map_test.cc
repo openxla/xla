@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/analysis/indexing_map.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

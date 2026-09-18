@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/analysis/alias_info.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -785,7 +786,6 @@ ENTRY AllToAll {
   expected_pairs.push_back({HloOperandIndex{1, {}}, {}});
   EXPECT_EQ(in_place_pairs, expected_pairs);
 }
-
 
 // Verifies that collective-permute-start expects no aliasing (empty in-place
 // pairs).

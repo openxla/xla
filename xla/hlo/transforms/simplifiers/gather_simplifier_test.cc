@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/gather_simplifier.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

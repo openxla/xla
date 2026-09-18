@@ -214,9 +214,9 @@ absl::StatusOr<bool> RemoveDeadParameters(HloComputation* computation) {
 
   // The new call computation is ready, now make all the call sites use it.
   for (HloInstruction* old_call : computation->caller_instructions()) {
-    ABSL_RETURN_IF_ERROR(ReplaceCallSite(old_call, new_computation,
-                                    old_to_new_parameter_number,
-                                    old_to_new_output_number, adjust_root));
+    ABSL_RETURN_IF_ERROR(
+        ReplaceCallSite(old_call, new_computation, old_to_new_parameter_number,
+                        old_to_new_output_number, adjust_root));
   }
 
   return true;

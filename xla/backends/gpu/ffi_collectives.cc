@@ -104,7 +104,7 @@ absl::StatusOr<GpuCliqueKey> GetCliqueKey(
     return InvalidArgument("communication_id must be non-negative");
   }
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
-                   ToCollectiveOpGroupMode(group_mode));
+                        ToCollectiveOpGroupMode(group_mode));
   return GetGpuCliqueKey(params, replica_groups, mode,
                          CommunicationId(communication_id));
 }
@@ -116,7 +116,7 @@ absl::StatusOr<std::vector<std::vector<GlobalDeviceId>>> GetDeviceGroups(
       << "Device assignment is required for GPU communicator FFI calls";
 
   ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode mode,
-                   ToCollectiveOpGroupMode(group_mode));
+                        ToCollectiveOpGroupMode(group_mode));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<std::vector<GlobalDeviceId>> device_groups,
@@ -158,13 +158,14 @@ absl::Status CommunicatorRequestImpl(const XLA_FFI_Collectives_Extension* self,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                   ToReplicaGroups(args->groups, args->num_groups));
-  ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                   GetCliqueKey(*state->collective_params, args->group_mode,
-                                replica_groups, args->communication_id));
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
   ABSL_ASSIGN_OR_RETURN(std::vector<std::vector<GlobalDeviceId>> device_groups,
-                   GetDeviceGroups(*state->collective_params, args->group_mode,
-                                   replica_groups));
+                        GetDeviceGroups(*state->collective_params,
+                                        args->group_mode, replica_groups));
   return state->collective_clique_requests->RequestClique(clique_key,
                                                           device_groups);
 }
@@ -191,13 +192,15 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                   ToReplicaGroups(args->groups, args->num_groups));
-  ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                   GetCliqueKey(*state->collective_params, args->group_mode,
-                                replica_groups, args->communication_id));
-  ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
-                   state->collective_cliques->GetComm(
-                       clique_key, state->collective_params->global_device_id));
+                        ToReplicaGroups(args->groups, args->num_groups));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
+                   args->communication_id));
+  ABSL_ASSIGN_OR_RETURN(
+      GpuCommunicator * comm,
+      state->collective_cliques->GetComm(
+          clique_key, state->collective_params->global_device_id));
 
   PlatformCommunicatorHandle platform_comm = comm->platform_comm();
   if (platform_comm.handle == nullptr) {

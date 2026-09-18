@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_args_packing_spec.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -191,10 +192,7 @@ TEST(KernelArgsPackingSpecTest, ToProto) {
 
   EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
                 kernel_arguments {
-                  relocations {
-                    kind: KIND_BITS64_ABSOLUTE
-                    argument_index: 33
-                  }
+                  relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 33 }
                 }
                 kernel_arguments { data: "\x34\x12\x00\x00" }
               )pb")));

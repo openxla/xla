@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/python/transfer/streaming_ifrt.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "tsl/platform/casts.h"
 #include "xla/future.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/raw_buffer.h"
@@ -50,7 +52,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace aux {
 namespace {
@@ -84,10 +85,10 @@ absl::StatusOr<SingleBufferCopyPlan> SetupTransferDestList(
   auto* pjrt_client = ifrt_client->pjrt_client();
   // CHECK_EQ(pjrt_client->platform_id(), xla::TpuId());
   ABSL_ASSIGN_OR_RETURN(auto* pjrt_memory_space,
-                   device->pjrt_device()->default_memory_space());
+                        device->pjrt_device()->default_memory_space());
   ABSL_ASSIGN_OR_RETURN(auto atm_owned,
-                   pjrt_client->CreateBuffersForAsyncHostToDevice(
-                       {shape}, pjrt_memory_space));
+                        pjrt_client->CreateBuffersForAsyncHostToDevice(
+                            {shape}, pjrt_memory_space));
   auto atm = std::shared_ptr<xla::PjRtClient::AsyncHostToDeviceTransferManager>(
       std::move(atm_owned));
   SingleBufferCopyPlan results;
@@ -95,9 +96,9 @@ absl::StatusOr<SingleBufferCopyPlan> SetupTransferDestList(
 
   results.dests.push_back(MakeDmaDestination(atm, 0, copy_size));
   // `CreateBuffersForAsyncHostToDevice` uses a default layout.
-  ABSL_ASSIGN_OR_RETURN(auto arr,
-                   ifrt_client->CreatePjRtArray(atm->RetrieveBuffer(0),
-                                                /*has_custom_layout=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      auto arr, ifrt_client->CreatePjRtArray(atm->RetrieveBuffer(0),
+                                             /*has_custom_layout=*/false));
   results.arrays.push_back(std::move(arr));
   return results;
 }

@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -52,14 +53,14 @@ class ProgramMemoryTracerTest
   absl::StatusOr<std::shared_ptr<IfrtIrLoadedExecutable>> GetIfrtIrExecutable(
       absl::string_view source, DeviceListRef devices) {
     ABSL_ASSIGN_OR_RETURN(LoadedExecutableRef executable,
-                     CompileProgram(source, devices));
+                          CompileProgram(source, devices));
     return std::static_pointer_cast<IfrtIrLoadedExecutable>(
         std::move(executable));
   }
 };
 
 TEST_F(ProgramMemoryTracerTest, IfrtIrProgramMemoryStatsWithCopyArrays) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1024x1024x768xi32>,
                       #ifrt.sharding_param<1x1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1024x1024x768xi32>,
@@ -83,7 +84,7 @@ module {
     return %arg0, %out_2 : !array0, !array0
   }
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
                        GetIfrtIrExecutable(source, devices));
@@ -102,7 +103,7 @@ module {
 }
 
 TEST_F(ProgramMemoryTracerTest, BitcastArraysDoesntChangeMemoryStats) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1024x1024x768xi32>,
                       #ifrt.sharding_param<1x1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1x1024x1024x768xi32>,
@@ -116,7 +117,7 @@ module {
     return %0 : !array1
   }
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
                        GetIfrtIrExecutable(source, devices));
@@ -132,7 +133,7 @@ module {
 }
 
 TEST_F(ProgramMemoryTracerTest, IfrtIrProgramMemoryStatsWithCallOps) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !input = !ifrt.array<tensor<1x1xi32>,
                      #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array0 = !ifrt.array<tensor<1024x1024x1280xi32>,
@@ -171,7 +172,7 @@ module {
     return %arg0 : tensor<1024x1024x1280xi32>
   }
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
                        GetIfrtIrExecutable(source, devices));
@@ -206,7 +207,7 @@ module {
 }
 
 TEST_F(ProgramMemoryTracerTest, IfrtIrShardedProgramMemoryStats) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !input = !ifrt.array<tensor<1x1xi32>,
                      #ifrt.sharding_param<1x1 to [0] on 2>, [0, 1]>
 !array = !ifrt.array<tensor<1024x1024x1536xi32>,
@@ -239,7 +240,7 @@ module {
     return %arg0 : tensor<1024x1024x1536xi32>
   }
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
                        GetIfrtIrExecutable(source, devices));
@@ -269,7 +270,7 @@ module {
 }
 
 TEST_F(ProgramMemoryTracerTest, IfrtIrProgramMemoryStatsWithOffloadedInput) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array_host = !ifrt.array<tensor<16xf32>,
                           #ifrt.sharding_param<2 to [0] on 2>, [0, 1],
                           memory_kind = "pinned_host">
@@ -296,7 +297,7 @@ module @sin_from_offloaded_arg {
     }
   }
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
                        GetIfrtIrExecutable(source, devices));
@@ -310,7 +311,7 @@ module @sin_from_offloaded_arg {
 }
 
 TEST_F(ProgramMemoryTracerTest, IfrtIrProgramMemoryStatsWithPaddingAndLayout) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<12x16xf32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0, 1],
                       layout = "{1,0:T(1,128)}">
@@ -323,7 +324,7 @@ module @padded_arrays_with_layouts {
     return %arg0: !array0
   }
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
                        GetIfrtIrExecutable(source, devices));

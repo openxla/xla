@@ -1690,9 +1690,9 @@ absl::Status MsaAlgorithm::OptimizeMemoryBoundLoop(int loop_start_idx,
   const int iteration_end_idx = iteration_start_idx + loop_size;
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MemoryBoundLoopOptimizer> optimizer,
-                   MemoryBoundLoopOptimizer::Create(
-                       iteration_start_idx, iteration_end_idx, hlo_live_range_,
-                       alias_analysis_, options_));
+                        MemoryBoundLoopOptimizer::Create(
+                            iteration_start_idx, iteration_end_idx,
+                            hlo_live_range_, alias_analysis_, options_));
   optimizer->Optimize();
 
   // Check if this unrolled loop is in a while loop.
@@ -2686,7 +2686,7 @@ MsaAlgorithm::GetAltMemoryColoredIntervalsForBuffer(
   std::vector<TimeInterval> default_mem_intervals;
   std::vector<TimeInterval> alternate_mem_intervals;
   ABSL_ASSIGN_OR_RETURN(std::vector<TimeInterval> contiguous_live_ranges,
-                   GetContiguousLiveRangesForBuffer(buffer));
+                        GetContiguousLiveRangesForBuffer(buffer));
 
   auto disallow_async_conversion_if_conversion_candidate =
       [&](const HloInstruction* inst) {
@@ -4620,8 +4620,8 @@ absl::Status MsaAlgorithm::PinScalarBuffersInAlternateMemory(
       sorted_scalar_buffers,
       [](const HloBuffer* a, const HloBuffer* b) { return a->id() < b->id(); });
   for (const HloBuffer* buffer : sorted_scalar_buffers) {
-    ABSL_RETURN_IF_ERROR(PinScalarBufferInAlternateMemory(buffer, program_end_time,
-                                                     instruction_schedule));
+    ABSL_RETURN_IF_ERROR(PinScalarBufferInAlternateMemory(
+        buffer, program_end_time, instruction_schedule));
   }
   return absl::OkStatus();
 }
@@ -5142,8 +5142,9 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
 
         VLOG(3) << "Running post allocation transformation on: \n"
                 << instr->ToString();
-        ABSL_ASSIGN_OR_RETURN(PostAllocationTransformationUpdate changes,
-                         options_.post_allocation_transformation_fn(instr));
+        ABSL_ASSIGN_OR_RETURN(
+            PostAllocationTransformationUpdate changes,
+            options_.post_allocation_transformation_fn(instr));
         if (!changes.to_be_removed.empty()) {
           VLOG(3) << "Post allocation transformation info: \n"
                   << changes.ToString();
@@ -6041,8 +6042,7 @@ absl::StatusOr<AllocationResult> MsaAlgorithm::AllocateAllocationValues(
           }
         }
         if (allocate_segment_result == AllocationResult::kSuccess &&
-            NeedsMirroredAllocation(allocation_value_to_update, use,
-                                    previous_use)) {
+            ShouldBeMirrored(allocation_value_to_update, use, previous_use)) {
           CreateMirroredAllocations(
               allocation_value_to_update, use, previous_use, allocation_values,
               already_processed_allocation_values_inside_a_conditional);
@@ -6772,19 +6772,19 @@ void MsaAlgorithm::SynchronizeAliasedWhileLoopOffsets(
       {hlo_use.instruction, hlo_use.operand_index}, offset);
 }
 
-bool MsaAlgorithm::NeedsMirroredAllocation(
+bool MsaAlgorithm::ShouldBeMirroredByNestedConditionals(
     const AllocationValue& allocation_value,
     const AllocationValue::Use& current_use,
     const AllocationValue::Use* previous_use) const {
-  // We create mirrored allocations for allocation values, inside
-  // conditional branches, by verifying that all of the following conditions
-  // are met:
+  // If all of the following conditions are met, we need mirrored allocations
+  // for the aliasing, nested allocation values in the time range
+  // [time(`previous_use`), time(`current_use`)]:
   // 1. The previous use is a conditional and the current use is strictly after
   //    the conditional.
-  // 2. The last allocation in the AllocationSequence is in the alternate
+  // 2. The previous allocation in the AllocationSequence is in the alternate
   //    memory.
-  // 3. The last allocation serves the previous use and the current use.
-  // 4. The last allocation extends throughout the conditional live range.
+  // 3. The previous allocation serves the previous use and the current use.
+  // 4. The previous allocation extends throughout the conditional live range.
 
   // Check conditions 1 and 2.
   const AllocationSequence* allocation_sequence =
@@ -6813,7 +6813,15 @@ bool MsaAlgorithm::NeedsMirroredAllocation(
   return last_allocation_covers_conditional_live_range;
 }
 
-void MsaAlgorithm::CreateMirroredAllocations(
+bool MsaAlgorithm::ShouldBeMirrored(
+    const AllocationValue& allocation_value,
+    const AllocationValue::Use& current_use,
+    const AllocationValue::Use* previous_use) const {
+  return ShouldBeMirroredByNestedConditionals(allocation_value, current_use,
+                                              previous_use);
+}
+
+void MsaAlgorithm::CreateMirroredAllocationsForNestedConditionals(
     AllocationValue& allocation_value, const AllocationValue::Use& current_use,
     const AllocationValue::Use* previous_use,
     absl::Span<AllocationValue> allocation_values,
@@ -6913,6 +6921,17 @@ void MsaAlgorithm::CreateMirroredAllocations(
         *allocation_val.mutable_allocation_sequence()->back(),
         /*aliased_offset=*/nullptr);
   }
+}
+
+void MsaAlgorithm::CreateMirroredAllocations(
+    AllocationValue& allocation_value, const AllocationValue::Use& current_use,
+    const AllocationValue::Use* previous_use,
+    absl::Span<AllocationValue> allocation_values,
+    absl::flat_hash_set<AllocationValue*>&
+        already_processed_allocation_values_inside_a_conditional) {
+  CreateMirroredAllocationsForNestedConditionals(
+      allocation_value, current_use, previous_use, allocation_values,
+      already_processed_allocation_values_inside_a_conditional);
 }
 
 bool MsaAlgorithm::IsEvictionRequiredForPreviousUseAtConditional(
@@ -9970,9 +9989,10 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
   }
 
   // Propagate the memory space to the cloned fusion computations.
-  ABSL_ASSIGN_OR_RETURN(auto dataflow_analysis,
-                   HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
-                                            /*bitcast_defines_value=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      auto dataflow_analysis,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
+                               /*bitcast_defines_value=*/true));
   MemorySpacePropagation memory_space_propagation(std::move(dataflow_analysis));
   for (HloInstruction* inst : cloned_insts_order) {
     HloInstruction* cloned = cloned_insts[inst];
@@ -10847,6 +10867,9 @@ std::vector<MsaAlgorithm::Chunk> MsaAlgorithm::FindBestChunkCandidates(
           alternate_mem_interval->UpdateEndTime(use);
           std::vector<Chunk> chunk_candidates =
               FindChunkCandidates(*alternate_mem_interval);
+          if (chunk_candidates.empty()) {
+            return false;
+          }
           int64_t max_chunk_end =
               absl::c_max_element(chunk_candidates, [](const Chunk& c1,
                                                        const Chunk& c2) {
@@ -10880,6 +10903,12 @@ std::vector<MsaAlgorithm::Chunk> MsaAlgorithm::FindBestChunkCandidates(
   alternate_mem_interval->UpdateEndTime(end_time);
   std::vector<Chunk> chunk_candidates =
       FindChunkCandidates(*alternate_mem_interval, preferred_offset->offset);
+  // Ensure that chunk candidates exist before querying min/max elements to
+  // prevent undefined behavior or segmentation faults when chunk_candidates is
+  // empty.
+  if (chunk_candidates.empty()) {
+    return {};
+  }
   int64_t candidates_start =
       absl::c_min_element(chunk_candidates, [](const Chunk& c1,
                                                const Chunk& c2) {

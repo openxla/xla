@@ -23,11 +23,11 @@ limitations under the License.
 #include "grpcpp/client_context.h"
 #include "grpcpp/support/async_unary_call.h"
 #include "grpcpp/support/status.h"
-#include "xla/backends/profiler/subprocess/subprocess_registry.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/profiler_service.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/backends/profiler/subprocess/subprocess_registry.h"
 
 namespace xla {
 namespace profiler {

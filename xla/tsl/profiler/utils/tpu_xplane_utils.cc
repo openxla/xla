@@ -18,9 +18,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/regexp.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/platform/regexp.h"
 
 namespace tsl {
 namespace profiler {

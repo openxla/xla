@@ -19,10 +19,10 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "xla/tsl/platform/test.h"
-#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "tsl/platform/coding.h"
 #include "tsl/platform/raw_coding.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
 
 namespace tsl {
 

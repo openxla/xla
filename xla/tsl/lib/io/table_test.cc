@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/snappy.h"
 #include "xla/tsl/lib/io/block.h"
 #include "xla/tsl/lib/io/block_builder.h"
 #include "xla/tsl/lib/io/format.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/snappy.h"
 
 namespace tsl {
 namespace table {

@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "xla/service/gpu/llvm_gpu_backend/ptx_version_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"

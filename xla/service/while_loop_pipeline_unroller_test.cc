@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/while_loop_pipeline_unroller.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"

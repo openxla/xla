@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/cpp/eigen_unary.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <limits>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/match.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"

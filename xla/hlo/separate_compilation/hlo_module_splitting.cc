@@ -238,7 +238,7 @@ absl::StatusOr<std::unique_ptr<HloModuleSplit>> CreateHloModuleSplit(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloComputation> stub,
-                     CreateCalleeStub(callee, callee_index));
+                          CreateCalleeStub(callee, callee_index));
     VLOG(4) << "Stubbing " << stub->name() << " --> " << callee->name() << " "
             << stub->ToString();
     HloComputation* stub_raw_ptr =
@@ -294,7 +294,8 @@ absl::StatusOr<std::unique_ptr<HloModuleSplitGroup>> CreateHloModuleSplitGroup(
       GroupComputationsForSplitting(module));
 
   for (const auto& split : splits) {
-    ABSL_ASSIGN_OR_RETURN(auto module_split, CreateHloModuleSplit(module, split));
+    ABSL_ASSIGN_OR_RETURN(auto module_split,
+                          CreateHloModuleSplit(module, split));
     module_splits.push_back(std::move(module_split));
     for (const auto* original_comp : split) {
       computation_address_book.insert(
@@ -303,7 +304,7 @@ absl::StatusOr<std::unique_ptr<HloModuleSplitGroup>> CreateHloModuleSplitGroup(
     ABSL_RETURN_IF_ERROR(
         MergeMapInto(global_stub_map, module_splits.back()->stub_map));
     ABSL_RETURN_IF_ERROR(MergeMapInto(global_computation_map,
-                                 module_splits.back()->computation_map));
+                                      module_splits.back()->computation_map));
   }
 
   if (VLOG_IS_ON(5)) {
@@ -323,7 +324,7 @@ absl::StatusOr<std::unique_ptr<HloModuleSplitGroup>> CreateHloModuleSplitGroup(
   // Compose at the end once all planned cloning operations are finished and
   // we know where each original computation ended up.
   ABSL_ASSIGN_OR_RETURN(auto stub_links,
-                   ComposeMaps(global_stub_map, global_computation_map));
+                        ComposeMaps(global_stub_map, global_computation_map));
 
   HloLinkingManifest linking_manifest{
       std::move(stub_links), module.shared_config(),

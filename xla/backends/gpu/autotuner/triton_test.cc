@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <memory>
@@ -24,15 +27,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
-#include "mlir/IR/MLIRContext.h"
 #include "google/protobuf/text_format.h"
+#include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/target_config/target_config.h"
@@ -54,7 +56,6 @@ limitations under the License.
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace gpu {
@@ -338,10 +339,11 @@ TEST_P(TritonBackendTest, VerifyHopperConfigsAreDifferentFromBlackwell) {
         se::GpuComputeCapability{cap});
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(kSimpleGemmFusionHlo));
-    ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<BackendConfig>> configs,
-                     backend_.GetSupportedConfigs(
-                         *(module->entry_computation()->root_instruction())));
+                          ParseAndReturnVerifiedModule(kSimpleGemmFusionHlo));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<BackendConfig>> configs,
+        backend_.GetSupportedConfigs(
+            *(module->entry_computation()->root_instruction())));
 
     std::vector<TritonBackendConfig> result;
     for (auto& config : configs) {
@@ -859,7 +861,6 @@ TEST_P(TritonBackendTest, CostModelOptions_Combination) {
   ASSERT_THAT(configs, IsOk());
   EXPECT_THAT(configs.value(), SizeIs(7));
 }
-
 
 TEST_P(TritonBackendTest, Version) { EXPECT_NE(backend_.version(), ""); }
 

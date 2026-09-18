@@ -361,7 +361,12 @@ const HloInstruction* FindStart(const HloInstruction* done) {
     return nullptr;
   }
   if (done->IsAsyncDone()) {
-    return hlo_instruction_utils::async::FindAsyncStart(done);
+    const HloInstruction* start =
+        hlo_instruction_utils::async::FindAsyncStart(done);
+    if (start != nullptr && start->parent() != done->parent()) {
+      return done->operand(0);
+    }
+    return start;
   }
   switch (done->opcode()) {
     case HloOpcode::kCopyDone:
@@ -1672,6 +1677,31 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
   const auto& sched_state = sched_state_;
   HloGraphNode* an = a.node;
   HloGraphNode* bn = b.node;
+
+  // Update the resource_constrained of the candidate before any
+  // target specific rule is applied so rules can access the
+  // up-to-date value.
+  UpdateCandidateResourceConstrained(sched_state, a, an);
+  UpdateCandidateResourceConstrained(sched_state, b, bn);
+
+  const SchedulerConfig& config = sched_state.config;
+  if (config.force_delay_over_memory_pressure) {
+    if (ABSL_PREDICT_FALSE(core_->early_target_scheduling_rule_ != nullptr)) {
+      if (auto value = InvokeTargetSchedulingFunction(
+              core_->early_target_scheduling_rule_, a, b, reason)) {
+        return *value;
+      }
+    }
+
+    // Schedule according to ForceDelayAfterTarget when we executed the
+    // early target scheduling rule.
+    if (auto res = CmpDirectional(
+            core_->top_down_scheduling_, an->GetForceDelayAfterTarget(),
+            bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget", reason)) {
+      return *res;
+    }
+  }
+
   // Schedule according to ForceEarly.
   if (auto res =
           CmpDirectional(core_->top_down_scheduling_, !an->GetForceEarly(),
@@ -1700,30 +1730,6 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
   if (an->HasPreference() && bn->HasPreference()) {
     if (auto res = CmpExplicit(an->GetPreference(), bn->GetPreference(),
                                "kPreference", reason)) {
-      return *res;
-    }
-  }
-
-  // Update the resource_constrained of the candidate before any
-  // target specific rule is applied so rules can access the
-  // up-to-date value.
-  UpdateCandidateResourceConstrained(sched_state, a, an);
-  UpdateCandidateResourceConstrained(sched_state, b, bn);
-
-  const SchedulerConfig& config = sched_state.config;
-  if (config.force_delay_over_memory_pressure) {
-    if (ABSL_PREDICT_FALSE(core_->early_target_scheduling_rule_ != nullptr)) {
-      if (auto value = InvokeTargetSchedulingFunction(
-              core_->early_target_scheduling_rule_, a, b, reason)) {
-        return *value;
-      }
-    }
-
-    // Schedule according to ForceDelayAfterTarget when we executed the
-    // early target scheduling rule.
-    if (auto res = CmpDirectional(
-            core_->top_down_scheduling_, an->GetForceDelayAfterTarget(),
-            bn->GetForceDelayAfterTarget(), "kForceDelayAfterTarget", reason)) {
       return *res;
     }
   }
@@ -2586,7 +2592,7 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
 
     // Schedule the node.
     ABSL_ASSIGN_OR_RETURN(sched_state->current_time,
-                     ScheduleNode(node, sched_state));
+                          ScheduleNode(node, sched_state));
     num_scheduled++;
     VLOG(2) << "Scheduled annotated node (" << num_scheduled << "/"
             << annotation_size << "): " << node->GetInstr().name();
@@ -3672,10 +3678,11 @@ absl::Status DefaultSchedulerCore::SchedulingStep(
   // Get the first available node for scheduling that is the node that
   // satisfies our ready heuristic the best.
   ABSL_ASSIGN_OR_RETURN(HloGraphNode * node,
-                   FindAndExtractBestNodeAvailable(
-                       *sched_state, /*should_skip_node=*/nullptr));
+                        FindAndExtractBestNodeAvailable(
+                            *sched_state, /*should_skip_node=*/nullptr));
   CHECK(node != nullptr);
-  ABSL_ASSIGN_OR_RETURN(sched_state->current_time, ScheduleNode(node, sched_state));
+  ABSL_ASSIGN_OR_RETURN(sched_state->current_time,
+                        ScheduleNode(node, sched_state));
   VLOG(1) << "Scheduled: " << node->GetInstr().name();
   XLA_VLOG_LINES(5, node->ToString());
   return absl::OkStatus();
@@ -3810,7 +3817,8 @@ absl::StatusOr<bool> DefaultSchedulerCore::TryScheduleOneAnnotationGroup(
     sched_state->ready_annotations.pop_back();
     VLOG(2) << "------- BEGIN ANNOTATION: " << annotation << " -------";
     sched_state->ongoing_annotation = annotation;
-    ABSL_RETURN_IF_ERROR(ScheduleAnnotation(computation, annotation, sched_state));
+    ABSL_RETURN_IF_ERROR(
+        ScheduleAnnotation(computation, annotation, sched_state));
     VLOG(2) << "-------  END ANNOTATION: " << annotation << " --------";
     sched_state->ongoing_annotation = -1;
     return true;
@@ -3870,7 +3878,7 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
   ScopedVlogFilter filter_guard(computation->name(),
                                 config_.log_computation_re);
   ABSL_ASSIGN_OR_RETURN(auto new_schedule,
-                   ScheduleComputation(computation, sched_state));
+                        ScheduleComputation(computation, sched_state));
   auto default_sched_state =
       std::dynamic_pointer_cast<DefaultSchedulerCore::SchedulingState>(
           sched_state);
@@ -4378,8 +4386,6 @@ void LatencyHidingScheduler::LogScheduleStatistics(
                         .ToString());
 }
 
-
-
 absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -4441,7 +4447,7 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
   }
   for (HloComputation* computation : computations_to_schedule_) {
     ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> new_schedule,
-                     scheduler_core_->ScheduleComputation(computation));
+                          scheduler_core_->ScheduleComputation(computation));
     // Update target specific states that may include altering the
     // computation.
     scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
@@ -4474,7 +4480,7 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
     scheduler_core_->SetMemoryLimit(scheduler_core_->GetMemoryLimit() * 0.9);
     for (HloComputation* computation : computations_to_schedule_) {
       ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> new_schedule,
-                       scheduler_core_->ScheduleComputation(computation));
+                            scheduler_core_->ScheduleComputation(computation));
       scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
           computation, scheduler_core_->GetSchedulingState().get());
       module->schedule().set_sequence(computation,
@@ -4515,7 +4521,7 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
   }
   if (debug_options.xla_dump_latency_hiding_schedule()) {
     ABSL_ASSIGN_OR_RETURN(ScheduleProto proto,
-                     scheduler_core_->GetCapturedScheduleProto());
+                          scheduler_core_->GetCapturedScheduleProto());
     const std::string filename = absl::StrFormat("%s.schedule", module->name());
     DumpProtobufToFile(proto, debug_options, filename);
   }

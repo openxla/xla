@@ -171,7 +171,7 @@ absl::StatusOr<bool> UnflattenCallGraph::RunImpl(
     return false;
   }
   ABSL_ASSIGN_OR_RETURN(const std::vector<ComputationHashResult> hash_results,
-                   HashComputations(calls.targets));
+                        HashComputations(calls.targets));
 
   // Map computations to their hashes.
   // The HloComputation* keys are owned by the HloModule and are guaranteed to

@@ -42,7 +42,7 @@ class ScatterDeterminismExpanderTest
   absl::StatusOr<bool> RunScatterDeterminismExpander(HloModule* module) {
     ScatterDeterminismExpander scatter_determinism_expander;
     ABSL_ASSIGN_OR_RETURN(bool result,
-                     RunHloPass(&scatter_determinism_expander, module));
+                          RunHloPass(&scatter_determinism_expander, module));
 
     // Check that expander pass didn't introduce zero element arrays.
     for (HloComputation* comp : module->computations()) {

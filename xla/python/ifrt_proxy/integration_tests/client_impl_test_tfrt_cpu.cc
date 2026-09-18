@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/python/ifrt_proxy/integration_tests/scoped_pjrt_cpu_via_proxy.h"
 
 int main(int argc, char** argv) {

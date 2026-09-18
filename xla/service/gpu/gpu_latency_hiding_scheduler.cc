@@ -222,8 +222,8 @@ absl::StatusOr<ParticipatingDeviceGroups> GetParticipatingDevicesGroups(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(ParticipatingDeviceGroups instruction_groups,
-                     GetParticipatingDevicesGroupsForAsyncStart(
-                         *instruction, device_assignment));
+                          GetParticipatingDevicesGroupsForAsyncStart(
+                              *instruction, device_assignment));
     for (std::vector<GlobalDeviceId>& group : instruction_groups) {
       groups.push_back(std::move(group));
     }
@@ -327,7 +327,7 @@ bool IsMemoryBoundKernel(const HloInstruction& hlo) {
     case HloOpcode::kCall:
       return false;
     case HloOpcode::kFusion:
-      return !IsConvFusion(hlo) &&
+      return !IsCudnnFusion(hlo) &&
              !hlo_query::ContainsInstrWithOpcode(
                  hlo.fused_instructions_computation(),
                  {HloOpcode::kDot, HloOpcode::kConvolution});

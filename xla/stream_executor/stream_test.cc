@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/stream.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_matchers.h"
 #include "xla/stream_executor/platform.h"

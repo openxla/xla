@@ -20,11 +20,11 @@ limitations under the License.
 #include <algorithm>
 
 #include "absl/status/status.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/raw_coding.h"
 #include "xla/tsl/lib/io/format.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/coding.h"
-#include "tsl/platform/raw_coding.h"
 
 namespace tsl {
 namespace table {
@@ -90,8 +90,8 @@ static inline const char* DecodeEntry(const char* p, const char* limit,
 
 class Block::Iter : public Iterator {
  private:
-  const char* const data_;     // underlying block contents
-  const uint32_t restarts_;    // Offset of restart array (list of fixed32)
+  const char* const data_;       // underlying block contents
+  const uint32_t restarts_;      // Offset of restart array (list of fixed32)
   const uint32_t num_restarts_;  // Number of uint32 entries in restart array
 
   // current_ is offset in data_ of current entry.  >= restarts_ if !Valid

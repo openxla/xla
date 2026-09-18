@@ -18,9 +18,9 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "xla/python/profiler/internal/python_hooks.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/python/profiler/internal/python_hooks.h"
 
 namespace xla {
 namespace profiler {

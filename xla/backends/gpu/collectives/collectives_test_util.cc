@@ -88,7 +88,8 @@ CreateCommunicators(absl::Span<se::StreamExecutor* const> executors,
 
   CliqueIds clique_ids;
   for (size_t i = 0; i < num_ids; ++i) {
-    ABSL_ASSIGN_OR_RETURN(CliqueId clique_id, collectives->CreateUniqueCliqueId());
+    ABSL_ASSIGN_OR_RETURN(CliqueId clique_id,
+                          collectives->CreateUniqueCliqueId());
     clique_ids.Add(clique_id);
   }
 
@@ -98,9 +99,10 @@ CreateCommunicators(absl::Span<se::StreamExecutor* const> executors,
   config.blocking_communicators = blocking;
   config.async_execution = !blocking;
 
-  ABSL_ASSIGN_OR_RETURN(auto comms, collectives->CreateCommunicatorsWithCancel(
-                                   clique_key, clique_ids, device_ranks, config,
-                                   std::make_shared<CancellationToken>()));
+  ABSL_ASSIGN_OR_RETURN(auto comms,
+                        collectives->CreateCommunicatorsWithCancel(
+                            clique_key, clique_ids, device_ranks, config,
+                            std::make_shared<CancellationToken>()));
   return DowncastComms(std::move(comms));
 }
 
@@ -136,10 +138,10 @@ SplitCommunicators(
     existing_comms_ptrs[i] = existing_comms[i].get();
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto comms,
-                   collectives->SplitCommunicatorsWithCancel(
-                       existing_comms_ptrs, /*color=*/0, keys, config,
-                       device_ranks, std::make_shared<CancellationToken>()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto comms, collectives->SplitCommunicatorsWithCancel(
+                      existing_comms_ptrs, /*color=*/0, keys, config,
+                      device_ranks, std::make_shared<CancellationToken>()));
   return DowncastComms(std::move(comms));
 }
 
@@ -162,7 +164,7 @@ absl::StatusOr<std::vector<std::unique_ptr<se::MemoryAllocation>>> Allocate(
   allocations.reserve(allocators.size());
   for (auto& allocator : allocators) {
     ABSL_ASSIGN_OR_RETURN(allocations.emplace_back(),
-                     allocator->Allocate(num_bytes));
+                          allocator->Allocate(num_bytes));
   }
   return allocations;
 }
