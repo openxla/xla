@@ -46,9 +46,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-MC3tNh8VTCDFB7VH7tMT8B1Ozlerxr5m8Pd7EMEHZCk=",
-    strip_prefix = "rules_ml_toolchain-2d318f0d6a4c7a402d30a0bce260040e6807b196",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/2d318f0d6a4c7a402d30a0bce260040e6807b196.tar.gz"],
+    integrity = "sha256-leZLWuQZZ8NA+JMasSlW/ZF17F+iuj/PeMlfKehNlrM=",
+    strip_prefix = "rules_ml_toolchain-c5d0f1ee03814ab88830d368e298005e07e7e2e6",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/c5d0f1ee03814ab88830d368e298005e07e7e2e6.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -299,8 +299,17 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 local_clang_configure = use_extension("@rules_ml_toolchain//extensions:local_clang_configure.bzl", "local_clang_configure_ext")
 use_repo(local_clang_configure, "local_config_clang")
 
+# ROCm configuration - create both local_config_rocm and config_rocm_hipcc via extension
 rocm_configure = use_extension("//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
 use_repo(rocm_configure, "config_rocm_hipcc", "local_config_rocm")
+
+# Override rules_ml_toolchain's hermetic config_rocm_hipcc with XLA's local one
+# This is the bzlmod equivalent of WORKSPACE override pattern
+rocm_hermetic = use_extension("@rules_ml_toolchain//extensions:rocm_hermetic_download.bzl", "rocm_hermetic_download_ext")
+override_repo(
+    rocm_hermetic,
+    config_rocm_hipcc = "config_rocm_hipcc",
+)
 
 tensorrt_configure = use_extension("//third_party/extensions:tensorrt_configure.bzl", "tensorrt_configure_ext")
 use_repo(tensorrt_configure, "local_config_tensorrt")
