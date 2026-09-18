@@ -38,8 +38,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'main' }}
 
 env:
-  ROCM_DISTRO_URL: https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz
-  ROCM_DISTRO_HASH: 1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6
+  ROCM_DISTRO_URL: https://nightly.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.2.0a20260917.tar.gz
+  ROCM_DISTRO_HASH: d63e0138055bfe498ca7e8d79ad873f44dddccfe4f2e6a52a3d1dd01ac4d054a
 
 jobs:
   rocm-config:
@@ -110,7 +110,8 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
-            --build_event_json_file=jax_build_events.json
+            --build_event_json_file=jax_build_events.json \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx950,gfx1250-strict"
 
       - name: Upload JAX BEP File
         if: always()
@@ -164,7 +165,8 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
-            --build_event_json_file=xla_single_gpu_build_events.json
+            --build_event_json_file=xla_single_gpu_build_events.json \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx950,gfx1250-strict"
 
       - name: Test XLA [rocm_cpu]
         timeout-minutes: 80
@@ -182,7 +184,8 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=cpu \
             --bes_keywords=pull_request \
-            --build_event_json_file=xla_rocm_cpu_build_events.json
+            --build_event_json_file=xla_rocm_cpu_build_events.json \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx950,gfx1250-strict"
 
       - name: Upload XLA BEP Files
         if: always()
