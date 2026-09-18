@@ -97,9 +97,10 @@ xla_cc_binary(
     ],
 )
 
-cc_library(
-    name = "fusion_to_mlir_deps",
-    testonly = 1,
+xla_cc_binary(
+    name = "cpu_fusion_to_mlir",
+    testonly = True,
+    srcs = ["fusion_to_mlir.cc"],
     deps = [
         "//xla/backends/cpu/codegen:fusion_compiler",
         "//xla/backends/cpu/codegen:fusion_emitter",
@@ -113,20 +114,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:platform_port",
     ],
-)
-
-xla_cc_binary(
-    name = "cpu_fusion_to_mlir",
-    testonly = True,
-    srcs = ["fusion_to_mlir.cc"],
-    deps = [":fusion_to_mlir_deps"],
-)
-
-xla_cc_binary(
-    name = "fusion_to_mlir",
-    testonly = True,
-    srcs = ["fusion_to_mlir.cc"],
-    deps = [":fusion_to_mlir_deps"],
 )
 
 xla_cc_binary(
