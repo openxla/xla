@@ -64,15 +64,9 @@ cc_library(
     ],
 )
 
-xla_cc_binary(
-    name = "fusion_to_mlir",
+cc_library(
+    name = "fusion_to_mlir_deps",
     testonly = 1,
-    srcs = ["fusion_to_mlir.cc"],
-    # We want to use this tool for lit tests. Due to hermetic cuda, we need to
-    # set linkopts in such a way that dynamic libraries are found, which are
-    # symlinked from the lit_lib directory.
-    linkopts = ["-Wl,-rpath,$$ORIGIN/../lit_lib"],
-    visibility = [":codegen_tests"],
     deps = [
         ":test_lib",
         "//xla/codegen/tools:test_lib",
@@ -83,6 +77,30 @@ xla_cc_binary(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:platform_port",
     ],
+)
+
+xla_cc_binary(
+    name = "gpu_fusion_to_mlir",
+    testonly = 1,
+    srcs = ["fusion_to_mlir.cc"],
+    # We want to use this tool for lit tests. Due to hermetic cuda, we need to
+    # set linkopts in such a way that dynamic libraries are found, which are
+    # symlinked from the lit_lib directory.
+    linkopts = ["-Wl,-rpath,$$ORIGIN/../lit_lib"],
+    visibility = [":codegen_tests"],
+    deps = [":fusion_to_mlir_deps"],
+)
+
+xla_cc_binary(
+    name = "fusion_to_mlir",
+    testonly = 1,
+    srcs = ["fusion_to_mlir.cc"],
+    # We want to use this tool for lit tests. Due to hermetic cuda, we need to
+    # set linkopts in such a way that dynamic libraries are found, which are
+    # symlinked from the lit_lib directory.
+    linkopts = ["-Wl,-rpath,$$ORIGIN/../lit_lib"],
+    visibility = [":codegen_tests"],
+    deps = [":fusion_to_mlir_deps"],
 )
 
 xla_cc_binary(

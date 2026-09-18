@@ -36,53 +36,6 @@ load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 visibility(DEFAULT_LOAD_VISIBILITY)
 
-def _copy_binary_impl(ctx):
-    """Copy a binary and forward its runfiles.
-
-    This is like copy_file but properly forwards runfiles from the source,
-    which is necessary for --dynamic_mode=fully to work correctly.
-    """
-    # The output file name comes from the out attribute
-    output = ctx.outputs.out
-
-    # Create symlink to the source binary
-    ctx.actions.symlink(
-        output = output,
-        target_file = ctx.file.src,
-        is_executable = True,
-    )
-
-    # Forward runfiles from the source binary
-    src_runfiles = ctx.attr.src[DefaultInfo].default_runfiles
-    return [DefaultInfo(
-        files = depset([output]),
-        runfiles = src_runfiles,
-        executable = output,
-    )]
-
-copy_binary = rule(
-    implementation = _copy_binary_impl,
-    executable = True,
-    attrs = {
-        "src": attr.label(
-            mandatory = True,
-            allow_single_file = True,
-            executable = True,
-            cfg = "target",
-        ),
-        "out": attr.output(
-            mandatory = True,
-            doc = "The output file name",
-        ),
-    },
-    doc = """Copy a binary while preserving its runfiles.
-
-    Unlike copy_file, this rule forwards runfiles from the source binary,
-    which is essential for binaries built with --dynamic_mode=fully that
-    depend on shared libraries in the _solib directory.
-    """,
-)
-
 def enforce_glob(files, **kwargs):
     """A utility to enforce that a list matches a glob expression.
 
