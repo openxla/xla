@@ -2,7 +2,10 @@
 
 ## Prerequisites
 
-- Python >= 3.12 (required by JAX >= 0.11)
+These benchmarks are intended to run on a Cloud TPU VM running Python >= 3.12
+(required by JAX >= 0.11). Please refer to
+[these instructions](https://docs.cloud.google.com/tpu/docs/create-tpu-vm) for
+steps on how to create one.
 
 ## Quickstart
 
