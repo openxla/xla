@@ -1804,6 +1804,7 @@ void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
   };
 
   NativeDestT* dest_data = static_cast<NativeDestT*>(dst_base);
+#pragma clang loop vectorize(disable) unroll(disable)
   for (const NativeSrcT& src : src_data) {
     *(dest_data++) = converter(src);
   }
@@ -1821,15 +1822,13 @@ absl::Status ConvertIfDestTypeMatches(const LiteralBase& src_literal,
   DCHECK_EQ(src_data.size(), dst_literal.element_count());
   return primitive_util::ArrayTypeSwitch(
       [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsComplexType(kSrcType) &&
-                      !primitive_util::IsComplexType(primitive_type_constant)) {
-          return Unimplemented("%s from type %s to type %s is not implemented.",
-                               "Converting", PrimitiveType_Name(kSrcType),
-                               PrimitiveType_Name(primitive_type_constant()));
-        } else if constexpr (kSrcType != primitive_type_constant) {
-          using NativeDestT = NativeTypeOf<primitive_type_constant>;
-          ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
-                                                             dst_base);
+        if constexpr (!primitive_util::IsComplexType(kSrcType) ||
+                      primitive_util::IsComplexType(primitive_type_constant)) {
+          if constexpr (kSrcType != primitive_type_constant) {
+            using NativeDestT = NativeTypeOf<primitive_type_constant>;
+            ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
+                                                               dst_base);
+          }
         }
         return absl::OkStatus();
       },
@@ -1844,7 +1843,9 @@ absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
   }
   // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
-      !primitive_util::IsArrayType(literal.shape().element_type())) {
+      !primitive_util::IsArrayType(literal.shape().element_type()) ||
+      (primitive_util::IsComplexType(literal.shape().element_type()) &&
+       !primitive_util::IsComplexType(primitive_dest_type))) {
     return Unimplemented("%s from type %s to type %s is not implemented.",
                          "Converting",
                          PrimitiveType_Name(literal.shape().element_type()),
