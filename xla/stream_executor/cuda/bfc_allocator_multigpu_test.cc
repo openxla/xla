@@ -24,14 +24,14 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/cuda/cuda_contiguous_sub_allocator.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
-#include "xla/stream_executor/integrations/device_mem_allocator.h"
+#include "xla/stream_executor/integrations/contiguous_sub_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/bfc_allocator.h"
-#include "xla/tsl/framework/device_id.h"
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"
@@ -67,8 +67,9 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
                            executors_[rank]->GetCollectiveMemoryGranularity());
       if (rank == 0) page_ = granularity;
       ASSERT_EQ(granularity, page_);
-      auto sub = std::make_unique<DeviceMemAllocator>(
-          executors_[rank], tsl::PlatformDeviceId(rank));
+      ASSERT_OK_AND_ASSIGN(auto sub, CreateCudaContiguousSubAllocator(
+                                         executors_[rank], 16 * page_));
+      ASSERT_EQ(sub->granularity(), page_);
       tsl::BFCAllocator::Options opts;
       opts.allow_growth = true;
       opts.allow_retry_on_failure = false;
