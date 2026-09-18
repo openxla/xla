@@ -58,8 +58,8 @@ class CudaMemoryReservation : public MemoryReservation {
   absl::Status Map(size_t reservation_offset, size_t allocation_offset,
                    size_t size, MemoryAllocation& allocation) override;
 
-  // Enables read/write access to the full reservation for the owning device
-  // via cuMemSetAccess.
+  // Enables read/write access to this slice for the owning device and its
+  // P2P-capable peers via cuMemSetAccess.
   absl::Status SetAccess(uint64_t reservation_offset, size_t size) override;
 
   // Unmaps [offset, offset+size) within this reservation via cuMemUnmap.

@@ -49,6 +49,7 @@ cc_library(
         "//xla/client:local_client",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/service:platform_util",
+        "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/integrations:device_mem_allocator",

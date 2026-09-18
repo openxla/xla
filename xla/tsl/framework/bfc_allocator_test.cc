@@ -1485,7 +1485,7 @@ TEST(BFCAllocatorTest,
       opts.initial_region_bytes = 8 * kMiB;
       opts.lower_end_policy.gap_split_policy =
           exact ? BFCAllocator::SplitPolicy::kExact
-                : BFCAllocator::SplitPolicy::kBfc;
+                : BFCAllocator::SplitPolicy::kRetainPadding;
       BFCAllocator alloc(std::move(sub), 12 * kMiB, "coalesced", opts);
       if (timestamped) alloc.SetTimingCounter(&counter);
       void* high = alloc.AllocateRaw(kAlignment, 4 * kMiB, *kUpper);

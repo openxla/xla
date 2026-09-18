@@ -74,6 +74,7 @@ class MemoryReservation {
   // An RAII wrapper that gives access to a contiguous slice of a memory
   // reservation backed by one or more physical memory allocations.
   // Unmaps the mapped range from the reservation on destruction.
+  // Must be destroyed before the reservation and its backing allocations.
   class ScopedMapping {
    public:
     ScopedMapping() = default;
