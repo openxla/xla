@@ -24,6 +24,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.pb.h"
+#include "xla/backends/gpu/runtime/internable_kernel_loader_spec.h"
+#include "xla/backends/gpu/runtime/kernel_spec_table.h"
+#include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
@@ -151,6 +154,62 @@ TEST(CustomKernelTest, FromProtoWithClusterDims) {
   EXPECT_EQ(custom_kernel.thread_dims(), stream_executor::ThreadDim(4, 5, 6));
   EXPECT_EQ(custom_kernel.cluster_dims(), stream_executor::ClusterDim(7, 8, 9));
   EXPECT_EQ(custom_kernel.shared_memory_bytes(), 10);
+}
+
+TEST(CustomKernelTest, FromProtoWithInlineInternableKernelSpec) {
+  auto proto = ParseTextProtoOrDie<CustomKernelProto>(R"pb(
+    name: "kernel_name"
+    internable_kernel_spec {
+      kernel_spec {
+        in_process_symbol { persistent_name: "persistent_kernel_name" }
+        kernel_name: "kernel_name_in_spec"
+        arity: 42
+      }
+    }
+    block_dims { coordinates { x: 1 y: 2 z: 3 } }
+    thread_dims { coordinates { x: 4 y: 5 z: 6 } }
+    shared_memory_bytes: 7
+  )pb");
+  ASSERT_OK_AND_ASSIGN(CustomKernel custom_kernel,
+                       CustomKernel::FromProto(proto, StaticSymbolResolver));
+  EXPECT_EQ(custom_kernel.name(), "kernel_name");
+  EXPECT_EQ(custom_kernel.kernel_spec().kernel_name(), "kernel_name_in_spec");
+  EXPECT_EQ(custom_kernel.kernel_spec().arity(), 42);
+  EXPECT_EQ(custom_kernel.block_dims(), stream_executor::BlockDim(1, 2, 3));
+  EXPECT_EQ(custom_kernel.thread_dims(), stream_executor::ThreadDim(4, 5, 6));
+  EXPECT_EQ(custom_kernel.shared_memory_bytes(), 7);
+}
+
+TEST(CustomKernelTest, ToProtoAndFromProtoWithKernelSpecTable) {
+  KernelSpecTable table;
+  CustomKernel custom_kernel(
+      "kernel_name",
+      InternableKernelLoaderSpec(
+          stream_executor::KernelLoaderSpec::
+              CreateSerializableInProcessSymbolSpec(
+                  "persistent_kernel_name",
+                  /*symbol=*/absl::bit_cast<void*>(&SomeKernel), "kernel_name",
+                  /*arity=*/42),
+          &table),
+      stream_executor::BlockDim(1, 2, 3), stream_executor::ThreadDim(4, 5, 6),
+      /*shared_memory_bytes=*/7);
+
+  ASSERT_OK_AND_ASSIGN(CustomKernelProto proto, custom_kernel.ToProto());
+  EXPECT_EQ(table.size(), 1);
+  EXPECT_THAT(proto, tsl::proto_testing::EqualsProto(R"pb(
+                name: "kernel_name"
+                internable_kernel_spec { kernel_spec_index: 0 }
+                block_dims { coordinates { x: 1 y: 2 z: 3 } }
+                thread_dims { coordinates { x: 4 y: 5 z: 6 } }
+                shared_memory_bytes: 7
+              )pb"));
+
+  ASSERT_OK_AND_ASSIGN(
+      CustomKernel reconstructed,
+      CustomKernel::FromProto(proto, StaticSymbolResolver, &table));
+  EXPECT_EQ(reconstructed.name(), "kernel_name");
+  EXPECT_EQ(reconstructed.kernel_spec().kernel_name(), "kernel_name");
+  EXPECT_EQ(reconstructed.kernel_spec().arity(), 42);
 }
 
 }  // namespace
