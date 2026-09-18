@@ -5443,4 +5443,413 @@ absl::Status HloEvaluator::HandleScan(const HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+namespace detail {
+
+Shape GetShapeWithLayout(const Shape& shape) {
+  Shape shape_with_layout = shape;
+  LayoutUtil::SetToDefaultLayout(&shape_with_layout);
+  return shape_with_layout;
+}
+
+void IncrementContractingIndexes(
+    DimensionVector& contracting_indexes,
+    absl::Span<const int64_t> contracting_dims,
+    const DimensionVector& contracting_dim_sizes,
+    std::optional<int64_t> contracting_dim_to_skip) {
+  for (int i = contracting_dim_sizes.size() - 1; i >= 0; --i) {
+    if (contracting_dim_to_skip.has_value() &&
+        contracting_dim_to_skip.value() == i) {
+      continue;
+    }
+    ++contracting_indexes[contracting_dims[i]];
+    if (contracting_indexes[contracting_dims[i]] != contracting_dim_sizes[i]) {
+      break;
+    }
+    contracting_indexes[contracting_dims[i]] = 0;
+  }
+}
+
+void InvokeTraceMacHandler(const HloEvaluator::TraceMACHandler& handler,
+                           const Shape& dot_shape,
+                           absl::Span<const int64_t> result_index,
+                           const Shape& lhs_shape,
+                           absl::Span<const int64_t> lhs_index,
+                           const Shape& rhs_shape,
+                           absl::Span<const int64_t> rhs_index) {
+  const int64_t result_linear_index =
+      IndexUtil::MultidimensionalIndexToLinearIndex(dot_shape, result_index);
+  const int64_t lhs_linear_index =
+      IndexUtil::MultidimensionalIndexToLinearIndex(lhs_shape, lhs_index);
+  const int64_t rhs_linear_index =
+      IndexUtil::MultidimensionalIndexToLinearIndex(rhs_shape, rhs_index);
+  handler(result_linear_index, lhs_linear_index, rhs_linear_index);
+}
+
+DotSlowPathInfo::DotSlowPathInfo(const HloInstruction* dot,
+                                 const Literal& lhs_literal,
+                                 const Literal& rhs_literal)
+    : lhs_rank(lhs_literal.shape().dimensions().size()),
+      rhs_rank(rhs_literal.shape().dimensions().size()) {
+  const auto& dnums = dot->dot_dimension_numbers();
+  CHECK(ShapeUtil::SameElementType(lhs_literal.shape(), rhs_literal.shape()));
+  CHECK(ShapeUtil::SameElementType(lhs_literal.shape(), dot->shape()));
+  CHECK_EQ(dnums.lhs_batch_dimensions_size(),
+           dnums.rhs_batch_dimensions_size());
+
+  lhs_non_contracting_dims =
+      GetNonContractingDims(lhs_rank, dnums.lhs_contracting_dimensions(),
+                            dnums.lhs_batch_dimensions());
+  rhs_non_contracting_dims =
+      GetNonContractingDims(rhs_rank, dnums.rhs_contracting_dimensions(),
+                            dnums.rhs_batch_dimensions());
+
+  contracting_dim_sizes.reserve(dnums.lhs_contracting_dimensions_size());
+  for (int64_t i = 0; i < dnums.lhs_contracting_dimensions_size(); ++i) {
+    const int64_t lhs_dnum = dnums.lhs_contracting_dimensions(i);
+    const int64_t rhs_dnum = dnums.rhs_contracting_dimensions(i);
+    lhs_contracting_dims.push_back(lhs_dnum);
+    rhs_contracting_dims.push_back(rhs_dnum);
+    const int64_t dim_size = lhs_literal.shape().dimensions(lhs_dnum);
+    contracting_dim_sizes.push_back(dim_size);
+  }
+  total_contraction_size = Product(contracting_dim_sizes);
+  dot_shape = GetShapeWithLayout(dot->shape());
+}
+
+void DotSlowPathInfo::InitIndices(const DotDimensionNumbers& dnums,
+                                  absl::Span<const int64_t> result_index,
+                                  DimensionVector& lhs_index,
+                                  DimensionVector& rhs_index) const {
+  int64_t idx = 0;
+  for (int64_t i = 0; i < dnums.lhs_batch_dimensions_size(); i++) {
+    lhs_index[dnums.lhs_batch_dimensions(i)] = result_index[idx];
+    rhs_index[dnums.rhs_batch_dimensions(i)] = result_index[idx];
+    idx++;
+  }
+  for (int64_t i = 0; i < lhs_non_contracting_dims.size(); i++) {
+    lhs_index[lhs_non_contracting_dims[i]] = result_index[idx++];
+  }
+  for (int64_t i = 0; i < rhs_non_contracting_dims.size(); i++) {
+    rhs_index[rhs_non_contracting_dims[i]] = result_index[idx++];
+  }
+}
+
+RaggedDotNonContractingInfo::RaggedDotNonContractingInfo(
+    const HloInstruction* dot, const Literal& lhs_literal,
+    const Literal& rhs_literal, const Literal& gs_literal)
+    : lhs_ragged_dim(
+          dot->ragged_dot_dimension_numbers().lhs_ragged_dimensions(0)),
+      lhs_rank(lhs_literal.shape().dimensions().size()),
+      rhs_rank(rhs_literal.shape().dimensions().size()),
+      gs_rank(gs_literal.shape().dimensions().size()),
+      num_groups(gs_literal.shape().dimensions(gs_rank - 1)),
+      rhs_group_dim(
+          dot->ragged_dot_dimension_numbers().rhs_group_dimensions(0)) {
+  const auto& dot_dims =
+      dot->ragged_dot_dimension_numbers().dot_dimension_numbers();
+  lhs_contracting =
+      DimensionVector(dot_dims.lhs_contracting_dimensions().begin(),
+                      dot_dims.lhs_contracting_dimensions().end());
+  lhs_non_contracting =
+      GetNonContractingDims(lhs_rank, dot_dims.lhs_contracting_dimensions(),
+                            dot_dims.lhs_batch_dimensions());
+
+  auto rhs_contracting_proto = dot_dims.rhs_contracting_dimensions();
+  rhs_contracting_proto.Add(rhs_group_dim);
+  rhs_contracting = DimensionVector(rhs_contracting_proto.begin(),
+                                    rhs_contracting_proto.end());
+  rhs_non_contracting = GetNonContractingDims(rhs_rank, rhs_contracting_proto,
+                                              dot_dims.rhs_batch_dimensions());
+
+  contracting_dim_sizes.reserve(lhs_contracting.size());
+  for (int64_t i = 0; i < lhs_contracting.size(); ++i) {
+    int64_t dim_size = lhs_literal.shape().dimensions(lhs_contracting[i]);
+    contracting_dim_sizes.push_back(dim_size);
+  }
+  total_contracting_size = Product(contracting_dim_sizes);
+  dot_shape = GetShapeWithLayout(dot->shape());
+}
+
+bool RaggedDotNonContractingInfo::InitIndices(
+    const DotDimensionNumbers& dot_dims, const Literal& gs_literal,
+    absl::Span<const int64_t> result_index, DimensionVector& lhs_index,
+    DimensionVector& rhs_index) const {
+  DimensionVector group_index(gs_rank);
+  const int64_t group_dim_index = gs_rank - 1;
+  int64_t idx = 0;
+  int64_t gs_idx = 0;
+  for (int64_t i = 0; i < dot_dims.lhs_batch_dimensions_size(); ++i) {
+    lhs_index[dot_dims.lhs_batch_dimensions(i)] = result_index[idx];
+    rhs_index[dot_dims.rhs_batch_dimensions(i)] = result_index[idx];
+    if (gs_idx < group_dim_index) {
+      group_index[gs_idx++] = result_index[idx];
+    }
+    idx++;
+  }
+
+  for (int64_t i = 0; i < lhs_non_contracting.size(); ++i) {
+    if (lhs_ragged_dim != lhs_non_contracting[i]) {
+      if (gs_idx < group_dim_index) {
+        group_index[gs_idx++] = result_index[idx];
+      }
+    }
+    lhs_index[lhs_non_contracting[i]] = result_index[idx++];
+  }
+  for (int64_t i = 0; i < rhs_non_contracting.size(); ++i) {
+    rhs_index[rhs_non_contracting[i]] = result_index[idx++];
+  }
+
+  int64_t lhs_ragged_index = lhs_index[lhs_ragged_dim];
+  int64_t group_row_end = 0;
+  for (int64_t i = 0; i < num_groups; ++i) {
+    group_index[group_dim_index] = i;
+    group_row_end += gs_literal.Get<int64_t>(group_index);
+    if (lhs_ragged_index < group_row_end) {
+      break;
+    }
+  }
+  if (lhs_ragged_index >= group_row_end) {
+    return false;
+  }
+  rhs_index[rhs_group_dim] = group_index[gs_idx];
+  return true;
+}
+
+RaggedDotBatchInfo::RaggedDotBatchInfo(const HloInstruction* dot,
+                                       const Literal& lhs_literal,
+                                       const Literal& rhs_literal,
+                                       const Literal& gs_literal)
+    : lhs_rank(lhs_literal.shape().dimensions().size()),
+      rhs_rank(rhs_literal.shape().dimensions().size()),
+      gs_rank(gs_literal.shape().dimensions().size()),
+      group_dim_index(gs_rank - 1),
+      num_groups(gs_literal.shape().dimensions(group_dim_index)) {
+  const auto& dot_dims =
+      dot->ragged_dot_dimension_numbers().dot_dimension_numbers();
+  lhs_contracting =
+      DimensionVector(dot_dims.lhs_contracting_dimensions().begin(),
+                      dot_dims.lhs_contracting_dimensions().end());
+  lhs_non_contracting =
+      GetNonContractingDims(lhs_rank, dot_dims.lhs_contracting_dimensions(),
+                            dot_dims.lhs_batch_dimensions());
+  rhs_contracting =
+      DimensionVector(dot_dims.rhs_contracting_dimensions().begin(),
+                      dot_dims.rhs_contracting_dimensions().end());
+  rhs_non_contracting =
+      GetNonContractingDims(rhs_rank, dot_dims.rhs_contracting_dimensions(),
+                            dot_dims.rhs_batch_dimensions());
+
+  contracting_dim_sizes.reserve(lhs_contracting.size());
+  for (int64_t i = 0; i < lhs_contracting.size(); ++i) {
+    int64_t dim_size = lhs_literal.shape().dimensions(lhs_contracting[i]);
+    contracting_dim_sizes.push_back(dim_size);
+  }
+  total_contracting_size = Product(contracting_dim_sizes);
+  dot_shape = GetShapeWithLayout(dot->shape());
+}
+
+bool RaggedDotBatchInfo::InitIndices(const DotDimensionNumbers& dot_dims,
+                                     const Literal& gs_literal,
+                                     absl::Span<const int64_t> result_index,
+                                     DimensionVector& lhs_index,
+                                     DimensionVector& rhs_index) const {
+  DimensionVector group_index(gs_rank);
+  int64_t gs_idx = 0;
+  int64_t idx = 0;
+  for (int64_t i = 0; i < dot_dims.lhs_batch_dimensions_size(); ++i) {
+    lhs_index[dot_dims.lhs_batch_dimensions(i)] = result_index[idx];
+    rhs_index[dot_dims.rhs_batch_dimensions(i)] = result_index[idx];
+    if (gs_idx < group_dim_index) {
+      group_index[gs_idx++] = result_index[idx];
+    }
+    ++idx;
+  }
+
+  int64_t batches_handled = 0;
+  for (int i = 0; i < num_groups; ++i) {
+    group_index[group_dim_index] = i;
+    batches_handled += gs_literal.Get<int64_t>(group_index);
+  }
+  if (lhs_index[dot_dims.lhs_batch_dimensions(group_dim_index)] >=
+      batches_handled) {
+    return false;
+  }
+
+  for (int64_t i = 0; i < lhs_non_contracting.size(); ++i) {
+    lhs_index[lhs_non_contracting[i]] = result_index[idx++];
+  }
+  for (int64_t i = 0; i < rhs_non_contracting.size(); ++i) {
+    rhs_index[rhs_non_contracting[i]] = result_index[idx++];
+  }
+  return true;
+}
+
+RaggedDotContractingInfo::RaggedDotContractingInfo(const HloInstruction* dot,
+                                                   const Literal& lhs_literal,
+                                                   const Literal& rhs_literal,
+                                                   const Literal& gs_literal)
+    : lhs_rank(lhs_literal.shape().dimensions().size()),
+      rhs_rank(rhs_literal.shape().dimensions().size()),
+      gs_rank(gs_literal.shape().dimensions().size()) {
+  const auto& ragged_dims = dot->ragged_dot_dimension_numbers();
+  const auto& dot_dims = ragged_dims.dot_dimension_numbers();
+  int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+
+  lhs_contracting =
+      DimensionVector(dot_dims.lhs_contracting_dimensions().begin(),
+                      dot_dims.lhs_contracting_dimensions().end());
+  lhs_non_contracting =
+      GetNonContractingDims(lhs_rank, dot_dims.lhs_contracting_dimensions(),
+                            dot_dims.lhs_batch_dimensions());
+  rhs_contracting =
+      DimensionVector(dot_dims.rhs_contracting_dimensions().begin(),
+                      dot_dims.rhs_contracting_dimensions().end());
+  rhs_non_contracting =
+      GetNonContractingDims(rhs_rank, dot_dims.rhs_contracting_dimensions(),
+                            dot_dims.rhs_batch_dimensions());
+
+  contracting_dim_sizes.reserve(lhs_contracting.size());
+  for (int64_t i = 0; i < lhs_contracting.size(); ++i) {
+    int64_t dim_size = lhs_literal.shape().dimensions(lhs_contracting[i]);
+    contracting_dim_sizes.push_back(dim_size);
+    if (lhs_ragged_dim == lhs_contracting[i] &&
+        !ragged_dim_as_contracting_dim.has_value()) {
+      ragged_dim_as_contracting_dim = i;
+    }
+  }
+  ragged_dim_size =
+      contracting_dim_sizes[ragged_dim_as_contracting_dim.value()];
+  total_contracting_size_excluding_ragged_dim =
+      Product(contracting_dim_sizes) / ragged_dim_size;
+  dot_shape = GetShapeWithLayout(dot->shape());
+}
+
+void RaggedDotContractingInfo::InitIndicesAndGroupRowBounds(
+    const DotDimensionNumbers& dot_dims, const Literal& gs_literal,
+    absl::Span<const int64_t> result_index, DimensionVector& lhs_index,
+    DimensionVector& rhs_index, int64_t& group_row_start,
+    int64_t& group_row_end) const {
+  DimensionVector group_index(gs_rank);
+  const int64_t group_dim_index = gs_rank - 1;
+  int64_t gs_idx = 0;
+  int64_t idx = 1;
+  for (int64_t i = 0; i < dot_dims.lhs_batch_dimensions_size(); ++i) {
+    lhs_index[dot_dims.lhs_batch_dimensions(i)] = result_index[idx];
+    rhs_index[dot_dims.rhs_batch_dimensions(i)] = result_index[idx];
+    if (gs_idx < group_dim_index) {
+      group_index[gs_idx++] = result_index[idx];
+    }
+    ++idx;
+  }
+
+  group_row_start = 0;
+  group_row_end = 0;
+  for (int i = 0; i <= result_index[0]; ++i) {
+    group_index[group_dim_index] = i;
+    group_row_start = group_row_end;
+    group_row_end += gs_literal.Get<int64_t>(group_index);
+  }
+  group_row_start = std::max(group_row_start, INT64_C(0));
+  group_row_start = std::min(group_row_start, ragged_dim_size);
+  group_row_end = std::max(group_row_end, INT64_C(0));
+  group_row_end = std::min(group_row_end, ragged_dim_size);
+
+  for (int64_t i = 0; i < lhs_non_contracting.size(); ++i) {
+    lhs_index[lhs_non_contracting[i]] = result_index[idx++];
+  }
+  for (int64_t i = 0; i < rhs_non_contracting.size(); ++i) {
+    rhs_index[rhs_non_contracting[i]] = result_index[idx++];
+  }
+}
+
+std::pair<DimensionVector, DimensionVector> ScaledDotShapeInfo::dims(
+    const DimensionVector& dim_indexes, const Shape& literal_shape,
+    const Shape& scale_shape) {
+  DimensionVector dim_sizes;
+  DimensionVector dim_scale_divisors;
+  for (int64_t i = 0; i < dim_indexes.size(); ++i) {
+    dim_sizes.push_back(literal_shape.dimensions(dim_indexes[i]));
+    dim_scale_divisors.push_back(literal_shape.dimensions(dim_indexes[i]) /
+                                 scale_shape.dimensions(dim_indexes[i]));
+  }
+  return {dim_sizes, dim_scale_divisors};
+}
+
+ScaledDotShapeInfo::ScaledDotShapeInfo(
+    const Literal& literal, const Literal& scale_literal,
+    const tsl::protobuf::RepeatedField<int64_t>& contracting_dims_field,
+    const tsl::protobuf::RepeatedField<int64_t>& batch_dims_field)
+    : rank(literal.shape().dimensions().size()) {
+  batch_dim_indexes =
+      DimensionVector(batch_dims_field.begin(), batch_dims_field.end());
+  std::tie(batch_dim_sizes, batch_dim_scale_divisors) =
+      dims(batch_dim_indexes, literal.shape(), scale_literal.shape());
+
+  non_contracting_dim_indexes =
+      GetNonContractingDims(rank, contracting_dims_field, batch_dims_field);
+  std::tie(non_contracting_dim_sizes, non_contracting_dim_scale_divisors) =
+      dims(non_contracting_dim_indexes, literal.shape(), scale_literal.shape());
+
+  contracting_dim_indexes = DimensionVector(contracting_dims_field.begin(),
+                                            contracting_dims_field.end());
+  std::tie(contracting_dim_sizes, contracting_dim_scale_divisors) =
+      dims(contracting_dim_indexes, literal.shape(), scale_literal.shape());
+}
+
+void ScaledDotShapeInfo::InitIndices(
+    const DotDimensionNumbers& dnums, const ScaledDotShapeInfo& lhs_info,
+    const ScaledDotShapeInfo& rhs_info, absl::Span<const int64_t> result_index,
+    DimensionVector& lhs_index, DimensionVector& lhs_scale_index,
+    DimensionVector& rhs_index, DimensionVector& rhs_scale_index) {
+  int64_t idx = 0;
+  for (int64_t i = 0; i < dnums.lhs_batch_dimensions_size(); i++) {
+    lhs_index[dnums.lhs_batch_dimensions(i)] = result_index[idx];
+    rhs_index[dnums.rhs_batch_dimensions(i)] = result_index[idx];
+    lhs_scale_index[dnums.lhs_batch_dimensions(i)] =
+        result_index[idx] / lhs_info.batch_dim_scale_divisors[i];
+    rhs_scale_index[dnums.rhs_batch_dimensions(i)] =
+        result_index[idx] / rhs_info.batch_dim_scale_divisors[i];
+    idx++;
+  }
+
+  for (int64_t i = 0; i < lhs_info.non_contracting_dim_indexes.size(); i++) {
+    lhs_index[lhs_info.non_contracting_dim_indexes[i]] = result_index[idx];
+    lhs_scale_index[lhs_info.non_contracting_dim_indexes[i]] =
+        result_index[idx] / lhs_info.non_contracting_dim_scale_divisors[i];
+    idx++;
+  }
+  for (int64_t i = 0; i < rhs_info.non_contracting_dim_indexes.size(); i++) {
+    rhs_index[rhs_info.non_contracting_dim_indexes[i]] = result_index[idx];
+    rhs_scale_index[rhs_info.non_contracting_dim_indexes[i]] =
+        result_index[idx] / rhs_info.non_contracting_dim_scale_divisors[i];
+    idx++;
+  }
+}
+
+void ScaledDotShapeInfo::StepContractingIndices(
+    const ScaledDotShapeInfo& lhs_info, const ScaledDotShapeInfo& rhs_info,
+    DimensionVector& lhs_index, DimensionVector& lhs_scale_index,
+    DimensionVector& rhs_index, DimensionVector& rhs_scale_index) {
+  if (!lhs_info.contracting_dim_sizes.empty()) {
+    for (int64_t i = lhs_info.contracting_dim_sizes.size() - 1; i >= 0; --i) {
+      lhs_index[lhs_info.contracting_dim_indexes[i]]++;
+      lhs_scale_index[lhs_info.contracting_dim_indexes[i]] =
+          lhs_index[lhs_info.contracting_dim_indexes[i]] /
+          lhs_info.contracting_dim_scale_divisors[i];
+      rhs_index[rhs_info.contracting_dim_indexes[i]]++;
+      rhs_scale_index[rhs_info.contracting_dim_indexes[i]] =
+          rhs_index[rhs_info.contracting_dim_indexes[i]] /
+          rhs_info.contracting_dim_scale_divisors[i];
+      if (lhs_index[lhs_info.contracting_dim_indexes[i]] !=
+          lhs_info.contracting_dim_sizes[i]) {
+        break;
+      }
+      lhs_index[lhs_info.contracting_dim_indexes[i]] = 0;
+      rhs_index[rhs_info.contracting_dim_indexes[i]] = 0;
+    }
+  }
+}
+
+}  // namespace detail
+
 }  // namespace xla
