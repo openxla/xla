@@ -55,6 +55,7 @@ xla_cc_test(
         ":sm_bw_kernels",
         ":sm_bw_utils",
         "//xla/tsl/cuda:cudart",
+        "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest_main",
     ],
 )
