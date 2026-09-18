@@ -369,16 +369,15 @@ void HloLiveRange::CalculateBufferStartEndMap() {
         instruction.IsRoot() ? computation_span_times_[computation].end
                              : entry.second;
 
-    // If the instruction is in an asynchronous context, extend the live range
-    // to cover the full async window: from the start of the outer computation
-    // to the end of the async-done instruction.
-    //
-    // The start is extended backward because LHS-style schedulers can fire
-    // async-start as an independent source node, meaning the inner computation
-    // runs concurrently with instructions that precede the async-start in the
-    // sequential HLO schedule. Treating inner buffers as live from the outer
-    // computation's start prevents the heap simulator from aliasing them with
-    // buffers from those earlier outer instructions.
+    // If the instruction is in an asynchronous context, adjust its live range
+    // to cover the async window precisely:
+    //   - end_time is extended to the async-done instruction so the buffer
+    //     remains live for the full async duration.
+    //   - start_time is tightened to the first-fully-bound instruction
+    //     (async-start for standard chains, async-update for late-binding
+    //     chains), because FlattenSchedule inlines the async computation
+    //     immediately before that instruction and the inner buffer is not live
+    //     before it fires.
     auto async_context_it = computations_in_async_context_.find(computation);
     if (async_context_it != computations_in_async_context_.end()) {
       const HloComputation* async_context = async_context_it->second;
@@ -412,7 +411,7 @@ void HloLiveRange::CalculateBufferStartEndMap() {
           // for standard chains, async-update for late-binding chains).
           // The inner buffer is not live until that instruction fires, so
           // assigning its schedule time gives the most accurate start.
-          auto is_first_fully_bound =
+          absl::StatusOr<bool> is_first_fully_bound =
               hlo_instruction_utils::async::IsFirstFullyBound(caller);
           if (is_first_fully_bound.ok() && *is_first_fully_bound) {
             auto first_bound_it = instruction_schedule_.find(caller);
