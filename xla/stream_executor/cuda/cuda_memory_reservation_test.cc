@@ -33,9 +33,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -101,8 +98,8 @@ TEST_F(CudaMemoryReservationTest, MapToSingleAllocation) {
   EXPECT_EQ(mapping.mapped_address().opaque(), res->address().opaque());
   EXPECT_EQ(mapping.mapped_address().size(), alloc_size);
   // ScopedMapping destructor: cuMemUnmap.
-  // CudaMemoryReservation destructor: cuMemUnmap (logs error, already unmapped)
-  // + cuMemAddressFree. Allocation destructor: cuMemRelease.
+  // CudaMemoryReservation destructor: cuMemAddressFree.
+  // Allocation destructor: cuMemRelease.
 }
 
 // Verifies that ScopedMapping unmaps the range on destruction, allowing a

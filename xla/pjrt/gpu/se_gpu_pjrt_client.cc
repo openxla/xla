@@ -1057,14 +1057,23 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
         desc.Clear();
         desc.set_buffer_index(i);
         if (mem->mem().size() > 0) {
+          ABSL_ASSIGN_OR_RETURN(auto range,
+                           executor->GetAllocationRange(mem->mem().opaque()));
+          const uintptr_t buffer_offset =
+              reinterpret_cast<intptr_t>(mem->mem().opaque()) -
+              reinterpret_cast<intptr_t>(range.opaque());
+          // A growing BFC buffer may span physical mappings. This descriptor
+          // carries only one fabric handle, so it cannot represent that span.
+          if (buffer_offset > range.size() ||
+              mem->mem().size() > range.size() - buffer_offset) {
+            return Unimplemented(
+                "Cross-host fabric transfer of a buffer spanning physical "
+                "allocations is not supported.");
+          }
           ABSL_ASSIGN_OR_RETURN(
               *desc.mutable_buffer_handle(),
               GetOrExportFabricHandle(executor, mem->mem().opaque()));
-          ABSL_ASSIGN_OR_RETURN(auto range,
-                           executor->GetAllocationRange(mem->mem().opaque()));
-          desc.set_buffer_offset(
-              reinterpret_cast<intptr_t>(mem->mem().opaque()) -
-              reinterpret_cast<intptr_t>(range.opaque()));
+          desc.set_buffer_offset(buffer_offset);
         }
         desc.set_rendezvous_key(rendezvous_key);
 
@@ -1330,8 +1339,9 @@ GetStreamExecutorGpuDeviceAllocator(
       // Collective memory is anchored at the lower end: symmetric NCCL windows
       // need identical offsets across ranks, and the base of a preallocated
       // range is the one address that can never move. Default memory is served
-      // from the upper end. Optional growth adds separate default-only regions
-      // without changing the shared range or collective offsets.
+      // from the upper end. On CUDA, growth maps additional backing into the
+      // reserved VA range and advances the upper end without changing existing
+      // mappings or the collective allocation limit.
       shared_collective_pool =
           allocator_config.preallocate &&
           debug_options.xla_gpu_enable_allocator_spatial_partitioning();

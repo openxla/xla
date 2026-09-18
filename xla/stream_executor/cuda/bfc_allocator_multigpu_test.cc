@@ -25,6 +25,8 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -69,6 +71,7 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
       ASSERT_EQ(granularity, page_);
       auto sub = std::make_unique<DeviceMemAllocator>(
           executors_[rank], tsl::PlatformDeviceId(rank));
+      ASSERT_OK(sub->ReserveMemory(16 * page_));
       tsl::BFCAllocator::Options opts;
       opts.allow_growth = true;
       opts.allow_retry_on_failure = false;
@@ -175,6 +178,19 @@ TEST_F(CudaBfcSymmetricGrowthTest, WindowsSurviveAsymmetricGrowth) {
   // Only rank zero grows, while its first symmetric window remains registered.
   void* extension = allocators_[0]->AllocateRaw(256, 8 * page_, upper_);
   ASSERT_NE(extension, nullptr);
+  EXPECT_EQ(reinterpret_cast<uintptr_t>(extension),
+            reinterpret_cast<uintptr_t>(buffers_[0][0]) + 4 * page_);
+  // Pointer range queries describe individual physical mappings, not the VA
+  // reservation. A single fabric handle cannot export a buffer spanning them.
+  auto* gpu_executor = static_cast<GpuExecutor*>(executors_[0]);
+  ASSERT_OK_AND_ASSIGN(auto initial_range,
+                       gpu_executor->GetAllocationRange(buffers_[0][0]));
+  ASSERT_OK_AND_ASSIGN(auto extension_range,
+                       gpu_executor->GetAllocationRange(extension));
+  EXPECT_EQ(initial_range.opaque(), buffers_[0][0]);
+  EXPECT_EQ(initial_range.size(), 4 * page_);
+  EXPECT_EQ(extension_range.opaque(), extension);
+  EXPECT_EQ(extension_range.size(), 8 * page_);
   EXPECT_GT(allocators_[0]->GetStats()->pool_bytes.value(), 4 * page_);
   EXPECT_EQ(allocators_[1]->GetStats()->pool_bytes.value(), 4 * page_);
   ASSERT_NO_FATAL_FAILURE(AllReduce(0));
@@ -204,6 +220,67 @@ TEST_F(CudaBfcSymmetricGrowthTest, WindowsSurviveAsymmetricGrowth) {
   allocators_[0]->DeallocateRaw(extension);
   // The released extension remains unavailable to collective allocations.
   EXPECT_EQ(allocators_[0]->AllocateRaw(page_, 2 * page_, lower_), nullptr);
+
+  // Free the old upper buffer, then reuse a span crossing the initial mapping
+  // boundary without allocating any more physical memory. Both S(1) windows
+  // stay registered throughout this coalescing and reuse.
+  allocators_[0]->DeallocateRaw(ordinary_[0]);
+  ordinary_[0] = nullptr;
+  const int64_t mapped_bytes = allocators_[0]->GetStats()->pool_bytes.value();
+  void* spanning = allocators_[0]->AllocateRaw(256, 9 * page_, upper_);
+  ASSERT_NE(spanning, nullptr);
+  const uintptr_t old_end =
+      reinterpret_cast<uintptr_t>(buffers_[0][0]) + 4 * page_;
+  ASSERT_LT(reinterpret_cast<uintptr_t>(spanning), old_end);
+  ASSERT_GT(reinterpret_cast<uintptr_t>(spanning) + 9 * page_, old_end);
+  EXPECT_EQ(allocators_[0]->GetStats()->pool_bytes.value(), mapped_bytes);
+  {
+    auto activation = executors_[0]->Activate();
+    ASSERT_EQ(cuMemsetD32(old_end - sizeof(uint32_t), 9012, 2), CUDA_SUCCESS);
+    std::array<uint32_t, 2> values;
+    ASSERT_EQ(
+        cuMemcpyDtoH(values.data(), old_end - sizeof(uint32_t), sizeof(values)),
+        CUDA_SUCCESS);
+    EXPECT_EQ(values[0], 9012);
+    EXPECT_EQ(values[1], 9012);
+  }
+  ASSERT_NO_FATAL_FAILURE(AllReduce(0));
+  ASSERT_NO_FATAL_FAILURE(AllReduce(1));
+  allocators_[0]->DeallocateRaw(spanning);
+}
+
+TEST(CudaBfcGrowthTest, FirstRequestCanSpanInitialBackingAndExtensionAtCap) {
+  ASSERT_OK_AND_ASSIGN(auto* platform,
+                       PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
+  if (platform->VisibleDeviceCount() < 1) GTEST_SKIP() << "Requires CUDA";
+  ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
+  auto sub =
+      std::make_unique<DeviceMemAllocator>(executor, tsl::PlatformDeviceId(0));
+  ASSERT_OK_AND_ASSIGN(uint64_t page,
+                       executor->GetCollectiveMemoryGranularity());
+  ASSERT_OK(sub->ReserveMemory(8 * page));
+  tsl::BFCAllocator::Options opts;
+  opts.allow_growth = true;
+  opts.allow_retry_on_failure = false;
+  opts.enable_spatial_partitioning = true;
+  opts.initial_region_bytes = 4 * page;
+  tsl::BFCAllocator allocator(std::move(sub), 8 * page, "first_growth", opts);
+  const tsl::AllocationAttributes upper{false, false, nullptr,
+                                        tsl::AllocationEnd::kUpper};
+  void* ptr = allocator.AllocateRaw(page, 8 * page, upper);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(allocator.GetStats()->pool_bytes.value(), 8 * page);
+  auto activation = executor->Activate();
+  const CUdeviceptr boundary = reinterpret_cast<CUdeviceptr>(ptr) + 4 * page;
+  ASSERT_EQ(cuMemsetD32(boundary - sizeof(uint32_t), 42, 2), CUDA_SUCCESS);
+  std::array<uint32_t, 2> values;
+  ASSERT_EQ(
+      cuMemcpyDtoH(values.data(), boundary - sizeof(uint32_t), sizeof(values)),
+      CUDA_SUCCESS);
+  EXPECT_EQ(values[0], 42);
+  EXPECT_EQ(values[1], 42);
+  EXPECT_EQ(allocator.AllocateRaw(page, page, upper), nullptr);
+  allocator.DeallocateRaw(ptr);
 }
 
 }  // namespace
