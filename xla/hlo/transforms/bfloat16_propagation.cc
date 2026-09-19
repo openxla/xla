@@ -30,7 +30,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -70,6 +69,51 @@ bool IsAssociativeScan(const HloInstruction* hlo) {
   return Cast<HloScanInstruction>(hlo)->is_associative() == TRI_STATE_TRUE;
 }
 
+// Returns true for ops that only move buffers between tuple shapes and never
+// compute on them. Their operand and output precisions are tied per element,
+// not per instruction, so the per-instruction SupportsMixedPrecisions answer
+// says nothing about them.
+bool IsTupleForwarder(const HloInstruction* hlo) {
+  return hlo->opcode() == HloOpcode::kTuple ||
+         hlo->opcode() == HloOpcode::kGetTupleElement ||
+         hlo->opcode() == HloOpcode::kDomain;
+}
+
+// Returns true if every array leaf of `shape` has element type `type`. Stops
+// at the first leaf that does not.
+bool AllArrayLeavesHaveType(const Shape& shape, PrimitiveType type) {
+  if (shape.IsTuple()) {
+    return absl::c_all_of(shape.tuple_shapes(), [type](const Shape& subshape) {
+      return AllArrayLeavesHaveType(subshape, type);
+    });
+  }
+  return shape.IsArray() && shape.element_type() == type;
+}
+
+// Returns the output shape index of `use.instruction` that reads the operand
+// value at `use` when the op forwards operand precision to its output
+// (EffectiveOperandPrecisionIsOutputPrecision). Tuple and tuple-shaped
+// all-reduce prefix the operand number; get-tuple-element strips its tuple
+// index; every other op reads the same index it was given.
+ShapeIndex ForwardedOutputIndex(const HloUse& use) {
+  ShapeIndex use_output_index;
+  if (use.instruction->opcode() == HloOpcode::kTuple ||
+      (use.instruction->opcode() == HloOpcode::kAllReduce &&
+       use.instruction->shape().IsTuple())) {
+    use_output_index.push_back(use.operand_number);
+    for (int64_t i : use.operand_index) {
+      use_output_index.push_back(i);
+    }
+  } else if (use.instruction->opcode() == HloOpcode::kGetTupleElement) {
+    for (int64_t i = 1; i < use.operand_index.size(); ++i) {
+      use_output_index.push_back(use.operand_index[i]);
+    }
+  } else {
+    use_output_index = use.operand_index;
+  }
+  return use_output_index;
+}
+
 }  // namespace
 
 BFloat16Propagation::BFloat16Propagation(const FloatSupport* bfloat16_support,
@@ -81,8 +125,49 @@ BFloat16Propagation::BFloat16Propagation(const FloatSupport* bfloat16_support,
 void BFloat16Propagation::DetermineFusionComputationPrecision(
     HloInstruction* fusion) {
   CHECK_EQ(fusion->opcode(), HloOpcode::kFusion);
-  if (!bfloat16_support_->SupportsMixedPrecisions(*fusion)) {
-    return;
+  if (!SupportsMixedPrecisionsCached(fusion)) {
+    bool has_f32_output = false;
+    bool has_bf16_output = false;
+    ShapeUtil::ForEachSubshape(fusion->shape(), [&](const Shape& subshape,
+                                                    const ShapeIndex& index) {
+      if (!subshape.IsArray()) {
+        return;
+      }
+      PrimitiveType effective_type = subshape.element_type() == F32
+                                         ? OutputTypeAfterChange(fusion, index)
+                                         : subshape.element_type();
+      if (effective_type == BF16) {
+        has_bf16_output = true;
+      } else if (effective_type == F32) {
+        has_f32_output = true;
+      }
+    });
+    if (!has_bf16_output || has_f32_output) {
+      // If some outputs were tentatively marked BF16 while others remain F32,
+      // revert the fusion's outputs back to F32 so the outer node remains
+      // homogeneous. The fusion's users have already been visited by the
+      // backward pass, but none of them read the fusion's post-change type:
+      // a user's own precision depends only on *its* users, and
+      // AllUsersConsumeBF16 on the operands reads the fused-parameter marks,
+      // not the fusion's output marks. Only the resolve pass reads them: it
+      // seeds F32 constraints from unmarked outputs (except outputs a
+      // call-boundary push can still mark, such as the root of a called
+      // computation), and MaterializeResolvedPrecisions rewrites them. The
+      // edges PropagateFromPosition adds for a pinned F32 output leaf of such
+      // a fusion carry the revert to its other output leaves and to its
+      // operands and fused parameters.
+      // Any value that aliases these outputs is reconciled by the resolve pass.
+      if (has_bf16_output) {
+        ShapeUtil::ForEachSubshape(
+            fusion->shape(),
+            [&](const Shape& subshape, const ShapeIndex& index) {
+              if (subshape.IsArray() && subshape.element_type() == F32) {
+                AddToOrRemoveFromBF16ChangeSet(fusion, index, F32);
+              }
+            });
+      }
+      return;
+    }
   }
 
   // We are depending on the fusion node itself having already been analyzed
@@ -480,33 +565,10 @@ bool BFloat16Propagation::AllUsersConsumeBF16(const HloInstruction& hlo,
       // supply BF16 also as the input. In the backward pass, the users shapes
       // should have already been processed.
       if (bfloat16_support_->EffectiveOperandPrecisionIsOutputPrecision(
-              *use.instruction, use.operand_number)) {
-        if (use.instruction->opcode() == HloOpcode::kTuple ||
-            (use.instruction->opcode() == HloOpcode::kAllReduce &&
-             use.instruction->shape().IsTuple())) {
-          ShapeIndex use_output_index{use.operand_number};
-          for (int64_t i : use.operand_index) {
-            use_output_index.push_back(i);
-          }
-          if (OutputTypeAfterChange(use.instruction, use_output_index) ==
+              *use.instruction, use.operand_number) &&
+          OutputTypeAfterChange(use.instruction, ForwardedOutputIndex(use)) ==
               BF16) {
-            continue;
-          }
-        } else if (use.instruction->opcode() == HloOpcode::kGetTupleElement) {
-          ShapeIndex use_output_index;
-          for (int64_t i = 1; i < use.operand_index.size(); ++i) {
-            use_output_index.push_back(use.operand_index[i]);
-          }
-          if (OutputTypeAfterChange(use.instruction, use_output_index) ==
-              BF16) {
-            continue;
-          }
-        } else {
-          if (OutputTypeAfterChange(use.instruction, use.operand_index) ==
-              BF16) {
-            continue;
-          }
-        }
+        continue;
       }
       return false;
     }
@@ -668,18 +730,157 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
       });
 }
 
+bool BFloat16Propagation::OperandF32SourcesAreCandidates(
+    const HloInstruction* operand) const {
+  // Walk syntactically through tuple forwarders in the operand's own
+  // computation to the instructions that produce its F32 leaves, and require
+  // each of those to be a candidate. This deliberately does not use the
+  // dataflow value sets: with propagate_through_calls, the values reaching a
+  // while/conditional/call parameter are defined in the caller (or at the
+  // while body root), neither of which the forward pass has visited yet when
+  // it reaches the callee, so a dataflow walk would reject every non-mixed op
+  // fed from such a parameter. The parameter itself is the right thing to
+  // judge there, exactly as for any other non-forwarding operand.
+  //
+  // No visited set is needed: the walk only moves from an instruction to its
+  // operands within one computation (a DAG), and every (instruction, index)
+  // pair it visits corresponds to a distinct subshape of `operand`, so the
+  // work is bounded by subshapes of the operand times forwarding depth, not
+  // just the leaf count. Still linear.
+  std::vector<std::pair<const HloInstruction*, ShapeIndex>> worklist;
+  worklist.emplace_back(operand, ShapeIndex{});
+  while (!worklist.empty()) {
+    auto [inst, index] = std::move(worklist.back());
+    worklist.pop_back();
+    const Shape& subshape = ShapeUtil::GetSubshape(inst->shape(), index);
+    if (!ShapeUtil::HasPrimitiveType(subshape, F32)) {
+      continue;  // Nothing at this position can change precision.
+    }
+    switch (inst->opcode()) {
+      case HloOpcode::kTuple:
+        if (index.empty()) {
+          for (const HloInstruction* tuple_operand : inst->operands()) {
+            worklist.emplace_back(tuple_operand, ShapeIndex{});
+          }
+        } else {
+          ShapeIndex operand_index(index.begin() + 1, index.end());
+          worklist.emplace_back(inst->operand(index.front()),
+                                std::move(operand_index));
+        }
+        break;
+      case HloOpcode::kGetTupleElement: {
+        ShapeIndex operand_index{inst->tuple_index()};
+        for (int64_t i : index) {
+          operand_index.push_back(i);
+        }
+        worklist.emplace_back(inst->operand(0), std::move(operand_index));
+        break;
+      }
+      case HloOpcode::kDomain:
+        worklist.emplace_back(inst->operand(0), index);
+        break;
+      default:
+        if (!ContainsKey(consider_using_bfloat16_, inst)) {
+          return false;
+        }
+        break;
+    }
+  }
+  return true;
+}
+
+bool BFloat16Propagation::KeepsNonMixedPrecisionOpHomogeneous(
+    const HloInstruction* hlo) {
+  if (SupportsMixedPrecisionsCached(hlo) || IsTupleForwarder(hlo)) {
+    return false;
+  }
+  if (hlo->opcode() == HloOpcode::kFusion) {
+    return true;  // FloatNormalization skips fusions.
+  }
+  // Mirror the "change everything to low precision" branch of
+  // FloatNormalizationVisitor::HandleInstruction, which is how
+  // FloatNormalization keeps a bare non-mixed op's BF16 output: every operand
+  // that is not already entirely BF16 must forward operand precision or be
+  // read at low precision, and accept a BF16 operand. Otherwise it restores
+  // the F32 output. Tuple-shaped ops and ops with called computations take
+  // other paths through FloatNormalization and are left to it. A few opcodes
+  // (bitcast, bitcast-convert, ...) are skipped by FloatNormalization
+  // entirely, which would leave such an op mixed; keeping one homogeneous
+  // here is merely conservative.
+  if (hlo->shape().IsTuple() || !hlo->called_computations().empty()) {
+    return false;
+  }
+  // Only an op with an F32/BF16 operand has an operand to keep at its output's
+  // precision. An op without one (real/imag/fft of a complex value, a
+  // bitcast-convert or integer op on integers, ...) is left to the plain
+  // candidate check in InstructionIsCandidateForBF16Output.
+  if (absl::c_none_of(hlo->operands(), [](const HloInstruction* operand) {
+        return ShapeUtil::HasPrimitiveType(operand->shape(), F32) ||
+               ShapeUtil::HasPrimitiveType(operand->shape(), BF16);
+      })) {
+    return false;
+  }
+  for (int64_t i = 0; i < hlo->operand_count(); ++i) {
+    if (AllArrayLeavesHaveType(hlo->operand(i)->shape(), BF16)) {
+      continue;
+    }
+    if ((bfloat16_support_->EffectiveOperandPrecisionIsLowPrecision(*hlo, i) ||
+         bfloat16_support_->EffectiveOperandPrecisionIsOutputPrecision(*hlo,
+                                                                       i)) &&
+        bfloat16_support_->SupportsLowPrecisionOperand(*hlo, i)) {
+      continue;
+    }
+    return true;  // FloatNormalization could not convert this operand.
+  }
+  return false;
+}
+
 bool BFloat16Propagation::InstructionIsCandidateForBF16Output(
     HloInstruction* hlo) {
-  if (!bfloat16_support_->SupportsMixedPrecisions(*hlo) &&
-      hlo->opcode() != HloOpcode::kTuple &&
-      hlo->opcode() != HloOpcode::kGetTupleElement &&
-      hlo->opcode() != HloOpcode::kDomain &&
-      hlo->shape().element_type() != BF16) {
+  if (!SupportsMixedPrecisionsCached(hlo) && !IsTupleForwarder(hlo) &&
+      !AllArrayLeavesHaveType(hlo->shape(), BF16)) {
+    // The op must stay homogeneous, so its output can only become BF16 if
+    // every floating-point operand can become BF16 with it. Where this pass
+    // itself enforces that (see KeepsNonMixedPrecisionOpHomogeneous), operands
+    // that are neither F32 nor BF16 are skipped, and the instructions
+    // producing every other operand's F32 leaves must be candidates, looking
+    // through tuple forwarding. Every other op gets the plain check: each
+    // operand must forward precision and be a candidate itself (a
+    // tuple/get-tuple-element/domain always is). FloatNormalization converts
+    // such an operand if it ends up F32, and being stricter there would e.g.
+    // keep an all-gather of a get-tuple-element of a non-candidate producer in
+    // F32, and so double the bytes it moves.
+    const bool kept_homogeneous_here =
+        KeepsNonMixedPrecisionOpHomogeneousCached(hlo);
     for (int64_t i = 0; i < hlo->operand_count(); ++i) {
-      if (!bfloat16_support_->EffectiveOperandPrecisionIsOutputPrecision(*hlo,
-                                                                         i) ||
-          !ContainsKey(consider_using_bfloat16_, hlo->operand(i))) {
-        return false;
+      const HloInstruction* operand = hlo->operand(i);
+      if (kept_homogeneous_here) {
+        const Shape& operand_shape = operand->shape();
+        if (!ShapeUtil::HasPrimitiveType(operand_shape, F32) &&
+            !ShapeUtil::HasPrimitiveType(operand_shape, BF16)) {
+          // Operands this pass never touches (indices, predicates, other
+          // float widths) do not take part in the homogeneity requirement.
+          // This is the same filter AddValueSeedsAndUseEdges applies when
+          // building the constraint graph.
+          continue;
+        }
+        // A fusion forwards operand precision through its fused parameters
+        // rather than through EffectiveOperandPrecisionIsOutputPrecision (which
+        // is false for kFusion); the operand check below covers it directly.
+        if (hlo->opcode() != HloOpcode::kFusion &&
+            !bfloat16_support_->EffectiveOperandPrecisionIsOutputPrecision(*hlo,
+                                                                           i)) {
+          return false;
+        }
+        if (!OperandF32SourcesAreCandidates(operand)) {
+          return false;
+        }
+      } else {
+        if (!bfloat16_support_->EffectiveOperandPrecisionIsOutputPrecision(*hlo,
+                                                                           i) ||
+            !ContainsKey(consider_using_bfloat16_, operand)) {
+          return false;
+        }
       }
     }
   }
@@ -915,6 +1116,39 @@ void BFloat16Propagation::AddEdgesForUse(const HloValue* value,
     static_f32_seed_values_.push_back(value);
     return;
   }
+  // Homogeneity edge: an op that cannot mix precisions and that this pass
+  // keeps homogeneous (a non-mixed fusion, or a bare non-mixed op with an
+  // F32/BF16 operand and an operand FloatNormalization could not convert, such
+  // as a gather's integer indices; see KeepsNonMixedPrecisionOpHomogeneous) is
+  // homogeneous as a whole, so an F32 operand value pins every F32 output
+  // leaf. For a bare op that FloatNormalization visits, this reaches the HLO
+  // FloatNormalization would (it would restore the F32 output), but without
+  // first flipping the op to BF16 and back, so the pass reports no change and
+  // is idempotent. For an op FloatNormalization skips (bitcast,
+  // bitcast-convert, ...) it would leave the op mixed instead; the edge just
+  // keeps such an op at its operand's precision. Any other non-mixed op (a
+  // collective, ...) gets no edge: FloatNormalization converts its *operand*
+  // instead, so the op itself still executes in BF16. Pinning such an op here
+  // would keep it, and e.g. the bytes an all-gather moves, in F32.
+  //
+  // The edge is a deliberate over-approximation: SupportsMixedPrecisions is a
+  // per-instruction answer, so an F32 operand pins the outputs even if it only
+  // feeds an integer-producing path inside a fusion. This matches the forward
+  // pass, which also requires every F32/BF16 operand of such an op to be a
+  // candidate. It costs O(F32 operands x F32 output leaves) edges per such op,
+  // which is fine while backends only mark a few kinds as non-mixed. The
+  // predicate itself is memoized: this runs once per (F32 value, use), and a
+  // backend's SupportsMixedPrecisions can walk the whole fused computation.
+  if (KeepsNonMixedPrecisionOpHomogeneousCached(use.instruction)) {
+    ShapeUtil::ForEachSubshape(
+        use.instruction->shape(),
+        [&](const Shape& subshape, const ShapeIndex& index) {
+          if (subshape.IsArray() && subshape.element_type() == F32) {
+            value_to_non_mixed_precision_users_[value].push_back(
+                HloPosition{use.instruction, index});
+          }
+        });
+  }
   auto add_reader = [&](HloInstruction* instruction, const ShapeIndex& index) {
     use_edges_[HloPosition{instruction, index}].push_back(value);
   };
@@ -994,21 +1228,7 @@ void BFloat16Propagation::AddEdgesForUse(const HloValue* value,
     return;
   }
   // Forwarding users read their own output position.
-  ShapeIndex use_output_index;
-  if (use.instruction->opcode() == HloOpcode::kTuple ||
-      (use.instruction->opcode() == HloOpcode::kAllReduce &&
-       use.instruction->shape().IsTuple())) {
-    use_output_index.push_back(use.operand_number);
-    for (int64_t i : use.operand_index) {
-      use_output_index.push_back(i);
-    }
-  } else if (use.instruction->opcode() == HloOpcode::kGetTupleElement) {
-    for (int64_t i = 1; i < use.operand_index.size(); ++i) {
-      use_output_index.push_back(use.operand_index[i]);
-    }
-  } else {
-    use_output_index = use.operand_index;
-  }
+  const ShapeIndex use_output_index = ForwardedOutputIndex(use);
   // What the user reads as depends on the read position's type. An original
   // F32 array can go either way, so it becomes an edge. A tuple (variadic
   // sort, tuple shaped collectives) or non BF16 array (widening convert) can
@@ -1070,6 +1290,12 @@ void BFloat16Propagation::PropagateFromValue(const HloValue* value) {
       ConstrainPositionToF32(position);
     }
   }
+  auto non_mixed_it = value_to_non_mixed_precision_users_.find(value);
+  if (non_mixed_it != value_to_non_mixed_precision_users_.end()) {
+    for (const HloPosition& position : non_mixed_it->second) {
+      ConstrainPositionToF32(position);
+    }
+  }
 }
 
 void BFloat16Propagation::PropagateFromPosition(const HloPosition& position) {
@@ -1088,6 +1314,50 @@ void BFloat16Propagation::PropagateFromPosition(const HloPosition& position) {
   }
   if (!subshape.IsArray() || subshape.element_type() != F32) {
     return;  // Only F32 subshapes can read as F32.
+  }
+  // Homogeneity edges for non-mixed fusions: a fusion that cannot mix
+  // precisions must keep all of its outputs and operands at one precision.
+  // Pinning one F32 output leaf pins all F32 operands and fused parameters:
+  // the backward pass may have marked a fused parameter BF16 because its
+  // readers only take it at low precision (a dot, say), and only the resolve
+  // pass finds out that the outputs stay F32. It also pins the other F32 output
+  // leaves (sibling edge). With an F32 operand that is redundant, since the
+  // operand's edges from AddEdgesForUse pin every output anyway, but a fusion
+  // without F32 operands has nothing else tying its outputs together.
+  // Together with the operand->output edges in AddEdgesForUse, a non-mixed
+  // fusion never ends with mixed precision across its boundary.
+  if (instr->opcode() == HloOpcode::kFusion &&
+      KeepsNonMixedPrecisionOpHomogeneousCached(instr)) {
+    if (instr->shape().IsTuple()) {
+      ShapeUtil::ForEachSubshape(
+          instr->shape(),
+          [&](const Shape& sibling_shape, const ShapeIndex& sibling_index) {
+            if (sibling_shape.IsArray() &&
+                sibling_shape.element_type() == F32 && sibling_index != index) {
+              ConstrainPositionToF32(HloPosition{instr, sibling_index});
+            }
+          });
+    }
+    for (int64_t i = 0; i < instr->operand_count(); ++i) {
+      HloInstruction* operand = instr->mutable_operand(i);
+      ShapeUtil::ForEachSubshape(
+          operand->shape(),
+          [&](const Shape& subshape, const ShapeIndex& subshape_index) {
+            if (subshape.IsArray() && subshape.element_type() == F32) {
+              for (const HloValue* val :
+                   dataflow_->GetValueSet(operand, subshape_index).values()) {
+                if (val->shape().element_type() == F32) {
+                  ConstrainValueToF32(val);
+                }
+              }
+              HloInstruction* fused_param = instr->fused_parameter(i);
+              if (fused_param != nullptr) {
+                ConstrainPositionToF32(
+                    HloPosition{fused_param, subshape_index});
+              }
+            }
+          });
+    }
   }
   // The values whose AllUsersConsumeBF16 check reads this position.
   auto readers_it = use_edges_.find(position);
@@ -1331,6 +1601,7 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
   included_computations_.clear();
   use_edges_.clear();
   value_to_inplace_outputs_.clear();
+  value_to_non_mixed_precision_users_.clear();
   static_f32_seed_values_.clear();
   static_f32_seed_positions_.clear();
   bf16_pushable_positions_.clear();
@@ -1339,6 +1610,8 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
   scan_carry_edges_.clear();
   keep_precision_unchanged_cache_.clear();
   inplace_input_output_pairs_cache_.clear();
+  non_mixed_precision_homogeneous_cache_.clear();
+  supports_mixed_precisions_cache_.clear();
   changed_ = false;
   execution_threads_ = execution_threads;
 
@@ -1592,6 +1865,28 @@ bool BFloat16Propagation::ShouldKeepPrecisionUnchangedCached(
   }
   const bool result = ShouldKeepPrecisionUnchanged(inst);
   keep_precision_unchanged_cache_.emplace(inst, result);
+  return result;
+}
+
+bool BFloat16Propagation::SupportsMixedPrecisionsCached(
+    const HloInstruction* hlo) {
+  auto it = supports_mixed_precisions_cache_.find(hlo);
+  if (it != supports_mixed_precisions_cache_.end()) {
+    return it->second;
+  }
+  const bool result = bfloat16_support_->SupportsMixedPrecisions(*hlo);
+  supports_mixed_precisions_cache_.emplace(hlo, result);
+  return result;
+}
+
+bool BFloat16Propagation::KeepsNonMixedPrecisionOpHomogeneousCached(
+    const HloInstruction* hlo) {
+  auto it = non_mixed_precision_homogeneous_cache_.find(hlo);
+  if (it != non_mixed_precision_homogeneous_cache_.end()) {
+    return it->second;
+  }
+  const bool result = KeepsNonMixedPrecisionOpHomogeneous(hlo);
+  non_mixed_precision_homogeneous_cache_.emplace(hlo, result);
   return result;
 }
 
