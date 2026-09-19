@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
@@ -38,6 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/range_annotations.h"
 
 namespace xla {
 namespace gpu {

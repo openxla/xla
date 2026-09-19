@@ -39,9 +39,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
@@ -56,6 +53,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_common.h"
 #include "xla/tsl/util/env_var.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/range_annotations.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
