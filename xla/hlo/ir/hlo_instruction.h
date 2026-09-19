@@ -2644,7 +2644,10 @@ class HloInstruction {
     }
     RemoveAllOperands();
   }
-  void RemoveAllOperands() { operands_.clear(); }
+  void RemoveAllOperands() {
+    operands_.clear();
+    InvalidatePostOrderCache();
+  }
 
  protected:
   // Internal constructor for a given opcode/shape, other fields must be
@@ -2653,6 +2656,7 @@ class HloInstruction {
 
   void RemoveOperandAt(int index) {
     operands_.erase(operands_.begin() + index);
+    InvalidatePostOrderCache();
   }
 
   // Removes a list of operands with the given indices in ascending order.
@@ -2729,10 +2733,22 @@ class HloInstruction {
       absl::Span<HloInstruction* const> operands);
 
   // Adds a user for this instruction.
-  void AddUser(HloInstruction* user) { users_.AddUser(user); }
+  void AddUser(HloInstruction* user) {
+    users_.AddUser(user);
+    InvalidatePostOrderCache();
+  }
 
   // Removes a user for this instruction.
-  void RemoveUser(HloInstruction* user) { users_.RemoveUser(user); }
+  void RemoveUser(HloInstruction* user) {
+    users_.RemoveUser(user);
+    InvalidatePostOrderCache();
+  }
+
+  // Marks the parent computation's cached post order stale. See
+  // HloComputation::InvalidatePostOrderCache for what the order depends on;
+  // every mutator of operands_, users_ membership or control predecessors
+  // calls it after its last write.
+  void InvalidatePostOrderCache();
 
   // Helper for implementing backend_config().  Parses backend_config_ into the
   // given proto.
