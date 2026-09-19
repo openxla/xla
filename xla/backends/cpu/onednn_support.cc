@@ -69,49 +69,112 @@ bool IsOneDnnSupportedTypeAndLayout(const HloInstruction* hlo,
                       is_supported));
 }
 
-absl::StatusOr<bool> IsDotSupportedByOneDnn(
-    const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
-    const Shape& rhs_shape, const Shape& out_shape,
-    const TargetMachineFeatures* cpu_features) {
-  if (lhs_shape.element_type() != rhs_shape.element_type() ||
-      lhs_shape.element_type() != out_shape.element_type()) {
+bool ShouldRewriteDot(const HloInstruction* dot_instr,
+                      bool before_layout_assignment,
+                      const TargetMachineFeatures* cpu_features) {
+  if (dot_instr->opcode() != HloOpcode::kDot) {
     return false;
   }
-  if (!IsOneDnnSupportedDType(out_shape.element_type(), cpu_features)) {
+  // Blocking control dependencies.
+  if (dot_instr->HasControlDependencies() ||
+      !IsOneDnnSupportedDType(dot_instr->shape().element_type(),
+                              cpu_features) ||
+      dot_instr->operands().size() != 2) {
     return false;
   }
 
+  // We rewrite when the data type is F32 or BF16. We do not need to check
+  // equality of contraction dim-size of the operands. HLO verifier already does
+  // the job. We, however, need to check if contraction is over only 1 dimension
+  // (i.e., K dimension in matrix-multiplication parlance). We also restrict
+  // that batch dimensions of the operands match.
+  const Shape& lhs_shape = dot_instr->operand(0)->shape();
+  const Shape& rhs_shape = dot_instr->operand(1)->shape();
+  const Shape& output_shape = dot_instr->shape();
+
+  // None of the operands and result should be ZeroElementArray.
   if (ShapeUtil::IsZeroElementArray(lhs_shape) ||
       ShapeUtil::IsZeroElementArray(rhs_shape) ||
-      ShapeUtil::IsZeroElementArray(out_shape)) {
+      ShapeUtil::IsZeroElementArray(output_shape)) {
     return false;
   }
 
-  // NOLINTNEXTLINE: Use dnnl.hpp for DNNL_MAX_NDIMS for now.
-  if (lhs_shape.dimensions().size() > DNNL_MAX_NDIMS ||
+  // OneDNN only supports rank <= DNNL_MAX_NDIMS and singular non-contracting
+  // dimensions. We should not rewrite if any of these conditions are violated.
+  if (lhs_shape.dimensions().empty() ||
+      lhs_shape.dimensions().size() > DNNL_MAX_NDIMS ||
+      rhs_shape.dimensions().empty() ||
       rhs_shape.dimensions().size() > DNNL_MAX_NDIMS ||
       lhs_shape.dimensions().size() != rhs_shape.dimensions().size()) {
     return false;
   }
 
-  auto dot_shape_result =
-      GetDotShape(dot_dimensions, lhs_shape, rhs_shape, out_shape);
-  if (!dot_shape_result.ok()) {
-    VLOG(2) << "GetDotShape Error: " << dot_shape_result.status();
+  // Layout should be row-major, contraction dimensions capture transpose
+  // scenarios in the last two dimensions. Col-major layouts are corrected to
+  // row-major for BatchDot operation as part of the layout-assignment pass.
+  // Skip row-major layout check before layout-assignment pass.
+  if (!before_layout_assignment) {
+    bool row_major = IsRowMajor(lhs_shape) && IsRowMajor(rhs_shape) &&
+                     IsRowMajor(output_shape);
+    if (!row_major) {
+      return false;
+    }
+  }
+
+  auto dot_dim_numbers = dot_instr->dot_dimension_numbers();
+  int64_t lhs_dim_k = dot_dim_numbers.lhs_contracting_dimensions(0);
+  int64_t rhs_dim_k = dot_dim_numbers.rhs_contracting_dimensions(0);
+
+  // Supported contraction is only in one of last two dimensions.
+  if (lhs_dim_k + 2 < lhs_shape.dimensions().size() ||
+      rhs_dim_k + 2 < rhs_shape.dimensions().size()) {
     return false;
   }
-  DotShape dot_shape = dot_shape_result.value();
 
-  auto dot_canonical_result = GetDotCanonicalDims(dot_dimensions, dot_shape);
-  if (!dot_canonical_result.ok()) {
-    VLOG(2) << "GetDotCanonicalDims Error: " << dot_canonical_result.status();
+  // OneDNN matmul has scratch allocation and copy overheads. The overheads
+  // can be amortized if there is sufficient number of flops. We don't rewrite
+  // for small cases (determined empirically).
+  // TODO(intel-tf): Relax the condition when more optimizations in oneDNN
+  // matmul is achieved.
+  auto num_flops = xla::HloCostAnalysis::GetDotFlops(lhs_shape, output_shape,
+                                                     dot_dim_numbers);
+  auto rank = output_shape.dimensions().size();
+  auto flops_threshold = (rank <= 2) ? (1 << 24) : (1 << 19);
+  return (num_flops >= flops_threshold);
+}
+
+bool ShouldRewriteConv(const HloInstruction* conv_instr) {
+  if (conv_instr->opcode() != HloOpcode::kConvolution ||
+      conv_instr->HasControlDependencies() ||
+      !IsSupportedType(conv_instr->shape().element_type()) ||
+      conv_instr->batch_group_count() != 1) {
     return false;
   }
-  DotCanonicalDims dot_canonical_dims = dot_canonical_result.value();
 
-  // Restrict support to row-major layouts.
-  return !dot_canonical_dims.lhs_column_major &&
-         !dot_canonical_dims.rhs_column_major;
+  if (conv_instr->operand(1)->opcode() == HloOpcode::kReverse) {
+    return false;
+  }
+
+  const Shape& inp_shape = conv_instr->operand(0)->shape();
+  const Shape& ker_shape = conv_instr->operand(1)->shape();
+  const Shape& out_shape = conv_instr->shape();
+  if (ShapeUtil::IsZeroElementArray(inp_shape) ||
+      ShapeUtil::IsZeroElementArray(ker_shape) ||
+      ShapeUtil::IsZeroElementArray(out_shape)) {
+    return false;
+  }
+
+  auto dims = conv_instr->window().dimensions().size();
+  if (dims >= 4 || dims <= 0) {
+    return false;
+  }
+
+  if (inp_shape.dimensions().size() != ker_shape.dimensions().size() ||
+      inp_shape.dimensions().size() != out_shape.dimensions().size()) {
+    return false;
+  }
+
+  return true;
 }
 
 const absl::flat_hash_map<HloOpcode, op::kind>& GetOneDnnUnaryOpMap() {
@@ -189,10 +252,7 @@ bool IsOpSupportedByOneDnn(const HloInstruction* hlo,
     return false;
   }
   if (hlo->opcode() == HloOpcode::kDot) {
-    return IsDotSupportedByOneDnn(
-               hlo->dot_dimension_numbers(), hlo->operand(0)->shape(),
-               hlo->operand(1)->shape(), hlo->shape(), cpu_features)
-        .value_or(false);
+    return ShouldRewriteDot(hlo, false, cpu_features);
   }
   if (hlo->opcode() == HloOpcode::kBitcast) {
     return IsBitcastOpSupportedByOneDnn(hlo, cpu_features);
