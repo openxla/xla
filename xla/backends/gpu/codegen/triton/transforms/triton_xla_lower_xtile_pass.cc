@@ -174,13 +174,8 @@ class XTileSelectBufferToTriton
     auto ptr_addr = mlir::triton::AddPtrOp::create(
         b, memref_to_ptr.getType(), memref_to_ptr, replica_id_i64);
     // Dereference the outer pointer.
-    auto addr_i64 =
-        mlir::triton::LoadOp::create(b, b.getI64Type(), ptr_addr.getResult(),
-                                     /*mask=*/mlir::Value(),
-                                     /*other=*/mlir::Value(),               //
-                                     mlir::triton::CacheModifier::NONE,     //
-                                     mlir::triton::EvictionPolicy::NORMAL,  //
-                                     /*isVolatile=*/false);
+    auto addr_i64 = mlir::triton::LoadOp::create(b, ptr_addr.getResult(),
+                                                 /*isVolatile=*/false);
     auto result_memref_type = mlir::cast<mlir::MemRefType>(op.getType());
     mlir::Type target_ptr_type =
         ttir::getPointerType(result_memref_type.getElementType());
@@ -212,10 +207,9 @@ class XTileExtractToTriton
         CreateMemrefToPtr(rewriter, extract_op.getSource());
 
     if (result_type.getRank() == 0) {
-      mlir::Value scalar_value = ttir::LoadOp::create(
-          rewriter, extract_op->getLoc(), memref_to_ptr,
-          ttir::CacheModifier::NONE, ttir::EvictionPolicy::NORMAL,
-          /*isVolatile=*/false);
+      mlir::Value scalar_value =
+          ttir::LoadOp::create(rewriter, extract_op->getLoc(), memref_to_ptr,
+                               /*isVolatile=*/false);
 
       rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
           extract_op, result_type, scalar_value);

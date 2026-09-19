@@ -115,12 +115,10 @@ LogicalResult LowerBlockBarrierOp(BlockBarrierOp block_barrier,
             builder, tensor_of_i64_ptr_type, signal_buffers_tensor, all_ranks);
         // SignalBuffers[0..WorldSize]
         // -> tensor<world_size x i64>
-        auto signal_buffer_i64 = mlir::triton::LoadOp::create(
-            builder,
-            /*ptr=*/signal_buffer_ptr,
-            /*cache=*/mlir::triton::CacheModifier::NONE,
-            /*evict=*/mlir::triton::EvictionPolicy::NORMAL,
-            /*isVolatile=*/false);
+        auto signal_buffer_i64 =
+            mlir::triton::LoadOp::create(builder,
+                                         /*ptr=*/signal_buffer_ptr,
+                                         /*isVolatile=*/false);
         // -> tensor<world_size x !tt.ptr<i32>>
         auto signal_buffer = mlir::triton::IntToPtrOp::create(
             builder, tensor_of_ptr_to_i32_type, signal_buffer_i64);
@@ -151,12 +149,10 @@ LogicalResult LowerBlockBarrierOp(BlockBarrierOp block_barrier,
             builder, signal_buffers_i64.getType(), signal_buffers_i64, rank);
         // SignalBuffers[rank]
         // -> i64
-        auto read_address_i64 = mlir::triton::LoadOp::create(
-            builder,
-            /*ptr=*/read_address_ptr_to_i64,
-            /*cache=*/mlir::triton::CacheModifier::NONE,
-            /*evict=*/mlir::triton::EvictionPolicy::NORMAL,
-            /*isVolatile=*/false);
+        auto read_address_i64 =
+            mlir::triton::LoadOp::create(builder,
+                                         /*ptr=*/read_address_ptr_to_i64,
+                                         /*isVolatile=*/false);
         // -> !tt.ptr<i32>
         auto read_address = mlir::triton::IntToPtrOp::create(
             builder, ptr_to_i32_type, read_address_i64);
