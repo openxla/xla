@@ -420,6 +420,8 @@ xla_test(
         ":thunk_id",
         ":thunk_proto_cc",
         "//xla/service:platform_util",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:mock_stream",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
