@@ -2962,20 +2962,56 @@ LiteralProto LiteralBase::ToProto() const {
   return proto;
 }
 
+const void* LiteralBase::untyped_data() const {
+  return root_piece().untyped_data();
+}
+
 const void* LiteralBase::untyped_data(const ShapeIndex& shape_index) const {
   return piece(shape_index).untyped_data();
+}
+
+void* MutableLiteralBase::untyped_data() {
+  return mutable_root_piece().untyped_data();
 }
 
 void* MutableLiteralBase::untyped_data(const ShapeIndex& shape_index) {
   return piece(shape_index).untyped_data();
 }
 
+int64_t LiteralBase::size_bytes() const {
+  return root_piece().size_bytes_dense();
+}
+
 int64_t LiteralBase::size_bytes(const ShapeIndex& shape_index) const {
   return piece(shape_index).size_bytes_dense();
 }
 
+int64_t LiteralBase::total_size_bytes() const {
+  return root_piece().total_bytes_dense();
+}
+
 int64_t LiteralBase::total_size_bytes(const ShapeIndex& shape_index) const {
   return piece(shape_index).total_bytes_dense();
+}
+
+ABSL_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::MakePopulateArrayError(
+    const Shape& this_shape, absl::string_view func_name) {
+  TF_RET_CHECK(this_shape.IsArray())
+      << func_name << " is only supported for dense arrays: " << this_shape;
+  return absl::OkStatus();
+}
+
+ABSL_ATTRIBUTE_NOINLINE absl::Status MutableLiteralBase::MakePopulateError(
+    const Shape& this_shape, PrimitiveType expected_element_type,
+    absl::string_view func_name) {
+  TF_RET_CHECK(this_shape.IsArray())
+      << func_name << " is only supported for dense arrays: " << this_shape;
+  TF_RET_CHECK(this_shape.element_type() == expected_element_type)
+      << "Failing to populate literal with element type "
+      << primitive_util::LowercasePrimitiveTypeName(this_shape.element_type())
+      << " using data of type "
+      << primitive_util::LowercasePrimitiveTypeName(expected_element_type);
+  return absl::OkStatus();
 }
 
 std::string LiteralBase::GetR1U8AsString() const {
