@@ -92,10 +92,14 @@ absl::Status AsyncStartThunk::ExecuteOnStream(const ExecuteParams& params) {
       return params.additional_compute_streams[idx];
     }
     if (execution_stream_id_.is_memcpy()) {
-      if (execution_stream_id_.memcpy_id() == kMemcpyD2HStreamId) {
-        return params.device_to_host_stream;
+      bool is_d2h = execution_stream_id_.memcpy_id() == kMemcpyD2HStreamId;
+      se::Stream* stream =
+          is_d2h ? params.device_to_host_stream : params.host_to_device_stream;
+      if (stream == nullptr) {
+        return Internal("%s stream is not available for async execution",
+                        is_d2h ? "device_to_host" : "host_to_device");
       }
-      return params.host_to_device_stream;
+      return stream;
     }
     return params.collective_params->async_streams.at(
         execution_stream_id_.communication_id().value());

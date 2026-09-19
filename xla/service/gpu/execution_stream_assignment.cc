@@ -193,19 +193,16 @@ std::optional<ExecutionScopeKind> AsyncHostMemcpyDirection(
     const HloAsyncInstruction* async_start) {
   const HloInstruction* inner = async_start->async_wrapped_instruction();
 
-  // After StreamAttributeAnnotator the DUS/DS is wrapped in a kLoop fusion.
+  // After StreamAttributeAnnotator the DUS/DS is wrapped in a kLoop fusion;
+  // unwrap to the fused root so the checks below apply uniformly to both the
+  // fused and non-fused (pre-StreamAttributeAnnotator) cases.
   if (inner->opcode() == HloOpcode::kFusion &&
       inner->fusion_kind() != HloInstruction::FusionKind::kCustom) {
-    // DUS writes to its first operand (the base buffer) and the result has
-    // the same shape.  DS reads from its first operand.
-    if (IsHostShape(inner->shape())) return ExecutionScopeKind::kMemcpyD2H;
-    if (!inner->operands().empty() && IsHostShape(inner->operand(0)->shape())) {
-      return ExecutionScopeKind::kMemcpyH2D;
-    }
-    return std::nullopt;
+    inner = inner->fused_expression_root();
   }
 
-  // Handle the non-fused case (before StreamAttributeAnnotator runs).
+  // DUS writes to its first operand (the base buffer) and the result has the
+  // same shape.  DS reads from its first operand.
   if (inner->opcode() == HloOpcode::kDynamicUpdateSlice &&
       IsHostShape(inner->shape())) {
     return ExecutionScopeKind::kMemcpyD2H;
