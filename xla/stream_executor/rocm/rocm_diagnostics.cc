@@ -54,7 +54,7 @@ void LogPackedHipVersion(const char* api_name, hipError_t err, int packed) {
 
 }  // namespace
 
-void Diagnostician::LogDiagnosticInformation() {
+void LogDiagnosticInformation() {
   LogEnv("HIP_VISIBLE_DEVICES");
   LogEnv("ROCR_VISIBLE_DEVICES");
 

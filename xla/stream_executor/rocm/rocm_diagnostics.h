@@ -22,14 +22,7 @@ namespace rocm {
 // Logs HIP visibility, runtime/driver version, and device 0 when ROCm looks
 // misconfigured (for example hipInit failed). Best-effort: HIP errors are
 // logged, not returned.
-class Diagnostician {
- public:
-  static void LogDiagnosticInformation();
-
- private:
-  Diagnostician(const Diagnostician&) = delete;
-  void operator=(const Diagnostician&) = delete;
-};
+void LogDiagnosticInformation();
 
 }  // namespace rocm
 }  // namespace stream_executor

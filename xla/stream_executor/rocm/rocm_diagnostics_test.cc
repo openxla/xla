@@ -38,7 +38,7 @@ TEST(RocmDiagnosticsTest, DiagnosticRuns) {
   // Platform init is not under test; it only provides a working ROCm context.
   ASSERT_NO_FATAL_FAILURE(EnsureRocmIsInitialized());
 
-  rocm::Diagnostician::LogDiagnosticInformation();
+  rocm::LogDiagnosticInformation();
 }
 
 }  // namespace

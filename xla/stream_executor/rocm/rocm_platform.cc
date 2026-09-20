@@ -51,7 +51,7 @@ static absl::Status InternalInitialize() {
   }
 
   LOG(ERROR) << "failed call to hipInit: " << ToString(res);
-  rocm::Diagnostician::LogDiagnosticInformation();
+  rocm::LogDiagnosticInformation();
   return absl::AbortedError(
       absl::StrCat("failed call to hipInit: ", ToString(res)));
 }
