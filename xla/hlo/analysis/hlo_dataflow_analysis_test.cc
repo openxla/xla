@@ -4333,5 +4333,112 @@ ENTRY main {
   }
 }
 
+// Phi values the phi graph optimizes away are deleted after propagation, which
+// leaves holes in the value ids. The surviving values come back in id order,
+// are counted exactly and are found by their id.
+TEST_F(HloDataflowAnalysisTest, DeletedPhiValuesLeaveNoTrace) {
+  // Element 0 of the loop state passes through the body, so the phis at index
+  // {0} of the while, the body parameter and the condition parameter are
+  // optimized away; the phis at {} and {1} stay.
+  const char* hlo_text = R"(
+HloModule DeletedPhiValuesLeaveNoTrace
+
+body {
+  body_param = (f32[], f32[]) parameter(0)
+  body_gte0 = f32[] get-tuple-element(body_param), index=0
+  body_gte1 = f32[] get-tuple-element(body_param), index=1
+  add = f32[] add(body_gte0, body_gte1)
+  ROOT body_root = (f32[], f32[]) tuple(body_gte0, add)
+}
+
+condition {
+  cond_param = (f32[], f32[]) parameter(0)
+  ROOT cond_constant = pred[] constant(false)
+}
+
+ENTRY main {
+  const1 = f32[] constant(1.0)
+  const2 = f32[] constant(2.0)
+  tuple = (f32[], f32[]) tuple(const1, const2)
+  ROOT while_op = (f32[], f32[]) while(tuple), condition=condition, body=body
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(
+                                    hlo_text, GetModuleConfigForTest()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloDataflowAnalysis> analysis,
+                       HloDataflowAnalysis::Run(*module_, /*ssa_form=*/true));
+
+  // Six instructions define a value and six phis survive.
+  const std::vector<HloValue*>& values = analysis->values();
+  ASSERT_EQ(values.size(), 12);
+  EXPECT_EQ(analysis->value_count(), 12);
+  // The deleted phis leave holes in the ids.
+  EXPECT_GT(values.back()->id() + 1, static_cast<int64_t>(values.size()));
+  for (int64_t i = 0; i < static_cast<int64_t>(values.size()); ++i) {
+    const HloValue* value = values[i];
+    if (i > 0) {
+      EXPECT_LT(values[i - 1]->id(), value->id());
+    }
+    EXPECT_EQ(&analysis->GetValue(value->id()), value);
+  }
+  EXPECT_EQ(absl::c_count_if(
+                values, [](const HloValue* value) { return value->is_phi(); }),
+            6);
+  EXPECT_OK(analysis->Verify());
+}
+
+// An instruction removed from its computation keeps its value set until the
+// computation is cleaned up, and the instructions Cleanup renumbers keep
+// theirs; an instruction the analysis never saw has none.
+TEST_F(HloDataflowAnalysisTest,
+       ValueSetsFollowRemovedAndRenumberedInstructions) {
+  const char* hlo_text = R"(
+HloModule ValueSetsFollowRemovedAndRenumberedInstructions
+
+ENTRY main {
+  param = f32[] parameter(0)
+  unused = f32[] negate(param)
+  ROOT negate = f32[] negate(param)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(
+                                    hlo_text, GetModuleConfigForTest()));
+  HloComputation* entry = module_->entry_computation();
+  HloInstruction* param = FindInstruction(module_.get(), "param");
+  HloInstruction* unused = FindInstruction(module_.get(), "unused");
+  HloInstruction* negate = FindInstruction(module_.get(), "negate");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloDataflowAnalysis> analysis,
+                       HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false));
+  const HloValue& param_value = analysis->GetValueDefinedAt(param);
+  const HloValue& unused_value = analysis->GetValueDefinedAt(unused);
+  const HloValue& negate_value = analysis->GetValueDefinedAt(negate);
+
+  // An instruction added after the analysis ran has no value set. It is added
+  // while every analyzed instruction is alive, so its address is not one the
+  // analysis knows.
+  HloInstruction* added = entry->AddInstruction(
+      HloInstruction::CreateUnary(scalar_shape_, HloOpcode::kNegate, param));
+  EXPECT_DEATH(analysis->GetValueSet(added), "has no value set");
+
+  // The removed instruction has no parent and no local id; it keeps its value
+  // set until Cleanup deletes it.
+  const int32_t unused_local_id = unused->local_id();
+  ASSERT_OK(entry->RemoveInstruction(unused));
+  ASSERT_EQ(unused->parent(), nullptr);
+  EXPECT_THAT(analysis->GetValueSet(unused).values(),
+              ElementsAre(&unused_value));
+
+  // Cleanup moves the root into the local id the removed instruction had and
+  // the added instruction into the local id the root had.
+  const int32_t negate_local_id = negate->local_id();
+  entry->Cleanup();
+  ASSERT_EQ(negate->local_id(), unused_local_id);
+  ASSERT_EQ(added->local_id(), negate_local_id);
+  EXPECT_THAT(analysis->GetValueSet(negate).values(),
+              ElementsAre(&negate_value));
+  EXPECT_THAT(analysis->GetValueSet(param).values(), ElementsAre(&param_value));
+  EXPECT_DEATH(analysis->GetValueSet(added), "has no value set");
+}
+
 }  // namespace
 }  // namespace xla

@@ -21,6 +21,7 @@ limitations under the License.
 #define XLA_HLO_ANALYSIS_HLO_DATAFLOW_ANALYSIS_H_
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -29,6 +30,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -39,6 +41,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -104,7 +107,12 @@ class HloDataflowAnalysis {
   HloValue& GetValueDefinedAt(const HloInstruction* instruction,
                               const ShapeIndex& index = {});
 
-  // Returns the InstructionValueSet for the given instruction.
+  // Returns the InstructionValueSet for the given instruction. The instruction
+  // must have been in the module when the analysis ran and must still be
+  // alive; it may since have been removed from its computation (but not yet
+  // deleted by HloComputation::Cleanup) or renumbered. CHECK fails for an
+  // instruction the analysis never saw. Every query below that reads value
+  // sets has the same contract.
   const InstructionValueSet& GetInstructionValueSet(
       const HloInstruction* instruction) const;
   InstructionValueSet& GetInstructionValueSet(
@@ -150,9 +158,9 @@ class HloDataflowAnalysis {
   HloValue& GetValue(HloValue::Id value_id);
 
   // Returns the total number of HloValues.
-  int64_t value_count() const { return values_.size(); }
+  int64_t value_count() const { return values_vector_.size(); }
 
-  // Returns a vector of all HloValues stabily sorted by HloValue::Id.
+  // Returns all HloValues in increasing HloValue::Id order.
   const std::vector<HloValue*>& values() const { return values_vector_; }
 
   // Returns a new value Id to use.
@@ -214,6 +222,19 @@ class HloDataflowAnalysis {
   absl::Status Verify() const;
 
  private:
+  // One instruction's value set and its state in Propagate. `instruction` is
+  // the instruction the slot was made for and is null exactly when the slot
+  // is empty (a local id no instruction had when the analysis ran).
+  struct ValueSetSlot {
+    const HloInstruction* instruction = nullptr;
+    // Priority in Propagate: the position AssignSchedulePositions gave the
+    // instruction, or -1 when the walk never reaches it (for example an
+    // instruction in a fusion computation); Propagate then uses priority 0.
+    int32_t schedule_position = -1;
+    bool in_worklist = false;
+    std::optional<InstructionValueSet> value_set;
+  };
+
   static bool AreTransitiveUsesElementwiseOrTuple(const HloInstruction* inst);
 
   HloDataflowAnalysis(const HloModule& module, bool ssa_form,
@@ -330,6 +351,27 @@ class HloDataflowAnalysis {
       HloInstruction* instruction, const InstructionValueSet& new_value_set,
       const InstructionValueSet* prev_value_set = nullptr);
 
+  // Returns the slot of `instruction`, or null when the analysis never saw
+  // it. The fast path indexes value_sets_ by the instruction's computation
+  // and local id. An instruction removed from its computation or renumbered
+  // since the analysis ran is found through slot_by_instruction_ instead, so
+  // such lookups answer as they always did. The instruction must be alive;
+  // removed but not yet deleted by HloComputation::Cleanup is fine.
+  const ValueSetSlot* FindValueSetSlot(const HloInstruction* instruction) const;
+
+  // Like FindValueSetSlot, but CHECKs that the slot exists.
+  const ValueSetSlot& GetValueSetSlot(const HloInstruction* instruction) const;
+  ValueSetSlot& GetValueSetSlot(const HloInstruction* instruction);
+
+  // Assigns post order positions, counting from `start_position`, to the
+  // instructions of `computation` and of the computations it calls in a
+  // sequential context (call, conditional, async-start and while). Returns the
+  // next position. An instruction keeps the first position it is given.
+  // Instructions of computations without slots advance the counter but are
+  // not recorded.
+  int64_t AssignSchedulePositions(const HloComputation* computation,
+                                  int64_t start_position);
+
   const HloModule& module_;
   const absl::flat_hash_set<absl::string_view> execution_threads_;
   const bool ssa_form_;
@@ -338,15 +380,25 @@ class HloDataflowAnalysis {
 
   std::unique_ptr<CallGraph> call_graph_;
 
-  // The map of all HloValues in the module. We pass around pointers to the
-  // mapped HloValues, so the underlying container must keep them valid despite
-  // mutations touching other map entries.
-  absl::flat_hash_map<HloValue::Id, std::unique_ptr<HloValue>> values_;
+  // All HloValues in the module, indexed by id: NewHloValue appends one slot
+  // per id it takes and DeleteMarkedValues empties the slot of a deleted
+  // value. Ids that NewValueId hands out after Run have no slot. We pass
+  // around pointers to the values, so the container must keep them valid
+  // while slots are appended or emptied; a deque does, a vector would not.
+  std::deque<std::optional<HloValue>> values_;
 
-  // A map from instruction to InstructionValueSet.
-  absl::flat_hash_map<const HloInstruction*,
-                      std::unique_ptr<InstructionValueSet>>
+  // The value sets of the instructions of each analyzed computation, indexed
+  // by the instruction's local id. Each vector is sized once, so the value
+  // sets never move.
+  absl::flat_hash_map<const HloComputation*, std::vector<ValueSetSlot>>
       value_sets_;
+
+  // Every slot keyed by its instruction, built on the first lookup the fast
+  // path of FindValueSetSlot cannot answer (see there). Built lazily from a
+  // const method, so a once flag guards it against concurrent const lookups.
+  mutable absl::once_flag slot_by_instruction_once_;
+  mutable absl::flat_hash_map<const HloInstruction*, const ValueSetSlot*>
+      slot_by_instruction_;
 
   // Values marked for deletion during construction. We don't delete them
   // immediately because references to them may remain in ValueSets temporarily
