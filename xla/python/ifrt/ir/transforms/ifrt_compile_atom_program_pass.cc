@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -61,6 +62,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
@@ -155,6 +157,9 @@ class IfrtCompileAtomProgramPass
   std::shared_ptr<AtomProgramCompiler> atom_program_compiler_;
 
   std::shared_ptr<mlir::MLIRContext> hlo_program_context_;
+
+  llvm::DenseMap<mlir::ModuleOp, std::shared_ptr<mlir::Operation>>
+      cloned_modules_;
 
   std::shared_ptr<
       absl::flat_hash_map<std::string, std::unique_ptr<CompileOptions>>>
@@ -253,26 +258,37 @@ absl::StatusOr<AtomProgramCompileResult> IfrtCompileAtomProgramPass::CompileXla(
 
   xla::CompileOptions compile_options =
       GetCompileOptions(call_op, xla_compile_options);
-  // In order to be able to compile multiple XLA computations in parallel, we
-  // need to:
-  // 1. Use an MLIR context with threading disabled to ensure MLIR doesn't
-  //    create too many threads when compiling many XLA computations in
-  //    parallel.
-  // 2. Clone the module into this new context. This cloning is necessary
-  //    because MLIR printing takes different paths depending on if a ModuleOp
-  //    has a parent or not. Thus, by cloning the module we ensure that the
-  //    module's string representation is maintained.
-  ABSL_ASSIGN_OR_RETURN(
-      mlir::OwningOpRef<mlir::ModuleOp> cloned_module,
-      CloneModuleIntoContext(module_op, *hlo_program_context_));
-  auto hlo_program = std::make_unique<HloProgram>(hlo_program_context_,
-                                                  std::move(cloned_module));
+
+  const auto [it, inserted] = cloned_modules_.try_emplace(module_op);
+  if (inserted) {
+    // In order to be able to compile multiple XLA computations in parallel, we
+    // need to:
+    // 1. Use an MLIR context with threading disabled to ensure MLIR doesn't
+    //    create too many threads when compiling many XLA computations in
+    //    parallel.
+    // 2. Clone the module into this new context. This cloning is necessary
+    //    because MLIR printing takes different paths depending on if a ModuleOp
+    //    has a parent or not. Thus, by cloning the module we ensure that the
+    //    module's string representation is maintained.
+    ABSL_ASSIGN_OR_RETURN(
+        auto cloned_module,
+        CloneModuleIntoContext(module_op, *hlo_program_context_));
+    it->second = std::shared_ptr<mlir::Operation>(
+        cloned_module.release().getOperation(),
+        [](mlir::Operation* op) { op->erase(); });
+  }
+  auto hlo_program =
+      std::make_unique<HloProgram>(llvm::cast<mlir::ModuleOp>(*it->second));
+
   AtomProgramCompileResult result;
   result.name =
       absl::StrCat(hlo_program->name(), ".", tsl::random::ThreadLocalNew64());
   result.executable = atom_program_compiler_->CompileXla(
       std::move(hlo_program), std::move(compile_options),
       std::move(filtered_callbacks));
+  result.executable.OnReady(
+      [context = hlo_program_context_, cloned_module = it->second](
+          const absl::StatusOr<LoadedExecutableRef>&) {});
   return result;
 }
 
