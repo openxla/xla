@@ -39,7 +39,7 @@ struct DotToDotGeneralPattern : public OpRewritePattern<DotOp> {
   using OpRewritePattern<DotOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(DotOp dotOp,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto lhs = dotOp.getLhs();
     auto rhs = dotOp.getRhs();
 
@@ -75,8 +75,8 @@ struct LegalizeDotToDotGeneralPass
 
 }  // namespace
 
-void populateDotToDotGeneralPatterns(mlir::MLIRContext *context,
-                                     RewritePatternSet *patterns) {
+void populateDotToDotGeneralPatterns(mlir::MLIRContext* context,
+                                     RewritePatternSet* patterns) {
   patterns->add<DotToDotGeneralPattern>(context);
 }
 

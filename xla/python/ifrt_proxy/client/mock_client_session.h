@@ -17,9 +17,10 @@
 #ifndef XLA_PYTHON_IFRT_PROXY_CLIENT_MOCK_CLIENT_SESSION_H_
 #define XLA_PYTHON_IFRT_PROXY_CLIENT_MOCK_CLIENT_SESSION_H_
 
+#include <gmock/gmock.h>
+
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "xla/python/ifrt_proxy/client/client_session.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"

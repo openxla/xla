@@ -55,9 +55,9 @@ absl::StatusOr<HloDotInstruction*> MakeDotWithSwappedOperands(
   HloComputation* computation = dot->parent();
 
   ABSL_ASSIGN_OR_RETURN(DotOperandDims lhs_dims,
-                   DotOperandDims::FromDotOperand(dot, 0));
+                        DotOperandDims::FromDotOperand(dot, 0));
   ABSL_ASSIGN_OR_RETURN(DotOperandDims rhs_dims,
-                   DotOperandDims::FromDotOperand(dot, 1));
+                        DotOperandDims::FromDotOperand(dot, 1));
 
   const size_t num_batch_dims = lhs_dims.Rank(DotOperandDims::kBatch);
   const size_t num_lhs_noncontracting_dims =
@@ -100,7 +100,7 @@ absl::Status SwapDotOperandsInFusion(HloComputation* computation) {
   HloInstruction* dot =
       hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
   ABSL_ASSIGN_OR_RETURN(HloDotInstruction * new_dot,
-                   MakeDotWithSwappedOperands(dot));
+                        MakeDotWithSwappedOperands(dot));
   HloInstruction* new_bitcast = computation->AddInstruction(
       HloInstruction::CreateBitcast(dot->shape(), new_dot), &dot->metadata());
   ABSL_RETURN_IF_ERROR(dot->ReplaceAllUsesWith(new_bitcast));
@@ -146,10 +146,12 @@ absl::StatusOr<bool> ShouldSwapOperands(const HloInstruction* instr) {
   const bool lhs_has_code = HasCodeGeneratingInstructions(dot->operand(0));
   const bool rhs_has_code = HasCodeGeneratingInstructions(dot->operand(1));
 
-  ABSL_ASSIGN_OR_RETURN(DotOperandDims lhs_dims,
-                   DotOperandDims::FromDotOperand(dot, /*operand_number=*/0));
-  ABSL_ASSIGN_OR_RETURN(DotOperandDims rhs_dims,
-                   DotOperandDims::FromDotOperand(dot, /*operand_number=*/1));
+  ABSL_ASSIGN_OR_RETURN(
+      DotOperandDims lhs_dims,
+      DotOperandDims::FromDotOperand(dot, /*operand_number=*/0));
+  ABSL_ASSIGN_OR_RETURN(
+      DotOperandDims rhs_dims,
+      DotOperandDims::FromDotOperand(dot, /*operand_number=*/1));
   const int64_t lhs_size = lhs_dims.TotalSize(DotOperandDims::kNonContracting);
   const int64_t rhs_size = rhs_dims.TotalSize(DotOperandDims::kNonContracting);
 
@@ -168,7 +170,8 @@ absl::StatusOr<bool> MaybeSwapOperands(HloComputation* computation) {
   if (dot == nullptr) {
     return false;
   }
-  ABSL_ASSIGN_OR_RETURN(const bool should_swap_operands, ShouldSwapOperands(dot));
+  ABSL_ASSIGN_OR_RETURN(const bool should_swap_operands,
+                        ShouldSwapOperands(dot));
   if (!should_swap_operands) {
     return false;
   }

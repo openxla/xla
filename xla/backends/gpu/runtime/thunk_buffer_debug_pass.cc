@@ -73,9 +73,9 @@ absl::StatusOr<bool> ThunkBufferDebugPass::Run(
 
   switch (mode_) {
     case Mode::kChecksum:
-      ABSL_RETURN_IF_ERROR(RunChecksumPassInternal(thunk_sequence, debug_options,
-                                              hlo_module, module_output_slices_,
-                                              allocator));
+      ABSL_RETURN_IF_ERROR(
+          RunChecksumPassInternal(thunk_sequence, debug_options, hlo_module,
+                                  module_output_slices_, allocator));
       break;
     case Mode::kFloatChecker:
       ABSL_RETURN_IF_ERROR(
@@ -104,7 +104,7 @@ absl::StatusOr<std::vector<ShapedSlice>> GetOutputShapedBuffers(
       [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
         if (subshape.IsArray()) {
           ABSL_ASSIGN_OR_RETURN(auto slice,
-                           buffer_assignment->GetUniqueSlice(root, index));
+                                buffer_assignment->GetUniqueSlice(root, index));
           buffers_to_check.push_back(ShapedSlice{slice, subshape});
         }
         return absl::OkStatus();

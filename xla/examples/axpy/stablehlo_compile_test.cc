@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <iostream>
 #include <memory>
 #include <ostream>
@@ -20,8 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Parser/Parser.h"
 #include "stablehlo/dialect/Register.h"
+#include "tsl/platform/path.h"
 #include "xla/error_spec.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -52,7 +54,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {

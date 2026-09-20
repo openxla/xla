@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_conv_runner.pb.h"
 #include "xla/tsl/platform/statusor.h"

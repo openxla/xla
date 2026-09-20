@@ -90,7 +90,8 @@ inline void TfAssertOkAndAssignDeprecationMarker() {}
 }  // namespace tsl
 
 #define TF_ASSIGN_OR_RETURN(lhs, rexpr) \
-  ABSL_ASSIGN_OR_RETURN(lhs, (::tsl::TfAssignOrReturnDeprecationMarker(), (rexpr)))
+  ABSL_ASSIGN_OR_RETURN(lhs,            \
+                        (::tsl::TfAssignOrReturnDeprecationMarker(), (rexpr)))
 
 #define TF_ASSERT_OK_AND_ASSIGN(lhs, rexpr)                             \
   TF_ASSERT_OK_AND_ASSIGN_IMPL(                                         \

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/mapped_ptr_container_sorter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <list>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/functional/bind_front.h"
 #include "absl/log/log.h"
 #include "xla/hlo/testlib/test.h"

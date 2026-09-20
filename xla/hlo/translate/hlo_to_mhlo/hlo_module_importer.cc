@@ -94,10 +94,10 @@ absl::Status HloModuleImporter::Import(const HloModule& hlo_module) {
     // Only import the entry computation, any reachable one will be imported
     // unless turned into a region operation.
     ABSL_RETURN_IF_ERROR(HloFunctionImporter::ImportAsFunc(
-                        *hlo_module.entry_computation(), symbol_table_,
-                        &function_map_, &builder_,
-                        /*is_main*/ true, flatten_computation_args_result_)
-                        .status());
+                             *hlo_module.entry_computation(), symbol_table_,
+                             &function_map_, &builder_,
+                             /*is_main*/ true, flatten_computation_args_result_)
+                             .status());
 
     // Convert all ops to MHLO
     LLVM_DEBUG(llvm::dbgs() << "Emit StableHLO: " << emit_stablehlo_ << "\n");
@@ -109,11 +109,12 @@ absl::Status HloModuleImporter::Import(const HloModule& hlo_module) {
 
   auto* module_entry_computation = hlo_module.entry_computation();
   for (const auto* computation : hlo_module.computations()) {
-    ABSL_RETURN_IF_ERROR(HloFunctionImporter::ImportAsFunc(
-                        *computation, symbol_table_, &function_map_, &builder_,
-                        /*is_main*/ computation == module_entry_computation,
-                        flatten_computation_args_result_)
-                        .status());
+    ABSL_RETURN_IF_ERROR(
+        HloFunctionImporter::ImportAsFunc(
+            *computation, symbol_table_, &function_map_, &builder_,
+            /*is_main*/ computation == module_entry_computation,
+            flatten_computation_args_result_)
+            .status());
   }
 
   ImportEntryComputationLayoutAndTiles(
@@ -131,10 +132,11 @@ absl::Status HloModuleImporter::Import(const HloModule& hlo_module) {
 
 absl::Status HloModuleImporter::Import(const HloModuleProto& module_proto) {
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
-  ABSL_ASSIGN_OR_RETURN(auto module_config, HloModule::CreateModuleConfigFromProto(
-                                           module_proto, debug_options));
-  ABSL_ASSIGN_OR_RETURN(auto module,
-                   HloModule::CreateFromProto(module_proto, module_config));
+  ABSL_ASSIGN_OR_RETURN(
+      auto module_config,
+      HloModule::CreateModuleConfigFromProto(module_proto, debug_options));
+  ABSL_ASSIGN_OR_RETURN(
+      auto module, HloModule::CreateFromProto(module_proto, module_config));
 
   return Import(*module);
 }

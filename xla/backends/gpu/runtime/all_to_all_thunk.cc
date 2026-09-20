@@ -161,7 +161,7 @@ absl::Status AllToAllThunk::Initialize(const InitializeParams& params) {
       absl::MutexLock lock(events_mutex_);
       if (!events_.count(executor)) {
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Event> event,
-                         executor->CreateEvent());
+                              executor->CreateEvent());
         events_.insert({executor, std::move(event)});
       }
     }
@@ -225,9 +225,10 @@ absl::Status AllToAllThunk::RunCollective(const ExecuteParams& params,
                                           const GpuCliqueKey& clique_key,
                                           se::Stream& stream,
                                           Communicator& comm) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
 
   if (IsAllReplicasLocal(params.collective_params->local_device_count,
                          config_.config.replica_groups,
@@ -381,8 +382,8 @@ absl::Status SyncProgress(absl::string_view name,
       absl::StrFormat("finish %s for rank %d, clique %s", name, rank.value(),
                       clique_key.ToString());
   ABSL_RETURN_IF_ERROR(Rendezvous(/*name=*/finish_rendezvous_key,
-                             /*key=*/clique_key,
-                             /*num_threads=*/num_ranks));
+                                  /*key=*/clique_key,
+                                  /*num_threads=*/num_ranks));
 
   // Wait for all devices to reach the corresponding events.
   for (se::Event* e : events) {
@@ -401,8 +402,8 @@ absl::Status RunMemCpyAllToAll(bool has_split_dimension,
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing mem-copy-all-to-all";
   ABSL_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
-  ABSL_RETURN_IF_ERROR(SyncProgress("before memcpy all-to-all", clique_key, rank,
-                               num_ranks, stream, event, events));
+  ABSL_RETURN_IF_ERROR(SyncProgress("before memcpy all-to-all", clique_key,
+                                    rank, num_ranks, stream, event, events));
 
   // AllToAll can operate in two modes. Either it specifies a split dimension,
   // in which case inputs are split and outputs concatenated in that dimension
@@ -440,7 +441,7 @@ absl::Status RunMemCpyAllToAll(bool has_split_dimension,
   }
 
   ABSL_RETURN_IF_ERROR(SyncProgress("after memcpy all-to-all", clique_key, rank,
-                               num_ranks, stream, event, events));
+                                    num_ranks, stream, event, events));
 
   return absl::OkStatus();
 }

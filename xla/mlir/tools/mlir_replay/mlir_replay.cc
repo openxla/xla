@@ -26,6 +26,10 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
 #include "xla/debug_options_flags.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter_value.h"
 #include "xla/mlir/tools/mlir_replay/mlir_replay_lib.h"
@@ -35,10 +39,6 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/status.h"
 
 struct ReplayOptions {
   std::string hlo_snapshot;

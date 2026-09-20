@@ -68,6 +68,4 @@ CollectiveMemoryCache::FindMulticastMemory(
   return it->second.Lock();
 }
 
-
-
 }  // namespace xla::gpu

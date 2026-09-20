@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/fptrunc.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"

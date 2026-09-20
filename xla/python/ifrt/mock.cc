@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/python/ifrt/mock.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"

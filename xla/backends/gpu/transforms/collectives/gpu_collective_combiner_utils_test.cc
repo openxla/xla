@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/hlo/ir/hlo_instruction.h"

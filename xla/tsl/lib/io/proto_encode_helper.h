@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef XLA_TSL_LIB_IO_PROTO_ENCODE_HELPER_H_
 #define XLA_TSL_LIB_IO_PROTO_ENCODE_HELPER_H_
 
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/coding.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/logging.h"
 
 // A helper class for appending various kinds of values in protocol
 // buffer encoding format to a buffer.  The client gives a pointer to

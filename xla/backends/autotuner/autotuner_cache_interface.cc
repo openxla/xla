@@ -26,11 +26,11 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/util/sorted_range.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -133,6 +133,30 @@ bool AutotuneCacheContext::operator==(const AutotuneCacheContext& other) const {
 
 bool AutotuneCacheContext::operator!=(const AutotuneCacheContext& other) const {
   return !(*this == other);
+}
+
+void AutotunerCacheInterface::CacheStats::RecordMiss(MissReason reason) {
+  misses++;
+  switch (reason) {
+    case MissReason::kNotFound:
+      miss_not_found++;
+      break;
+    case MissReason::kVersionMismatch:
+      miss_version_mismatch++;
+      break;
+    case MissReason::kReadError:
+      miss_read_error++;
+      break;
+  }
+}
+
+std::string AutotunerCacheInterface::CacheStats::ToString() const {
+  return absl::StrCat("hits=", hits, ", misses=", misses,
+                      " (strict_hits=", strict_hits,
+                      ", in_memory_hits=", in_memory_hits,
+                      ", miss_reasons: not_found=", miss_not_found,
+                      ", version_mismatch=", miss_version_mismatch,
+                      ", read_error=", miss_read_error, ")");
 }
 
 }  // namespace xla

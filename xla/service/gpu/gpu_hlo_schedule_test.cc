@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/log_severity.h"
 #include "absl/log/log.h"
@@ -36,8 +37,9 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
-#include "mlir/IR/MLIRContext.h"
 #include "google/protobuf/text_format.h"
+#include "mlir/IR/MLIRContext.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -64,7 +66,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {

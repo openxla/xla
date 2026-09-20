@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/types/span.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal.h"
 #include "xla/tests/exhaustive/error_spec.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/tests/exhaustive/exhaustive_op_test_base.h"
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"
 #include "xla/types.h"
-#include "tsl/platform/test.h"
 
 #ifdef __FAST_MATH__
 #error "Can't be compiled with fast math on"

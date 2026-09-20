@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -29,8 +32,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -89,7 +91,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace memory_space_assignment {
@@ -13647,37 +13648,40 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
 
     // Update schedule_to_class with the instructions we care about.
     int slices_start_after_index;
-    ABSL_ASSIGN_OR_RETURN(slices_start_after_index,
-                     FindScheduleIndexOfInstruction(
-                         entry_schedule, slices_start_after_instruction_name,
-                         InstructionClass::kStartAfterNonCopy));
+    ABSL_ASSIGN_OR_RETURN(
+        slices_start_after_index,
+        FindScheduleIndexOfInstruction(entry_schedule,
+                                       slices_start_after_instruction_name,
+                                       InstructionClass::kStartAfterNonCopy));
     schedule_to_class[slices_start_after_index] =
         InstructionClass::kStartAfterNonCopy;
     int slices_done_before_index;
-    ABSL_ASSIGN_OR_RETURN(slices_done_before_index,
-                     FindScheduleIndexOfInstruction(
-                         entry_schedule, slices_done_before_instruction_name,
-                         InstructionClass::kDoneBeforeNonCopy));
+    ABSL_ASSIGN_OR_RETURN(
+        slices_done_before_index,
+        FindScheduleIndexOfInstruction(entry_schedule,
+                                       slices_done_before_instruction_name,
+                                       InstructionClass::kDoneBeforeNonCopy));
     schedule_to_class[slices_done_before_index] =
         InstructionClass::kDoneBeforeNonCopy;
     int concat_bitcast_index;
     ABSL_ASSIGN_OR_RETURN(concat_bitcast_index,
-                     FindScheduleIndexOfInstruction(
-                         entry_schedule, concat_bitcast->name(),
-                         InstructionClass::kRelatedConcatBitcast));
+                          FindScheduleIndexOfInstruction(
+                              entry_schedule, concat_bitcast->name(),
+                              InstructionClass::kRelatedConcatBitcast));
     schedule_to_class[concat_bitcast_index] =
         InstructionClass::kRelatedConcatBitcast;
     for (const HloInstruction* slice : concat_bitcast->operands()) {
       int done_index;
-      ABSL_ASSIGN_OR_RETURN(done_index, FindScheduleIndexOfInstruction(
-                                       entry_schedule, slice->name(),
-                                       InstructionClass::kRelatedSliceDone));
+      ABSL_ASSIGN_OR_RETURN(
+          done_index,
+          FindScheduleIndexOfInstruction(entry_schedule, slice->name(),
+                                         InstructionClass::kRelatedSliceDone));
       schedule_to_class[done_index] = InstructionClass::kRelatedSliceDone;
       int start_index;
       ABSL_ASSIGN_OR_RETURN(start_index,
-                       FindScheduleIndexOfInstruction(
-                           entry_schedule, slice->operand(0)->name(),
-                           InstructionClass::kRelatedSliceStart));
+                            FindScheduleIndexOfInstruction(
+                                entry_schedule, slice->operand(0)->name(),
+                                InstructionClass::kRelatedSliceStart));
       schedule_to_class[start_index] = InstructionClass::kRelatedSliceStart;
     }
 
@@ -14797,7 +14801,7 @@ ENTRY main {
           absl::string_view hlo_text) -> absl::StatusOr<ModuleAndAssignments> {
     ModuleAndAssignments module_and_assignments;
     ABSL_ASSIGN_OR_RETURN(module_and_assignments.module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     VLOG(1) << "Original module:\n"
             << module_and_assignments.module->ToString(
                    HloPrintOptions::ShortParsable());
@@ -18683,6 +18687,205 @@ ENTRY entry {
             kDefaultMemorySpace);
 }
 
+// Tests that FindAliases correctly maps operands to parameters for async-start,
+// async-update, call, and conditional instructions:
+// 1. Operands bound with async-start map 1-to-1 to initial parameters.
+// 2. Operand 0 of async-update (the async context token) does not alias
+//    parameters.
+// 3. Operands bound with async-update map 1-to-1 to subsequent parameters,
+//    offset by the number of previously bound operands.
+// 4. Operands of synchronous call map 1-to-1 to callee parameters by operand
+//    index, and operands 1..N of conditional map to branch_computation(i - 1)
+//    parameter 0.
+TEST_F(MemorySpaceAssignmentTest, FindAliasesAsyncStartAndAsyncUpdate) {
+  absl::string_view hlo_string = R"hlo(
+HloModule module, is_scheduled=true
+
+async_computation {
+  p0 = f32[4]{0} parameter(0)
+  p1 = f32[4]{0} parameter(1)
+  p2 = f32[4]{0} parameter(2)
+  p3 = f32[4]{0} parameter(3)
+  ROOT tuple = (f32[4]{0}, f32[4]{0}, f32[4]{0}, f32[4]{0}) tuple(p0, p1, p2, p3)
+}
+
+call_computation {
+  cp0 = f32[4]{0} parameter(0)
+  cp1 = f32[4]{0} parameter(1)
+  ROOT call_tuple = (f32[4]{0}, f32[4]{0}) tuple(cp0, cp1)
+}
+
+branch0_computation {
+  ROOT bp0 = f32[4]{0} parameter(0)
+}
+
+branch1_computation {
+  ROOT bp1 = f32[4]{0} parameter(0)
+}
+
+ENTRY entry {
+  param0 = f32[4]{0} parameter(0)
+  param1 = f32[4]{0} parameter(1)
+  param2 = f32[4]{0} parameter(2)
+  param3 = f32[4]{0} parameter(3)
+  param_pred = pred[] parameter(4)
+  async-start = ((f32[4]{0}, f32[4]{0}), (), s32[]) async-start(param0, param1), calls=async_computation
+  async-update = ((f32[4]{0}, f32[4]{0}, f32[4]{0}, f32[4]{0}), (), s32[]) async-update(async-start, param2, param3), calls=async_computation
+  async-done = (f32[4]{0}, f32[4]{0}, f32[4]{0}, f32[4]{0}) async-done(async-update), calls=async_computation
+  sync-call = (f32[4]{0}, f32[4]{0}) call(param0, param1), to_apply=call_computation
+  cond = f32[4]{0} conditional(param_pred, param2, param3), true_computation=branch0_computation, false_computation=branch1_computation
+  ROOT root = ((f32[4]{0}, f32[4]{0}, f32[4]{0}, f32[4]{0}), (f32[4]{0}, f32[4]{0}), f32[4]{0}, f32[4]{0}, f32[4]{0}, f32[4]{0}, f32[4]{0}) tuple(async-done, sync-call, cond, param0, param1, param2, param3)
+}
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HloInstruction* param0 = FindInstruction(module.get(), "param0");
+  HloInstruction* param1 = FindInstruction(module.get(), "param1");
+  HloInstruction* param2 = FindInstruction(module.get(), "param2");
+  HloInstruction* param3 = FindInstruction(module.get(), "param3");
+  HloInstruction* pred = FindInstruction(module.get(), "param_pred");
+  HloInstruction* async_start = FindInstruction(module.get(), "async-start");
+  HloInstruction* async_update = FindInstruction(module.get(), "async-update");
+  HloInstruction* async_done = FindInstruction(module.get(), "async-done");
+  HloInstruction* sync_call = FindInstruction(module.get(), "sync-call");
+  HloInstruction* cond = FindInstruction(module.get(), "cond");
+
+  HloComputation* async_comp =
+      module->GetComputationWithName("async_computation");
+  HloInstruction* p0 = async_comp->parameter_instruction(0);
+  HloInstruction* p1 = async_comp->parameter_instruction(1);
+  HloInstruction* p2 = async_comp->parameter_instruction(2);
+  HloInstruction* p3 = async_comp->parameter_instruction(3);
+
+  HloComputation* call_comp =
+      module->GetComputationWithName("call_computation");
+  HloInstruction* cp0 = call_comp->parameter_instruction(0);
+  HloInstruction* cp1 = call_comp->parameter_instruction(1);
+
+  HloComputation* branch0_comp =
+      module->GetComputationWithName("branch0_computation");
+  HloInstruction* bp0 = branch0_comp->parameter_instruction(0);
+  HloComputation* branch1_comp =
+      module->GetComputationWithName("branch1_computation");
+  HloInstruction* bp1 = branch1_comp->parameter_instruction(0);
+
+  std::vector<AllocationValue> allocation_values;
+  // Allocation values for parameters of the async, call, and branch
+  // computations.
+  allocation_values.emplace_back(nullptr, HloPosition{p0, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{p1, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{p2, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{p3, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{cp0, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{cp1, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{bp0, {}}, 16);
+  allocation_values.emplace_back(nullptr, HloPosition{bp1, {}}, 16);
+
+  // Allocation values for caller operands passed to async-start (operands 0 and
+  // 1) and sync-call (operands 0 and 1).
+  AllocationValue val_param0(nullptr, HloPosition{param0, {}}, 16);
+  val_param0.uses().push_back(AllocationValue::Use{HloUse{async_start, 0}, 1});
+  val_param0.uses().push_back(AllocationValue::Use{HloUse{sync_call, 0}, 4});
+  allocation_values.push_back(std::move(val_param0));
+
+  AllocationValue val_param1(nullptr, HloPosition{param1, {}}, 16);
+  val_param1.uses().push_back(AllocationValue::Use{HloUse{async_start, 1}, 1});
+  val_param1.uses().push_back(AllocationValue::Use{HloUse{sync_call, 1}, 4});
+  allocation_values.push_back(std::move(val_param1));
+
+  // Allocation values for async-start bound operand elements ({0, 0} and
+  // {0, 1}) consumed as operand 0 of async-update.
+  AllocationValue val_async_start_0(nullptr, HloPosition{async_start, {0, 0}},
+                                    16);
+  val_async_start_0.uses().push_back(
+      AllocationValue::Use{HloUse{async_update, 0, {0, 0}}, 2});
+  allocation_values.push_back(std::move(val_async_start_0));
+
+  AllocationValue val_async_start_1(nullptr, HloPosition{async_start, {0, 1}},
+                                    16);
+  val_async_start_1.uses().push_back(
+      AllocationValue::Use{HloUse{async_update, 0, {0, 1}}, 2});
+  allocation_values.push_back(std::move(val_async_start_1));
+
+  // Allocation values for caller operands passed to async-update (operands 1
+  // and 2) and conditional (operands 1 and 2).
+  AllocationValue val_param2(nullptr, HloPosition{param2, {}}, 16);
+  val_param2.uses().push_back(AllocationValue::Use{HloUse{async_update, 1}, 2});
+  val_param2.uses().push_back(AllocationValue::Use{HloUse{cond, 1}, 5});
+  allocation_values.push_back(std::move(val_param2));
+
+  AllocationValue val_param3(nullptr, HloPosition{param3, {}}, 16);
+  val_param3.uses().push_back(AllocationValue::Use{HloUse{async_update, 2}, 2});
+  val_param3.uses().push_back(AllocationValue::Use{HloUse{cond, 2}, 5});
+  allocation_values.push_back(std::move(val_param3));
+
+  AllocationValue val_pred(nullptr, HloPosition{pred, {}}, 1);
+  val_pred.uses().push_back(AllocationValue::Use{HloUse{cond, 0}, 5});
+  allocation_values.push_back(std::move(val_pred));
+
+  // Allocation values for async-update bound operand elements ({0, 0}, {0, 1},
+  // {0, 2}, and {0, 3}) consumed by async-done.
+  for (int64_t i = 0; i < 4; ++i) {
+    AllocationValue val_async_update(nullptr, HloPosition{async_update, {0, i}},
+                                     16);
+    val_async_update.uses().push_back(
+        AllocationValue::Use{HloUse{async_done, 0, {0, i}}, 3});
+    allocation_values.push_back(std::move(val_async_update));
+  }
+
+  MsaAlgorithm::FindAliasesForTesting(&allocation_values);
+
+  auto find_val = [&](const HloInstruction* inst,
+                      ShapeIndex index = {}) -> const AllocationValue& {
+    for (const auto& v : allocation_values) {
+      if (v.position().instruction == inst && v.position().index == index) {
+        return v;
+      }
+    }
+    LOG(FATAL) << "Not found: " << inst->name() << " " << index.ToString();
+  };
+
+  // 1. Verify 1-to-1 mapping for async-start operands:
+  // param0 (operand 0) aliases {async_start, {0, 0}} and callee parameter p0.
+  EXPECT_THAT(find_val(param0).uses()[0].aliases,
+              ::testing::ElementsAre(HloPosition{async_start, {0, 0}},
+                                     HloPosition{p0, {}}));
+  // param1 (operand 1) aliases {async_start, {0, 1}} and callee parameter p1.
+  EXPECT_THAT(find_val(param1).uses()[0].aliases,
+              ::testing::ElementsAre(HloPosition{async_start, {0, 1}},
+                                     HloPosition{p1, {}}));
+
+  // 2. Verify operand 0 of async-update (the async context tuple) aliases
+  // matching elements in async_update, and does not alias any callee parameter:
+  EXPECT_THAT(find_val(async_start, {0, 0}).uses()[0].aliases,
+              ::testing::ElementsAre(HloPosition{async_update, {0, 0}}));
+  EXPECT_THAT(find_val(async_start, {0, 1}).uses()[0].aliases,
+              ::testing::ElementsAre(HloPosition{async_update, {0, 1}}));
+
+  // 3. Verify late-bound parameter offset calculation for async-update
+  // operands: param2 (operand 1 of async-update) aliases {async_update, {0, 2}}
+  // and callee parameter p2 (1 - 1 + 2 = 2).
+  EXPECT_THAT(find_val(param2).uses()[0].aliases,
+              ::testing::ElementsAre(HloPosition{async_update, {0, 2}},
+                                     HloPosition{p2, {}}));
+  // param3 (operand 2 of async-update) aliases {async_update, {0, 3}} and
+  // callee parameter p3 (2 - 1 + 2 = 3).
+  EXPECT_THAT(find_val(param3).uses()[0].aliases,
+              ::testing::ElementsAre(HloPosition{async_update, {0, 3}},
+                                     HloPosition{p3, {}}));
+
+  // 4. Verify 1-to-1 mapping for synchronous call and conditional operands:
+  EXPECT_THAT(find_val(param0).uses()[1].aliases,
+              ::testing::ElementsAre(HloPosition{cp0, {}}));
+  EXPECT_THAT(find_val(param1).uses()[1].aliases,
+              ::testing::ElementsAre(HloPosition{cp1, {}}));
+  EXPECT_THAT(find_val(pred).uses()[0].aliases, ::testing::IsEmpty());
+  EXPECT_THAT(find_val(param2).uses()[1].aliases,
+              ::testing::ElementsAre(HloPosition{bp0, {}}));
+  EXPECT_THAT(find_val(param3).uses()[1].aliases,
+              ::testing::ElementsAre(HloPosition{bp1, {}}));
+}
+
 // Tests a case where some operands bound in async-start/update are allowed
 // in alternate memory while others are restricted to default memory.
 // TODO(b/538345137): Re-enable this test once b/538345137 is fixed.
@@ -19742,6 +19945,70 @@ ENTRY %Entry (k_base: bf16[4,384,128], o_base: bf16[4,384,128], update_slice: bf
       HloPosition{root_tuple, {2, 0, 1}}, *alias_analysis));
   EXPECT_FALSE(IsAsyncPipelinedWhileAlternateMemoryPosition(
       HloPosition{root_tuple, {2, 1}}, *alias_analysis));
+}
+
+// Test subclass of MsaAlgorithm that simulates an empty candidate list from
+// FindChunkCandidates.
+class EmptyChunkCandidatesMsaAlgorithm : public MsaAlgorithm {
+ public:
+  using MsaAlgorithm::FindBestChunkCandidates;
+  using MsaAlgorithm::MsaAlgorithm;
+
+  std::vector<Chunk> FindChunkCandidates(
+      const SlicedBufferInterval& sliced_buffer_interval,
+      int64_t preferred_offset) const override {
+    return {};
+  }
+};
+
+// Tests that FindBestChunkCandidates handles empty chunk candidates safely
+// without dereferencing past-the-end iterators (preventing ASAN container
+// overflows).
+TEST_F(MemorySpaceAssignmentTest, FindBestChunkCandidatesEmptyChunkCandidates) {
+  auto module = CreateNewVerifiedModule();
+  HloComputation::Builder builder(TestName());
+  Shape shape = ShapeUtil::MakeShape(F32, {4});
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  HloComputation* computation = module->AddEntryComputation(builder.Build());
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(computation, {p0});
+  ASSERT_OK(module->set_schedule(schedule));
+
+  AllocationSequence allocations;
+  Options options = DefaultMemorySpaceOptions();
+  ASSERT_OK_AND_ASSIGN(auto alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(auto hlo_live_range,
+                       HloLiveRange::Run(module->schedule(), *alias_analysis,
+                                         module->entry_computation()));
+
+  EmptyChunkCandidatesMsaAlgorithm algorithm(module.get(), &allocations,
+                                             options, *alias_analysis,
+                                             &alias_info_, *hlo_live_range);
+
+  AllocationRequest request;
+  request.end_time = 10;
+  AliasedOffset preferred_offset{/*offset=*/16};
+
+  GlobalDecreasingSizeBestFitHeap<HloValue>::BufferInterval buffer_interval;
+  buffer_interval.buffer = nullptr;
+  buffer_interval.size = 16;
+  buffer_interval.start = 0;
+  buffer_interval.end = 10;
+  buffer_interval.need_allocation = true;
+
+  using SlicedBufferInterval =
+      GlobalDecreasingSizeBestFitHeap<HloValue>::SlicedBufferInterval;
+  auto sliced_interval =
+      SlicedBufferInterval::CreateMutableInterval(buffer_interval);
+
+  // Without the bounds check in FindBestChunkCandidates, an empty
+  // chunk_candidates vector results in absl::c_min_element dereferencing an
+  // end() iterator, triggering an AddressSanitizer container-overflow/crash.
+  std::vector<Chunk> result = algorithm.FindBestChunkCandidates(
+      request, &preferred_offset, &sliced_interval);
+  EXPECT_THAT(result, ::testing::IsEmpty());
 }
 
 }  // namespace

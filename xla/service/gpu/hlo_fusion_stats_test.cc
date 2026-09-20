@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/hlo_fusion_stats.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/match.h"
 #include "xla/hlo/parser/hlo_parser.h"

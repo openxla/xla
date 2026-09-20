@@ -14,18 +14,19 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/fp_util.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/numeric/bits.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/bit_cast.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/util.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

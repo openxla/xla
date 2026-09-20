@@ -185,7 +185,8 @@ ElementalKernelEmitter::EmitKernelDefinition() {
       KernelApiIrBuilder::Options::FromHloModuleConfig(hlo_module->config()));
 
   std::unique_ptr<llvm::Module> llvm_module = KernelApiIrBuilder::CreateModule(
-      absl::StrCat(instr_->name(), "_elemental_kernel_module"), *ctx);
+      absl::StrCat(instr_->name(), "_elemental_kernel_module"), *ctx,
+      target_machine_);
 
   ABSL_ASSIGN_OR_RETURN(
       KernelApiIrBuilder::KernelPrototype kernel_prototype,
@@ -225,8 +226,8 @@ ElementalKernelEmitter::EmitKernelDefinition() {
       elemental_ir_emitter.MakeElementGenerator(instr_, operand_to_generator);
 
   ABSL_ASSIGN_OR_RETURN(NumWorkGroups num_workgroups,
-                   EmitElementalLoops(ir_builder, instr_, kernel_prototype,
-                                      element_generator));
+                        EmitElementalLoops(ir_builder, instr_, kernel_prototype,
+                                           element_generator));
 
   LlvmKernelSource source(std::move(ctx), std::move(llvm_module));
 
@@ -290,7 +291,7 @@ absl::StatusOr<NumWorkGroups> ElementalKernelEmitter::EmitElementalLoops(
 
   // Emit a whole loop for the instruction.
   ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(element_generator, result, &b)
-                      .EmitLoop(llvm_ir::IrName(instr)));
+                           .EmitLoop(llvm_ir::IrName(instr)));
   return NumWorkGroups();
 }
 

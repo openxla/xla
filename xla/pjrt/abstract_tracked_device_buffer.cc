@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/future.h"
 #include "xla/pjrt/c/pjrt_c_api_device_event.h"
 #include "xla/pjrt/common_pjrt_client.h"
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/util/maybe_owning.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -130,6 +130,26 @@ Future<> AbstractTrackedDeviceBuffer::GetReadyFuture(
   return definition_future;
 }
 
+absl::StatusOr<PjRtDeviceEventRef>
+AbstractTrackedDeviceBuffer::GetDefinitionEvent(PjRtMemorySpace* memory_space) {
+  if (definition_events().empty()) {
+    auto* client = absl::down_cast<CommonPjRtClient*>(memory_space->client());
+    PjRtDeviceEventPromiseRef usage_event_promise;
+    PjRtDeviceEventRef usage_event;
+    ABSL_ASSIGN_OR_RETURN(std::tie(usage_event_promise, usage_event),
+                          client->CreateLinkedEventPromise(
+                              memory_space, "GetDefinitionEvent 0-sized"));
+    usage_event_promise.SetReady();
+    return usage_event;
+  }
+  if (definition_events().size() != 1) {
+    return absl::InternalError(
+        "GetMergedDefinitionEvent only supported on TPU for buffers with "
+        "exactly 1 definition event.");
+  }
+  return definition_events_[0];
+}
+
 absl::Status AbstractTrackedDeviceBuffer::BlockForOperationsToComplete(
     PjRtMemorySpace* memory_space) {
   for (const auto& ev : usage_events_) {
@@ -152,7 +172,8 @@ absl::Status AbstractTrackedDeviceBuffer::WaitUntilBufferReadyOnStream(
     PjRtMemorySpace* memory_space, std::intptr_t stream) {
   auto* client = absl::down_cast<CommonPjRtClient*>(memory_space->client());
   for (const auto& event : definition_events()) {
-    ABSL_RETURN_IF_ERROR(client->WaitOnStream(memory_space, event, stream));
+    ABSL_RETURN_IF_ERROR(
+        client->raw_client()->WaitOnStream(memory_space, event, stream));
   }
   return absl::OkStatus();
 }
@@ -459,9 +480,10 @@ absl::Status CommonPjRtBuffer::AcquireScopedRawBuffer(
     definition_events.push_back(ev);
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto device_event, std::move(scoped_acquire)(
-                                          device_buffer.buffer()->raw_buffer(),
-                                          std::move(definition_events)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto device_event,
+      std::move(scoped_acquire)(device_buffer.buffer()->raw_buffer(),
+                                std::move(definition_events)));
   device_buffer.ConvertUsageHold(std::move(device_event));
   return absl::OkStatus();
 }
@@ -481,8 +503,8 @@ CommonPjRtBuffer::GetRawBufferForUsage(const char* caller_name) {
         auto* client =
             absl::down_cast<CommonPjRtClient*>(memory_space_->client());
         ABSL_ASSIGN_OR_RETURN(std::tie(usage_done_promise, usage_event),
-                         client->CreateLinkedEventPromise(
-                             memory_space_, "GetRawBufferForUsage"));
+                              client->CreateLinkedEventPromise(
+                                  memory_space_, "GetRawBufferForUsage"));
         return usage_event;
       },
       caller_name));

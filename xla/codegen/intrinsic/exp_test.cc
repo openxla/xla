@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/exp.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"

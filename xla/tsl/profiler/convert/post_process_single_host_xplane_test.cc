@@ -15,16 +15,17 @@ limitations under the License.
 
 #include "xla/tsl/profiler/convert/post_process_single_host_xplane.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/container/flat_hash_set.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

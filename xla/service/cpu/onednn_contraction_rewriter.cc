@@ -26,6 +26,7 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -33,10 +34,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "Eigen/Core"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_common.hpp"
 #include "oneapi/dnnl/dnnl_threadpool.hpp"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/backends/cpu/runtime/onednn/onednn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -64,8 +66,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace cpu {

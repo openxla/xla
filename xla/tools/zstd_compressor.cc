@@ -42,8 +42,8 @@ limitations under the License.
 #include "riegeli/bytes/copy_all.h"
 #include "riegeli/bytes/std_io.h"
 #include "riegeli/zstd/zstd_writer.h"
-#include "xla/tsl/util/command_line_flags.h"
 #include "tsl/platform/init_main.h"
+#include "xla/tsl/util/command_line_flags.h"
 
 int main(int argc, char** argv) {
   int compression_level = 22;

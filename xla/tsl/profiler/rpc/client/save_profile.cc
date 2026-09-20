@@ -34,15 +34,15 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "riegeli/bytes/fd_writer.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/profiler/utils/file_system_utils.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

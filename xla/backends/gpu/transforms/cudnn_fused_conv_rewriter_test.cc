@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <initializer_list>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"

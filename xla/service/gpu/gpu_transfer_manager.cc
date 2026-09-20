@@ -34,6 +34,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/IR/DataLayout.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/statusor.h"
 #include "xla/literal.h"
 #include "xla/service/compiler.h"
 #include "xla/service/generic_transfer_manager.h"
@@ -54,10 +58,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -115,7 +115,7 @@ absl::Status GpuTransferManager::EnsurePinnedBuffersAllocated(
   }
 
   ABSL_ASSIGN_OR_RETURN(pinned_chunk_,
-                   executor->HostMemoryAllocate(kPinnedChunkBytes));
+                        executor->HostMemoryAllocate(kPinnedChunkBytes));
 
   static_assert(kPinnedChunkBytes % kPinnedBufferBytes == 0,
                 "assumption of loop below");
@@ -134,8 +134,9 @@ absl::Status GpuTransferManager::ReadDynamicShapes(
   DCHECK(device_shape->is_dynamic());
   Shape original_device_shape = *device_shape;
 
-  ABSL_ASSIGN_OR_RETURN(auto compiler, Compiler::GetForPlatform(
-                                      stream->parent()->GetPlatform()->id()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto compiler,
+      Compiler::GetForPlatform(stream->parent()->GetPlatform()->id()));
   auto shape_size_fn = compiler->ShapeSizeBytesFunction();
 
   // First, figure out which parts of `device_shape` are dynamic and where the
@@ -263,7 +264,7 @@ absl::Status GpuTransferManager::TransferBufferFromDevice(
           << tsl::strings::HumanReadableNumBytes(size);
 
   ABSL_ASSIGN_OR_RETURN(auto staging_buffer,
-                   GetOrCreateStagingBuffer(stream->parent()));
+                        GetOrCreateStagingBuffer(stream->parent()));
 
   absl::MutexLock lock(staging_buffer->mutex);
   void* staging = staging_buffer->allocation->address().opaque();
@@ -282,7 +283,8 @@ absl::Status GpuTransferManager::TransferBufferFromDevice(
         [=] { std::memcpy(dst, staging, chunk_size); });
   };
 
-  ABSL_RETURN_IF_ERROR(stream->WaitFor(staging_buffer->transfer_completed.get()));
+  ABSL_RETURN_IF_ERROR(
+      stream->WaitFor(staging_buffer->transfer_completed.get()));
   ABSL_RETURN_IF_ERROR(ForEachChunk(size, kStagingBufferSize, transfer_chunk));
   ABSL_RETURN_IF_ERROR(
       stream->RecordEvent(staging_buffer->transfer_completed.get()));
@@ -304,7 +306,7 @@ absl::Status GpuTransferManager::TransferBufferToDevice(
           << tsl::strings::HumanReadableNumBytes(size);
 
   ABSL_ASSIGN_OR_RETURN(auto staging_buffer,
-                   GetOrCreateStagingBuffer(stream->parent()));
+                        GetOrCreateStagingBuffer(stream->parent()));
 
   absl::MutexLock lock(staging_buffer->mutex);
   void* staging = staging_buffer->allocation->address().opaque();
@@ -323,7 +325,8 @@ absl::Status GpuTransferManager::TransferBufferToDevice(
     return stream->Memcpy(&chunk, staging, chunk_size);
   };
 
-  ABSL_RETURN_IF_ERROR(stream->WaitFor(staging_buffer->transfer_completed.get()));
+  ABSL_RETURN_IF_ERROR(
+      stream->WaitFor(staging_buffer->transfer_completed.get()));
   ABSL_RETURN_IF_ERROR(ForEachChunk(size, kStagingBufferSize, transfer_chunk));
   ABSL_RETURN_IF_ERROR(
       stream->RecordEvent(staging_buffer->transfer_completed.get()));
@@ -350,7 +353,7 @@ GpuTransferManager::GetOrCreateStagingBuffer(se::StreamExecutor* executor) {
       executor->device_ordinal());
 
   ABSL_ASSIGN_OR_RETURN(auto staging_buffer,
-                   executor->HostMemoryAllocate(kStagingBufferSize));
+                        executor->HostMemoryAllocate(kStagingBufferSize));
 
   ABSL_ASSIGN_OR_RETURN(auto transfer_completed, executor->CreateEvent());
 

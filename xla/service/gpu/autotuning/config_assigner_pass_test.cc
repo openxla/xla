@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/autotuning/config_assigner_pass.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/log/check.h"
 #include "absl/log/globals.h"
@@ -1021,6 +1022,14 @@ TEST_F(ConfigAssignerPassTest,
   debug_options.set_xla_candidate_configs_file("/tmp/candidates.pbtxt");
   auto options = GetCodegenOrchestratorOptions(debug_options);
   EXPECT_EQ(options.candidate_configs_file, "/tmp/candidates.pbtxt");
+}
+
+TEST_F(ConfigAssignerPassTest, PreferredBackendPropagatesToAutotunerOptions) {
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_autotuner_preferred_backend(autotuner::Backend::CUDNN);
+  auto options = GetAutotunerOptions(debug_options,
+                                     /*is_buffer_check_supported=*/false);
+  EXPECT_EQ(options.preferred_backend, autotuner::Backend::CUDNN);
 }
 
 TEST_F(ConfigAssignerPassTest, CustomFusionForbidsSpills) {

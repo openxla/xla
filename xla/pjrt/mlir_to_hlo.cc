@@ -173,8 +173,8 @@ absl::Status MlirToXlaComputation(
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   xla::ConvertStablehloToHloWithOptions(module, use_tuple_args,
-                                                         return_tuple));
+                        xla::ConvertStablehloToHloWithOptions(
+                            module, use_tuple_args, return_tuple));
 
   xla_computation = XlaComputation(hlo_module->ToProto());
   return absl::OkStatus();
@@ -210,7 +210,7 @@ absl::Status ParseMlirModuleStringAndConvertToXlaComputation(
     bool use_tuple_args, bool return_tuple) {
   mlir::MLIRContext context;
   ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                   xla::ParseMlirModuleString(mlir_module_str, context));
+                        xla::ParseMlirModuleString(mlir_module_str, context));
   return xla::MlirToXlaComputation(*module, xla_computation, use_tuple_args,
                                    return_tuple,
                                    /*exec_build_options=*/nullptr);

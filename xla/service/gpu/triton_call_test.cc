@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/triton_call.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "mlir/IR/MLIRContext.h"
 
 namespace xla::gpu {

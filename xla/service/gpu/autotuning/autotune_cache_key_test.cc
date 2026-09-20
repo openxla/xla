@@ -15,16 +15,19 @@ limitations under the License.
 
 #include "xla/service/gpu/autotuning/autotune_cache_key.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/stream_executor/device_description.h"
@@ -33,8 +36,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {

@@ -23,7 +23,7 @@ limitations under the License.
 
 #include "xla/pjrt/proto/pjrt_value_type.pb.h"
 
-template<typename T>
+template <typename T>
 struct always_false : std::false_type {};
 
 namespace xla {

@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
@@ -55,7 +57,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace gpu {

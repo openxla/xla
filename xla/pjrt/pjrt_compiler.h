@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/base/any.h"
 #include "riegeli/bytes/reader.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/runtime/process_id.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -294,7 +294,8 @@ class PjRtTopologyDescription {
   // Returns the total number of cores of the default type.
   virtual absl::StatusOr<int> CoreCountOfDefaultType() const {
     ABSL_ASSIGN_OR_RETURN(int process_count, ProcessCount());
-    ABSL_ASSIGN_OR_RETURN(int cores_per_process, CoreCountOfDefaultTypePerProcess());
+    ABSL_ASSIGN_OR_RETURN(int cores_per_process,
+                          CoreCountOfDefaultTypePerProcess());
     return process_count * cores_per_process;
   }
 
@@ -302,7 +303,7 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<int> LogicalDeviceCountOfDefaultTypePerProcess()
       const {
     ABSL_ASSIGN_OR_RETURN(int logical_devices_per_chip,
-                     LogicalDeviceCountOfDefaultTypePerChip());
+                          LogicalDeviceCountOfDefaultTypePerChip());
     ABSL_ASSIGN_OR_RETURN(int chips_per_process, ChipsPerProcess());
     return chips_per_process * logical_devices_per_chip;
   }
@@ -311,7 +312,7 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<int> LogicalDeviceCountOfDefaultType() const {
     ABSL_ASSIGN_OR_RETURN(int process_count, ProcessCount());
     ABSL_ASSIGN_OR_RETURN(int logical_devices_per_process,
-                     LogicalDeviceCountOfDefaultTypePerProcess());
+                          LogicalDeviceCountOfDefaultTypePerProcess());
     return process_count * logical_devices_per_process;
   }
 

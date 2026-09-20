@@ -11,6 +11,9 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/heap_simulator/free_chunks_manager.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -19,8 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/tsl/platform/test_benchmark.h"
 
 namespace xla {

@@ -176,7 +176,8 @@ absl::StatusOr<cuda::Assembly> CompileAndLinkUsingLibNvJitLink(
   };
 
   if (create_result != NVJITLINK_SUCCESS) {
-    ABSL_ASSIGN_OR_RETURN(std::string error_log, nvJitLinkGetErrorLog(link_handle));
+    ABSL_ASSIGN_OR_RETURN(std::string error_log,
+                          nvJitLinkGetErrorLog(link_handle));
 
     VLOG(3) << "libnvjitlink error log output: " << error_log;
 
@@ -211,7 +212,7 @@ absl::StatusOr<cuda::Assembly> CompileAndLinkUsingLibNvJitLink(
       VLOG(3) << "libnvjitlink error log output: " << *error_log;
 
       ABSL_RETURN_IF_ERROR(CreateErrorFromPTXASLog(*error_log, architecture,
-                                              cancel_if_reg_spill));
+                                                   cancel_if_reg_spill));
       return ToStatus(result, *error_log);
     }
 
@@ -226,7 +227,8 @@ absl::StatusOr<cuda::Assembly> CompileAndLinkUsingLibNvJitLink(
   nvJitLinkResult linking_result = nvJitLinkComplete(link_handle);
 
   if (linking_result != NVJITLINK_SUCCESS) {
-    ABSL_ASSIGN_OR_RETURN(std::string error_log, nvJitLinkGetErrorLog(link_handle));
+    ABSL_ASSIGN_OR_RETURN(std::string error_log,
+                          nvJitLinkGetErrorLog(link_handle));
 
     // Print the verbose output of ptxas.
     VLOG(3) << "libnvjitlink error log output: " << error_log;
@@ -278,7 +280,8 @@ absl::StatusOr<int> GetLatestPtxIsaVersionForLibNvJitLink() {
   };
 
   if (create_result != NVJITLINK_SUCCESS) {
-    ABSL_ASSIGN_OR_RETURN(std::string error_log, nvJitLinkGetErrorLog(link_handle));
+    ABSL_ASSIGN_OR_RETURN(std::string error_log,
+                          nvJitLinkGetErrorLog(link_handle));
 
     VLOG(3) << "libnvjitlink error log output: " << error_log;
 
@@ -302,7 +305,8 @@ absl::StatusOr<int> GetLatestPtxIsaVersionForLibNvJitLink() {
         "libnvjitlink compilation succeeded where it was expected to fail");
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::string error_log, nvJitLinkGetErrorLog(link_handle));
+  ABSL_ASSIGN_OR_RETURN(std::string error_log,
+                        nvJitLinkGetErrorLog(link_handle));
   return GetLatestPtxIsaVersionFromUnsupportedVersionErrorLog(error_log);
 }
 

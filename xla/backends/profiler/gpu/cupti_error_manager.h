@@ -31,8 +31,8 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_target.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "tsl/platform/thread_annotations.h"
+#include "xla/backends/profiler/gpu/cupti_interface.h"
 
 namespace xla {
 namespace profiler {

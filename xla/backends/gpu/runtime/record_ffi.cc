@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/ffi.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/mem.h"
 
 namespace xla::gpu {
 namespace {
@@ -278,7 +278,7 @@ class FfiKernelCache : public se::CommandBuffer::Resource {
                   AsByteSpan(kernel_data, kernel_size), kernel_name, num_args);
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                     executor->LoadKernel(spec));
+                          executor->LoadKernel(spec));
 
     se::Kernel* kernel_ptr = kernel.get();
     kernels_[KernelKey{kernel_name, kernel_data}] = std::move(kernel);

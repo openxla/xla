@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/reduce_scatter_combiner.h"
 
-#include <cstdint>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"

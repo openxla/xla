@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <ostream>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"

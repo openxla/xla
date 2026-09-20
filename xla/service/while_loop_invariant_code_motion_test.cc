@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/while_loop_invariant_code_motion.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_computation.h"

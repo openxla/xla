@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/single_threaded_executor.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/notification.h"
 #include "xla/tsl/platform/env.h"

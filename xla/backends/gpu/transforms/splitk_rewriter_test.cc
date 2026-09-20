@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/splitk_rewriter.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"

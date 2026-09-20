@@ -48,10 +48,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 
@@ -318,7 +318,8 @@ MappedPtrContainerSorter<PointedToTy>::SortedIndices::Flatten() const {
             target_index_to_unmapped_element_index_.at(
                 num_inserted_mapped_elements - 1);
         for (size_t unmapped_element_index : unmapped_element_indices) {
-          ABSL_ASSIGN_OR_RETURN(result[unmapped_element_index], next_index_fn());
+          ABSL_ASSIGN_OR_RETURN(result[unmapped_element_index],
+                                next_index_fn());
         }
       }
     }
@@ -446,9 +447,9 @@ absl::Status MappedPtrContainerSorter<PointedToTy>::Sort(
     MapPtrFn map_ptr, UnmappedPtrIndexFn unmapped_index,
     const OrderedTy& ordered_container, UnorderedTy& unordered_container) {
   std::vector<size_t> indices;
-  ABSL_ASSIGN_OR_RETURN(indices,
-                   ComputeNewIndices(map_ptr, unmapped_index, ordered_container,
-                                     unordered_container));
+  ABSL_ASSIGN_OR_RETURN(
+      indices, ComputeNewIndices(map_ptr, unmapped_index, ordered_container,
+                                 unordered_container));
   Reorder(std::move(indices), unordered_container);
   return absl::OkStatus();
 }

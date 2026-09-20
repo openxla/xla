@@ -31,6 +31,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/protobuf/profiler_analysis.pb.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/convert/trace_events_to_json.h"
@@ -39,10 +43,6 @@ limitations under the License.
 #include "xla/tsl/profiler/rpc/client/remote_profiler_session_manager.h"
 #include "xla/tsl/profiler/rpc/client/save_profile.h"
 #include "xla/tsl/profiler/utils/session_manager.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/profiler/protobuf/profiler_analysis.pb.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -156,8 +156,8 @@ absl::Status Profile(const std::string& repository_root,
       // repository. This improves backward compatibility by reducing assumption
       // of what server side does.
       ABSL_RETURN_IF_ERROR(SaveProfile(repository_root, session_id,
-                                  client_response.service_address, response,
-                                  &std::cout));
+                                       client_response.service_address,
+                                       response, &std::cout));
     }
     if (!client_response.status.ok()) {
       LOG(WARNING) << client_response.service_address << " returned "
@@ -206,7 +206,8 @@ absl::Status StartContinuousProfiling(
       /*repository_root=*/"", session_id,
       /*host_name=*/service_addr, opts);
   tensorflow::ContinuousProfilingResponse response;
-  ABSL_RETURN_IF_ERROR(ContinuousProfilingGrpc(service_addr, request, &response));
+  ABSL_RETURN_IF_ERROR(
+      ContinuousProfilingGrpc(service_addr, request, &response));
   return absl::OkStatus();
 }
 
@@ -230,10 +231,10 @@ absl::Status GetSnapshot(const char* service_addr, const char* logdir) {
   std::string repository_root = GetTensorBoardProfilePluginDir(logdir);
   std::string snapshot_session_id = GetCurrentTimeStampAsString();
   ABSL_RETURN_IF_ERROR(SaveProfile(repository_root, snapshot_session_id,
-                              service_addr, response, &std::cout));
+                                   service_addr, response, &std::cout));
   if (response.has_xspace()) {
     ABSL_RETURN_IF_ERROR(SaveXSpace(repository_root, snapshot_session_id,
-                               service_addr, response.xspace()));
+                                    service_addr, response.xspace()));
   }
 
   return absl::OkStatus();
@@ -360,7 +361,7 @@ absl::Status CaptureRemoteTrace(
 
   {
     ABSL_RETURN_IF_ERROR(CaptureRemoteTrace(logdir, num_tracing_attempts, opts,
-                                       is_cloud_tpu_session));
+                                            is_cloud_tpu_session));
   }
   return absl::OkStatus();
 }

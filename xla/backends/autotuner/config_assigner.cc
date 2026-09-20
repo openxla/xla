@@ -39,6 +39,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuner.h"
@@ -60,8 +62,6 @@ limitations under the License.
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -149,7 +149,7 @@ absl::StatusOr<std::unique_ptr<ConfigAssigner>> ConfigAssigner::Create(
     std::unique_ptr<Autotuner> absl_nullable autotuner,
     tsl::thread::ThreadPool* thread_pool) {
   ABSL_ASSIGN_OR_RETURN(std::optional<Config> forced_config,
-                   ParseForcedConfig(options.force_config, *orchestrator));
+                        ParseForcedConfig(options.force_config, *orchestrator));
   return absl::WrapUnique(new ConfigAssigner(
       std::move(options), std::move(cache), std::move(orchestrator),
       std::move(autotuner), thread_pool, std::move(forced_config)));
@@ -167,7 +167,7 @@ absl::Status ConfigAssigner::AssignConfigs(
           << " unique instructions.";
 
   ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
-                   GetConfigsForAll(instruction_groups));
+                        GetConfigsForAll(instruction_groups));
 
   for (int i = 0; i < instruction_groups.size(); i++) {
     auto& instructions = instruction_groups[i];
@@ -227,7 +227,7 @@ absl::Status ConfigAssigner::AssignConfigs(
           << all_instruction_groups.size() << " unique instructions ";
 
   ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
-                   GetConfigsForAll(instruction_groups));
+                        GetConfigsForAll(instruction_groups));
 
   std::vector<const HloInstruction*> autotuned_instructions;
   autotuned_instructions.reserve(instruction_groups.size());
@@ -245,8 +245,8 @@ absl::Status ConfigAssigner::AssignConfigs(
                     options_.use_new_cache_format);
   std::string local_results;
   if (!autotuned_instructions.empty()) {
-    ABSL_ASSIGN_OR_RETURN(local_results,
-                     optimal_config_cache_->Serialize(autotuned_instructions));
+    ABSL_ASSIGN_OR_RETURN(local_results, optimal_config_cache_->Serialize(
+                                             autotuned_instructions));
   }
   absl::StatusOr<std::string> stored_result = kv_store.TryGet(local_key);
   if (stored_result.status().code() == absl::StatusCode::kNotFound) {
@@ -281,7 +281,7 @@ absl::Status ConfigAssigner::AssignConfigs(
     // TODO(b/361009609): reset to infinite duration once issue with MPI is
     // fixed. https://github.com/google/jax/issues/22995.
     ABSL_ASSIGN_OR_RETURN(std::string remote_results,
-                     kv_store.Get(remote_key, absl::Hours(24)));
+                          kv_store.Get(remote_key, absl::Hours(24)));
     if (!remote_results.empty()) {
       ABSL_RETURN_IF_ERROR(optimal_config_cache_->Deserialize(remote_results));
     }

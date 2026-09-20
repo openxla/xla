@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dot_operand_converter.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"

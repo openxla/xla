@@ -15,23 +15,24 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 namespace {
-
 
 // 1 MB — will be rounded up to the VMM granularity (typically 2 MB).
 static constexpr uint64_t kTestSize = 1024 * 1024;

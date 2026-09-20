@@ -156,7 +156,8 @@ absl::Status FlattenEntryParameters(HloModule* hlo_module) {
 
     // Forward non-tuple parameters to the new instructions.
     if (!param->shape().IsTuple()) {
-      ABSL_RETURN_IF_ERROR(param->ReplaceAllUsesWith(flat_params.at({i, {}}).get()));
+      ABSL_RETURN_IF_ERROR(
+          param->ReplaceAllUsesWith(flat_params.at({i, {}}).get()));
       continue;
     }
 
@@ -238,8 +239,8 @@ absl::Status AppendDestinationParameters(HloModule* hlo_module) {
 
   // Append output parameters for aliased outputs.
   Shape original_result_shape = layout.result_shape();
-  ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(original_result_shape,
-                                                       append_output_param));
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+      original_result_shape, append_output_param));
 
   return absl::OkStatus();
 }

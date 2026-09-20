@@ -84,7 +84,9 @@ namespace gpu_plugin {
 #if TENSORFLOW_USE_ROCM
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "ROCM"
 #elif TENSORFLOW_USE_SYCL
-#define PJRT_GPU_PLUGIN_PLATFORM_NAME "ONEAPI"
+// TODO(Intel-tf)  this will be changed to ONEAPI
+// when the SYCL backend has been renamed to ONEAPI.
+#define PJRT_GPU_PLUGIN_PLATFORM_NAME "SYCL"
 #else
 #define PJRT_GPU_PLUGIN_PLATFORM_NAME "CUDA"
 #endif
@@ -306,8 +308,8 @@ absl::StatusOr<TargetConfigAndDevices> GetTargetConfigFromOptions(
     return {{*target_config_proto, *host_target_machine_options, {}}};
   }
   ABSL_ASSIGN_OR_RETURN(xla::LocalClient * xla_client,
-                   xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
-                                        /*allowed_devices=*/std::nullopt));
+                        xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
+                                             /*allowed_devices=*/std::nullopt));
   stream_executor::StreamExecutor* executor =
       xla_client->backend().default_stream_executor();
   std::vector<int> device_ids;
@@ -337,7 +339,7 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
   if (plugin_platform == "ROCM") {
     platform_id = xla::RocmId();
     platform_name = xla::RocmName();
-  } else if (plugin_platform == "ONEAPI") {
+  } else if (plugin_platform == "SYCL") {
     platform_id = xla::OneapiId();
     platform_name = xla::OneapiName();
   } else {

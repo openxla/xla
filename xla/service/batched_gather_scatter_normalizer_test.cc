@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/batched_gather_scatter_normalizer.h"
 
-#include <optional>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <optional>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"

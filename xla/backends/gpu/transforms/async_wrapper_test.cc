@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/async_wrapper.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_computation.h"

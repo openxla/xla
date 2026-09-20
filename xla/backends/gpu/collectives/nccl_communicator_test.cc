@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -107,7 +108,7 @@ TEST(NcclCommunicatorTest, AsyncApiCalls) {
         all_reduce_barriers[i - 1]->Block();
       }
       ABSL_ASSIGN_OR_RETURN(auto sym_mem, comms[rank]->CreateSymmetricMemory(
-                                         sym_allocs[rank]->address()));
+                                              sym_allocs[rank]->address()));
       registration_barriers[i]->Block();
     }
     all_reduce_barriers[kNumIterations - 1]->Block();
@@ -122,10 +123,10 @@ TEST(NcclCommunicatorTest, AsyncApiCalls) {
     for (int i = 0; i < kNumIterations; ++i) {
       registration_barriers[i]->Block();
       ABSL_RETURN_IF_ERROR(comms[rank]
-                          ->AllReduce(send_allocs[rank]->address(),
-                                      recv_allocs[rank]->address(), F32, 256,
-                                      ReductionKind::SUM, gpu_exec)
-                          .Await());
+                               ->AllReduce(send_allocs[rank]->address(),
+                                           recv_allocs[rank]->address(), F32,
+                                           256, ReductionKind::SUM, gpu_exec)
+                               .Await());
       all_reduce_barriers[i]->Block();
     }
     return absl::OkStatus();

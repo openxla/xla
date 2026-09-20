@@ -279,7 +279,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
         "compare-value-and-index", {input->shape().element_type(), S32},
         {Gt, Lt}, &b);
     ABSL_ASSIGN_OR_RETURN(HloComputation * compare_computation,
-                     XlaComputationToHloComputation(comparator, module_));
+                          XlaComputationToHloComputation(comparator, module_));
     // Each partition needs to do TopK separately, thus the base shape for sort
     // becomes [ceil(batch_size / batch_dim_partition), k * shard_count].
     const Shape sort_shape = ShapeUtil::MakeTupleShape(
@@ -316,7 +316,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
     XlaComputation comparator = CreateScalarComparisonComputation(
         "compare-value", {input->shape().element_type()}, {Gt}, &b);
     ABSL_ASSIGN_OR_RETURN(HloComputation * compare_computation,
-                     XlaComputationToHloComputation(comparator, module_));
+                          XlaComputationToHloComputation(comparator, module_));
 
     const Shape sort_shape = ShapeUtil::MakeShape(
         hlo->operand(0)->shape().element_type(),
@@ -884,7 +884,8 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
 
 absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiSlice(
     HloInstruction* hlo) {
-  ABSL_ASSIGN_OR_RETURN(auto attrs_pair, ParseOpaqueAsAttributesWithArrays(hlo));
+  ABSL_ASSIGN_OR_RETURN(auto attrs_pair,
+                        ParseOpaqueAsAttributesWithArrays(hlo));
   auto& int_attrs = attrs_pair.first;
   auto& array_attrs = attrs_pair.second;
 
@@ -1152,12 +1153,12 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiPad(
   HloInstruction* pad_value = GetPartitionedHlo(hlo->operand(1)).hlo();
 
   ABSL_ASSIGN_OR_RETURN(auto super_shard_and_offset,
-                   ConstructHaloExchangeSuperShard(
-                       input_operand, dim, /*left_amount=*/from_left,
-                       /*right_amount=*/from_right,
-                       /*handle_last_shard=*/false, max_start_index,
-                       post_halo_shard_size, pad_value,
-                       /*first_shard_uses_pad_value=*/true));
+                        ConstructHaloExchangeSuperShard(
+                            input_operand, dim, /*left_amount=*/from_left,
+                            /*right_amount=*/from_right,
+                            /*handle_last_shard=*/false, max_start_index,
+                            post_halo_shard_size, pad_value,
+                            /*first_shard_uses_pad_value=*/true));
 
   HloInstruction* shard_to_slice = super_shard_and_offset.first;
 

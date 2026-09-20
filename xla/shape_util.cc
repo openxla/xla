@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 
@@ -139,8 +139,8 @@ absl::StatusOr<Shape> MakeValidatedShapeWithLayoutInternal(
     return InvalidArgument("Unsupported element type: %s",
                            PrimitiveType_Name(element_type));
   }
-  ABSL_ASSIGN_OR_RETURN(Shape shape,
-                   ShapeUtil::MakeValidatedShape(element_type, dimensions));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape shape, ShapeUtil::MakeValidatedShape(element_type, dimensions));
   if (element_size_in_bits ==
       ShapeUtil::ByteSizeOfPrimitiveType(element_type) * 8) {
     // Only set element_size_in_bits if it's different from the default value.
@@ -312,8 +312,8 @@ static std::vector<bool> MakeDynamicDimensions(
 
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedBufferShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
-  ABSL_ASSIGN_OR_RETURN(Shape shape,
-                   ShapeUtil::MakeValidatedShape(element_type, dimensions));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape shape, ShapeUtil::MakeValidatedShape(element_type, dimensions));
   return ShapeUtil::MakeValidatedBufferShape(shape);
 }
 
@@ -460,7 +460,7 @@ ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
     dims[i] = shape.dimensions(dim);
   }
   ABSL_ASSIGN_OR_RETURN(Shape new_shape, MakeValidatedShapeWithDescendingLayout(
-                                        shape.element_type(), dims));
+                                             shape.element_type(), dims));
   if (shape.IsBuffer()) {
     ABSL_ASSIGN_OR_RETURN(new_shape, MakeValidatedBufferShape(new_shape));
   }
@@ -1062,12 +1062,12 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
 }
 
 /* static */ absl::StatusOr<int64_t> ShapeUtil::SerializedSize(
-    const Shape& shape) {
-  return SerializedSizeWithProto(shape, shape.ToProto());
+    const Shape& shape, bool pack_pred) {
+  return SerializedSizeWithProto(shape, shape.ToProto(), pack_pred);
 }
 
 /* static */ absl::StatusOr<int64_t> ShapeUtil::SerializedSizeWithProto(
-    const Shape& shape, const ShapeProto& proto) {
+    const Shape& shape, const ShapeProto& proto, bool pack_pred) {
   // The size computed here must be kept in sync with the serialized format as
   // described in the comments for LiteralBase::SerializeWithShapeProto in
   // literal.h.
@@ -1087,8 +1087,12 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
           size += sizeof(DynamicSizeType) * subshape.dimensions().size();
         }
         if (subshape.element_type() == PRED) {
-          // PRED is packed 8 elements per byte.
-          size += CeilOfRatio<int64_t>(ElementsIn(subshape), 8);
+          if (pack_pred) {
+            // PRED is packed 8 elements per byte.
+            size += CeilOfRatio<int64_t>(ElementsIn(subshape), 8);
+          } else {
+            size += ByteSizeOfElements(subshape);
+          }
         } else if (primitive_util::IsSubByteNonPredType(
                        subshape.element_type())) {
           // 4-bit types are packed 2 elements per byte.
@@ -2066,7 +2070,8 @@ ShapeUtil::DecomposeBitcastToTrt(const Shape& input_shape,
   int64_t n = -1;
   int64_t rank = s.rank;
   while (n < rank) {
-    ABSL_ASSIGN_OR_RETURN(bool should_continue, visitor_function(s.indexes_span));
+    ABSL_ASSIGN_OR_RETURN(bool should_continue,
+                          visitor_function(s.indexes_span));
     if (TF_PREDICT_FALSE(!should_continue)) {
       break;
     }

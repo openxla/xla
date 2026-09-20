@@ -19,10 +19,10 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace profiler {

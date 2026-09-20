@@ -17,12 +17,13 @@ limitations under the License.
 // least kNumDevices GPUs. Command-buffer tests additionally require CUDA 12.9+
 // driver/toolkit for CreateChildCommand / UpdateChildCommand support.
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
@@ -165,7 +166,7 @@ static absl::Status VerifyOutput(se::Stream& stream,
     float expected =
         SourceValue(source_rank, /*target_rank=*/device_ordinal, phase);
     ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
-                     ReadDeviceBuffer(stream, dst[source_rank], kLength));
+                          ReadDeviceBuffer(stream, dst[source_rank], kLength));
     for (int i = 0; i < kLength; ++i) {
       if (output[i] != expected) {
         return absl::InternalError(absl::StrFormat(
@@ -231,7 +232,7 @@ static absl::Status RunUpdatePhase(DeviceTestSlot& slot, AllToAllThunk& thunk,
   Thunk::ExecuteParams execute_params = MakeExecuteParams(slot, allocations);
 
   ABSL_RETURN_IF_ERROR(RecordCommandBufferUpdate(slot, thunk, execute_params,
-                                            AllAllocationIndices()));
+                                                 AllAllocationIndices()));
   ABSL_RETURN_IF_ERROR(SubmitCommandBuffer(slot));
   return VerifyOutput(*slot.stream, DestinationBuffers(slot.update_buffers),
                       device_ordinal, phase);
@@ -250,7 +251,8 @@ TEST(AllToAllThunkMultiGpuTest, ExecuteOnStream) {
 
   ASSERT_OK(
       RunOnDevices(kNumDevices, "alltoall_execute", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunExecuteOnStreamPhase(slots[d], thunk, d,
                                        /*phase=*/1);
       }));
@@ -272,7 +274,8 @@ TEST(AllToAllThunkMultiGpuTest, RecordCommandBufferCreate) {
 
   ASSERT_OK(
       RunOnDevices(kNumDevices, "alltoall_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d,
                               /*phase=*/2);
       }));
@@ -294,7 +297,8 @@ TEST(AllToAllThunkMultiGpuTest, RecordCommandBufferUpdate) {
 
   ASSERT_OK(
       RunOnDevices(kNumDevices, "alltoall_create", [&](int d) -> absl::Status {
-        ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slots[d], thunk, device_assignment));
+        ABSL_RETURN_IF_ERROR(
+            SetupDeviceSlot(d, slots[d], thunk, device_assignment));
         return RunCreatePhase(slots[d], thunk, d,
                               /*phase=*/2);
       }));

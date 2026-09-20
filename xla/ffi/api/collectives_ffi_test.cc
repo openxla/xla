@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/ffi/api/collectives_ffi.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/collectives_c_api.h"

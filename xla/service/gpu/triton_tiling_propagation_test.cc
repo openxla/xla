@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/triton_tiling_propagation.h"
 
-#include <vector>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <vector>
+
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

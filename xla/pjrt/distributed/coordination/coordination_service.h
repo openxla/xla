@@ -35,12 +35,12 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/random.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/key_value_store.h"
 #include "xla/runtime/device_id.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
-#include "tsl/platform/random.h"
 
 namespace xla {
 

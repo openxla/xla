@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -105,7 +106,7 @@ class BuildAllGatherInfoTest : public HloHardwareIndependentTestBase {
         ->set_active_links(active_links);
     target_config_proto.set_platform_name("CUDA");
     ABSL_ASSIGN_OR_RETURN(gpu::GpuTargetConfig target_config,
-                     gpu::GpuTargetConfig::FromProto(target_config_proto));
+                          gpu::GpuTargetConfig::FromProto(target_config_proto));
 
     // num_devices_per_host = num_replicas / num_hosts (for single group).
     const int num_devices_per_host =
@@ -115,8 +116,9 @@ class BuildAllGatherInfoTest : public HloHardwareIndependentTestBase {
                              /*num_devices_per_host=*/num_devices_per_host,
                              target_config);
 
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(module_str, num_replicas));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(module_str, num_replicas));
 
     const HloInstruction* hlo_instr =
         HloHardwareIndependentTestBase::FindInstruction(module.get(),

@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -119,8 +119,8 @@ absl::StatusOr<HloInstruction*> CreateNewAllGather(
   int64_t new_all_gather_dim = all_gather_dim - major_dims_to_delete.size();
   int64_t shard_count = GetShardCount(all_gather);
   ABSL_ASSIGN_OR_RETURN(Shape new_all_gather_shape,
-                   ShapeInference::InferAllGatherShape(
-                       reshaped_shapes, new_all_gather_dim, shard_count));
+                        ShapeInference::InferAllGatherShape(
+                            reshaped_shapes, new_all_gather_dim, shard_count));
   auto* new_all_gather = Cast<HloAllGatherInstruction>(
       all_gather->parent()->AddInstruction(all_gather->CloneWithNewOperands(
           new_all_gather_shape, reshaped_operands)));
@@ -172,9 +172,10 @@ absl::StatusOr<bool> AllGatherRemoveDegenerateDims::RunImpl(
       }
 
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_all_gather,
-                       CreateNewAllGather(all_gather));
+                            CreateNewAllGather(all_gather));
       if (new_all_gather != all_gather) {
-        ABSL_RETURN_IF_ERROR(ReshapeAndReplaceResults(all_gather, new_all_gather));
+        ABSL_RETURN_IF_ERROR(
+            ReshapeAndReplaceResults(all_gather, new_all_gather));
         changed = true;
       }
     }

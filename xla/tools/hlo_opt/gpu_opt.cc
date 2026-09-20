@@ -97,11 +97,12 @@ class GpuOptProvider : public CompiledOptProvider {
       std::unique_ptr<HloModule> module, absl::string_view s) override {
     if (s == "llvm-before-optimizations") {
       ABSL_ASSIGN_OR_RETURN(std::string llvm_ir,
-                       LlvmIrFor(std::move(module), false));
+                            LlvmIrFor(std::move(module), false));
       return llvm_ir;
     }
     if (s == "llvm" || s == "llvm-after-optimizations") {
-      ABSL_ASSIGN_OR_RETURN(std::string llvm_ir, LlvmIrFor(std::move(module), true));
+      ABSL_ASSIGN_OR_RETURN(std::string llvm_ir,
+                            LlvmIrFor(std::move(module), true));
       return llvm_ir;
     }
     if (s == "ptx") {
@@ -110,7 +111,7 @@ class GpuOptProvider : public CompiledOptProvider {
     }
     if (s == "buffer-assignment") {
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                       GetExecutable(std::move(module)));
+                            GetExecutable(std::move(module)));
       auto gpu_executable = static_cast<gpu::GpuExecutable*>(executable.get());
       return gpu_executable->buffer_allocations_debug_summary();
     }
@@ -210,7 +211,7 @@ class GpuOptProvider : public CompiledOptProvider {
                                         bool optimized) {
     Compiler::CompileOptions opts;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                     GetOptimizedHlo(std::move(input_module)));
+                          GetOptimizedHlo(std::move(input_module)));
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor, GetExecutor());
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler, GetCompiler());
 
@@ -248,7 +249,7 @@ class GpuOptProvider : public CompiledOptProvider {
   absl::StatusOr<std::string> PtxFor(std::unique_ptr<HloModule> input_module) {
     Compiler::CompileOptions opts;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                     GetOptimizedHlo(std::move(input_module)));
+                          GetOptimizedHlo(std::move(input_module)));
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor, GetExecutor());
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler, GetCompiler());
 

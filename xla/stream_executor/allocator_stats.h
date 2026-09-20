@@ -20,7 +20,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-
 namespace stream_executor {
 
 // Runtime statistics collected by an allocator. Exactly the same as

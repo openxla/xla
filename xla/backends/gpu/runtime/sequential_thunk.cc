@@ -24,12 +24,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
 
@@ -71,7 +71,7 @@ absl::StatusOr<ThunkProto> SequentialThunk::ToProto() const {
   proto.mutable_sequential_thunk();
   for (const auto& thunk : executor_.thunks()) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_sequential_thunk()->add_thunks(),
-                     thunk->ToProto());
+                          thunk->ToProto());
   }
   return proto;
 }
@@ -82,7 +82,7 @@ absl::StatusOr<std::unique_ptr<SequentialThunk>> SequentialThunk::FromProto(
   ThunkSequence thunk_sequence;
   for (const auto& sub_thunk_proto : thunk_proto.thunks()) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> sub_thunk,
-                     deserializer(sub_thunk_proto));
+                          deserializer(sub_thunk_proto));
     thunk_sequence.push_back(std::move(sub_thunk));
   }
 

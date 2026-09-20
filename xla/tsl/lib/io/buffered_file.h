@@ -22,10 +22,10 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status_macros.h"
+#include "tsl/platform/cord.h"
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/cord.h"
 
 namespace tsl {
 class BufferedWritableFile : public WritableFile {

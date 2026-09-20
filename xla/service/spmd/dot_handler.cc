@@ -1445,11 +1445,11 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         dot_rhs = slice;
       }
     }
-    ABSL_ASSIGN_OR_RETURN(auto dot,
-                     create_sharded_dot(
-                         PartitionedHlo(dot_lhs, lhs.base_shape(), lhs.state()),
-                         PartitionedHlo(dot_rhs, rhs.base_shape(), rhs.state()),
-                         &body_b, conv_window));
+    ABSL_ASSIGN_OR_RETURN(
+        auto dot, create_sharded_dot(
+                      PartitionedHlo(dot_lhs, lhs.base_shape(), lhs.state()),
+                      PartitionedHlo(dot_rhs, rhs.base_shape(), rhs.state()),
+                      &body_b, conv_window));
     if (windowed_at_contracting_dims || operands_sharded_at_contracting_dims) {
       // Accumulate the partial output to the result buffer.
       o = body_b.AddInstruction(
@@ -1525,8 +1525,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
             &body_b, cw_cp_input, cw_sd_pairs,
             (*lhs.state().next_channel_id)++);
 
-    ABSL_ASSIGN_OR_RETURN(auto outputs, get_partial_bid_results(l, r, o, extra_inout,
-                                                           cw_cp_output, i));
+    ABSL_ASSIGN_OR_RETURN(
+        auto outputs,
+        get_partial_bid_results(l, r, o, extra_inout, cw_cp_output, i));
     o = outputs[0];
     cw_cp_output = outputs[1];
 
@@ -1557,9 +1558,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
             &body_b, next_cw_cp_input, cw_sd_pairs,
             (*lhs.state().next_channel_id)++);
 
-    ABSL_ASSIGN_OR_RETURN(outputs,
-                     get_partial_bid_results(next_l, next_r, o, cw_cp_output,
-                                             next_cw_cp_output, i));
+    ABSL_ASSIGN_OR_RETURN(
+        outputs, get_partial_bid_results(next_l, next_r, o, cw_cp_output,
+                                         next_cw_cp_output, i));
     o = outputs[0];
     next_cw_cp_output = outputs[1];
 
@@ -1584,7 +1585,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           &body_b, o, output_sd_pairs, (*lhs.state().next_channel_id)++);
 
       ABSL_ASSIGN_OR_RETURN(extra_inout,
-                       get_partial_unid_result(l, r, extra_inout, i));
+                            get_partial_unid_result(l, r, extra_inout, i));
 
       extra_inout =
           lhs.state().collective_ops_creator.create_collective_permute(
@@ -1879,7 +1880,8 @@ absl::StatusOr<HloInstruction*> PartitionBaseCaseBeforePartialMatch(
   if (lhs_batch_partitions == rhs_batch_partitions &&
       rhs_batch_partitions == num_partitions &&
       lhs_sharding_transposed_to_match_rhs == rhs_sharding) {
-    ABSL_ASSIGN_OR_RETURN(auto dot, create_sharded_dot(lhs, rhs, b, conv_window));
+    ABSL_ASSIGN_OR_RETURN(auto dot,
+                          create_sharded_dot(lhs, rhs, b, conv_window));
     dot->set_sharding(*lhs_sharding_transposed_to_match_output);
     return PartitionedHlo(dot, output_base_shape, lhs.state())
         .Reshard(output_sharding)
@@ -2922,9 +2924,10 @@ absl::StatusOr<HloInstruction*> PartitionDotGroupOnContractingImpl(
     // inner_creator will become create_sharded_dot's operator() target. Call
     // create_sharded_dot's original CreateSharded function here by setting
     // call_custom_create_sharded to false.
-    ABSL_ASSIGN_OR_RETURN(auto inner_dot,
-                     create_sharded_dot(l, r, b, conv_window,
-                                        /*call_custom_create_sharded=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        auto inner_dot,
+        create_sharded_dot(l, r, b, conv_window,
+                           /*call_custom_create_sharded=*/false));
     HloInstruction* result = inner_dot;
     if (!output_slice_dims.empty()) {
       // Create an AllReduce along slice dims first to allow a reduce-scatter.
@@ -4526,8 +4529,9 @@ absl::Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
   auto new_operand_tuple_inside =
       body->AddInstruction(HloInstruction::CreateGetTupleElement(
           new_input_subtuple->shape(), body_param, non_windowed_operand_index));
-  ABSL_RETURN_IF_ERROR(body->root_instruction()->ReplaceOperandWithDifferentShape(
-      non_windowed_operand_index, new_operand_tuple_inside));
+  ABSL_RETURN_IF_ERROR(
+      body->root_instruction()->ReplaceOperandWithDifferentShape(
+          non_windowed_operand_index, new_operand_tuple_inside));
 
   // Create nodes inside the loop body.
   std::vector<HloInstruction*> worklist;
@@ -4579,7 +4583,8 @@ absl::Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
   for (auto ou : old_body_param_users) {
     if (ou->opcode() == HloOpcode::kGetTupleElement &&
         ou->tuple_index() == non_windowed_operand_index) {
-      ABSL_RETURN_IF_ERROR(ou->ReplaceAllUsesWith(outside_to_inside[old_operand]));
+      ABSL_RETURN_IF_ERROR(
+          ou->ReplaceAllUsesWith(outside_to_inside[old_operand]));
       ABSL_RETURN_IF_ERROR(body->RemoveInstruction(ou));
     }
   }
@@ -4971,11 +4976,12 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
         -> absl::StatusOr<HloInstruction*> {
       HloInstruction* operand0 = outside_to_inside[reduce_outside->operand(0)];
       HloInstruction* operand1 = outside_to_inside[reduce_outside->operand(1)];
-      ABSL_ASSIGN_OR_RETURN(Shape reduce_shape,
-                       ShapeInference::InferReduceShape(
-                           {&operand0->shape(), &operand1->shape()},
-                           reduce_outside->dimensions(),
-                           reduce_outside->to_apply()->ComputeProgramShape()));
+      ABSL_ASSIGN_OR_RETURN(
+          Shape reduce_shape,
+          ShapeInference::InferReduceShape(
+              {&operand0->shape(), &operand1->shape()},
+              reduce_outside->dimensions(),
+              reduce_outside->to_apply()->ComputeProgramShape()));
       *reduce_shape.mutable_layout() = reduce_outside->shape().layout();
       std::vector<HloInstruction*> reduce_dus_offsets;
       // If any collapsed dimension is windowed, we need to accumulate with last

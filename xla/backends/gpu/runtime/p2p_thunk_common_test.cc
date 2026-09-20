@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"

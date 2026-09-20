@@ -28,8 +28,8 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "xla/tsl/platform/macros.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/macros.h"
 
 // Basic string utility routines
 namespace tsl {

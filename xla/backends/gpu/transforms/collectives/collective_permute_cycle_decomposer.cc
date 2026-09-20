@@ -35,14 +35,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/collectives/collective_permute_cycle.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
-#include "xla/service/collective_permute_cycle.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -206,7 +204,7 @@ absl::Status DecomposeCollectivePermuteCycle(
       GetCollectiveOpGroupMode(cp->channel_id().has_value(), std::nullopt));
 
   ABSL_ASSIGN_OR_RETURN(auto attrs, DecomposeFrontendAttributes(
-                                   cp->frontend_attributes(), cycle_type));
+                                        cp->frontend_attributes(), cycle_type));
 
   // Backward edge.
   HloInstruction* back_cp =
@@ -228,7 +226,7 @@ absl::Status DecomposeCollectivePermuteCycle(
   // If the collective is across replicas, then `partition` is replaced by
   // `replica = u32[] replica-id()`.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * partition_or_replica,
-                   CreatePartitionOrReplicaId(computation, mode, cp_name));
+                        CreatePartitionOrReplicaId(computation, mode, cp_name));
   int64_t bwd_recv_id = back_pairs.back().second;
   HloInstruction* constant = computation->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0(U32, bwd_recv_id)),

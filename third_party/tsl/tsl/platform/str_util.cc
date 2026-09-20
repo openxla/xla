@@ -24,8 +24,8 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace str_util {

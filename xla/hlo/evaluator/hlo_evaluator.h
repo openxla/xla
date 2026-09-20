@@ -16,14 +16,12 @@ limitations under the License.
 #ifndef XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 #define XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 
-#include "absl/log/log.h"
-#include "absl/status/status_macros.h"
 #define _USE_MATH_DEFINES
 
 #include <complex>
-#include <cstddef>  // NOLINT(build/include_order)
+#include <cstddef>
 #include <cstdint>
-#include <deque>  // NOLINT(build/include_order)
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -31,15 +29,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/array2d.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/evaluator/hlo_evaluator_interface.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 
@@ -80,6 +80,14 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
 
   // Only evaluate up to max_loop_iterations per while-loop execution if
   // specified.
+  //
+  // If `cache_call_computation_evals` true, HloEvaluator caches evals on
+  // computations on call ops to avoid re-evaluating the same call on identical
+  // constant arguments.
+  //
+  // In case `is_embeeded` is true, HloEvaluator does not create a fresh cache
+  // for call evals. Instead `CreateEmbedded` api sets it so that the child
+  // evaluator borrow the cache from the parent evaluator.
   explicit HloEvaluator(int64_t max_loop_iterations = -1,
                         bool cache_call_computation_evals = false,
                         bool is_embedded = false);
@@ -90,6 +98,8 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   // Called by the evaluator to create an embedded evaluator to execute a
   // sub-region of control flow. Subclasses should override this to return an
   // instance of the subclass instead.
+  // TODO(b/260601110): Cache call computations also for HloEvaluator
+  // subclasses, e.g. TpuHloEvaluator.
   virtual std::unique_ptr<HloEvaluator> CreateEmbedded(
       int64_t max_loop_iterations) {
     auto result = std::make_unique<HloEvaluator>(max_loop_iterations,
@@ -285,8 +295,9 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
 
   // Data structures for memoizing call computation evaluations.
   //
-  // HloEvaluator caches the results of kCall evaluations to avoid re-evaluating
-  // the same computation on identical constant arguments.
+  // HloEvaluator caches (if requested by cache_call_computation_evals) the
+  // results of kCall evaluations to avoid re-evaluating the same computation on
+  // identical constant arguments.
   //
   // SpecializationKey identifies an evaluation by its target HloComputation
   // and concrete argument literals (compared by value).
@@ -782,7 +793,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
 
   // Optional handler exercised when evaluating literals.
   EvalLiteralHandler eval_literal_handler_;
-
 
   // Set by EvaluateInternal and opportunistically used by the HandleXXX
   // functions. When non-empty, the HandleXXX function may evaluate the

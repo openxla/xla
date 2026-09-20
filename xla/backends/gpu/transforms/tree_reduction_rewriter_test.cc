@@ -16,9 +16,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/tree_reduction_rewriter.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/stream_executor/device_description.h"

@@ -447,7 +447,7 @@ absl::StatusOr<bool> TopkRewriter::TransformToCustomCall(
   for (HloComputation* comp : module->computations(execution_threads)) {
     for (HloInstruction* inst : comp->MakeInstructionPostOrder()) {
       ABSL_ASSIGN_OR_RETURN(HloInstruction * topkcc,
-                       TransformPatternToCustomCall(inst));
+                            TransformPatternToCustomCall(inst));
       if (topkcc != nullptr) {
         VLOG(2) << "Rewritten Topk: " << topkcc->ToString();
         changed = true;
@@ -462,7 +462,7 @@ absl::StatusOr<bool> TopkRewriter::RunImpl(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   ABSL_ASSIGN_OR_RETURN(auto transform_to_customcall_changed,
-                   TransformToCustomCall(module, execution_threads));
+                        TransformToCustomCall(module, execution_threads));
   changed |= transform_to_customcall_changed;
   return changed;
 }
@@ -501,7 +501,7 @@ class TopkDecomposerVisitor : public DfsHloRewriteVisitor {
     }
 
     ABSL_ASSIGN_OR_RETURN(HloComputation * comparator,
-                     CreateVariadicComparator(topk));
+                          CreateVariadicComparator(topk));
     return DecomposeTopKFallback(topk, comparator);
   }
 

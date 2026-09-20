@@ -18,13 +18,13 @@ limitations under the License.
 
 #include <string>
 
+#include "tsl/platform/stringpiece.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/stringpiece.h"
 
 struct z_stream_s;
 typedef z_stream_s z_stream;

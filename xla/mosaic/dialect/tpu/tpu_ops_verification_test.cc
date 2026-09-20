@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -355,6 +356,101 @@ TEST_F(TpuOpsVerificationTest, VectorStoreInvalidMemorySpace) {
 
   ASSERT_THAT(VerifyOp(vs),
               StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregValid) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregValid2D) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8, 2}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8, 2}, /*values=*/{1});
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+// Packed types use a (lane_count, packing) vreg with a lane mask, so only
+// dimension 0 has to match the mask.
+TEST_F(TpuOpsVerificationTest, CompressStoreVregValidPacked) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({16}, builder().getBF16Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value vector_to_store = ConstantBF16Vector(/*shape=*/{8, 2}, /*value=*/1.0f);
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(VerifyOp(cs),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregMismatchedMaskShape) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{4},
+                                /*values=*/{true, true, true, true});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(
+      VerifyOp(cs),
+      StatusIs(
+          _,
+          HasSubstr(
+              "Expected valueToStore dimension 0 to match mask dimension 0")));
 }
 
 TEST_F(TpuOpsVerificationTest, UnpackSubelementsValidIndex) {

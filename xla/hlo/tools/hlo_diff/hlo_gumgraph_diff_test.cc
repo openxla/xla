@@ -14,9 +14,10 @@
 
 #include "xla/hlo/tools/hlo_diff/hlo_gumgraph_diff.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/tsl/platform/statusor.h"

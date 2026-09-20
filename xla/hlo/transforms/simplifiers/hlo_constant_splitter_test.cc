@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -24,7 +25,6 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

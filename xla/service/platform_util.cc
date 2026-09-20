@@ -126,7 +126,7 @@ absl::Status IsDeviceSupported(se::StreamExecutor* executor) {
 absl::StatusOr<se::StreamExecutor*> ExecutorForDevice(se::Platform* platform,
                                                       int device_ordinal) {
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * exec,
-                   platform->ExecutorForDevice(device_ordinal));
+                        platform->ExecutorForDevice(device_ordinal));
   ABSL_RETURN_IF_ERROR(IsDeviceSupported(exec));
   return exec;
 }
@@ -237,8 +237,8 @@ absl::StatusOr<se::Platform*> PlatformUtil::GetDefaultPlatform() {
 /*static*/ absl::StatusOr<se::Platform*> PlatformUtil::GetPlatform(
     absl::string_view platform_name) {
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(
-                       xla::CanonicalPlatformName(platform_name)));
+                        se::PlatformManager::PlatformWithName(
+                            xla::CanonicalPlatformName(platform_name)));
   ABSL_RETURN_IF_ERROR(Compiler::GetForPlatform(platform->id()).status());
   return platform;
 }
@@ -248,7 +248,7 @@ PlatformUtil::GetStreamExecutors(
     se::Platform* platform,
     const std::optional<std::set<int>>& allowed_devices) {
   ABSL_ASSIGN_OR_RETURN(std::vector<int> device_ordinals,
-                   GetDeviceOrdinals(platform, allowed_devices));
+                        GetDeviceOrdinals(platform, allowed_devices));
 
   std::vector<absl::StatusOr<se::StreamExecutor*>> executors(
       device_ordinals.size(),

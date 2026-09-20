@@ -143,7 +143,6 @@ CopyThunk::ParallelBlockParams CopyThunk::ComputeParallelBlockParams(
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> CopyThunk::Execute(
     const ExecuteParams& params) {
-
   const BufferAllocations* allocations = params.buffer_allocations;
 
   se::DeviceAddressBase src_data;

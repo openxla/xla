@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -38,6 +39,10 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/stacktrace.h"
+#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/allocator_retry.h"
 #include "xla/tsl/framework/scoped_allocation_trace.h"
@@ -46,10 +51,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/profiler/utils/trace_filter_utils.h"
 #include "xla/tsl/protobuf/bfc_memory_map.pb.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/stacktrace.h"
-#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace tsl {
 
@@ -524,6 +525,11 @@ void* BFCAllocator::AllocateRawInternal(size_t alignment, size_t num_bytes,
                                         AllocationEnd allocation_end) {
   if (ABSL_PREDICT_FALSE(num_bytes == 0)) {
     VLOG(2) << "tried to allocate 0 bytes";
+    return nullptr;
+  }
+  if (ABSL_PREDICT_FALSE(num_bytes > std::numeric_limits<size_t>::max() -
+                                         (kMinAllocationSize - 1))) {
+    VLOG(2) << "allocation size cannot be safely rounded: " << num_bytes;
     return nullptr;
   }
   // First, always allocate memory of at least kMinAllocationSize

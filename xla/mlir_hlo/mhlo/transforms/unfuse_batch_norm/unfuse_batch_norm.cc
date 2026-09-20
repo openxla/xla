@@ -56,7 +56,7 @@ Value broadcastToFeatureDim(Location loc, RankedTensorType resultType,
 
 // Get the shape of operand, assuming it is a dynamic shape with static rank.
 Value getShapeValue(Location loc, Value operand,
-                    PatternRewriter &rewriter) {  // NOLINT
+                    PatternRewriter& rewriter) {  // NOLINT
   RankedTensorType resultType =
       mlir::dyn_cast<RankedTensorType>(operand.getType());
   return mlir::shape::ShapeOfOp::create(
@@ -65,9 +65,9 @@ Value getShapeValue(Location loc, Value operand,
       operand);
 }
 
-Value materializeEpsilon(Operation *op, FloatAttr epsilonAttr, FloatType fpType,
+Value materializeEpsilon(Operation* op, FloatAttr epsilonAttr, FloatType fpType,
                          Value broadcastTo, RankedTensorType broadcastToType,
-                         PatternRewriter &rewriter) {  // NOLINT
+                         PatternRewriter& rewriter) {  // NOLINT
   ImplicitLocOpBuilder b(op->getLoc(), rewriter);
   if (epsilonAttr.getType() != fpType) {
     // Need to convert.
@@ -182,7 +182,7 @@ Value createReduce(Location loc, Value operand, Value zero,
                              rewriter.getI64TensorAttr(reduceDims));
 
   // setup "mhlo.reduce"'s body
-  Region &region = reduce.getBody();
+  Region& region = reduce.getBody();
   Block& block = region.emplaceBlock();
   RankedTensorType blockArgumentType =
       RankedTensorType::get({}, operandType.getElementType());
@@ -203,10 +203,10 @@ Value createReduce(Location loc, Value operand, Value zero,
 
 // Calculate total reduce size, assuming it is a dynamic shape with static rank.
 // Reduce from operand to operand[feature_index]/scale
-Value calculateReduceSize(Operation *op, Value operand,
+Value calculateReduceSize(Operation* op, Value operand,
                           RankedTensorType operandType, Value scale,
                           RankedTensorType scaleType, int64_t featureIndex,
-                          PatternRewriter &rewriter) {
+                          PatternRewriter& rewriter) {
   ImplicitLocOpBuilder b(op->getLoc(), rewriter);
   Type indexType = b.getIndexType();
   if (!operandType.hasStaticShape()) {
@@ -367,13 +367,13 @@ class UnfuseBatchNormTrainingPattern
 // In combination with marking such ops as illegal, this allows backends that
 // do not have special support for fused batchnorm to use simpler arithmetic
 // primitives.
-void populateUnfuseBatchNormInferencePattern(MLIRContext *context,
-                                             RewritePatternSet *patterns) {
+void populateUnfuseBatchNormInferencePattern(MLIRContext* context,
+                                             RewritePatternSet* patterns) {
   patterns->add<UnfuseBatchNormInferencePattern>(context);
 }
 
-void populateUnfuseBatchNormTrainingPattern(MLIRContext *context,
-                                            RewritePatternSet *patterns) {
+void populateUnfuseBatchNormTrainingPattern(MLIRContext* context,
+                                            RewritePatternSet* patterns) {
   patterns->add<UnfuseBatchNormTrainingPattern>(context);
 }
 

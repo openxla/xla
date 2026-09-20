@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/hlo_cse_constant_key.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"

@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string>
 
-#include "xla/tsl/platform/status.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/status.h"
 
 namespace tsl {
 

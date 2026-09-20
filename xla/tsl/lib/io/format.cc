@@ -18,13 +18,13 @@ limitations under the License.
 #include <limits>
 
 #include "absl/status/status.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/raw_coding.h"
+#include "tsl/platform/snappy.h"
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/lib/io/block.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/coding.h"
-#include "tsl/platform/raw_coding.h"
-#include "tsl/platform/snappy.h"
 
 namespace tsl {
 namespace table {

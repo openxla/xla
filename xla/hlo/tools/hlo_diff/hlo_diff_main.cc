@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace hlo_diff {
@@ -111,8 +111,8 @@ absl::Status CheckGroupFlags(const Options::HloPath& hlo_path) {
 absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(
     const HloModuleProto& hlo_module_proto) {
   ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
-                   HloModule::CreateModuleConfigFromProto(
-                       hlo_module_proto, xla::GetDebugOptionsFromFlags()));
+                        HloModule::CreateModuleConfigFromProto(
+                            hlo_module_proto, xla::GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(hlo_module_proto, config);
 }
 
@@ -166,8 +166,9 @@ absl::Status RunGumgraphDiff(HloModule& first_module, HloModule& second_module,
   ABSL_RETURN_IF_ERROR(first_module.RemoveUnusedComputations());
   ABSL_RETURN_IF_ERROR(second_module.RemoveUnusedComputations());
 
-  ABSL_ASSIGN_OR_RETURN(auto hlo_gumgraph_diff,
-                   ComputeDiff(first_module, second_module, opts.diff_options));
+  ABSL_ASSIGN_OR_RETURN(
+      auto hlo_gumgraph_diff,
+      ComputeDiff(first_module, second_module, opts.diff_options));
   std::cout << "Diffing finished" << '\n';
 
   const DiffResult& diff = *hlo_gumgraph_diff.diff_result;

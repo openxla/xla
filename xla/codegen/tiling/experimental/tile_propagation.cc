@@ -1483,9 +1483,10 @@ absl::StatusOr<Tile> PropagateTileForBitcastOp(const Tile& tile,
   const ShapeUtil::BitcastDecompositionTrt& trt = maybe_trt.value();
   Tile transpose1_tile = PropagateTileThroughTransposeOp(
       tile, InversePermutation(trt.transpose1_dims));
-  ABSL_ASSIGN_OR_RETURN(auto reshape_tile, PropagateTileThroughReshape(
-                                          transpose1_tile, trt.transpose1_shape,
-                                          trt.reshape_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      auto reshape_tile,
+      PropagateTileThroughReshape(transpose1_tile, trt.transpose1_shape,
+                                  trt.reshape_shape));
   return PropagateTileThroughTransposeOp(
       reshape_tile, InversePermutation(trt.transpose2_dims));
 }

@@ -51,6 +51,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -87,7 +88,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -203,19 +203,21 @@ HloComputation* HloModule::AddComputationInternal(
   }
 
   computation->set_parent(this);
-  topological_sort_.AddNode(computation.get());
-  for (auto& [caller, count] : computation->caller_computations_) {
-    if (caller->parent() == this) {
-      topological_sort_.AddEdge(caller, computation.get());
-    }
-  }
-  for (auto& [callee, count] : computation->callee_computations_) {
-    if (callee->parent() == this) {
-      topological_sort_.AddEdge(computation.get(), callee);
-    }
-  }
+  computation->index_in_module_ = computations_.size();
+  HloComputation* computation_raw_ptr = computation.get();
   computations_.push_back(std::move(computation));
-  return computations_.back().get();
+  topological_sort_.AddNode(computation_raw_ptr);
+  for (auto& [caller, count] : computation_raw_ptr->caller_computations_) {
+    if (caller->parent() == this) {
+      topological_sort_.AddEdge(caller, computation_raw_ptr);
+    }
+  }
+  for (auto& [callee, count] : computation_raw_ptr->callee_computations_) {
+    if (callee->parent() == this) {
+      topological_sort_.AddEdge(computation_raw_ptr, callee);
+    }
+  }
+  return computation_raw_ptr;
 }
 
 HloComputation* HloModule::AddEntryComputation(
@@ -840,7 +842,7 @@ absl::StatusOr<HloModuleProto> HloModule::RemapInstructionIds(
     computation_proto.set_root_id(new_root_id);
     // Fix schedule.
     ABSL_RETURN_IF_ERROR(UpdateIdsInSchedule(proto_copy, computation_proto.id(),
-                                        old_instr_id_to_new_id));
+                                             old_instr_id_to_new_id));
   }
   return proto_copy;
 }
@@ -983,7 +985,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
   TF_RET_CHECK(proto.has_host_program_shape())
       << "No program shape found in the proto";
   ABSL_ASSIGN_OR_RETURN(ProgramShape expected_program_shape,
-                   ProgramShape::FromProto(proto.host_program_shape()));
+                        ProgramShape::FromProto(proto.host_program_shape()));
   TF_RET_CHECK(expected_program_shape.parameters_size() ==
                module_config.entry_computation_layout().parameter_count());
   for (int i = 0; i < expected_program_shape.parameters_size(); ++i) {
@@ -1070,8 +1072,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
       module->input_output_alias_config_,
       HloInputOutputAliasConfig::CreateFromProto(
           entry->ComputeProgramShape().result(), proto.input_output_alias()));
-  ABSL_ASSIGN_OR_RETURN(module->buffer_donor_config_,
-                   HloBufferDonorConfig::CreateFromProto(proto.buffer_donor()));
+  ABSL_ASSIGN_OR_RETURN(
+      module->buffer_donor_config_,
+      HloBufferDonorConfig::CreateFromProto(proto.buffer_donor()));
 
   ABSL_RETURN_IF_ERROR(
       module->CheckUniqueNamesAndIdsForComputationsAndInstructions());
@@ -1108,14 +1111,14 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 
   if (proto.has_spmd_output_sharding()) {
     ABSL_ASSIGN_OR_RETURN(HloSharding hlo_sharding,
-                     HloSharding::FromProto(proto.spmd_output_sharding()));
+                          HloSharding::FromProto(proto.spmd_output_sharding()));
     module->set_spmd_output_sharding(hlo_sharding);
   }
 
   std::vector<HloSharding> param_shardings;
   for (const auto& sharding_proto : proto.spmd_parameters_shardings()) {
     ABSL_ASSIGN_OR_RETURN(HloSharding sharding,
-                     HloSharding::FromProto(sharding_proto));
+                          HloSharding::FromProto(sharding_proto));
     param_shardings.push_back(sharding);
   }
   if (!param_shardings.empty()) {
@@ -1141,8 +1144,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 
   if (proto.has_original_value_recovery_table()) {
     ABSL_ASSIGN_OR_RETURN(module->original_value_recovery_table_,
-                     HloModule::OriginalValueRecoveryTable::FromProto(
-                         proto.original_value_recovery_table()));
+                          HloModule::OriginalValueRecoveryTable::FromProto(
+                              proto.original_value_recovery_table()));
   }
   for (const auto& debug_attribute_table_entry : proto.debug_attributes()) {
     OriginalArray original_array =
@@ -1253,8 +1256,8 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
     }
     if (execution_options->has_device_assignment()) {
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<DeviceAssignment> device_assignment,
-                       DeviceAssignment::Deserialize(
-                           execution_options->device_assignment()));
+                            DeviceAssignment::Deserialize(
+                                execution_options->device_assignment()));
       module_config.set_static_device_assignment(*device_assignment);
       if (execution_options->num_replicas() > 0) {
         CHECK_EQ(module_config.static_device_assignment().replica_count(),
@@ -1286,8 +1289,9 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
         entry_layout->mutable_parameter_layout(i)->CopyLayoutFromShape(
             program_shape.parameters(i)));
   }
-  ABSL_RETURN_IF_ERROR(entry_layout->mutable_result_layout()->CopyLayoutFromShape(
-      program_shape.result()));
+  ABSL_RETURN_IF_ERROR(
+      entry_layout->mutable_result_layout()->CopyLayoutFromShape(
+          program_shape.result()));
   return module_config;
 }
 
@@ -1299,10 +1303,10 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
     return absl::FailedPreconditionError("No program shape found in the proto");
   }
   ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
-                   ProgramShape::FromProto(module.host_program_shape()));
+                        ProgramShape::FromProto(module.host_program_shape()));
   ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
-                   CreateModuleConfigFromShape(program_shape, debug_options,
-                                               execution_options));
+                        CreateModuleConfigFromShape(
+                            program_shape, debug_options, execution_options));
   if (!module.device_type().empty()) {
     config.set_device_type(module.device_type());
   }
@@ -1335,7 +1339,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProtoWithConfig(
     BufferAssignmentProto* buffer_assignment_proto) {
   const auto& hlo_module_proto = proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModuleConfig> config_ptr,
-                   HloModuleConfig::CreateFromProto(proto.config()));
+                        HloModuleConfig::CreateFromProto(proto.config()));
   return HloModule::CreateFromProto(
       hlo_module_proto, *config_ptr, prohibit_empty_literal,
       std::move(comp_envs), preserve_instruction_ids, buffer_assignment_proto);
@@ -1358,12 +1362,18 @@ void HloModule::CleanupComputations() {
   if (to_be_deleted_computations_.empty()) {
     return;
   }
+  std::vector<int> old_to_new(computations_.size(), -1);
   computations_.erase(
       std::remove_if(computations_.begin(), computations_.end(),
                      [](const std::unique_ptr<HloComputation>& comp) {
                        return comp == nullptr;
                      }),
       computations_.end());
+  for (size_t i = 0; i < computations_.size(); ++i) {
+    old_to_new[computations_[i]->index_in_module_] = i;
+    computations_[i]->index_in_module_ = i;
+  }
+  topological_sort_.Reindex(old_to_new);
   to_be_deleted_computations_.clear();
 }
 
@@ -1393,13 +1403,18 @@ absl::Status HloModule::ReorderComputationsToPostOrder() {
     comp_map[comp_ptr] = std::move(comp);
   }
 
+  std::vector<int> old_to_new(computations_.size(), -1);
   computations_.clear();
   computations_.reserve(post_order.size());
-  for (HloComputation* comp : post_order) {
+  for (size_t i = 0; i < post_order.size(); ++i) {
+    HloComputation* comp = post_order[i];
     auto it = comp_map.find(comp);
     TF_RET_CHECK(it != comp_map.end()) << "Computation not found in module";
+    old_to_new[comp->index_in_module_] = i;
+    comp->index_in_module_ = i;
     computations_.push_back(std::move(it->second));
   }
+  topological_sort_.Reindex(old_to_new);
 
   TF_RET_CHECK(computations_.size() == comp_map.size())
       << "Lost computations during reordering. Original count: "
@@ -1597,16 +1612,18 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
   for (auto it = topological_sort_.rbegin(); it != topological_sort_.rend();
        ++it) {
     ++num_computations;
+    HloComputation* computation = computations_[*it].get();
     if (execution_threads.empty() ||
-        execution_threads.contains(it->execution_thread())) {
-      post_order.push_back(&*it);
+        execution_threads.contains(computation->execution_thread())) {
+      post_order.push_back(computation);
     }
   }
 
   if (num_computations != computation_count()) {
-    for (HloComputation& computation : topological_sort_) {
-      LOG(ERROR) << "Reverse postorder: " << computation.name() << " ("
-                 << computation.parent()->name() << ")";
+    for (int32_t idx : topological_sort_) {
+      HloComputation* computation = computations_[idx].get();
+      LOG(ERROR) << "Reverse postorder: " << computation->name() << " ("
+                 << computation->parent()->name() << ")";
     }
     for (const HloComputation* computation : computations()) {
       LOG(ERROR) << "Computations: " << computation->name() << " ("
@@ -1788,6 +1805,12 @@ void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
     LOG(ERROR) << "Failed to sort module computations for " << name() << "; "
                << status;
   }
+  std::vector<int> old_to_new(module->computations_.size(), -1);
+  for (size_t i = 0; i < module->computations_.size(); ++i) {
+    old_to_new[module->computations_[i]->index_in_module_] = i;
+    module->computations_[i]->index_in_module_ = i;
+  }
+  module->topological_sort_.Reindex(old_to_new);
 }
 
 std::unique_ptr<HloModule> HloModule::Clone(
@@ -1982,10 +2005,10 @@ HloModule::OriginalValueRecoveryTable::FromProto(
     if (entry.has_recovery_module()) {
       const HloModuleProto proto = entry.recovery_module();
       ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
-                       HloModule::CreateModuleConfigFromProto(
-                           proto, GetDebugOptionsFromFlags()));
+                            HloModule::CreateModuleConfigFromProto(
+                                proto, GetDebugOptionsFromFlags()));
       ABSL_ASSIGN_OR_RETURN(recovery_module,
-                       HloModule::CreateFromProto(proto, config));
+                            HloModule::CreateFromProto(proto, config));
     }
     original_value_recovery_table.table_[old_original_array] =
         std::make_pair(new_original_array, std::move(recovery_module));

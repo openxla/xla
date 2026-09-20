@@ -56,8 +56,9 @@ absl::StatusOr<MlirTestKernelEmitter::KernelDefinition>
 MlirTestKernelEmitter::EmitKernelDefinition() {
   std::unique_ptr<mlir::MLIRContext> context = FusionCompiler::CreateContext();
 
-  ABSL_ASSIGN_OR_RETURN(MlirKernelSource source, MlirKernelSource::ParseFromString(
-                                                mlir_, std::move(context)));
+  ABSL_ASSIGN_OR_RETURN(
+      MlirKernelSource source,
+      MlirKernelSource::ParseFromString(mlir_, std::move(context)));
 
   // Convert kernel arguments to fake allocations and buffer uses.
   KernelSpec::Buffers argument_buffers;
