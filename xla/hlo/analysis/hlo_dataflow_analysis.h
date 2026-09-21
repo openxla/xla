@@ -29,6 +29,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -151,7 +152,7 @@ class HloDataflowAnalysis {
   HloValue& GetValue(HloValue::Id value_id);
 
   // Returns the total number of HloValues.
-  int64_t value_count() const { return values_.size(); }
+  int64_t value_count() const { return values_vector_.size(); }
 
   // Returns a vector of all HloValues stabily sorted by HloValue::Id.
   const std::vector<HloValue*>& values() const { return values_vector_; }
@@ -225,6 +226,12 @@ class HloDataflowAnalysis {
 
   // Runs dataflow analysis on the module attached to this HloDataflowAnalysis.
   absl::Status RunImpl();
+
+  // Returns the index of the instruction in instructions_ and value_sets_, or
+  // -1 for an instruction the analysis does not know. The slot of its local id
+  // finds it in O(1). An instruction removed from its computation, or one
+  // whose local id HloComputation::Cleanup moved, is found by address.
+  int32_t GetInstructionIndex(const HloInstruction* instruction) const;
 
   // 1. During value propagation (Propagate function), always create phi
   // values once it see multiple inputs merging at the same point. It then
@@ -344,12 +351,23 @@ class HloDataflowAnalysis {
   // The map of all HloValues in the module. We pass around pointers to the
   // mapped HloValues, so the underlying container must keep them valid despite
   // mutations touching other map entries.
-  absl::flat_hash_map<HloValue::Id, std::unique_ptr<HloValue>> values_;
+  std::vector<std::unique_ptr<HloValue>> values_;
 
   // A map from instruction to InstructionValueSet.
-  absl::flat_hash_map<const HloInstruction*,
-                      std::unique_ptr<InstructionValueSet>>
-      value_sets_;
+  std::vector<InstructionValueSet> value_sets_;
+
+  // The slots of the local ids of the computation with unique id u are
+  // [computation_offsets_[u], computation_offsets_[u + 1]) in
+  // instruction_indices_; the range is empty for an excluded computation.
+  std::vector<int64_t> computation_offsets_;
+  // Per slot, the index of its instruction, or -1.
+  std::vector<int32_t> instruction_indices_;
+  // Per index, the instruction; post order, as value_sets_.
+  std::vector<HloInstruction*> instructions_;
+  // Filled from instructions_ by the first lookup that misses the slots.
+  mutable absl::once_flag instruction_indices_by_ptr_once_;
+  mutable absl::flat_hash_map<const HloInstruction*, int32_t>
+      instruction_indices_by_ptr_;
 
   // Values marked for deletion during construction. We don't delete them
   // immediately because references to them may remain in ValueSets temporarily
