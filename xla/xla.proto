@@ -355,6 +355,18 @@ message DebugOptions {
   // If true, XLA:CPU uses the new xtile lowering.
   optional bool xla_cpu_use_new_xtile_lowering = 529;
 
+  // XLA:CPU fusion cost model: how many arithmetic operations a core retires
+  // in the time it takes to move one byte to or from DRAM. Fusion duplicates
+  // a producer's arithmetic in order to avoid writing its output to memory
+  // and reading it back; this ratio is what decides whether that trade wins.
+  // Values <= 0 select the built-in default.
+  optional int64 xla_cpu_fusion_machine_balance_flops_per_byte = 548;
+
+  // XLA:CPU fusion cost model: intermediates smaller than this stay resident
+  // in cache, so materializing them costs no DRAM round trip and the model
+  // will not spend flops to avoid it. Values <= 0 select the built-in default.
+  optional int64 xla_cpu_fusion_cache_bytes = 549;
+
   // When true, XLA:CPU uses XNNPACK to execute supported operations.
   optional bool xla_cpu_use_xnnpack = 359;
 
@@ -1860,7 +1872,7 @@ message DebugOptions {
   // Enables Raft for stable TopK.
   optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
 
-  // Next id: 548
+  // Next id: 550
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

@@ -1079,12 +1079,39 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cpu_fusion_cost_model",
+    srcs = ["cpu_fusion_cost_model.cc"],
+    hdrs = ["cpu_fusion_cost_model.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:window_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "cpu_fusion_cost_model_test",
+    srcs = ["cpu_fusion_cost_model_test.cc"],
+    deps = [
+        ":cpu_fusion_cost_model",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "cpu_instruction_fusion",
     srcs = ["cpu_instruction_fusion.cc"],
     hdrs = ["cpu_instruction_fusion.h"],
     deps = [
         ":cpu_options",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/hlo/analysis:hlo_reachability",

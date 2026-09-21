@@ -269,6 +269,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
   opts.set_xla_cpu_use_xnnpack(true);
   opts.set_xla_cpu_use_new_xtile_lowering(false);
+  opts.set_xla_cpu_fusion_machine_balance_flops_per_byte(8);
+  opts.set_xla_cpu_fusion_cache_bytes(256 * 1024);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
   opts.add_xla_cpu_experimental_ynn_fusion_type(
@@ -1658,6 +1660,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_cpu_use_new_xtile_lowering),
       debug_options->xla_cpu_use_new_xtile_lowering(),
       "Use new xtile lowering."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_fusion_machine_balance_flops_per_byte",
+      int64_setter_for(
+          &DebugOptions::set_xla_cpu_fusion_machine_balance_flops_per_byte),
+      debug_options->xla_cpu_fusion_machine_balance_flops_per_byte(),
+      "XLA:CPU fusion cost model: arithmetic operations retired per byte "
+      "moved to or from DRAM. Higher values make the compiler more willing "
+      "to recompute a producer instead of materializing it."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_fusion_cache_bytes",
+      int64_setter_for(&DebugOptions::set_xla_cpu_fusion_cache_bytes),
+      debug_options->xla_cpu_fusion_cache_bytes(),
+      "XLA:CPU fusion cost model: intermediates below this size are assumed "
+      "to stay in cache, so the model will not trade flops to avoid "
+      "materializing them."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_experimental_xnn_fusion_type",
       SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
