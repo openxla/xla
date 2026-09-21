@@ -1619,13 +1619,14 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
                     tma_metadata = result.tma_metadata,
                     kernel_name = std::move(kernel_name)](
                        const std::vector<uint8_t>& cubin) mutable {
-                return KernelReuseCache::Entry{std::move(kernel_name),
-                                               launch_dimensions,
-                                               /*cluster_dim=*/std::nullopt,
-                                               shmem_bytes,
-                                               cubin,
-                                               tma_metadata,
-                                               use_pdl};
+                return KernelReuseCache::Entry{
+                    std::move(kernel_name),
+                    launch_dimensions,
+                    /*cluster_dim=*/std::nullopt,
+                    shmem_bytes,
+                    std::make_shared<const std::vector<uint8_t>>(cubin),
+                    tma_metadata,
+                    use_pdl};
               });
         });
   };
@@ -1641,23 +1642,23 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  return status_or_entry.Map([info = std::move(info),
-                              kernel_arguments = std::move(kernel_arguments),
-                              call_zeroed_outputs =
-                                  std::move(call_zeroed_outputs)](
-                                 const KernelReuseCache::Entry* entry) mutable
-                                 -> absl::StatusOr<ThunkSequence> {
-    ABSL_ASSIGN_OR_RETURN(
-        CustomKernel custom_kernel,
-        kernel::CreateOwnedCubinCustomKernel(
-            entry->kernel_name, entry->binary, kernel_arguments.args().size(),
-            entry->launch_dimensions.block_counts(),
-            entry->launch_dimensions.thread_counts_per_block(),
-            entry->shmem_bytes));
-    return ThunkSequence::Of<CustomKernelThunk>(
-        std::move(info), std::move(custom_kernel), std::move(kernel_arguments),
-        entry->use_pdl, call_zeroed_outputs, entry->tma_metadata);
-  });
+  return status_or_entry.Map(
+      [info = std::move(info), kernel_arguments = std::move(kernel_arguments),
+       call_zeroed_outputs = std::move(call_zeroed_outputs)](
+          const KernelReuseCache::Entry& entry) mutable
+          -> absl::StatusOr<ThunkSequence> {
+        ABSL_ASSIGN_OR_RETURN(
+            CustomKernel custom_kernel,
+            kernel::CreateSharedCubinCustomKernel(
+                entry.kernel_name, entry.binary, kernel_arguments.args().size(),
+                entry.launch_dimensions.block_counts(),
+                entry.launch_dimensions.thread_counts_per_block(),
+                entry.shmem_bytes));
+        return ThunkSequence::Of<CustomKernelThunk>(
+            std::move(info), std::move(custom_kernel),
+            std::move(kernel_arguments), entry.use_pdl, call_zeroed_outputs,
+            entry.tma_metadata);
+      });
 }
 
 Future<ThunkSequence> ThunkEmitter::EmitDynamicSliceCopyFusion(
