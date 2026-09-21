@@ -611,6 +611,7 @@ xla_cc_test(
     name = "support_test",
     srcs = ["support_test.cc"],
     shard_count = 50,  # TODO: b/514293537 - change to 25 after disabling symblic analysis.
+    tags = ["flaky"],  # TODO(b/564525549): Fix flaky test.
     deps = [
         ":support",
         ":support_test_base",
