@@ -2160,6 +2160,21 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "multi_output_fusion_test",
+    srcs = ["multi_output_fusion_test.cc"],
+    deps = [
+        ":multi_output_fusion",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "hlo_creation_utils",
     srcs = ["hlo_creation_utils.cc"],
