@@ -21,7 +21,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -277,7 +277,7 @@ ENTRY main {
 }
 
 std::string HloWithOperandPrecision(absl::string_view operand_precision) {
-  return absl::StrCat(R"(
+  return absl::StrFormat(R"(
 HloModule SwapOperandPrecision
 
 fcomp {
@@ -285,8 +285,7 @@ fcomp {
   rhs = f32[128,64]{1,0} parameter(1)
   ROOT dot = f32[32,128]{1,0} dot(lhs, rhs),
       lhs_contracting_dims={1}, rhs_contracting_dims={1},
-      operand_precision={)",
-                      operand_precision, R"(}
+      operand_precision={%s}
 }
 
 ENTRY main {
@@ -296,7 +295,8 @@ ENTRY main {
       calls=fcomp,
       backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
 }
-)");
+)",
+                         operand_precision);
 }
 
 TEST_F(SwapOperandsTest, SwapsPerOperandPrecision) {
