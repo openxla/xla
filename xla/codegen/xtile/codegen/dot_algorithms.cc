@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -218,7 +219,9 @@ absl::StatusOr<std::optional<Type>> DotDefaultOperandsType(
       return lhs_type;
     }
   }
-  if (debug_options.xla_gpu_default_to_alg_dot_bf16_bf16_f32()) {
+  if (!debug_options.xla_cpu_use_new_xtile_lowering() &&
+      debug_options.xla_gpu_default_to_alg_dot_bf16_bf16_f32() &&
+      tsl::tensor_float_32_execution_enabled()) {
     return b.getBF16Type();
   }
   return lhs_type;
