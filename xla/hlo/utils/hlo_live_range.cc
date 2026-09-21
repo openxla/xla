@@ -427,10 +427,9 @@ void HloLiveRange::CalculateBufferStartEndMap() {
           if (is_first_fully_bound.ok() && *is_first_fully_bound) {
             auto first_bound_it = instruction_schedule_.find(caller);
             if (first_bound_it != instruction_schedule_.end()) {
-              tightened_start_time =
-                  tightened_start_time.has_value()
-                      ? std::min(*tightened_start_time, first_bound_it->second)
-                      : first_bound_it->second;
+              tightened_start_time = std::min(
+                  first_bound_it->second,
+                  tightened_start_time.value_or(first_bound_it->second));
             }
           }
         }
