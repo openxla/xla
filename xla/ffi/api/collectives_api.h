@@ -109,21 +109,10 @@ class CommunicatorContextBase {
   // collective device APIs directly to obtain local, peer, and multicast
   // pointers. Allocation stays on the JAX-side.
 
-  bool SupportsWindow() const {
-    return ext_->extension_base.id.minor_version >= 2 &&
-           ext_->request_window != nullptr && ext_->get_window != nullptr;
-  }
-
   Status RequestWindow(GroupMode group_mode,
                        const std::vector<std::vector<int64_t>>& groups,
                        int64_t communication_id,
                        const std::vector<CollectiveMemoryRegion>& regions) {
-    if (!SupportsWindow()) {
-      return ErrorPolicy::FromErrorCode(
-          XLA_FFI_Error_Code_UNIMPLEMENTED,
-          "Collective memory window API (request_window) requires runtime "
-          "collectives FFI extension >= v0.2");
-    }
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
     std::vector<XLA_FFI_CollectiveMemoryRegion> raw_regions;
     raw_regions.reserve(regions.size());
@@ -149,12 +138,6 @@ class CommunicatorContextBase {
   StatusOr<WindowLookup> GetWindow(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id, const void* buffer) {
-    if (!SupportsWindow()) {
-      return StatusOr<WindowLookup>(ErrorPolicy::FromErrorCode(
-          XLA_FFI_Error_Code_UNIMPLEMENTED,
-          "Collective memory window API (get_window) requires runtime "
-          "collectives FFI extension >= v0.2"));
-    }
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
     XLA_FFI_Window_Get_Args args;
     args.struct_size = XLA_FFI_Window_Get_Args_STRUCT_SIZE;
@@ -202,14 +185,6 @@ struct CollectivesExtensionBase {
       XLA_FFI_Extension_Collectives_MajorVersion;
   static constexpr int32_t kMinorVersion =
       XLA_FFI_Extension_Collectives_MinorVersion;
-
-  static constexpr int32_t kMinRuntimeMinorVersion = 1;
-
-  static bool Support(int32_t runtime_major_version,
-                      int32_t runtime_minor_version) {
-    return runtime_major_version == kMajorVersion &&
-           runtime_minor_version >= kMinRuntimeMinorVersion;
-  }
 
   // Builds a context from the extension.
   static CommunicatorContextT Create(const XLA_FFI_Api* api,

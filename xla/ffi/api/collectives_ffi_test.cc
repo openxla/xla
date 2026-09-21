@@ -188,13 +188,11 @@ TEST(CollectivesFfiTest, RequestAndGetWindow) {
   };
 
   bool called = false;
-  bool supports_window = false;
   WindowLookup got_lookup = {nullptr, 0};
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [&](Communicator comm) -> Error {
         called = true;
-        supports_window = comm.SupportsWindow();
         if (Error status = comm.RequestWindow(GroupMode::kFlattenedId, {{0, 1}},
                                               /*communication_id=*/9, regions);
             status.failure()) {
@@ -227,7 +225,6 @@ TEST(CollectivesFfiTest, RequestAndGetWindow) {
 
   ASSERT_OK(status);
   EXPECT_TRUE(called);
-  EXPECT_TRUE(supports_window);
   EXPECT_TRUE(backend.request_window_called);
   EXPECT_EQ(backend.requested_window_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
   EXPECT_EQ(backend.requested_window_num_groups, 1u);
@@ -241,50 +238,6 @@ TEST(CollectivesFfiTest, RequestAndGetWindow) {
   EXPECT_EQ(backend.get_window_buffer, &fake_buffer0);
   EXPECT_EQ(got_lookup.window, kFakeWindow);
   EXPECT_EQ(got_lookup.offset, kFakeWindowOffset);
-}
-
-TEST(CollectivesFfiTest, WindowNotSupportedWhenCallbacksMissing) {
-  bool called = false;
-  bool supports_window = true;
-  bool request_window_failed = false;
-  bool get_window_failed = false;
-
-  static uint32_t fake_buffer = 0;
-  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
-      [&](Communicator comm) -> Error {
-        called = true;
-        supports_window = comm.SupportsWindow();
-        request_window_failed =
-            comm.RequestWindow(GroupMode::kFlattenedId, {{0, 1}},
-                               /*communication_id=*/0,
-                               {{&fake_buffer, sizeof(fake_buffer)}})
-                .failure();
-        get_window_failed = comm.GetWindow(GroupMode::kFlattenedId, {{0, 1}},
-                                           /*communication_id=*/0, &fake_buffer)
-                                .has_error();
-        return Error::Success();
-      });
-
-  CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
-  auto call_frame = builder.Build();
-
-  FakeBackend backend;
-  XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
-      reinterpret_cast<XLA_FFI_CollectivesState*>(&backend),
-      FakeRequestCommunicator, FakeGetCommunicator);
-
-  InvokeContext context;
-  context.extension_start = &ext.extension_base;
-
-  auto status =
-      Invoke(Api(), *handler, call_frame, context, ExecutionStage::kExecute);
-
-  ASSERT_OK(status);
-  EXPECT_TRUE(called);
-  EXPECT_FALSE(supports_window);
-  EXPECT_TRUE(request_window_failed);
-  EXPECT_TRUE(get_window_failed);
-  EXPECT_FALSE(backend.request_window_called);
 }
 
 }  // namespace
