@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -505,8 +506,13 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
 
   // Cost condition: not fuse (simple, expensive producers) and (consumers who
   // reuse operand elements).
+  //
+  // `is_expensive` is a pure opcode judgement with no size term, so on its own
+  // it refuses to recompute one divide in order to materialize a multi-megabyte
+  // buffer. The cost model supplies the missing comparison.
   if (producer->opcode() != HloOpcode::kFusion && is_expensive(*producer) &&
-      ReusesOperandElements(consumer, operand_index)) {
+      ReusesOperandElements(consumer, operand_index) &&
+      !cost_model_.RecomputeBeatsMaterialize(producer)) {
     return FusionDecision::Forbid("Fusion is not profitable.");
   }
 
@@ -556,8 +562,10 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
       // We have no cached results for this fusion node yet. This can happen
       // when we run the InstructionFusion pass more than once. We can only
       // cache the results within one run.
-      fusion_node_evaluations_.emplace(consumer,
-                                       FusionNodeIndexingEvaluation(consumer));
+      fusion_node_evaluations_.emplace(
+          consumer, FusionNodeIndexingEvaluation(
+                        consumer, /*root_usage_count=*/1,
+                        MakeRematerializationPolicy()));
     }
     if (fusion_node_evaluations_.at(consumer).CodeDuplicationTooHigh(
             producer)) {
@@ -609,6 +617,19 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
   return FusionDecision::Forbid("Not fusing: not found a fusible case");
 }
 
+bool CpuInstructionFusion::MayDuplicateExpensiveProducer(
+    const HloInstruction& producer, const HloInstruction& consumer) {
+  return cost_model_.RecomputeBeatsMaterialize(&producer);
+}
+
+FusionNodeIndexingEvaluation::RematerializationPolicy
+CpuInstructionFusion::MakeRematerializationPolicy() {
+  return [this](const HloInstruction* producer, int64_t emitted_copies) {
+    return cost_model_.RematerializationBeatsMaterialization(producer,
+                                                             emitted_copies);
+  };
+}
+
 HloInstruction::FusionKind CpuInstructionFusion::ChooseKind(
     const HloInstruction* producer, const HloInstruction* consumer) {
   return CanBeOutputFused(producer, consumer)
@@ -626,7 +647,9 @@ HloInstruction* CpuInstructionFusion::FuseInstruction(
   if (evaluation == fusion_node_evaluations_.end()) {
     evaluation = fusion_node_evaluations_
                      .emplace(fusion_instruction,
-                              FusionNodeIndexingEvaluation(fusion_instruction))
+                              FusionNodeIndexingEvaluation(
+                                  fusion_instruction, /*root_usage_count=*/1,
+                                  MakeRematerializationPolicy()))
                      .first;
   }
   auto indexing_users = evaluation->second.RemoveFusionOperand(producer);

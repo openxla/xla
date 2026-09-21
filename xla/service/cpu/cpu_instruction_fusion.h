@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/cpu/cpu_fusion_cost_model.h"
 #include "xla/service/fusion_node_indexing_evaluation.h"
 #include "xla/service/instruction_fusion.h"
 
@@ -54,10 +55,18 @@ class CpuInstructionFusion : public InstructionFusion {
   HloInstruction::FusionKind ChooseKind(
       const HloInstruction* producer, const HloInstruction* consumer) override;
 
+  // Lets a producer whose opcode is "expensive" be duplicated anyway when
+  // recomputing it is cheaper than the memory round trip that materializing
+  // it would cost. See CpuFusionCostModel.
+  bool MayDuplicateExpensiveProducer(const HloInstruction& producer,
+                                     const HloInstruction& consumer) override;
+
   absl::StatusOr<bool> RunImpl(HloModule* module,
                                const absl::flat_hash_set<absl::string_view>&
                                    execution_threads) override {
     fusion_node_evaluations_.clear();
+    cost_model_ = CpuFusionCostModel(
+        CpuFusionCostModel::ParamsFromConfig(module->config()));
     ComputeInstructionsToSkip(module, execution_threads);
     return InstructionFusion::RunImpl(module, execution_threads);
   }
@@ -78,7 +87,16 @@ class CpuInstructionFusion : public InstructionFusion {
   absl::flat_hash_map<const HloInstruction*, FusionNodeIndexingEvaluation>
       fusion_node_evaluations_;
 
+  // Returns the rematerialization policy handed to every
+  // FusionNodeIndexingEvaluation this pass creates.
+  FusionNodeIndexingEvaluation::RematerializationPolicy
+  MakeRematerializationPolicy();
+
   absl::flat_hash_set<const HloInstruction*> instructions_to_skip_;
+
+  // Decides recompute-vs-materialize. Rebuilt per module so that its caches,
+  // which are keyed on instruction pointers, never outlive the graph.
+  CpuFusionCostModel cost_model_{CpuFusionCostModel::Params{}};
 };
 
 }  // namespace cpu

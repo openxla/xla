@@ -1110,6 +1110,7 @@ cc_library(
     hdrs = ["cpu_instruction_fusion.h"],
     deps = [
         ":cpu_options",
+        ":cpu_fusion_cost_model",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",

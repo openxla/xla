@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -1434,6 +1435,109 @@ ENTRY main {
   EXPECT_TRUE(changed);
   EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kConcatenate));
   EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kNegate));
+}
+
+// The pairwise-reduction pattern behind gravity, electrostatics and RBF
+// kernels: `reduce_j f(x_i, y_j)`. The `f32[M,N,1]` distance chain is read
+// three times by the `f32[M,N,3]` term, which the old boolean heuristic read
+// as "expensive producer, reused elements -> materialize", forcing a 4 MB
+// intermediate into memory rather than redo a sqrt. The cost model compares
+// the two and recomputes.
+constexpr absl::string_view kPairwiseGravityTemplate = R"(
+HloModule gravity
+
+add_f32 {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT s = f32[] add(a, b)
+}
+
+ENTRY main {
+  pos  = f32[$N,3]{1,0} parameter(0)
+  src  = f32[$N,3]{1,0} parameter(1)
+  mass = f32[$N]{0}     parameter(2)
+  zero = f32[] constant(0)
+
+  pos_b = f32[$N,$N,3]{2,1,0} broadcast(pos), dimensions={0,2}
+  src_b = f32[$N,$N,3]{2,1,0} broadcast(src), dimensions={1,2}
+  r     = f32[$N,$N,3]{2,1,0} subtract(pos_b, src_b)
+
+  rr  = f32[$N,$N,3]{2,1,0} multiply(r, r)
+  d2  = f32[$N,$N]{1,0} reduce(rr, zero), dimensions={2}, to_apply=add_f32
+  d2k = f32[$N,$N,1]{2,1,0} reshape(d2)
+  dk  = f32[$N,$N,1]{2,1,0} sqrt(d2k)
+  ddk = f32[$N,$N,1]{2,1,0} multiply(dk, dk)
+  d3k = f32[$N,$N,1]{2,1,0} multiply(ddk, dk)
+  d3  = f32[$N,$N]{1,0} reshape(d3k)
+
+  d3b    = f32[$N,$N,3]{2,1,0} broadcast(d3), dimensions={0,1}
+  mass_b = f32[$N,$N,3]{2,1,0} broadcast(mass), dimensions={1}
+  num    = f32[$N,$N,3]{2,1,0} multiply(mass_b, r)
+  term   = f32[$N,$N,3]{2,1,0} divide(num, d3b)
+
+  ROOT acc = f32[$N,3]{1,0} reduce(term, zero), dimensions={1}, to_apply=add_f32
+}
+)";
+
+std::string PairwiseGravityModule(int n) {
+  return absl::StrReplaceAll(kPairwiseGravityTemplate,
+                             {{"$N", absl::StrCat(n)}});
+}
+
+// Returns true if the entry computation still writes out a temporary of at
+// least `min_elements` elements -- i.e. an intermediate that survived fusion
+// and has to go through memory. Checking for a standalone opcode is not
+// enough: a producer can be swallowed by a *separate* fusion and still be
+// materialized.
+bool EntryMaterializesTemporary(const HloModule& module, int64_t min_elements) {
+  const HloComputation* entry = module.entry_computation();
+  return absl::c_any_of(
+      entry->instructions(), [&](const HloInstruction* instr) {
+        return instr != entry->root_instruction() &&
+               instr->opcode() != HloOpcode::kParameter &&
+               instr->opcode() != HloOpcode::kConstant &&
+               instr->shape().IsArray() &&
+               ShapeUtil::ElementsIn(instr->shape()) >= min_elements;
+      });
+}
+
+TEST_F(InstructionFusionTest, LargePairwiseDistanceChainIsRecomputed) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(PairwiseGravityModule(512)));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  // The whole distance chain folds into the reduction loop: no M x N
+  // intermediate is left for the entry computation to write out.
+  EXPECT_FALSE(EntryMaterializesTemporary(*module, 512 * 512));
+}
+
+// Same graph, small enough that the intermediate stays in cache. There is no
+// DRAM round trip to buy back, so spending flops on one would be pure loss --
+// the model must decline. This is the other half of the size term: it is not
+// "always fuse".
+TEST_F(InstructionFusionTest, SmallPairwiseDistanceChainIsMaterialized) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(PairwiseGravityModule(32)));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(EntryMaterializesTemporary(*module, 32 * 32));
+}
+
+// End-to-end check that the tunable is actually plumbed through: declaring a
+// huge cache makes the large case look cache-resident, and the verdict flips.
+TEST_F(InstructionFusionTest, FusionCacheBytesFlagChangesTheVerdict) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(PairwiseGravityModule(512)));
+  auto debug_options = module->config().debug_options();
+  debug_options.set_xla_cpu_fusion_cache_bytes(1LL << 40);
+  module->mutable_config().set_debug_options(debug_options);
+
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(EntryMaterializesTemporary(*module, 512 * 512));
 }
 
 }  // namespace
