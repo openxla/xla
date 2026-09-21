@@ -50,6 +50,15 @@ class HloLiveRange {
       const HloComputation* computation, bool module_scoped_analysis = true,
       absl::flat_hash_set<absl::string_view> execution_threads = {});
 
+  // Returns the flattened_instruction_sequence() that Run() with the same
+  // arguments computes, without needing an alias analysis: the instructions of
+  // computation in schedule order and, in module scoped mode, the sequences
+  // of the computations they call inlined before the calling instruction.
+  static absl::StatusOr<HloInstructionSequence> GetFlattenedInstructionSequence(
+      const HloSchedule& schedule, const HloComputation* computation,
+      bool module_scoped_analysis = true,
+      absl::flat_hash_set<absl::string_view> execution_threads = {});
+
   // Returns all HloValues defined by this instruction.
   static std::vector<const HloValue*> GetValuesDefined(
       const HloInstruction* instruction, const HloDataflowAnalysis& dataflow);
