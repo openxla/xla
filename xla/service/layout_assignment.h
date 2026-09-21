@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_LAYOUT_ASSIGNMENT_H_
 #define XLA_SERVICE_LAYOUT_ASSIGNMENT_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iosfwd>
@@ -188,12 +189,25 @@ class BufferLayoutConstraint : public LayoutConstraint {
 class OperandLayoutConstraint : public LayoutConstraint {
  public:
   // Constructs an OperandLayoutConstraint for the specified operand slot.
-  OperandLayoutConstraint(const ShapeLayout& shape_layout,
+  OperandLayoutConstraint(ShapeLayout shape_layout,
                           const HloInstruction* instruction, int64_t operand_no,
                           bool mandatory, bool dfs, int64_t priority);
 
   // Returns the expected ShapeLayout for the operand.
   const ShapeLayout& shape_layout() const { return shape_layout_[0]; }
+
+  // Returns true if UpdateLayout would find the constraint already satisfied
+  // by the constrained operand carrying layout: the same minor_to_major as
+  // the constrained layout. Tiles, element size, memory space, tail padding
+  // and split configs are ignored, as in MatchesLayoutInShape with
+  // minor_to_major_only.
+  bool IsSatisfiedBy(const Layout& layout) const;
+
+  // Raises the priority to priority when that is higher: what UpdateLayout
+  // does to a constraint the new layout already satisfies.
+  void RaisePriority(int64_t priority) {
+    priority_ = std::max(priority_, priority);
+  }
 
   // Returns the consumer HloInstruction imposing this constraint.
   const HloInstruction* instruction() const { return instruction_; }
@@ -929,6 +943,8 @@ class LayoutAssignment : public HloModulePass, public HloDataflowPropagation {
   bool IsWhileLoopCopyDisabled(const HloInstruction& instruction) const;
 
  private:
+  friend class LayoutAssignmentPeer;
+
   // Returns true if `computation` has an entry in `computation_layouts_` whose
   // ComputationLayout has been explicitly constrained or calculated.
   bool HasConstrainedComputationLayout(const HloComputation* computation) const;
@@ -960,6 +976,13 @@ class LayoutAssignment : public HloModulePass, public HloDataflowPropagation {
   mutable absl::flat_hash_map<const HloInstruction*, std::unique_ptr<BufferSet>>
       buffer_sets_cache_;
   const HloDataflowAnalysis* buffer_sets_cache_analysis_ = nullptr;
+
+  // SetOperandLayout on the constraint slot of (instruction, operand_no),
+  // already looked up by the caller, which has excluded scalars.
+  absl::Status SetOperandLayout(
+      const Shape& shape_with_layout, const HloInstruction* instruction,
+      int64_t operand_no, bool mandatory, bool dfs, int64_t priority,
+      std::unique_ptr<OperandLayoutConstraint>& constraint_slot);
 
   // Buffer layout constraints stored densely by HloValue::Id, which the
   // dataflow analysis assigns sequentially. Clear() invalidates every entry
