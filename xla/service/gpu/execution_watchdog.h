@@ -64,11 +64,13 @@ class ExecutionWatchdogScope {
 
  private:
   ExecutionWatchdogScope(absl::Duration watchdog_timeout,
+                         absl::Duration abort_timeout,
                          std::string watchdog_name,
                          const GpuExecutableRunOptions* gpu_run_options,
                          se::Stream* stream, bool block_host_until_done);
 
   absl::Duration watchdog_timeout_;
+  absl::Duration abort_timeout_;
   std::string watchdog_name_;
   const GpuExecutableRunOptions* gpu_run_options_ = nullptr;
   se::Stream* stream_ = nullptr;

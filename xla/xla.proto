@@ -907,6 +907,11 @@ message DebugOptions {
   // Timeout to issue a warning on stuck rendezvous.
   optional int32 xla_gpu_executable_warn_stuck_timeout_seconds = 327;
 
+  // After an execution timeout handler runs, wait this long before aborting
+  // the process. Same duration format as xla_gpu_execution_terminate_timeout.
+  // Default "30s"; "inf" skips the abort.
+  optional string xla_gpu_execution_abort_timeout = 548;
+
   // Number of thunks to track for execution progress reporting. When this
   // value is greater than 0, XLA:GPU installs a progress tracker for the
   // sequential thunk execution. On execution timeout, the last N completed

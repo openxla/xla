@@ -45,10 +45,15 @@ namespace {
 
 absl::StatusOr<std::unique_ptr<ExecutionWatchdogScope>> CreateArmedScope(
     absl::Duration timeout, GpuExecutableRunOptions* gpu_run_options,
-    bool block_host_until_done) {
+    bool block_host_until_done,
+    absl::Duration abort_timeout = absl::InfiniteDuration()) {
   DebugOptions debug_options;
   debug_options.set_xla_gpu_execution_terminate_timeout(
       absl::FormatDuration(timeout));
+  // First-stage tests keep the scope after timeout; disable post-cancel abort
+  // so a slow CI machine cannot LOG(FATAL) from the second watchdog.
+  debug_options.set_xla_gpu_execution_abort_timeout(
+      absl::FormatDuration(abort_timeout));
   ABSL_ASSIGN_OR_RETURN(std::optional<ExecutionWatchdogScope> maybe_scope,
                         ExecutionWatchdogScope::Create(
                             &debug_options, "test_module",
@@ -158,6 +163,41 @@ TEST(ExecutionWatchdogScopeTest,
   EXPECT_EQ(handler_calls.load(), 1);
   EXPECT_THAT(observed_action, ::testing::HasSubstr("XLA GPU execution"));
   EXPECT_EQ(observed_timeout, kTimeout);
+}
+
+// After the execution timeout handler runs, a second HangWatchdog is armed.
+// Releasing the scope must drop that watch so a recovered execution cannot
+// abort. If the abort watch were still live, HangWatchdog::Abort would
+// LOG(FATAL) during the wait below.
+TEST(ExecutionWatchdogScopeTest,
+     AbortWatchDroppedWhenScopeReleasedAfterTimeout) {
+  constexpr absl::Duration kTimeout = absl::Milliseconds(50);
+  constexpr absl::Duration kAbortTimeout = absl::Milliseconds(200);
+
+  std::atomic<int> handler_calls{0};
+  absl::Notification handler_done;
+  GpuExecutableRunOptions gpu_run_options;
+  gpu_run_options.set_execution_timeout_handler(
+      [&](absl::string_view /*action*/, absl::Duration /*timeout*/) {
+        handler_calls.fetch_add(1);
+        handler_done.Notify();
+      });
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ExecutionWatchdogScope> scope,
+                       CreateArmedScope(kTimeout, &gpu_run_options,
+                                        /*block_host_until_done=*/false,
+                                        kAbortTimeout));
+
+  EXPECT_TRUE(handler_done.WaitForNotificationWithTimeout(absl::Seconds(5)))
+      << "timeout handler should fire before the abort watch is dropped";
+  EXPECT_EQ(handler_calls.load(), 1);
+
+  // Recovered execution: destructor sets released and drops the abort watch.
+  scope.reset();
+
+  absl::SleepFor(kAbortTimeout * 5);
+  EXPECT_EQ(handler_calls.load(), 1)
+      << "post-cancel abort must not run after the scope is released";
 }
 
 // Negative: releasing the scope at dispatch return (old stack-local guard

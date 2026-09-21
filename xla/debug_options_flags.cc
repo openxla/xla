@@ -513,6 +513,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_executable_num_communication_streams(0);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
+  opts.set_xla_gpu_execution_abort_timeout("30s");
   opts.set_xla_gpu_execution_terminate_timeout("inf");
   opts.set_xla_gpu_execution_progress_tracking(0);
 
@@ -3228,6 +3229,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_executable_warn_stuck_timeout_seconds),
       debug_options->xla_gpu_executable_warn_stuck_timeout_seconds(),
       "Set timeout for Rendezvous stuck warning"));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_execution_abort_timeout",
+      duration_setter_for(&DebugOptions::set_xla_gpu_execution_abort_timeout),
+      debug_options->xla_gpu_execution_abort_timeout(),
+      "Set timeout to abort the process if execution timeout handling does "
+      "not unwind"));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_execution_terminate_timeout",

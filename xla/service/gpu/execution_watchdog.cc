@@ -39,10 +39,11 @@ limitations under the License.
 namespace xla::gpu {
 
 ExecutionWatchdogScope::ExecutionWatchdogScope(
-    absl::Duration watchdog_timeout, std::string watchdog_name,
-    const GpuExecutableRunOptions* gpu_run_options, se::Stream* stream,
-    bool block_host_until_done)
+    absl::Duration watchdog_timeout, absl::Duration abort_timeout,
+    std::string watchdog_name, const GpuExecutableRunOptions* gpu_run_options,
+    se::Stream* stream, bool block_host_until_done)
     : watchdog_timeout_(watchdog_timeout),
+      abort_timeout_(abort_timeout),
       watchdog_name_(std::move(watchdog_name)),
       gpu_run_options_(gpu_run_options),
       stream_(stream),
@@ -67,15 +68,25 @@ ExecutionWatchdogScope::Create(
     return std::nullopt;
   }
 
+  absl::Duration abort_timeout = absl::Seconds(30);
+  if (debug_options &&
+      !debug_options->xla_gpu_execution_abort_timeout().empty()) {
+    TF_RET_CHECK(absl::ParseDuration(
+        debug_options->xla_gpu_execution_abort_timeout(), &abort_timeout))
+        << "Failed to parse XLA execution abort timeout";
+  }
+
   std::string watchdog_name = absl::StrFormat("[%d] XLA GPU execution `%s`",
                                               device_ordinal, module_name);
-  return ExecutionWatchdogScope(watchdog_timeout, std::move(watchdog_name),
-                                gpu_run_options, stream, block_host_until_done);
+  return ExecutionWatchdogScope(watchdog_timeout, abort_timeout,
+                                std::move(watchdog_name), gpu_run_options,
+                                stream, block_host_until_done);
 }
 
 struct ExecutionWatchdogScope::GuardHolder {
   absl::Mutex mu;
   std::shared_ptr<HangWatchdog::Guard> guard ABSL_GUARDED_BY(mu);
+  bool released ABSL_GUARDED_BY(mu) = false;
 };
 
 void ExecutionWatchdogScope::Arm(HangWatchdog::CancelCallback pre_abort) {
@@ -93,20 +104,32 @@ void ExecutionWatchdogScope::Arm(HangWatchdog::CancelCallback pre_abort) {
     std::weak_ptr<GuardHolder> weak_guard_holder = guard_holder_;
     auto watchdog_name = watchdog_name_;
     auto watchdog_timeout = watchdog_timeout_;
+    auto abort_timeout = abort_timeout_;
     auto* gpu_run_options = gpu_run_options_;
-    on_timeout = [watchdog_name, watchdog_timeout,
+    on_timeout = [watchdog_name, watchdog_timeout, abort_timeout,
                   pre_abort = std::move(pre_abort), gpu_run_options,
                   weak_guard_holder]() mutable {
       if (pre_abort) {
         std::move(pre_abort)();
       }
 
+      bool should_handle = false;
       if (std::shared_ptr<GuardHolder> guard_holder =
               weak_guard_holder.lock()) {
         absl::MutexLock lock(guard_holder->mu);
-        guard_holder->guard = HangWatchdog::Global().Watch(
-            "post-abort ...", absl::Minutes(1),
-            HangWatchdog::Abort("post-abort ...", absl::Minutes(1)));
+        if (!guard_holder->released) {
+          if (abort_timeout < absl::InfiniteDuration()) {
+            std::string abort_name =
+                absl::StrFormat("%s (post-cancel abort)", watchdog_name);
+            guard_holder->guard = HangWatchdog::Global().Watch(
+                abort_name, abort_timeout,
+                HangWatchdog::Abort(abort_name, abort_timeout));
+          }
+          should_handle = true;
+        }
+      }
+      if (!should_handle) {
+        return;
       }
 
       gpu_run_options->execution_timeout_handler()(watchdog_name,
@@ -144,6 +167,7 @@ ExecutionWatchdogScope::~ExecutionWatchdogScope() {
   // Drop the HangWatchdog guard now that execution is done (or abandoned).
   if (guard_holder_ != nullptr) {
     absl::MutexLock lock(guard_holder_->mu);
+    guard_holder_->released = true;
     guard_holder_->guard = nullptr;
   }
 }
