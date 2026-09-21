@@ -1156,9 +1156,12 @@ FusionDecision InstructionFusion::ShouldFuse(
         "not fusing into the output of the root instruction");
   }
 
-  // Cost condition: don't duplicate expensive instructions.
+  // Cost condition: don't duplicate expensive instructions, unless the
+  // backend's cost model says recomputing beats materializing.
   if (!legality_check_only && FusionWouldDuplicate(*producer, *consumer) &&
-      (!may_duplicate_ || is_expensive_(*producer)) &&
+      (!may_duplicate_ ||
+       (is_expensive_(*producer) &&
+        !MayDuplicateExpensiveProducer(*producer, *consumer))) &&
       !IsAlwaysDuplicable(*producer)) {
     VLOG(2) << "Fusion rejected: producer '" << producer->name()
             << "' is too expensive to duplicate into '" << consumer->name()
