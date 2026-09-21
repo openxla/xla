@@ -52,9 +52,9 @@ namespace {
 
 static absl::StatusOr<se::StreamExecutor*> CreateExecutor() {
   ABSL_ASSIGN_OR_RETURN(std::string platform_name,
-                   xla::PlatformUtil::CanonicalPlatformName("gpu"));
+                        xla::PlatformUtil::CanonicalPlatformName("gpu"));
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(platform_name));
+                        se::PlatformManager::PlatformWithName(platform_name));
   return platform->ExecutorForDevice(0);
 }
 
