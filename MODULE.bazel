@@ -302,6 +302,13 @@ use_repo(local_clang_configure, "local_config_clang")
 rocm_configure = use_extension("//third_party/extensions:rocm_configure.bzl", "rocm_configure_ext")
 use_repo(rocm_configure, "config_rocm_hipcc", "local_config_rocm")
 
+rocm_hermetic = use_extension("@rules_ml_toolchain//extensions:rocm_hermetic_download.bzl", "rocm_hermetic_download_ext")
+
+override_repo(
+    rocm_hermetic,
+    config_rocm_hipcc = "config_rocm_hipcc",
+)
+
 tensorrt_configure = use_extension("//third_party/extensions:tensorrt_configure.bzl", "tensorrt_configure_ext")
 use_repo(tensorrt_configure, "local_config_tensorrt")
 
