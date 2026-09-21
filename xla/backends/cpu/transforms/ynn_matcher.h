@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_TRANSFORMS_YNN_MATCHER_H_
 #define XLA_BACKENDS_CPU_TRANSFORMS_YNN_MATCHER_H_
 
+#include <algorithm>
+#include <cstdint>
 #include <string>
 
 #include "absl/base/no_destructor.h"
@@ -29,7 +31,9 @@ limitations under the License.
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/cpu/cpu_fusion_cost_model.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 
 namespace xla::cpu {
 
@@ -109,6 +113,92 @@ class YnnMatcher : public LibraryMatcher {
     return false;
   }
 
+  // Returns true if the chain feeding `reduce` contains a large intermediate
+  // that XLA's own loop fusion could keep out of memory.
+  //
+  // LibraryRewriter runs before CpuInstructionFusion. Once a reduction is
+  // wrapped in a library fusion, CpuInstructionFusion treats it as opaque
+  // ("Don't fuse instructions from custom fusions/calls") and every producer
+  // feeding it must be materialized. For a reduction over a real buffer that
+  // is a good trade: the library kernel beats our emitted loop and the buffer
+  // exists either way. For a reduction over a computed intermediate it is a
+  // bad one -- we pay to write and re-read a buffer that loop fusion would
+  // have kept in registers, and that buffer is O(input) while the result is
+  // only O(output).
+  //
+  // The walk looks through reduction-like and shape-only producers, because a
+  // large reduction may already have been split into a reduce-window plus a
+  // final reduce by the time we run: the intermediate worth saving then sits
+  // above the reduce-window, not directly under the reduce.
+  static bool ReductionInputIsFusibleIntermediate(
+      const HloInstruction* reduce) {
+    // Bound the walk so this stays cheap on deep graphs.
+    static constexpr int kMaxWalkDepth = 8;
+
+    if (!reduce->shape().IsArray()) {
+      return false;
+    }
+
+    int64_t largest_intermediate = 0;
+    const HloInstruction* largest_intermediate_instr = nullptr;
+    const HloInstruction* instr = reduce;
+    for (int depth = 0; depth < kMaxWalkDepth; ++depth) {
+      if (instr->operand_count() == 0) {
+        break;
+      }
+      const HloInstruction* input = instr->operand(0);
+      if (!input->shape().IsArray()) {
+        break;
+      }
+      // Parameters and constants are real buffers that exist regardless, so
+      // there is nothing to save by declining the library fusion.
+      if (input->opcode() == HloOpcode::kParameter ||
+          input->opcode() == HloOpcode::kConstant) {
+        break;
+      }
+      bool can_look_through = input->IsElementwise();
+      switch (input->opcode()) {
+        case HloOpcode::kBitcast:
+        case HloOpcode::kBroadcast:
+        case HloOpcode::kConcatenate:
+        case HloOpcode::kReduce:
+        case HloOpcode::kReduceWindow:
+        case HloOpcode::kReshape:
+        case HloOpcode::kReverse:
+        case HloOpcode::kSlice:
+        case HloOpcode::kTranspose:
+          can_look_through = true;
+          break;
+        default:
+          break;
+      }
+      if (!can_look_through) {
+        break;
+      }
+      const int64_t input_bytes = ShapeUtil::ByteSizeOfElements(input->shape());
+      if (input_bytes > largest_intermediate) {
+        largest_intermediate = input_bytes;
+        largest_intermediate_instr = input;
+      }
+      instr = input;
+    }
+
+    if (largest_intermediate_instr == nullptr) {
+      return false;
+    }
+    // Ask the same question CpuInstructionFusion will ask: is recomputing
+    // this intermediate inside the reduction loop cheaper than writing it out
+    // and reading it back? If so, declining the library fusion lets loop
+    // fusion keep it in registers. If not -- a small buffer, or one whose
+    // arithmetic is too expensive to redo -- the library kernel is worth more
+    // than the round trip it would avoid.
+    //
+    // A fresh model per call: its caches are keyed on instruction pointers,
+    // and this runs before fusion has begun rewriting the graph.
+    CpuFusionCostModel cost_model{CpuFusionCostModel::Params{}};
+    return cost_model.RecomputeBeatsMaterialize(largest_intermediate_instr);
+  }
+
   // Returns true if we should start a new fusion containing just the given HLO
   // instruction. We control the instructions that can start a fusion with the
   // `--xla_cpu_experimental_ynn_fusion_type` flag.
@@ -124,7 +214,10 @@ class YnnMatcher : public LibraryMatcher {
     }
     if (fuse_reduce_ && (instr->opcode() == HloOpcode::kReduce ||
                          instr->opcode() == HloOpcode::kReduceWindow)) {
-      return true;
+      // Leave reductions over fusible intermediates to CpuInstructionFusion,
+      // which can fold the producer chain into the reduction loop instead of
+      // forcing it through memory.
+      return !ReductionInputIsFusibleIntermediate(instr);
     }
     return fuse_eltwise_ && instr->IsElementwise();
   }

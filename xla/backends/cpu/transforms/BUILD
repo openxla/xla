@@ -126,6 +126,7 @@ cc_library(
     deps = [
         ":library_matcher",
         "//xla:shape_util",
+        "//xla/service/cpu:cpu_fusion_cost_model",
         "//xla/backends/cpu:custom_fusion_configs",
         "//xla/backends/cpu:ynn_support",
         "//xla/backends/cpu/codegen:target_machine_features",
