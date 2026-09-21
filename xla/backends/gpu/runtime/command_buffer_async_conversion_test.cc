@@ -71,7 +71,8 @@ class CommandBufferAsyncConversionTest : public testing::Test {
     thunks.Emplace<ReplicaIdThunk>(Info(), slice_);
   }
 
-  AsyncStartThunk* Start(ThunkSequence& thunks, bool convertible = true) {
+  AsyncStartThunk* Start(ThunkSequence& thunks, bool convertible = true,
+                         ExecutionStreamId stream = ComputationStreamId(0)) {
     ThunkSequence body;
     if (convertible) {
       AddCommand(body);
@@ -79,8 +80,8 @@ class CommandBufferAsyncConversionTest : public testing::Test {
       // Memset thunks are not eligible for conversion in this pass.
       body.Emplace<Memset32BitValueThunk>(Info(), 0, slice_);
     }
-    auto start = std::make_unique<AsyncStartThunk>(
-        Info(), ComputationStreamId(0), std::move(body));
+    auto start =
+        std::make_unique<AsyncStartThunk>(Info(), stream, std::move(body));
     auto* result = start.get();
     thunks.push_back(std::move(start));
     return result;
@@ -260,11 +261,132 @@ TEST_F(CommandBufferAsyncConversionTest, ConvertsTailAfterUnmatchedStart) {
 
   ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
   EXPECT_TRUE(changed);
-  // The region stays open until the end of the sequence: nested pairs remain
-  // thunks while plain commands are still captured.
+  // The stream stays open until the end of the sequence: later pairs on the
+  // same stream remain thunks while plain commands are still captured.
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kAsyncStart,
                                     Thunk::kCommandBuffer, Thunk::kAsyncStart,
                                     Thunk::kAsyncDone, Thunk::kCommandBuffer));
+}
+
+TEST_F(CommandBufferAsyncConversionTest,
+       ConvertsTailAfterUnmatchedStartOnOtherStream) {
+  ThunkSequence thunks;
+  AddCommand(thunks);
+  Start(thunks, /*convertible=*/true, ComputationStreamId(0));
+  AddCommand(thunks);
+  auto* inner = Start(thunks, /*convertible=*/true, ComputationStreamId(1));
+  Done(thunks, inner);
+  AddCommand(thunks);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
+  // The unmatched start only keeps its own stream open. A pair on another
+  // stream never observed that stream in thunk mode either, so capturing it
+  // loses no ordering.
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer, Thunk::kAsyncStart,
+                                    Thunk::kCommandBuffer));
+  EXPECT_THAT(CommandBufferThunks(*thunks[2]),
+              ThunkKindsAre(Thunk::kReplicaId, Thunk::kAsyncStart,
+                            Thunk::kAsyncDone, Thunk::kReplicaId));
+}
+
+TEST_F(CommandBufferAsyncConversionTest, ConvertsNestedRegionOnOtherStream) {
+  ThunkSequence thunks;
+  auto* outer = Start(thunks, /*convertible=*/false, ComputationStreamId(0));
+  auto* inner = Start(thunks, /*convertible=*/true, ComputationStreamId(1));
+  AddCommand(thunks);
+  Done(thunks, inner);
+  AddCommand(thunks);
+  Done(thunks, outer);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kCommandBuffer,
+                                    Thunk::kAsyncDone));
+  EXPECT_THAT(CommandBufferThunks(*thunks[1]),
+              ThunkKindsAre(Thunk::kAsyncStart, Thunk::kReplicaId,
+                            Thunk::kAsyncDone, Thunk::kReplicaId));
+}
+
+TEST_F(CommandBufferAsyncConversionTest, ClosesStreamAtMatchingDone) {
+  ThunkSequence thunks;
+  auto* a = Start(thunks, /*convertible=*/false, ComputationStreamId(0));
+  auto* b = Start(thunks, /*convertible=*/false, ComputationStreamId(1));
+  Done(thunks, a);
+  auto* c = Start(thunks, /*convertible=*/true, ComputationStreamId(0));
+  Done(thunks, c);
+  Done(thunks, b);
+  AddCommand(thunks);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
+  // Stream 0 is joined at `a`'s done, so `c` can be captured even though
+  // stream 1 is still open.
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
+                                    Thunk::kAsyncDone, Thunk::kCommandBuffer,
+                                    Thunk::kAsyncDone, Thunk::kCommandBuffer));
+  EXPECT_THAT(CommandBufferThunks(*thunks[3]),
+              ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncDone));
+}
+
+TEST_F(CommandBufferAsyncConversionTest, KeepsRegionWithStartOnOpenStream) {
+  ThunkSequence thunks;
+  auto* a = Start(thunks, /*convertible=*/false, ComputationStreamId(0));
+  auto* b = Start(thunks, /*convertible=*/true, ComputationStreamId(1));
+  auto* c = Start(thunks, /*convertible=*/true, ComputationStreamId(0));
+  Done(thunks, c);
+  Done(thunks, b);
+  Done(thunks, a);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  // `b`'s region is closed and convertible, but it contains `c`, which starts
+  // work on the stream still occupied by `a`. Capturing the region would run
+  // `c`'s body in a graph on the main stream.
+  EXPECT_FALSE(changed);
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
+                                    Thunk::kAsyncStart, Thunk::kAsyncDone,
+                                    Thunk::kAsyncDone, Thunk::kAsyncDone));
+}
+
+TEST_F(CommandBufferAsyncConversionTest, ConvertsLoopBodyRegionOnOtherStream) {
+  ThunkSequence thunks;
+  auto* start = Start(thunks, /*convertible=*/false, ComputationStreamId(0));
+  ThunkSequence body;
+  auto* inner = Start(body, /*convertible=*/true, ComputationStreamId(1));
+  Done(body, inner);
+  AddCommand(body);
+  WhileThunk* loop = Loop(thunks, std::move(body));
+  Done(thunks, start);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kWhile,
+                                    Thunk::kAsyncDone));
+  // Only stream 0 is open inside the loop body; the pair on stream 1 is
+  // captured together with the plain command.
+  EXPECT_THAT(loop->body_executor().thunks(),
+              ThunkKindsAre(Thunk::kCommandBuffer));
+  EXPECT_THAT(
+      CommandBufferThunks(*loop->body_executor().thunks()[0]),
+      ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncDone, Thunk::kReplicaId));
+}
+
+TEST_F(CommandBufferAsyncConversionTest, DoesNotCaptureLoopWithLoneDone) {
+  ThunkSequence thunks;
+  auto* start = Start(thunks, /*convertible=*/false);
+  ThunkSequence body;
+  Done(body, start);
+  AddCommand(body);
+  WhileThunk* loop = Loop(thunks, std::move(body));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks, /*enable_while=*/true));
+  EXPECT_TRUE(changed);
+  // The loop body joins an operation started outside the loop. Capturing the
+  // loop whole would drop that join, so only the plain command in the body is
+  // captured.
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kWhile));
+  EXPECT_THAT(loop->body_executor().thunks(),
+              ThunkKindsAre(Thunk::kAsyncDone, Thunk::kCommandBuffer));
 }
 
 TEST_F(CommandBufferAsyncConversionTest, MatchesCanonicalAsyncExecution) {
