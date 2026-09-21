@@ -497,7 +497,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_autotune_cache_mode(
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
-  opts.set_xla_gpu_autotune_gemm_rtol(0.01f);
+  opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
   // TODO(b/355487968): Remove this flag once all data will be presented in
   // xprof with command buffers.
@@ -2817,6 +2817,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_mock_custom_calls),
                 debug_options->xla_gpu_mock_custom_calls(),
                 "Replace custom calls with noop operations."));
+  flag_list->push_back(
+      tsl::Flag("xla_cpu_mock_custom_calls",
+                bool_setter_for(&DebugOptions::set_xla_cpu_mock_custom_calls),
+                debug_options->xla_cpu_mock_custom_calls(),
+                "Replace custom calls with noop operations on CPU."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_while_loop_double_buffering",
       bool_setter_for(

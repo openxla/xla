@@ -42,6 +42,7 @@ limitations under the License.
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
+#include "xla/backends/gpu/runtime/collective_group_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -207,6 +208,7 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
     case Thunk::kAllToAll:
     case Thunk::kCollectiveBroadcast:
     case Thunk::kCollectivePermute:
+    case Thunk::kGroup:
     case Thunk::kRaggedAllToAll:
     case Thunk::kReduceScatter:
     case Thunk::kRecv:
@@ -435,6 +437,11 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
     return IsConvertible(static_cast<const RaggedAllToAllThunk&>(thunk),
                          config);
   }
+
+  if (thunk.kind() == Thunk::kGroup) {
+    return ThunkSequenceIsConvertible(
+        static_cast<const CollectiveGroupThunk&>(thunk).thunks(), config);
+  }
   return true;
 }
 
@@ -565,7 +572,8 @@ ConvertThunksToCommandBuffer(
       !debug_options.xla_enable_command_buffers_during_profiling()) {
     thunk_info.profile_annotation += " (disabled for profiling)";
   }
-  VLOG(2) << "Creating command buffer thunk with the following thunks: "
+  VLOG(2) << "Creating command buffer thunk "
+          << command_buffer_profile_annotation << " with the following thunks: "
           << absl::StrJoin(
                  thunks_to_convert, ", ",
                  [](std::string* out, const std::unique_ptr<Thunk>& thunk) {

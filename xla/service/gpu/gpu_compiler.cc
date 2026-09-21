@@ -1754,6 +1754,7 @@ bool GpuCompiler::IsScaledDotSupportedByBackend(
   const se::GpuComputeCapability& gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
   return debug_options.xla_gpu_experimental_scaled_dot_with_triton() &&
+         IsTritonGemmEnabled(debug_options, gpu_version) &&
          IsTritonSupportedInstruction(*instr, gpu_version).IsAllowed();
 }
 
@@ -2033,15 +2034,16 @@ void AddGemmRewriterPasses(HloPassPipeline& pipeline,
     bias_mode = GemmRewriterOptions::BiasMode::kNoBias;
   }
 
+  GemmRewriterOptions fp8_options{GemmRewriterOptions::DType::kFp8Only,
+                                  bias_mode};
+  pipeline.AddPass<GemmRewriter>(gpu_version, toolkit_version, fp8_options);
+
   // Rewrite dots with the algorithms that cannot be handled by cublas directly.
   // I.e. transform single dot into a chain of dots with the default algorithm
   // that cublas can handle. These dots were inlined by the CallInliner pass
   // above.
-  pipeline.AddPass<DotAlgorithmRewriter>();
+  pipeline.AddPass<DotAlgorithmRewriter>(gpu_version);
 
-  GemmRewriterOptions fp8_options{GemmRewriterOptions::DType::kFp8Only,
-                                  bias_mode};
-  pipeline.AddPass<GemmRewriter>(gpu_version, toolkit_version, fp8_options);
   pipeline.AddPass<GemmRewriter>(
       gpu_version, toolkit_version,
       GemmRewriterOptions{GemmRewriterOptions::DType::kNonFp8Only, bias_mode});

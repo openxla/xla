@@ -3757,6 +3757,12 @@ absl::StatusOr<bool> LayoutAssignment::RunImpl(
                                                    entry_computation_layout_));
 
 #ifndef NDEBUG
+  // Before validation, update computation_layouts_ with the entry computation
+  // layout since it might be modified during PropagateComputationLayouts()
+  // above for AUTO layouts.
+  *mutable_computation_constraints(module->entry_computation())
+       ->mutable_computation_constraint()
+       ->mutable_computation_layout() = *entry_computation_layout_;
   ABSL_RETURN_IF_ERROR(CheckLayouts(module, execution_threads));
 #endif  // NDEBUG
 
