@@ -388,7 +388,7 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
     return IsConvertible(static_cast<const AsyncStartThunk&>(thunk), config);
   }
 
-  // Async done thunks are no-op from command buffer perspective.
+  // Async done thunks can be represented by dependency-only join nodes.
   if (thunk.kind() == Thunk::kAsyncDone) {
     return true;
   }
