@@ -128,7 +128,8 @@ absl::StatusOr<std::unique_ptr<XlaExecutableVersion>> GetXlaExecutableVersion(
   if (platform_id == xla::TpuId()) {
     xla_abi_version = std::make_unique<xla::TpuXlaExecutableAbiVersion>(
         *std::move(abi_version));
-  } else if (platform_id == xla::CudaId() || platform_id == xla::RocmId()) {
+  } else if (platform_id == xla::CudaId() || platform_id == xla::RocmId() ||
+             platform_id == xla::OneapiId()) {
     xla_abi_version = std::make_unique<xla::GpuXlaExecutableAbiVersion>(
         *std::move(abi_version));
   } else {
