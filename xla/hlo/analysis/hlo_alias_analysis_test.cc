@@ -648,7 +648,6 @@ ENTRY main {
   EXPECT_FALSE(AnyValuesInSameBufferInterfere());
 }
 
-
 TEST_F(HloAliasAnalysisTest, SequentialWhiles) {
   // Test sequential while instructions. The while body includes a
   // pass-through value. HLO:
@@ -880,8 +879,6 @@ ENTRY main {
   // resulting liveness interference.
   EXPECT_TRUE(AnyValuesInSameBufferInterfere());
 }
-
-
 
 TEST_F(HloAliasAnalysisTest, Bitcast) {
   // Bitcasting a value should not produce a new buffer.

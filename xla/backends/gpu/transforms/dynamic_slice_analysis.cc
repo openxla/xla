@@ -173,7 +173,8 @@ static absl::StatusOr<int64_t> EvaluateByteOffsetAtIteration(
   int32_t first_offset_index = GetFirstOffsetOperandIndex(instr);
   int32_t rank = instr->operand(0)->shape().dimensions().size();
 
-  ABSL_ASSIGN_OR_RETURN(Literal ivar_literal, Literal::Make(induction_var->shape()));
+  ABSL_ASSIGN_OR_RETURN(Literal ivar_literal,
+                        Literal::Make(induction_var->shape()));
   ABSL_RETURN_IF_ERROR(ivar_literal.SetIntegralAsS64({}, ivar_value));
 
   absl::flat_hash_map<const HloInstruction*, const LiteralBase*> substitutions;
@@ -206,12 +207,12 @@ static absl::StatusOr<int64_t> EvaluateByteOffsetAtIteration(
     Literal offset_literal;
     if (auto it = functional_dependencies.find(operand);
         it != functional_dependencies.end()) {
-      ABSL_ASSIGN_OR_RETURN(offset_literal,
-                       EvaluateFunctionalOffset(operand, it->second,
-                                                &ivar_literal, &evaluator));
+      ABSL_ASSIGN_OR_RETURN(
+          offset_literal, EvaluateFunctionalOffset(operand, it->second,
+                                                   &ivar_literal, &evaluator));
     } else {
-      ABSL_ASSIGN_OR_RETURN(offset_literal,
-                       evaluator.Evaluate(operand, {}, true, substitutions));
+      ABSL_ASSIGN_OR_RETURN(
+          offset_literal, evaluator.Evaluate(operand, {}, true, substitutions));
     }
 
     auto offset_value = LiteralUtil::LiteralAsScalarInt64(offset_literal);
@@ -481,7 +482,7 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
   // Step 6: Read the loop's init/step/trip_count from WhileLoopBackendConfig
   // (set by WhileLoopTripCountAnnotator).
   ABSL_ASSIGN_OR_RETURN(auto loop_config,
-                   while_loop->backend_config<WhileLoopBackendConfig>());
+                        while_loop->backend_config<WhileLoopBackendConfig>());
   if (!loop_config.has_known_init_step() ||
       !loop_config.has_known_trip_count()) {
     VLOG(5) << "Loop does not have known init/step/trip_count.";
@@ -508,8 +509,8 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
   for (int64_t iter = 0; iter < trip_count; ++iter) {
     int64_t ivar = effective_init + iter * init_step.step;
     ABSL_ASSIGN_OR_RETURN(offsets[iter], EvaluateByteOffsetAtIteration(
-                                        instr, *strides, induction_var,
-                                        functional_dependencies, ivar));
+                                             instr, *strides, induction_var,
+                                             functional_dependencies, ivar));
     VLOG(3) << instr->name() << ": iteration " << iter << " (ivar=" << ivar
             << ") -> byte_offset=" << offsets[iter];
   }

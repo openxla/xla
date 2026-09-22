@@ -42,7 +42,7 @@ struct EinsumToDotGeneralPattern : public OpRewritePattern<EinsumOp> {
   using OpRewritePattern<EinsumOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(EinsumOp einsum,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     StringRef equation = einsum.getEinsumConfig();
     SmallVector<char> lhsTokens, rhsTokens;
     SmallVector<char> resultTokens;
@@ -79,14 +79,14 @@ struct EinsumToDotGeneralPattern : public OpRewritePattern<EinsumOp> {
     auto collectOperandDims =
         [resultTokens](
             RankedTensorType operandType, SmallVector<char> operandTokens,
-            SmallVector<char> others, SmallVectorImpl<int64_t> &contractingDims,
-            SmallVectorImpl<int64_t> &batchingDims,
-            SmallVector<char> &dotResultTokens,
-            SmallVector<int64_t> &dotResultShape) {
+            SmallVector<char> others, SmallVectorImpl<int64_t>& contractingDims,
+            SmallVectorImpl<int64_t>& batchingDims,
+            SmallVector<char>& dotResultTokens,
+            SmallVector<int64_t>& dotResultShape) {
           llvm::SmallDenseSet<char> othersSet(others.begin(), others.end());
           llvm::SmallDenseSet<char> resultTokensSet(resultTokens.begin(),
                                                     resultTokens.end());
-          for (const auto &en : llvm::enumerate(operandTokens)) {
+          for (const auto& en : llvm::enumerate(operandTokens)) {
             bool isResultToken = resultTokensSet.contains(en.value());
             bool isOtherToken = othersSet.contains(en.value());
 
@@ -115,7 +115,7 @@ struct EinsumToDotGeneralPattern : public OpRewritePattern<EinsumOp> {
                        rhsBatchingDims, dotResultTokens, dotResultShape);
 
     // Prepend batch tokens.
-    for (const auto &it : llvm::enumerate(lhsBatchingDims)) {
+    for (const auto& it : llvm::enumerate(lhsBatchingDims)) {
       char batchingToken = lhsTokens[it.value()];
       int64_t batchingShapeDim = lhsType.getShape()[it.value()];
       dotResultTokens.insert(dotResultTokens.begin() + it.index(),
@@ -135,7 +135,7 @@ struct EinsumToDotGeneralPattern : public OpRewritePattern<EinsumOp> {
     SmallVector<int64_t> resultPerms;
     bool isNaturalOrder = true;
     for (char resultToken : resultTokens) {
-      auto *foundIt = std::find(dotResultTokens.begin(), dotResultTokens.end(),
+      auto* foundIt = std::find(dotResultTokens.begin(), dotResultTokens.end(),
                                 resultToken);
       if (foundIt == dotResultTokens.end()) {
         return rewriter.notifyMatchFailure(
@@ -188,8 +188,8 @@ struct LegalizeEinsumToDotGeneralPass
 };
 }  // namespace
 
-void populateEinsumToDotGeneralPatterns(mlir::MLIRContext *context,
-                                        RewritePatternSet *patterns) {
+void populateEinsumToDotGeneralPatterns(mlir::MLIRContext* context,
+                                        RewritePatternSet* patterns) {
   patterns->add<EinsumToDotGeneralPattern>(context);
 }
 

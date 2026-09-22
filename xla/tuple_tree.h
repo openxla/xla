@@ -378,9 +378,9 @@ class TupleTree {
                                          const ShapeIndex& src_index,
                                          const ShapeIndex& dst_index) {
     ABSL_ASSIGN_OR_RETURN(const internal::IndexTable::Entry* src_entry,
-                     other.index_table_.GetEntry(src_index));
+                          other.index_table_.GetEntry(src_index));
     ABSL_ASSIGN_OR_RETURN(const internal::IndexTable::Entry* dst_entry,
-                     this->index_table_.GetEntry(dst_index));
+                          this->index_table_.GetEntry(dst_index));
 
     ABSL_RETURN_IF_ERROR(internal::IndexTable::IsSubtreeCompatible(
         other.index_table_, src_entry, this->index_table_, dst_entry));
@@ -421,7 +421,7 @@ class TupleTree {
 
   absl::StatusOr<TupleTree<T>> Subtree(const ShapeIndex& index) const {
     ABSL_ASSIGN_OR_RETURN(const internal::IndexTable::Entry* root_entry,
-                     index_table_.GetEntry(index));
+                          index_table_.GetEntry(index));
     size_t root_node_id = root_entry->node_id;
 
     ABSL_ASSIGN_OR_RETURN(
@@ -682,7 +682,7 @@ class TupleTree {
 
   absl::StatusOr<Node> ToNodeImpl(const ShapeIndex& index) const {
     ABSL_ASSIGN_OR_RETURN(const internal::IndexTable::Entry* entry,
-                     index_table_.GetEntry(index));
+                          index_table_.GetEntry(index));
 
     const T& value = nodes_[entry->node_id].second;
 

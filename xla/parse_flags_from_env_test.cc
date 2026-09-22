@@ -17,6 +17,8 @@ limitations under the License.
 
 #include "xla/parse_flags_from_env.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -25,8 +27,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "xla/tsl/platform/env.h"

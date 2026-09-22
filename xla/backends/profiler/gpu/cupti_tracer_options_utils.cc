@@ -31,11 +31,11 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/utils/profiler_options_util.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
 
 namespace xla {
 namespace profiler {

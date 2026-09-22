@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/async_execution.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -53,9 +54,9 @@ class TestThunk : public Thunk {
 
 static absl::StatusOr<se::StreamExecutor*> CreateExecutor() {
   ABSL_ASSIGN_OR_RETURN(std::string platform_name,
-                   xla::PlatformUtil::CanonicalPlatformName("gpu"));
+                        xla::PlatformUtil::CanonicalPlatformName("gpu"));
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(platform_name));
+                        se::PlatformManager::PlatformWithName(platform_name));
   return platform->ExecutorForDevice(0);
 }
 

@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "tsl/platform/net.h"
 
+#include "tsl/platform/platform.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/platform.h"
 
 #if !defined(PLATFORM_WINDOWS)
 #include <errno.h>

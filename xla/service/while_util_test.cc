@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/while_util.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -64,7 +65,8 @@ ENTRY entry {
 }
 )";
 
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
 
     *entry_computation = module->entry_computation();
     *param0 = (*entry_computation)->parameter_instruction(0);

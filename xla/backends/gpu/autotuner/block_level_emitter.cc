@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "triton/Version.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "triton/Version.h"
 
 namespace xla::gpu {
 
@@ -94,7 +94,7 @@ absl::StatusOr<std::optional<BlockLevelFusionConfig>> GetPreExistingConfig(
     return std::nullopt;
   }
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   if (gpu_backend_config.has_fusion_backend_config() &&
       gpu_backend_config.fusion_backend_config()
           .has_block_level_fusion_config()) {
@@ -112,8 +112,9 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::optional<BlockLevelFusionConfig> pre_existing_config,
-                   GetPreExistingConfig(instr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::optional<BlockLevelFusionConfig> pre_existing_config,
+      GetPreExistingConfig(instr));
   if (pre_existing_config.has_value()) {
     std::vector<std::unique_ptr<BackendConfig>> configs;
     configs.push_back(Pack(pre_existing_config.value()));
@@ -126,9 +127,10 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
                             ->config()
                             .debug_options()
                             .xla_gpu_fusion_autotune_top_k_configs();
-  ABSL_ASSIGN_OR_RETURN(TopKTiledRunTimeDataOrError tiled_runtime_data,
-                   indexing_performance_model_.TryFindTopKBestTilingsForFusion(
-                       *fusion_adaptor, num_configs));
+  ABSL_ASSIGN_OR_RETURN(
+      TopKTiledRunTimeDataOrError tiled_runtime_data,
+      indexing_performance_model_.TryFindTopKBestTilingsForFusion(
+          *fusion_adaptor, num_configs));
 
   if (std::holds_alternative<FusionDecision>(tiled_runtime_data)) {
     return std::vector<std::unique_ptr<BackendConfig>>();
@@ -178,14 +180,16 @@ BlockLevelEmitterBackend::GetDefaultConfig(const HloInstruction& instr) {
         absl::StrCat("BlockLevelEmitterBackend: unsupported instruction: ",
                      instr.ToString()));
   }
-  ABSL_ASSIGN_OR_RETURN(std::optional<BlockLevelFusionConfig> pre_existing_config,
-                   GetPreExistingConfig(instr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::optional<BlockLevelFusionConfig> pre_existing_config,
+      GetPreExistingConfig(instr));
   if (pre_existing_config.has_value()) {
     return Pack(pre_existing_config.value());
   }
 
   // No explicit config found - create one from the cost model if possible.
-  ABSL_ASSIGN_OR_RETURN(BlockLevelFusionConfig config, GetCostModelConfig(instr));
+  ABSL_ASSIGN_OR_RETURN(BlockLevelFusionConfig config,
+                        GetCostModelConfig(instr));
   return Pack(config);
 }
 
@@ -204,7 +208,7 @@ absl::Status BlockLevelEmitterBackend::ApplyConfig(
   // Extract the current GPU backend config from the instruction.
   // This contains the nested FusionBackendConfig we want to modify.
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   FusionBackendConfig& backend_config =
       *gpu_backend_config.mutable_fusion_backend_config();
   backend_config.set_kind(kTritonFusionKind);

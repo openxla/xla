@@ -33,6 +33,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/log_severity.h"
 #include "absl/base/macros.h"
@@ -48,7 +49,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
+#include "tsl/platform/bfloat16.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/ml_dtypes.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/packing.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/math/math_util.h"
@@ -57,10 +61,6 @@ limitations under the License.
 #include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/bfloat16.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/ml_dtypes.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

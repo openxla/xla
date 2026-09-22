@@ -432,7 +432,7 @@ absl::StatusOr<bool> GroupCollectivesInComputation(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                     GetCollectiveCommunicationDomain(*instr));
+                          GetCollectiveCommunicationDomain(*instr));
     key_to_collectives[{std::string(*key), domain}].push_back(instr);
   }
   if (key_to_collectives.empty()) {
@@ -499,15 +499,15 @@ absl::StatusOr<bool> GroupCollectivesInComputation(
     groups_to_form.push_back({key, std::move(collectives)});
   }
 
-  ABSL_RETURN_IF_ERROR(ValidateGroupGraphIsAcyclic(groups_to_form, *reachability,
-                                              computation->name()));
+  ABSL_RETURN_IF_ERROR(ValidateGroupGraphIsAcyclic(
+      groups_to_form, *reachability, computation->name()));
 
   // Phase two: every group validated against a consistent, mutation-free map,
   // so it is now safe to form them.
   bool changed = false;
   for (const CollectiveGroup& group : groups_to_form) {
     ABSL_RETURN_IF_ERROR(CreateCollectivesGroup(computation, group.collectives,
-                                           execution_thread));
+                                                execution_thread));
     changed = true;
   }
   return changed;
@@ -528,8 +528,8 @@ absl::StatusOr<bool> GroupCollectivesByKey::RunImpl(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(bool comp_changed,
-                     GroupCollectivesInComputation(comp, predicate_,
-                                                   comp->execution_thread()));
+                          GroupCollectivesInComputation(
+                              comp, predicate_, comp->execution_thread()));
     changed |= comp_changed;
   }
   return changed;

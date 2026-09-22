@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/profiler/kernel_name_tracer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -67,7 +68,7 @@ using ::testing::IsEmpty;
 
 absl::StatusOr<stream_executor::Platform*> GetPlatform() {
   ABSL_ASSIGN_OR_RETURN(std::string name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
   return stream_executor::PlatformManager::PlatformWithName(
       absl::AsciiStrToUpper(name));
 }

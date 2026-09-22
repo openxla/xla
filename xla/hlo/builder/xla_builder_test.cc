@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/builder/xla_builder.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <complex>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -82,10 +83,11 @@ HloInstruction* GetRoot(HloModule& module) {
 // TODO(b/74197823): Move the tests to service/.
 absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b) {
   ABSL_ASSIGN_OR_RETURN(XlaComputation computation,
-                   b.Build(/*remove_dynamic_dimensions=*/false));
+                        b.Build(/*remove_dynamic_dimensions=*/false));
   const HloModuleProto& proto = computation.proto();
-  ABSL_ASSIGN_OR_RETURN(const auto& config, HloModule::CreateModuleConfigFromProto(
-                                           proto, GetDebugOptionsFromFlags()));
+  ABSL_ASSIGN_OR_RETURN(const auto& config,
+                        HloModule::CreateModuleConfigFromProto(
+                            proto, GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(proto, config);
 }
 
@@ -93,10 +95,11 @@ absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b) {
 absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b,
                                                           XlaOp root) {
   ABSL_ASSIGN_OR_RETURN(XlaComputation computation,
-                   b.Build(root, /*remove_dynamic_dimensions=*/false));
+                        b.Build(root, /*remove_dynamic_dimensions=*/false));
   const HloModuleProto& proto = computation.proto();
-  ABSL_ASSIGN_OR_RETURN(const auto& config, HloModule::CreateModuleConfigFromProto(
-                                           proto, GetDebugOptionsFromFlags()));
+  ABSL_ASSIGN_OR_RETURN(const auto& config,
+                        HloModule::CreateModuleConfigFromProto(
+                            proto, GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(proto, config);
 }
 

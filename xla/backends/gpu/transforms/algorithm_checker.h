@@ -35,7 +35,7 @@ namespace gpu {
 class AlgorithmChecker : public HloModulePass {
  public:
   explicit AlgorithmChecker(se::GpuComputeCapability gpu_compute_capability)
-      : gpu_compute_capability_(std::move(gpu_compute_capability)){};
+      : gpu_compute_capability_(std::move(gpu_compute_capability)) {};
 
   absl::string_view name() const override { return "algorithm-checker"; }
 

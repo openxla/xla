@@ -75,9 +75,9 @@ AsyncThunkSequence SortFusion::Emit(IrEmitterContext& ir_emitter_context,
           ir_emitter_context.buffer_assignment().GetUniqueSlice(src_instr, {}));
       src_buffers.push_back(slice);
       src_shapes.push_back(sort->operand(i)->shape());
-      ABSL_ASSIGN_OR_RETURN(slice,
-                       ir_emitter_context.buffer_assignment().GetUniqueSlice(
-                           &fusion, shape_index));
+      ABSL_ASSIGN_OR_RETURN(
+          slice, ir_emitter_context.buffer_assignment().GetUniqueSlice(
+                     &fusion, shape_index));
       dst_buffers.push_back(slice);
     } else {
       TF_RET_CHECK(HloPredicateIsOp<HloOpcode::kIota>(sort->operand(i)));
@@ -96,13 +96,12 @@ AsyncThunkSequence SortFusion::Emit(IrEmitterContext& ir_emitter_context,
     }
   }
   return EmitBitonicSortLLVMIR(sort, &ir_emitter_context)
-      .Map(
-          [thunks = std::move(thunks)](ThunkSequence sort_thunks) mutable {
-            thunks.insert(thunks.end(),
-                          std::make_move_iterator(sort_thunks.begin()),
-                          std::make_move_iterator(sort_thunks.end()));
-            return std::move(thunks);
-          });
+      .Map([thunks = std::move(thunks)](ThunkSequence sort_thunks) mutable {
+        thunks.insert(thunks.end(),
+                      std::make_move_iterator(sort_thunks.begin()),
+                      std::make_move_iterator(sort_thunks.end()));
+        return std::move(thunks);
+      });
 }
 
 }  // namespace gpu

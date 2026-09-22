@@ -138,9 +138,10 @@ PjRtCompatibleClientRemapArrays(PjRtCompatibleClient* client,
         return InvalidArgument("in_array must be in [0, %d), but is %d",
                                num_inputs, in_array);
       }
-      ABSL_ASSIGN_OR_RETURN(absl::Span<std::shared_ptr<xla::PjRtBuffer>> in_buffers,
-                       static_cast<PjRtCompatibleArray*>(arrays[in_array].get())
-                           ->mutable_pjrt_buffers());
+      ABSL_ASSIGN_OR_RETURN(
+          absl::Span<std::shared_ptr<xla::PjRtBuffer>> in_buffers,
+          static_cast<PjRtCompatibleArray*>(arrays[in_array].get())
+              ->mutable_pjrt_buffers());
 
       if (!in_device_to_shard[in_array].has_value()) {
         absl::Span<Device* const> in_devices = arrays[in_array]

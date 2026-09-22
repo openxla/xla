@@ -64,7 +64,7 @@ struct SymbolicBroadcastDimension {
 struct SimplifyBroadcasts : public mlir::OpRewritePattern<shape::BroadcastOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(
-      shape::BroadcastOp op, mlir::PatternRewriter &rewriter) const override {
+      shape::BroadcastOp op, mlir::PatternRewriter& rewriter) const override {
     // Require successful shape analysis.
     ShapeComponentAnalysis shapeAnalysis;
     llvm::SmallVector<ArrayRef<SymbolicExpr>> shapesInfo;
@@ -78,14 +78,14 @@ struct SimplifyBroadcasts : public mlir::OpRewritePattern<shape::BroadcastOp> {
 
     // Find the result rank.
     size_t rank = 0;
-    for (const auto &sInfo : shapesInfo) rank = std::max(rank, sInfo.size());
+    for (const auto& sInfo : shapesInfo) rank = std::max(rank, sInfo.size());
 
     // Compute broadcast symbolically.
     SmallVector<std::optional<SymbolicBroadcastDimension>> symResult(
         rank, std::nullopt);
-    for (const auto &sInfo : llvm::enumerate(shapesInfo)) {
+    for (const auto& sInfo : llvm::enumerate(shapesInfo)) {
       size_t dimOffset = rank - sInfo.value().size();
-      for (const auto &symExpr : llvm::enumerate(sInfo.value())) {
+      for (const auto& symExpr : llvm::enumerate(sInfo.value())) {
         // Unit dimensions are neutral to the final result.
         if (symExpr.value().isConstant(1)) continue;
 
@@ -112,7 +112,7 @@ struct SimplifyBroadcasts : public mlir::OpRewritePattern<shape::BroadcastOp> {
       return newlyCreated;
     };
     auto elements = llvm::to_vector<8>(
-        llvm::map_range(symResult, [&](const auto &symResultDim) {
+        llvm::map_range(symResult, [&](const auto& symResultDim) {
           // If we know the dimension statically, use a constant.
           if (!symResultDim) return findOrCreateConstant(1);
           if (auto cexpr =
@@ -144,9 +144,9 @@ struct SimplifyBroadcasts : public mlir::OpRewritePattern<shape::BroadcastOp> {
 };
 
 LogicalResult analyzeDynamicBroadcastInDimExpandingBehavior(
-    ShapeComponentAnalysis &analysis, Value value, Value shape,
-    llvm::SmallSetVector<int64_t, 4> *knownExpandingDims,
-    llvm::SmallSetVector<int64_t, 4> *knownNonexpandingDims) {
+    ShapeComponentAnalysis& analysis, Value value, Value shape,
+    llvm::SmallSetVector<int64_t, 4>* knownExpandingDims,
+    llvm::SmallSetVector<int64_t, 4>* knownNonexpandingDims) {
   // Require successful analysis of shapes.
   auto shapeIn = analysis.GetShapeInfo(value);
   auto shapeOut = analysis.GetValueInfo(shape);
@@ -175,7 +175,7 @@ struct AnnotateExpandingDimensionsInDynamicBroadcastInDim
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(
       stablehlo::DynamicBroadcastInDimOp op,
-      mlir::PatternRewriter &rewriter) const override {
+      mlir::PatternRewriter& rewriter) const override {
     // Analyze shapes and identify expanding and non-expanding dims.
     ShapeComponentAnalysis analysis;
     llvm::SmallSetVector<int64_t, 4> knownExpandingDims, knownNonexpandingDims;
@@ -186,7 +186,7 @@ struct AnnotateExpandingDimensionsInDynamicBroadcastInDim
     }
 
     // Collect possibly already annotated info.
-    auto insertAll = [](llvm::SmallSetVector<int64_t, 4> &dst,
+    auto insertAll = [](llvm::SmallSetVector<int64_t, 4>& dst,
                         std::optional<ArrayRef<int64_t>> src) {
       if (!src) return;
       for (auto it : *src) dst.insert(it);
@@ -195,7 +195,7 @@ struct AnnotateExpandingDimensionsInDynamicBroadcastInDim
     insertAll(knownNonexpandingDims, op.getKnownNonexpandingDimensions());
 
     // Fail pattern application if there is nothing new to annotate.
-    auto isEqual = [](llvm::SmallSetVector<int64_t, 4> &set,
+    auto isEqual = [](llvm::SmallSetVector<int64_t, 4>& set,
                       ArrayRef<int64_t> attr) {
       return static_cast<int64_t>(set.size()) == attr.size() &&
              llvm::all_of(attr, [&](auto it) { return set.count(it); });
@@ -237,7 +237,7 @@ bool isProduct(AffineExpr expr,
   return false;
 }
 
-bool isSymbolicProduct(const SymbolicExpr &symbolicExpr,
+bool isSymbolicProduct(const SymbolicExpr& symbolicExpr,
                        llvm::function_ref<void(int64_t)> cbkConstantFactor,
                        llvm::function_ref<void(Symbol)> cbkSymbolicFactor) {
   return isProduct(
@@ -258,8 +258,8 @@ struct SymbolicProduct {
   bool empty() { return concrete == 1 && symbolic.empty(); }
 };
 
-bool isSymbolicProduct(const SymbolicExpr &symbolicExpr,
-                       SymbolicProduct *product) {
+bool isSymbolicProduct(const SymbolicExpr& symbolicExpr,
+                       SymbolicProduct* product) {
   return isSymbolicProduct(
       symbolicExpr, [&](int64_t c) { product->concrete *= c; },
       [&](Symbol s) { product->symbolic.push_back(s); });
@@ -268,7 +268,7 @@ bool isSymbolicProduct(const SymbolicExpr &symbolicExpr,
 LogicalResult materializeReshapeAsScalarExpand(RankedTensorType operandTy,
                                                RankedTensorType resultTy,
                                                stablehlo::DynamicReshapeOp op,
-                                               PatternRewriter &rewriter) {
+                                               PatternRewriter& rewriter) {
   assert(operandTy.getRank() == 0 && "expect scalar operand");
   auto loc = op.getLoc();
   SmallVector<int64_t> unitDims(resultTy.getRank(), 1);
@@ -287,7 +287,7 @@ LogicalResult materializeReshapeAsScalarExpand(RankedTensorType operandTy,
 LogicalResult materializeReshapeAsScalarCollapse(RankedTensorType operandTy,
                                                  RankedTensorType resultTy,
                                                  stablehlo::DynamicReshapeOp op,
-                                                 PatternRewriter &rewriter) {
+                                                 PatternRewriter& rewriter) {
   assert(resultTy.getRank() == 0 && "expect scalar result");
   auto loc = op.getLoc();
   Value operand = op.getOperand();
@@ -314,7 +314,7 @@ struct DimensionGroup {
   DimensionGroupKind kind = DimensionGroupKind::kNone;
 };
 
-SymbolicProduct eliminateCommonFactors(SymbolicProduct &a, SymbolicProduct &b) {
+SymbolicProduct eliminateCommonFactors(SymbolicProduct& a, SymbolicProduct& b) {
   SymbolicProduct gcd;
 
   // Eliminate common concrete factors.
@@ -325,7 +325,7 @@ SymbolicProduct eliminateCommonFactors(SymbolicProduct &a, SymbolicProduct &b) {
   // Eliminate common symbolic factors.
   int64_t i = 0;
   while (i < static_cast<int64_t>(a.symbolic.size())) {
-    auto *it = llvm::find(b.symbolic, a.symbolic[i]);
+    auto* it = llvm::find(b.symbolic, a.symbolic[i]);
     if (it != b.symbolic.end()) {
       gcd.symbolic.push_back(*it);
       std::swap(a.symbolic[i], a.symbolic.back());
@@ -348,7 +348,7 @@ bool isUnpairedUnitDimension(
          (otherIt == otherEnd || !otherIt->isConstant(1));
 }
 
-int64_t getShapedTypyDimSize(const SymbolicProduct &symProduct) {
+int64_t getShapedTypyDimSize(const SymbolicProduct& symProduct) {
   return symProduct.symbolic.empty() ? symProduct.concrete
                                      : ShapedType::kDynamic;
 }
@@ -380,12 +380,12 @@ int64_t getShapedTypyDimSize(const SymbolicProduct &symProduct) {
 LogicalResult findExpandingAndCollapsingDimensionGroups(
     ArrayRef<SymbolicExpr> operandShapeInfo,
     ArrayRef<SymbolicExpr> resultShapeInfo,
-    SmallVector<DimensionGroup> *dimensionGroups,
-    SmallVector<int64_t> *expandedIntermShape) {
-  const auto *operandShapeIt = operandShapeInfo.begin();
-  const auto *operandShapeEnd = operandShapeInfo.end();
-  const auto *resultShapeIt = resultShapeInfo.begin();
-  const auto *resultShapeEnd = resultShapeInfo.end();
+    SmallVector<DimensionGroup>* dimensionGroups,
+    SmallVector<int64_t>* expandedIntermShape) {
+  const auto* operandShapeIt = operandShapeInfo.begin();
+  const auto* operandShapeEnd = operandShapeInfo.end();
+  const auto* resultShapeIt = resultShapeInfo.begin();
+  const auto* resultShapeEnd = resultShapeInfo.end();
 
   // Crucial iteration state.
   SymbolicProduct remainingOperandShapeFactors;
@@ -398,7 +398,7 @@ LogicalResult findExpandingAndCollapsingDimensionGroups(
   while (operandShapeIt != operandShapeEnd && resultShapeIt != resultShapeEnd) {
     assert(!anyRemainingFactors() &&
            "expect no remaining factors from previous iteration");
-    DimensionGroup &dimGroup = dimensionGroups->emplace_back();
+    DimensionGroup& dimGroup = dimensionGroups->emplace_back();
 
     // Consume at least one operand and result dimension.
     {
@@ -536,12 +536,12 @@ SmallVector<int64_t> concretizeOperandShape(
 }
 
 std::optional<SmallVector<ReassociationIndices>> requiresReassociationOfKind(
-    DimensionGroupKind kind, const SmallVector<DimensionGroup> &dimGroups) {
+    DimensionGroupKind kind, const SmallVector<DimensionGroup>& dimGroups) {
   SmallVector<ReassociationIndices> reassociation;
   reassociation.reserve(dimGroups.size());
   bool isStrictlyReassociating = false;
   int64_t i = 0;
-  for (const DimensionGroup &g : dimGroups) {
+  for (const DimensionGroup& g : dimGroups) {
     if (g.kind == kind) {
       isStrictlyReassociating = true;
       reassociation.push_back(
@@ -558,9 +558,9 @@ std::optional<SmallVector<ReassociationIndices>> requiresReassociationOfKind(
 }
 
 LogicalResult materializeReshapeAsExpandAndCollapse(
-    ShapeComponentAnalysis &shapeAnalysis, RankedTensorType operandTy,
+    ShapeComponentAnalysis& shapeAnalysis, RankedTensorType operandTy,
     RankedTensorType resultTy, stablehlo::DynamicReshapeOp op,
-    PatternRewriter &rewriter) {
+    PatternRewriter& rewriter) {
   // Require sucessful shape analysis for operand and result shape.
   auto operandShapeInfo = shapeAnalysis.GetShapeInfo(op.getOperand());
   if (!operandShapeInfo) return failure();
@@ -610,7 +610,7 @@ struct DynamicReshapeToExpandAndCollapseShape final
     : public OpRewritePattern<stablehlo::DynamicReshapeOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(stablehlo::DynamicReshapeOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto operandTy =
         mlir::dyn_cast<RankedTensorType>(op.getOperand().getType());
     if (!operandTy) return failure();
@@ -636,7 +636,7 @@ struct DynamicReshapeToExpandAndCollapseShape final
 };
 
 // Returns true if all of bcasted_shapes can be broadcasted with output_shape.
-bool isKnownBroadcastable(ShapeComponentAnalysis &analysis,
+bool isKnownBroadcastable(ShapeComponentAnalysis& analysis,
                           ValueRange bcastedShapes, Value outputShape) {
   auto outputShapeDims = analysis.GetValueInfo(outputShape);
   if (!outputShapeDims) return false;
@@ -646,8 +646,8 @@ bool isKnownBroadcastable(ShapeComponentAnalysis &analysis,
     // Iterate backwards over the smallest input shape.
     for (auto zip : llvm::zip(llvm::reverse(*outputShapeDims),
                               llvm::reverse(*shapeDims))) {
-      const auto &first = std::get<0>(zip);
-      const auto &second = std::get<1>(zip);
+      const auto& first = std::get<0>(zip);
+      const auto& second = std::get<1>(zip);
       // TODO(ezhulenev): What to do with dimensions statically known to be
       // zero?
       // Numpy can only broadcast [0] with [1], however Tensorflow can broadcast
@@ -671,7 +671,7 @@ struct CstrBroadcastableOpLowering
     : public OpRewritePattern<shape::CstrBroadcastableOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(shape::CstrBroadcastableOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     ShapeComponentAnalysis shapeComponentAnalysis;
     if (!isKnownBroadcastable(shapeComponentAnalysis, op.getShapes(),
                               op.getShapes().front())) {
@@ -684,13 +684,13 @@ struct CstrBroadcastableOpLowering
 
 // Returns a shape tensor if the shapes can be broadcasted to a known shape.
 // Will either return one of the shapes or a generated mix of the shapes.
-std::optional<Value> simplifyBroadcast(ShapeComponentAnalysis &analysis,
+std::optional<Value> simplifyBroadcast(ShapeComponentAnalysis& analysis,
                                        ValueRange shapes, Location loc,
-                                       OpBuilder *builder) {
+                                       OpBuilder* builder) {
   // First find the input shape with the largest rank.
   SmallVector<ArrayRef<ShapeComponentAnalysis::SymbolicExpr>> shapesFound;
   size_t maxRank = 0;
-  for (const auto &shape : llvm::enumerate(shapes)) {
+  for (const auto& shape : llvm::enumerate(shapes)) {
     auto foundShape = analysis.GetValueInfo(shape.value());
     if (!foundShape) return {};
     shapesFound.push_back(*foundShape);
@@ -701,11 +701,11 @@ std::optional<Value> simplifyBroadcast(ShapeComponentAnalysis &analysis,
         *builder, loc, shapes[0].getType(), SmallVector<Value>()));
   }
 
-  SmallVector<const ShapeComponentAnalysis::SymbolicExpr *> joinedDimensions(
+  SmallVector<const ShapeComponentAnalysis::SymbolicExpr*> joinedDimensions(
       maxRank);
   SmallVector<std::pair<Value, int64_t>> shapeAndRankForDim(maxRank);
-  for (const auto &shape : llvm::enumerate(shapesFound)) {
-    for (const auto &dim : llvm::enumerate(llvm::reverse(shape.value()))) {
+  for (const auto& shape : llvm::enumerate(shapesFound)) {
+    for (const auto& dim : llvm::enumerate(llvm::reverse(shape.value()))) {
       // 1 dimensions don't contribute to the final result.
       if (dim.value().isConstant(1)) continue;
       // If it's not a 1 dimension it will be present in the result. Remember
@@ -751,7 +751,7 @@ struct BroadcastOpLowering final
     : public mlir::OpRewritePattern<shape::BroadcastOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(
-      shape::BroadcastOp op, mlir::PatternRewriter &rewriter) const override {
+      shape::BroadcastOp op, mlir::PatternRewriter& rewriter) const override {
     ShapeComponentAnalysis shapeComponentAnalysis;
     auto newBroadcast = simplifyBroadcast(
         shapeComponentAnalysis, op.getShapes(), op.getLoc(), &rewriter);
@@ -772,12 +772,12 @@ struct BroadcastOpLowering final
 class SymbolicShapeOptimizationPass final
     : public impl::SymbolicShapeOptimizationPassBase<
           SymbolicShapeOptimizationPass> {
-  void getDependentDialects(DialectRegistry &registry) const override {
+  void getDependentDialects(DialectRegistry& registry) const override {
     registry.insert<linalg::LinalgDialect>();
   }
 
   void runOnOperation() override {
-    MLIRContext *ctx = &getContext();
+    MLIRContext* ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
 
     // clang-format off

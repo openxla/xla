@@ -31,6 +31,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/hlo/pass/hlo_pass_filter.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/service/dump.h"
@@ -40,9 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla {
 
@@ -178,11 +178,11 @@ absl::StatusOr<bool> HloPassPipeline::RunPassesInternal(
       debug_options.xla_unsupported_crash_on_hlo_pass_noop_change();
 
   ABSL_ASSIGN_OR_RETURN(const auto disable_filter,
-                   HloPassFilter::FromRepeatedProtoField(
-                       debug_options.xla_disable_hlo_passes()));
+                        HloPassFilter::FromRepeatedProtoField(
+                            debug_options.xla_disable_hlo_passes()));
   ABSL_ASSIGN_OR_RETURN(const auto enable_filter,
-                   HloPassFilter::FromRepeatedProtoField(
-                       debug_options.xla_enable_hlo_passes_only()));
+                        HloPassFilter::FromRepeatedProtoField(
+                            debug_options.xla_enable_hlo_passes_only()));
   CHECK(disable_filter.empty() || enable_filter.empty())
       << "Cannot set both --xla_disable_hlo_passes and "
          "--xla_enable_hlo_passes_only.";
@@ -220,7 +220,8 @@ absl::StatusOr<bool> HloPassPipeline::RunPassesInternal(
 
     // Run-time gate for xla_disable_hlo_passes / xla_enable_hlo_passes_only.
     if (has_disable_filter || has_enable_filter) {
-      ABSL_ASSIGN_OR_RETURN(int64_t pass_id, hlo->metadata()->current_pass_id());
+      ABSL_ASSIGN_OR_RETURN(int64_t pass_id,
+                            hlo->metadata()->current_pass_id());
       const HloPassFilter::InvocationInfo invocation{
           /*pass_name=*/pass_name,
           /*pipeline_name=*/pipeline_name,

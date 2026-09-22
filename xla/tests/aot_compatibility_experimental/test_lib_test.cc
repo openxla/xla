@@ -22,13 +22,13 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "tsl/platform/path.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/tests/aot_interception_pjrt_client.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/util/split_proto/human_readable_aot_executable.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace aot_compatibility_experimental {

@@ -26,8 +26,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
-#include "xla/tsl/lib/gtl/flatmap.h"
 #include "tsl/platform/thread_annotations.h"
+#include "xla/tsl/lib/gtl/flatmap.h"
 
 namespace tsl {
 

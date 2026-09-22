@@ -20,9 +20,11 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -31,20 +33,25 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/time/time.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/multi_gpu_barrier.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
+#include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -56,8 +63,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -196,7 +201,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
             "clique id callback must be passed via execution params");
       }
       ABSL_ASSIGN_OR_RETURN(CliqueId clique_id,
-                       params.collectives->CreateUniqueCliqueId());
+                            params.collectives->CreateUniqueCliqueId());
       return CliqueIds(clique_id);
     };
 
@@ -230,8 +235,9 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
                   [](const CollectiveCliqueRequests::CliqueRequest& r) {
                     return r.use_cross_device_barrier_requested;
                   })) {
-    ABSL_ASSIGN_OR_RETURN(collective_alloc, params.executor->CreateMemoryAllocator(
-                                           se::MemorySpace::kCollective));
+    ABSL_ASSIGN_OR_RETURN(
+        collective_alloc,
+        params.executor->CreateMemoryAllocator(se::MemorySpace::kCollective));
   }
 
   // After we acquired all GPU cliques, check if they already have required
@@ -279,7 +285,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
         }
       }
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<GpuDeviceCommunicator> dev_comm,
-                       comm->CreateDeviceComm(reqs));
+                            comm->CreateDeviceComm(reqs));
       GpuDeviceCommunicator* dev_comm_ptr = dev_comm.get();
       ABSL_RETURN_IF_ERROR(
           (*clique)->AddDeviceComm(*rank, reqs, std::move(dev_comm)));
@@ -310,25 +316,77 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
         se::DeviceAddressBase signal_addr = signal->address();
 
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                         params.executor->CreateStream());
+                              params.executor->CreateStream());
         ABSL_RETURN_IF_ERROR(
             stream->MemZero(&signal_value_addr, signal_value_addr.size()));
         ABSL_RETURN_IF_ERROR(stream->MemZero(&signal_addr, signal_addr.size()));
         ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symmetric_memory,
-                         comm->CreateSymmetricMemory(signal_addr));
+                              comm->CreateSymmetricMemory(signal_addr));
 
-        ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
-                         (*clique)->Tie(std::move(signal_value)));
+        ABSL_ASSIGN_OR_RETURN(
+            tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
+            (*clique)->Tie(std::move(signal_value)));
         ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<se::MemoryAllocation> tied_signal,
-                         (*clique)->Tie(std::move(signal)));
-        ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symmetric_memory,
-                         (*clique)->Tie(std::move(symmetric_memory)));
+                              (*clique)->Tie(std::move(signal)));
+        ABSL_ASSIGN_OR_RETURN(
+            tsl::TiedRef<SymmetricMemory> tied_symmetric_memory,
+            (*clique)->Tie(std::move(symmetric_memory)));
 
         comm->InitializeCrossDeviceBarrier(std::move(tied_signal_value),
                                            std::move(tied_signal),
                                            std::move(tied_symmetric_memory));
+      }
+    }
+
+    if (r.use_gxl_requested) {
+      auto* comm = dynamic_cast<GpuCommunicator*>(*(*clique)->comm(*rank));
+      TF_RET_CHECK(comm) << "Communicator must be in the acquired clique";
+
+      if (comm->gxl_communicator() == nullptr) {
+        XLA_VLOG_DEVICE(2, params.executor->device_ordinal())
+            << absl::StreamFormat("Attach GXL communicators: rank=%v clique=%v",
+                                  *rank, r.key);
+
+        GpuCollectives::Device gpu_device(params.executor);
+        Collectives::DeviceRank device_rank = {&gpu_device, *rank};
+        auto rendezvous_key =
+            std::make_tuple(params.run_id, r.key, "attach_gxl");
+        auto rendezvous_name = absl::StrFormat(
+            "[%d] [rank=%v] [run_id=%v] Attach GXL to clique: %v",
+            params.executor->device_ordinal(), *rank, params.run_id, r.key);
+
+        ABSL_RETURN_IF_ERROR(
+            Rendezvous<bool>(
+                rendezvous_name, rendezvous_key, device_rank,
+                r.key.num_local_participants(),
+                [&](auto participants) -> absl::StatusOr<bool> {
+                  std::vector<Collectives::DeviceRank> local_ranks;
+                  local_ranks.reserve(participants.size());
+                  for (const auto* p : participants) {
+                    local_ranks.emplace_back(*p);
+                  }
+                  absl::c_sort(local_ranks,
+                               [](const Collectives::DeviceRank& a,
+                                  const Collectives::DeviceRank& b) {
+                                 return a.rank < b.rank;
+                               });
+
+                  std::vector<Communicator*> local_comms;
+                  local_comms.reserve(local_ranks.size());
+                  for (const auto& lr : local_ranks) {
+                    auto comm_opt = (*clique)->comm(lr.rank);
+                    TF_RET_CHECK(comm_opt.has_value());
+                    local_comms.push_back(*comm_opt);
+                  }
+
+                  ABSL_RETURN_IF_ERROR(
+                      params.collectives->MaybeAttachGxlCommunicators(
+                          r.key, local_ranks, local_comms));
+                  return true;
+                })
+                .status());
       }
     }
   }

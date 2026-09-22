@@ -34,11 +34,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"     // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
+#include "tsl/platform/protobuf.h"
 #include "xla/array.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -70,7 +71,6 @@ limitations under the License.
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace nb = nanobind;
 
@@ -123,18 +123,18 @@ absl::StatusOr<std::shared_ptr<HloModule>> HloModuleFromSerializedProto(
     return InvalidArgument("Failed to deserialize HloModuleProto");
   }
   ABSL_ASSIGN_OR_RETURN(const HloModuleConfig module_config,
-                   HloModule::CreateModuleConfigFromProto(
-                       proto, GetDebugOptionsFromFlags()));
+                        HloModule::CreateModuleConfigFromProto(
+                            proto, GetDebugOptionsFromFlags()));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   HloModule::CreateFromProto(proto, module_config));
+                        HloModule::CreateFromProto(proto, module_config));
   return std::shared_ptr<HloModule>(std::move(module));
 }
 
 absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule(
     const XlaComputation& computation) {
   ABSL_ASSIGN_OR_RETURN(const HloModuleConfig module_config,
-                   HloModule::CreateModuleConfigFromProto(
-                       computation.proto(), GetDebugOptionsFromFlags()));
+                        HloModule::CreateModuleConfigFromProto(
+                            computation.proto(), GetDebugOptionsFromFlags()));
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> module,
       HloModule::CreateFromProto(computation.proto(), module_config));
@@ -145,7 +145,7 @@ absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule(
 absl::StatusOr<std::string> GetComputationHloText(
     const XlaComputation& computation, bool print_large_constants = false) {
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<HloModule> hlo_module,
-                   GetHloModule(computation));
+                        GetHloModule(computation));
   HloPrintOptions options;
   options = HloPrintOptions::ShortParsable();
   options.set_print_large_constants(print_large_constants);
@@ -156,7 +156,7 @@ absl::StatusOr<std::string> GetComputationHloText(
 absl::StatusOr<std::string> GetComputationHloDotGraph(
     const XlaComputation& computation) {
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<HloModule> hlo_module,
-                   GetHloModule(computation));
+                        GetHloModule(computation));
   return RenderGraph(*hlo_module->entry_computation(), /*label=*/"",
                      hlo_module->config().debug_options(),
                      RenderedGraphFormat::kDot);
@@ -165,7 +165,7 @@ absl::StatusOr<std::string> GetComputationHloDotGraph(
 // Hashes the HLO module.
 absl::StatusOr<uint64_t> HashComputation(const XlaComputation& computation) {
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<HloModule> hlo_module,
-                   GetHloModule(computation));
+                        GetHloModule(computation));
   return absl::HashOf(*hlo_module);
 }
 
@@ -177,15 +177,17 @@ absl::StatusOr<Shape> MakeShapeWithDenseLayout(
     std::optional<const std::vector<bool>> dynamic_dimensions) {
   Shape shape;
   if (dynamic_dimensions) {
-    ABSL_ASSIGN_OR_RETURN(shape,
-                     ShapeUtil::MakeValidatedShape(element_type, dims,
-                                                   dynamic_dimensions.value()));
+    ABSL_ASSIGN_OR_RETURN(
+        shape, ShapeUtil::MakeValidatedShape(element_type, dims,
+                                             dynamic_dimensions.value()));
   } else {
-    ABSL_ASSIGN_OR_RETURN(shape, ShapeUtil::MakeValidatedShape(element_type, dims));
+    ABSL_ASSIGN_OR_RETURN(shape,
+                          ShapeUtil::MakeValidatedShape(element_type, dims));
   }
   if (minor_to_major) {
     *shape.mutable_layout() = LayoutUtil::MakeLayout(*minor_to_major);
-    ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(shape.layout(), shape));
+    ABSL_RETURN_IF_ERROR(
+        LayoutUtil::ValidateLayoutForShape(shape.layout(), shape));
   }
 
   return shape;

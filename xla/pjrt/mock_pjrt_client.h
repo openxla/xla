@@ -16,9 +16,10 @@ limitations under the License.
 #ifndef XLA_PJRT_MOCK_PJRT_CLIENT_H_
 #define XLA_PJRT_MOCK_PJRT_CLIENT_H_
 
+#include <gmock/gmock.h>
+
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

@@ -865,7 +865,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
   }
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * custom_call,
-                   CreateCustomCallHelper(conv, cc, dnn_version));
+                        CreateCustomCallHelper(conv, cc, dnn_version));
   if (custom_call == nullptr) {
     return false;
   }

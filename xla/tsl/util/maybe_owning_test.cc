@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/tsl/util/maybe_owning.h"
 
-#include <memory>
-
 #include <gtest/gtest.h>
+
+#include <memory>
 
 namespace tsl {
 namespace {

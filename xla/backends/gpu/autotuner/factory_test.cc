@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/factory.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/backends.pb.h"

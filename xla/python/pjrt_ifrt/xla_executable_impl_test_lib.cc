@@ -33,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -64,7 +65,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -145,7 +145,7 @@ absl::StatusOr<LoadedExecutableRef> CompileOnDevices(
     std::optional<std::vector<int>> outputs_bundle_slice_sizes = std::nullopt) {
   mlir::MLIRContext context;
   ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                   xla::ParseMlirModuleString(mlir_module_str, context));
+                        xla::ParseMlirModuleString(mlir_module_str, context));
 
   xla::CompileOptions compile_options;
   ExecutableBuildOptions& build_options =
@@ -153,8 +153,9 @@ absl::StatusOr<LoadedExecutableRef> CompileOnDevices(
   DeviceListRef device_list;
   if (devices.empty()) {
     compile_options.compile_portable_executable = true;
-    ABSL_ASSIGN_OR_RETURN(device_list, client->MakeDeviceList(
-                                      {client->addressable_devices().front()}));
+    ABSL_ASSIGN_OR_RETURN(
+        device_list,
+        client->MakeDeviceList({client->addressable_devices().front()}));
   } else {
     if (devices.size() == 1) {
       build_options.set_device_ordinal(devices.front()->Id().value());
@@ -187,15 +188,17 @@ absl::StatusOr<LoadedExecutableRef> CompileOnDevices(
       std::make_unique<XlaCompileOptions>(compile_options, device_list);
   xla_compile_options->outputs_bundle_slice_sizes =
       std::move(outputs_bundle_slice_sizes);
-  ABSL_ASSIGN_OR_RETURN(auto loaded_executable,
-                   compiler
-                       ->CompileAndLoad(std::make_unique<HloProgram>(*module),
-                                        std::move(xla_compile_options))
-                       .Await());
+  ABSL_ASSIGN_OR_RETURN(
+      auto loaded_executable,
+      compiler
+          ->CompileAndLoad(std::make_unique<HloProgram>(*module),
+                           std::move(xla_compile_options))
+          .Await());
   if (!serialize) {
     return loaded_executable;
   }
-  ABSL_ASSIGN_OR_RETURN(auto serialized_executable, loaded_executable->Serialize());
+  ABSL_ASSIGN_OR_RETURN(auto serialized_executable,
+                        loaded_executable->Serialize());
   auto options = std::make_unique<XlaDeserializeExecutableOptions>();
   options->devices = std::move(device_list);
   return compiler

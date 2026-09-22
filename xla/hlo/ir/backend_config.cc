@@ -29,9 +29,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "google/protobuf/message.h"
 #include "re2/re2.h"
-#include "xla/util.h"
 #include "tsl/platform/human_readable_json.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/util.h"
 
 // TODO(dasenov): Remove this after 2026-07-15.
 namespace {
@@ -109,7 +109,8 @@ absl::Status BackendConfigWrapper::GetProto(
     return copy_from_cache();
   }
 
-  ABSL_RETURN_IF_ERROR(tsl::HumanReadableJsonToProto(raw_string_, output_proto));
+  ABSL_RETURN_IF_ERROR(
+      tsl::HumanReadableJsonToProto(raw_string_, output_proto));
   // Cache the proto into the empty proto_.
   proto_ = CloneBackendConfigProto(output_proto);
   return absl::OkStatus();

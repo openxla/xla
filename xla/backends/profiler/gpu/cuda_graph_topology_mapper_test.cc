@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/cuda_graph_topology_mapper.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 
 namespace xla {

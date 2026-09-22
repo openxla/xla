@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/delay_kernel.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"

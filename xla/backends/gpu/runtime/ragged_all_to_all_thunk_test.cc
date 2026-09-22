@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -82,7 +84,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
@@ -216,13 +217,18 @@ static absl::Status WriteBuffer(se::Stream& stream,
 static absl::Status PrepareOneRankInputs(
     se::Stream& stream, absl::Span<const se::DeviceAddressBase> buffers,
     int phase) {
-  ABSL_RETURN_IF_ERROR(WriteBuffer(stream, buffers[0], OneRankInputValues(phase)));
-  ABSL_RETURN_IF_ERROR(WriteBuffer(stream, buffers[1],
-                              std::vector<float>(kNumOneRankElements, -1.0f)));
-  ABSL_RETURN_IF_ERROR(WriteBuffer(stream, buffers[2], std::vector<int64_t>{0, 2}));
-  ABSL_RETURN_IF_ERROR(WriteBuffer(stream, buffers[3], std::vector<int64_t>{1, 2}));
-  ABSL_RETURN_IF_ERROR(WriteBuffer(stream, buffers[4], std::vector<int64_t>{1, 2}));
-  ABSL_RETURN_IF_ERROR(WriteBuffer(stream, buffers[5], std::vector<int64_t>{1, 2}));
+  ABSL_RETURN_IF_ERROR(
+      WriteBuffer(stream, buffers[0], OneRankInputValues(phase)));
+  ABSL_RETURN_IF_ERROR(WriteBuffer(
+      stream, buffers[1], std::vector<float>(kNumOneRankElements, -1.0f)));
+  ABSL_RETURN_IF_ERROR(
+      WriteBuffer(stream, buffers[2], std::vector<int64_t>{0, 2}));
+  ABSL_RETURN_IF_ERROR(
+      WriteBuffer(stream, buffers[3], std::vector<int64_t>{1, 2}));
+  ABSL_RETURN_IF_ERROR(
+      WriteBuffer(stream, buffers[4], std::vector<int64_t>{1, 2}));
+  ABSL_RETURN_IF_ERROR(
+      WriteBuffer(stream, buffers[5], std::vector<int64_t>{1, 2}));
   return stream.BlockHostUntilDone();
 }
 
@@ -239,7 +245,7 @@ static absl::Status VerifyOneRankOutput(se::Stream& stream,
                                         se::DeviceAddressBase buffer,
                                         int phase) {
   ABSL_ASSIGN_OR_RETURN(std::vector<float> output,
-                   ReadOneRankOutput(stream, buffer));
+                        ReadOneRankOutput(stream, buffer));
   std::vector<float> expected = OneRankExpectedValues(phase);
   for (int i = 0; i < output.size(); ++i) {
     if (output[i] != expected[i]) {

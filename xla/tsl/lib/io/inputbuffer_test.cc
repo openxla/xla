@@ -18,14 +18,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/coding.h"
-#include "tsl/platform/str_util.h"
-#include "tsl/platform/strcat.h"
 
 namespace tsl {
 namespace {

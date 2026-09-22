@@ -20,11 +20,11 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace xla {
 class CoordinationServiceRpcHandler {

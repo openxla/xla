@@ -118,10 +118,11 @@ absl::StatusOr<bool> SmallWhileLoopHoistingPass::RunImpl(
     std::vector<HloInstruction*> parameters;
     parameters.reserve(while_instr->operand_count());
     for (HloInstruction* operand : while_instr->operands()) {
-      ABSL_ASSIGN_OR_RETURN(HloInstruction * parameter,
-                       builder.AddParameter(HloInstruction::CreateParameter(
-                           while_instr->operand_index(operand),
-                           operand->shape(), operand->name())));
+      ABSL_ASSIGN_OR_RETURN(
+          HloInstruction * parameter,
+          builder.AddParameter(HloInstruction::CreateParameter(
+              while_instr->operand_index(operand), operand->shape(),
+              operand->name())));
       parameters.push_back(parameter);
     }
     builder.AddInstruction(

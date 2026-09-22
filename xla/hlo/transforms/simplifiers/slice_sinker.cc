@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -36,7 +37,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -289,7 +289,8 @@ absl::StatusOr<bool> SliceSinker::RunImpl(
           instruction->operands(), std::back_inserter(slice_sources),
           [](HloInstruction* slice) { return slice->mutable_operand(0); });
 
-      ABSL_RETURN_IF_ERROR(SinkSlices(slice_sources, similar_operations.value()));
+      ABSL_RETURN_IF_ERROR(
+          SinkSlices(slice_sources, similar_operations.value()));
       changed = true;
     }
   }

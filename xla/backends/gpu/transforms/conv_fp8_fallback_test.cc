@@ -30,10 +30,11 @@ limitations under the License.
 // The fusions under test are produced by the real ConvKindAssignment +
 // ConvFusionRewriter passes, so they cannot drift from pipeline output.
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -73,7 +74,7 @@ class ConvFp8FallbackTestBase : public HloHardwareIndependentTestBase {
   static absl::StatusOr<GpuTargetConfig> DevicelessTargetConfig(
       GpuModel model) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto proto,
-                     GetGpuTargetConfig(model));
+                          GetGpuTargetConfig(model));
     return GpuTargetConfig::FromProto(proto);
   }
 
@@ -83,7 +84,7 @@ class ConvFp8FallbackTestBase : public HloHardwareIndependentTestBase {
       absl::string_view hlo_text, const GpuTargetConfig& target_config) {
     const se::DeviceDescription& device_info = target_config.device_description;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     ConvKindAssignment kind_assignment(
         device_info.gpu_compute_capability(),
         se::dnn::VersionInfo(device_info.dnn_version()));

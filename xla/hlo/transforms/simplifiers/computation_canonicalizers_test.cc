@@ -14,9 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/transforms/simplifiers/computation_canonicalizers.h"
 
+#include <gtest/gtest.h>
+
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"

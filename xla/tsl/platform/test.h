@@ -16,14 +16,15 @@ limitations under the License.
 #ifndef XLA_TSL_PLATFORM_TEST_H_
 #define XLA_TSL_PLATFORM_TEST_H_
 
+#include <gtest/gtest.h>  // IWYU pragma: export
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>  // IWYU pragma: export
+#include "tsl/platform/platform.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/platform.h"
 
 // Includes gmock.h and enables the use of gmock matchers in tensorflow tests.
 //
@@ -42,8 +43,8 @@ limitations under the License.
 #if !defined(PLATFORM_GOOGLE) && !defined(PLATFORM_GOOGLE_ANDROID) && \
     !defined(PLATFORM_CHROMIUMOS)
 #include <gmock/gmock-actions.h>
-#include <gmock/gmock-matchers.h>            // IWYU pragma: export
-#include <gmock/gmock-more-matchers.h>       // IWYU pragma: export
+#include <gmock/gmock-matchers.h>       // IWYU pragma: export
+#include <gmock/gmock-more-matchers.h>  // IWYU pragma: export
 #endif
 #include <gmock/gmock.h>  // IWYU pragma: export
 

@@ -20,8 +20,6 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
-#include "tensor_ir/Dialect/TensorIR.h"
-#include "tensor_ir/Dialect/TensorIRAttrs.h"
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
@@ -51,6 +49,8 @@ limitations under the License.
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "tensor_ir/Dialect/TensorIR.h"
+#include "tensor_ir/Dialect/TensorIRAttrs.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -141,8 +141,9 @@ absl::StatusOr<mlir::Type> GetElementType(PrimitiveType type,
 absl::StatusOr<mlir::TypedAttr> GetScalarAttribute(
     const LiteralBase& literal, mlir::Builder& builder,
     bool use_signless_integer_type) {
-  ABSL_ASSIGN_OR_RETURN(auto element_type,
-                   GetElementType(literal.shape().element_type(), builder));
+  ABSL_ASSIGN_OR_RETURN(
+      auto element_type,
+      GetElementType(literal.shape().element_type(), builder));
   if (element_type.isFloat()) {
     if (auto cst = literal.GetAsDouble({})) {
       return mlir::FloatAttr::get(element_type, *cst);
@@ -164,7 +165,7 @@ absl::StatusOr<mlir::TypedAttr> GetScalarAttribute(
 absl::StatusOr<mlir::RankedTensorType> GetTensorType(const Shape& shape,
                                                      mlir::Builder& builder) {
   ABSL_ASSIGN_OR_RETURN(auto element_type,
-                   GetElementType(shape.element_type(), builder));
+                        GetElementType(shape.element_type(), builder));
   // Promote 0-D scalar shapes to 1-D tensors of size 1 for TensorIR.
   if (shape.dimensions().empty()) {
     return mlir::RankedTensorType::get({1}, element_type);
@@ -213,7 +214,7 @@ absl::StatusOr<mlir::Value> BuildBitcast(const HloInstruction& source,
     auto permutation = llvm::to_vector(
         llvm::reverse(source.operand(0)->shape().layout().minor_to_major()));
     ABSL_ASSIGN_OR_RETURN(auto transpose_type,
-                     GetTensorType(operand_normal_shape, builder));
+                          GetTensorType(operand_normal_shape, builder));
     VLOG(3) << "Transposing operand: "
             << llvm_ir::DumpToString(result.getType()) << " to "
             << llvm_ir::DumpToString(transpose_type);
@@ -224,7 +225,7 @@ absl::StatusOr<mlir::Value> BuildBitcast(const HloInstruction& source,
   // If the normalized shapes are not equal, create a reshape operation.
   if (operand_normal_shape != result_normal_shape) {
     ABSL_ASSIGN_OR_RETURN(auto reshape_type,
-                     GetTensorType(result_normal_shape, builder));
+                          GetTensorType(result_normal_shape, builder));
     VLOG(3) << "Reshaping operand: " << llvm_ir::DumpToString(result.getType())
             << " to " << llvm_ir::DumpToString(reshape_type);
     result = tir::ReshapeOp::create(builder, reshape_type, result);
@@ -239,7 +240,7 @@ absl::StatusOr<mlir::Value> BuildBitcast(const HloInstruction& source,
       permutation[pos] = idx;
     }
     ABSL_ASSIGN_OR_RETURN(auto transpose_type,
-                     GetTensorType(source.shape(), builder));
+                          GetTensorType(source.shape(), builder));
     VLOG(3) << "Transposing operand: "
             << llvm_ir::DumpToString(result.getType()) << " to "
             << llvm_ir::DumpToString(transpose_type);
@@ -427,7 +428,8 @@ absl::StatusOr<mlir::Value> BuildDot(const HloDotInstruction& source,
   }
 
   // Calculate matmul result shape.
-  ABSL_ASSIGN_OR_RETURN(auto result_type, GetTensorType(source.shape(), builder));
+  ABSL_ASSIGN_OR_RETURN(auto result_type,
+                        GetTensorType(source.shape(), builder));
 
   llvm::SmallVector<int64_t> matmul_shape;
   if (!lhs_batch.empty()) {
@@ -476,15 +478,17 @@ absl::StatusOr<mlir::Value> BuildReduce(const HloReduceInstruction& source,
   llvm::SmallVector<mlir::Attribute> initial_values;
   for (const HloInstruction* init_instr : source.init_values()) {
     const auto* constant = Cast<HloConstantInstruction>(init_instr);
-    ABSL_ASSIGN_OR_RETURN(auto initial_value,
-                     GetScalarAttribute(constant->literal(), builder,
-                                        /*use_signless_integer_type=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        auto initial_value,
+        GetScalarAttribute(constant->literal(), builder,
+                           /*use_signless_integer_type=*/false));
     initial_values.push_back(initial_value);
   }
 
   llvm::SmallVector<int32_t> reduce_dims(source.dimensions().begin(),
                                          source.dimensions().end());
-  ABSL_ASSIGN_OR_RETURN(auto result_type, GetTensorType(source.shape(), builder));
+  ABSL_ASSIGN_OR_RETURN(auto result_type,
+                        GetTensorType(source.shape(), builder));
   mlir::ShapedType output_type = GetReduceOutputType(
       result_type, source.operand(0)->shape(), source.shape(), reduce_dims);
 
@@ -571,7 +575,8 @@ absl::StatusOr<mlir::Value> BuildSimpleReduce(
     mlir::Value operand, mlir::ImplicitLocOpBuilder& builder) {
   llvm::SmallVector<int32_t> reduce_dims(source.dimensions().begin(),
                                          source.dimensions().end());
-  ABSL_ASSIGN_OR_RETURN(auto result_type, GetTensorType(source.shape(), builder));
+  ABSL_ASSIGN_OR_RETURN(auto result_type,
+                        GetTensorType(source.shape(), builder));
   mlir::ShapedType output_type = GetReduceOutputType(
       result_type, source.operand(0)->shape(), source.shape(), reduce_dims);
 
@@ -713,7 +718,7 @@ absl::StatusOr<mlir::Value> ConvertFusionInstruction(
       return tir::CeilOp::create(builder, operands);
     case HloOpcode::kConvert: {
       ABSL_ASSIGN_OR_RETURN(auto convert_type,
-                       GetTensorType(source.shape(), builder));
+                            GetTensorType(source.shape(), builder));
       return tir::ConvertOp::create(builder, convert_type, operands[0]);
     }
     case HloOpcode::kCos:
@@ -726,7 +731,7 @@ absl::StatusOr<mlir::Value> ConvertFusionInstruction(
       // NOTE: Decomposing Expm1(x) to Exp(x) - 1.0 can result in a severe loss
       // of precision for values of x close to 0.
       ABSL_ASSIGN_OR_RETURN(auto one,
-                       BuildFloatConstant(1.0, source.shape(), builder));
+                            BuildFloatConstant(1.0, source.shape(), builder));
       return tir::SubOp::create(builder,
                                 tir::ExpOp::create(builder, operands[0]), one);
     }
@@ -738,7 +743,7 @@ absl::StatusOr<mlir::Value> ConvertFusionInstruction(
       // NOTE: Decomposing Log1p(x) to Log(x + 1.0) can result in a severe loss
       // of precision for values of x close to 0.
       ABSL_ASSIGN_OR_RETURN(auto one,
-                       BuildFloatConstant(1.0, source.shape(), builder));
+                            BuildFloatConstant(1.0, source.shape(), builder));
       return tir::LogOp::create(builder,
                                 tir::AddOp::create(builder, operands[0], one));
     }
@@ -802,7 +807,8 @@ absl::StatusOr<mlir::Value> ConvertFusionInstruction(
       return BuildBroadcast(*Cast<HloBroadcastInstruction>(&source),
                             operands[0], builder);
     case HloOpcode::kSlice: {
-      ABSL_ASSIGN_OR_RETURN(auto slice_type, GetTensorType(source.shape(), builder));
+      ABSL_ASSIGN_OR_RETURN(auto slice_type,
+                            GetTensorType(source.shape(), builder));
       return tir::SliceOp::create(builder, slice_type, operands[0],
                                   source.slice_starts(), source.slice_limits(),
                                   source.slice_strides());
@@ -810,7 +816,7 @@ absl::StatusOr<mlir::Value> ConvertFusionInstruction(
     case HloOpcode::kTranspose: {
       auto transpose = Cast<HloTransposeInstruction>(&source);
       ABSL_ASSIGN_OR_RETURN(auto transpose_type,
-                       GetTensorType(source.shape(), builder));
+                            GetTensorType(source.shape(), builder));
       return tir::TransposeOp::create(builder, transpose_type, operands[0],
                                       transpose->dimensions());
     }
@@ -834,13 +840,14 @@ absl::StatusOr<mlir::Value> ConvertFusionInstruction(
       return BuildConstant(source.literal(), source.shape(), builder);
     case HloOpcode::kIota: {
       auto iota = Cast<HloIotaInstruction>(&source);
-      ABSL_ASSIGN_OR_RETURN(auto iota_type, GetTensorType(source.shape(), builder));
+      ABSL_ASSIGN_OR_RETURN(auto iota_type,
+                            GetTensorType(source.shape(), builder));
       return tir::IotaOp::create(builder, iota_type, iota->iota_dimension(),
                                  /*dynamic_sizes=*/{});
     }
     case HloOpcode::kConcatenate: {
       ABSL_ASSIGN_OR_RETURN(auto concatenate_type,
-                       GetTensorType(source.shape(), builder));
+                            GetTensorType(source.shape(), builder));
       return tir::ConcatenateOp::create(builder, concatenate_type, operands,
                                         source.concatenate_dimension());
     }
@@ -926,9 +933,9 @@ absl::StatusOr<mlir::Value> ConvertReductionInstruction(
       return target.getArgument(source.parameter_number());
     case HloOpcode::kConstant: {
       const auto& constant = *Cast<HloConstantInstruction>(&source);
-      ABSL_ASSIGN_OR_RETURN(auto value,
-                       GetScalarAttribute(constant.literal(), builder,
-                                          /*use_signless_integer_type=*/true));
+      ABSL_ASSIGN_OR_RETURN(
+          auto value, GetScalarAttribute(constant.literal(), builder,
+                                         /*use_signless_integer_type=*/true));
       return arith::ConstantOp::create(builder, value);
     }
 
@@ -954,7 +961,7 @@ absl::StatusOr<mlir::nv_tensor_ir::GraphOp> ConvertFusionComputation(
   llvm::SmallVector<mlir::Attribute> input_attrs;
   for (const auto& parameter : source.parameter_instructions()) {
     ABSL_ASSIGN_OR_RETURN(auto parameter_type,
-                     GetTensorType(parameter->shape(), builder));
+                          GetTensorType(parameter->shape(), builder));
     input_types.push_back(parameter_type);
     input_attrs.push_back(
         CreateStridesDictionaryAttribute(context, parameter->shape()));
@@ -968,8 +975,9 @@ absl::StatusOr<mlir::nv_tensor_ir::GraphOp> ConvertFusionComputation(
   }
 
   llvm::SmallVector<mlir::Type> output_types;
-  ABSL_ASSIGN_OR_RETURN(auto output_type,
-                   GetTensorType(source.root_instruction()->shape(), builder));
+  ABSL_ASSIGN_OR_RETURN(
+      auto output_type,
+      GetTensorType(source.root_instruction()->shape(), builder));
   output_types.push_back(output_type);
 
   mlir::ArrayAttr res_attrs;

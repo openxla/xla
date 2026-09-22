@@ -30,12 +30,12 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/util.h"
-#include "xla/xla.pb.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/regexp.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/util.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 

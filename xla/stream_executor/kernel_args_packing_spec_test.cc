@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_args_packing_spec.h"
 
-#include <cstdint>
-#include <memory>
-#include <vector>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <vector>
+
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -191,10 +193,7 @@ TEST(KernelArgsPackingSpecTest, ToProto) {
 
   EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
                 kernel_arguments {
-                  relocations {
-                    kind: KIND_BITS64_ABSOLUTE
-                    argument_index: 33
-                  }
+                  relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 33 }
                 }
                 kernel_arguments { data: "\x34\x12\x00\x00" }
               )pb")));
@@ -230,6 +229,61 @@ TEST(KernelArgsPackingSpecTest, FromProto) {
                                          arguments->argument_addresses().at(1)),
                                      4),
               ElementsAre(0x34, 0x12, 0x00, 0x00));
+}
+
+TEST(KernelArgsPackingSpecTest, Identity) {
+  KernelArgsPackingSpec spec = KernelArgsPackingSpec::Identity(3);
+
+  EXPECT_EQ(spec.size(), 3);
+  EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
+                kernel_arguments {
+                  relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
+                }
+                kernel_arguments {
+                  relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 1 }
+                }
+                kernel_arguments {
+                  relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 2 }
+                }
+              )pb")));
+}
+
+TEST(KernelArgsPackingSpecTest, IdentityWithZeroArguments) {
+  KernelArgsPackingSpec spec = KernelArgsPackingSpec::Identity(0);
+
+  EXPECT_EQ(spec.size(), 0);
+  EXPECT_EQ(spec.MaxArgumentIndex(), std::nullopt);
+}
+
+TEST(KernelArgsPackingSpecTest, MaxArgumentIndex) {
+  KernelArgsPackingSpec spec;
+  EXPECT_EQ(spec.MaxArgumentIndex(), std::nullopt);
+
+  spec.AddConstantArgument(0x1234);
+  EXPECT_EQ(spec.MaxArgumentIndex(), std::nullopt);
+
+  spec.AddAddressArgument(/*argument_index=*/5);
+  spec.AddAddressArgument(/*argument_index=*/2);
+  EXPECT_EQ(spec.MaxArgumentIndex(), 5);
+}
+
+TEST(KernelArgsPackingSpecTest, Validate) {
+  KernelArgsPackingSpec spec;
+  spec.AddAddressArgument(/*argument_index=*/0);
+  spec.AddConstantArgument(0x1234);
+  spec.AddAddressArgument(/*argument_index=*/2);
+
+  EXPECT_OK(spec.Validate(/*num_available_args=*/3));
+  EXPECT_OK(spec.Validate(/*num_available_args=*/4));
+  EXPECT_THAT(spec.Validate(/*num_available_args=*/2),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(KernelArgsPackingSpecTest, ValidateConstantsOnlySpecNeedsNoArguments) {
+  KernelArgsPackingSpec spec;
+  spec.AddConstantArgument(0x1234);
+
+  EXPECT_OK(spec.Validate(/*num_available_args=*/0));
 }
 
 }  // namespace

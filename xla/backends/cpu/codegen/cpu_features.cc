@@ -27,8 +27,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringMap.h"  // IWYU pragma: keep
 #include "llvm/TargetParser/Host.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/cpu_info.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace xla::cpu {
 

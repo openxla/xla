@@ -46,8 +46,8 @@ using ::testing::UnorderedElementsAre;
 
 absl::StatusOr<se::DeviceDescription> MakeDeviceDescription() {
   ABSL_ASSIGN_OR_RETURN(stream_executor::DeviceDescription device_description,
-                   stream_executor::DeviceDescription::FromProto(
-                       stream_executor::GpuDeviceInfoProto{}));
+                        stream_executor::DeviceDescription::FromProto(
+                            stream_executor::GpuDeviceInfoProto{}));
   device_description.set_threads_per_warp(32);
   return device_description;
 }

@@ -16,11 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_CODEGEN_TENSOR_IR_CONVERSION_H_
 #define XLA_BACKENDS_GPU_CODEGEN_TENSOR_IR_CONVERSION_H_
 
-#include "tensor_ir/Dialect/TensorIR.h"
 #include "absl/status/statusor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "tensor_ir/Dialect/TensorIR.h"
 #include "xla/hlo/ir/hlo_computation.h"
 
 namespace xla::gpu::tensor_ir {

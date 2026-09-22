@@ -385,14 +385,14 @@ Future<> PjRtRawBufferInterface::CopyRawHostToDevice(const void* src,
                                                      int64_t offset,
                                                      int64_t transfer_size) {
   ABSL_ASSIGN_OR_RETURN(auto event, CopyRawHostToDeviceAndReturnEvent(
-                                   src, offset, transfer_size));
+                                        src, offset, transfer_size));
   return ConvertEventToFuture(std::move(event));
 }
 
 Future<> PjRtRawBufferInterface::CopyRawDeviceToHost(void* dst, int64_t offset,
                                                      int64_t transfer_size) {
   ABSL_ASSIGN_OR_RETURN(auto event, CopyRawDeviceToHostAndReturnEvent(
-                                   dst, offset, transfer_size));
+                                        dst, offset, transfer_size));
   return ConvertEventToFuture(std::move(event));
 }
 

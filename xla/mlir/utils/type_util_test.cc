@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/mlir/utils/type_util.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/functional/function_ref.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Builders.h"

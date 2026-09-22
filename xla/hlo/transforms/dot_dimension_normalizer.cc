@@ -94,9 +94,9 @@ class NormalizerVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleDot(HloInstruction* dot) override {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims lhs_dims,
-                     DotOperandDims::FromDotOperand(dot, 0));
+                          DotOperandDims::FromDotOperand(dot, 0));
     ABSL_ASSIGN_OR_RETURN(DotOperandDims rhs_dims,
-                     DotOperandDims::FromDotOperand(dot, 1));
+                          DotOperandDims::FromDotOperand(dot, 1));
 
     bool contracting_normalization_needed =
         lhs_dims.Rank(DotOperandDims::kContracting) > 1;
@@ -111,18 +111,20 @@ class NormalizerVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * normalized_lhs,
-                     NormalizeOperand(&lhs_dims, dot->mutable_operand(0),
-                                      normalize_noncontracting_dimensions_));
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * normalized_rhs,
-                     NormalizeOperand(&rhs_dims, dot->mutable_operand(1),
-                                      normalize_noncontracting_dimensions_));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * normalized_lhs,
+        NormalizeOperand(&lhs_dims, dot->mutable_operand(0),
+                         normalize_noncontracting_dimensions_));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * normalized_rhs,
+        NormalizeOperand(&rhs_dims, dot->mutable_operand(1),
+                         normalize_noncontracting_dimensions_));
     ABSL_ASSIGN_OR_RETURN(
         DotDimensionNumbers new_dnums,
         DotOperandDims::CreateDotDimensionNumbers(lhs_dims, rhs_dims));
     ABSL_ASSIGN_OR_RETURN(Shape new_dot_shape,
-                     DotOperandDims::ComputeOutputShape(
-                         dot->shape().element_type(), lhs_dims, rhs_dims));
+                          DotOperandDims::ComputeOutputShape(
+                              dot->shape().element_type(), lhs_dims, rhs_dims));
     HloInstruction* new_dot = dot->parent()->AddInstruction(
         HloInstruction::CreateDot(new_dot_shape, normalized_lhs, normalized_rhs,
                                   new_dnums, dot->precision_config()),

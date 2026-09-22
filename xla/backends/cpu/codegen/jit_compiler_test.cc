@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -133,7 +134,7 @@ TEST(JitCompilerTest, Compile) {
   auto add_module = [&](absl::string_view ir, absl::string_view name,
                         size_t dylib_index) -> absl::Status {
     ABSL_ASSIGN_OR_RETURN(llvm::orc::ThreadSafeModule tsm,
-                     ParseModule(tsc, ir, name));
+                          ParseModule(tsc, ir, name));
     ABSL_RETURN_IF_ERROR(compiler.AddModule(std::move(tsm), dylib_index));
     return absl::OkStatus();
   };

@@ -125,10 +125,11 @@ absl::StatusOr<TmaDescriptor> CreateTmaDescriptor(
   auto interleave = TmaDescriptor::TmaInterleave::kNone;
   auto l2_promotion = TmaDescriptor::TmaL2Promotion::k128B;
 
-  ABSL_ASSIGN_OR_RETURN(auto tma_desc, TmaDescriptor::Create(
-                                      global_dims, global_strides, box_dims,
-                                      element_strides, element_byte_size,
-                                      interleave, swizzle_mode, l2_promotion));
+  ABSL_ASSIGN_OR_RETURN(
+      auto tma_desc,
+      TmaDescriptor::Create(global_dims, global_strides, box_dims,
+                            element_strides, element_byte_size, interleave,
+                            swizzle_mode, l2_promotion));
   return tma_desc;
 }
 

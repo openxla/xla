@@ -139,7 +139,7 @@ absl::Status SubByteCollectiveNormalizationVisitor::HandleAllToAll(
   const auto* all_to_all = Cast<HloAllToAllInstruction>(hlo);
   if (all_to_all->split_dimension()) {
     ABSL_ASSIGN_OR_RETURN(const CollectiveOpGroupMode group_mode,
-                     GetCollectiveOpGroupMode(all_to_all));
+                          GetCollectiveOpGroupMode(all_to_all));
     const int64_t split_dimension_size =
         hlo->shape().dimensions(*all_to_all->split_dimension());
     if (split_dimension_size %

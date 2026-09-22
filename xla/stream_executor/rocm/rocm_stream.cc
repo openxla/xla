@@ -157,8 +157,9 @@ absl::Status RecordEvent(StreamExecutor* executor, hipEvent_t event,
 absl::Status WaitStreamOnEvent(StreamExecutor* executor, hipStream_t stream,
                                hipEvent_t event) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
-  ABSL_RETURN_IF_ERROR(ToStatus(hipStreamWaitEvent(stream, event, 0 /* = flags */),
-                           "could not wait stream on event"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipStreamWaitEvent(stream, event, 0 /* = flags */),
+               "could not wait stream on event"));
   return absl::OkStatus();
 }
 
@@ -220,7 +221,7 @@ absl::Status AsynchronousMemcpyD2D(StreamExecutor* executor,
 absl::Status SynchronizeStream(StreamExecutor* executor, hipStream_t stream) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
   ABSL_RETURN_IF_ERROR(ToStatus(hipStreamSynchronize(stream),
-                           "Could not synchronize on ROCM stream"));
+                                "Could not synchronize on ROCM stream"));
   VLOG(2) << "successfully synchronized stream " << stream << " on device "
           << executor->device_ordinal();
   return absl::OkStatus();
@@ -238,11 +239,12 @@ absl::StatusOr<std::unique_ptr<RocmStream>> RocmStream::Create(
     return executor->GetGpuStreamPriority(
         std::get<StreamPriority>(priority.value_or(StreamPriority::Default)));
   }();
-  ABSL_ASSIGN_OR_RETURN(auto stream_handle, CreateStream(executor, stream_priority));
+  ABSL_ASSIGN_OR_RETURN(auto stream_handle,
+                        CreateStream(executor, stream_priority));
 
   ABSL_ASSIGN_OR_RETURN(auto completed_event,
-                   RocmEvent::Create(executor,
-                                     /*allow_timing=*/false));
+                        RocmEvent::Create(executor,
+                                          /*allow_timing=*/false));
 
   return std::unique_ptr<RocmStream>(new RocmStream(
       executor, std::move(completed_event), priority, stream_handle));

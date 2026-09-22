@@ -91,8 +91,9 @@ LaunchDimensionsProto LaunchDimensions::ToProto() const {
 
 absl::StatusOr<LaunchDimensions> LaunchDimensions::FromProto(
     const LaunchDimensionsProto& proto) {
-  ABSL_ASSIGN_OR_RETURN(stream_executor::BlockDim block_counts,
-                   stream_executor::BlockDim::FromProto(proto.block_counts()));
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::BlockDim block_counts,
+      stream_executor::BlockDim::FromProto(proto.block_counts()));
   ABSL_ASSIGN_OR_RETURN(
       stream_executor::ThreadDim thread_counts_per_block,
       stream_executor::ThreadDim::FromProto(proto.thread_counts_per_block()));

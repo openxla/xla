@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/codegen/emitters/computation_partitioner.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"

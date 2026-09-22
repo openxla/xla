@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/topk_splitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <stdint.h>
 
 #include <cstddef>
@@ -23,8 +25,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"

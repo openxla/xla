@@ -24,11 +24,11 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/str_util.h"
 #include "tsl/platform/strcat.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 
@@ -100,7 +100,8 @@ absl::Status ReadStringsFromEnvVar(absl::string_view env_var_name,
                                    std::vector<std::string>* value,
                                    absl::string_view delimiters) {
   std::string str_val;
-  ABSL_RETURN_IF_ERROR(ReadStringFromEnvVar(env_var_name, default_val, &str_val));
+  ABSL_RETURN_IF_ERROR(
+      ReadStringFromEnvVar(env_var_name, default_val, &str_val));
   std::vector<absl::string_view> parts = absl::StrSplit(
       str_val, absl::ByAnyChar(delimiters), absl::SkipWhitespace());
   value->clear();

@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla::gpu::triton {
 namespace {

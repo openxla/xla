@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/ascii.h"
 #include "google/protobuf/text_format.h"

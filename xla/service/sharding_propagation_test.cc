@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/sharding_propagation.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"

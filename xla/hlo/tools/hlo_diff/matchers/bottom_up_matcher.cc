@@ -117,10 +117,11 @@ double DiceSimLimitedSubgraph(
 
 // Returns true if all HloValues used by the left and right nodes have their
 // defining instructions matched.
-double AllOperandHloValuesMatchedScore(
-    const HloInstructionNode* left_node, const HloInstructionNode* right_node,
-    const HloGumgraph& left, const HloGumgraph& right,
-    HloGumgraphMappings& mappings) {
+double AllOperandHloValuesMatchedScore(const HloInstructionNode* left_node,
+                                       const HloInstructionNode* right_node,
+                                       const HloGumgraph& left,
+                                       const HloGumgraph& right,
+                                       HloGumgraphMappings& mappings) {
   const auto& left_hlo_values = left_node->used_values;
   const auto& right_hlo_values = right_node->used_values;
   if (left_hlo_values.empty() || right_hlo_values.empty() ||

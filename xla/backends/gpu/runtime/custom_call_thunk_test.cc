@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -146,7 +147,8 @@ namespace ffi = ::xla::ffi;
 
 static absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
   ABSL_ASSIGN_OR_RETURN(auto name, PlatformUtil::CanonicalPlatformName("gpu"));
-  ABSL_ASSIGN_OR_RETURN(auto* platform, se::PlatformManager::PlatformWithName(name));
+  ABSL_ASSIGN_OR_RETURN(auto* platform,
+                        se::PlatformManager::PlatformWithName(name));
   return platform->ExecutorForDevice(0);
 }
 
@@ -938,12 +940,14 @@ absl::StatusOr<Slices> AllocateAndCopy(se::Stream& stream,
                                        absl::Span<const int32_t> host_srcs,
                                        absl::Span<const int32_t> result_inits) {
   for (int i = 0; i < alloc.operand_dev_ptrs.size(); ++i) {
-    ABSL_RETURN_IF_ERROR(stream.Memcpy(&alloc.operand_dev_ptrs[i], &host_srcs[i],
-                                  RecordTestAlloc::kByteLength));
+    ABSL_RETURN_IF_ERROR(stream.Memcpy(&alloc.operand_dev_ptrs[i],
+                                       &host_srcs[i],
+                                       RecordTestAlloc::kByteLength));
   }
   for (int i = 0; i < alloc.result_dev_ptrs.size(); ++i) {
-    ABSL_RETURN_IF_ERROR(stream.Memcpy(&alloc.result_dev_ptrs[i], &result_inits[i],
-                                  RecordTestAlloc::kByteLength));
+    ABSL_RETURN_IF_ERROR(stream.Memcpy(&alloc.result_dev_ptrs[i],
+                                       &result_inits[i],
+                                       RecordTestAlloc::kByteLength));
   }
   std::vector<NullableShapedSlice> operand_slices;
   operand_slices.reserve(alloc.operand_dev_ptrs.size());
@@ -980,8 +984,9 @@ struct FfiRecordTestSetup {
     ABSL_ASSIGN_OR_RETURN(setup->stream, executor->CreateStream());
     setup->alloc = std::make_unique<RecordTestAlloc>(executor);
 
-    ABSL_ASSIGN_OR_RETURN(auto slices, AllocateAndCopy(*setup->stream, *setup->alloc,
-                                                  inputs, outputs_init));
+    ABSL_ASSIGN_OR_RETURN(
+        auto slices,
+        AllocateAndCopy(*setup->stream, *setup->alloc, inputs, outputs_init));
 
     ABSL_ASSIGN_OR_RETURN(
         setup->thunk,
@@ -1110,8 +1115,10 @@ absl::Status AddI32WithBarrierFfiHandler(ffi::RecordExtension::Type record_ctx,
     const std::vector<void*> args = {input_0.untyped_data(),
                                      input_1.untyped_data(),
                                      (*result).untyped_data()};
-    ABSL_RETURN_IF_ERROR(record_ctx.UpdateLaunch(record_ctx.commands()[0], args));
-    ABSL_RETURN_IF_ERROR(record_ctx.UpdateLaunch(record_ctx.commands()[1], args));
+    ABSL_RETURN_IF_ERROR(
+        record_ctx.UpdateLaunch(record_ctx.commands()[0], args));
+    ABSL_RETURN_IF_ERROR(
+        record_ctx.UpdateLaunch(record_ctx.commands()[1], args));
   }
   return absl::OkStatus();
 }

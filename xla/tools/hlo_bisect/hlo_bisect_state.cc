@@ -281,7 +281,8 @@ absl::StatusOr<bool> HloBisectState::TrimByInstructions() {
   // Update the current module and verify that the bug is present, if changed.
   bool changed = bisect_high < upper_bound;
   if (changed) {
-    ABSL_RETURN_IF_ERROR(MorphModuleWithInstructions(module_.get(), bisect_high));
+    ABSL_RETURN_IF_ERROR(
+        MorphModuleWithInstructions(module_.get(), bisect_high));
     ABSL_RETURN_IF_ERROR(ExpectModuleIsBuggy());
   }
   return changed;

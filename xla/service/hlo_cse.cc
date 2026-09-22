@@ -267,12 +267,13 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
     return false;
   }
 
-  ABSL_ASSIGN_OR_RETURN(bool changed,
-                   is_layout_sensitive_
-                       ? CombineConstants<true>(
-                             computation, std::move(should_combine_constant_))
-                       : CombineConstants<false>(
-                             computation, std::move(should_combine_constant_)));
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed,
+      is_layout_sensitive_
+          ? CombineConstants<true>(computation,
+                                   std::move(should_combine_constant_))
+          : CombineConstants<false>(computation,
+                                    std::move(should_combine_constant_)));
 
   const auto eq_instructions = [&](const HloInstruction* a,
                                    const HloInstruction* b) {
@@ -321,7 +322,8 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
     auto pair = representatives.insert(CseKey{instruction});
     if (!pair.second) {
       HloInstruction* equivalent_instruction = pair.first->hlo;
-      ABSL_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(equivalent_instruction));
+      ABSL_RETURN_IF_ERROR(
+          instruction->ReplaceAllUsesWith(equivalent_instruction));
       ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
           instruction, /*cleanup=*/std::nullopt, ignore_control_dependencies_));
       VLOG(4) << "Replaced " << instruction->name() << " with "
@@ -381,7 +383,8 @@ absl::StatusOr<bool> HloCSE::RunImpl(
   bool changed = false;
 
   for (auto* computation : module->computations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool computation_changed, RunOnComputation(computation));
+    ABSL_ASSIGN_OR_RETURN(bool computation_changed,
+                          RunOnComputation(computation));
     changed |= computation_changed;
   }
   return changed;

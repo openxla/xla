@@ -23,9 +23,9 @@ limitations under the License.
 #include <string>
 
 #include "absl/base/call_once.h"
+#include "tsl/platform/platform.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/platform.h"
 #if defined(PLATFORM_IS_X86)
 #include <mutex>  // NOLINT
 #endif
@@ -70,7 +70,7 @@ namespace {
 class CPUIDInfo;
 void InitCPUIDInfo();
 
-CPUIDInfo *cpuid = nullptr;
+CPUIDInfo* cpuid = nullptr;
 
 #ifdef PLATFORM_WINDOWS
 // Visual Studio defines a builtin function, so use that if possible.
@@ -146,9 +146,9 @@ class CPUIDInfo {
     // Get vendor string (issue CPUID with eax = 0)
     GETCPUID(eax, ebx, ecx, edx, 0, 0);
     const uint32_t kMaxLeaf = eax;
-    cpuid->vendor_str_.append(reinterpret_cast<char *>(&ebx), 4);
-    cpuid->vendor_str_.append(reinterpret_cast<char *>(&edx), 4);
-    cpuid->vendor_str_.append(reinterpret_cast<char *>(&ecx), 4);
+    cpuid->vendor_str_.append(reinterpret_cast<char*>(&ebx), 4);
+    cpuid->vendor_str_.append(reinterpret_cast<char*>(&edx), 4);
+    cpuid->vendor_str_.append(reinterpret_cast<char*>(&ecx), 4);
 
     // To get general information and extended features we send eax = 1 and
     // ecx = 0 to cpuid.  The response is returned in eax, ebx, ecx and edx.
@@ -396,7 +396,7 @@ class CPUIDInfo;
 void InitCPUIDInfo();
 void InitCPUIDFeatureInfo();
 
-CPUIDInfo *cpuid = nullptr;
+CPUIDInfo* cpuid = nullptr;
 
 // Structure for basic CPUID info.
 class CPUIDInfo {

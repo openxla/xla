@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/spmd/spmd_partitioner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -25,8 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -143,7 +144,7 @@ class SpmdPartitioningTest
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
 
     ShardingFormatPicker format_picker(sharding_type);
     ABSL_ASSIGN_OR_RETURN(bool changed, format_picker.Run(module.get()));
@@ -17450,6 +17451,55 @@ ENTRY %entry {
   EXPECT_THAT(topk_operand, op::Shape("bf16[32,256000]{1,0}"));
 }
 
+TEST_P(SpmdPartitioningTest, TopKCustomCallTupleRootUsesIndices) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+region {
+  index_lhs = s32[] parameter(2)
+  index_rhs = s32[] parameter(3)
+  value_lhs = bf16[] parameter(0)
+  value_rhs = bf16[] parameter(1)
+  ROOT compare = pred[] compare(value_lhs, value_rhs), direction=GT, order=TOTAL
+}
+
+ENTRY entry {
+  input = bf16[64,4096]{1,0} parameter(0), sharding={devices=[2,1]<=[2]}
+  ROOT topk = (bf16[64,40]{1,0}, s32[64,40]{1,0}) custom-call(input), custom_call_target="TopK", called_computations={region}, sharding={{devices=[2,1]<=[2]}, {devices=[2,1]<=[2]}}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Shape("(bf16[32,40]{1,0}, s32[32,40]{1,0})"));
+}
+
+TEST_P(SpmdPartitioningTest, TopKCustomCallIndexRootUsesIndices) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+region {
+  index_lhs = s32[] parameter(2)
+  index_rhs = s32[] parameter(3)
+  value_lhs = bf16[] parameter(0)
+  value_rhs = bf16[] parameter(1)
+  ROOT compare = pred[] compare(value_lhs, value_rhs), direction=GT, order=TOTAL
+}
+
+ENTRY entry {
+  input = bf16[64,4096]{1,0} parameter(0), sharding={devices=[2,1]<=[2]}
+  topk = (bf16[64,40]{1,0}, s32[64,40]{1,0}) custom-call(input), custom_call_target="TopK", called_computations={region}, sharding={{devices=[2,1]<=[2]}, {devices=[2,1]<=[2]}}
+  ROOT indices = s32[64,40]{1,0} get-tuple-element(topk), index=1, sharding={devices=[2,1]<=[2]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Shape("s32[32,40]{1,0}"));
+}
+
 TEST_P(SpmdPartitioningTest,
        TopKCustomCallTopkReplicatedOperandNonTopKDimSharded) {
   absl::string_view hlo_string = R"(
@@ -18221,12 +18271,16 @@ ENTRY entry {
   dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={unreduced}
   ROOT copy = f32[8,256]{1,0} copy(dot), sharding={unreduced}
 })";
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string, /*num_devices=*/2));
-  VLOG(1) << module->ToString();
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
-              op::Copy(op::Dot()));
-  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  SpmdPartitionerOptions options;
+  for (bool need_resolve_conflicts : {true, false}) {
+    options.need_resolve_conflicts = need_resolve_conflicts;
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        PartitionComputation(hlo_string, /*num_devices=*/2, options));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                op::Copy(op::Dot()));
+    EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, UnreducedParam) {
@@ -18273,11 +18327,15 @@ ENTRY entry {
   b = f32[1024,256]{1,0} parameter(1), sharding={devices=[2,2,2]<=[2,2,2]T(1,2,0) last_tile_dim_replicate}
   ROOT dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={devices=[2,2,2]<=[2,2,2]T(0,2,1) last_tile_dims={unreduced}}
 })";
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string, /*num_devices=*/8));
-  VLOG(1) << module->ToString();
-  EXPECT_THAT(module->entry_computation()->root_instruction(), op::Dot());
-  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  SpmdPartitionerOptions options;
+  for (bool need_resolve_conflicts : {true, false}) {
+    options.need_resolve_conflicts = need_resolve_conflicts;
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        PartitionComputation(hlo_string, /*num_devices=*/8, options));
+    EXPECT_THAT(module->entry_computation()->root_instruction(), op::Dot());
+    EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, SubgroupUnreducedAndReplicated) {
@@ -18289,11 +18347,83 @@ ENTRY entry {
   b = f32[1024,256]{1,0} parameter(1), sharding={devices=[2,2,4]<=[2,2,4]T(1,2,0) last_tile_dim_replicate}
   ROOT dot = f32[8,256]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={devices=[2,2,2,2]<=[2,2,2,2]T(0,2,1,3) last_tile_dims={unreduced,replicated}}
 })";
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       PartitionComputation(hlo_string, /*num_devices=*/16));
-  VLOG(1) << module->ToString();
-  EXPECT_THAT(module->entry_computation()->root_instruction(), op::Dot());
-  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  SpmdPartitionerOptions options;
+  for (bool need_resolve_conflicts : {true, false}) {
+    options.need_resolve_conflicts = need_resolve_conflicts;
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        PartitionComputation(hlo_string, /*num_devices=*/16, options));
+    EXPECT_THAT(module->entry_computation()->root_instruction(), op::Dot());
+    EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  }
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedReduce) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+%add {
+  %x = f32[] parameter(0)
+  %y = f32[] parameter(1)
+  ROOT %add = f32[] add(%x, %y)
+}
+
+ENTRY entry {
+  %input = f32[8,1024] parameter(0), sharding={devices=[2,1]<=[2]}
+  %zero = f32[] constant(0)
+  ROOT %reduce = f32[1024] reduce(%input, %zero), dimensions={0}, to_apply=%add, sharding={unreduced}
+})";
+
+  SpmdPartitionerOptions options;
+  for (bool need_resolve_conflicts : {true, false}) {
+    options.need_resolve_conflicts = need_resolve_conflicts;
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        PartitionComputation(hlo_string, /*num_devices=*/2, options));
+    EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  }
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedConvolutionContractingDims) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[128,56,56,64] parameter(0), sharding={devices=[2,1,1,1]<=[2]}
+  %rhs = f32[128,56,56,256] parameter(1), sharding={devices=[2,1,1,1]<=[2]}
+  ROOT %conv = f32[1,1,64,256] convolution(%lhs, %rhs),
+    window={size=56x56}, dim_labels=f01b_i01o->01bf, sharding={unreduced}
+})";
+
+  SpmdPartitionerOptions options;
+  for (bool need_resolve_conflicts : {true, false}) {
+    options.need_resolve_conflicts = need_resolve_conflicts;
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        PartitionComputation(hlo_string, /*num_devices=*/2, options));
+    EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  }
+}
+
+TEST_P(SpmdPartitioningTest, UnreducedConvolutionSpatialDims) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[128,56,56,64] parameter(0), sharding={devices=[1,2,1,1]<=[2]}
+  %rhs = f32[128,56,56,256] parameter(1), sharding={devices=[1,2,1,1]<=[2]}
+  ROOT %conv = f32[1,1,64,256] convolution(%lhs, %rhs),
+    window={size=56x56}, dim_labels=f01b_i01o->01bf, sharding={unreduced}
+})";
+
+  SpmdPartitionerOptions options;
+  for (bool need_resolve_conflicts : {true, false}) {
+    options.need_resolve_conflicts = need_resolve_conflicts;
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        PartitionComputation(hlo_string, /*num_devices=*/2, options));
+    EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kAllReduce), nullptr);
+  }
 }
 
 TEST_P(SpmdPartitioningTest, OriginalValueWithTrivialShardingAnnotation) {
@@ -18811,7 +18941,7 @@ class SpmdPartitioningV3Test : public HloHardwareIndependentTestBase {
     config.set_use_shardy_partitioner(true);
     config.mutable_debug_options().set_xla_enable_hlo_sharding_v3(true);
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
 
     HloPassPipeline pass("spmd-partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,

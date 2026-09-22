@@ -19,12 +19,12 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "tsl/platform/logging.h"
 #include "xla/literal.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

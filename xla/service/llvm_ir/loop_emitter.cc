@@ -88,7 +88,7 @@ BodyEmitter MakeBodyEmitter(const ElementGenerator& target_element_generator,
     return [=](const llvm_ir::IrArray::Index array_index) -> absl::Status {
       // Convert target_element_generator to a BodyEmitter.
       ABSL_ASSIGN_OR_RETURN(llvm::Value * target_element,
-                       target_element_generator(array_index));
+                            target_element_generator(array_index));
       target_arrays_vec[0].EmitWriteArrayElement(array_index, target_element,
                                                  b);
       return absl::OkStatus();
@@ -97,7 +97,7 @@ BodyEmitter MakeBodyEmitter(const ElementGenerator& target_element_generator,
 
   return [=](const llvm_ir::IrArray::Index array_index) {
     ABSL_ASSIGN_OR_RETURN(llvm::Value * target_element,
-                     target_element_generator(array_index));
+                          target_element_generator(array_index));
     CHECK(target_element->getType()->isStructTy())
         << "This BodyEmitter is for multi-output, but target element "
            "generator does not produce values of struct type.";

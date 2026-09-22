@@ -74,7 +74,7 @@ cufftType CUDAFftType(fft::Type type) {
 }
 
 // Associates the given stream with the given cuFFT plan.
-bool SetStream(StreamExecutor *parent, cufftHandle plan, Stream *stream) {
+bool SetStream(StreamExecutor* parent, cufftHandle plan, Stream* stream) {
   std::unique_ptr<ActivateContext> activation = parent->Activate();
   auto ret = cufftSetStream(
       plan,
@@ -104,10 +104,10 @@ absl::StatusOr<std::array<int32_t, 3>> Downsize64bArray(
 }  // namespace
 
 absl::Status CUDAFftPlan::Initialize(
-    StreamExecutor *parent, Stream *stream, int rank, uint64_t *elem_count,
-    uint64_t *input_embed, uint64_t input_stride, uint64_t input_distance,
-    uint64_t *output_embed, uint64_t output_stride, uint64_t output_distance,
-    fft::Type type, int batch_count, ScratchAllocator *scratch_allocator) {
+    StreamExecutor* parent, Stream* stream, int rank, uint64_t* elem_count,
+    uint64_t* input_embed, uint64_t input_stride, uint64_t input_distance,
+    uint64_t* output_embed, uint64_t output_stride, uint64_t output_distance,
+    fft::Type type, int batch_count, ScratchAllocator* scratch_allocator) {
   if (IsInitialized()) {
     return absl::InternalError("cuFFT is already initialized.");
   }
@@ -220,11 +220,11 @@ absl::Status CUDAFftPlan::Initialize(
     if (scratch_allocator == nullptr) {
       // Downsize 64b arrays to 32b as there's no 64b version of cufftPlanMany
       ABSL_ASSIGN_OR_RETURN(auto elem_count_32b_,
-                       Downsize64bArray(elem_count_, rank));
+                            Downsize64bArray(elem_count_, rank));
       ABSL_ASSIGN_OR_RETURN(auto input_embed_32b_,
-                       Downsize64bArray(input_embed_, rank));
+                            Downsize64bArray(input_embed_, rank));
       ABSL_ASSIGN_OR_RETURN(auto output_embed_32b_,
-                       Downsize64bArray(output_embed_, rank));
+                            Downsize64bArray(output_embed_, rank));
       auto ret = cufftPlanMany(
           &plan_, rank, elem_count_32b_.data(),
           input_embed ? input_embed_32b_.data() : nullptr, input_stride,
@@ -264,7 +264,7 @@ absl::Status CUDAFftPlan::Initialize(
 }
 
 absl::Status CUDAFftPlan::UpdateScratchAllocator(
-    Stream *stream, ScratchAllocator *scratch_allocator) {
+    Stream* stream, ScratchAllocator* scratch_allocator) {
   scratch_allocator_ = scratch_allocator;
 
   if (scratch_size_bytes_ != 0) {
@@ -311,10 +311,10 @@ int CUDAFftPlan::GetFftDirection() const {
 }
 
 std::unique_ptr<fft::Plan> CUDAFft::CreateBatchedPlanWithScratchAllocator(
-    Stream *stream, int rank, uint64_t *elem_count, uint64_t *input_embed,
-    uint64_t input_stride, uint64_t input_distance, uint64_t *output_embed,
+    Stream* stream, int rank, uint64_t* elem_count, uint64_t* input_embed,
+    uint64_t input_stride, uint64_t input_distance, uint64_t* output_embed,
     uint64_t output_stride, uint64_t output_distance, fft::Type type,
-    bool in_place_fft, int batch_count, ScratchAllocator *scratch_allocator) {
+    bool in_place_fft, int batch_count, ScratchAllocator* scratch_allocator) {
   std::unique_ptr<CUDAFftPlan> fft_plan_ptr{new CUDAFftPlan()};
   absl::Status status = fft_plan_ptr->Initialize(
       parent_, stream, rank, elem_count, input_embed, input_stride,
@@ -339,8 +339,8 @@ std::unique_ptr<fft::Plan> CUDAFft::CreateBatchedPlanWithScratchAllocator(
 }
 
 void CUDAFft::UpdatePlanWithScratchAllocator(
-    Stream *stream, fft::Plan *plan, ScratchAllocator *scratch_allocator) {
-  CUDAFftPlan *cuda_fft_plan = dynamic_cast<CUDAFftPlan *>(plan);
+    Stream* stream, fft::Plan* plan, ScratchAllocator* scratch_allocator) {
+  CUDAFftPlan* cuda_fft_plan = dynamic_cast<CUDAFftPlan*>(plan);
   absl::Status status =
       cuda_fft_plan->UpdateScratchAllocator(stream, scratch_allocator);
   if (!status.ok()) {
@@ -353,7 +353,7 @@ template <typename FuncT, typename InputT, typename OutputT>
 bool CUDAFft::DoFftInternal(Stream* stream, fft::Plan* plan, FuncT cufftExec,
                             const DeviceAddress<InputT>& input,
                             DeviceAddress<OutputT>* output) {
-  CUDAFftPlan *cuda_fft_plan = dynamic_cast<CUDAFftPlan *>(plan);
+  CUDAFftPlan* cuda_fft_plan = dynamic_cast<CUDAFftPlan*>(plan);
 
   DeviceAddress<InputT> input_maybe_copy = input;
 
@@ -376,7 +376,7 @@ bool CUDAFft::DoFftInternal(Stream* stream, fft::Plan* plan, FuncT cufftExec,
       (std::is_same<OutputT, float>::value ||
        std::is_same<OutputT, double>::value) &&
       input.size() > 0) {
-    auto *allocator = cuda_fft_plan->GetScratchAllocator();
+    auto* allocator = cuda_fft_plan->GetScratchAllocator();
     if (allocator) {
       auto allocated = allocator->AllocateBytes(input.size());
       if (allocated.ok()) {
@@ -394,7 +394,7 @@ bool CUDAFft::DoFftInternal(Stream* stream, fft::Plan* plan, FuncT cufftExec,
   std::unique_ptr<ActivateContext> activation = parent_->Activate();
   auto ret =
       cufftExec(cuda_fft_plan->GetPlan(),
-                CUDAComplex(const_cast<InputT *>(GpuMemory(input_maybe_copy))),
+                CUDAComplex(const_cast<InputT*>(GpuMemory(input_maybe_copy))),
                 CUDAComplex(GpuMemoryMutable(output)));
 
   if (ret != CUFFT_SUCCESS) {
@@ -410,7 +410,7 @@ bool CUDAFft::DoFftWithDirectionInternal(Stream* stream, fft::Plan* plan,
                                          FuncT cufftExec,
                                          const DeviceAddress<InputT>& input,
                                          DeviceAddress<OutputT>* output) {
-  CUDAFftPlan *cuda_fft_plan = dynamic_cast<CUDAFftPlan *>(plan);
+  CUDAFftPlan* cuda_fft_plan = dynamic_cast<CUDAFftPlan*>(plan);
   if (cuda_fft_plan == nullptr) {
     LOG(ERROR) << "The passed-in plan is not a CUDAFftPlan object.";
     return false;
@@ -422,7 +422,7 @@ bool CUDAFft::DoFftWithDirectionInternal(Stream* stream, fft::Plan* plan,
 
   std::unique_ptr<ActivateContext> activation = parent_->Activate();
   auto ret = cufftExec(cuda_fft_plan->GetPlan(),
-                       CUDAComplex(const_cast<InputT *>(GpuMemory(input))),
+                       CUDAComplex(const_cast<InputT*>(GpuMemory(input))),
                        CUDAComplex(GpuMemoryMutable(output)),
                        cuda_fft_plan->GetFftDirection());
 
@@ -474,7 +474,7 @@ void initialize_cufft() {
   absl::Status status =
       PluginRegistry::Instance()->RegisterFactory<PluginRegistry::FftFactory>(
           cuda::kCudaPlatformId, "cuFFT",
-          [](StreamExecutor *parent) -> fft::FftSupport * {
+          [](StreamExecutor* parent) -> fft::FftSupport* {
             return new gpu::CUDAFft(parent);
           });
   if (!status.ok()) {

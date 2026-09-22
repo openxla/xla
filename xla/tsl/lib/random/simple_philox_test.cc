@@ -42,8 +42,8 @@ TEST(SimplePhiloxTest, FloatTest) {
   }
 }
 
-static void DifferenceTest(const char *names, SimplePhilox *gen1,
-                           SimplePhilox *gen2) {
+static void DifferenceTest(const char* names, SimplePhilox* gen1,
+                           SimplePhilox* gen2) {
   static const int kIters = 100;
   bool different = false;
   for (int i = 0; i < kIters; ++i) {

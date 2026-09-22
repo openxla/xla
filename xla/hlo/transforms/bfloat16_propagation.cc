@@ -30,6 +30,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
@@ -51,9 +54,6 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -319,19 +319,19 @@ void BFloat16Propagation::DetermineAsyncComputationsPrecision(
   if (wrapped_comp == nullptr || root == nullptr || done == nullptr) {
     return;
   }
-  ShapeUtil::ForEachSubshape(root->shape(), [&](const Shape& subshape,
-                                                const ShapeIndex& index) {
-    if (subshape.element_type() != F32) {
-      return;
-    }
-    if (OutputTypeAfterChange(done, index) == BF16) {
-      AddToOrRemoveFromBF16ChangeSet(root, index, BF16);
-      VLOG(2) << "Async wrapped computation root " << root->ToString()
-              << " at shape index " << index
-              << " changed to BF16 precision for async start "
-              << async_start->ToString();
-    }
-  });
+  ShapeUtil::ForEachSubshape(
+      root->shape(), [&](const Shape& subshape, const ShapeIndex& index) {
+        if (subshape.element_type() != F32) {
+          return;
+        }
+        if (OutputTypeAfterChange(done, index) == BF16) {
+          AddToOrRemoveFromBF16ChangeSet(root, index, BF16);
+          VLOG(2) << "Async wrapped computation root " << root->ToString()
+                  << " at shape index " << index
+                  << " changed to BF16 precision for async start "
+                  << async_start->ToString();
+        }
+      });
   auto insts = wrapped_comp->MakeInstructionPostOrder();
   for (auto inst_it = insts.rbegin(); inst_it != insts.rend(); ++inst_it) {
     DetermineInstructionPrecision(*inst_it, /*skip_parameters=*/false);
@@ -1277,7 +1277,7 @@ absl::Status BFloat16Propagation::ResolveConvertedConstants(HloModule* module) {
       if (!Shape::Equal().MinorToMajorOnlyInLayout()(hlo->literal().shape(),
                                                      hlo->shape())) {
         ABSL_ASSIGN_OR_RETURN(auto converted_literal,
-                         hlo->literal().ConvertToShape(hlo->shape()));
+                              hlo->literal().ConvertToShape(hlo->shape()));
         auto new_constant = computation->AddInstruction(
             HloInstruction::CreateConstant(std::move(converted_literal)));
         UpdateLayout(new_constant->mutable_shape());
@@ -1373,7 +1373,17 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(dataflow_, HloDataflowAnalysis::Run(*module));
+  // The backward pass and ResolveInconsistencyOfAliasingBuffers read the uses
+  // of the F32 values before the module is mutated, so those are computed up
+  // front in one linear pass; any other value keeps its lazy computation.
+  ABSL_ASSIGN_OR_RETURN(
+      dataflow_,
+      HloDataflowAnalysis::Run(
+          *module, /*ssa_form=*/false, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/true,
+          /*precompute_uses=*/[](const HloValue& value) {
+            return value.shape().element_type() == F32;
+          }));
 
   // The first step is a forward pass (parameters to root), where we determine
   // the potential candidate instructions to use bfloat16 in the outputs that
@@ -1412,6 +1422,10 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
   // defining instruction's shape has changed. So we need to adjust the output
   // shapes of instructions according to the HLO values they refer to.
   ResolveInconsistencyOfAliasingBuffers(module);
+
+  // From here on the module is rewritten and the analysis no longer describes
+  // it; drop it so a later read fails instead of returning stale values.
+  dataflow_.reset();
 
   // Apply the changes in changes_to_bf16_.
   for (auto& change : changes_to_bf16_) {
@@ -1463,7 +1477,8 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
   auto clean_up = [this, module]() -> absl::Status {
     ABSL_RETURN_IF_ERROR(SkipNoopConversions(module));
     TupleSimplifier tuple_simplifier;
-    ABSL_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads_).status());
+    ABSL_RETURN_IF_ERROR(
+        tuple_simplifier.Run(module, execution_threads_).status());
     HloDCE dce;
     ABSL_RETURN_IF_ERROR(dce.Run(module, execution_threads_).status());
     return absl::OkStatus();

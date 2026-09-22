@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/scatter_simplifier.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 
-#include <gmock/gmock.h>
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"

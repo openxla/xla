@@ -15,10 +15,11 @@ limitations under the License.
 
 // Verifies that oneDNN's ONEDNN_VERBOSE environment variable is functional.
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/array2d.h"

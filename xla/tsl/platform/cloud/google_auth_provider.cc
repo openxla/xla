@@ -41,9 +41,9 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/synchronization/mutex.h"
 #include "json/json.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/path.h"
 
 namespace tsl {
 

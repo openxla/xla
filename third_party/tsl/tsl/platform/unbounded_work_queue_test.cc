@@ -20,10 +20,10 @@ limitations under the License.
 
 #include "absl/memory/memory.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/random.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 namespace {

@@ -41,9 +41,10 @@ absl::StatusOr<std::unique_ptr<Executable>> CompileToExecutable(
     Compiler* compiler, const Compiler::CompileOptions& compile_options,
     std::unique_ptr<HloModule> hlo_module, bool run_optimization_passes) {
   if (run_optimization_passes) {
-    ABSL_ASSIGN_OR_RETURN(hlo_module, compiler->RunHloPasses(std::move(hlo_module),
-                                                        /*executor=*/nullptr,
-                                                        compile_options));
+    ABSL_ASSIGN_OR_RETURN(
+        hlo_module,
+        compiler->RunHloPasses(std::move(hlo_module),
+                               /*executor=*/nullptr, compile_options));
   }
   return compiler->RunBackend(std::move(hlo_module), /*executor=*/nullptr,
                               compile_options);
@@ -106,9 +107,10 @@ absl::Status CompileAndVerifyIr(LLVMCompiler* compiler,
   if (run_optimization_passes) {
     // Run optimization passes before we set the hook so that we don't capture
     // intermediate compilations from autotuner.
-    ABSL_ASSIGN_OR_RETURN(hlo_module, compiler->RunHloPasses(std::move(hlo_module),
-                                                        /*executor=*/nullptr,
-                                                        compile_options));
+    ABSL_ASSIGN_OR_RETURN(
+        hlo_module,
+        compiler->RunHloPasses(std::move(hlo_module),
+                               /*executor=*/nullptr, compile_options));
   }
 
   if (!match_ir_from_hlo_passes) {
@@ -116,12 +118,13 @@ absl::Status CompileAndVerifyIr(LLVMCompiler* compiler,
   }
 
   ABSL_RETURN_IF_ERROR(compiler
-                      ->RunBackend(std::move(hlo_module), /*executor=*/nullptr,
-                                   compile_options)
-                      .status());
+                           ->RunBackend(std::move(hlo_module),
+                                        /*executor=*/nullptr, compile_options)
+                           .status());
 
-  ABSL_ASSIGN_OR_RETURN(bool succeeded,
-                   RunFileCheck(FileCheckInput(hook_handler->ir()), pattern));
+  ABSL_ASSIGN_OR_RETURN(
+      bool succeeded,
+      RunFileCheck(FileCheckInput(hook_handler->ir()), pattern));
   if (!succeeded) {
     return absl::InternalError(
         absl::StrCat("FileCheck failed. Full IR: ", hook_handler->ir()));
@@ -139,8 +142,8 @@ absl::Status CompileAheadOfTimeAndVerifyIr(
       compiler->CompileAheadOfTime(std::move(hlo_module), aot_options)
           .status());
 
-  ABSL_ASSIGN_OR_RETURN(bool succeeded,
-                   RunFileCheck(FileCheckInput(hook_handler.ir()), pattern));
+  ABSL_ASSIGN_OR_RETURN(
+      bool succeeded, RunFileCheck(FileCheckInput(hook_handler.ir()), pattern));
   if (!succeeded) {
     return absl::InternalError(
         absl::StrCat("FileCheck failed. Full IR: ", hook_handler.ir()));

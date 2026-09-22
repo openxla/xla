@@ -14,9 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/pjrt/c/pjrt_c_api_cpu.h"
 
+#include <gtest/gtest.h>
+
 #include <cstring>
 
-#include <gtest/gtest.h>
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_test.h"
 

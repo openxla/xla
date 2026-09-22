@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/rng_state_lib.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "absl/numeric/int128.h"
 
 namespace xla::cpu {

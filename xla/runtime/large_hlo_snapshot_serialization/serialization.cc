@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/literal.h"
 #include "xla/runtime/large_hlo_snapshot_serialization/coded_stream_iterators.h"
 #include "xla/service/hlo.pb.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -49,7 +49,7 @@ absl::Status SerializeHloUnoptimizedSnapshot(
     for (const auto& argument : partition.arguments()) {
       ABSL_ASSIGN_OR_RETURN(auto shape, Shape::FromProto(argument.shape()));
       ABSL_ASSIGN_OR_RETURN(int64_t serialized_size,
-                       ShapeUtil::SerializedSize(shape));
+                            ShapeUtil::SerializedSize(shape));
       partition_metadata->add_arguments_descriptors()->set_argument_size_bytes(
           serialized_size);
     }
@@ -65,7 +65,7 @@ absl::Status SerializeHloUnoptimizedSnapshot(
   for (const auto& hlo_input : snapshot.partitions()) {
     for (const auto& literal_proto : hlo_input.arguments()) {
       ABSL_ASSIGN_OR_RETURN(Literal literal,
-                       xla::Literal::CreateFromProto(literal_proto));
+                            xla::Literal::CreateFromProto(literal_proto));
       ABSL_RETURN_IF_ERROR(literal.Serialize(output_it));
     }
   }

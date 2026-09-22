@@ -75,10 +75,12 @@ absl::StatusOr<ExecutionStateProto> ExecutionState::ToProto() const {
                            state_.get_deleter().type_id);
   }
 
-  ABSL_ASSIGN_OR_RETURN(absl::string_view type_name,
-                   TypeRegistry::GetTypeName(state_.get_deleter().type_id));
-  ABSL_ASSIGN_OR_RETURN(std::string state,
-                   state_.get_deleter().type_info.serializer(state_.get()));
+  ABSL_ASSIGN_OR_RETURN(
+      absl::string_view type_name,
+      TypeRegistry::GetTypeName(state_.get_deleter().type_id));
+  ABSL_ASSIGN_OR_RETURN(
+      std::string state,
+      state_.get_deleter().type_info.serializer(state_.get()));
 
   ExecutionStateProto proto;
   proto.set_type_name(type_name);
@@ -93,7 +95,8 @@ absl::StatusOr<ExecutionState> ExecutionState::FromProto(
     return state;
   }
 
-  ABSL_ASSIGN_OR_RETURN(TypeId type_id, TypeRegistry::GetTypeId(proto.type_name()));
+  ABSL_ASSIGN_OR_RETURN(TypeId type_id,
+                        TypeRegistry::GetTypeId(proto.type_name()));
   ABSL_ASSIGN_OR_RETURN(TypeInfo type_info, TypeRegistry::GetTypeInfo(type_id));
 
   if (!type_info.deserializer) {
@@ -102,7 +105,8 @@ absl::StatusOr<ExecutionState> ExecutionState::FromProto(
         proto.type_name());
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto opaque_state, type_info.deserializer(proto.state()));
+  ABSL_ASSIGN_OR_RETURN(auto opaque_state,
+                        type_info.deserializer(proto.state()));
   ABSL_RETURN_IF_ERROR(state.Set(type_id, type_info, opaque_state.release()));
   return state;
 }

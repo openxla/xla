@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/dynamic_dimension_inference.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -60,9 +61,9 @@ class DynamicDimensionInferenceTest : public HloHardwareIndependentTestBase {
       const DynamicDimensionInference::AssertionGenerator& assertion_generator =
           nullptr) {
     ABSL_ASSIGN_OR_RETURN(DynamicDimensionInference inference,
-                     DynamicDimensionInference::Run(
-                         module_.get(), op_supports_dynamism_handler, handler,
-                         shape_check_mode, assertion_generator));
+                          DynamicDimensionInference::Run(
+                              module_.get(), op_supports_dynamism_handler,
+                              handler, shape_check_mode, assertion_generator));
 
     inference_ = std::make_unique<DynamicDimensionInference>(inference);
     return absl::OkStatus();

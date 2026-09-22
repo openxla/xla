@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu_compilation_environment.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/service/compilation_environments.h"

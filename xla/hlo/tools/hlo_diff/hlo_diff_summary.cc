@@ -34,6 +34,7 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -46,7 +47,6 @@
 #include "xla/hlo/tools/hlo_diff/utils/bidirectional_map.h"
 #include "xla/hlo/tools/hlo_diff/utils/connected_components.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace hlo_diff {
@@ -403,9 +403,9 @@ absl::StatusOr<std::unique_ptr<const DiffSummary>> ConstructDiffSummary(
     const HloModule& left_module, const HloModule& right_module,
     const DiffResult& diff_result) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<const HloGumgraph> graph_l,
-                   HloGumgraph::Create(&left_module));
+                        HloGumgraph::Create(&left_module));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<const HloGumgraph> graph_r,
-                   HloGumgraph::Create(&right_module));
+                        HloGumgraph::Create(&right_module));
   return ConstructDiffSummary(*graph_l, *graph_r, diff_result);
 }
 

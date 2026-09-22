@@ -20,10 +20,10 @@ limitations under the License.
 
 #include <array>
 
-#include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/types.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 namespace tracing {

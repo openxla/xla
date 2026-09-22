@@ -46,6 +46,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/python/ifrt/array.h"
@@ -70,7 +71,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -452,8 +452,8 @@ struct CallLoadedExecutableOpState {
     }
 
     ABSL_ASSIGN_OR_RETURN(ExecuteResult result,
-                     executable->Execute(absl::MakeSpan(inputs), options,
-                                         /*devices=*/std::nullopt));
+                          executable->Execute(absl::MakeSpan(inputs), options,
+                                              /*devices=*/std::nullopt));
     TF_RET_CHECK(result.outputs.size() == output_handles.size())
         << "Got " << result.outputs.size() << " results, but atom program has "
         << output_handles.size() << ". " << pretty_print;
@@ -724,11 +724,12 @@ struct RemapArraysOpState {
     }
 
     // Apply the remap arrays operation.
-    ABSL_ASSIGN_OR_RETURN(auto out_arrays,
-                     env.client->RemapArrays(
-                         remap_plan, absl::MakeSpan(inputs),
-                         remap_is_donated ? ArrayCopySemantics::kDonateInput
-                                          : ArrayCopySemantics::kReuseInput));
+    ABSL_ASSIGN_OR_RETURN(
+        auto out_arrays,
+        env.client->RemapArrays(remap_plan, absl::MakeSpan(inputs),
+                                remap_is_donated
+                                    ? ArrayCopySemantics::kDonateInput
+                                    : ArrayCopySemantics::kReuseInput));
 
     for (const auto handle : arrays_to_remove) {
       // Donated remapped arrays are pro-actively deleted, and aliased arrays
@@ -768,8 +769,9 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
   input_specs.reserve(remap_op.getInputs().size());
   for (const mlir::Value input : remap_op.getInputs()) {
     state.input_handles.push_back(ToArrayHandle(input));
-    ABSL_ASSIGN_OR_RETURN(ArraySpec spec,
-                     ArraySpecFromMlirType(input.getType(), client_, devices_));
+    ABSL_ASSIGN_OR_RETURN(
+        ArraySpec spec,
+        ArraySpecFromMlirType(input.getType(), client_, devices_));
     input_specs.push_back(std::move(spec));
     if (liveness_.isDeadAfter(input, remap_op)) {
       state.dead_inputs.insert(ToArrayHandle(input));
@@ -780,14 +782,15 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
   std::vector<ArraySpec> output_specs;
   output_specs.reserve(remap_op.getOutputs().size());
   for (const mlir::Value output : remap_op.getOutputs()) {
-    ABSL_ASSIGN_OR_RETURN(ArraySpec spec, ArraySpecFromMlirType(output.getType(),
-                                                           client_, devices_));
+    ABSL_ASSIGN_OR_RETURN(
+        ArraySpec spec,
+        ArraySpecFromMlirType(output.getType(), client_, devices_));
     output_specs.push_back(std::move(spec));
   }
 
   ABSL_ASSIGN_OR_RETURN(auto input_devices_for_output_map,
-                   ComputeInputDevicesForOutputMap(client_, input_specs,
-                                                   output_specs, remap_op));
+                        ComputeInputDevicesForOutputMap(
+                            client_, input_specs, output_specs, remap_op));
 
   state.remap_plan = RemapPlan(std::move(input_specs), std::move(output_specs),
                                std::move(input_devices_for_output_map));
@@ -875,11 +878,12 @@ struct BitcastArraysOpState {
       }
     }
 
-    ABSL_ASSIGN_OR_RETURN(std::vector<ArrayRef> bitcast_arrays,
-                     env.client->BitcastArrays(
-                         absl::MakeSpan(inputs), absl::MakeSpan(output_specs),
-                         bitcast_is_donated ? ArrayCopySemantics::kDonateInput
-                                            : ArrayCopySemantics::kReuseInput));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<ArrayRef> bitcast_arrays,
+        env.client->BitcastArrays(
+            absl::MakeSpan(inputs), absl::MakeSpan(output_specs),
+            bitcast_is_donated ? ArrayCopySemantics::kDonateInput
+                               : ArrayCopySemantics::kReuseInput));
 
     for (const auto handle : arrays_to_remove) {
       // Donated bitcast arrays are proactively deleted, and aliased arrays
@@ -925,8 +929,9 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
     const ArrayHandle handle =
         output.use_empty() ? kArrayNotUsed : ToArrayHandle(output);
     state.output_handles.push_back(handle);
-    ABSL_ASSIGN_OR_RETURN(ArraySpec spec, ArraySpecFromMlirType(output.getType(),
-                                                           client_, devices_));
+    ABSL_ASSIGN_OR_RETURN(
+        ArraySpec spec,
+        ArraySpecFromMlirType(output.getType(), client_, devices_));
     state.output_specs.push_back(std::move(spec));
   }
 
@@ -1008,11 +1013,12 @@ struct CopyArraysOpState {
                              absl::StrAppend(out, array->DebugString());
                            })
           << " (this warning is logged only at most 5 times)." << pretty_print;
-      ABSL_ASSIGN_OR_RETURN(std::vector<ArrayRef> copied_arrays,
-                       env.client->CopyArrays(absl::MakeSpan(arrays_to_copy),
-                                              /*devices=*/std::nullopt,
-                                              /*memory_kind=*/std::nullopt,
-                                              ArrayCopySemantics::kAlwaysCopy));
+      ABSL_ASSIGN_OR_RETURN(
+          std::vector<ArrayRef> copied_arrays,
+          env.client->CopyArrays(absl::MakeSpan(arrays_to_copy),
+                                 /*devices=*/std::nullopt,
+                                 /*memory_kind=*/std::nullopt,
+                                 ArrayCopySemantics::kAlwaysCopy));
       for (int i = 0; i < array_idxs_to_copy.size(); ++i) {
         inputs[array_idxs_to_copy[i]] = std::move(copied_arrays[i]);
       }
@@ -1077,9 +1083,9 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
   }
 
   ABSL_ASSIGN_OR_RETURN(state.new_sharding,
-                   ShardingFromIfrtArrayType(
-                       GetArrayType(copy_arrays_op.getOutputs().front()),
-                       client_, devices_));
+                        ShardingFromIfrtArrayType(
+                            GetArrayType(copy_arrays_op.getOutputs().front()),
+                            client_, devices_));
 
   for (const auto output : copy_arrays_op.getOutputs()) {
     const ArrayHandle handle =

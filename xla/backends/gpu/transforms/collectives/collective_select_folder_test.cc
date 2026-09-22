@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_select_folder.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <initializer_list>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"

@@ -15,19 +15,20 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/tma_metadata.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <cstdint>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/stream_executor/gpu/tma_metadata.pb.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"
 
 namespace stream_executor::gpu {
 namespace {

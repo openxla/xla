@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/reduce_window_rewriter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/tsl/platform/statusor.h"
@@ -692,6 +693,42 @@ ENTRY entry (arg: s64[<=256]) -> s64[<=256] {
 // CHECK-NOT: map(
 // CHECK: reduce-window({{.*}}), window={size=256x1 pad=255_0x0_0}
 // CHECK-NOT: map(
+)");
+}
+
+TEST_F(ReduceWindowRewriterTest, MultipleScansAreSupported) {
+  CheckScanRewrite(R"(
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  add = s32[] add(lhs, rhs)
+  t = (s32[], s32[]) tuple(add, add)
+}
+
+scan_a {
+  arg = s32[256] parameter(0)
+  zero = s32[] constant(0)
+  scan = (s32[256], s32[]) scan(arg, zero), dimensions={0},
+    num_carries=1, to_apply=add_s32, is_associative=true
+  r = s32[256] get-tuple-element(scan), index=0
+}
+
+scan_b {
+  arg = s32[256] parameter(0)
+  zero = s32[] constant(0)
+  scan = (s32[256], s32[]) scan(arg, zero), dimensions={0},
+    num_carries=1, to_apply=add_s32, is_associative=true
+  r = s32[256] get-tuple-element(scan), index=0
+}
+
+entry {
+  arg = s32[256] parameter(0)
+  a = s32[256] call(arg), to_apply=scan_a
+  b = s32[256] call(arg), to_apply=scan_b
+  r = (s32[256], s32[256]) tuple(a, b)
+})",
+                   R"(
+// CHECK-NOT: scan(
 )");
 }
 

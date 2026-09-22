@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/service/dynamic_padder.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

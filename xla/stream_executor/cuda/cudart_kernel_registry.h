@@ -90,9 +90,10 @@ template <typename ReturnT, typename... Args>
 absl::StatusOr<KernelLoaderSpec> FindCudaRuntimeKernel(
     ReturnT (*host_fun)(Args...),
     const CudaComputeCapability& compute_capability) {
-  ABSL_ASSIGN_OR_RETURN(CudaRuntimeKernel kernel,
-                   FindCudaRuntimeKernel(absl::bit_cast<const void*>(host_fun),
-                                         compute_capability));
+  ABSL_ASSIGN_OR_RETURN(
+      CudaRuntimeKernel kernel,
+      FindCudaRuntimeKernel(absl::bit_cast<const void*>(host_fun),
+                            compute_capability));
   return KernelLoaderSpec::CreateCudaCubinInMemorySpec(
       kernel.cubin, std::string(kernel.name), sizeof...(Args));
 }

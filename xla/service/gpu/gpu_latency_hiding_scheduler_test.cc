@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -93,9 +94,9 @@ class GpuLatencyHidingSchedulerBaseTest
     options.set_xla_gpu_pgle_accuracy_checker(strictness);
 
     ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, /*pointer_size=*/8,
-                                      gpu_device_info, &mlir_context_,
-                                      &alias_info)
-                        .status());
+                                           gpu_device_info, &mlir_context_,
+                                           &alias_info)
+                             .status());
     return module;
   }
 

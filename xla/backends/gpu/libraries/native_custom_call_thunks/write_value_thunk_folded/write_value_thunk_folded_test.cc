@@ -18,12 +18,13 @@ limitations under the License.
 // custom call wrote the expected value to every output element. Mirrors the FFI
 // AOT example test in backends/gpu/ffi/xla_ffi_aot_custom_call_test.cc.
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/executable_run_options.h"
 #include "xla/literal.h"

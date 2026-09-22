@@ -122,7 +122,7 @@ absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& shape_proto) {
           "Buffer shape must have exactly one tuple shape.");
     }
     ABSL_ASSIGN_OR_RETURN(Shape buffer_shape,
-                     Shape::FromProto(shape_proto.tuple_shapes(0)));
+                          Shape::FromProto(shape_proto.tuple_shapes(0)));
     if (!buffer_shape.IsArrayExcludingBuffer()) {
       return absl::InvalidArgumentError("Buffer shape must have array shape.");
     }
@@ -133,7 +133,7 @@ absl::StatusOr<Shape> Shape::FromProto(const ShapeProto& shape_proto) {
                                   << PrimitiveType_Name(shape.element_type())
                                   << " should not have a layout.";
     ABSL_ASSIGN_OR_RETURN(*shape.mutable_layout(),
-                     Layout::FromProto(shape_proto.layout()));
+                          Layout::FromProto(shape_proto.layout()));
   }
   return shape;
 }
@@ -539,11 +539,11 @@ absl::StatusOr<ProgramShape> ProgramShape::FromProto(
     const std::string& name =
         i < num_param_names ? program_shape_proto.parameter_names(i) : "";
     ABSL_ASSIGN_OR_RETURN(Shape shape,
-                     Shape::FromProto(program_shape_proto.parameters(i)));
+                          Shape::FromProto(program_shape_proto.parameters(i)));
     program_shape.AddParameter(shape, name);
   }
   ABSL_ASSIGN_OR_RETURN(*program_shape.mutable_result(),
-                   Shape::FromProto(program_shape_proto.result()));
+                        Shape::FromProto(program_shape_proto.result()));
   return program_shape;
 }
 

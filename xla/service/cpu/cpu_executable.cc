@@ -39,6 +39,9 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/denormal.h"
+#include "tsl/platform/setround.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
@@ -74,9 +77,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/denormal.h"
-#include "tsl/platform/setround.h"
-#include "tsl/profiler/lib/traceme.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -182,8 +182,9 @@ static absl::StatusOr<MaybeOwningDeviceAddress> MemoryForAllocation(
   }
 
   int64_t buffer_size = allocation.size();
-  ABSL_ASSIGN_OR_RETURN(se::ScopedDeviceAddress<uint8_t> out,
-                   memory_allocator->Allocate(device_ordinal, buffer_size));
+  ABSL_ASSIGN_OR_RETURN(
+      se::ScopedDeviceAddress<uint8_t> out,
+      memory_allocator->Allocate(device_ordinal, buffer_size));
   VLOG(3) << "buffer allocated " << buffer_size << " bytes [" << out->opaque()
           << "]";
 
@@ -206,14 +207,14 @@ CpuExecutable::CreateBufferTable(se::DeviceAddressAllocator* memory_allocator,
   for (BufferAllocation::Index i = 0; i < assignment_->Allocations().size();
        ++i) {
     const BufferAllocation& allocation = assignment_->GetAllocation(i);
-    ABSL_ASSIGN_OR_RETURN(buffers[i],
-                     MemoryForAllocation(allocation, arguments, constants_,
-                                         memory_allocator, device_ordinal));
+    ABSL_ASSIGN_OR_RETURN(
+        buffers[i], MemoryForAllocation(allocation, arguments, constants_,
+                                        memory_allocator, device_ordinal));
   }
 
   if (VLOG_IS_ON(3)) {
     ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice result_slice,
-                     assignment_->GetUniqueTopLevelOutputSlice());
+                          assignment_->GetUniqueTopLevelOutputSlice());
     VLOG(3) << "result index: " << result_slice.index();
   }
   return std::move(buffers);
@@ -261,12 +262,14 @@ absl::Status CpuExecutable::ExecuteThunks(
   }
 
   // Prepare for executing XLA program collectively.
-  ABSL_ASSIGN_OR_RETURN(Thunk::CollectiveExecuteParams collective_execute_params,
-                   Thunk::CollectiveExecuteParams::Create(run_options));
+  ABSL_ASSIGN_OR_RETURN(
+      Thunk::CollectiveExecuteParams collective_execute_params,
+      Thunk::CollectiveExecuteParams::Create(run_options));
 
   // Prepare for executing XLA custom calls.
-  ABSL_ASSIGN_OR_RETURN(Thunk::CustomCallExecuteParams custom_call_execute_params,
-                   Thunk::CustomCallExecuteParams::Create(run_options));
+  ABSL_ASSIGN_OR_RETURN(
+      Thunk::CustomCallExecuteParams custom_call_execute_params,
+      Thunk::CustomCallExecuteParams::Create(run_options));
 
   // Prepare for executing YNNPACK fusions.
   std::optional<Thunk::YnnParams> ynn_params;

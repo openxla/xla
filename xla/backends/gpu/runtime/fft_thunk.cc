@@ -296,14 +296,16 @@ absl::StatusOr<std::unique_ptr<FftThunk>> FftThunk::FromProto(
     ThunkInfo thunk_info, const FftThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice input_buffer,
-                   BufferAllocation::Slice::FromProto(proto.input_buffer(),
-                                                      buffer_allocations));
+                        BufferAllocation::Slice::FromProto(proto.input_buffer(),
+                                                           buffer_allocations));
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_buffer,
-                   BufferAllocation::Slice::FromProto(proto.output_buffer(),
-                                                      buffer_allocations));
+                        BufferAllocation::Slice::FromProto(
+                            proto.output_buffer(), buffer_allocations));
 
-  ABSL_ASSIGN_OR_RETURN(Shape input_shape, Shape::FromProto(proto.input_shape()));
-  ABSL_ASSIGN_OR_RETURN(Shape output_shape, Shape::FromProto(proto.output_shape()));
+  ABSL_ASSIGN_OR_RETURN(Shape input_shape,
+                        Shape::FromProto(proto.input_shape()));
+  ABSL_ASSIGN_OR_RETURN(Shape output_shape,
+                        Shape::FromProto(proto.output_shape()));
 
   std::vector<int64_t> fft_length{proto.fft_length().begin(),
                                   proto.fft_length().end()};
@@ -323,8 +325,10 @@ absl::StatusOr<ThunkProto> FftThunk::ToProto() const {
 
   *proto->mutable_fft_length() = {fft_length_.begin(), fft_length_.end()};
 
-  ABSL_ASSIGN_OR_RETURN(*proto->mutable_input_buffer(), input_buffer_.ToProto());
-  ABSL_ASSIGN_OR_RETURN(*proto->mutable_output_buffer(), output_buffer_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*proto->mutable_input_buffer(),
+                        input_buffer_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*proto->mutable_output_buffer(),
+                        output_buffer_.ToProto());
 
   *proto->mutable_input_shape() = input_shape_.ToProto();
   *proto->mutable_output_shape() = output_shape_.ToProto();

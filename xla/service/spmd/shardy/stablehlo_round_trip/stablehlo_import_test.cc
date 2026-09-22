@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "llvm/ADT/DenseMap.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/MLIRContext.h"

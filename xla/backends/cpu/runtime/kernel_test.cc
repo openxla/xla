@@ -15,14 +15,16 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/kernel.h"
 
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/match.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/runtime/kernel_c_api.h"
 #include "xla/runtime/work_group.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -31,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/cpu_info.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"

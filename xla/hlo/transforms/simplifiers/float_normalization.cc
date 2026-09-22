@@ -284,7 +284,7 @@ absl::Status FloatNormalizationVisitor::InsertConvertBeforeOperand(
     PrimitiveType to, HloComputation* computation) {
   auto operand = hlo->mutable_operand(operand_idx);
   ABSL_ASSIGN_OR_RETURN(auto new_operand,
-                   ConvertType(operand, from, to, computation));
+                        ConvertType(operand, from, to, computation));
   if (new_operand == operand) {
     return absl::OkStatus();
   }
@@ -313,8 +313,8 @@ absl::Status FloatNormalizationVisitor::ConvertCalledComputations(
   for (auto& comp_pair : cloned_computations) {
     auto comp = comp_pair.second;
     ABSL_RETURN_IF_ERROR(InsertConvertAfterOutput(comp->root_instruction(),
-                                             LowPrecisionType(),
-                                             HighPrecisionType(), comp));
+                                                  LowPrecisionType(),
+                                                  HighPrecisionType(), comp));
     for (auto* param : comp->parameter_instructions()) {
       // This changes the parameter to high-precision then inserts a convert
       // after it.

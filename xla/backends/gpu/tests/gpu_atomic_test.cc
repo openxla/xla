@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/tsl/lib/core/status_test_util.h"

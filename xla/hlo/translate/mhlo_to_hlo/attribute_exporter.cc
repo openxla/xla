@@ -542,7 +542,7 @@ ConvertReplicaGroups(mlir::Attribute replica_groups, mlir::Operation* op) {
   if (auto dense_attr =
           mlir::dyn_cast<mlir::DenseIntElementsAttr>(replica_groups)) {
     ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> groups,
-                     ConvertReplicaGroups(dense_attr));
+                          ConvertReplicaGroups(dense_attr));
     return std::make_unique<xla::CollectiveDeviceList>(std::move(groups));
   }
 
@@ -591,7 +591,8 @@ absl::StatusOr<std::vector<ReplicaGroup>> ConvertReplicaGroupsToV1(
           mlir::dyn_cast_or_null<mlir::DenseIntElementsAttr>(replica_groups)) {
     return ConvertReplicaGroups(dense_attr);
   }
-  ABSL_ASSIGN_OR_RETURN(auto device_list, ConvertReplicaGroups(replica_groups, op));
+  ABSL_ASSIGN_OR_RETURN(auto device_list,
+                        ConvertReplicaGroups(replica_groups, op));
   return device_list->replica_groups();
 }
 

@@ -75,9 +75,10 @@ CollectivePermuteThunk::Execute(const ExecuteParams& params) {
   Thunk::CollectiveExecuteParams* collective_params = params.collective_params;
   TF_RET_CHECK(collective_params) << "Collectives parameters are not set";
 
-  ABSL_ASSIGN_OR_RETURN(DeviceAssignment::LogicalID logical_id,
-                   collective_params->device_assignment->LogicalIdForDevice(
-                       collective_params->global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      DeviceAssignment::LogicalID logical_id,
+      collective_params->device_assignment->LogicalIdForDevice(
+          collective_params->global_device_id));
 
   int32_t logical_device_id = op_params().has_channel_id
                                   ? logical_id.computation_id

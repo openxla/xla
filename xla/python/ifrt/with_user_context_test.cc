@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/python/ifrt/with_user_context.h"
 
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"

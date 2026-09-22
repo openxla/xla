@@ -17,9 +17,10 @@
 #ifndef XLA_PYTHON_IFRT_PROXY_SERVER_MOCK_IFRT_BACKEND_H_
 #define XLA_PYTHON_IFRT_PROXY_SERVER_MOCK_IFRT_BACKEND_H_
 
+#include <gmock/gmock.h>
+
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/server/ifrt_backend.h"

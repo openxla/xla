@@ -14,9 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include "third_party/gpus/cuda/include/nvrtc.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
+#include "xla/tsl/platform/logging.h"
 
 // Implements the NVRTC API by forwarding to NVRTC loaded from the DSO.
 

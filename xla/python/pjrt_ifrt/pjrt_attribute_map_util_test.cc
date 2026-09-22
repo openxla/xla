@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/python/ifrt/attribute_map.h"

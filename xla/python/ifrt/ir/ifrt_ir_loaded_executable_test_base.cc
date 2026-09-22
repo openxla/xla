@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/ifrt_ir_loaded_executable_test_base.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -86,8 +87,9 @@ absl::StatusOr<LoadedExecutableRef>
 IfrtIrLoadedExecutableTestBase::CompileProgram(absl::string_view source,
                                                DeviceListRef devices) {
   auto context = std::make_unique<mlir::MLIRContext>();
-  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
-                   xla::ifrt::support::ParseMlirModuleString(source, *context));
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+      xla::ifrt::support::ParseMlirModuleString(source, *context));
   return client_->GetDefaultCompiler()
       ->CompileAndLoad(std::make_unique<xla::ifrt::IfrtIRProgram>(
                            std::move(context), std::move(mlir_module)),
@@ -127,8 +129,8 @@ IfrtIrLoadedExecutableTestBase::SerDeRoundTrip(
               mlir::sdy::SdyDialectVersion::getCurrentVersion().toString())));
 
   // Deserialize the versioned IFRT IR program.
-  ABSL_ASSIGN_OR_RETURN(program,
-                   Deserialize<IfrtIRProgram>(serialized, /*options=*/nullptr));
+  ABSL_ASSIGN_OR_RETURN(
+      program, Deserialize<IfrtIRProgram>(serialized, /*options=*/nullptr));
   return program;
 }
 
@@ -137,8 +139,9 @@ IfrtIrLoadedExecutableTestBase::CompileProgramWithSerDe(
     absl::string_view source, DeviceListRef devices,
     Version::CompatibilityRequirement compatibility_requirement) {
   auto context = std::make_unique<mlir::MLIRContext>();
-  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
-                   xla::ifrt::support::ParseMlirModuleString(source, *context));
+  ABSL_ASSIGN_OR_RETURN(
+      mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+      xla::ifrt::support::ParseMlirModuleString(source, *context));
   auto program = std::make_unique<xla::ifrt::IfrtIRProgram>(
       std::move(context), std::move(mlir_module));
   ABSL_ASSIGN_OR_RETURN(
