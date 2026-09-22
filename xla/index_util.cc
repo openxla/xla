@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "xla/layout_util.h"
 #include "xla/shape.h"
@@ -25,6 +26,34 @@ limitations under the License.
 #include "xla/util.h"
 
 namespace xla {
+
+/* static */ int64_t IndexUtil::MultidimensionalIndexToLinearIndex(
+    const Shape& shape, absl::Span<const int64_t> multi_index) {
+  return MultidimensionalIndexToLinearIndex(
+      shape, LayoutUtil::MinorToMajor(shape), multi_index);
+}
+
+/* static */ int64_t IndexUtil::MultidimensionalIndexToLinearIndex(
+    const Shape& shape, absl::Span<const int64_t> minor_to_major,
+    absl::Span<const int64_t> multi_index) {
+  for (size_t i = 0; i < multi_index.size(); ++i) {
+    DCHECK_GE(multi_index[i], 0);
+    DCHECK_LT(multi_index[i], shape.dimensions(i))
+        << "indexing beyond extent in dimension " << i << ":"
+        << "\n\tindex: " << absl::StrJoin(multi_index, ",")
+        << "\n\tshape: " << ShapeUtil::HumanString(shape);
+  }
+  if (minor_to_major.empty()) {
+    return 0;
+  }
+  int64_t linear_index = multi_index[minor_to_major[0]];
+  int64_t scale = 1;
+  for (int i = 1; i < minor_to_major.size(); ++i) {
+    scale *= shape.dimensions(minor_to_major[i - 1]);
+    linear_index += scale * multi_index[minor_to_major[i]];
+  }
+  return linear_index;
+}
 
 /* static */ DimensionVector IndexUtil::LinearIndexToMultidimensionalIndex(
     const Shape& shape, int64_t linear_index) {
