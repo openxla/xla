@@ -1758,7 +1758,11 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
           se::DeviceAddressBase(buffer->untyped_data(), buffer->size_bytes()));
     }
 
-    cpu::BufferAllocations allocations(buffer_device_mem);
+    cpu::BufferAllocations allocations(
+        buffer_device_mem, [&buffer_table](BufferAllocation::Index index) {
+          // The wait below keeps the borrowed table alive for async thunks.
+          return (*buffer_table)[index]->GetCacheIdentity();
+        });
 
     ABSL_ASSIGN_OR_RETURN(cpu::Thunk::CollectiveExecuteParams collective_params,
                      cpu::Thunk::CollectiveExecuteParams::Create(&run_options));
