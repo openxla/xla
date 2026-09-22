@@ -599,6 +599,24 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "onemkl_util_test",
+    srcs = ["onemkl_util_test.cc"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":onemkl_util_headers",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_sycl//sycl:sycl_headers",
+        "@oneapi//:libs",
+    ],
+)
+
 cc_library(
     name = "onednn_util",
     srcs = ["onednn_util.cc"],

@@ -77,5 +77,8 @@ MklResult<std::invoke_result_t<Callable>> ExecMklFunc(Callable&& mkl_func) {
   }
 }
 }  // namespace sycl
+
 }  // namespace stream_executor
+
 #endif  // XLA_STREAM_EXECUTOR_SYCL_ONEMKL_UTIL_H_
+
