@@ -1426,7 +1426,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaScatterAddVerificationWorks) {
   auto dma = Create<EnqueueIndirectDMAOp>(
       /*source=*/AllocaI32({64, 128}, MemorySpace::kVmem),
-      /*target=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({1024, 128}, MemorySpace::kVmemShared),
       /*offsets=*/AllocaI32({64}, MemorySpace::kVmem),
       /*semaphore=*/AllocaDMASemaphore(),
       /*offset_filter=*/nullptr,
