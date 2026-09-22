@@ -37,7 +37,7 @@ absl::Status RefinePolymorphicShapes(mlir::ModuleOp module,
 // If `validate_static_shapes` is true, then checks that only static shapes
 // are left after refinement.
 absl::Status RefinePolymorphicShapes(llvm::StringRef module_str,
-                                     llvm::raw_ostream &os,
+                                     llvm::raw_ostream& os,
                                      bool enable_shape_assertions,
                                      bool validate_static_shapes,
                                      bool enable_shardy);

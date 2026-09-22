@@ -24,6 +24,7 @@ limitations under the License.
 #include <type_traits>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "Eigen/Core"
 #include "xla/index_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -70,7 +70,7 @@ static absl::StatusOr<bool> DeviceCompare(const ComparisonParams& params) {
   se::StreamExecutor* executor = params.stream->parent();
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::MemoryAllocation> allocation,
-                   executor->HostMemoryAllocate(sizeof(uint64_t)));
+                        executor->HostMemoryAllocate(sizeof(uint64_t)));
   se::DeviceAddressBase out_addr = allocation->address();
 
   ABSL_RETURN_IF_ERROR(params.stream->MemZero(&out_addr, sizeof(uint64_t)));
@@ -111,7 +111,8 @@ static absl::StatusOr<bool> DeviceCompare(const ComparisonParams& params) {
 
   uint64_t result = -1;
   CHECK_EQ(out_addr.size(), sizeof(result));
-  ABSL_RETURN_IF_ERROR(params.stream->Memcpy(&result, out_addr, sizeof(result)));
+  ABSL_RETURN_IF_ERROR(
+      params.stream->Memcpy(&result, out_addr, sizeof(result)));
   ABSL_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
   return result == 0;
 }
@@ -207,10 +208,10 @@ template <typename ElementType, typename ComparisonType>
 static absl::StatusOr<bool> HostCompare(const ComparisonParams& params) {
   int64_t n = params.current.size() / sizeof(ElementType);
   std::vector<ElementType> host_current(n), host_expected(n);
-  ABSL_RETURN_IF_ERROR(params.stream->Memcpy(host_current.data(), params.current,
-                                        params.current.size()));
-  ABSL_RETURN_IF_ERROR(params.stream->Memcpy(host_expected.data(), params.expected,
-                                        params.expected.size()));
+  ABSL_RETURN_IF_ERROR(params.stream->Memcpy(
+      host_current.data(), params.current, params.current.size()));
+  ABSL_RETURN_IF_ERROR(params.stream->Memcpy(
+      host_expected.data(), params.expected, params.expected.size()));
   ABSL_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
 
   const auto canonicalize = [](ComparisonType a) -> ComparisonType {
@@ -330,7 +331,7 @@ static absl::StatusOr<bool> CompareEqualParameterized(
   }
 
   ABSL_ASSIGN_OR_RETURN(bool host_return,
-                   (HostCompare<ElementT, ComparisonT>(params)));
+                        (HostCompare<ElementT, ComparisonT>(params)));
   CHECK_EQ(host_return, result)
       << "Host comparison succeeded even though GPU comparison failed.";
   return false;

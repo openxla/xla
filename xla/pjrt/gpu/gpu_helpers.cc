@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numbers.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
 #include "xla/service/platform_util.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
 
 namespace xla {
 
@@ -122,8 +122,8 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
 
   if (enable_unified_memory) {
     ABSL_ASSIGN_OR_RETURN(auto unified_memory_allocator,
-                     executor->CreateMemoryAllocator(
-                         stream_executor::MemorySpace::kUnified));
+                          executor->CreateMemoryAllocator(
+                              stream_executor::MemorySpace::kUnified));
     sub_allocator = std::make_unique<se::StreamExecutorAllocator>(
         std::move(unified_memory_allocator),
         stream_executor::MemorySpace::kUnified, device_ordinal,
@@ -180,8 +180,8 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
     size_t collective_memory_size) {
   int device_ordinal = executor->device_ordinal();
   ABSL_ASSIGN_OR_RETURN(auto collective_memory_allocator,
-                   executor->CreateMemoryAllocator(
-                       stream_executor::MemorySpace::kCollective));
+                        executor->CreateMemoryAllocator(
+                            stream_executor::MemorySpace::kCollective));
   auto sub_allocator = std::make_unique<se::StreamExecutorAllocator>(
       std::move(collective_memory_allocator),
       /*memory_type=*/stream_executor::MemorySpace::kCollective,

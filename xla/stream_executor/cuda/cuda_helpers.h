@@ -46,15 +46,15 @@ struct CUDAComplexT<std::complex<double>> {
 // Converts pointers of std::complex<> to pointers of
 // cuComplex/cuDoubleComplex. No type conversion for non-complex types.
 template <typename T>
-inline const typename CUDAComplexT<T>::type *CUDAComplex(const T *p) {
-  auto *result = reinterpret_cast<const typename CUDAComplexT<T>::type *>(p);
+inline const typename CUDAComplexT<T>::type* CUDAComplex(const T* p) {
+  auto* result = reinterpret_cast<const typename CUDAComplexT<T>::type*>(p);
   CHECK_EQ(reinterpret_cast<uintptr_t>(p) % alignof(decltype(*result)), 0)
       << "Source pointer is not aligned by " << alignof(decltype(*result));
   return result;
 }
 template <typename T>
-inline typename CUDAComplexT<T>::type *CUDAComplex(T *p) {
-  auto *result = reinterpret_cast<typename CUDAComplexT<T>::type *>(p);
+inline typename CUDAComplexT<T>::type* CUDAComplex(T* p) {
+  auto* result = reinterpret_cast<typename CUDAComplexT<T>::type*>(p);
   CHECK_EQ(reinterpret_cast<uintptr_t>(p) % alignof(decltype(*result)), 0)
       << "Source pointer is not aligned by " << alignof(decltype(*result));
   return result;

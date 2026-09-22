@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -258,14 +258,14 @@ absl::Status AOTInterceptionPjrtClient::CompareGoldenCPUExecutable(
 absl::Status AOTInterceptionPjrtClient::VerifyAgainstGolden(
     const PjRtExecutable& fresh_executable) {
   ABSL_ASSIGN_OR_RETURN(const AOTTestPlatform platform,
-                   PlatformFromName(inner_client_->platform_name()));
+                        PlatformFromName(inner_client_->platform_name()));
 
   ABSL_ASSIGN_OR_RETURN(std::string fresh_serialized,
-                   fresh_executable.SerializeExecutable());
+                        fresh_executable.SerializeExecutable());
   ABSL_ASSIGN_OR_RETURN(HumanReadableAotExecutable fresh_unpacked,
-                   DeserializeToHumanReadable(fresh_serialized, platform));
+                        DeserializeToHumanReadable(fresh_serialized, platform));
   ABSL_ASSIGN_OR_RETURN(HumanReadableAotExecutable golden,
-                   LoadHumanReadableArtifact());
+                        LoadHumanReadableArtifact());
 
   switch (platform) {
     case AOTTestPlatform::kGpu:
@@ -300,7 +300,7 @@ AOTInterceptionPjrtClient::LoadHumanReadableArtifact() {
 absl::StatusOr<std::string>
 AOTInterceptionPjrtClient::PackArtifactForInnerClient() {
   ABSL_ASSIGN_OR_RETURN(HumanReadableAotExecutable unpacked,
-                   LoadHumanReadableArtifact());
+                        LoadHumanReadableArtifact());
 
   ExecutableAndOptionsProto executable_and_options =
       std::move(*unpacked.mutable_executable_and_options());
@@ -366,8 +366,9 @@ AOTInterceptionPjrtClient::Compile(const XlaComputation& computation,
             << "]. Compiling fresh and verifying against golden.";
     options.executable_build_options.mutable_debug_options()
         ->set_xla_gpu_exclude_nondeterministic_ops(true);
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> exec,
-                     inner_client_->Compile(computation, std::move(options)));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<PjRtExecutable> exec,
+        inner_client_->Compile(computation, std::move(options)));
 
     TF_RET_CHECK(exec != nullptr) << "Compile() returned nullptr";
     ABSL_RETURN_IF_ERROR(VerifyAgainstGolden(*exec));

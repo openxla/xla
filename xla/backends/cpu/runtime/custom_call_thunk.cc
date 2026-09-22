@@ -106,8 +106,8 @@ static absl::Status InstantiateHandlerState(
     ffi::InvokeContext invoke_context;
     invoke_context.state_context = {execution_state};
     ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), handler.bundle.instantiate,
-                           instantiate_call_frame, invoke_context,
-                           XLA_FFI_ExecutionStage_INSTANTIATE));
+                                instantiate_call_frame, invoke_context,
+                                XLA_FFI_ExecutionStage_INSTANTIATE));
   }
 
   return absl::OkStatus();
@@ -249,14 +249,16 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
   if (api_version == CustomCallApiVersion::API_VERSION_TYPED_FFI) {
     ABSL_ASSIGN_OR_RETURN(target, ffi::FindHandler(target_name, "Host"));
 
-    ABSL_ASSIGN_OR_RETURN(AttributesMap attributes, ParseAttributes(backend_config));
+    ABSL_ASSIGN_OR_RETURN(AttributesMap attributes,
+                          ParseAttributes(backend_config));
 
-    ABSL_RETURN_IF_ERROR(InstantiateHandlerState(std::get<1>(target),
-                                            execution_state.get(), attributes));
+    ABSL_RETURN_IF_ERROR(InstantiateHandlerState(
+        std::get<1>(target), execution_state.get(), attributes));
 
-    ABSL_ASSIGN_OR_RETURN(call_frame, BuildCallFrameForTypedFFI(
-                                     api_version, op_buffers, backend_config,
-                                     std::move(attributes)));
+    ABSL_ASSIGN_OR_RETURN(
+        call_frame,
+        BuildCallFrameForTypedFFI(api_version, op_buffers, backend_config,
+                                  std::move(attributes)));
   } else {
     auto* registry = CustomCallTargetRegistry::Global();
     ABSL_ASSIGN_OR_RETURN(
@@ -311,7 +313,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
     BufferAllocation::Slice& slice = op_buffers_.arguments_buffers[i];
     if constexpr (ShouldCheckBufferSlices()) {
       ABSL_ASSIGN_OR_RETURN(arguments.emplace_back(),
-                       params.buffer_allocations->GetDeviceAddress(slice));
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       arguments.push_back(
           params.buffer_allocations->GetDeviceAddressUnchecked(slice));
@@ -331,7 +333,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
     BufferAllocation::Slice& slice = op_buffers_.results_buffers[i];
     if constexpr (ShouldCheckBufferSlices()) {
       ABSL_ASSIGN_OR_RETURN(results.emplace_back(),
-                       params.buffer_allocations->GetDeviceAddress(slice));
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       results.push_back(
           params.buffer_allocations->GetDeviceAddressUnchecked(slice));
@@ -371,7 +373,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
     auto& slice = op_buffers_.arguments_buffers[i];
     se::DeviceAddressBase arg;
     if constexpr (ShouldCheckBufferSlices()) {
-      ABSL_ASSIGN_OR_RETURN(arg, params.buffer_allocations->GetDeviceAddress(slice));
+      ABSL_ASSIGN_OR_RETURN(arg,
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       arg = params.buffer_allocations->GetDeviceAddressUnchecked(slice);
     }
@@ -390,7 +393,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
     auto& slice = op_buffers_.results_buffers[i];
     se::DeviceAddressBase res;
     if constexpr (ShouldCheckBufferSlices()) {
-      ABSL_ASSIGN_OR_RETURN(res, params.buffer_allocations->GetDeviceAddress(slice));
+      ABSL_ASSIGN_OR_RETURN(res,
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       res = params.buffer_allocations->GetDeviceAddressUnchecked(slice);
     }

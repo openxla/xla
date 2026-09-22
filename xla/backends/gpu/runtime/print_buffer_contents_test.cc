@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/print_buffer_contents.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/scoped_mock_log.h"
 #include "absl/strings/ascii.h"
 #include "xla/service/platform_util.h"

@@ -25,11 +25,11 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/strcat.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/strcat.h"
 
 #ifndef _WIN32
 #include <limits.h>

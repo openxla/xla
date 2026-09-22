@@ -106,10 +106,12 @@ class ReduceDecomposerVisitor : public DfsHloRewriteVisitor {
     }
 
     TF_RET_CHECK(!output_shapes.empty());
-    ABSL_ASSIGN_OR_RETURN(auto expected_tuple_shape,
-                     ShapeUtil::MakeValidatedMaybeTupleShape(expected_shapes));
-    ABSL_ASSIGN_OR_RETURN(auto expected_output_shape,
-                     ShapeUtil::MakeValidatedMaybeTupleShape(output_shapes));
+    ABSL_ASSIGN_OR_RETURN(
+        auto expected_tuple_shape,
+        ShapeUtil::MakeValidatedMaybeTupleShape(expected_shapes));
+    ABSL_ASSIGN_OR_RETURN(
+        auto expected_output_shape,
+        ShapeUtil::MakeValidatedMaybeTupleShape(output_shapes));
     if (expected_tuple_shape == expected_output_shape) {
       return absl::OkStatus();  // Nothing to do here.
     }
@@ -179,11 +181,12 @@ absl::StatusOr<bool> ReduceDecomposer::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(bool changed1,
-                   VariadicReductionLayoutEqualizer{}.RunOnModule(
-                       module, execution_threads));
-  ABSL_ASSIGN_OR_RETURN(bool changed2,
-                   ReduceDecomposerVisitor{custom_layout_allowed_}.RunOnModule(
-                       module, execution_threads));
+                        VariadicReductionLayoutEqualizer{}.RunOnModule(
+                            module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed2,
+      ReduceDecomposerVisitor{custom_layout_allowed_}.RunOnModule(
+          module, execution_threads));
   return changed1 || changed2;
 }
 

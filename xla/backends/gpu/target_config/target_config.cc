@@ -116,7 +116,7 @@ absl::StatusOr<absl::string_view> GetEmbeddedGpuTargetConfigData(
 absl::StatusOr<stream_executor::GpuTargetConfigProto> GetGpuTargetConfig(
     GpuModel gpu_model) {
   ABSL_ASSIGN_OR_RETURN(absl::string_view gpu_spec,
-                   GetEmbeddedGpuTargetConfigData(gpu_model));
+                        GetEmbeddedGpuTargetConfigData(gpu_model));
 
   stream_executor::GpuTargetConfigProto config;
   if (!google::protobuf::TextFormat::ParseFromString(gpu_spec, &config)) {
@@ -142,8 +142,9 @@ bool GpuTargetConfig::operator==(const GpuTargetConfig& other) const {
 absl::StatusOr<GpuTargetConfig> GpuTargetConfig::FromProto(
     const se::GpuTargetConfigProto& proto) {
   GpuTargetConfig target_config;
-  ABSL_ASSIGN_OR_RETURN(target_config.device_description,
-                   se::DeviceDescription::FromProto(proto.gpu_device_info()));
+  ABSL_ASSIGN_OR_RETURN(
+      target_config.device_description,
+      se::DeviceDescription::FromProto(proto.gpu_device_info()));
   target_config.platform_name = proto.platform_name();
   target_config.device_description_str = proto.device_description_str();
   if (!target_config.device_description_str.empty()) {
@@ -185,8 +186,8 @@ absl::StatusOr<GpuTargetConfig> GetTargetConfigFromFile(
   ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(
       tsl::Env::Default(), std::string(filename), &gpu_target_config_string));
   stream_executor::GpuTargetConfigProto gpu_target_config_proto;
-  if (!google::protobuf::TextFormat::ParseFromString(gpu_target_config_string,
-                                           &gpu_target_config_proto)) {
+  if (!google::protobuf::TextFormat::ParseFromString(
+          gpu_target_config_string, &gpu_target_config_proto)) {
     return absl::FailedPreconditionError(
         "Failed to parse GpuTargetConfigProto");
   }

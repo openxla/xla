@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/python/ifrt/executable.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "xla/python/ifrt/attribute_map.h"

@@ -22,8 +22,8 @@ limitations under the License.
 #include <utility>
 
 #include "llvm/IR/Function.h"
-#include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "tsl/platform/logging.h"
+#include "xla/backends/cpu/codegen/target_machine_features.h"
 
 namespace xla::cpu {
 
@@ -58,6 +58,10 @@ class TargetMachineFeaturesStub : public TargetMachineFeatures {
   }
 
   std::string get_target_feature_string() const final {
+    LOG(FATAL) << "Unexpected call to " << __func__;
+  }
+
+  const llvm::TargetMachine* target_machine() const final {
     LOG(FATAL) << "Unexpected call to " << __func__;
   }
 

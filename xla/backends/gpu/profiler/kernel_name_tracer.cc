@@ -29,8 +29,9 @@ namespace xla::gpu {
 absl::StatusOr<std::unique_ptr<KernelNameTracer>> KernelNameTracer::Create(
     const stream_executor::Platform::Id& platform_id) {
   auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
-  ABSL_ASSIGN_OR_RETURN(KernelNameTracerFactory::Type func,
-                   registry.FindObject<KernelNameTracerFactory>(platform_id));
+  ABSL_ASSIGN_OR_RETURN(
+      KernelNameTracerFactory::Type func,
+      registry.FindObject<KernelNameTracerFactory>(platform_id));
   return func();
 }
 

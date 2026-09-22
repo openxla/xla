@@ -21,11 +21,11 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
+#include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 namespace {
@@ -68,7 +68,7 @@ class FakeLibCurl : public LibCurl {
       case CURLOPT_POST:
         is_post_ = param;
         break;
-      case CURLOPT_PUT:
+      case CURLOPT_UPLOAD:
         is_put_ = param;
         break;
       default:
@@ -192,15 +192,8 @@ class FakeLibCurl : public LibCurl {
     }
     return CURLE_OK;
   }
-  CURLcode curl_easy_getinfo(CURL* curl, CURLINFO info,
-                             double* value) override {
-    switch (info) {
-      case CURLINFO_SIZE_DOWNLOAD:
-        *value = response_content_.size();
-        break;
-      default:
-        break;
-    }
+  CURLcode curl_easy_getinfo(CURL* /*curl*/, CURLINFO /*info*/,
+                             double* /*value*/) override {
     return CURLE_OK;
   }
   void curl_easy_cleanup(CURL* curl) override { is_cleaned_up_ = true; }

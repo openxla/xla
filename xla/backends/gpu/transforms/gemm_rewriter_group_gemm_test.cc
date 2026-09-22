@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/transforms/gemm_rewriter_test_lib.h"
 #include "xla/error_spec.h"
 #include "xla/service/hlo_module_config.h"

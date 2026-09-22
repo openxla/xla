@@ -32,9 +32,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/ndarray.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/ndarray.h"          // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -553,7 +553,7 @@ absl::StatusOr<nb::object> LiteralToPython(
 
   nb::object literal_object = nb::cast(literal);
   ABSL_ASSIGN_OR_RETURN(nb_dtype dtype,
-                   PrimitiveTypeToNbDtype(m.shape().element_type()));
+                        PrimitiveTypeToNbDtype(m.shape().element_type()));
   return nb_numpy_ndarray(dtype, m.shape().dimensions(),
                           ByteStridesForShape(m.shape()), m.untyped_data(),
                           literal_object);

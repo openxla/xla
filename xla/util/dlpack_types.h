@@ -25,7 +25,6 @@ namespace xla {
 absl::StatusOr<DLDataType> PrimitiveTypeToDLDataType(PrimitiveType type);
 absl::StatusOr<PrimitiveType> DLDataTypeToPrimitiveType(DLDataType type);
 
-
 }  // namespace xla
 
 #endif  // XLA_UTIL_DLPACK_TYPES_H_

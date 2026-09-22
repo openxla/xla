@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

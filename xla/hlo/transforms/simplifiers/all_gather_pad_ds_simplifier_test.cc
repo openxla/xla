@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/all_gather_pad_ds_simplifier.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -59,7 +60,7 @@ class AllGatherPadDsSimplifierTest : public HloHardwareIndependentTestBase {
         /*num_partitions=*/num_partitions);
     config.set_use_spmd_partitioning(num_partitions > 1);
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
     auto changed = AllGatherPadDsSimplifier().Run(module.get(), {});
     if (!changed.ok()) {
       return changed.status();

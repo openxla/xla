@@ -42,7 +42,7 @@ absl::Status StreamExecutorGpuPjRtRuntimeAbiVersion::IsCompatibleWith(
   // serialize to proto that we can parse to a
   // `StreamExecutorPjRtExecutableAbiVersion`.
   ABSL_ASSIGN_OR_RETURN(PjRtExecutableAbiVersionProto abi_version_proto,
-                   abi_version.ToProto());
+                        abi_version.ToProto());
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<StreamExecutorPjRtExecutableAbiVersion>
           se_executable_abi_version,

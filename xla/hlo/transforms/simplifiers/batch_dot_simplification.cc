@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -34,8 +36,6 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 absl::StatusOr<bool>
@@ -82,9 +82,9 @@ BatchDotSimplification::ElideDegenerateBatchDimensionFromBatchDot(
   }
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * new_lhs,
-                   ElideDegenerateDims(lhs, degenerate_dims));
+                        ElideDegenerateDims(lhs, degenerate_dims));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * new_rhs,
-                   ElideDegenerateDims(rhs, degenerate_dims));
+                        ElideDegenerateDims(rhs, degenerate_dims));
 
   DotDimensionNumbers new_dim_numbers = dim_numbers;
   new_dim_numbers.clear_lhs_batch_dimensions();
@@ -111,7 +111,7 @@ BatchDotSimplification::ElideDegenerateBatchDimensionFromBatchDot(
                  /*preferred_element_type=*/batch_dot->shape().element_type()));
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * new_dot_reshaped,
-                   MakeReshapeHlo(batch_dot->shape(), new_dot));
+                        MakeReshapeHlo(batch_dot->shape(), new_dot));
 
   VLOG(2) << "Replaced " << batch_dot->ToString() << " with "
           << new_dot->ToString();
@@ -136,7 +136,7 @@ absl::StatusOr<bool> BatchDotSimplification::RunImpl(
   }
   for (HloInstruction* dot_instr : dot_instrs) {
     ABSL_ASSIGN_OR_RETURN(bool elided_batch_dim_from_one,
-                     ElideDegenerateBatchDimensionFromBatchDot(dot_instr));
+                          ElideDegenerateBatchDimensionFromBatchDot(dot_instr));
     changed |= elided_batch_dim_from_one;
   }
   return changed;

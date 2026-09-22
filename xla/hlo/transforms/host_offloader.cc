@@ -252,7 +252,7 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
       }
     } else if (instruction->opcode() == HloOpcode::kDynamicSlice) {
       ABSL_ASSIGN_OR_RETURN(bool is_end_of_offload,
-                       SliceLeadsToMoveToDeviceCustomCall(instruction));
+                            SliceLeadsToMoveToDeviceCustomCall(instruction));
       if (is_end_of_offload) {
         // This DynamicSlice is the end of this path of host memory offload.
         continue;
@@ -263,7 +263,7 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
 
     } else if (instruction->opcode() == HloOpcode::kSlice) {
       ABSL_ASSIGN_OR_RETURN(bool is_end_of_offload,
-                       SliceLeadsToMoveToDeviceCustomCall(instruction));
+                            SliceLeadsToMoveToDeviceCustomCall(instruction));
       if (is_end_of_offload) {
         // This Slice is the end of this path of host memory offload.
         // This Slice should be a DynamicSlice to be able to work with host
@@ -479,10 +479,11 @@ absl::StatusOr<bool> HostOffloader::HandleInputStreaming(
                     << " streamed into program with shape: "
                     << subshape.ToString(/*print_layout=*/true) << " at index "
                     << index.ToString();
-            ABSL_ASSIGN_OR_RETURN(bool result, WalkDownHostMemoryOffloadPaths(
-                                              InstructionAndShapeIndex(
-                                                  parameter_instruction, index),
-                                              /*insert_copy_before=*/false));
+            ABSL_ASSIGN_OR_RETURN(
+                bool result,
+                WalkDownHostMemoryOffloadPaths(
+                    InstructionAndShapeIndex(parameter_instruction, index),
+                    /*insert_copy_before=*/false));
             changed = changed || result;
           }
           return absl::OkStatus();
@@ -564,17 +565,19 @@ absl::StatusOr<bool> HostOffloader::HandleMoveToHostCustomCall(
             custom_call_instruction);
 
     if (operand_indices.empty()) {
-      ABSL_ASSIGN_OR_RETURN(bool result, WalkDownHostMemoryOffloadPaths(
-                                        starting_instruction_and_shape,
-                                        should_insert_copy_before_instruction,
-                                        std::nullopt));
+      ABSL_ASSIGN_OR_RETURN(
+          bool result,
+          WalkDownHostMemoryOffloadPaths(starting_instruction_and_shape,
+                                         should_insert_copy_before_instruction,
+                                         std::nullopt));
       (void)result;
     } else {
       for (const int64_t operand_index : operand_indices) {
-        ABSL_ASSIGN_OR_RETURN(bool result, WalkDownHostMemoryOffloadPaths(
-                                          starting_instruction_and_shape,
-                                          should_insert_copy_before_instruction,
-                                          operand_index));
+        ABSL_ASSIGN_OR_RETURN(
+            bool result,
+            WalkDownHostMemoryOffloadPaths(
+                starting_instruction_and_shape,
+                should_insert_copy_before_instruction, operand_index));
         (void)result;
       }
     }
@@ -677,8 +680,9 @@ absl::StatusOr<bool> HostOffloader::InsertCopyBetween(
       const absl::InlinedVector<int64_t, 4> operand_indices =
           instruction_and_index.instruction->OperandIndices(data_to_copy);
       for (const int64_t operand_index : operand_indices) {
-        ABSL_RETURN_IF_ERROR(instruction_and_index.instruction->ReplaceOperandWith(
-            operand_index, copy_to_host));
+        ABSL_RETURN_IF_ERROR(
+            instruction_and_index.instruction->ReplaceOperandWith(
+                operand_index, copy_to_host));
       }
       VLOG(2) << absl::StreamFormat(
           "Inserted copy \"%s\" between \"%s\" and \"%s\"",
@@ -722,8 +726,9 @@ HostOffloader::GetStartingInstructions(
       continue;
     }
     // Is a logical bitcast/reshape, we won't offload this yet.
-    ABSL_ASSIGN_OR_RETURN(const std::vector<InstructionAndShapeIndex> successors,
-                     host_offload_utils::GetSuccessors(instruction_and_shape));
+    ABSL_ASSIGN_OR_RETURN(
+        const std::vector<InstructionAndShapeIndex> successors,
+        host_offload_utils::GetSuccessors(instruction_and_shape));
     for (const InstructionAndShapeIndex& successor : successors) {
       queue.push(successor);
     }
@@ -764,8 +769,9 @@ absl::StatusOr<bool> HostOffloader::SliceLeadsToMoveToDeviceCustomCall(
           HloOpcodeString(slice->opcode()), slice->name(), slice->name());
       return false;
     }
-    ABSL_ASSIGN_OR_RETURN(const std::vector<InstructionAndShapeIndex> successors,
-                     host_offload_utils::GetSuccessors(instruction_and_shape));
+    ABSL_ASSIGN_OR_RETURN(
+        const std::vector<InstructionAndShapeIndex> successors,
+        host_offload_utils::GetSuccessors(instruction_and_shape));
     for (const InstructionAndShapeIndex& successor : successors) {
       queue.push(successor);
     }
@@ -902,9 +908,10 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
       // instruction that we're walking up the graph from.
       CHECK(previous_instruction_and_shape.has_value())
           << "We expect to have a previous instruction at this point.";
-      ABSL_ASSIGN_OR_RETURN(std::vector<InstructionAndShapeIndex> successors,
-                       host_offload_utils::GetSuccessors(
-                           InstructionAndShapeIndex(instruction, shape_index)));
+      ABSL_ASSIGN_OR_RETURN(
+          std::vector<InstructionAndShapeIndex> successors,
+          host_offload_utils::GetSuccessors(
+              InstructionAndShapeIndex(instruction, shape_index)));
       for (const InstructionAndShapeIndex& successor : successors) {
         if (ShapeUtil::GetSubshape(successor.instruction->shape(),
                                    successor.shape_index)
@@ -997,8 +1004,8 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
               << matched_copy->name();
           CHECK_EQ(instruction->opcode(), HloOpcode::kTuple)
               << "Expecting a tuple when shape index has ndim>0";
-          ABSL_RETURN_IF_ERROR(broadcast_user->ReplaceOperandWith(shape_index[0],
-                                                             allocate_buffer));
+          ABSL_RETURN_IF_ERROR(broadcast_user->ReplaceOperandWith(
+              shape_index[0], allocate_buffer));
         } else {
           // Any shape index larger than 1 would mean that the broadcast
           // produces a tuple, which is not possible.
@@ -1006,7 +1013,8 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
               << "Only other supported shape index size is 0";
           if (matched_copy != nullptr) {
             CHECK_EQ(matched_copy->user_count(), 1);
-            ABSL_RETURN_IF_ERROR(matched_copy->ReplaceAllUsesWith(allocate_buffer));
+            ABSL_RETURN_IF_ERROR(
+                matched_copy->ReplaceAllUsesWith(allocate_buffer));
             ABSL_RETURN_IF_ERROR(
                 matched_copy->parent()->RemoveInstruction(matched_copy));
           } else {
@@ -1029,8 +1037,9 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
           VLOG(3) << absl::StreamFormat(
               "Broadcast \"%s\" has no remaining users; removing.",
               predecessor_instruction->name());
-          ABSL_RETURN_IF_ERROR(predecessor_instruction->parent()->RemoveInstruction(
-              predecessor_instruction));
+          ABSL_RETURN_IF_ERROR(
+              predecessor_instruction->parent()->RemoveInstruction(
+                  predecessor_instruction));
         }
       } else {
         queue.push(predecessor);
@@ -1075,7 +1084,7 @@ absl::StatusOr<bool> HostOffloader::ApplySchedulingFix(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                   HloAliasAnalysis::Run(module, alias_info_));
+                        HloAliasAnalysis::Run(module, alias_info_));
   auto uses_parameter_buffer = [&](HloInstruction* hlo) {
     for (const HloBuffer* buffer : alias_analysis->ComputeBuffersAt(hlo)) {
       for (const HloValue* value : buffer->values()) {
@@ -1365,7 +1374,7 @@ absl::StatusOr<bool> HostOffloader::ProcessNextMoveToHostInstr(
     if (instruction->IsCustomCall(
             memory_annotations::kMoveToHostCustomCallTarget)) {
       ABSL_ASSIGN_OR_RETURN(bool removed_move_to_host,
-                       HandleMoveToHostCustomCall(instruction));
+                            HandleMoveToHostCustomCall(instruction));
       if (removed_move_to_host) {
         return true;
       }
@@ -1374,7 +1383,7 @@ absl::StatusOr<bool> HostOffloader::ProcessNextMoveToHostInstr(
     if (instruction->has_called_computations()) {
       for (HloComputation* called_comp : instruction->called_computations()) {
         ABSL_ASSIGN_OR_RETURN(bool removed_move_to_host,
-                         ProcessNextMoveToHostInstr(called_comp));
+                              ProcessNextMoveToHostInstr(called_comp));
         if (removed_move_to_host) {
           return true;
         }
@@ -1452,7 +1461,7 @@ absl::StatusOr<bool> HostOffloader::HandleDynamicUpdateSlices() {
 absl::StatusOr<bool> HostOffloader::HandlePallasKernel(
     HloInstruction* instruction) {
   ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> memory_space_colors,
-                   GetPallasCustomCallOutputMemorySpaces(instruction));
+                        GetPallasCustomCallOutputMemorySpaces(instruction));
   if (instruction->shape().IsArray()) {
     CHECK_EQ(memory_space_colors.size(), 1)
         << "Pallas custom calls with non-tuple output must have exactly "
@@ -1461,9 +1470,10 @@ absl::StatusOr<bool> HostOffloader::HandlePallasKernel(
       // Does not output to host memory; skip.
       return false;
     }
-    ABSL_ASSIGN_OR_RETURN(bool result, WalkDownHostMemoryOffloadPaths(
-                                      InstructionAndShapeIndex(instruction, {}),
-                                      /*insert_copy_before=*/false));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          WalkDownHostMemoryOffloadPaths(
+                              InstructionAndShapeIndex(instruction, {}),
+                              /*insert_copy_before=*/false));
     return result;
   }
   CHECK(instruction->shape().IsTuple())
@@ -1483,8 +1493,8 @@ absl::StatusOr<bool> HostOffloader::HandlePallasKernel(
       // Does not output to host memory; skip.
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(bool result,
-                     WalkDownHostMemoryOffloadPaths(
+    ABSL_ASSIGN_OR_RETURN(
+        bool result, WalkDownHostMemoryOffloadPaths(
                          InstructionAndShapeIndex(instruction, {tuple_index}),
                          /*insert_copy_before=*/false));
     if (result) {
@@ -1526,15 +1536,15 @@ absl::StatusOr<bool> HostOffloader::RunImpl(
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (host_offload_utils::IsHostAsyncStart(instruction)) {
-        ABSL_ASSIGN_OR_RETURN(changed_in_loop,
-                         HandleRedundantCopiesBackToHost(module, instruction));
+        ABSL_ASSIGN_OR_RETURN(changed_in_loop, HandleRedundantCopiesBackToHost(
+                                                   module, instruction));
         changed = changed || changed_in_loop;
       }
     }
   }
 
   ABSL_ASSIGN_OR_RETURN(const bool input_streaming_changed_module,
-                   HandleInputStreaming(module->entry_computation()));
+                        HandleInputStreaming(module->entry_computation()));
   changed = changed || input_streaming_changed_module;
 
   ABSL_ASSIGN_OR_RETURN(const bool handled_mosaic, HandlePallasKernels(module));
@@ -1547,8 +1557,8 @@ absl::StatusOr<bool> HostOffloader::RunImpl(
     // Iterate over the computations in the order that they are executed. This
     // ensures we process "MoveToHost" instructions that are at the beginning of
     // a host memory offload instruction chain.
-    ABSL_ASSIGN_OR_RETURN(changed_in_loop,
-                     ProcessNextMoveToHostInstr(module->entry_computation()));
+    ABSL_ASSIGN_OR_RETURN(changed_in_loop, ProcessNextMoveToHostInstr(
+                                               module->entry_computation()));
     if (changed_in_loop) {
       changed = true;
     }
@@ -1569,14 +1579,14 @@ absl::StatusOr<bool> HostOffloader::RunImpl(
       if (instruction->IsCustomCall(
               memory_annotations::kMoveToDeviceCustomCallTarget)) {
         ABSL_ASSIGN_OR_RETURN(bool result,
-                         HandleMoveToDeviceCustomCall(instruction));
+                              HandleMoveToDeviceCustomCall(instruction));
         changed = changed || result;
       }
     }
   }
 
   ABSL_ASSIGN_OR_RETURN(bool applied_scheduling_fix,
-                   ApplySchedulingFix(module, execution_threads));
+                        ApplySchedulingFix(module, execution_threads));
   changed = changed || applied_scheduling_fix;
 
   // Finally, run CSE to do a little cleanup.

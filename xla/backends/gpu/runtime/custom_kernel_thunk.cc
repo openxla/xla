@@ -78,8 +78,9 @@ absl::Status CustomKernelThunk::Initialize(const InitializeParams& params) {
   absl::MutexLock lock(mutex_);
 
   if (!kernel_cache_.contains(params.executor)) {
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                     params.executor->LoadKernel(custom_kernel_.kernel_spec()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<se::Kernel> kernel,
+        params.executor->LoadKernel(custom_kernel_.kernel_spec()));
     se::KernelMetadata m = kernel->metadata();
     m.set_shared_memory_bytes(custom_kernel_.shared_memory_bytes());
     kernel->set_metadata(m);
@@ -116,7 +117,7 @@ CustomKernelThunk::GetKernelAndArgs(const BufferAllocations& buffer_allocations,
         it != tma_metadata_.arg_index_to_tma_info.end()) {
       const se::gpu::TmaDescriptor& tma_desc = it->second;
       ABSL_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
-                       executor->CreateTensorMap(tma_desc, buf.opaque()));
+                            executor->CreateTensorMap(tma_desc, buf.opaque()));
       VLOG(5) << "  Using TensorMap for arg #" << idx << ": "
               << tma_desc.ToString();
       kernel_args.push_back(std::move(tensor_map));
@@ -138,7 +139,7 @@ absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   ABSL_ASSIGN_OR_RETURN(auto kernel_with_args,
-                   GetKernelAndArgs(*params.buffer_allocations, executor));
+                        GetKernelAndArgs(*params.buffer_allocations, executor));
   auto& [kernel, buffer_args] = kernel_with_args;
 
   XLA_VLOG_DEVICE(3, executor->device_ordinal())
@@ -165,8 +166,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelThunk::Record(
           << custom_kernel_.name();
 
   ABSL_ASSIGN_OR_RETURN(auto kernel_with_args,
-                   GetKernelAndArgs(*execute_params.buffer_allocations,
-                                    execute_params.stream->parent()));
+                        GetKernelAndArgs(*execute_params.buffer_allocations,
+                                         execute_params.stream->parent()));
   auto& [kernel, buffer_args] = kernel_with_args;
 
   auto kernel_args =
@@ -223,13 +224,14 @@ absl::StatusOr<ThunkProto> CustomKernelThunk::ToProto() const {
   CustomKernelThunkProto* custom_kernel_thunk_proto =
       thunk_proto.mutable_custom_kernel_thunk();
   for (const ShapedSlice& arg : args_) {
-    ABSL_ASSIGN_OR_RETURN(*custom_kernel_thunk_proto->add_args(), arg.ToProto());
+    ABSL_ASSIGN_OR_RETURN(*custom_kernel_thunk_proto->add_args(),
+                          arg.ToProto());
   }
   for (bool written : written_) {
     custom_kernel_thunk_proto->add_written(written);
   }
   ABSL_ASSIGN_OR_RETURN(*custom_kernel_thunk_proto->mutable_custom_kernel(),
-                   custom_kernel_.ToProto());
+                        custom_kernel_.ToProto());
 
   custom_kernel_thunk_proto->mutable_zeroed_output_buffer_indices()->Assign(
       zeroed_output_buffer_indices_.begin(),
@@ -251,8 +253,9 @@ absl::StatusOr<std::unique_ptr<CustomKernelThunk>> CustomKernelThunk::FromProto(
   std::vector<ShapedSlice> args;
   args.reserve(proto.args_size());
   for (const ShapedSliceProto& arg_proto : proto.args()) {
-    ABSL_ASSIGN_OR_RETURN(args.emplace_back(),
-                     ShapedSlice::FromProto(arg_proto, buffer_allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        args.emplace_back(),
+        ShapedSlice::FromProto(arg_proto, buffer_allocations));
   }
   std::vector<bool> written{proto.written().begin(), proto.written().end()};
 

@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/mock_codegen_backend.h"
@@ -43,7 +45,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -298,7 +299,6 @@ TEST_F(CodegenOrchestratorTest, GetDefaultConfigFailsWhenNoBackendProvides) {
   EXPECT_THAT(orchestrator->GetDefaultConfig(*dummy_instr),
               StatusIs(absl::StatusCode::kNotFound));
 }
-
 
 TEST_F(CodegenOrchestratorTest, ConfigsWithRegisterSpillingAreAllowed) {
   CodegenOrchestrator::Options options;

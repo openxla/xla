@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -71,8 +72,9 @@ struct DummyThunk : public Thunk {
   BufferUses buffer_uses() const override { return {}; }
   static absl::StatusOr<std::unique_ptr<DummyThunk>> FromProto(
       const ThunkProto& thunk_proto, Thunk::Kind kind) {
-    ABSL_ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
-                     Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
+    ABSL_ASSIGN_OR_RETURN(
+        Thunk::ThunkInfo thunk_info,
+        Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
     return std::make_unique<DummyThunk>(kind, std::move(thunk_info));
   }
 
@@ -331,8 +333,8 @@ TEST(ConditionalThunkTest, RecordCreatesAndUpdatesCommandBufferCase) {
               auto branch = std::make_unique<BranchCommandBuffer>();
               ConfigureNestedCommandBuffer(branch.get());
               ABSL_RETURN_IF_ERROR(create_branch(branch->command_buffer.get(),
-                                            /*dependencies=*/{})
-                                  .status());
+                                                 /*dependencies=*/{})
+                                       .status());
               ABSL_RETURN_IF_ERROR(branch->command_buffer->Finalize());
               branch_command_buffers.push_back(std::move(branch));
             }
@@ -356,27 +358,29 @@ TEST(ConditionalThunkTest, RecordCreatesAndUpdatesCommandBufferCase) {
   EXPECT_CALL(command_buffer,
               UpdateCase(&case_se_command,
                          testing::A<se::DeviceAddress<int32_t>>(), testing::_))
-      .WillOnce([&](const se::CommandBuffer::Command* command,
-                    se::DeviceAddress<int32_t>,
-                    std::vector<se::CommandBuffer::UpdateCommands>
-                        update_branches) -> absl::Status {
-        ++update_case_calls;
-        update_case_branch_count = update_branches.size();
-        if (command != &case_se_command) {
-          return absl::InternalError("unexpected case command");
-        }
-        if (update_branches.size() != branch_command_buffers.size()) {
-          return absl::InternalError("unexpected branch count");
-        }
-        for (size_t i = 0; i < update_branches.size(); ++i) {
-          ABSL_RETURN_IF_ERROR(branch_command_buffers[i]->command_buffer->Update());
-          ABSL_RETURN_IF_ERROR(update_branches[i](
-              branch_command_buffers[i]->command_buffer.get()));
-          ABSL_RETURN_IF_ERROR(
-              branch_command_buffers[i]->command_buffer->Finalize());
-        }
-        return absl::OkStatus();
-      });
+      .WillOnce(
+          [&](const se::CommandBuffer::Command* command,
+              se::DeviceAddress<int32_t>,
+              std::vector<se::CommandBuffer::UpdateCommands> update_branches)
+              -> absl::Status {
+            ++update_case_calls;
+            update_case_branch_count = update_branches.size();
+            if (command != &case_se_command) {
+              return absl::InternalError("unexpected case command");
+            }
+            if (update_branches.size() != branch_command_buffers.size()) {
+              return absl::InternalError("unexpected branch count");
+            }
+            for (size_t i = 0; i < update_branches.size(); ++i) {
+              ABSL_RETURN_IF_ERROR(
+                  branch_command_buffers[i]->command_buffer->Update());
+              ABSL_RETURN_IF_ERROR(update_branches[i](
+                  branch_command_buffers[i]->command_buffer.get()));
+              ABSL_RETURN_IF_ERROR(
+                  branch_command_buffers[i]->command_buffer->Finalize());
+            }
+            return absl::OkStatus();
+          });
 
   ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_case_command,

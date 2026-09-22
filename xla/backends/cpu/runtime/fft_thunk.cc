@@ -20,13 +20,13 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "Eigen/ThreadPool"
 #include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "ducc/google/fft.h"
-#include "Eigen/ThreadPool"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/layout_util.h"
 #include "xla/runtime/buffer_use.h"
@@ -46,9 +46,9 @@ namespace xla::cpu {
 FftThunk::FftThunk(Info thunk_info, bool is_multi_thread_eigen,
                    int32_t fft_type, absl::Span<const int64_t> fft_length,
                    BufferAllocation::Slice input_buffer,
-                   const Shape &input_shape,
+                   const Shape& input_shape,
                    BufferAllocation::Slice output_buffer,
-                   const Shape &output_shape)
+                   const Shape& output_shape)
     : Thunk(Kind::kFft, thunk_info),
       is_multi_thread_eigen_(is_multi_thread_eigen),
       is_double_precision_(input_shape.element_type() == F64 ||
@@ -63,17 +63,17 @@ FftThunk::FftThunk(Info thunk_info, bool is_multi_thread_eigen,
 absl::StatusOr<std::unique_ptr<FftThunk>> FftThunk::Create(
     Info thunk_info, bool is_multi_thread_eigen, int32_t fft_type,
     absl::Span<const int64_t> fft_length, BufferAllocation::Slice input_buffer,
-    const Shape &input_shape, BufferAllocation::Slice output_buffer,
-    const Shape &output_shape) {
+    const Shape& input_shape, BufferAllocation::Slice output_buffer,
+    const Shape& output_shape) {
   return absl::WrapUnique(
       new FftThunk(thunk_info, is_multi_thread_eigen, fft_type, fft_length,
                    input_buffer, input_shape, output_buffer, output_shape));
 }
 
-static void DuccFft(const Eigen::ThreadPoolDevice *device, void *out,
-                    void *operand, int32_t fft_type, int32_t double_precision,
-                    int32_t fft_rank, const int64_t *input_shape,
-                    const int64_t *fft_length) {
+static void DuccFft(const Eigen::ThreadPoolDevice* device, void* out,
+                    void* operand, int32_t fft_type, int32_t double_precision,
+                    int32_t fft_rank, const int64_t* input_shape,
+                    const int64_t* fft_length) {
   bool forward = (fft_type == /*FFT*/ 0 || fft_type == /*RFFT*/ 2);
   bool real = (fft_type == /*RFFT*/ 2 || fft_type == /*IRFFT*/ 3);
 
@@ -122,41 +122,41 @@ static void DuccFft(const Eigen::ThreadPoolDevice *device, void *out,
   }
   double scale = forward ? 1.0 : 1.0 / inv_scale;
 
-  Eigen::ThreadPoolInterface *thread_pool =
+  Eigen::ThreadPoolInterface* thread_pool =
       device ? device->getPool() : nullptr;
 
   if (!real) {
     if (double_precision) {
-      ducc0::google::c2c(static_cast<const std::complex<double> *>(operand),
+      ducc0::google::c2c(static_cast<const std::complex<double>*>(operand),
                          in_shape, in_stride,
-                         static_cast<std::complex<double> *>(out), out_shape,
+                         static_cast<std::complex<double>*>(out), out_shape,
                          out_stride, axes, forward, scale, thread_pool);
     } else {
       ducc0::google::c2c(
-          static_cast<const std::complex<float> *>(operand), in_shape,
-          in_stride, static_cast<std::complex<float> *>(out), out_shape,
-          out_stride, axes, forward, static_cast<float>(scale), thread_pool);
+          static_cast<const std::complex<float>*>(operand), in_shape, in_stride,
+          static_cast<std::complex<float>*>(out), out_shape, out_stride, axes,
+          forward, static_cast<float>(scale), thread_pool);
     }
   } else if (forward) {
     if (double_precision) {
-      ducc0::google::r2c(static_cast<double *>(operand), in_shape, in_stride,
-                         static_cast<std::complex<double> *>(out), out_shape,
+      ducc0::google::r2c(static_cast<double*>(operand), in_shape, in_stride,
+                         static_cast<std::complex<double>*>(out), out_shape,
                          out_stride, axes, forward, scale, thread_pool);
     } else {
-      ducc0::google::r2c(static_cast<float *>(operand), in_shape, in_stride,
-                         static_cast<std::complex<float> *>(out), out_shape,
+      ducc0::google::r2c(static_cast<float*>(operand), in_shape, in_stride,
+                         static_cast<std::complex<float>*>(out), out_shape,
                          out_stride, axes, forward, static_cast<float>(scale),
                          thread_pool);
     }
   } else {
     if (double_precision) {
-      ducc0::google::c2r(static_cast<const std::complex<double> *>(operand),
-                         in_shape, in_stride, static_cast<double *>(out),
+      ducc0::google::c2r(static_cast<const std::complex<double>*>(operand),
+                         in_shape, in_stride, static_cast<double*>(out),
                          out_shape, out_stride, axes, forward, scale,
                          thread_pool);
     } else {
-      ducc0::google::c2r(static_cast<const std::complex<float> *>(operand),
-                         in_shape, in_stride, static_cast<float *>(out),
+      ducc0::google::c2r(static_cast<const std::complex<float>*>(operand),
+                         in_shape, in_stride, static_cast<float*>(out),
                          out_shape, out_stride, axes, forward,
                          static_cast<float>(scale), thread_pool);
     }
@@ -164,14 +164,16 @@ static void DuccFft(const Eigen::ThreadPoolDevice *device, void *out,
 }
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> FftThunk::Execute(
-    const ExecuteParams &params) {
+    const ExecuteParams& params) {
   TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(input_shape_.layout()));
   TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(output_shape_.layout()));
 
-  ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase input_data,
-                   params.buffer_allocations->GetDeviceAddress(input_buffer_));
-  ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase output_data,
-                   params.buffer_allocations->GetDeviceAddress(output_buffer_));
+  ABSL_ASSIGN_OR_RETURN(
+      se::DeviceAddressBase input_data,
+      params.buffer_allocations->GetDeviceAddress(input_buffer_));
+  ABSL_ASSIGN_OR_RETURN(
+      se::DeviceAddressBase output_data,
+      params.buffer_allocations->GetDeviceAddress(output_buffer_));
 
   const int fft_rank = fft_length_.size();
 

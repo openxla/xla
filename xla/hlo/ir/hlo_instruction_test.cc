@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instruction.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
@@ -1048,6 +1049,40 @@ TEST_F(HloInstructionTest, CompareProtoRoundTripWithOrder) {
       static_cast<const HloCompareInstruction*>(clone.get());
   EXPECT_EQ(compare_clone->direction(), ComparisonDirection::kLt);
   EXPECT_EQ(compare_clone->order(), ComparisonOrder::kTotal);
+}
+
+TEST_F(HloInstructionTest,
+       AsyncUpdatePreservesOutputToOperandAliasingRoundTrip) {
+  constexpr absl::string_view kHloString = R"(
+HloModule AsyncUpdateAliasing
+
+%async_computation (param_0: f32[10]) -> f32[10] {
+  %param_0 = f32[10] parameter(0)
+  ROOT %neg = f32[10] negate(%param_0)
+}
+
+ENTRY %main (p0: f32[10]) -> f32[10] {
+  %p0 = f32[10] parameter(0)
+  %async-start = ((f32[10]), f32[10], u32[]) async-start(%p0), calls=%async_computation
+  %async-update = ((f32[10]), f32[10], u32[]) async-update(%async-start), output_to_operand_aliasing={{2}: (0, {2})}
+  ROOT %async-done = f32[10] async-done(%async-update)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloInstruction* async_update =
+      module->entry_computation()->root_instruction()->mutable_operand(0);
+  ASSERT_EQ(async_update->opcode(), HloOpcode::kAsyncUpdate);
+  ASSERT_FALSE(async_update->output_operand_aliasing().empty());
+
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(auto roundtrip_module,
+                       HloModule::CreateFromProto(proto, module->config()));
+  HloInstruction* roundtrip_async_update = roundtrip_module->entry_computation()
+                                               ->root_instruction()
+                                               ->mutable_operand(0);
+  ASSERT_EQ(roundtrip_async_update->opcode(), HloOpcode::kAsyncUpdate);
+  EXPECT_EQ(roundtrip_async_update->output_operand_aliasing(),
+            async_update->output_operand_aliasing());
 }
 
 }  // namespace

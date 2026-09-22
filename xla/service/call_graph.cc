@@ -394,7 +394,7 @@ absl::StatusOr<bool> CallGraph::VisitNodesWithReturn(
     for (const CallGraphNode& node : nodes()) {
       if (node.callers().empty()) {
         ABSL_ASSIGN_OR_RETURN(bool node_changed,
-                         VisitNodesInternal(visitor_func, node, &visited));
+                              VisitNodesInternal(visitor_func, node, &visited));
         changed |= node_changed;
       }
     }

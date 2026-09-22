@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_TEST_BASE_H_
 #define XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_TEST_BASE_H_
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -27,8 +30,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -322,10 +323,10 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
     }
 
     ABSL_ASSIGN_OR_RETURN(auto alias_analysis,
-                     HloAliasAnalysis::Run(module, &alias_info_));
+                          HloAliasAnalysis::Run(module, &alias_info_));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloLiveRange> hlo_live_range,
-                     HloLiveRange::Run(module->schedule(), *alias_analysis,
-                                       module->entry_computation()));
+                          HloLiveRange::Run(module->schedule(), *alias_analysis,
+                                            module->entry_computation()));
 
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<PresetAssignments> preset_assignments,

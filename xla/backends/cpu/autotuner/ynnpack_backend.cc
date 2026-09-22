@@ -82,7 +82,7 @@ YnnpackBackend::GetDefaultConfig(const HloInstruction& instr) {
 absl::Status YnnpackBackend::ApplyConfig(HloInstruction& instr,
                                          const xla::BackendConfig& config) {
   ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                   instr.backend_config<xla::cpu::BackendConfig>());
+                        instr.backend_config<xla::cpu::BackendConfig>());
 
   if (!config.has_ynn_fusion()) {
     return absl::InvalidArgumentError(

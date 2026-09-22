@@ -308,12 +308,12 @@ class TensorContractionBlocking<float, float, float, StorageIndex,
     if (!UseCustomContractionKernels()) return;
 
     // 2. And refine them to work well with mkldnn sgemm.
-    mc_ = (std::min)(
-        m, Eigen::divup(static_cast<StorageIndex>(mc_ * kScaleM), kUnrollM) *
-               kUnrollM);
-    nc_ = (std::min)(
-        n, Eigen::divup(static_cast<StorageIndex>(nc_ * kScaleN), kUnrollN) *
-               kUnrollN);
+    mc_ = (std::min)(m, Eigen::divup(static_cast<StorageIndex>(mc_ * kScaleM),
+                                     kUnrollM) *
+                            kUnrollM);
+    nc_ = (std::min)(n, Eigen::divup(static_cast<StorageIndex>(nc_ * kScaleN),
+                                     kUnrollN) *
+                            kUnrollN);
 
     // We split Kth dimensions in roughly equal slices.
     StorageIndex target_k_slices =

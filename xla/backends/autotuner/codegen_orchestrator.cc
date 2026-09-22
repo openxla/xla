@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -163,7 +163,8 @@ absl::StatusOr<std::vector<CodegenOrchestrator::EstimatedConfig>>
 CodegenOrchestrator::GetSupportedConfigsWithEstimates(
     const HloInstruction& instr) const {
   if (!candidate_configs_.empty()) {
-    ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs, GetSupportedConfigs(instr));
+    ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
+                          GetSupportedConfigs(instr));
     std::vector<EstimatedConfig> estimated_configs;
     estimated_configs.reserve(configs.size());
     for (auto& config : configs) {

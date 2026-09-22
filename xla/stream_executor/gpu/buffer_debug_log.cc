@@ -55,7 +55,8 @@ absl::StatusOr<DeviceAddress<uint8_t>> BufferDebugLogBase::CreateOnDevice(
       /*write_idx=*/0,
       /*capacity=*/max_entries,
   };
-  ABSL_RETURN_IF_ERROR(stream.Memcpy(&memory, &empty_header, sizeof(empty_header)));
+  ABSL_RETURN_IF_ERROR(
+      stream.Memcpy(&memory, &empty_header, sizeof(empty_header)));
   return memory;
 }
 

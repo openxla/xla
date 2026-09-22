@@ -77,7 +77,7 @@ absl::StatusOr<DeviceListRef> DeviceList::FromProto(
   devices.reserve(proto.device_ids_size());
   for (int device_id : proto.device_ids()) {
     ABSL_ASSIGN_OR_RETURN(Device* const device,
-                     client->LookupDevice(DeviceId(device_id)));
+                          client->LookupDevice(DeviceId(device_id)));
     devices.push_back(device);
   }
   return client->MakeDeviceList(devices);

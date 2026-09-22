@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/spmd/shardy/utils.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status_matchers.h"
 #include "llvm/ADT/BitVector.h"
 

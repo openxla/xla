@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu_topology.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/backends/cpu/target_machine_options.h"

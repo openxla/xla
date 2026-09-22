@@ -144,7 +144,7 @@ absl::StatusOr<HloFusionInstruction*> BuildBf16Fusion(
           bf16_computation->root_instruction()->shape(), fusion->fusion_kind(),
           new_operands, bf16_computation));
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   fusion->backend_config<GpuBackendConfig>());
+                        fusion->backend_config<GpuBackendConfig>());
   ABSL_RETURN_IF_ERROR(bf16_fusion->set_backend_config(gpu_config));
   return Cast<HloFusionInstruction>(bf16_fusion);
 }
@@ -193,7 +193,8 @@ absl::Status ReplaceWithBf16Fusion(HloFusionInstruction* fusion,
 
 absl::StatusOr<HloFusionInstruction*> RewriteFp8FusionToBf16(
     HloFusionInstruction* fusion) {
-  ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * bf16_fusion, BuildBf16Fusion(fusion));
+  ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * bf16_fusion,
+                        BuildBf16Fusion(fusion));
   ABSL_RETURN_IF_ERROR(ReplaceWithBf16Fusion(fusion, bf16_fusion));
   return bf16_fusion;
 }
@@ -231,7 +232,7 @@ absl::StatusOr<bool> ConvFp8Fallback::RunImpl(
       // No FP8 plans — check that the BF16 replacement has plans before
       // rewriting.
       ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * bf16_fusion,
-                       BuildBf16Fusion(fusion));
+                            BuildBf16Fusion(fusion));
       if (CuDnnFusionCompiler::SupportsFusionDeviceless(device_description_,
                                                         *bf16_fusion) !=
           DevicelessFusionSupport::kSupported) {

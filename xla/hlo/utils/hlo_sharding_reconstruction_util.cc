@@ -204,10 +204,11 @@ absl::StatusOr<xla::Literal> UnshardLiteral(
     }
 
     // We can do a dynamic slice and dynamic update slice or just CopySliceFrom
-    ABSL_RETURN_IF_ERROR(unsharded_literal.CopySliceFrom(*shard.data,
-                                                    /*src_base=*/zero_start,
-                                                    /*dest_base=*/start_indices,
-                                                    /*copy_size=*/copy_dims));
+    ABSL_RETURN_IF_ERROR(
+        unsharded_literal.CopySliceFrom(*shard.data,
+                                        /*src_base=*/zero_start,
+                                        /*dest_base=*/start_indices,
+                                        /*copy_size=*/copy_dims));
   }
   return unsharded_literal;
 }

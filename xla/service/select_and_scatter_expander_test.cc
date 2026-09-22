@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/select_and_scatter_expander.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

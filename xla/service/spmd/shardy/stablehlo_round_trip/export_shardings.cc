@@ -108,6 +108,8 @@ void exportFunc(FuncOp funcOp, const SymbolTable& symbolTable,
       };
   std::function<MeshAttr(TensorShardingAttr)> getMeshAttr =
       [&](TensorShardingAttr sharding) {
+        CHECK(sharding) << "null sharding while exporting func @"
+                        << funcOp.getSymName().str();
         return sharding.getMesh(symbolTable);
       };
 
@@ -415,6 +417,9 @@ NamedSharding convertToNamedSharding(
   }
 
   if (sdyMesh.getAxes().size() == manualAxes.size()) {
+    // Every axis is manual, so there is nothing left to shard over. HLO's
+    // canonical form for this omits the dimension shardings entirely; import
+    // restores them from the value's type.
     return NamedSharding::Manual(mesh);
   }
 

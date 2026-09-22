@@ -27,6 +27,7 @@
 #include "absl/time/time.h"
 #include "grpcpp/client_context.h"
 #include "grpcpp/grpcpp.h"
+#include "tsl/platform/stacktrace.h"
 #include "xla/pjrt/distributed/util.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/serdes_any_version_accessor.h"
@@ -42,7 +43,6 @@
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 namespace ifrt {

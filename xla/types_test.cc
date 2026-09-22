@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/types.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/test.h"
 
 namespace xla {

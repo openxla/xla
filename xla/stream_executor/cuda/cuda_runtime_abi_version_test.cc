@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_runtime_abi_version.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"

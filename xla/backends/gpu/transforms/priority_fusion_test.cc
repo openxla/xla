@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -1684,7 +1685,7 @@ TEST_F(PriorityFusionRocmMemoryBandwidthTest, MemoryBandwidthTipsReduceFusion) {
   // gfx950 legacy formula bandwidth: 2 * (8192/8) * 1.9e9 = 3.8912 TB/s.
   constexpr int64_t kFormulaBandwidth = 3'891'200'000'000;
   // gfx950 corrected per-gfx bandwidth (rocm_memory_bandwidth.cc).
-  constexpr int64_t kFixedBandwidth = 6'810'000'000'000;
+  constexpr int64_t kFixedBandwidth = 7'782'000'000'000;
 
   // The bandwidth value changes the PriorityFusion decision for this HLO.
   EXPECT_EQ(RunAndCountFusions(kHlo, kFormulaBandwidth), 1);

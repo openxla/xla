@@ -134,8 +134,9 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
         ExecutionUnitDescription::FromProto(proto.matrix_unit_description()));
   }
   if (!proto.driver_version().empty()) {
-    ABSL_ASSIGN_OR_RETURN(device_description.driver_version_,
-                     SemanticVersion::ParseFromString(proto.driver_version()));
+    ABSL_ASSIGN_OR_RETURN(
+        device_description.driver_version_,
+        SemanticVersion::ParseFromString(proto.driver_version()));
   }
   if (!proto.kernel_mode_driver_version().empty()) {
     ABSL_ASSIGN_OR_RETURN(
@@ -143,8 +144,9 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
         SemanticVersion::ParseFromString(proto.kernel_mode_driver_version()));
   }
   if (!proto.runtime_version().empty()) {
-    ABSL_ASSIGN_OR_RETURN(device_description.runtime_version_,
-                     SemanticVersion::ParseFromString(proto.runtime_version()));
+    ABSL_ASSIGN_OR_RETURN(
+        device_description.runtime_version_,
+        SemanticVersion::ParseFromString(proto.runtime_version()));
   }
   if (!proto.compile_time_toolkit_version().empty()) {
     ABSL_ASSIGN_OR_RETURN(
@@ -152,12 +154,14 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
         SemanticVersion::ParseFromString(proto.compile_time_toolkit_version()));
   }
   if (!proto.dnn_version().empty()) {
-    ABSL_ASSIGN_OR_RETURN(device_description.dnn_version_,
-                     SemanticVersion::ParseFromString(proto.dnn_version()));
+    ABSL_ASSIGN_OR_RETURN(
+        device_description.dnn_version_,
+        SemanticVersion::ParseFromString(proto.dnn_version()));
   }
   if (!proto.cub_version().empty()) {
-    ABSL_ASSIGN_OR_RETURN(device_description.cub_version_,
-                     SemanticVersion::ParseFromString(proto.cub_version()));
+    ABSL_ASSIGN_OR_RETURN(
+        device_description.cub_version_,
+        SemanticVersion::ParseFromString(proto.cub_version()));
   }
   ABSL_ASSIGN_OR_RETURN(
       device_description.interconnect_info_,

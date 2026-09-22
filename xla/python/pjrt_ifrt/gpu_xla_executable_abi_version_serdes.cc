@@ -83,7 +83,7 @@ class GpuXlaExecutableAbiVersionSerDes
         ifrt::cast<xla::ifrt::XlaExecutableAbiVersion>(serializable);
 
     ABSL_ASSIGN_OR_RETURN(xla::PjRtExecutableAbiVersionProto proto,
-                     version.ExecutableAbiVersion().ToProto());
+                          version.ExecutableAbiVersion().ToProto());
     absl::Cord executable_abi_version;
     if (!proto.SerializeToString(&executable_abi_version)) {
       return absl::InternalError(

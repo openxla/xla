@@ -146,7 +146,7 @@ absl::Status ObjectLoader::AddObjFile(
   }
 
   ABSL_ASSIGN_OR_RETURN(llvm::orc::JITDylib * dylib,
-                   execution_engine_->dylib(dylib_index));
+                        execution_engine_->dylib(dylib_index));
   if (auto err =
           execution_engine_->object_layer()->add(*dylib, std::move(obj_file))) {
     return absl::Status(
@@ -185,7 +185,8 @@ absl::StatusOr<llvm::orc::SymbolMap> ObjectLoader::LookupSymbols(
   // Build a search order for the dynamic libraries.
   llvm::orc::JITDylibSearchOrder search_order(num_dylibs());
   for (size_t i = 0; i < num_dylibs(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(llvm::orc::JITDylib * dylib, execution_engine_->dylib(i));
+    ABSL_ASSIGN_OR_RETURN(llvm::orc::JITDylib * dylib,
+                          execution_engine_->dylib(i));
     search_order[i] = std::make_pair(
         dylib, llvm::orc::JITDylibLookupFlags::MatchExportedSymbolsOnly);
   }

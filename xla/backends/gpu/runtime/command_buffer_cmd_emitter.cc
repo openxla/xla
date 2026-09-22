@@ -123,8 +123,9 @@ static absl::Status SetOrUpdateCommandBufferExecutors(
   ABSL_ASSIGN_OR_RETURN(
       CommandExecutor cond_cmds,
       ConvertToCommands(thunk.condition_executor().thunks(), options));
-  ABSL_ASSIGN_OR_RETURN(CommandExecutor body_cmds,
-                   ConvertToCommands(thunk.body_executor().thunks(), options));
+  ABSL_ASSIGN_OR_RETURN(
+      CommandExecutor body_cmds,
+      ConvertToCommands(thunk.body_executor().thunks(), options));
 
   return thunk.SetOrUpdateCommandBufferExecutors(
       std::move(cond_cmds), std::move(body_cmds), options.enable_loop_unroll);
@@ -147,7 +148,7 @@ static absl::Status SetOrUpdateCommandBufferBranchExecutors(
   } else {
     for (const ThunkExecutor& branch_thunk : thunk.branch_executors()) {
       ABSL_ASSIGN_OR_RETURN(CommandExecutor cmds,
-                       ConvertToCommands(branch_thunk.thunks(), options));
+                            ConvertToCommands(branch_thunk.thunks(), options));
       branch_cmds.emplace_back(std::move(cmds));
     }
   }
@@ -170,7 +171,8 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return absl::OkStatus();
     case Thunk::Kind::kWhile: {
       auto& while_thunk = static_cast<WhileThunk&>(thunk);
-      ABSL_RETURN_IF_ERROR(SetOrUpdateCommandBufferExecutors(while_thunk, options));
+      ABSL_RETURN_IF_ERROR(
+          SetOrUpdateCommandBufferExecutors(while_thunk, options));
       cmd_sequence.Append(&while_thunk);
       return absl::OkStatus();
     }
@@ -526,8 +528,9 @@ absl::Status AppendCommandsInConcurrentRegions(
     ConversionContext& ctx, CommandSequence& cmd_sequence,
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options,
     std::optional<uint64_t> inherited_region_id) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<ConcurrentRegion> concurrent_regions,
-                   CollectConcurrentRegions(sequence, inherited_region_id));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<ConcurrentRegion> concurrent_regions,
+      CollectConcurrentRegions(sequence, inherited_region_id));
 
   std::vector<ConcurrentRegionScheduler> concurrent_region_schedules;
   absl::flat_hash_map<const Thunk*, int64_t> thunk_to_index;

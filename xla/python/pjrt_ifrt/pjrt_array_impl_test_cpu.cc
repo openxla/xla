@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/string_view.h"
 #include "xla/python/ifrt/test_util.h"
 

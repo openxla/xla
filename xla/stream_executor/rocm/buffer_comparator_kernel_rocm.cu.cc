@@ -14,9 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/primitive_util.h"
-#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/gpu/buffer_comparator_kernel_lib.cu.h"
 #include "xla/stream_executor/platform/initialize.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 
 namespace stream_executor::rocm {
 

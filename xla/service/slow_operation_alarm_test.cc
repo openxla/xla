@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/slow_operation_alarm.h"
 
+#include <gtest/gtest.h>
+
 #include <thread>  // NOLINT
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"

@@ -30,6 +30,10 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/test.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_pjrt.h"
@@ -37,10 +41,6 @@ limitations under the License.
 #include "xla/tools/run_hlo_module.h"
 #include "xla/tools/run_hlo_module.pb.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/test.h"
 
 namespace {
 const char* const kUsage = R"(

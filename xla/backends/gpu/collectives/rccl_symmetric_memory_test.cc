@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/rccl_symmetric_memory.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "rocm/include/hip/hip_runtime.h"

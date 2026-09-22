@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/executable.h"
+#include "xla/service/xla_compile_result.pb.h"
 
 namespace xla {
 
@@ -49,7 +50,7 @@ absl::StatusOr<std::string> AotCompileCpuExecutable(
     *result->mutable_hlo_module() = executables[0]->module().ToProto();
   }
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CompiledModule> aot_result,
-                   cpu_compiler.Export(executables[0].get()));
+                        cpu_compiler.Export(executables[0].get()));
   return aot_result->SerializeAsString();
 }
 

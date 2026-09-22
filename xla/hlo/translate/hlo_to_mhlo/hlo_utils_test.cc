@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/Builders.h"

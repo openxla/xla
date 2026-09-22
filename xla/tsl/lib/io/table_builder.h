@@ -26,9 +26,9 @@ limitations under the License.
 
 #include <stdint.h>
 
+#include "tsl/platform/stringpiece.h"
 #include "xla/tsl/lib/io/table_options.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 class WritableFile;

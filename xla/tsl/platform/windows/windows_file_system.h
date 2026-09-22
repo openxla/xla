@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/file_system.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/platform/file_system.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef CopyFile

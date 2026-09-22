@@ -1522,10 +1522,7 @@ xla_test(
     # Turn on logging so that VLOG statements don't appear uncovered to zapfhahn.
     args = if_google(["--vmodule=convolution_emitter=7"]),
     shard_count = 40,
-    tags = [
-        "cuda-only",
-        "optonly",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1649,7 +1646,6 @@ xla_test(
     backend_args = {"gpu": ["--xla_backend_extra_options=xla_gpu_experimental_conv_disable_layout_heuristic"]},
     backends = ["gpu"],
     shard_count = 25,
-    tags = ["cuda-only"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2758,15 +2754,12 @@ xla_test(
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
-        ":hlo_runner_agnostic_reference_mixin",
         ":xla_internal_test_main",
         "//xla:error_spec",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/pjrt/interpreter:interpreter_client",
-        "//xla/service:hlo_runner_pjrt",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:ml_dtypes",
@@ -3016,10 +3009,7 @@ xla_test(
         "interpreter",
     ],
     shard_count = 30,
-    tags = [
-        "cuda-only",
-        "optonly",
-    ],
+    tags = ["optonly"],
     use_legacy_runtime = True,
     deps = [
         ":literal_test_util",

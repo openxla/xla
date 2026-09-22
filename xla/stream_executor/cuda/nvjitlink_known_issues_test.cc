@@ -16,8 +16,9 @@ limitations under the License.
 #include "xla/stream_executor/cuda/nvjitlink_known_issues.h"
 
 #include <gtest/gtest.h>
-#include "xla/stream_executor/cuda/nvjitlink_support.h"
+
 #include "tsl/platform/test.h"
+#include "xla/stream_executor/cuda/nvjitlink_support.h"
 
 namespace {
 

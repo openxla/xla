@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/core/host_offloading/host_offloading_executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/ffi.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
@@ -52,7 +54,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace {
@@ -73,7 +74,7 @@ absl::StatusOr<std::unique_ptr<HostOffloadingExecutable>> CompileFromString(
       XlaComputation computation(module->ToProto());
       ABSL_ASSIGN_OR_RETURN(auto executable, client.Compile(computation));
       ABSL_ASSIGN_OR_RETURN(auto aot_compilation_result,
-                       client.Export(executable.get()));
+                            client.Export(executable.get()));
 
       xla::cpu::CpuAotCompilationResult* cpu_aot_compilation_result =
           absl::down_cast<cpu::CpuAotCompilationResult*>(

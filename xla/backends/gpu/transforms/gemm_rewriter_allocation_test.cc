@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/tests/hlo_legacy_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/executable.h"

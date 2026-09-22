@@ -14,11 +14,12 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/tools/hlo_diff/utils/text_diff.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 
 namespace xla::hlo_diff {

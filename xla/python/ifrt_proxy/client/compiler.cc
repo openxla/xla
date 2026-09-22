@@ -28,6 +28,7 @@
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/python/ifrt/client.h"
@@ -55,7 +56,6 @@
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_to_from_proto.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -74,7 +74,7 @@ tsl::Future<xla::ifrt::LoadedExecutableRef> Compiler::CompileAndLoad(
     auto serialize_options = std::make_unique<xla::ifrt::SerializeOptions>(
         rpc_helper_->ifrt_serdes_version());
     ABSL_ASSIGN_OR_RETURN(*request->mutable_program(),
-                     Serialize(*program, std::move(serialize_options)));
+                          Serialize(*program, std::move(serialize_options)));
   }
   tsl::profiler::TraceMe traceme_ifrt_entrypoint(
       [prog_size = request->program().data().size()]() {
@@ -108,7 +108,7 @@ tsl::Future<xla::ifrt::LoadedExecutableRef> Compiler::CompileAndLoad(
           client_, xla_host_callback.operands, xla_host_callback.results,
           /*queue=*/nullptr);
       ABSL_ASSIGN_OR_RETURN(*request->add_host_callbacks(),
-                       remote_loaded_host_callback->Serialize());
+                            remote_loaded_host_callback->Serialize());
     }
 
     loaded_host_callbacks.swap(xla_options->loaded_host_callbacks);
@@ -132,7 +132,7 @@ tsl::Future<xla::ifrt::LoadedExecutableRef> Compiler::CompileAndLoad(
   auto serialize_options = std::make_unique<xla::ifrt::SerializeOptions>(
       rpc_helper_->ifrt_serdes_version());
   ABSL_ASSIGN_OR_RETURN(*request->mutable_compile_options(),
-                   Serialize(*options, std::move(serialize_options)));
+                        Serialize(*options, std::move(serialize_options)));
 
   xla::ifrt::UserContextRef user_context =
       xla::ifrt::UserContextScope::current();
@@ -155,7 +155,7 @@ Compiler::CreateExecutableFromResponse(
   addressable_devices.reserve(response->addressable_device_ids_size());
   for (const int32_t device_id : response->addressable_device_ids()) {
     ABSL_ASSIGN_OR_RETURN(xla::ifrt::Device* const device,
-                     client_->LookupDevice(DeviceId(device_id)));
+                          client_->LookupDevice(DeviceId(device_id)));
     addressable_devices.push_back(device);
   }
   absl::StatusOr<
@@ -175,7 +175,7 @@ Compiler::CreateExecutableFromResponse(
       for (const auto& device_id :
            devices_proto.mpmd_addressable_device_ids()) {
         ABSL_ASSIGN_OR_RETURN(xla::ifrt::Device* const device,
-                         client_->LookupDevice(DeviceId(device_id)));
+                              client_->LookupDevice(DeviceId(device_id)));
         current_devices.push_back(device);
       }
       mpmd_addressable_devices->insert({name, std::move(current_devices)});
@@ -212,14 +212,14 @@ Compiler::CreateExecutableFromResponse(
     devices.reserve(response->addressable_device_ids_size());
     for (const int32_t device_id : response->addressable_device_ids()) {
       ABSL_ASSIGN_OR_RETURN(xla::ifrt::Device* const device,
-                       client_->LookupDevice(DeviceId(device_id)));
+                            client_->LookupDevice(DeviceId(device_id)));
       devices.push_back(device);
     }
   } else {
     devices.reserve(response->device_ids_size());
     for (const int32_t device_id : response->device_ids()) {
       ABSL_ASSIGN_OR_RETURN(xla::ifrt::Device* const device,
-                       client_->LookupDevice(DeviceId(device_id)));
+                            client_->LookupDevice(DeviceId(device_id)));
       devices.push_back(device);
     }
   }

@@ -41,6 +41,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
@@ -49,10 +53,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
 
@@ -196,8 +196,8 @@ absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
     ThunkSequence thunk_sequence, const ThunkExecutor::Options& options) {
   // Construct an execution graph for the given thunk sequence.
   ABSL_ASSIGN_OR_RETURN(ExecutionGraph execution_graph,
-                   ExecutionGraph::Create<ThunkOperation>(
-                       CreateThunkOperations(thunk_sequence)));
+                        ExecutionGraph::Create<ThunkOperation>(
+                            CreateThunkOperations(thunk_sequence)));
 
   return ThunkExecutor(std::move(thunk_sequence), std::move(execution_graph),
                        options);

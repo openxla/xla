@@ -49,12 +49,12 @@ class AllocToArgPass : public impl::AllocToArgPassBase<AllocToArgPass> {
 void AllocToArgPass::runOnOperation() {
   // Find unique block and return op.
   FuncOp funcOp = getOperation();
-  auto &blocks = funcOp.getFunctionBody().getBlocks();
+  auto& blocks = funcOp.getFunctionBody().getBlocks();
   if (blocks.size() != 1) {
     funcOp.emitError("expect function with single-block body");
     return signalPassFailure();
   }
-  Block &bodyBlock = blocks.front();
+  Block& bodyBlock = blocks.front();
   auto returnOp = llvm::cast<func::ReturnOp>(bodyBlock.getTerminator());
 
   IRRewriter rewriter(&getContext());
@@ -62,7 +62,7 @@ void AllocToArgPass::runOnOperation() {
   Location loc = returnOp.getLoc();
 
   for (auto [i, result] : llvm::enumerate(returnOp.getOperands())) {
-    Operation *resultDef = result.getDefiningOp();
+    Operation* resultDef = result.getDefiningOp();
     Type resultTy = result.getType();
 
     // Case: plain alloc.
@@ -81,7 +81,7 @@ void AllocToArgPass::runOnOperation() {
     // Case: shape-expanded alloc.
     if (auto expandOp =
             llvm::dyn_cast_or_null<memref::ExpandShapeOp>(resultDef)) {
-      Operation *expandDef = expandOp.getOperand(0).getDefiningOp();
+      Operation* expandDef = expandOp.getOperand(0).getDefiningOp();
       if (auto allocOp = llvm::dyn_cast_or_null<memref::AllocOp>(expandDef)) {
         resultsToErase.set(i);
         auto attrs = funcOp.getResultAttrDict(i);

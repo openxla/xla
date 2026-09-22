@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/triton/fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "mlir/IR/MLIRContext.h"

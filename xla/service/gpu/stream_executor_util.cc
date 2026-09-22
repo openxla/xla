@@ -30,6 +30,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/const_init.h"
 #include "absl/log/check.h"
@@ -41,7 +42,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
+#include "tsl/platform/ml_dtypes.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/layout.h"
@@ -69,9 +72,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -79,7 +79,6 @@ using tsl::profiler::TraceMeLevel;
 
 namespace xla {
 namespace gpu {
-
 
 namespace {
 
@@ -143,14 +142,16 @@ absl::StatusOr<std::tuple<Layout, Layout, Layout>>
 StreamExecutorConvLayoutsToXlaLayouts(const ConvolutionDimensionNumbers& dnums,
                                       DataLayout input, FilterLayout filter,
                                       DataLayout output) {
-  ABSL_ASSIGN_OR_RETURN(Layout input_layout,
-                   DataLayoutToXlaLayout(input, dnums.input_batch_dimension(),
-                                         dnums.input_feature_dimension(),
-                                         dnums.input_spatial_dimensions()));
-  ABSL_ASSIGN_OR_RETURN(Layout output_layout,
-                   DataLayoutToXlaLayout(input, dnums.output_batch_dimension(),
-                                         dnums.output_feature_dimension(),
-                                         dnums.output_spatial_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      Layout input_layout,
+      DataLayoutToXlaLayout(input, dnums.input_batch_dimension(),
+                            dnums.input_feature_dimension(),
+                            dnums.input_spatial_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      Layout output_layout,
+      DataLayoutToXlaLayout(input, dnums.output_batch_dimension(),
+                            dnums.output_feature_dimension(),
+                            dnums.output_spatial_dimensions()));
 
   std::vector<int64_t> filter_layout;
   switch (filter) {
@@ -368,7 +369,7 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
           ptx, std::move(kernel_name), num_args);
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                   stream_exec->LoadKernel(loader_spec));
+                        stream_exec->LoadKernel(loader_spec));
 
   se::KernelMetadata m;
   m.set_shared_memory_bytes(shared_mem_bytes);
@@ -386,7 +387,7 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
           cubin_data, std::move(kernel_name), num_args);
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                   stream_exec->LoadKernel(loader_spec));
+                        stream_exec->LoadKernel(loader_spec));
 
   se::KernelMetadata m;
   m.set_shared_memory_bytes(shared_mem_bytes);
@@ -409,7 +410,8 @@ absl::Status ExecuteKernelOnStream(
           return TraceMeEncode("ExecuteKernelOnStream/PackKernelArgs", {});
         },
         /*level=*/TraceMeLevel::kVerbose);
-    ABSL_ASSIGN_OR_RETURN(kernel_args, se::PackKernelArgs(args, kernel.metadata()));
+    ABSL_ASSIGN_OR_RETURN(kernel_args,
+                          se::PackKernelArgs(args, kernel.metadata()));
   }
 
   return kernel.Launch(dims.thread_counts_per_block(), dims.block_counts(),

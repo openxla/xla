@@ -45,19 +45,19 @@ namespace xla {
 namespace gpu {
 
 class EnforceMinorToMajorReduceOpVisitor : public DfsHloRewriteVisitor {
-  absl::Status HandleReduce(HloInstruction *hlo) override {
+  absl::Status HandleReduce(HloInstruction* hlo) override {
     auto reduce = Cast<HloReduceInstruction>(hlo);
     VLOG(5) << "Input: " << reduce->ToString();
 
     int operand_idx = -1;
 
-    absl::InlinedVector<HloInstruction *, 2> canonical_reduce_inputs;
+    absl::InlinedVector<HloInstruction*, 2> canonical_reduce_inputs;
     absl::InlinedVector<Shape, 2> new_reduce_shapes;
 
     DimensionVector out_reduce_dimensions;
-    const Shape &first_instruction_shape = reduce->inputs()[0]->shape();
+    const Shape& first_instruction_shape = reduce->inputs()[0]->shape();
 
-    for (HloInstruction *operand : reduce->inputs()) {
+    for (HloInstruction* operand : reduce->inputs()) {
       operand_idx++;
 
       if (operand_idx != 0 &&
@@ -67,10 +67,10 @@ class EnforceMinorToMajorReduceOpVisitor : public DfsHloRewriteVisitor {
             "reduce inputs");
       }
 
-      const Shape &operand_shape = operand->shape();
-      const Layout &operand_layout = operand_shape.layout();
+      const Shape& operand_shape = operand->shape();
+      const Layout& operand_layout = operand_shape.layout();
 
-      const Shape &reduce_shape =
+      const Shape& reduce_shape =
           reduce->shape().IsTuple() ? reduce->shape().tuple_shapes(operand_idx)
                                     : reduce->shape();
 
@@ -130,7 +130,7 @@ class EnforceMinorToMajorReduceOpVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
 
-      HloInstruction *canonical_reduce_input =
+      HloInstruction* canonical_reduce_input =
           new_operand_shape != operand_shape
               ? reduce->parent()->AddInstruction(
                     HloInstruction::CreateBitcast(new_operand_shape, operand))
@@ -156,10 +156,10 @@ class EnforceMinorToMajorReduceOpVisitor : public DfsHloRewriteVisitor {
         new_reduce_shape, canonical_reduce_inputs, reduce->init_values(),
         out_reduce_dimensions, reduce->to_apply());
     VLOG(5) << "Generated new reduction: " << new_reduce->ToString();
-    const Shape &orig_reduce_shape = reduce->shape();
+    const Shape& orig_reduce_shape = reduce->shape();
 
     if (new_reduce_shape != orig_reduce_shape) {
-      HloInstruction *wrapped_reduce =
+      HloInstruction* wrapped_reduce =
           reduce->parent()->AddInstruction(std::move(new_reduce));
 
       if (!new_reduce_shape.IsTuple()) {
@@ -167,9 +167,9 @@ class EnforceMinorToMajorReduceOpVisitor : public DfsHloRewriteVisitor {
             HloInstruction::CreateBitcast(reduce->shape(), wrapped_reduce);
       } else {
         // Bitcast each element of the tuple.
-        absl::InlinedVector<HloInstruction *, 2> out;
+        absl::InlinedVector<HloInstruction*, 2> out;
         for (int oidx = 0; oidx < reduce->input_count(); oidx++) {
-          HloInstruction *gte = reduce->parent()->AddInstruction(
+          HloInstruction* gte = reduce->parent()->AddInstruction(
               HloInstruction::CreateGetTupleElement(wrapped_reduce, oidx));
           out.push_back(
               reduce->parent()->AddInstruction(HloInstruction::CreateBitcast(
@@ -188,8 +188,8 @@ absl::StatusOr<bool> ReductionLayoutNormalizer::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   EnforceMinorToMajorReduceOpVisitor().RunOnModule(
-                       module, execution_threads));
+                        EnforceMinorToMajorReduceOpVisitor().RunOnModule(
+                            module, execution_threads));
   return changed;
 }
 

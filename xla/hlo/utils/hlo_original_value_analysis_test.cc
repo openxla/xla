@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/utils/hlo_original_value_analysis.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_original_value.h"

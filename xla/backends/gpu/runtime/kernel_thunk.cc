@@ -113,7 +113,7 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
     ThunkInfo thunk_info, const KernelThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(LaunchDimensions launch_dimensions,
-                   LaunchDimensions::FromProto(proto.launch_dimensions()));
+                        LaunchDimensions::FromProto(proto.launch_dimensions()));
   std::optional<stream_executor::ClusterDim> cluster_dim;
   if (proto.has_cluster_dim()) {
     ABSL_ASSIGN_OR_RETURN(
@@ -132,9 +132,10 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
   arguments.reserve(proto.args().size());
   for (int i = 0; i < proto.args().size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                     BufferAllocation::Slice::FromProto(proto.args().at(i),
-                                                        buffer_allocations));
-    ABSL_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(proto.args_shape().at(i)));
+                          BufferAllocation::Slice::FromProto(
+                              proto.args().at(i), buffer_allocations));
+    ABSL_ASSIGN_OR_RETURN(Shape shape,
+                          Shape::FromProto(proto.args_shape().at(i)));
     emitters::KernelArgument argument{shape, slice};
     argument.set_written(proto.written().at(i));
     arguments.push_back(std::move(argument));
@@ -189,9 +190,9 @@ absl::Status KernelThunk::Initialize(const InitializeParams& params) {
                                params.executor, shmem_bytes_, use_pdl_));
 
     } else {
-      ABSL_ASSIGN_OR_RETURN(kernel,
-                       CreateKernel(kernel_name_, args_.size(), params.src.text,
-                                    params.executor, shmem_bytes_, use_pdl_));
+      ABSL_ASSIGN_OR_RETURN(
+          kernel, CreateKernel(kernel_name_, args_.size(), params.src.text,
+                               params.executor, shmem_bytes_, use_pdl_));
     }
 
     kernel_cache_.emplace(params.executor, std::move(kernel));
@@ -224,7 +225,7 @@ absl::StatusOr<KernelThunk::KernelWithArgs> KernelThunk::GetKernelAndArgs(
         it != tma_metadata_.arg_index_to_tma_info.end()) {
       const se::gpu::TmaDescriptor& tma_desc = it->second;
       ABSL_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
-                       executor->CreateTensorMap(tma_desc, buf.opaque()));
+                            executor->CreateTensorMap(tma_desc, buf.opaque()));
       VLOG(5) << "  Using TensorMap for arg #" << idx << ": "
               << tma_desc.ToString();
       kernel_args.push_back(std::move(tensor_map));
@@ -246,7 +247,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   ABSL_ASSIGN_OR_RETURN(auto kernel_with_args,
-                   GetKernelAndArgs(*params.buffer_allocations, executor));
+                        GetKernelAndArgs(*params.buffer_allocations, executor));
   auto& [kernel, kernel_args] = kernel_with_args;
 
   int device_ordinal = executor->device_ordinal();

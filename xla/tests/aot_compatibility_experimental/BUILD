@@ -33,7 +33,7 @@ xla_cc_test(
     srcs = ["test_lib_test.cc"],
     data = ["//xla/tests/aot_compatibility_experimental/gpu:test_dummy_test_data"],
     tags = [
-        "manual",
+        "broken",
         "no_oss",
     ],
     deps = [

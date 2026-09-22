@@ -441,7 +441,7 @@ mlir::ArrayAttr ConvertOutputOperandAliasing(
 absl::StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
     xla::CustomCallApiVersion api_version) {
   ABSL_ASSIGN_OR_RETURN(auto stablehlo_api_version,
-                   stablehlo::ConvertCustomCallApiVersion(api_version));
+                        stablehlo::ConvertCustomCallApiVersion(api_version));
   auto mhlo_api_version = mlir::mhlo::symbolizeCustomCallApiVersion(
       mlir::stablehlo::stringifyCustomCallApiVersion(stablehlo_api_version));
   if (!mhlo_api_version.has_value()) {

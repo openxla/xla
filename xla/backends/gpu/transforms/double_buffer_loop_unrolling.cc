@@ -262,7 +262,7 @@ absl::StatusOr<bool> FullyUnroll(HloInstruction* while_instr,
   std::string clone_suffix = "full_unroll_clone";
 
   ABSL_ASSIGN_OR_RETURN(WhileLoopBackendConfig config,
-                   while_instr->backend_config<WhileLoopBackendConfig>());
+                        while_instr->backend_config<WhileLoopBackendConfig>());
   std::vector<HloInstruction*> ops_to_clone;
   ops_to_clone.reserve(while_body->MakeInstructionPostOrder().size());
 
@@ -323,9 +323,9 @@ absl::StatusOr<bool> FullyUnroll(HloInstruction* while_instr,
     VLOG(2) << "Replaced with new root "
             << while_body->root_instruction()->ToString();
 
-    ABSL_RETURN_IF_ERROR(HandleControlDependencies(while_body, old_to_new_map,
-                                              &loop_roots, old_input_parameter,
-                                              skip_control_dep_injection));
+    ABSL_RETURN_IF_ERROR(HandleControlDependencies(
+        while_body, old_to_new_map, &loop_roots, old_input_parameter,
+        skip_control_dep_injection));
 
     // Inductive step update, clean/update necessary buffers to prepare them for
     // the next unrolling iteration.
@@ -345,7 +345,7 @@ absl::StatusOr<bool> FullyUnroll(HloInstruction* while_instr,
 
   WhileLoopBackendConfig old_config;
   ABSL_ASSIGN_OR_RETURN(old_config,
-                   while_instr->backend_config<WhileLoopBackendConfig>());
+                        while_instr->backend_config<WhileLoopBackendConfig>());
 
   WhileLoopBackendConfig new_config = old_config;
   new_config.mutable_known_trip_count()->set_n(1);
@@ -428,7 +428,7 @@ absl::Status PeelInstructionsForOddTripCount(HloModule* module,
 absl::StatusOr<bool> DoubleBufferingUnroll(HloInstruction* while_instr,
                                            HloModule* module) {
   ABSL_ASSIGN_OR_RETURN(auto config,
-                   while_instr->backend_config<WhileLoopBackendConfig>());
+                        while_instr->backend_config<WhileLoopBackendConfig>());
 
   CHECK(config.has_known_trip_count())
       << "Only loops with known trip count are supported.";
@@ -504,9 +504,9 @@ absl::StatusOr<bool> DoubleBufferingUnroll(HloInstruction* while_instr,
           << while_body->root_instruction()->ToString();
 
   // Handle existing control dependencies.
-  ABSL_RETURN_IF_ERROR(HandleControlDependencies(while_body, old_to_new_map,
-                                            &old_loop_roots, input_parameter,
-                                            skip_control_dep_injection));
+  ABSL_RETURN_IF_ERROR(
+      HandleControlDependencies(while_body, old_to_new_map, &old_loop_roots,
+                                input_parameter, skip_control_dep_injection));
 
   WhileLoopBackendConfig new_config = config;
   new_config.mutable_known_trip_count()->set_n(exact_trip_count / 2);
@@ -565,8 +565,9 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
   VLOG(2) << "Processing " << while_instrs.size() << " while loops.";
 
   for (HloInstruction* while_instr : while_instrs) {
-    ABSL_ASSIGN_OR_RETURN(WhileLoopBackendConfig config,
-                     while_instr->backend_config<WhileLoopBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(
+        WhileLoopBackendConfig config,
+        while_instr->backend_config<WhileLoopBackendConfig>());
     if (!config.has_known_trip_count()) {
       VLOG(2) << while_instr->ToString()
               << " doesn't have exact trip count, skipping loop unrolling.";
@@ -595,7 +596,8 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
     if (unroll_strategy_ == UnrollStrategy::kFullUnroll) {
       ABSL_ASSIGN_OR_RETURN(changed, FullyUnroll(while_instr, module));
     } else if (unroll_strategy_ == UnrollStrategy::kDoubleBuffer) {
-      ABSL_ASSIGN_OR_RETURN(changed, DoubleBufferingUnroll(while_instr, module));
+      ABSL_ASSIGN_OR_RETURN(changed,
+                            DoubleBufferingUnroll(while_instr, module));
     } else if (unroll_strategy_ == UnrollStrategy::kAuto) {
       ABSL_ASSIGN_OR_RETURN(changed, AutoUnroll(while_instr, module));
     } else if (unroll_strategy_ == UnrollStrategy::kManual) {
@@ -604,7 +606,8 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
       }
       if (absl::EqualsIgnoreCase(manual_unroll_attr_val,
                                  kManualUnrollDoubleBuffer)) {
-        ABSL_ASSIGN_OR_RETURN(changed, DoubleBufferingUnroll(while_instr, module));
+        ABSL_ASSIGN_OR_RETURN(changed,
+                              DoubleBufferingUnroll(while_instr, module));
       }
     } else {
       LOG(FATAL) << absl::StrCat("Unhandled unrolling strategy: ",
@@ -620,7 +623,8 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
     // The call graph will not be flat if one of the loops that was unrolled
     // contains any kind of call to another computation---since the call will
     // be duplicated, thereby adding a second callsite for that computation.
-    ABSL_RETURN_IF_ERROR(FlattenCallGraph().Run(module, execution_threads).status());
+    ABSL_RETURN_IF_ERROR(
+        FlattenCallGraph().Run(module, execution_threads).status());
   }
 
   return changed;

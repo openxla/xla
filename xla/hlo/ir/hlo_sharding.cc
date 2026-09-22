@@ -1055,7 +1055,7 @@ const TileAssignment& HloSharding::TileAgnosticDeviceAssignment() const {
     tuple_shardings.reserve(proto.tuple_shardings().size());
     for (const OpSharding& tuple_sharding_proto : proto.tuple_shardings()) {
       ABSL_ASSIGN_OR_RETURN(HloSharding sharding,
-                       HloSharding::FromProto(tuple_sharding_proto));
+                            HloSharding::FromProto(tuple_sharding_proto));
       tuple_shardings.push_back(std::move(sharding));
     }
     return std::move(
@@ -1121,11 +1121,12 @@ const TileAssignment& HloSharding::TileAgnosticDeviceAssignment() const {
 
   // RE: the product of tile assignment tensor dimensions must be
   // equal to tile_assignment_devices.size() or the product of iota_dimensions.
-  ABSL_ASSIGN_OR_RETURN(int64_t product_of_dimensions,
-                   product_no_overflow(proto.tile_assignment_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      int64_t product_of_dimensions,
+      product_no_overflow(proto.tile_assignment_dimensions()));
   if (use_iota_tile_assignments) {
     ABSL_ASSIGN_OR_RETURN(int64_t product_of_iota_dimensions,
-                     product_no_overflow(proto.iota_reshape_dims()));
+                          product_no_overflow(proto.iota_reshape_dims()));
     TF_RET_CHECK(product_of_dimensions == product_of_iota_dimensions);
   } else {
     TF_RET_CHECK(product_of_dimensions ==

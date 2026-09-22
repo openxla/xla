@@ -112,8 +112,9 @@ absl::Status OutfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
     // TODO(b/111309141): Run this on a separate stream so it doesn't block
     // the GPU from doing work during the transfer.
     ABSL_RETURN_IF_ERROR(stream.Memcpy(buffer->destination()->untyped_data(),
-                                  data_address, buffer->length()));
-    ABSL_RETURN_IF_ERROR(stream.DoHostCallback([&buffer]() { buffer->Done(); }));
+                                       data_address, buffer->length()));
+    ABSL_RETURN_IF_ERROR(
+        stream.DoHostCallback([&buffer]() { buffer->Done(); }));
   }
 
   absl::Status block_status = stream.BlockHostUntilDone();
@@ -146,8 +147,9 @@ absl::StatusOr<ThunkProto> OutfeedThunk::ToProto() const {
   *thunk_proto.mutable_thunk_info() = thunk_info().ToProto();
 
   for (const ShapedSlice& shaped_slice : source_slices_) {
-    ABSL_ASSIGN_OR_RETURN(*thunk_proto.mutable_outfeed_thunk()->add_source_slices(),
-                     shaped_slice.ToProto());
+    ABSL_ASSIGN_OR_RETURN(
+        *thunk_proto.mutable_outfeed_thunk()->add_source_slices(),
+        shaped_slice.ToProto());
   }
 
   return thunk_proto;

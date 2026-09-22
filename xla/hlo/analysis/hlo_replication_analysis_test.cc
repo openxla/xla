@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/analysis/hlo_replication_analysis.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

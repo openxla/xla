@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_schedule.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -396,15 +397,14 @@ ENTRY %WhileLoop () -> (s32[], f32[10]) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(module_str));
-  ASSERT_OK_AND_ASSIGN(
-      HloSchedule schedule,
-      ScheduleModule(module.get(), &alias_info_,
-                     [](const BufferValue& buffer) {
-                       return ShapeUtil::ByteSizeOf(
-                           buffer.shape(),
-                           /*pointer_size=*/sizeof(void*));
-                     },
-                     {HloInstruction::kMainExecutionThread}));
+  ASSERT_OK_AND_ASSIGN(HloSchedule schedule,
+                       ScheduleModule(module.get(), &alias_info_,
+                                      [](const BufferValue& buffer) {
+                                        return ShapeUtil::ByteSizeOf(
+                                            buffer.shape(),
+                                            /*pointer_size=*/sizeof(void*));
+                                      },
+                                      {HloInstruction::kMainExecutionThread}));
 
   HloInstruction* xla_while = module->entry_computation()
                                   ->root_instruction()
@@ -476,15 +476,14 @@ ENTRY %WhileLoop () -> (s32[], f32[10]) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(module_str));
-  ASSERT_OK_AND_ASSIGN(
-      HloSchedule schedule,
-      ScheduleModule(module.get(), &alias_info_,
-                     [](const BufferValue& buffer) {
-                       return ShapeUtil::ByteSizeOf(
-                           buffer.shape(),
-                           /*pointer_size=*/sizeof(void*));
-                     },
-                     {HloInstruction::kMainExecutionThread}));
+  ASSERT_OK_AND_ASSIGN(HloSchedule schedule,
+                       ScheduleModule(module.get(), &alias_info_,
+                                      [](const BufferValue& buffer) {
+                                        return ShapeUtil::ByteSizeOf(
+                                            buffer.shape(),
+                                            /*pointer_size=*/sizeof(void*));
+                                      },
+                                      {HloInstruction::kMainExecutionThread}));
 
   HloComputation* entry_computation = module->entry_computation();
   // Insert computation

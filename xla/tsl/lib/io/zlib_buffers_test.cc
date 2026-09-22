@@ -16,6 +16,7 @@ limitations under the License.
 #include <zlib.h>
 
 #include "absl/strings/match.h"
+#include "tsl/platform/strcat.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/io/random_inputstream.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
@@ -24,7 +25,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/strcat.h"
 
 namespace tsl {
 namespace io {

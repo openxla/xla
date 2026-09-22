@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/stream_executor/device_description.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"

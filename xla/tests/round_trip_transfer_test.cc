@@ -16,13 +16,15 @@ limitations under the License.
 // Tests transferring literals of various shapes and values in and out of the
 // XLA service.
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <numeric>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/array2d.h"
 #include "xla/array4d.h"
 #include "xla/literal.h"
@@ -30,7 +32,6 @@ limitations under the License.
 #include "xla/service/service.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/local_client_test_base.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

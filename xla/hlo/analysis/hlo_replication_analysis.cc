@@ -501,7 +501,7 @@ absl::Status HloReplicationAnalysis::ComputeHloReplication() {
     std::unique_ptr<ShapeTree<HloSharding>> sharding_tree = nullptr;
     if (cross_partition_spmd_ && param->has_sharding()) {
       ABSL_ASSIGN_OR_RETURN(auto result,
-                       param->sharding().AsShapeTree(param->shape()));
+                            param->sharding().AsShapeTree(param->shape()));
       sharding_tree =
           std::make_unique<ShapeTree<HloSharding>>(std::move(result));
     }

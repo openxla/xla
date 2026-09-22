@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -464,7 +464,7 @@ absl::StatusOr<bool> HloConstantFolding::RunOnComputation(
                        return instruction->opcode() == HloOpcode::kCall;
                      })) {
     ABSL_ASSIGN_OR_RETURN(bool did_change,
-                     PropagateIdenticalConstantArguments(computation));
+                          PropagateIdenticalConstantArguments(computation));
     changed |= did_change;
   }
   // Instructions removed while folding earlier entries of the snapshot
@@ -627,8 +627,8 @@ absl::StatusOr<bool> HloConstantFolding::RunImpl(
   for (auto it = computations.rbegin(); it != computations.rend(); ++it) {
     HloComputation* computation = *it;
     ABSL_ASSIGN_OR_RETURN(bool computation_changed,
-                     RunOnComputation(computation, evaluator.get(),
-                                      is_foldable_computation));
+                          RunOnComputation(computation, evaluator.get(),
+                                           is_foldable_computation));
     changed |= computation_changed;
   }
   return changed;

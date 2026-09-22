@@ -103,6 +103,8 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/transforms/Passes.h"
 #include "stablehlo/transforms/optimization/Passes.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
@@ -126,8 +128,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 namespace {
@@ -461,7 +461,8 @@ void AddVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max) {
 // Lowering passes for the new tiled emitter.
 // The input IR is from the xtile dialect which uses tensors that are converted
 // first to the vector dialect and then to LLVM.
-void AddNewVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max) {
+void AddNewVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max,
+                              int32_t vector_width) {
   // Get rid of 0d vectors.
   pm.addPass(cpu::createVectorToScalarPass());
   // Get rid of multi-dimensional vectors.
@@ -472,17 +473,17 @@ void AddNewVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max) {
       mlir::VectorTransferToSCFOptions().enableFullUnroll(true)));
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addNestedPass<mlir::func::FuncOp>(cpu::createHoistAllocaPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
 
   pm.addPass(cpu::createUnpackSubByteVectorWritePass());
 
+  pm.addPass(cpu::createLowerToLLVMPass(
+      cpu::LowerToLLVMPassOptions{/*prefer_vector_width =*/vector_width}));
   mlir::ConvertVectorToLLVMPassOptions options;
-
-  // If the tile size is 16x16 this will generate the most efficient code for
-  // avx512 platforms.
   options.vectorTransposeLowering =
       mlir::vector::VectorTransposeLowering::Shuffle16x16;
   pm.addPass(mlir::createConvertVectorToLLVMPass(options));
-  pm.addPass(cpu::createLowerToLLVMPass());
   pm.addPass(mlir::memref::createExpandStridedMetadataPass());
   pm.addPass(emitters::createSafeIntegerArithmeticPass());
 
@@ -526,7 +527,8 @@ FusionCompiler::FusionCompiler(mlir::MLIRContext* context, Options options,
         std::make_unique<ModuleCallbackPass>(hlo_module_, "post-optimization"));
   }
   if (options_.use_new_xtile_lowering) {
-    AddNewVectorToLLVMPasses(tiled_pass_manager_, options_.fast_min_max);
+    AddNewVectorToLLVMPasses(tiled_pass_manager_, options_.fast_min_max,
+                             options_.vector_width);
   } else {
     AddVectorToLLVMPasses(tiled_pass_manager_, options_.fast_min_max);
   }
@@ -645,7 +647,7 @@ absl::StatusOr<LlvmKernelSource> FusionCompiler::Compile(
     MlirKernelSource mlir_kernel_source) {
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> llvm_module,
-                   Compile(*llvm_context, mlir_kernel_source.module()));
+                        Compile(*llvm_context, mlir_kernel_source.module()));
   return LlvmKernelSource(std::move(llvm_context), std::move(llvm_module));
 }
 

@@ -125,11 +125,11 @@ ConvolutionReorderThunk::FromProto(
   std::optional<BiasBuffers> biases;
   if (proto.has_biases()) {
     ABSL_ASSIGN_OR_RETURN(ShapedSlice bias_input,
-                     ShapedSlice::FromProto(proto.biases().bias_input(),
-                                            buffer_allocations));
+                          ShapedSlice::FromProto(proto.biases().bias_input(),
+                                                 buffer_allocations));
     ABSL_ASSIGN_OR_RETURN(ShapedSlice bias_output,
-                     ShapedSlice::FromProto(proto.biases().bias_output(),
-                                            buffer_allocations));
+                          ShapedSlice::FromProto(proto.biases().bias_output(),
+                                                 buffer_allocations));
     biases = {{bias_input, bias_output}};
   }
 
@@ -145,17 +145,17 @@ absl::StatusOr<ThunkProto> ConvolutionReorderThunk::ToProto() const {
       thunk_proto.mutable_convolution_reorder_thunk();
 
   ABSL_ASSIGN_OR_RETURN(*reorder_proto->mutable_filter_input(),
-                   filter_input_.ToProto());
+                        filter_input_.ToProto());
   ABSL_ASSIGN_OR_RETURN(*reorder_proto->mutable_filter_output(),
-                   filter_output_.ToProto());
+                        filter_output_.ToProto());
 
   if (biases_.has_value()) {
     ConvolutionReorderBiasBuffers* biases_proto =
         reorder_proto->mutable_biases();
     ABSL_ASSIGN_OR_RETURN(*biases_proto->mutable_bias_input(),
-                     biases_->bias_input.ToProto());
+                          biases_->bias_input.ToProto());
     ABSL_ASSIGN_OR_RETURN(*biases_proto->mutable_bias_output(),
-                     biases_->bias_output.ToProto());
+                          biases_->bias_output.ToProto());
   }
 
   return thunk_proto;

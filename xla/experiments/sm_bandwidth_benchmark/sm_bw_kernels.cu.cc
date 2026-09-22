@@ -17,7 +17,6 @@ limitations under the License.
 #if GOOGLE_CUDA
 
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_kernels.h"
-
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_utils.h"
 
 namespace experiments {

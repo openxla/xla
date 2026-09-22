@@ -22,13 +22,13 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/aot_compatibility_experimental/test_lib.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace aot_compatibility_experimental {

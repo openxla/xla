@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/codegen/xtile/tiling_from_block_parameters.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -207,15 +208,16 @@ class GetTileTilingSpaceConcreteSizesTest
   absl::StatusOr<llvm::SmallVector<int64_t>> ComputeConcreteTileSizesOfFusion(
       const HloInstruction* fusion) {
     TF_RET_CHECK(fusion->opcode() == HloOpcode::kFusion) << fusion->ToString();
-    ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                     fusion->backend_config<::xla::gpu::GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(
+        auto backend_config,
+        fusion->backend_config<::xla::gpu::GpuBackendConfig>());
     BlockLevelParameters block_level_parameters =
         BlockLevelParameters::FromBlockLevelFusionConfig(
             backend_config.fusion_backend_config().block_level_fusion_config());
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(fusion);
     ABSL_ASSIGN_OR_RETURN(auto tiling_space,
-                     ::xla::gpu::experimental::TilingSpace::Create(
-                         *fusion_adaptor, &mlir_context_));
+                          ::xla::gpu::experimental::TilingSpace::Create(
+                              *fusion_adaptor, &mlir_context_));
     return GetTilingSpaceConcreteSizes(
         *tiling_space, block_level_parameters,
         GetDebugOptionsForTest()

@@ -21,7 +21,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 #define XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 
-#include "rocm/include/rocprofiler-sdk/buffer.h"  // IWYU pragma: export
+#include "rocm/include/rocprofiler-sdk/buffer.h"          // IWYU pragma: export
 #include "rocm/include/rocprofiler-sdk/buffer_tracing.h"  // IWYU pragma: export
 #include "rocm/include/rocprofiler-sdk/callback_tracing.h"  // IWYU pragma: export
 #include "rocm/include/rocprofiler-sdk/cxx/name_info.hpp"  // IWYU pragma: export
@@ -29,6 +29,6 @@ limitations under the License.
 #include "rocm/include/rocprofiler-sdk/fwd.h"  // IWYU pragma: export
 #include "rocm/include/rocprofiler-sdk/internal_threading.h"  // IWYU pragma: export
 #include "rocm/include/rocprofiler-sdk/registration.h"  // IWYU pragma: export
-#include "rocm/include/rocprofiler-sdk/rocprofiler.h"  // IWYU pragma: export
+#include "rocm/include/rocprofiler-sdk/rocprofiler.h"   // IWYU pragma: export
 
 #endif  // XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_

@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/compilation_environments.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -107,8 +107,9 @@ absl::StatusOr<std::vector<std::unique_ptr<HloModule>>> DecomposeHloModule(
     return true;
   };
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<HloModule>> isolated_modules,
-                   Decompose(module));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<HloModule>> isolated_modules,
+      Decompose(module));
   for (auto& module : isolated_modules) {
     if (should_add_module(module.get())) {
       modules.push_back(std::move(module));

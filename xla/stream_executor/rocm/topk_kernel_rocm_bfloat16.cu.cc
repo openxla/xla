@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "xla/types.h"
 #include "xla/stream_executor/rocm/topk_kernel_rocm_common.cu.h"
+#include "xla/types.h"
 
 namespace stream_executor::rocm {
 

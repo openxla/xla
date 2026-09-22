@@ -14,17 +14,18 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/onednn_support.h"
 #include "xla/error_spec.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {
 namespace {

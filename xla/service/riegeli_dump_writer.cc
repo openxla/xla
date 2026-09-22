@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "riegeli/bytes/writer.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/dump.h"
 #include "xla/service/dump_options.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 

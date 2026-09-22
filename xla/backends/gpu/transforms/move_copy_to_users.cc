@@ -142,8 +142,9 @@ class MoveCopyToUsersVisitor : public DfsHloRewriteVisitor {
     }
     if (HloPredicateIsOp<HloOpcode::kCopy>(operand)) {
       HloInstruction* copied = operand->mutable_operand(0);
-      ABSL_ASSIGN_OR_RETURN(HloInstruction * earlier_elementwise,
-                       MakeUnaryHlo(hlo->opcode(), copied, &hlo->metadata()));
+      ABSL_ASSIGN_OR_RETURN(
+          HloInstruction * earlier_elementwise,
+          MakeUnaryHlo(hlo->opcode(), copied, &hlo->metadata()));
       HloInstruction* later_copy =
           MakeCopyHlo(earlier_elementwise, hlo->shape());
       ABSL_RETURN_IF_ERROR(ReplaceInstruction(hlo, later_copy));
@@ -195,13 +196,14 @@ class MoveCopyToUsersVisitor : public DfsHloRewriteVisitor {
       if (copied_a->shape() == copied_b->shape()) {
         HloInstruction* earlier_elementwise;
         if (HloPredicateIsOp<HloOpcode::kCompare>(hlo)) {
-          ABSL_ASSIGN_OR_RETURN(earlier_elementwise,
-                           MakeCompareHlo(hlo->comparison_direction(), copied_a,
-                                          copied_b, &hlo->metadata()));
+          ABSL_ASSIGN_OR_RETURN(
+              earlier_elementwise,
+              MakeCompareHlo(hlo->comparison_direction(), copied_a, copied_b,
+                             &hlo->metadata()));
         } else {
           ABSL_ASSIGN_OR_RETURN(earlier_elementwise,
-                           MakeBinaryHlo(hlo->opcode(), copied_a, copied_b,
-                                         &hlo->metadata()));
+                                MakeBinaryHlo(hlo->opcode(), copied_a, copied_b,
+                                              &hlo->metadata()));
         }
         HloInstruction* later_copy =
             MakeCopyHlo(earlier_elementwise, hlo->shape());
@@ -232,8 +234,9 @@ class MoveCopyToUsersVisitor : public DfsHloRewriteVisitor {
       new_operands.push_back(op->mutable_operand(0));
     }
 
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * new_concat,
-                     MakeConcatHlo(new_operands, hlo->concatenate_dimension()));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * new_concat,
+        MakeConcatHlo(new_operands, hlo->concatenate_dimension()));
     *new_concat->mutable_shape()->mutable_layout() = inner_op_layout;
 
     HloInstruction* new_copy = MakeCopyHlo(new_concat, hlo->shape());

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -312,7 +312,8 @@ static absl::StatusOr<DotOutputFusionLayoutAssignmentResult> RunDotOutputFusion(
       fusion_instruction->fused_instructions_computation()->root_instruction();
   HloInstruction* fused_dot = fusion_instruction->FuseInstruction(dot_result);
 
-  ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(dot_result));
+  ABSL_RETURN_IF_ERROR(
+      computation->RemoveInstructionAndUnusedOperands(dot_result));
 
   ComputationLayout computation_layout(computation->ComputeProgramShape());
   *computation_layout.mutable_parameter_layout(0) =
@@ -336,7 +337,7 @@ static absl::StatusOr<DotOutputFusionLayoutAssignmentResult> RunDotOutputFusion(
   cpu::CpuLayoutAssignment layout_assignment(&computation_layout,
                                              &target_machine_features);
   ABSL_ASSIGN_OR_RETURN(result.layout_assignment_changed_something,
-                   layout_assignment.Run(module));
+                        layout_assignment.Run(module));
 
   return result;
 }

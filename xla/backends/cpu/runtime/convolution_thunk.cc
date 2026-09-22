@@ -80,14 +80,14 @@ ConvolutionThunk::ConvolutionThunk(
 tsl::AsyncValueRef<Thunk::ExecuteEvent> ConvolutionThunk::Execute(
     const ExecuteParams& params) {
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase input_data,
-                   params.buffer_allocations->GetDeviceAddress(
-                       convolution_slices_.input_buffer));
+                        params.buffer_allocations->GetDeviceAddress(
+                            convolution_slices_.input_buffer));
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase kernel_data,
-                   params.buffer_allocations->GetDeviceAddress(
-                       convolution_slices_.kernel_buffer));
+                        params.buffer_allocations->GetDeviceAddress(
+                            convolution_slices_.kernel_buffer));
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase output_data,
-                   params.buffer_allocations->GetDeviceAddress(
-                       convolution_slices_.output_buffer));
+                        params.buffer_allocations->GetDeviceAddress(
+                            convolution_slices_.output_buffer));
 
   VLOG(3) << absl::StreamFormat("Convolution: %v", convolution_canonical_dims_);
 

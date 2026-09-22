@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
@@ -64,7 +65,7 @@ class IfrtIRProgramSerDesTest : public testing::TestWithParam<SerDesVersion> {
 };
 
 TEST_P(IfrtIRProgramSerDesTest, RoundTrip) {
-  static constexpr absl::string_view kMlirModuleStr = R"(
+  static constexpr absl::string_view kMlirModuleStr = R"mlir(
 !array = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 module {
   func.func @main(%arg0: !array) -> !array attributes {ifrt.function} {
@@ -81,7 +82,7 @@ module {
     }
   }
 }
-  )";
+  )mlir";
 
   Serialized serialized;
   auto context = std::make_unique<mlir::MLIRContext>();
@@ -105,7 +106,7 @@ module {
 }
 
 TEST_P(IfrtIRProgramSerDesTest, RoundTripWithUnreduced) {
-  static constexpr absl::string_view kMlirModuleStr = R"(
+  static constexpr absl::string_view kMlirModuleStr = R"mlir(
 !array = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1 unreduced [0]>, [0]>
 module {
   func.func @main(%arg0: !array) -> !array attributes {ifrt.function} {
@@ -122,7 +123,7 @@ module {
     }
   }
 }
-  )";
+  )mlir";
 
   Serialized serialized;
   auto context = std::make_unique<mlir::MLIRContext>();
@@ -146,7 +147,7 @@ module {
 }
 
 TEST_P(IfrtIRProgramSerDesTest, VersioningRoundTrip) {
-  static constexpr absl::string_view kMlirModuleStr = R"(
+  static constexpr absl::string_view kMlirModuleStr = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module @multiple_calls_of_same_module {
@@ -168,7 +169,7 @@ module @multiple_calls_of_same_module {
     }
   }
 }
-  )";
+  )mlir";
 
   Serialized serialized;
   auto context = std::make_unique<mlir::MLIRContext>();
@@ -198,7 +199,7 @@ module @multiple_calls_of_same_module {
 }
 
 TEST_P(IfrtIRProgramSerDesTest, VersioningRoundTripWithUnreduced) {
-  static constexpr absl::string_view kMlirModuleStr = R"(
+  static constexpr absl::string_view kMlirModuleStr = R"mlir(
 !array = !ifrt.array<tensor<2xi32>,
                      #ifrt.sharding_param<1 to [0,1] on 1x2 unreduced [1]>, [0,1]>
 module @multiple_calls_of_same_module {
@@ -216,7 +217,7 @@ module @multiple_calls_of_same_module {
     }
   }
 }
-  )";
+  )mlir";
 
   Serialized serialized;
   auto context = std::make_unique<mlir::MLIRContext>();
@@ -246,7 +247,7 @@ module @multiple_calls_of_same_module {
 }
 
 TEST_P(IfrtIRProgramSerDesTest, VersioningOfAtomProgramInMhloShouldFail) {
-  static constexpr absl::string_view kMlirModuleStr = R"(
+  static constexpr absl::string_view kMlirModuleStr = R"mlir(
 !array = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 module {
   func.func @main(%arg0: !array) -> !array attributes {ifrt.function} {
@@ -263,7 +264,7 @@ module {
     }
   }
 }
-  )";
+  )mlir";
 
   Serialized serialized;
   auto context = std::make_unique<mlir::MLIRContext>();
@@ -288,7 +289,7 @@ module {
 }
 
 TEST_P(IfrtIRProgramSerDesTest, DeserializationError) {
-  static constexpr absl::string_view kMlirModuleStr = R"(
+  static constexpr absl::string_view kMlirModuleStr = R"mlir(
 !array = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 module {
   func.func @main(%arg0: !array) -> !array attributes {ifrt.function} {
@@ -305,7 +306,7 @@ module {
     }
   }
 }
-  )";
+  )mlir";
   Serialized serialized;
   {
     auto context = std::make_unique<mlir::MLIRContext>();

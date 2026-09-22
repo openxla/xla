@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/analysis/indexing_analysis.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -114,6 +115,8 @@ class IndexingAnalysisTest : public IndexingTestBase,
 
             "GetTupleElementOp/1",
             "ScanOp/1",
+            "ScanOpMultiDimensional/1",
+            "ScanOpMultiDimensionalLeadingScanDimension/1",
         };
 
     if (GetParam()) {
@@ -752,9 +755,101 @@ TEST_P(IndexingAnalysisTest, ScanOp) {
   auto input_indexing_1 = GetOutputToInputIndexing(root, /*output_id=*/1);
   EXPECT_THAT(input_indexing_1.ToString(), MatchIndexingString(R"(
                             operand id = 0
-                              () -> ()
+                              ()[s0] -> (s0),
+                              domain:
+                              s0 in [0, 9]
                             operand id = 1
                               () -> ()
+                          )"));
+}
+
+TEST_P(IndexingAnalysisTest, ScanOpMultiDimensional) {
+  auto root = ParseAndGetRoot(R"(
+    HloModule m
+    scan_computation {
+      p0 = f32[8] parameter(0)
+      p1 = f32[8] parameter(1)
+      ROOT t = (f32[8], f32[8]) tuple(p0, p1)
+    }
+    ENTRY e {
+      p0 = f32[8, 10] parameter(0)
+      p1 = f32[8] parameter(1)
+      ROOT scan = (f32[8, 10], f32[8]) scan(p0, p1), dimensions={1},
+        num_carries=1, to_apply=scan_computation
+    }
+  )");
+
+  // The carry has the shape of the output with the scan dimension removed, so
+  // it is indexed by the non-scan dimensions rather than as a scalar.
+  auto input_indexing_0 = GetOutputToInputIndexing(root, /*output_id=*/0);
+  EXPECT_THAT(input_indexing_0.ToString(), MatchIndexingString(R"(
+                            operand id = 0
+                              (d0, d1) -> (d0, d1),
+                              domain:
+                              d0 in [0, 7],
+                              d1 in [0, 9]
+                            operand id = 1
+                              (d0, d1) -> (d0),
+                              domain:
+                              d0 in [0, 7],
+                              d1 in [0, 9]
+                          )"));
+
+  auto input_indexing_1 = GetOutputToInputIndexing(root, /*output_id=*/1);
+  EXPECT_THAT(input_indexing_1.ToString(), MatchIndexingString(R"(
+                            operand id = 0
+                              (d0)[s0] -> (d0, s0),
+                              domain:
+                              d0 in [0, 7],
+                              s0 in [0, 9]
+                            operand id = 1
+                              (d0) -> (d0),
+                              domain:
+                              d0 in [0, 7]
+                          )"));
+}
+
+TEST_P(IndexingAnalysisTest, ScanOpMultiDimensionalLeadingScanDimension) {
+  auto root = ParseAndGetRoot(R"(
+    HloModule m
+    scan_computation {
+      p0 = f32[10] parameter(0)
+      p1 = f32[10] parameter(1)
+      ROOT t = (f32[10], f32[10]) tuple(p0, p1)
+    }
+    ENTRY e {
+      p0 = f32[8, 10] parameter(0)
+      p1 = f32[10] parameter(1)
+      ROOT scan = (f32[8, 10], f32[10]) scan(p0, p1), dimensions={0},
+        num_carries=1, to_apply=scan_computation
+    }
+  )");
+
+  auto input_indexing_0 = GetOutputToInputIndexing(root, /*output_id=*/0);
+  EXPECT_THAT(input_indexing_0.ToString(), MatchIndexingString(R"(
+                            operand id = 0
+                              (d0, d1) -> (d0, d1),
+                              domain:
+                              d0 in [0, 7],
+                              d1 in [0, 9]
+                            operand id = 1
+                              (d0, d1) -> (d1),
+                              domain:
+                              d0 in [0, 7],
+                              d1 in [0, 9]
+                          )"));
+
+  auto input_indexing_1 = GetOutputToInputIndexing(root, /*output_id=*/1);
+  EXPECT_THAT(input_indexing_1.ToString(), MatchIndexingString(R"(
+                            operand id = 0
+                              (d0)[s0] -> (s0, d0),
+                              domain:
+                              d0 in [0, 9],
+                              s0 in [0, 7]
+                            operand id = 1
+                              (d0) -> (d0),
+                              domain:
+                              d0 in [0, 9]
                           )"));
 }
 

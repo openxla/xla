@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/OperationSupport.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -59,7 +60,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -104,7 +104,7 @@ CreateAtomExecutableVersion(
 
   IfrtIrExecutableVersion::AtomExecutableVersion atom_executable_version;
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const ExecutableVersion> version,
-                   executable->executable_version());
+                        executable->executable_version());
   atom_executable_version.runtime_abi_version = std::move(version);
   atom_executable_version.logical_device_ids.reserve(devices.size());
   for (Device* device : devices) {
@@ -140,9 +140,9 @@ IfrtIrLoadedExecutable::executable_version() const {
       for (const auto& [name, executable] :
            *program_->atom_program_executables) {
         ABSL_ASSIGN_OR_RETURN(IfrtIrExecutableVersion::AtomExecutableVersion
-                             atom_executable_version,
-                         CreateAtomExecutableVersion(
-                             executable, device_id_to_logical_device_id));
+                                  atom_executable_version,
+                              CreateAtomExecutableVersion(
+                                  executable, device_id_to_logical_device_id));
         runtime_abi_versions.push_back(std::move(atom_executable_version));
       }
 
@@ -193,7 +193,7 @@ IfrtIrLoadedExecutable::GetMpmdCompiledMemoryStats() const {
       mpmd_compiled_memory_stats;
   for (const auto& [name, executable] : *program_->atom_program_executables) {
     ABSL_ASSIGN_OR_RETURN(auto compiled_memory_stats,
-                     executable->GetCompiledMemoryStats());
+                          executable->GetCompiledMemoryStats());
     mpmd_compiled_memory_stats.insert({name, std::move(compiled_memory_stats)});
   }
   return mpmd_compiled_memory_stats;
@@ -286,8 +286,9 @@ IfrtIrLoadedExecutable::GetHloModules() const {
   // same as HloModule::name()
   std::vector<std::shared_ptr<xla::HloModule>> all_modules;
   for (const auto& [name, executable] : *program_->atom_program_executables) {
-    ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<xla::HloModule>> this_modules,
-                     executable->GetHloModules());
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<std::shared_ptr<xla::HloModule>> this_modules,
+        executable->GetHloModules());
     all_modules.insert(all_modules.end(), this_modules.begin(),
                        this_modules.end());
   }
@@ -332,7 +333,8 @@ absl::StatusOr<absl::flat_hash_map<std::string, AttributeMap>>
 IfrtIrLoadedExecutable::GetMpmdCostAnalysis() const {
   absl::flat_hash_map<std::string, AttributeMap> mpmd_cost_analysis;
   for (const auto& [name, executable] : *program_->atom_program_executables) {
-    ABSL_ASSIGN_OR_RETURN(auto atom_program_analysis, executable->GetCostAnalysis());
+    ABSL_ASSIGN_OR_RETURN(auto atom_program_analysis,
+                          executable->GetCostAnalysis());
     mpmd_cost_analysis.insert({name, std::move(atom_program_analysis)});
   }
   return mpmd_cost_analysis;

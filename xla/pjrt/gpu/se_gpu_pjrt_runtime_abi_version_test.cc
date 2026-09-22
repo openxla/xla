@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_runtime_abi_version.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/pjrt/pjrt_common.h"

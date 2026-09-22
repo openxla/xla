@@ -25,13 +25,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "google/protobuf/descriptor.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/statusor.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/service/compilation_environments.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -81,7 +81,7 @@ GpuCompilationEnvironment CreateGpuCompEnvWithDefaultValues() {
 absl::Status InitializeMissingFieldsFromXLAFlags(
     GpuCompilationEnvironment& env) {
   ABSL_ASSIGN_OR_RETURN(GpuCompilationEnvironment from_env,
-                   CreateGpuCompEnvFromEnvVar());
+                        CreateGpuCompEnvFromEnvVar());
 
   auto default_env = CreateGpuCompEnvWithDefaultValues();
 

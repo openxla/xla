@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_computation.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"

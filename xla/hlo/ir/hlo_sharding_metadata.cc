@@ -230,8 +230,9 @@ absl::StatusOr<AssignmentKind> AssignTreeSharding(
     // TODO(b/112885211): Add ShapeTree::IsLeaf(const ShapeTreeIterator &it)
     if (rhs_tree.IsLeaf(rhs_it->first)) {
       TF_RET_CHECK(lhs_tree->IsLeaf(lhs_it->first));
-      ABSL_ASSIGN_OR_RETURN(AssignmentKind sub_assigned,
-                       AssignLeafSharding(&lhs_it->second, rhs_it->second));
+      ABSL_ASSIGN_OR_RETURN(
+          AssignmentKind sub_assigned,
+          AssignLeafSharding(&lhs_it->second, rhs_it->second));
       if (sub_assigned == AssignmentKind::kConflict) {
         // In case of conflict we return conflict to the caller. At this point
         // partial assignments to lhs_tree may have been made already. It is up
@@ -283,7 +284,7 @@ absl::StatusOr<bool> ApplyShardingFromUsers(
     }
     AssignmentKind sub_assigned = AssignmentKind::kUnassigned;
     ABSL_ASSIGN_OR_RETURN(ShapeTree<HloSharding> user_sharding_tree,
-                     GetShardingTreeFromUser(*instruction, *user));
+                          GetShardingTreeFromUser(*instruction, *user));
     if (instruction->shape().IsTuple()) {
       // For tuple-shaped instructions collect individual tuple subshardings
       // from the uses, and then combine them into the tuple sharding.
@@ -294,16 +295,17 @@ absl::StatusOr<bool> ApplyShardingFromUsers(
           user->opcode() == HloOpcode::kGetTupleElement
               ? sharding_tree.find({user->tuple_index()})
               : sharding_tree.begin();
-      ABSL_ASSIGN_OR_RETURN(sub_assigned,
-                       AssignTreeSharding(&sharding_tree, sharding_tree_begin,
-                                          user_sharding_tree));
+      ABSL_ASSIGN_OR_RETURN(
+          sub_assigned, AssignTreeSharding(&sharding_tree, sharding_tree_begin,
+                                           user_sharding_tree));
     } else {
       // Non-tuple shape: assign common users sharding.
       TF_RET_CHECK(user_sharding_tree.leaf_count() == 1)
           << "Expected non-tuple user sharding";
-      ABSL_ASSIGN_OR_RETURN(sub_assigned,
-                       AssignTreeSharding(&sharding_tree, sharding_tree.begin(),
-                                          user_sharding_tree));
+      ABSL_ASSIGN_OR_RETURN(
+          sub_assigned,
+          AssignTreeSharding(&sharding_tree, sharding_tree.begin(),
+                             user_sharding_tree));
     }
 
     if (sub_assigned == AssignmentKind::kConflict) {
@@ -461,7 +463,7 @@ absl::Status ShardingMetadata::NormalizeShardingDomain(
     const DomainMetadata::Domain& domain, const DomainMetadata* metadata) {
   if (metadata != nullptr) {
     ABSL_ASSIGN_OR_RETURN(const auto& sharding_metadata,
-                     ToShardingMetadata(metadata));
+                          ToShardingMetadata(metadata));
     const HloSharding* sharding = sharding_metadata->sharding();
     if (sharding != nullptr) {
       VLOG(4) << "Normalizing sharding to " << sharding->ToString() << ":";
@@ -470,7 +472,7 @@ absl::Status ShardingMetadata::NormalizeShardingDomain(
     }
   } else {
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const HloSharding> sharding,
-                     ExtractOriginalCommonSharding(domain.instructions));
+                          ExtractOriginalCommonSharding(domain.instructions));
     if (sharding != nullptr) {
       VLOG(4) << "Normalizing sharding-less domain to " << sharding->ToString();
       ABSL_RETURN_IF_ERROR(ApplyDomainSharding(domain, *sharding));

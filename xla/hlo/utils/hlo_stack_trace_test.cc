@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/utils/hlo_stack_trace.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_value.h"

@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/conditional_simplifier.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace {

@@ -14,6 +14,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/collective_emitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
@@ -194,7 +195,7 @@ class CollectiveEmitterTest : public CollectiveBlockLevelConfigTest {
   absl::StatusOr<std::unique_ptr<ModuleWithEmitter>> BuildModuleWithEmitter(
       std::string module_str, const GpuTopology& gpu_topology) const {
     ABSL_ASSIGN_OR_RETURN(ModuleWithFusion module_with_fusion,
-                     BuildModuleWithFusion(std::move(module_str)));
+                          BuildModuleWithFusion(std::move(module_str)));
     ABSL_RETURN_IF_ERROR(TrySetGpuBackendConfigForCollective(
         gpu_topology, module_with_fusion.MutableFusionInstr()));
     auto result = std::make_unique<ModuleWithEmitter>(

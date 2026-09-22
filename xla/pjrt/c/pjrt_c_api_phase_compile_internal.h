@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_PJRT_C_PJRT_C_API_PHASE_COMPILE_INTERNAL_H_
 #define XLA_PJRT_C_PJRT_C_API_PHASE_COMPILE_INTERNAL_H_
 
-
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"

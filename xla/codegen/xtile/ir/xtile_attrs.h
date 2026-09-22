@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_CODEGEN_XTILE_IR_XTILE_ATTRS_H_
 #define XLA_CODEGEN_XTILE_IR_XTILE_ATTRS_H_
 
-#include "mlir/IR/Attributes.h"  // IWYU pragma: keep
+#include "mlir/IR/Attributes.h"                  // IWYU pragma: keep
 #include "xla/codegen/xtile/ir/xtile_dialect.h"  // IWYU pragma: keep
 #define GET_ATTRDEF_CLASSES
 #include "xla/codegen/xtile/ir/xtile_attrs.h.inc"  // IWYU pragma: export

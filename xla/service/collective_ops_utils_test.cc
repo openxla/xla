@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/collective_ops_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -25,24 +28,25 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/array2d.h"
+#include "xla/core/collectives/reduction_kind.h"
+#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/transforms/collectives/collective_permute_cycle.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/collective_permute_cycle.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/source_target_pairs.h"
 #include "xla/shape.h"
@@ -710,11 +714,11 @@ absl::StatusOr<std::unique_ptr<HloComputation>> CreateMaxComputation() {
   Shape scalar = ShapeUtil::MakeScalarShape(F32);
   auto builder_max = HloComputation::Builder("max");
   ABSL_ASSIGN_OR_RETURN(HloInstruction * a,
-                   builder_max.AddParameter(
-                       HloInstruction::CreateParameter(0, scalar, "a")));
+                        builder_max.AddParameter(
+                            HloInstruction::CreateParameter(0, scalar, "a")));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * b,
-                   builder_max.AddParameter(
-                       HloInstruction::CreateParameter(1, scalar, "b")));
+                        builder_max.AddParameter(
+                            HloInstruction::CreateParameter(1, scalar, "b")));
   HloInstruction* max = builder_max.AddInstruction(
       HloInstruction::CreateBinary(scalar, HloOpcode::kMaximum, a, b), "max");
   return builder_max.Build(max);

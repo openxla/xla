@@ -59,10 +59,11 @@ absl::StatusOr<int32_t> RocmKernel::GetMaxOccupiedBlocksPerCore(
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
 
   int max_blocks = 0;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(
-                               &max_blocks, rocm_function_, threads_per_block,
-                               dynamic_shared_memory_bytes),
-                           "Failed to calculate maximal active blocks per SM"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(
+                   &max_blocks, rocm_function_, threads_per_block,
+                   dynamic_shared_memory_bytes),
+               "Failed to calculate maximal active blocks per SM"));
   return max_blocks;
 }
 
@@ -74,7 +75,7 @@ absl::StatusOr<KernelMetadata> RocmKernel::GetKernelMetadata() {
   kernel_metadata.set_registers_per_thread(value);
 
   ABSL_RETURN_IF_ERROR(FuncGetAttribute(HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
-                                   rocm_function_, &value));
+                                        rocm_function_, &value));
   kernel_metadata.set_shared_memory_bytes(value);
   return kernel_metadata;
 }

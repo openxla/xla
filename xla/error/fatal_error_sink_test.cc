@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/error/fatal_error_sink.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/log_sink_registry.h"

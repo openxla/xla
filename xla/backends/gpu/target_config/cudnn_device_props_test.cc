@@ -15,19 +15,20 @@ limitations under the License.
 
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "json/json.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"

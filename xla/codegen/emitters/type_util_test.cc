@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/codegen/emitters/type_util.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/Support/raw_ostream.h"

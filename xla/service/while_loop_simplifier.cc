@@ -96,13 +96,15 @@ static absl::StatusOr<bool> TryRemoveTrivialCompare(HloInstruction* while_op) {
               if (constant_value.value() <= init_value.value()) {
                 if (body_instr->comparison_direction() ==
                     ComparisonDirection::kLt) {
-                  ABSL_RETURN_IF_ERROR(while_op->while_body()->ReplaceInstruction(
-                      body_instr, MakeScalarLike(body_instr, false)));
+                  ABSL_RETURN_IF_ERROR(
+                      while_op->while_body()->ReplaceInstruction(
+                          body_instr, MakeScalarLike(body_instr, false)));
                   return true;
                 } else if (body_instr->comparison_direction() ==
                            ComparisonDirection::kGt) {
-                  ABSL_RETURN_IF_ERROR(while_op->while_body()->ReplaceInstruction(
-                      body_instr, MakeScalarLike(body_instr, true)));
+                  ABSL_RETURN_IF_ERROR(
+                      while_op->while_body()->ReplaceInstruction(
+                          body_instr, MakeScalarLike(body_instr, true)));
                   return true;
                 }
               }
@@ -111,13 +113,15 @@ static absl::StatusOr<bool> TryRemoveTrivialCompare(HloInstruction* while_op) {
                   init_value.value() + trip_count.value()) {
                 if (body_instr->comparison_direction() ==
                     ComparisonDirection::kLt) {
-                  ABSL_RETURN_IF_ERROR(while_op->while_body()->ReplaceInstruction(
-                      body_instr, MakeScalarLike(body_instr, true)));
+                  ABSL_RETURN_IF_ERROR(
+                      while_op->while_body()->ReplaceInstruction(
+                          body_instr, MakeScalarLike(body_instr, true)));
                   return true;
                 } else if (body_instr->comparison_direction() ==
                            ComparisonDirection::kGt) {
-                  ABSL_RETURN_IF_ERROR(while_op->while_body()->ReplaceInstruction(
-                      body_instr, MakeScalarLike(body_instr, false)));
+                  ABSL_RETURN_IF_ERROR(
+                      while_op->while_body()->ReplaceInstruction(
+                          body_instr, MakeScalarLike(body_instr, false)));
                   return true;
                 }
               }
@@ -540,7 +544,7 @@ absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
           << while_op->ToString(print_no_metadata);
 
   ABSL_ASSIGN_OR_RETURN(while_op,
-                   RemoveDeadTupleIndices(while_op, used_tuple_indices));
+                        RemoveDeadTupleIndices(while_op, used_tuple_indices));
 
   return true;
 }
@@ -724,9 +728,9 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
 
   // Only keep one index for each equivalence set.
   HloInstruction* original_while_op = while_op;
-  ABSL_ASSIGN_OR_RETURN(while_op,
-                   RemoveRepeatedWhileTupleIndices(while_op, init_to_indices,
-                                                   /*replace_with_init=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      while_op, RemoveRepeatedWhileTupleIndices(while_op, init_to_indices,
+                                                /*replace_with_init=*/true));
 
   // In theory, we could handle the "simple" case and the "dynamic-update-slice"
   // case in one go, but it's probably not worth the added complexity, so do it
@@ -1017,7 +1021,7 @@ static absl::StatusOr<bool> TryRemoveWhileLoop(HloInstruction* while_op) {
       ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(while_op, call_op));
       call_op->set_metadata_op_name("");
       ABSL_ASSIGN_OR_RETURN(auto inlined_instructions_map,
-                       CallInliner::Inline(call_op));
+                            CallInliner::Inline(call_op));
       (void)inlined_instructions_map;
       return true;
     } else {
@@ -1094,7 +1098,7 @@ static absl::StatusOr<bool> TryPropagateConstant(HloInstruction* while_op) {
   };
 
   ABSL_ASSIGN_OR_RETURN(bool changed_cond,
-                   propagate_constant(while_op->while_condition()));
+                        propagate_constant(while_op->while_condition()));
   ABSL_ASSIGN_OR_RETURN(bool changed_body, propagate_constant(while_body));
 
   return changed_cond || changed_body;
@@ -1580,7 +1584,8 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
     // These optimizations should be fine even with send/recv nodes within the
     // loop.
 
-    ABSL_ASSIGN_OR_RETURN(bool result, TryRemoveRepeatedWhileTupleIndices(while_op));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          TryRemoveRepeatedWhileTupleIndices(while_op));
     changed |= result;
     if (result) {
       continue;
@@ -1654,7 +1659,7 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
     // work because S/U16 literals are not implemented.
     for (auto elem_ty : {S8, U8, S32, U32, S64, U64}) {
       ABSL_ASSIGN_OR_RETURN(auto* new_while_op,
-                       TryMergeInductionVariables(while_op, elem_ty));
+                            TryMergeInductionVariables(while_op, elem_ty));
       if (new_while_op) {
         while_op = new_while_op;
         changed = true;

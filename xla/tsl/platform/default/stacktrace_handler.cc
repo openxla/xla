@@ -47,7 +47,7 @@ inline void SafePrintStackTrace() {
   (void)!write(STDERR_FILENO, begin_msg, strlen(begin_msg));
 
   int buffer_size = 128;
-  void *trace[128];
+  void* trace[128];
   // Run backtrace to get the size of the stacktrace
   buffer_size = backtrace(trace, buffer_size);
 
@@ -58,7 +58,7 @@ inline void SafePrintStackTrace() {
   (void)!write(STDERR_FILENO, end_msg, strlen(end_msg));
 }
 
-static void StacktraceHandler(int sig, siginfo_t *si, void *v) {
+static void StacktraceHandler(int sig, siginfo_t* si, void* v) {
   // Make sure our handler does not deadlock. And this should be the last thing
   // our program does. Therefore, set a timer to kill the program in 60
   // seconds.

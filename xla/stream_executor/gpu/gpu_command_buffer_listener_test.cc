@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/gpu_command_buffer_listener.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <thread>  // NOLINT(build/c++11)
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer_listener_test_helper.h"

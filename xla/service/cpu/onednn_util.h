@@ -23,15 +23,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_common.hpp"
 #include "oneapi/dnnl/dnnl_threadpool_iface.hpp"
+#include "tsl/platform/cpu_info.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace cpu {

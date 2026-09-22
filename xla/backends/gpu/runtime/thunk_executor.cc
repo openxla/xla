@@ -34,6 +34,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -44,8 +46,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -138,7 +138,7 @@ absl::Status ThunkExecutor::ExecuteOnStream(
     if (progress_tracker) {
       // Borrow an event from the pool and record it on the execution stream.
       ABSL_ASSIGN_OR_RETURN(auto event,
-                       progress_tracker->event_pool->GetOrCreateEvent());
+                            progress_tracker->event_pool->GetOrCreateEvent());
       ABSL_RETURN_IF_ERROR(params.stream->RecordEvent(event->get()));
 
       absl::MutexLock lock(progress_tracker->mu);

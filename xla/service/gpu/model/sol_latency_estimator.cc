@@ -92,7 +92,7 @@ absl::StatusOr<HloInstructionProfileList> ReadProfiles(
 
   ABSL_RETURN_IF_ERROR(tsl::Env::Default()->FileExists(perf_table_path));
   ABSL_RETURN_IF_ERROR(tsl::ReadTextOrBinaryProto(tsl::Env::Default(),
-                                             perf_table_path, &profile));
+                                                  perf_table_path, &profile));
   std::string key = HloOpProfiles::GetDeviceSpecificProfileName(device_info);
 
   if (!profile.entries().contains(key)) {
@@ -165,11 +165,12 @@ absl::StatusOr<absl::Duration> DCNCollectiveDuration(
                       .EstimateRunTimeForInstruction(
                           instr.async_wrapped_instruction(), &analysis)
                       .compute_time;
-        ABSL_ASSIGN_OR_RETURN(absl::Duration runtime,
-                         sol_model.RingLatency(
-                             msg_size, num_participating_hosts,
-                             SolGPUCostModel::CollectiveType::kReduceScatter,
-                             num_communicators));
+        ABSL_ASSIGN_OR_RETURN(
+            absl::Duration runtime,
+            sol_model.RingLatency(
+                msg_size, num_participating_hosts,
+                SolGPUCostModel::CollectiveType::kReduceScatter,
+                num_communicators));
         result += runtime;
       }
       if (instr.async_wrapped_opcode() == HloOpcode::kAllToAll) {
@@ -226,7 +227,7 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
 
   GPUCommunicationType comm = *communication_type;
   ABSL_ASSIGN_OR_RETURN(auto num_groups_and_devices,
-                   GetReplicaGroupCountAndSize(&instr));
+                        GetReplicaGroupCountAndSize(&instr));
   if (!num_groups_and_devices.has_value()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Could not determine replica group count and size for collective: ",
@@ -268,8 +269,8 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
               absl::Seconds(1.0f * analysis.bytes_accessed(instr) /
                             gpu_device_info.memory_bandwidth());
           ABSL_ASSIGN_OR_RETURN(absl::Duration nvlink_time,
-                           sol_model.IntraNodeAllReduceLatency(
-                               size_bytes, num_gpus, active_links));
+                                sol_model.IntraNodeAllReduceLatency(
+                                    size_bytes, num_gpus, active_links));
           return hbm_time + nvlink_time;
         }
       }
@@ -393,10 +394,11 @@ SolLatencyEstimator::ComputeCollectiveTime(
         GPUCommunicationType communication_type,
         CommunicationType(partition_size, *collective_instr,
                           gpu_device_info.gpu_compute_capability()));
-    ABSL_ASSIGN_OR_RETURN(absl::Duration result,
-                     DispatchEstimation(communication_type, *collective_instr,
-                                        gpu_device_info, sol_flags, analysis,
-                                        collective_interpolator));
+    ABSL_ASSIGN_OR_RETURN(
+        absl::Duration result,
+        DispatchEstimation(communication_type, *collective_instr,
+                           gpu_device_info, sol_flags, analysis,
+                           collective_interpolator));
     return result;
   }
 
@@ -429,8 +431,9 @@ SolLatencyEstimator::Create(
       CreateCollectiveInterpolator(sol_config.gpus_per_node,
                                    *computation->parent(), gpu_info,
                                    *cost_analysis));
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MatmulInterpolator> matmul_interpolator,
-                   CreateMatmulInterpolator(*computation->parent(), gpu_info));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<MatmulInterpolator> matmul_interpolator,
+      CreateMatmulInterpolator(*computation->parent(), gpu_info));
   return std::unique_ptr<SolLatencyEstimator>(new SolLatencyEstimator(
       config, std::move(latency_estimator), gpu_info, std::move(cost_analysis),
       shape_size_function, sol_config, std::move(collective_interpolator),

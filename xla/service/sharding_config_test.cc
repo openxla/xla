@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/sharding_config.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_sharding.h"
 
 namespace xla {

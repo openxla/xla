@@ -35,6 +35,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -48,8 +50,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -607,9 +607,10 @@ absl::Status MoveCopyDown(
       const int index = instruction_and_index.index;
       if (instruction->opcode() == HloOpcode::kBitcast) {
         std::pair<Shape, Shape> new_shapes;
-        ABSL_ASSIGN_OR_RETURN(new_shapes, GetNewShapesAfterBitcast(
-                                         instruction, copy_to_move,
-                                         shape_before_copy, shape_after_copy));
+        ABSL_ASSIGN_OR_RETURN(
+            new_shapes,
+            GetNewShapesAfterBitcast(instruction, copy_to_move,
+                                     shape_before_copy, shape_after_copy));
         shape_before_copy = new_shapes.first;
         shape_after_copy = new_shapes.second;
       } else if (instruction->opcode() == HloOpcode::kSlice ||
@@ -701,7 +702,8 @@ absl::Status MoveCopyDown(
             instruction->AddInstruction(annotation->CloneWithNewOperands(
                 instruction->operand(1)->shape(),
                 {instruction->mutable_operand(1)}));
-        ABSL_RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, new_annotation));
+        ABSL_RETURN_IF_ERROR(
+            instruction->ReplaceOperandWith(1, new_annotation));
         ABSL_RETURN_IF_ERROR(
             annotation->ReplaceAllUsesWith(annotation->mutable_operand(0)));
         processed_annotations.insert(annotation);
@@ -945,7 +947,7 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
     HloInstruction* copy_to_move = copy_to_move_and_index.instruction;
     if (ShouldMoveCopyDown(copy_to_move)) {
       ABSL_RETURN_IF_ERROR(MoveCopyDown(copy_to_move_and_index, call_graph,
-                                   processed_annotations, to_remove));
+                                        processed_annotations, to_remove));
       changed = true;
     } else {
       // We should not move this copy down; maybe we can move it up. For now, we
@@ -981,9 +983,9 @@ absl::StatusOr<bool> FixupInterveningCopies(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(bool changed_annotation_for_copy_movement,
-                     ProcessAnnotationForCopyMovement(instruction, call_graph,
-                                                      processed_annotations,
-                                                      annotations_to_remove));
+                          ProcessAnnotationForCopyMovement(
+                              instruction, call_graph, processed_annotations,
+                              annotations_to_remove));
     changed |= changed_annotation_for_copy_movement;
   }
   for (HloInstruction* instruction : annotations_to_remove) {

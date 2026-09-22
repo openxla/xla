@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
@@ -79,7 +80,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -106,7 +106,8 @@ class PjRtCpuRawClient : public PjRtRawClient {
       std::shared_ptr<cpu::CpuCollectives> collectives, size_t num_threads,
       bool asynchronous, int max_transpose_threads,
       std::function<void(HloModuleConfig&)> customize_hlo_module_config,
-      int cpu_device_count, int max_inflight_computations);
+      int cpu_device_count, int max_inflight_computations,
+      const Eigen::ThreadPoolDevice* intra_op_device = nullptr);
 
   ~PjRtCpuRawClient() override;
 
@@ -125,8 +126,9 @@ class PjRtCpuRawClient : public PjRtRawClient {
     return eigen_intraop_pool_.get();
   }
 
-  Eigen::ThreadPoolDevice* eigen_intraop_device() const {
-    return eigen_intraop_device_.get();
+  const Eigen::ThreadPoolDevice* eigen_intraop_device() const {
+    return custom_intraop_device_ != nullptr ? custom_intraop_device_
+                                             : eigen_intraop_device_.get();
   }
 
   cpu::CpuCollectives* collectives() const { return collectives_.get(); }
@@ -289,6 +291,7 @@ class PjRtCpuRawClient : public PjRtRawClient {
   // the member variables of this class that are already destroyed.
   std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool_;
   std::unique_ptr<Eigen::ThreadPoolDevice> eigen_intraop_device_;
+  const Eigen::ThreadPoolDevice* custom_intraop_device_ = nullptr;
   std::unique_ptr<ThreadPoolAsyncWorkRunner> async_work_runner_;
 };
 
@@ -450,14 +453,14 @@ class PjRtCpuExecutable final : public PjRtExecutable {
   const CpuTopologyDescription* topology_;
 };
 
-absl::StatusOr<std::unique_ptr<PjRtClient>> ABSL_DEPRECATED(
-    "Use public XLA:CPU GetXlaPjRtCpuClient instead")
-    GetPjRtCpuClient(CpuClientOptions options);
+[[deprecated("Use public XLA:CPU GetXlaPjRtCpuClient instead")]]
+absl::StatusOr<std::unique_ptr<PjRtClient>> GetPjRtCpuClient(
+    CpuClientOptions options);
 
 // Deprecated. Use the overload that takes 'options' instead.
-inline absl::StatusOr<std::unique_ptr<PjRtClient>> ABSL_DEPRECATED(
-    "Use public XLA:CPU GetXlaPjRtCpuClient instead")
-    GetPjRtCpuClient(bool asynchronous) {
+[[deprecated("Use public XLA:CPU GetXlaPjRtCpuClient instead")]]
+inline absl::StatusOr<std::unique_ptr<PjRtClient>> GetPjRtCpuClient(
+    bool asynchronous) {
   CpuClientOptions options;
   options.asynchronous = asynchronous;
   return GetPjRtCpuClient(std::move(options));

@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace memory_space_assignment {
@@ -49,10 +49,10 @@ class FakeCostAnalysis : public CostAnalysis {
       const CostAnalysisOptions& options) {
     auto alias_info = std::make_unique<AliasInfo>();
     ABSL_ASSIGN_OR_RETURN(auto alias_analysis,
-                     HloAliasAnalysis::Run(&module, alias_info.get()));
+                          HloAliasAnalysis::Run(&module, alias_info.get()));
     ABSL_ASSIGN_OR_RETURN(auto hlo_live_range,
-                     HloLiveRange::Run(module.schedule(), *alias_analysis,
-                                       module.entry_computation()));
+                          HloLiveRange::Run(module.schedule(), *alias_analysis,
+                                            module.entry_computation()));
     auto call_graph = CallGraph::Build(&module);
     return absl::WrapUnique(
         new FakeCostAnalysis(op_cost_manager, options,

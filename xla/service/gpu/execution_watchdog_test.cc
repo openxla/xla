@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/execution_watchdog.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -49,10 +50,10 @@ absl::StatusOr<std::unique_ptr<ExecutionWatchdogScope>> CreateArmedScope(
   debug_options.set_xla_gpu_execution_terminate_timeout(
       absl::FormatDuration(timeout));
   ABSL_ASSIGN_OR_RETURN(std::optional<ExecutionWatchdogScope> maybe_scope,
-                   ExecutionWatchdogScope::Create(
-                       &debug_options, "test_module",
-                       /*device_ordinal=*/0, gpu_run_options,
-                       /*stream=*/nullptr, block_host_until_done));
+                        ExecutionWatchdogScope::Create(
+                            &debug_options, "test_module",
+                            /*device_ordinal=*/0, gpu_run_options,
+                            /*stream=*/nullptr, block_host_until_done));
   if (!maybe_scope.has_value()) {
     return absl::InternalError("expected ExecutionWatchdogScope");
   }

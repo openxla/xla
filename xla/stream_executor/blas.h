@@ -123,7 +123,7 @@ enum class CallContext {
 // Converts a ComputationType to a string.
 std::string ComputationTypeString(ComputationType ty);
 
-std::ostream &operator<<(std::ostream &os, ComputationType ty);
+std::ostream& operator<<(std::ostream& os, ComputationType ty);
 
 // Converts blas::ComputationType to the equivalent proto enum.
 xla::BlasComputationTypeProto ToProto(ComputationType ty);
@@ -137,7 +137,7 @@ using dnn::ToDataType;
 // Converts a ComputationType to a string.
 std::string DataTypeString(DataType ty);
 
-std::ostream &operator<<(std::ostream &os, DataType ty);
+std::ostream& operator<<(std::ostream& os, DataType ty);
 
 // Opaque identifier for an "algorithm" used by a blas routine.  This functions
 // as a hint to the blas library.
@@ -185,10 +185,10 @@ class AlgorithmConfig {
   explicit AlgorithmConfig(AlgorithmType algorithm) : algorithm_(algorithm) {}
   AlgorithmType algorithm() const { return algorithm_; }
   void set_algorithm(AlgorithmType val) { algorithm_ = val; }
-  bool operator==(const AlgorithmConfig &other) const {
+  bool operator==(const AlgorithmConfig& other) const {
     return this->algorithm_ == other.algorithm_;
   }
-  bool operator!=(const AlgorithmConfig &other) const {
+  bool operator!=(const AlgorithmConfig& other) const {
     return !(*this == other);
   }
   std::string ToString() const;
@@ -228,7 +228,7 @@ class BlasSupport {
  public:
   virtual ~BlasSupport() = default;
 
-  virtual gpu::BlasLt *GetBlasLt() = 0;
+  virtual gpu::BlasLt* GetBlasLt() = 0;
 
   // For tests only: sets *is_main_stream to true if the underlying Blas library
   // has stream 0 set as its current stream.
@@ -309,10 +309,10 @@ class BlasSupport {
 
   // Gets a list of supported algorithms for DoBlasGemmWithAlgorithm.
   virtual bool GetBlasGemmAlgorithms(
-      Stream *stream, const gpu::MatrixDescriptor &a,
-      const gpu::MatrixDescriptor &b, gpu::OutputMatrixDescriptor *c,
-      const void *alpha, const void *beta,
-      std::vector<blas::AlgorithmType> *out_algorithms) = 0;
+      Stream* stream, const gpu::MatrixDescriptor& a,
+      const gpu::MatrixDescriptor& b, gpu::OutputMatrixDescriptor* c,
+      const void* alpha, const void* beta,
+      std::vector<blas::AlgorithmType>* out_algorithms) = 0;
 
   // Like DoBlasGemm, but accepts an algorithm and an compute type.
   //
@@ -419,8 +419,8 @@ class BlasSupport {
         (CheckTypesForExtendedBlas<InputType, OutputType, ConstantType>(
             computation_type)));
 
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
+    void* alpha_ptr = &alpha;
+    void* beta_ptr = &beta;
     float alpha_storage, beta_storage;
     UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
                                     &beta_storage);
@@ -462,8 +462,8 @@ class BlasSupport {
                                     Eigen::bfloat16, ConstantType>(),
                   "If input is not int8_t, Eigen::half, constant and input "
                   "types have to match");
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
+    void* alpha_ptr = &alpha;
+    void* beta_ptr = &beta;
     float alpha_storage, beta_storage;
     UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
                                     &beta_storage);
@@ -501,8 +501,8 @@ class BlasSupport {
         (CheckTypesForExtendedBlas<InputType, OutputType, ConstantType>(
             computation_type)));
 
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
+    void* alpha_ptr = &alpha;
+    void* beta_ptr = &beta;
     float alpha_storage, beta_storage;
     UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
                                     &beta_storage);
@@ -558,8 +558,8 @@ class BlasSupport {
                        std::is_same_v<ConstantType, float>),
                   "Mismatched input and alpha/beta types");
 
-    void *alpha_ptr = &alpha;
-    void *beta_ptr = &beta;
+    void* alpha_ptr = &alpha;
+    void* beta_ptr = &beta;
     float alpha_storage, beta_storage;
     UpcastHalfToFloat<ConstantType>(&alpha_ptr, &beta_ptr, &alpha_storage,
                                     &beta_storage);
@@ -647,10 +647,10 @@ class BlasSupport {
     ~ScopedWorkspace();
 
    private:
-    BlasSupport *blas_;
+    BlasSupport* blas_;
   };
 
-  virtual absl::Status GetVersion(std::string *version) = 0;
+  virtual absl::Status GetVersion(std::string* version) = 0;
 
  protected:
   DeviceAddressBase* GetWorkspace();
@@ -717,27 +717,27 @@ class BlasSupport {
   // type is Eigen::half. However, for consistency purposes it is convenient
   // for the interface to accept Eigen::half.
   template <typename T>
-  void UpcastHalfToFloat(void **alpha_ptr, void **beta_ptr,
-                         float *alpha_storage, float *beta_storage) {
+  void UpcastHalfToFloat(void** alpha_ptr, void** beta_ptr,
+                         float* alpha_storage, float* beta_storage) {
     if (std::is_same_v<T, Eigen::half>) {
       *alpha_storage =
-          static_cast<float>(*reinterpret_cast<Eigen::half *>(*alpha_ptr));
+          static_cast<float>(*reinterpret_cast<Eigen::half*>(*alpha_ptr));
       *beta_storage =
-          static_cast<float>(*reinterpret_cast<Eigen::half *>(*beta_ptr));
+          static_cast<float>(*reinterpret_cast<Eigen::half*>(*beta_ptr));
       *alpha_ptr = alpha_storage;
       *beta_ptr = beta_storage;
     } else if (std::is_same_v<T, Eigen::bfloat16>) {
       *alpha_storage =
-          static_cast<float>(*reinterpret_cast<Eigen::bfloat16 *>(*alpha_ptr));
+          static_cast<float>(*reinterpret_cast<Eigen::bfloat16*>(*alpha_ptr));
       *beta_storage =
-          static_cast<float>(*reinterpret_cast<Eigen::bfloat16 *>(*beta_ptr));
+          static_cast<float>(*reinterpret_cast<Eigen::bfloat16*>(*beta_ptr));
       *alpha_ptr = alpha_storage;
       *beta_ptr = beta_storage;
     }
   }
 
-  BlasSupport(const BlasSupport &) = delete;
-  void operator=(const BlasSupport &) = delete;
+  BlasSupport(const BlasSupport&) = delete;
+  void operator=(const BlasSupport&) = delete;
 };
 
 // Macro used to quickly declare overrides for abstract virtuals in the

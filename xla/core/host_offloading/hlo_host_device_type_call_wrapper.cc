@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/core/host_offloading/annotate_host_compute_offload.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 
@@ -89,38 +89,39 @@ absl::StatusOr<bool> OffloadHostInstructions(
     return host_offload_utils::ComputeTypeIsHost(instr);
   };
 
-  ABSL_ASSIGN_OR_RETURN(auto offloaded_instructions_and_calls,
-                   offloader_util::FindAndWrapOffloadedComputations(
-                       computation,
-                       /*should_offload=*/should_offload_to_host_compute,
-                       /*should_fuse*/
-                       [](const HloInstruction&, const HloInstruction& hlo) {
-                         // If the computation has a schedule, we cannot fuse.
-                         // Otherwise incremental HloSchedule::Update() will
-                         // fail. Before:
-                         //   a = ...
-                         //   copy_a = copy(a) // host-to-host copy
-                         //   c = ds(copy_a)
-                         //   b = ...
-                         //   copy_b = copy(b) // host-to-host copy
-                         //   d = ds(copy_b)
-                         //
-                         // After offloading and fusing:
-                         //   a = ...
-                         //   b = ...
-                         //   host_call = host-call(a, b)
-                         //   copy_a = gte(host_call, 0)
-                         //   copy_b = gte(host_call, 1)
-                         //   c = ds(copy_a)
-                         //   d = ds(copy_b)
-                         //
-                         // Now b has to be scheduled before c, which an
-                         // incremental HloSchedule::Update() cannot do since it
-                         // only schedules new instructions and doesn't change
-                         // the original sequence.
-                         return !hlo.GetModule()->has_schedule();
-                       },
-                       options.clear_backend_config_device_type, "host-call"));
+  ABSL_ASSIGN_OR_RETURN(
+      auto offloaded_instructions_and_calls,
+      offloader_util::FindAndWrapOffloadedComputations(
+          computation,
+          /*should_offload=*/should_offload_to_host_compute,
+          /*should_fuse*/
+          [](const HloInstruction&, const HloInstruction& hlo) {
+            // If the computation has a schedule, we cannot fuse.
+            // Otherwise incremental HloSchedule::Update() will
+            // fail. Before:
+            //   a = ...
+            //   copy_a = copy(a) // host-to-host copy
+            //   c = ds(copy_a)
+            //   b = ...
+            //   copy_b = copy(b) // host-to-host copy
+            //   d = ds(copy_b)
+            //
+            // After offloading and fusing:
+            //   a = ...
+            //   b = ...
+            //   host_call = host-call(a, b)
+            //   copy_a = gte(host_call, 0)
+            //   copy_b = gte(host_call, 1)
+            //   c = ds(copy_a)
+            //   d = ds(copy_b)
+            //
+            // Now b has to be scheduled before c, which an
+            // incremental HloSchedule::Update() cannot do since it
+            // only schedules new instructions and doesn't change
+            // the original sequence.
+            return !hlo.GetModule()->has_schedule();
+          },
+          options.clear_backend_config_device_type, "host-call"));
 
   bool modified = false;
   for (const auto& [_, instr_call] : offloaded_instructions_and_calls) {
@@ -302,8 +303,8 @@ absl::Status CloneAnnotationToDestination(
     }
     for (int64_t operand_index :
          destination_user->operand_indices(destination_instruction)) {
-      ABSL_RETURN_IF_ERROR(destination_user->ReplaceOperandWith(operand_index,
-                                                           moved_annotation));
+      ABSL_RETURN_IF_ERROR(destination_user->ReplaceOperandWith(
+          operand_index, moved_annotation));
     }
     used_new_annotation = true;
   }
@@ -357,8 +358,9 @@ absl::StatusOr<bool> MoveAnnotationsToCallerTuple(
       }
     }
 
-    ABSL_RETURN_IF_ERROR(host_computation->root_instruction()->ReplaceOperandWith(
-        operand_index, root_operand->mutable_operand(0)));
+    ABSL_RETURN_IF_ERROR(
+        host_computation->root_instruction()->ReplaceOperandWith(
+            operand_index, root_operand->mutable_operand(0)));
     ABSL_RETURN_IF_ERROR(host_computation->RemoveInstruction(root_operand));
     changed = true;
   }
@@ -380,9 +382,9 @@ absl::StatusOr<bool> MoveAnnotationToCallerNonTuple(
   for (HloInstruction* caller_instruction :
        host_computation->caller_instructions()) {
     HloComputation* caller_computation = caller_instruction->parent();
-    ABSL_RETURN_IF_ERROR(CloneAnnotationToDestination(caller_computation,
-                                                 caller_instruction, root_instr,
-                                                 caller_instruction));
+    ABSL_RETURN_IF_ERROR(
+        CloneAnnotationToDestination(caller_computation, caller_instruction,
+                                     root_instr, caller_instruction));
   }
 
   // Remove the annotation from inside this computation.
@@ -403,12 +405,14 @@ absl::StatusOr<bool> MoveAnnotationsToCaller(HloComputation* computation) {
   if (computation->root_instruction()->opcode() == HloOpcode::kTuple) {
     // When the computation returns a tuple, the annotation is on the operands
     // of the root tuple.
-    ABSL_ASSIGN_OR_RETURN(bool moved, MoveAnnotationsToCallerTuple(computation));
+    ABSL_ASSIGN_OR_RETURN(bool moved,
+                          MoveAnnotationsToCallerTuple(computation));
     changed = changed || moved;
   } else {
     // When the computation returns a single value, the annotation is the root
     // instruction.
-    ABSL_ASSIGN_OR_RETURN(bool moved, MoveAnnotationToCallerNonTuple(computation));
+    ABSL_ASSIGN_OR_RETURN(bool moved,
+                          MoveAnnotationToCallerNonTuple(computation));
     changed = changed || moved;
   }
   return changed;
@@ -633,7 +637,8 @@ absl::StatusOr<bool> HloHostDeviceTypeCallWrapper::RunImpl(
   ABSL_RETURN_IF_ERROR(
       AnnotateHostComputeOffload().Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(CallInliner().Run(module, execution_threads).status());
-  ABSL_RETURN_IF_ERROR(TupleSimplifier().Run(module, execution_threads).status());
+  ABSL_RETURN_IF_ERROR(
+      TupleSimplifier().Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
 
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
@@ -651,7 +656,8 @@ absl::StatusOr<bool> HloHostDeviceTypeCallWrapper::RunImpl(
       RemoveComputeTypeFrontendAttribute(*computation);
       continue;
     }
-    ABSL_RETURN_IF_ERROR(OffloadHostInstructions(*computation, options_).status());
+    ABSL_RETURN_IF_ERROR(
+        OffloadHostInstructions(*computation, options_).status());
   }
 
   ABSL_RETURN_IF_ERROR(module->RemoveUnusedComputations());

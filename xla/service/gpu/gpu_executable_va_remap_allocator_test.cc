@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_va_remap_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -275,9 +276,9 @@ class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
                                        /*device_ordinal=*/0));
     result.va_remap_enabled = scope->va_remap_enabled();
     ABSL_ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
-                     scope->GenerateBufferAllocations(
-                         &service_run_options_, get_parameter_buffer, &globals,
-                         vmm_allocator, /*device_ordinal=*/0));
+                          scope->GenerateBufferAllocations(
+                              &service_run_options_, get_parameter_buffer,
+                              &globals, vmm_allocator, /*device_ordinal=*/0));
     ABSL_RETURN_IF_ERROR(scope->ExecuteWithBufferAllocations(
         buffer_allocations, /*device_ordinal=*/0,
         [&](const BufferAllocations& execution_buffers,
@@ -294,8 +295,8 @@ class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
         buffer_allocations.GetDeviceAddress(0);
     if (!allocations_to_tear_down.empty()) {
       std::set<se::DeviceAddressBase> no_live_addresses;
-      ABSL_RETURN_IF_ERROR(buffer_allocations.TearDown(no_live_addresses,
-                                                  allocations_to_tear_down));
+      ABSL_RETURN_IF_ERROR(buffer_allocations.TearDown(
+          no_live_addresses, allocations_to_tear_down));
     }
     return result;
   }
