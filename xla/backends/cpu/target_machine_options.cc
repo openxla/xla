@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"  // IWYU pragma: keep
 #include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/util.h"
@@ -103,15 +104,21 @@ GetEnabledAndDisabledFeatures(const std::vector<std::string>& features) {
   return std::make_pair(enabled_features, disabled_features);
 }
 
+// Preserves empty triples instead of normalizing them to "unknown" so that
+// llvm::EngineBuilder::selectTarget falls back to the host process triple.
+std::string NormalizeTriple(absl::string_view triple) {
+  return triple.empty() ? "" : llvm::Triple::normalize(triple);
+}
+
 }  // namespace
 
 TargetMachineOptions::TargetMachineOptions() {
-  triple_ = llvm::sys::getDefaultTargetTriple();
+  triple_ = NormalizeTriple(llvm::sys::getDefaultTargetTriple());
   cpu_ = llvm::sys::getHostCPUName();
 }
 
 TargetMachineOptions::TargetMachineOptions(const DebugOptions& debug_options) {
-  triple_ = llvm::sys::getDefaultTargetTriple();
+  triple_ = NormalizeTriple(llvm::sys::getDefaultTargetTriple());
   auto xla_cpu_max_isa = CpuFeatureFromString(debug_options.xla_cpu_max_isa());
   auto detected_machine_attributes = DetectMachineAttributes(xla_cpu_max_isa);
 
@@ -131,7 +138,7 @@ TargetMachineOptions::TargetMachineOptions(const DebugOptions& debug_options) {
 TargetMachineOptions::TargetMachineOptions(absl::string_view triple,
                                            absl::string_view cpu,
                                            absl::string_view features)
-    : triple_(triple), cpu_(cpu) {
+    : triple_(NormalizeTriple(triple)), cpu_(cpu) {
   std::vector<std::string> features_vec = absl::StrSplit(features, ',');
   std::tie(enabled_features_, disabled_features_) =
       GetEnabledAndDisabledFeatures(features_vec);
@@ -144,8 +151,9 @@ TargetMachineOptions TargetMachineOptions::Native() {
   auto [enabled_features, disabled_features] =
       GetEnabledAndDisabledFeatures(detected_machine_attributes.features);
   return TargetMachineOptions(
-      llvm::sys::getDefaultTargetTriple(), llvm::sys::getHostCPUName().str(),
-      std::move(enabled_features), std::move(disabled_features));
+      NormalizeTriple(llvm::sys::getDefaultTargetTriple()),
+      llvm::sys::getHostCPUName().str(), std::move(enabled_features),
+      std::move(disabled_features));
 }
 
 bool TargetMachineOptions::operator==(const TargetMachineOptions& other) const {
@@ -172,7 +180,7 @@ TargetMachineOptions::TargetMachineOptions(
     std::string triple, std::string cpu,
     std::vector<std::string> enabled_features,
     std::vector<std::string> disabled_features)
-    : triple_(std::move(triple)),
+    : triple_(NormalizeTriple(triple)),
       cpu_(std::move(cpu)),
       enabled_features_(std::move(enabled_features)),
       disabled_features_(std::move(disabled_features)) {}
