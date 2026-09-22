@@ -86,32 +86,39 @@ bool HasDisableWhileLoopCopiesAttr(const HloInstruction* instruction) {
 }
 
 bool HasDisableWhileLoopDceAttr(const HloInstruction* instruction) {
-  if (instruction == nullptr) {
+  return HasDisableWhileLoopDceFrontendAttr(instruction) ||
+         (instruction != nullptr && instruction->GetModule() != nullptr &&
+          HasDisableWhileLoopDceOption(*instruction->GetModule()));
+}
+
+bool HasDisableWhileLoopDceFrontendAttr(const HloInstruction* instruction) {
+  if (instruction == nullptr || !instruction->has_frontend_attributes()) {
     return false;
   }
-  if (instruction->has_frontend_attributes()) {
-    const auto& map = instruction->frontend_attributes().map();
-    for (absl::string_view key :
-         {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
-          kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
-      auto it = map.find(key);
-      if (it != map.end() && IsTrueVal(it->second)) {
-        return true;
-      }
+  const auto& map = instruction->frontend_attributes().map();
+  for (absl::string_view key :
+       {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
+        kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
+    auto it = map.find(key);
+    if (it != map.end() && IsTrueVal(it->second)) {
+      return true;
     }
   }
-  if (instruction->GetModule() != nullptr) {
-    const auto& extra_options = instruction->GetModule()
-                                    ->config()
-                                    .debug_options()
-                                    .xla_backend_extra_options();
-    for (const char* key :
-         {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
-          kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
-      auto it = extra_options.find(key);
-      if (it != extra_options.end() && IsTrueVal(it->second)) {
-        return true;
-      }
+  return false;
+}
+
+bool HasDisableWhileLoopDceOption(const HloModule& module) {
+  const auto& extra_options =
+      module.config().debug_options().xla_backend_extra_options();
+  if (extra_options.empty()) {
+    return false;
+  }
+  for (const char* key :
+       {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
+        kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
+    auto it = extra_options.find(key);
+    if (it != extra_options.end() && IsTrueVal(it->second)) {
+      return true;
     }
   }
   return false;
