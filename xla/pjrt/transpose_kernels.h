@@ -22,7 +22,70 @@ limitations under the License.
 #include <cstring>
 #include <utility>
 
+#include "hwy//highway.h"
 #include "xla/compiler_macros.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace xla {
+namespace HWY_NAMESPACE {
+namespace hn = hwy::HWY_NAMESPACE;
+
+// Highway's model: Vectors are composed of 128-bit blocks, blocks hold lanes.
+// Interleave operations work within blocks. Cross-block movement requires
+// block-level shuffles.
+constexpr size_t kBlockBytes = 16;   // 128-bit blocks
+constexpr size_t kMaxLaneBytes = 8;  // Lanes are at most 64 bits
+
+enum class Extract { kLo, kHi };
+// Unpack: Interleave lanes within each 128-bit block
+template <size_t element_size, Extract extract, class V>
+HWY_INLINE V Unpack(V a, V b) {
+  static_assert(element_size <= kMaxLaneBytes);
+  using D = hn::DFromV<V>;
+  using ElementT = hwy::UnsignedFromSize<element_size>;
+  const hn::Repartition<ElementT, D> d_elem;
+  auto a_elem = hn::BitCast(d_elem, a);
+  auto b_elem = hn::BitCast(d_elem, b);
+  if constexpr (extract == Extract::kLo) {
+    return hn::BitCast(D(), hn::InterleaveLower(d_elem, a_elem, b_elem));
+  } else {
+    return hn::BitCast(D(), hn::InterleaveUpper(d_elem, a_elem, b_elem));
+  }
+}
+// Load/Store
+template <class D, size_t bytes>
+HWY_INLINE hn::Vec<D> LoadBytes(D d, const void* p) {
+  const hn::FixedTag<uint8_t, bytes> d_fixed;
+  return hn::ResizeBitCast(
+      d, hn::LoadU(d_fixed, reinterpret_cast<const uint8_t*>(p)));
+}
+template <class D, size_t bytes, size_t lane>
+HWY_INLINE void StoreLane(D d, void* p, hn::Vec<D> v) {
+  if constexpr (bytes <= kMaxLaneBytes && lane > 0) {
+    using ElementT = hwy::UnsignedFromSize<bytes>;
+    const hn::Repartition<ElementT, D> d_elem;
+    const ElementT scalar = hn::ExtractLane(hn::BitCast(d_elem, v), lane);
+    hwy::CopyBytes(&scalar, reinterpret_cast<ElementT*>(p), bytes);
+  } else {
+    const hn::Repartition<uint8_t, D> d_u8;
+    auto v_u8 = hn::BitCast(d_u8, v);
+    if constexpr (lane > 0) {
+      v_u8 = hn::SlideDownLanes(d_u8, v_u8, lane * bytes);
+    }
+    const hn::FixedTag<uint8_t, bytes> d_fixed;
+    hn::StoreU(hn::ResizeBitCast(d_fixed, v_u8), d_fixed,
+               reinterpret_cast<uint8_t*>(p));
+  }
+}
+template <class D, size_t bytes, size_t... lane>
+HWY_INLINE void StoreLanes(D d, char* b, int64_t ldb, hn::Vec<D> v, size_t i,
+                           std::index_sequence<lane...>) {
+  (StoreLane<D, bytes, lane>(d, b + ldb * (i + lane), v), ...);
+}
+
+}  // namespace HWY_NAMESPACE
+}  // namespace xla
+HWY_AFTER_NAMESPACE();
 
 #ifdef XLA_HAS_SSE2
 #include <immintrin.h>  // IWYU pragma: keep
