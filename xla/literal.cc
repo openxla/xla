@@ -894,6 +894,25 @@ void MutableLiteralBase::PopulateR1(const tsl::core::Bitmap& values) {
   }
 }
 
+absl::Status MutableLiteralBase::ValidatePopulate(
+    PrimitiveType expected_element_type) const {
+  const Shape& this_shape = shape();
+  TF_RET_CHECK(this_shape.IsArray())
+      << "Populate is only supported for dense arrays: " << this_shape;
+  TF_RET_CHECK(this_shape.element_type() == expected_element_type)
+      << "Failing to populate literal with element type "
+      << primitive_util::LowercasePrimitiveTypeName(this_shape.element_type())
+      << " using data of type "
+      << primitive_util::LowercasePrimitiveTypeName(expected_element_type);
+  return absl::OkStatus();
+}
+
+absl::Status MutableLiteralBase::ValidatePopulateInplace() const {
+  TF_RET_CHECK(shape().IsArray())
+      << "PopulateInplace is only supported for dense arrays: " << shape();
+  return absl::OkStatus();
+}
+
 void MutableLiteralBase::PopulateInplaceInternal(
     absl::FunctionRef<void(void*, absl::Span<const int64_t>, int)> populator,
     bool parallel) {

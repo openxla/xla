@@ -1549,6 +1549,8 @@ class MutableLiteralBase : public LiteralBase {
   absl::Status PopulateLinearInternal(Generator&& generator, bool parallel);
   void PopulateLinearInplaceInternal(
       absl::FunctionRef<void(void*, int64_t, int)> populator, bool parallel);
+  absl::Status ValidatePopulate(PrimitiveType expected_element_type) const;
+  absl::Status ValidatePopulateInplace() const;
 
   friend class LiteralBase;
   friend class MutableBorrowingLiteral;
@@ -2175,15 +2177,8 @@ void MutableLiteralBase::PopulateR4FromArray4D(const Array4D<NativeT>& values) {
 template <typename NativeT, typename Generator>
 absl::Status MutableLiteralBase::PopulateInternal(Generator&& generator,
                                                   bool parallel) {
-  const Shape& this_shape = shape();
-  DCHECK(this_shape.IsArray());
-  TF_RET_CHECK(this_shape.element_type() ==
-               primitive_util::NativeToPrimitiveType<NativeT>())
-      << "Failing to populate literal with element type "
-      << primitive_util::LowercasePrimitiveTypeName(this_shape.element_type())
-      << " using data of type "
-      << primitive_util::LowercasePrimitiveTypeName(
-             primitive_util::NativeToPrimitiveType<NativeT>());
+  TF_RETURN_IF_ERROR(
+      ValidatePopulate(primitive_util::NativeToPrimitiveType<NativeT>()));
   PopulateInplaceInternal(
       [&](void* dest, absl::Span<const int64_t> indices, int thread_id) {
         *static_cast<NativeT*>(dest) = generator(indices, thread_id);
@@ -2195,8 +2190,6 @@ absl::Status MutableLiteralBase::PopulateInternal(Generator&& generator,
 template <typename NativeT, typename Generator,
           MutableLiteralBase::IsGenerator<NativeT, Generator>*>
 absl::Status MutableLiteralBase::Populate(Generator&& generator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
   return PopulateInternal<NativeT>(
       [&](absl::Span<const int64_t> indexes, int /*thread_id*/) {
         return generator(indexes);
@@ -2206,24 +2199,15 @@ absl::Status MutableLiteralBase::Populate(Generator&& generator) {
 template <typename NativeT, typename Generator,
           MutableLiteralBase::IsParallelGenerator<NativeT, Generator>*>
 absl::Status MutableLiteralBase::PopulateParallel(Generator&& generator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
   return PopulateInternal<NativeT>(generator,
-                                   /*parallel=*/data<NativeT>().size() > 32);
+                                   /*parallel=*/element_count() > 32);
 }
 
 template <typename NativeT, typename Generator>
 absl::Status MutableLiteralBase::PopulateLinearInternal(Generator&& generator,
                                                         bool parallel) {
-  const Shape& this_shape = shape();
-  DCHECK(this_shape.IsArray());
-  TF_RET_CHECK(this_shape.element_type() ==
-               primitive_util::NativeToPrimitiveType<NativeT>())
-      << "Failing to populate literal with element type "
-      << primitive_util::LowercasePrimitiveTypeName(this_shape.element_type())
-      << " using data of type "
-      << primitive_util::LowercasePrimitiveTypeName(
-             primitive_util::NativeToPrimitiveType<NativeT>());
+  TF_RETURN_IF_ERROR(
+      ValidatePopulate(primitive_util::NativeToPrimitiveType<NativeT>()));
   PopulateLinearInplaceInternal(
       [&](void* dest, int64_t linear_index, int thread_id) {
         *static_cast<NativeT*>(dest) = generator(linear_index, thread_id);
@@ -2235,8 +2219,6 @@ absl::Status MutableLiteralBase::PopulateLinearInternal(Generator&& generator,
 template <typename NativeT, typename Generator,
           MutableLiteralBase::IsLinearGenerator<NativeT, Generator>*>
 absl::Status MutableLiteralBase::PopulateLinear(Generator&& generator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
   return PopulateLinearInternal<NativeT>(
       [&](int64_t linear_index, int /*thread_id*/) {
         return generator(linear_index);
@@ -2246,17 +2228,13 @@ absl::Status MutableLiteralBase::PopulateLinear(Generator&& generator) {
 template <typename NativeT, typename Generator,
           MutableLiteralBase::IsLinearParallelGenerator<NativeT, Generator>*>
 absl::Status MutableLiteralBase::PopulateLinearParallel(Generator&& generator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
-  return PopulateLinearInternal<NativeT>(
-      std::forward<Generator>(generator),
-      /*parallel=*/data<NativeT>().size() > 32);
+  return PopulateLinearInternal<NativeT>(std::forward<Generator>(generator),
+                                         /*parallel=*/element_count() > 32);
 }
 
 template <typename Populator, MutableLiteralBase::IsPopulator<Populator>*>
 absl::Status MutableLiteralBase::PopulateInplace(Populator&& populator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
+  TF_RETURN_IF_ERROR(ValidatePopulateInplace());
   PopulateInplaceInternal(
       [&](void* dest, absl::Span<const int64_t> indexes, int /*thread_id*/) {
         return populator(dest, indexes);
@@ -2269,8 +2247,7 @@ template <typename Populator,
           MutableLiteralBase::IsParallelPopulator<Populator>*>
 absl::Status MutableLiteralBase::PopulateInplaceParallel(
     Populator&& populator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
+  TF_RETURN_IF_ERROR(ValidatePopulateInplace());
   PopulateInplaceInternal(std::forward<Populator>(populator),
                           /*parallel=*/element_count() > 32);
   return absl::OkStatus();
@@ -2278,8 +2255,7 @@ absl::Status MutableLiteralBase::PopulateInplaceParallel(
 
 template <typename Populator, MutableLiteralBase::IsLinearPopulator<Populator>*>
 absl::Status MutableLiteralBase::PopulateLinearInplace(Populator&& populator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
+  TF_RETURN_IF_ERROR(ValidatePopulateInplace());
   PopulateLinearInplaceInternal(
       [&](void* dest, int64_t linear_index, int /*thread_id*/) {
         return populator(dest, linear_index);
@@ -2292,8 +2268,7 @@ template <typename Populator,
           MutableLiteralBase::IsLinearParallelPopulator<Populator>*>
 absl::Status MutableLiteralBase::PopulateLinearInplaceParallel(
     Populator&& populator) {
-  TF_RET_CHECK(shape().IsArray())
-      << __func__ << " is only supported for dense arrays: " << shape();
+  TF_RETURN_IF_ERROR(ValidatePopulateInplace());
   PopulateLinearInplaceInternal(std::forward<Populator>(populator),
                                 /*parallel=*/element_count() > 32);
   return absl::OkStatus();
