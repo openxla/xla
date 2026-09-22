@@ -140,7 +140,6 @@ class Thunk {
     kReduceScatter,
     kReplicaId,
     kRngSeed,
-    kSelectK,
     kSend,
     kSequential,
     kTriangularSolve,
