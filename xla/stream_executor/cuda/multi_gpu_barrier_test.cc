@@ -154,6 +154,8 @@ absl::StatusOr<std::vector<T>> CopyToHost(Stream* stream,
 }
 
 TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
+  constexpr int64_t kThreadsPerBlock = 1;
+
   // 1. Allocate Signal Buffers on each device
   std::vector<DeviceAddress<uint32_t>> signal_buffers;
 
@@ -188,10 +190,8 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
           auto kernel, (GpuKernelRegistry::GetGlobalRegistry()
                             .LoadKernel<MultiGpuBarrierKernel>(executors_[i])));
 
-      const int64_t threads_per_warp =
-          executors_[i]->GetDeviceDescription().threads_per_warp();
       ASSERT_OK(kernel.Launch(
-          ThreadDim(threads_per_warp, 1, 1), BlockDim(1, 1, 1),
+          ThreadDim(kThreadsPerBlock, 1, 1), BlockDim(1, 1, 1),
           streams_[i].get(), static_cast<int64_t>(i),
           static_cast<int64_t>(num_devices_), kernel_arg_ptrs, counters[i]));
     }
@@ -231,6 +231,8 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
 }
 
 TEST_F(MultiGpuBarrierTest, BarrierSynchronizationWithNccl) {
+  constexpr int64_t kThreadsPerBlock = 1;
+
   std::vector<std::unique_ptr<MemoryAllocator>> collective_allocators;
   for (int i = 0; i < num_devices_; ++i) {
     ASSERT_OK_AND_ASSIGN(
@@ -272,9 +274,7 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronizationWithNccl) {
           (GpuKernelRegistry::GetGlobalRegistry()
                .LoadKernel<MultiGpuBarrierWithNcclKernel>(executors_[i])));
 
-      const int64_t threads_per_warp =
-          executors_[i]->GetDeviceDescription().threads_per_warp();
-      ASSERT_OK(kernel.Launch(ThreadDim(threads_per_warp, 1, 1),
+      ASSERT_OK(kernel.Launch(ThreadDim(kThreadsPerBlock, 1, 1),
                               BlockDim(1, 1, 1), streams_[i].get(),
                               static_cast<int64_t>(i),
                               static_cast<int64_t>(num_devices_),
