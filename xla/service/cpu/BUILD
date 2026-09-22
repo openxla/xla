@@ -1419,6 +1419,7 @@ onednn_cc_library(
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        ":onednn_weight_cache",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -1476,6 +1477,7 @@ onednn_cc_library(
         ":onednn_config_proto_cc",
         ":onednn_memory_util",
         ":onednn_util",
+        ":onednn_weight_cache",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",

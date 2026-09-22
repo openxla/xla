@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -43,10 +43,12 @@ limitations under the License.
 #include "xla/service/cpu/onednn_matmul.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_softmax.h"
+#include "xla/service/cpu/onednn_weight_cache.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
@@ -212,9 +214,47 @@ tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> OneDnnOpThunk::Execute(
     base_resources.result_memrefs.push_back(std::move(memref));
   }
 
+  // Cache only read-only entry parameters with a runtime content identity.
+  // Constants and externally exposed buffers have no supported identity.
+  if (target_ == "__onednn$matmul" &&
+      GlobalOneDnnWeightCache().capacity_bytes() > 0 &&
+      op_buffers_.arguments_buffers.size() > 1 &&
+      op_buffers_.arguments_buffers[1].size() > 0) {
+    const BufferAllocation* weights =
+        op_buffers_.arguments_buffers[1].allocation();
+    const auto& matmul_config = std::get<OneDnnMatMulConfig>(config_);
+    const Shape& weights_shape = op_buffers_.arguments_shapes[1];
+    if (weights->is_entry_computation_parameter() && weights->is_readonly() &&
+        weights_shape.dimensions_size() == 2 &&
+        weights_shape.element_type() == F32 &&
+        !matmul_config.optimization_config().weights_prepacked()) {
+      runtime->prim_resources().weights_source_identity =
+          params.buffer_allocations->GetBufferIdentity(
+              op_buffers_.arguments_buffers[1].index());
+    }
+  }
+
   auto executed = runtime->Invoke(thread_pool, config_, target_);
 
-  // Do not return runtime to the pool until the execution is done.
+  if (runtime->prim_resources().weights_pending) {
+    // Publish a miss before callers observe completion. Other waiters on the
+    // oneDNN event can otherwise run before the cache's completion callback.
+    auto completed = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
+    executed.AndThen(
+        [runtime = std::move(runtime), completed](absl::Status status) mutable {
+          runtime->prim_resources().CompleteWeightCache(status.ok());
+          runtime.reset();
+          if (status.ok()) {
+            completed.SetStateConcrete();
+          } else {
+            completed.SetError(std::move(status));
+          }
+        });
+    return completed;
+  }
+
+  // On hits, callers can observe completion before this callback runs; it must
+  // retain the runtime's resources until oneDNN has finished with them.
   executed.AndThen([runtime = std::move(runtime)]() {
     // runtime will be destroyed here when going out of scope.
     VLOG(3) << "OneDnnOpThunk execution completed and destroying runtime now.";

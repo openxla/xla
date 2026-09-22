@@ -140,6 +140,7 @@ cc_library(
     deps = [
         ":onednn_threadpool",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
@@ -149,6 +150,7 @@ cc_library(
         "//xla/service/cpu:onednn_matmul",
         "//xla/service/cpu:onednn_memory_util",
         "//xla/service/cpu:onednn_softmax",
+        "//xla/service/cpu:onednn_weight_cache",
         "//xla/stream_executor:device_address",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/mkl:onednn",

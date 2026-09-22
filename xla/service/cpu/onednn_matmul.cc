@@ -1,4 +1,4 @@
-/* Copyright 2023 The OpenXLA Authors.
+/* Copyright 2023, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
+#include "xla/service/cpu/onednn_weight_cache.h"
 #include "xla/shape.h"
 #include "tsl/platform/cpu_info.h"
 
@@ -275,13 +276,51 @@ void ExecuteOneDnnMatMul(OneDnnMatMulConfig matmul_config,
   }
 
   FusedOperandsRef fused_operands_ref{fused_bufs, resources.postop_args};
-  auto matmul_pd =
-      CreateMatMulPrimDesc(cpu_engine, input_md, weights_md, output_md,
-                           fused_mds, matmul_config, &fused_operands_ref);
+  std::unique_ptr<matmul::primitive_desc> matmul_pd;
+
+  if (resources.weights_source_identity && weights_minfo.Data() != nullptr) {
+    // Ask oneDNN for its preferred packed layout; the source is still unpacked.
+    OneDnnMatMulConfig packed_config = matmul_config;
+    packed_config.mutable_optimization_config()->set_weights_prepacked(true);
+    matmul_pd =
+        CreateMatMulPrimDesc(cpu_engine, input_md, weights_md, output_md,
+                             fused_mds, packed_config, &fused_operands_ref);
+
+    // The selected primitive must fit the original compiled scratch allocation.
+    const bool scratch_fits =
+        !matmul_config.optimization_config().user_scratchpad() ||
+        (resources.result_memrefs.size() > 1 &&
+         MemrefInfo(resources.result_memrefs[1].get())
+                 .GetOneDnnMemDesc()
+                 .get_size() >= matmul_pd->scratchpad_desc().get_size());
+
+    if (scratch_fits) {
+      OneDnnWeightCache::LookupResult lookup =
+          GlobalOneDnnWeightCache().LookupOrCreate(
+              {weights_minfo.Data(), weights_md, matmul_pd->weights_desc(),
+               resources.weights_source_identity});
+      resources.packed_weights = std::move(lookup.weights);
+      resources.weights_pending =
+          lookup.kind == OneDnnWeightCache::LookupKind::kMiss;
+    } else {
+      VLOG(1) << "oneDNN weight cache bypass: packed primitive scratchpad "
+                 "exceeds compiled allocation";
+    }
+  }
+
+  if (!resources.packed_weights) {
+    // Rebuild post-op bindings if the packed primitive was rejected.
+    resources.postop_args.clear();
+    matmul_pd =
+        CreateMatMulPrimDesc(cpu_engine, input_md, weights_md, output_md,
+                             fused_mds, matmul_config, &fused_operands_ref);
+  }
 
   resources.src_mem = memory(input_md, cpu_engine, input_minfo.Data());
   resources.wei_mem =
-      memory(matmul_pd->weights_desc(), cpu_engine, weights_minfo.Data());
+      memory(matmul_pd->weights_desc(), cpu_engine,
+             resources.packed_weights ? resources.packed_weights->data()
+                                      : weights_minfo.Data());
   resources.dst_mem = memory(output_md, cpu_engine, output_minfo.Data());
 
   if (std::strstr(matmul_pd->impl_info_str(), "ref") != nullptr) {
@@ -306,6 +345,14 @@ void ExecuteOneDnnMatMul(OneDnnMatMulConfig matmul_config,
   matmul_args.insert(resources.postop_args.begin(),
                      resources.postop_args.end());
 
+  if (resources.weights_pending) {
+    resources.weights_reorder_src_mem =
+        memory(weights_md, cpu_engine, weights_minfo.Data());
+    resources.weights_reorder =
+        dnnl::reorder(resources.weights_reorder_src_mem, resources.wei_mem);
+    resources.weights_reorder.execute(
+        onednn_stream, resources.weights_reorder_src_mem, resources.wei_mem);
+  }
   resources.primitive.execute(onednn_stream, matmul_args);
 }
 
