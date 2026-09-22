@@ -32,6 +32,14 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - '.github/workflows/presubmit_benchmark.yml'
+      - 'xla/tools/benchmarks/**'
+      - 'xla/tools/multihost_hlo_runner/**'
+      - 'xla/service/gpu/**'
+      - 'xla/backends/gpu/**'
+      - 'xla/stream_executor/cuda/**'
+      - 'xla/stream_executor/gpu/**'
 
 permissions:
   contents: read
@@ -45,7 +53,7 @@ concurrency:
 jobs:
   run_benchmarks:
     name: Run XLA Presubmit Benchmarks
-    uses: google-ml-infra/bap/.github/workflows/run-benchmarks.yaml@887b34acdb5c70bbd2bc93bb11c2d0a103698e7f # main
+    uses: google-ml-infra/bap/.github/workflows/run-benchmarks.yaml@887b34acdb5c70bbd2bc93bb11c2d0a103698e7f
     with:
       registry_file: "xla/tools/benchmarks/benchmark_registry.pbtxt"
       tag_filter: "presubmit"
