@@ -5174,6 +5174,7 @@ cc_library(
     srcs = ["slow_operation_alarm.cc"],
     hdrs = ["slow_operation_alarm.h"],
     deps = [
+        "//xla/tsl/platform:env",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -5184,7 +5185,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:env",
     ],
 )
 
