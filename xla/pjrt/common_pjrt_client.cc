@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -621,9 +621,10 @@ CommonPjRtClient::CreateStagingForZeroCopyLinearize(
 absl::StatusOr<tsl::AsyncValueRef<PjRtStagingBuffer>>
 CommonPjRtClient::AllocateLinearizeDest(bool sync, size_t size,
                                         PjRtRawBufferRef dest_buffer) {
-  if (dest_buffer->GetHostPointer() != nullptr) {
-    absl::Span<uint8_t> span(
-        static_cast<uint8_t*>(dest_buffer->GetHostPointer()), size);
+  if (void* host_ptr = dest_buffer->GetHostPointerForInternalUse(
+          PjRtRawBufferInterface::HostAccess::kWrite);
+      host_ptr != nullptr) {
+    absl::Span<uint8_t> span(static_cast<uint8_t*>(host_ptr), size);
     return PjRtStagingBuffer::Create(
         span, [dest_buffer = std::move(dest_buffer)]() {});
   }
@@ -1303,7 +1304,8 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
                                           tsl::profiler::ContextType::kPjRt);
 
   tsl::AsyncValueRef<PjRtStagingBuffer> linearized;
-  if (raw_buffer->GetHostPointer() == nullptr &&
+  if (raw_buffer->GetHostPointerForInternalUse(
+          PjRtRawBufferInterface::HostAccess::kRead) == nullptr &&
       host_buffer_semantics != HostBufferSemantics::kImmutableOnlyDuringCall &&
       dynamic_sizes.empty() &&
       ShouldPerformZeroCopyLinearize(data, device_shape, type, dims,
@@ -1311,7 +1313,8 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
     linearized = CreateStagingForZeroCopyLinearize(
         data, device_shape, memory_space, std::move(on_done_with_host_buffer));
   } else if (std::shared_ptr<TransposePlan> plan =
-                 (raw_buffer->GetHostPointer() == nullptr &&
+                 (raw_buffer->GetHostPointerForInternalUse(
+                      PjRtRawBufferInterface::HostAccess::kRead) == nullptr &&
                   dynamic_sizes.empty())
                      ? CreateChunkedTransposePlan(
                            /*is_h2d=*/true, ShapeUtil::MakeShape(type, dims),
@@ -1418,7 +1421,9 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
               return;
             }
             PjRtDeviceEventRef copy_event;
-            if (raw_buffer->GetHostPointer() == staging_data.data()) {
+            if (raw_buffer->GetHostPointerForInternalUse(
+                    PjRtRawBufferInterface::HostAccess::kRead) ==
+                staging_data.data()) {
               linearized.reset();
               copy_event_promise.SetReady();
               return;
@@ -1444,7 +1449,8 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
     return *error;
   }
   auto staging_data = linearized->const_data();
-  if (raw_buffer->GetHostPointer() == staging_data.data()) {
+  if (raw_buffer->GetHostPointerForInternalUse(
+          PjRtRawBufferInterface::HostAccess::kRead) == staging_data.data()) {
     PjRtDeviceEventPromiseRef copy_event_promise;
     PjRtDeviceEventRef copy_event;
     ABSL_ASSIGN_OR_RETURN(
@@ -2293,8 +2299,10 @@ void CommonPjRtRawBufferImpl::ScheduleCopySliceTo(
           return;
         }
 
-        void* src_ptr_void = src_raw_buffer->GetHostPointer();
-        void* dst_ptr_void = dst_raw_buffer->GetHostPointer();
+        void* src_ptr_void = src_raw_buffer->GetHostPointerForInternalUse(
+            PjRtRawBufferInterface::HostAccess::kRead);
+        void* dst_ptr_void = dst_raw_buffer->GetHostPointerForInternalUse(
+            PjRtRawBufferInterface::HostAccess::kWrite);
         if (src_ptr_void == nullptr || dst_ptr_void == nullptr) {
           notify_error_async(absl::UnimplementedError(absl::StrCat(
               "ScheduleCopySliceTo is only supported for host buffers; got "
@@ -2417,8 +2425,10 @@ void CommonPjRtRawBufferImpl::ScheduleUpdateSlice(
           return;
         }
 
-        void* dst_ptr_void = dst_raw_buffer->GetHostPointer();
-        void* src_ptr_void = src_raw_buffer->GetHostPointer();
+        void* dst_ptr_void = dst_raw_buffer->GetHostPointerForInternalUse(
+            PjRtRawBufferInterface::HostAccess::kWrite);
+        void* src_ptr_void = src_raw_buffer->GetHostPointerForInternalUse(
+            PjRtRawBufferInterface::HostAccess::kRead);
         if (dst_ptr_void == nullptr || src_ptr_void == nullptr) {
           notify_error_async(absl::UnimplementedError(absl::StrCat(
               "ScheduleUpdateSlice is only supported for host buffers; got "
@@ -4435,7 +4445,8 @@ CommonPjRtBufferImpl::CopyToCpuMemorySpace(xla::Shape dst_shape,
       auto buffer,
       dst_client->DefineBuffer(shared_dst_shape, dst_memory_space,
                                dst_raw_buffer, {std::move(definition_event)}));
-  auto* base_ptr = dst_raw_buffer->GetHostPointer();
+  auto* base_ptr = dst_raw_buffer->GetHostPointerForInternalUse(
+      PjRtRawBufferInterface::HostAccess::kWrite);
   std::unique_ptr<MutableLiteralBase> literal;
   bool needs_second_copy = false;
   if (!primitive_util::IsSubByteNonPredType(shared_dst_shape->element_type()) &&
@@ -4706,11 +4717,12 @@ CommonPjRtBufferImpl::CopyFromCpuToMemorySpace(
             set_error(status);
             return;
           }
-          auto* base_ptr = src_raw_buffer->GetHostPointer();
+          auto* base_ptr = src_raw_buffer->GetHostPointerForInternalUse(
+              PjRtRawBufferInterface::HostAccess::kRead);
           if (!base_ptr) {
             set_error(absl::InternalError(
                 "CopyFromCpuToMemorySpace expects that "
-                "src_raw_buffer->GetHostPointer() is nonnull"));
+                "src_raw_buffer->GetHostPointerForInternalUse() is nonnull"));
             return;
           }
           if (allocation_event) {
@@ -5310,7 +5322,8 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
                 return;
               }
               raw_buffer = *status_or_buffer;
-              if (raw_buffer->GetHostPointer() == nullptr &&
+              if (raw_buffer->GetHostPointerForInternalUse(
+                      PjRtRawBufferInterface::HostAccess::kRead) == nullptr &&
                   common_client->ShouldDoDirectTransfer(
                       *literal, shape, raw_buffer->memory_space())) {
                 tsl::profiler::TraceMe traceme([&] {
@@ -5339,7 +5352,8 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
                 return;
               }
               if (std::shared_ptr<TransposePlan> plan =
-                      raw_buffer->GetHostPointer() == nullptr
+                      raw_buffer->GetHostPointerForInternalUse(
+                          PjRtRawBufferInterface::HostAccess::kRead) == nullptr
                           ? common_client->CreateChunkedTransposePlan(
                                 /*is_h2d=*/false, literal->shape(),
                                 /*host_byte_strides=*/std::nullopt,
