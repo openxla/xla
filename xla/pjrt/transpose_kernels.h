@@ -38,6 +38,15 @@ limitations under the License.
 
 namespace xla {
 
+// Maximum number of elements along each dimension of a macroblock. When the
+// inner microkernel block size `bs` is at least `kMaxOuterBlockElems`, the
+// outer block dimensions (`outer_bs_a` and `outer_bs_b`) are always 1.
+inline constexpr int kMaxOuterBlockElems = 16;
+
+// Maximum input byte stride (`lda`) for which the 128-bit square microkernel
+// is preferred over the 256-bit rectangular microkernel when `lda >= ldb`.
+inline constexpr int kMaxSquare128StrideBytes = 64;
+
 // The transpose microkernels use a general approach of zipping elements from
 // different rows together. We start zipping together elements of size 1, size 2
 // and so-on until we have achieved our transpose. As we increase the number of
@@ -697,7 +706,7 @@ struct TransposeMicroKernel {
       } else if constexpr (sizeof(T) * bs == sizeof(__m128i)) {
         // Prefer SseSquare when gathering from memory (lda >= ldb) with small
         // strides, rather than dealing with lo/hi packing.
-        if (lda >= ldb && lda <= 64) {
+        if (lda >= ldb && lda <= kMaxSquare128StrideBytes) {
           return SseSquareTransposeMicroKernelImpl<T, bs>::Apply(a, lda, b,
                                                                  ldb);
         }
