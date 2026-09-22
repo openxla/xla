@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -40,7 +41,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/multi_gpu_barrier_kernel.h"
+#include "xla/stream_executor/gpu/ragged_all_to_all_device_kernel.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
@@ -88,6 +89,64 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
+
+// Per-element cost of a remote fabric write vs a local HBM write for the
+// LSA copy loop, in kLocalCopyCost units:
+//
+//   cost = kLocalCopyCost * (hbm_bw / (active_links * per_link_bw))
+//                         * fabric_cost_weight
+//
+// The bare bandwidth ratio assumes the fabric runs at peak and ignores
+// local-write overheads (coalescing, SM dispatch) that compress the
+// *effective* cost ratio seen by CTA scheduling. `fabric_cost_weight` is
+// an empirical scalar applied to that ratio: higher value => higher
+// remote-write cost => more CTAs assigned to remote work. The default
+// 0.22 was fitted on GB200. The flag
+// xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight overrides it.
+
+inline constexpr float kDefaultFabricCostWeight = 0.22f;
+
+// Per-lane NVLink bandwidth, unidirectional, in bytes/sec. Values match
+// gpu_collective_performance_model.cc.
+double PerLinkFabricBytesPerSec(const se::DeviceDescription& desc) {
+  const auto* cc = desc.gpu_compute_capability().cuda_compute_capability();
+  if (cc == nullptr) {
+    return 0.0;
+  }
+  switch (cc->major) {
+    case se::CudaComputeCapability::kHopper:
+      return 20.0 * 1e9;
+    case se::CudaComputeCapability::kBlackwell:
+    case se::CudaComputeCapability::kBlackwell_11:
+    case se::CudaComputeCapability::kBlackwell_12:
+      return 40.0 * 1e9;
+    default:
+      return 0.0;
+  }
+}
+
+int32_t RaggedAllToAllRemoteCost(const se::DeviceDescription& desc,
+                                 float fabric_cost_weight) {
+  const int64_t active_links = desc.device_interconnect_info().active_links;
+  const double per_link_bytes_per_sec = PerLinkFabricBytesPerSec(desc);
+  if (active_links <= 0 || per_link_bytes_per_sec <= 0.0) {
+    // No P2P NVLink reported, or no per-link bandwidth model for this arch:
+    // return 0 so the kernel falls back to equal-weight (byte-balanced)
+    // per-CTA scheduling.
+    return 0;
+  }
+  const int64_t hbm_bytes_per_sec = desc.memory_bandwidth();
+  const float weight = (fabric_cost_weight > 0.0f && fabric_cost_weight <= 1.0f)
+                           ? fabric_cost_weight
+                           : kDefaultFabricCostWeight;
+  const double fabric_bytes_per_sec =
+      static_cast<double>(active_links) * per_link_bytes_per_sec;
+  const double peak_ratio =
+      static_cast<double>(hbm_bytes_per_sec) / fabric_bytes_per_sec;
+  const int64_t cost = static_cast<int64_t>(std::llround(
+      static_cast<double>(se::gpu::kLocalCopyCost) * peak_ratio * weight));
+  return static_cast<int32_t>(std::max<int64_t>(se::gpu::kLocalCopyCost, cost));
+}
 
 // RaggedAllToAll has 4 operands with ragged tensor metadata: input_offsets,
 // send_sizes, output_offsets, and recv_sizes.
@@ -163,6 +222,11 @@ RaggedAllToAllConfig GetRaggedAllToAllConfig(
           ->config()
           .debug_options()
           .xla_gpu_experimental_ragged_all_to_all_use_device_kernel();
+  config.fabric_cost_weight =
+      instr->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight();
   config.allow_fallback_to_nccl =
       instr->GetModule()
           ->config()
@@ -1075,7 +1139,8 @@ RaggedAllToAllThunk::FromProto(
           thunk_proto.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel(),
           thunk_proto.allow_fallback_to_nccl(), thunk_proto.collectives_mode(),
           thunk_proto.use_device_kernel(),
-          fast_interconnect_slice_size_override, thunk_proto.enable_gxl()},
+          fast_interconnect_slice_size_override, thunk_proto.enable_gxl(),
+          thunk_proto.fabric_cost_weight()},
       std::move(buffers), devices_per_host);
 }
 
@@ -1104,6 +1169,7 @@ absl::StatusOr<ThunkProto> RaggedAllToAllThunk::ToProto() const {
   thunk_proto->set_fast_interconnect_slice_size_override(
       config_.fast_interconnect_slice_size_override.value_or(0));
   thunk_proto->set_enable_gxl(config_.enable_gxl);
+  thunk_proto->set_fabric_cost_weight(config_.fabric_cost_weight);
 
   return proto;
 }
@@ -1148,8 +1214,9 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
 
     if (input_sym != nullptr && output_sym != nullptr) {
       ABSL_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
-      const int core_count =
-          stream.parent()->GetDeviceDescription().core_count();
+      const se::DeviceDescription& device_description =
+          stream.parent()->GetDeviceDescription();
+      const int core_count = device_description.core_count();
 
       const int64_t lsa_size = state->lsa_size.value();
       const bool has_remote_peers = state->lsa_size.value() < num_ranks;
@@ -1191,7 +1258,9 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
             device_buffers[4].source_buffer, num_ranks, num_updates_per_replica,
             config_.num_row_elements, cta_count,
             static_cast<int64_t>(input_offset),
-            static_cast<int64_t>(output_offset));
+            static_cast<int64_t>(output_offset),
+            RaggedAllToAllRemoteCost(device_description,
+                                     config_.fabric_cost_weight));
       }
     }
   }

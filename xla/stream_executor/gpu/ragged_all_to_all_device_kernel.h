@@ -30,6 +30,10 @@ class GpuDeviceCommunicator;
 
 namespace stream_executor::gpu {
 
+// Reference cost of a local-HBM copy. Remote-peer cost is derived from this
+// in RaggedAllToAllRemoteCost.
+inline constexpr int64_t kLocalCopyCost = 100;
+
 template <int64_t kVectorSize>
 struct RaggedAllToAllDeviceKernel {
   using KernelType = stream_executor::TypedKernel<
@@ -42,7 +46,8 @@ struct RaggedAllToAllDeviceKernel {
       int64_t,                             // num_updates_per_replica
       int64_t,                             // num_row_elements
       int64_t,                             // input_buffer_offset_bytes
-      int64_t>;                            // output_buffer_offset_bytes
+      int64_t,                             // output_buffer_offset_bytes
+      int32_t>;                            // remote_cost
 };
 
 }  // namespace stream_executor::gpu
