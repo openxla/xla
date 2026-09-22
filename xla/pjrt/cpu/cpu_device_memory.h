@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2021, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,6 +24,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+
+namespace tsl {
+class TiedAny;
+}  // namespace tsl
 
 namespace xla {
 
@@ -61,6 +65,14 @@ class CpuDeviceMemory {
 
   virtual void* untyped_data() const = 0;
   virtual size_t size_bytes() const = 0;
+
+  // Identifies the current contents and owns cached representations of them.
+  // The identity does not retain this allocation. Writes replace it; slices
+  // share it. Only owned memory supports caching.
+  virtual std::shared_ptr<tsl::TiedAny> GetCacheIdentity() { return nullptr; }
+  virtual void InvalidateCacheIdentity() {}
+  // Mutable pointer exports can outlive a call: disable caching permanently.
+  virtual void DisableCacheIdentity() {}
 
   // Creates an unavailable AsyncValueRef placeholder for a delayed
   // memory allocation (see `AllocateInto` below).

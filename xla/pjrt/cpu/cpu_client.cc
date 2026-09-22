@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2021, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1609,12 +1609,20 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     // Call interpreted thunk sequence implementing XLA executable.
     absl::InlinedVector<MaybeOwningDeviceAddress, 8> buffer_device_mem;
     buffer_device_mem.reserve(buffer_table->size());
-    for (const auto& buffer : *buffer_table) {
+    for (size_t i = 0; i < buffer_table->size(); ++i) {
+      const auto& buffer = (*buffer_table)[i];
+      if (!cpu_executable->buffer_assignment().GetAllocation(i).is_readonly()) {
+        buffer->InvalidateCacheIdentity();
+      }
       buffer_device_mem.emplace_back(
           se::DeviceAddressBase(buffer->untyped_data(), buffer->size_bytes()));
     }
 
-    cpu::BufferAllocations allocations(buffer_device_mem);
+    cpu::BufferAllocations allocations(
+        buffer_device_mem, [&buffer_table](BufferAllocation::Index index) {
+          // The wait below keeps the borrowed table alive for async thunks.
+          return (*buffer_table)[index]->GetCacheIdentity();
+        });
 
     ABSL_ASSIGN_OR_RETURN(
         cpu::Thunk::CollectiveExecuteParams collective_params,
