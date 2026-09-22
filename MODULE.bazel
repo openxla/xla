@@ -46,9 +46,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-00Y1ioBJtOpQJwQztTChaBJSLu2n1E4dWriTCCkUMBg=",
-    strip_prefix = "rules_ml_toolchain-1985a543c1de67d2269d5c5e7d983b70a6705f6a",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/1985a543c1de67d2269d5c5e7d983b70a6705f6a.tar.gz"],
+    integrity = "sha256-XrL/AKDPawv6pfBMKS1QlceKHPIu1OXi0wfH42qmfe8=",
+    strip_prefix = "rules_ml_toolchain-cdfa52fa7e8bd9fb51cf66de1da166969d850edd",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/cdfa52fa7e8bd9fb51cf66de1da166969d850edd.tar.gz"],
 )
 
 # TODO: Upstream the patch?
