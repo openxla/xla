@@ -4346,20 +4346,23 @@ bool HloParserImpl::ParseMesh(std::optional<Mesh>& mesh) {
   std::string device_ids_str;
   bool is_device_ids = false;
   const char* ptr = lexer_.GetLoc();
-  if (ptr != nullptr) {
+  const char* const buf_end = lexer_.GetBufferEnd();
+  if (ptr != nullptr && ptr < buf_end) {
     if (*ptr == ']') {
       ptr++;
     }
-    while (*ptr == ' ' || *ptr == '\t' || *ptr == '\n' || *ptr == '\r') {
+    while (ptr < buf_end &&
+           (*ptr == ' ' || *ptr == '\t' || *ptr == '\n' || *ptr == '\r')) {
       ptr++;
     }
-    if (*ptr == ',') {
+    if (ptr < buf_end && *ptr == ',') {
       const char* lookahead_ptr = ptr + 1;
-      while (*lookahead_ptr == ' ' || *lookahead_ptr == '\t' ||
-             *lookahead_ptr == '\n' || *lookahead_ptr == '\r') {
+      while (lookahead_ptr < buf_end &&
+             (*lookahead_ptr == ' ' || *lookahead_ptr == '\t' ||
+              *lookahead_ptr == '\n' || *lookahead_ptr == '\r')) {
         lookahead_ptr++;
       }
-      absl::string_view remaining(lookahead_ptr);
+      absl::string_view remaining(lookahead_ptr, buf_end - lookahead_ptr);
       if (absl::StartsWith(remaining, "device_ids") &&
           (remaining.size() == 10 || remaining[10] == '=' ||
            remaining[10] == ' ' || remaining[10] == '\t')) {
