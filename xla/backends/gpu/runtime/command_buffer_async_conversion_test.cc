@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/status_matchers.h"
 
 namespace xla::gpu {
 namespace {

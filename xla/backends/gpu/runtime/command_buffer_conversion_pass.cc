@@ -545,24 +545,25 @@ bool ContainsAsyncStartOnStreams(
   if (streams.empty()) {
     return false;
   }
-  bool found = false;
-  thunk.Walk([&](const Thunk* nested) {
+  // A non-OK status stops the walk at the first match.
+  absl::Status walk = thunk.Walk([&](const Thunk* nested) -> absl::Status {
     if (nested->kind() == Thunk::kAsyncStart) {
       if (streams.contains(static_cast<const AsyncStartThunk&>(*nested)
                                .execution_stream_id())) {
-        found = true;
+        return absl::CancelledError();
       }
     } else if (nested->kind() == Thunk::kDynamicSliceFusion) {
       const auto& fusion =
           static_cast<const DynamicSliceFusionV2Thunk&>(*nested);
       for (const std::unique_ptr<Thunk>& embedded : fusion.thunks()) {
         if (ContainsAsyncStartOnStreams(*embedded, streams)) {
-          found = true;
+          return absl::CancelledError();
         }
       }
     }
+    return absl::OkStatus();
   });
-  return found;
+  return !walk.ok();
 }
 
 // Returns the index one past the done that joins the start at
@@ -583,14 +584,6 @@ size_t AsyncJoinEnd(absl::Span<const std::unique_ptr<Thunk>> thunks,
     }
   }
   return thunks.size();
-}
-
-// Returns the shortest non-empty sequence of thunks that form a valid async
-// region as a span. If no such region is found, an empty span is returned.
-absl::Span<std::unique_ptr<Thunk>> CollectAndCheckAsyncRegion(
-    absl::Span<std::unique_ptr<Thunk>> thunks,
-    const CommandBufferConfig& config) {
-  return thunks.subspan(0, CheckAsyncRegion(thunks, config));
 }
 
 absl::StatusOr<CommandExecutor::SynchronizationMode> GetSynchronizationMode(
@@ -813,8 +806,10 @@ absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
       // We always have to capture both corresponding start and done events in
       // the same command buffer.
       if (!open_streams.contains(start.execution_stream_id())) {
-        absl::Span<std::unique_ptr<Thunk>> region = CollectAndCheckAsyncRegion(
-            absl::MakeSpan(original_thunks).subspan(i), config);
+        absl::Span<std::unique_ptr<Thunk>> tail =
+            absl::MakeSpan(original_thunks).subspan(i);
+        absl::Span<std::unique_ptr<Thunk>> region =
+            tail.first(CheckAsyncRegion(tail, config));
         if (!region.empty() &&
             absl::c_none_of(region, [&](const std::unique_ptr<Thunk>& nested) {
               return ContainsAsyncStartOnStreams(*nested, open_streams);
@@ -831,19 +826,13 @@ absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
       // stream; the stream is open until the done that joins it.
       size_t& end = open_stream_ends[start.execution_stream_id()];
       end = std::max(end, AsyncJoinEnd(original_thunks, i));
-      ABSL_RETURN_IF_ERROR(flush_command_buffer());
-      new_thunks.push_back(std::move(thunk));
-      continue;
     }
 
-    if (thunk->kind() == Thunk::kAsyncDone) {
-      // Async done thunks are only captured as part of a valid async region.
-      ABSL_RETURN_IF_ERROR(flush_command_buffer());
-      new_thunks.push_back(std::move(thunk));
-      continue;
-    }
-
-    if (IsConvertible(*thunk, config) &&
+    // Async start and done thunks are only captured as part of a valid async
+    // region above; on their own they stay in place.
+    const bool is_async_boundary = thunk->kind() == Thunk::kAsyncStart ||
+                                   thunk->kind() == Thunk::kAsyncDone;
+    if (!is_async_boundary && IsConvertible(*thunk, config) &&
         !ContainsAsyncStartOnStreams(*thunk, open_streams)) {
       current_command_buffer_thunks.push_back(std::move(thunk));
       continue;
