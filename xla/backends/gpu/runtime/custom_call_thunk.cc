@@ -241,7 +241,7 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
       thunk_info, std::move(target_name), std::move(bundle),
       std::move(operands), std::move(results), std::move(call_frame),
       std::move(attributes), std::move(execution_state), called_computation,
-      cpu_target_machine_options, use_pdl));
+      gpu_compute_capability, cpu_target_machine_options, use_pdl));
 }
 
 absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
@@ -283,7 +283,7 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
       thunk_info, std::move(target_name), std::move(bundle),
       std::move(operands), std::move(results), std::move(call_frame),
       std::move(attributes), std::move(execution_state), called_computation,
-      cpu_target_machine_options));
+      gpu_compute_capability, cpu_target_machine_options));
 }
 
 CustomCallThunk::CustomCallThunk(
@@ -294,6 +294,7 @@ CustomCallThunk::CustomCallThunk(
     ffi::AttributesMap attributes,
     std::unique_ptr<ffi::ExecutionState> execution_state,
     const HloComputation* called_computation,
+    const se::GpuComputeCapability& gpu_compute_capability,
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
     bool use_pdl)
     : TracedCommand(Thunk::kCustomCall, thunk_info),
@@ -301,12 +302,19 @@ CustomCallThunk::CustomCallThunk(
       operands_(std::move(operands)),
       results_(std::move(results)),
       bundle_(std::move(bundle)),
+      has_prepare_(std::visit(
+          [](const auto& bundle) { return bundle.prepare != nullptr; },
+          bundle_)),
+      has_initialize_(std::visit(
+          [](const auto& bundle) { return bundle.initialize != nullptr; },
+          bundle_)),
       use_pdl_(use_pdl),
       attributes_(std::move(attributes)),
       call_frame_(std::move(call_frame)),
       call_frames_([this] { return call_frame_->Copy(); }),
       execution_state_(std::move(execution_state)),
       called_computation_(called_computation),
+      gpu_compute_capability_(gpu_compute_capability),
       cpu_target_machine_options_(std::move(cpu_target_machine_options)) {}
 
 absl::StatusOr<ObjectPool<CallFrame>::BorrowedObject>
@@ -360,20 +368,22 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
     allocator = buffer_allocations->memory_allocator();
   }
 
-  const se::GpuComputeCapability* gpu_compute_capability = nullptr;
-  if (stream != nullptr) {
-    gpu_compute_capability =
-        &stream->parent()->GetDeviceDescription().gpu_compute_capability();
-  }
-
   ffi::ExecutionState* prepare_state = nullptr;
   ffi::ExecutionState* initialize_state = nullptr;
 
-  if (execution_scoped_state) {
-    PrepareAndInitState& prepare_and_init = tsl::any_cast<PrepareAndInitState>(
-        execution_scoped_state->at(this->thunk_info().thunk_id));
-    prepare_state = &prepare_and_init.prepare;
-    initialize_state = &prepare_and_init.init;
+  if (execution_scoped_state != nullptr && (has_prepare_ || has_initialize_)) {
+    if (auto it = execution_scoped_state->find(thunk_info().thunk_id);
+        it != execution_scoped_state->end()) {
+      if (auto* prepare_and_init =
+              tsl::any_cast<PrepareAndInitState>(&it->second)) {
+        if (has_prepare_) {
+          prepare_state = &prepare_and_init->prepare;
+        }
+        if (has_initialize_) {
+          initialize_state = &prepare_and_init->init;
+        }
+      }
+    }
   }
 
   // `called_computation_` is forwarded to the FFI handler both for direct
@@ -387,7 +397,7 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
       InvokeContext::GpuContext{
           stream, allocator, collective_params, collective_clique_requests,
           collective_memory_requests, collective_cliques, collective_memory,
-          gpu_compute_capability,
+          &gpu_compute_capability_,
           cpu_target_machine_options_ ? &*cpu_target_machine_options_ : nullptr,
           computation_streams,
           collective_params ? absl::MakeSpan(collective_params->async_streams)
@@ -466,6 +476,10 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
 }
 
 absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
+  if (!has_prepare_) {
+    return absl::OkStatus();
+  }
+
   // Run the prepare stage at most once per execution. When lowered into a
   // command buffer, CommandBufferThunk drives this same object via both its
   // command sequence and its fallback thunk sequence; see PrepareAndInitState.
@@ -517,6 +531,10 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
 }
 
 absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
+  if (!has_initialize_) {
+    return absl::OkStatus();
+  }
+
   // Run the initialize stage at most once per execution. When lowered into a
   // command buffer, CommandBufferThunk drives this same object via both its
   // command sequence and its fallback thunk sequence; see PrepareAndInitState.

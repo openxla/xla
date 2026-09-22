@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
@@ -326,6 +327,192 @@ TEST(CustomCallThunkTest, CustomCallWithOwnedHandlersWithoutOptionalOnes) {
           /*called_computation=*/nullptr, se::GpuComputeCapability()));
   EXPECT_THAT(thunk->Prepare(prepare_params), IsOk());
   EXPECT_THAT(thunk->Initialize(initialize_params), IsOk());
+  EXPECT_THAT(thunk->ExecuteOnStream(execute_params), IsOk());
+  EXPECT_EQ(execute_calls, 1);
+}
+
+TEST(CustomCallThunkTest,
+     ExecutionScopedStateSkippedWhenNoPrepareOrInitialize) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+  int execute_calls = 0;
+  CustomCallThunk::OwnedHandlerBundle bundle;
+  bundle.execute = ffi::Ffi::Bind().To([&]() {
+    ++execute_calls;
+    return absl::OkStatus();
+  });
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(executor->device_ordinal())));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({}, 0, &allocator);
+
+  CollectiveCliqueRequests clique_requests;
+  CollectiveMemoryRequests memory_requests(buffer_allocations);
+
+  Thunk::ExecutionScopedState execution_scoped_state;
+
+  Thunk::PrepareParams prepare_params{
+      &collective_params, &clique_requests,    &memory_requests,
+      executor,           &buffer_allocations, &execution_scoped_state};
+
+  Thunk::InitializeParams initialize_params;
+  initialize_params.stream = stream.get();
+  initialize_params.buffer_allocations = &buffer_allocations;
+  initialize_params.execution_scoped_state = &execution_scoped_state;
+
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      ServiceExecutableRunOptions(), buffer_allocations, stream.get(),
+      stream.get(), nullptr, nullptr, nullptr);
+  execute_params.execution_scoped_state = &execution_scoped_state;
+
+  se::CudaComputeCapability cuda_capability{9, 0};
+  se::GpuComputeCapability gpu_capability(cuda_capability);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CustomCallThunk> thunk,
+                       CustomCallThunk::Create(
+                           Thunk::ThunkInfo(), "target_name", std::move(bundle),
+                           /*operands=*/{},
+                           /*results=*/{}, /*attributes=*/{},
+                           /*called_computation=*/nullptr, gpu_capability));
+
+  EXPECT_FALSE(thunk->has_prepare());
+  EXPECT_FALSE(thunk->has_initialize());
+  EXPECT_EQ(thunk->gpu_compute_capability(), gpu_capability);
+
+  // Prepare and Initialize should early-exit without touching
+  // execution_scoped_state.
+  EXPECT_THAT(thunk->Prepare(prepare_params), IsOk());
+  EXPECT_TRUE(execution_scoped_state.empty());
+
+  EXPECT_THAT(thunk->Initialize(initialize_params), IsOk());
+  EXPECT_TRUE(execution_scoped_state.empty());
+
+  // ExecuteOnStream should succeed without crashing or throwing on missing
+  // entry.
+  EXPECT_THAT(thunk->ExecuteOnStream(execute_params), IsOk());
+  EXPECT_EQ(execute_calls, 1);
+  EXPECT_TRUE(execution_scoped_state.empty());
+}
+
+TEST(CustomCallThunkTest, ExecutionScopedStatePopulatedWhenPreparePresent) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+  int prepare_calls = 0;
+  int execute_calls = 0;
+  CustomCallThunk::OwnedHandlerBundle bundle;
+  bundle.prepare = ffi::Ffi::Bind<ffi::ExecutionStage::kPrepare>().To([&]() {
+    ++prepare_calls;
+    return absl::OkStatus();
+  });
+  bundle.execute = ffi::Ffi::Bind().To([&]() {
+    ++execute_calls;
+    return absl::OkStatus();
+  });
+
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream.get());
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(executor->device_ordinal())));
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({}, 0, &allocator);
+
+  CollectiveCliqueRequests clique_requests;
+  CollectiveMemoryRequests memory_requests(buffer_allocations);
+
+  Thunk::ExecutionScopedState execution_scoped_state;
+
+  Thunk::PrepareParams prepare_params{
+      &collective_params, &clique_requests,    &memory_requests,
+      executor,           &buffer_allocations, &execution_scoped_state};
+
+  Thunk::InitializeParams initialize_params;
+  initialize_params.stream = stream.get();
+  initialize_params.buffer_allocations = &buffer_allocations;
+  initialize_params.execution_scoped_state = &execution_scoped_state;
+
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      ServiceExecutableRunOptions(), buffer_allocations, stream.get(),
+      stream.get(), nullptr, nullptr, nullptr);
+  execute_params.execution_scoped_state = &execution_scoped_state;
+
+  se::CudaComputeCapability cuda_capability{9, 0};
+  se::GpuComputeCapability gpu_capability(cuda_capability);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CustomCallThunk> thunk,
+                       CustomCallThunk::Create(
+                           Thunk::ThunkInfo(), "target_name", std::move(bundle),
+                           /*operands=*/{},
+                           /*results=*/{}, /*attributes=*/{},
+                           /*called_computation=*/nullptr, gpu_capability));
+
+  EXPECT_TRUE(thunk->has_prepare());
+  EXPECT_FALSE(thunk->has_initialize());
+
+  // Prepare populates execution_scoped_state.
+  EXPECT_THAT(thunk->Prepare(prepare_params), IsOk());
+  EXPECT_EQ(prepare_calls, 1);
+  EXPECT_FALSE(execution_scoped_state.empty());
+
+  // Initialize has no handler and returns early without touching
+  // execution_scoped_state further.
+  EXPECT_THAT(thunk->Initialize(initialize_params), IsOk());
+
+  // ExecuteOnStream succeeds and finds state in execution_scoped_state.
+  EXPECT_THAT(thunk->ExecuteOnStream(execute_params), IsOk());
+  EXPECT_EQ(execute_calls, 1);
+}
+
+TEST(CustomCallThunkTest,
+     ExecutionScopedStateMissingEntryDoesNotCrashWhenPreparePresent) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                       executor->CreateStream());
+  int execute_calls = 0;
+  CustomCallThunk::OwnedHandlerBundle bundle;
+  bundle.prepare = ffi::Ffi::Bind<ffi::ExecutionStage::kPrepare>().To(
+      [&]() { return absl::OkStatus(); });
+  bundle.execute = ffi::Ffi::Bind().To([&]() {
+    ++execute_calls;
+    return absl::OkStatus();
+  });
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations buffer_allocations({}, 0, &allocator);
+
+  Thunk::ExecutionScopedState execution_scoped_state;
+
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      ServiceExecutableRunOptions(), buffer_allocations, stream.get(),
+      stream.get(), nullptr, nullptr, nullptr);
+  // execution_scoped_state is passed, but Prepare was never called (no entry
+  // for thunk_id).
+  execute_params.execution_scoped_state = &execution_scoped_state;
+
+  se::CudaComputeCapability cuda_capability{9, 0};
+  se::GpuComputeCapability gpu_capability(cuda_capability);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CustomCallThunk> thunk,
+                       CustomCallThunk::Create(
+                           Thunk::ThunkInfo(), "target_name", std::move(bundle),
+                           /*operands=*/{},
+                           /*results=*/{}, /*attributes=*/{},
+                           /*called_computation=*/nullptr, gpu_capability));
+
+  EXPECT_TRUE(thunk->has_prepare());
+
+  // ExecuteOnStream should use .find(...) and safely handle the missing entry
+  // without throwing.
   EXPECT_THAT(thunk->ExecuteOnStream(execute_params), IsOk());
   EXPECT_EQ(execute_calls, 1);
 }
