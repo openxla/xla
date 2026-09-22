@@ -2504,11 +2504,6 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
     return true;
   }
 
-  // Check Mosaic with symmetric_memory_parameters attribute
-  if (IsMosaicWithSymmetricParameter(*user)) {
-    return true;
-  }
-
   return false;
 }
 
@@ -2537,11 +2532,6 @@ bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
 
   // Check custom calls with results_memory_spaces attribute
   if (DefinesCollectiveMemorySpaceFrontendAttr(value)) {
-    return true;
-  }
-
-  // Check Mosaic with symmetric_memory_parameters attribute
-  if (IsMosaicWithSymmetricParameter(*def)) {
     return true;
   }
 
