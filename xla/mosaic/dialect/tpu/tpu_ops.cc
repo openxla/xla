@@ -3153,6 +3153,16 @@ LogicalResult SubcoreIdOp::verify() {
   }
   return success();
 }
+
+LogicalResult TileSizeOp::verify() {
+  MemRefType memref_ty = getSource().getType();
+  const int32_t index = getIndex();
+  if (index < 0 || index >= memref_ty.getRank()) {
+    return emitOpError("Index out of bounds");
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
