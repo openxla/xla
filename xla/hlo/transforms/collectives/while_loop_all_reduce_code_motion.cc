@@ -777,8 +777,7 @@ MovableAllReduceContext IsAllReduceMovable(
 
   if (auto scatter_context =
           FindScatterPattern(all_reduce, while_body, get_origin_tuple_index,
-                             get_output_tuple_index);
-      scatter_context) {
+                             get_output_tuple_index)) {
     accumulation_contexts.push_back(*scatter_context);
     if (is_buffer_used(accumulation_contexts, while_body)) {
       return MovableAllReduceContext{};
