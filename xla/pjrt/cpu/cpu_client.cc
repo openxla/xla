@@ -1500,14 +1500,32 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
           input_buffers, buffer_alloc, buffer_alloc_and_copy, tuple_index_table,
           output_leaf_buffers, executable_->output_indices_);
 
+  // Schedule only one collective at a time. Computed here because it also
+  // decides whether this launch may block on admission control below.
+  const bool is_a_collective_launch = num_addressable_devices_ > 1;
+
   // The choice of where we wait is arbitrary; the reason for the wait is
   // pacing to avoid problems such as memory fragmentation and running ahead
   // too far, not for correctness. Placing it before the executable launch
   // allows the inputs for the next executable to be fetched even if the
   // launch is delayed.
-  auto compute_reservation = std::make_unique<Semaphore::ScopedReservation>(
-      local_device_state->max_inflight_computations_semaphore().ScopedAcquire(
-          1));
+  //
+  // A collective launch must never block here. Every replica of a collective
+  // has to reach the rendezvous in `InProcessCommunicator` before any of them
+  // can make progress, and replicas are dispatched independently (see
+  // `CommonPjRtLoadedExecutable::ExecuteSharded`), in an order the runtime
+  // does not control. If one replica blocked waiting for a permit while its
+  // peers were already parked in the rendezvous, the launch would deadlock:
+  // the permit is only released by an execution that cannot finish until this
+  // collective completes. Collective launches are instead paced by
+  // `GetCollectiveLaunchEvent()` below, which admits a single collective at a
+  // time.
+  std::unique_ptr<Semaphore::ScopedReservation> compute_reservation;
+  if (!is_a_collective_launch) {
+    compute_reservation = std::make_unique<Semaphore::ScopedReservation>(
+        local_device_state->max_inflight_computations_semaphore().ScopedAcquire(
+            1));
+  }
 
   ExecutableRunOptions run_options;
   run_options.set_run_id(run_id_);
@@ -1546,10 +1564,8 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     cpu_run_options->set_collectives(raw_client->collectives());
   }
 
-  // Schedule only one collective at a time.
   // Add additional dependency conditioned on whether this is a collective
   // launch or not.
-  bool is_a_collective_launch = num_addressable_devices_ > 1;
   if (is_a_collective_launch) {
     // We only created enough threads for one collective to complete.
     // The next collective launch will not be scheduled onto threadpool until

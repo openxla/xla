@@ -1437,6 +1437,95 @@ TEST(PjRtCpuClientTest, MultiDevicePrepareFailurePropagatesError) {
   EXPECT_THAT(result.status().message(), HasSubstr("incompatible size"));
 }
 
+// Regression test: a replica of a collective launch must never block while
+// acquiring an in-flight computation permit. Replicas are dispatched
+// independently (see `CommonPjRtLoadedExecutable::ExecuteSharded`) in an order
+// the runtime does not control, so a replica that blocks during dispatch
+// deadlocks against peers that are already parked in the collective
+// rendezvous waiting for it.
+//
+// This dispatches device-major: both launches on device 0 before device 1 is
+// dispatched at all. With `max_inflight_computations_per_device == 1`, the
+// second dispatch on device 0 can only obtain a permit once the first launch
+// completes, and the first launch can only complete once device 1 joins the
+// rendezvous. If dispatch blocks on the permit, this hangs.
+TEST(PjRtCpuClientTest, CollectiveDispatchDoesNotBlockOnInflightLimit) {
+  constexpr int kNumDevices = 2;
+  constexpr int kNumLaunches = 2;
+
+  CpuClientOptions cpu_options;
+  cpu_options.cpu_device_count = kNumDevices;
+  cpu_options.max_inflight_computations_per_device = 1;
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetXlaPjrtCpuClient(std::move(cpu_options)));
+  ASSERT_EQ(client->addressable_devices().size(), kNumDevices);
+
+  static constexpr char kProgram[] = R"(
+    HloModule m
+
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    ENTRY e {
+      p = f32[] parameter(0)
+      ROOT ar = f32[] all-reduce(p), replica_groups={{0,1}}, to_apply=add
+    })";
+  ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                       ParseAndReturnUnverifiedModule(kProgram, {}));
+  XlaComputation xla_computation(hlo_module->ToProto());
+  CompileOptions compile_options;
+  compile_options.executable_build_options.set_num_replicas(kNumDevices);
+  ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      client->CompileAndLoad(xla_computation, std::move(compile_options)));
+  ASSERT_EQ(executable->addressable_devices().size(), kNumDevices);
+
+  std::vector<float> input = {1.0f};
+  std::vector<std::unique_ptr<PjRtBuffer>> arguments;
+  arguments.reserve(kNumDevices);
+  for (int device_index = 0; device_index < kNumDevices; ++device_index) {
+    ASSERT_OK_AND_ASSIGN(
+        PjRtMemorySpace * memory_space,
+        client->addressable_devices()[device_index]->default_memory_space());
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> argument,
+        client->BufferFromHostBuffer(
+            input.data(), F32, /*dims=*/{}, /*byte_strides=*/std::nullopt,
+            PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+            memory_space, /*device_layout=*/nullptr));
+    arguments.push_back(std::move(argument));
+  }
+
+  std::vector<std::unique_ptr<PjRtBuffer>> outputs;
+  for (int device_index = 0; device_index < kNumDevices; ++device_index) {
+    for (int launch = 0; launch < kNumLaunches; ++launch) {
+      ExecuteOptions options;
+      // Replicas of the same launch must share a run id, and distinct launches
+      // must not collide.
+      options.launch_id = launch + 1;
+      std::optional<Future<>> returned_future;
+      PjRtBuffer* argument = arguments[device_index].get();
+      ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<PjRtBuffer>> buffers,
+                           executable->ExecuteSharded(
+                               /*argument_handles=*/{argument},
+                               client->addressable_devices()[device_index],
+                               options, returned_future));
+      ASSERT_EQ(buffers.size(), 1);
+      outputs.push_back(std::move(buffers[0]));
+    }
+  }
+
+  ASSERT_EQ(outputs.size(), kNumDevices * kNumLaunches);
+  for (const std::unique_ptr<PjRtBuffer>& output : outputs) {
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> literal,
+                         output->ToLiteral().Await());
+    EXPECT_THAT(literal->data<float>(), ElementsAre(2.0f));
+  }
+}
+
 TEST(PjRtCpuClientTest, DonateWithControlDependency) {
   ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
   auto literal = LiteralUtil::CreateR2<float>({{1, 2, 3}, {4, 5, 6}});
