@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
@@ -491,21 +492,31 @@ bool ThunkSequenceIsConvertible(const ThunkSequence& thunks,
 // is unsupported, the whole region must remain outside the command buffer:
 // capturing an inner region could lose ordering with an outstanding operation
 // on the same async stream.
+//
+// Returns 0 when no closed region starts here: either a start in the scanned
+// range has no done in this sequence, or a done in the range joins a start
+// from outside it. The caller handles both the same way, by leaving the start
+// as a thunk and keeping its stream open until it is joined.
 size_t AsyncRegionSize(absl::Span<const std::unique_ptr<Thunk>> thunks) {
   absl::flat_hash_set<const AsyncExecution*> unpaired_executions;
 
   for (size_t i = 0; i < thunks.size(); ++i) {
     auto& thunk = thunks[i];
 
-    // Pipelined starts can share the canonical start's execution state, but
-    // AsyncExecution requires Done before that state can be started again.
     if (thunk->kind() == Thunk::kAsyncStart) {
-      if (!unpaired_executions
-               .insert(static_cast<const AsyncStartThunk&>(*thunk)
-                           .async_execution()
-                           .get())
-               .second) {
-        return 0;  // Duplicate outstanding start: do not capture this region.
+      // Pipelined starts can share the canonical start's execution state, but
+      // AsyncExecution::Start rejects a second start before the matching done,
+      // so a valid sequence never inserts the same execution twice. Optimized
+      // builds fall back to leaving such a region uncaptured.
+      bool inserted = unpaired_executions
+                          .insert(static_cast<const AsyncStartThunk&>(*thunk)
+                                      .async_execution()
+                                      .get())
+                          .second;
+      DCHECK(inserted) << "Async execution started twice before its done: "
+                       << thunk->profile_annotation();
+      if (!inserted) {
+        return 0;
       }
     }
     if (thunk->kind() == Thunk::kAsyncDone) {

@@ -404,8 +404,7 @@ TEST_F(CommandBufferAsyncConversionTest, MatchesCanonicalAsyncExecution) {
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer));
 }
 
-TEST_F(CommandBufferAsyncConversionTest,
-       KeepsOverlappingSharedExecutionIntact) {
+TEST_F(CommandBufferAsyncConversionTest, DuplicateOutstandingStart) {
   ThunkSequence thunks;
   auto* canonical = Start(thunks);
   ThunkSequence body;
@@ -417,14 +416,18 @@ TEST_F(CommandBufferAsyncConversionTest,
   Done(thunks, canonical);
   AddCommand(thunks);
 
-  // Runtime permits only one outstanding start per AsyncExecution. Do not
-  // close and capture a region at the first done when a duplicate start
-  // exists; the trailing command is still captured on its own.
+  // The runtime permits only one outstanding start per AsyncExecution, so this
+  // sequence can never execute. Debug builds catch it in the pass; optimized
+  // builds leave the region as thunks and still capture the trailing command.
+#ifndef NDEBUG
+  EXPECT_DEATH(Convert(thunks).IgnoreError(), "started twice");
+#else
   ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
   EXPECT_TRUE(changed);
   EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
                                     Thunk::kAsyncDone, Thunk::kAsyncDone,
                                     Thunk::kCommandBuffer));
+#endif
 }
 
 }  // namespace
