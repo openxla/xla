@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2021, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -248,6 +248,15 @@ class PjRtCpuClient final : public CommonPjRtClientImpl {
     return absl::down_cast<PjRtCpuRawClient*>(
         CommonPjRtClientImpl::raw_client());
   }
+
+  absl::StatusOr<PjRtRawBufferRef> ImportZeroCopyHostBuffer(
+      const void* data, absl::AnyInvocable<void() &&> on_delete_callback,
+      size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
+      HostBufferSemantics host_buffer_semantics) override;
+
+  bool ShouldDoDirectTransfer(const MutableLiteralBase& literal,
+                              const Shape& shape,
+                              PjRtMemorySpace* memory_space) const override;
 
   bool allow_fallback_for_donation() const override { return true; }
   // This is needed because CPU currently doesn't have per-device dispatching

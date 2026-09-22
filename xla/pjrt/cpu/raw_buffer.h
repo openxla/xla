@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -91,11 +91,12 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
       const CpuDeviceMemory::Allocator& allocator =
           CpuDeviceMemory::DefaultAllocator());
 
-  // Imports foreign memory.
+  // Imports foreign memory. is_mutable governs PJRT writes. Only set
+  // is_immutable if contents will not change until on_delete_callback runs.
   static absl::StatusOr<tsl::RCReference<CpuRawBuffer>> ImportForeignMemory(
       void* data, absl::AnyInvocable<void() &&> on_delete_callback,
       size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
-      bool is_mutable);
+      bool is_mutable, bool is_immutable = false);
 
   size_t GetOnDeviceSizeInBytes() const override;
 
@@ -106,7 +107,7 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
     // external frameworks like NumPy.
     tsl::BlockUntilReady(buffer_);
     CHECK(buffer_.IsConcrete());
-    return buffer_->untyped_data();
+    return CpuRawBuffer::GetHostPointer();
   }
 
   const tsl::AsyncValueRef<CpuDeviceMemory>& buffer() const { return buffer_; }

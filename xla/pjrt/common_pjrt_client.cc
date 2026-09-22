@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -858,12 +858,9 @@ CommonPjRtClient::BufferFromHostBuffer(
           GetOnDeviceBytesCount(memory_space, *shared_device_shape));
       ABSL_ASSIGN_OR_RETURN(
           auto raw_buffer,
-          ImportForeignMemory(
-              const_cast<void*>(data),  // CONST_CAST_OK=flag controlled.
-              std::move(on_done_with_host_buffer), on_device_bytes_count,
-              memory_space,
-              host_buffer_semantics ==
-                  PjRtClient::HostBufferSemantics::kMutableZeroCopy));
+          ImportZeroCopyHostBuffer(data, std::move(on_done_with_host_buffer),
+                                   on_device_bytes_count, memory_space,
+                                   host_buffer_semantics));
       ABSL_ASSIGN_OR_RETURN(
           auto output_buffer,
           DefineBuffer(shared_device_shape, memory_space, raw_buffer,

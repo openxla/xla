@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -124,7 +124,7 @@ CpuRawBuffer::Allocate(PjRtMemorySpace* memory_space, size_t size_bytes,
 CpuRawBuffer::ImportForeignMemory(
     void* data, absl::AnyInvocable<void() &&> on_delete_callback,
     size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
-    bool is_mutable) {
+    bool is_mutable, bool is_immutable) {
   if ((absl::bit_cast<std::uintptr_t>(data) & (cpu::MinAlign() - 1)) != 0) {
     return InvalidArgument(
         "Can't create a view of buffer with unaligned data, ptr: %#x is not "
@@ -134,13 +134,18 @@ CpuRawBuffer::ImportForeignMemory(
   return tsl::MakeRef<CpuRawBuffer>(
       memory_space,
       CpuDeviceMemory::CreateForeignMemory(data, on_device_bytes_count,
-                                           std::move(on_delete_callback)),
+                                           std::move(on_delete_callback),
+                                           is_immutable),
       on_device_bytes_count, is_mutable);
 }
 
 size_t CpuRawBuffer::GetOnDeviceSizeInBytes() const { return buffer_size_; }
 
-void* CpuRawBuffer::GetHostPointer() const { return buffer_->untyped_data(); }
+void* CpuRawBuffer::GetHostPointer() const {
+  // Callers may retain the pointer and write after later executions complete.
+  buffer_->DisableCacheIdentity();
+  return buffer_->untyped_data();
+}
 
 absl::Status CpuRawBuffer::ValidateSlice(int64_t offset, int64_t slice_size) {
   size_t buffer_size = GetOnDeviceSizeInBytes();
@@ -169,7 +174,8 @@ CpuRawBuffer::CopyRawHostToDeviceAndReturnEvent(
   ABSL_RETURN_IF_ERROR(ValidateSlice(offset, transfer_size));
 
   if (dependencies.empty()) {
-    std::memcpy(static_cast<uint8_t*>(GetHostPointer()) + offset, src,
+    buffer_->InvalidateCacheIdentity();
+    std::memcpy(static_cast<uint8_t*>(buffer_->untyped_data()) + offset, src,
                 transfer_size);
     return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
   }
@@ -183,8 +189,9 @@ CpuRawBuffer::CopyRawHostToDeviceAndReturnEvent(
       event.SetError(dep_status);
       return;
     }
-    std::memcpy(static_cast<uint8_t*>(buf->GetHostPointer()) + offset, src,
-                transfer_size);
+    buf->buffer_->InvalidateCacheIdentity();
+    std::memcpy(static_cast<uint8_t*>(buf->buffer_->untyped_data()) + offset,
+                src, transfer_size);
     event.SetStateConcrete();
   };
 
@@ -202,7 +209,7 @@ CpuRawBuffer::CopyRawDeviceToHostAndReturnEvent(
   ABSL_RETURN_IF_ERROR(ValidateSlice(offset, transfer_size));
 
   if (dependencies.empty()) {
-    std::memcpy(dst, static_cast<uint8_t*>(GetHostPointer()) + offset,
+    std::memcpy(dst, static_cast<uint8_t*>(buffer_->untyped_data()) + offset,
                 transfer_size);
     return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
   }
@@ -216,7 +223,8 @@ CpuRawBuffer::CopyRawDeviceToHostAndReturnEvent(
       event.SetError(dep_status);
       return;
     }
-    std::memcpy(dst, static_cast<uint8_t*>(buf->GetHostPointer()) + offset,
+    std::memcpy(dst,
+                static_cast<uint8_t*>(buf->buffer_->untyped_data()) + offset,
                 transfer_size);
     event.SetStateConcrete();
   };
@@ -234,6 +242,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromLiteral(
   auto event = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
   async_work_runner->Execute([literal, layout, event, buffer = buffer_]() {
     CHECK(buffer.IsConcrete());
+    buffer->InvalidateCacheIdentity();
     const xla::Shape& shape = literal.shape();
     if (shape.IsToken()) {
     } else if ((!shape.has_layout() &&
@@ -318,6 +327,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
         thread_pool->Schedule(std::move(work));
       };
     }
+    device_buffer->InvalidateCacheIdentity();
     transpose->Execute(data, dst_data_ptr, schedule_work);
     if (on_done_with_host_buffer) {
       std::move(on_done_with_host_buffer)();
@@ -329,6 +339,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
             PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall ||
         (byte_size < kSmallDataTransferByteSize);
     if (should_sync_copy) {
+      device_buffer->InvalidateCacheIdentity();
       std::memcpy(dst_data_ptr, data, byte_size);
       if (on_done_with_host_buffer) {
         std::move(on_done_with_host_buffer)();
@@ -343,6 +354,7 @@ absl::StatusOr<PjRtDeviceEventRef> CpuRawBuffer::CopyFromHostBuffer(
                                   on_done_with_host_buffer = std::move(
                                       on_done_with_host_buffer)]() mutable {
         tsl::profiler::TraceMe traceme("H2D Dispatch");
+        device_buffer->InvalidateCacheIdentity();
         std::memcpy(dst_data_ptr, data, byte_size);
         if (on_done_with_host_buffer) {
           std::move(on_done_with_host_buffer)();
@@ -369,8 +381,10 @@ void CpuRawBuffer::CopyTo(
   if (allocation_event) {
     std::move(allocation_event)(absl::OkStatus());
   }
+  // Borrow the source without a mutable export; the completion callback
+  // retains its storage until the transfer finishes.
   auto other_event = dst_raw_buffer->CopyRawHostToDeviceAndReturnEvent(
-      GetHostPointer(), 0, GetOnDeviceSizeInBytes());
+      buffer_->untyped_data(), 0, GetOnDeviceSizeInBytes());
   if (!other_event.ok()) {
     definition_event_promise.SetError(other_event.status());
     src_usage_event_promise.SetError(other_event.status());

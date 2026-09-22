@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2021, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1078,6 +1078,36 @@ bool PjRtCpuClient::BufferFromHostBufferSupportsZeroCopy(
       data, type, dims, byte_strides, shape);
 }
 
+absl::StatusOr<PjRtRawBufferRef> PjRtCpuClient::ImportZeroCopyHostBuffer(
+    const void* data, absl::AnyInvocable<void() &&> on_delete_callback,
+    size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
+    HostBufferSemantics host_buffer_semantics) {
+  return CpuRawBuffer::ImportForeignMemory(
+      const_cast<void*>(data),  // CONST_CAST_OK=flag controlled.
+      std::move(on_delete_callback), on_device_bytes_count, memory_space,
+      /*is_mutable=*/host_buffer_semantics ==
+          HostBufferSemantics::kMutableZeroCopy,
+      /*is_immutable=*/host_buffer_semantics ==
+          HostBufferSemantics::kImmutableZeroCopy);
+}
+
+bool PjRtCpuClient::ShouldDoDirectTransfer(
+    const MutableLiteralBase& literal, const Shape& shape,
+    PjRtMemorySpace* memory_space) const {
+  // Direct readback avoids staging's mutable pointer export.
+  if (shape.IsTuple() ||
+      primitive_util::IsSubByteNonPredType(shape.element_type())) {
+    return false;
+  }
+
+  if (literal.shape().has_layout()) {
+    return Layout::Equal().IgnoreMemorySpace()(shape.layout(),
+                                               literal.shape().layout());
+  }
+
+  return LayoutUtil::HasDescendingLayout(shape.layout());
+}
+
 absl::StatusOr<PjRtDeviceEventRef> PjRtCpuClient::LinearizeHostBufferInto(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
@@ -1719,7 +1749,11 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     // Call interpreted thunk sequence implementing XLA executable.
     absl::InlinedVector<MaybeOwningDeviceAddress, 8> buffer_device_mem;
     buffer_device_mem.reserve(buffer_table->size());
-    for (const auto& buffer : *buffer_table) {
+    for (size_t i = 0; i < buffer_table->size(); ++i) {
+      const auto& buffer = (*buffer_table)[i];
+      if (!cpu_executable->buffer_assignment().GetAllocation(i).is_readonly()) {
+        buffer->InvalidateCacheIdentity();
+      }
       buffer_device_mem.emplace_back(
           se::DeviceAddressBase(buffer->untyped_data(), buffer->size_bytes()));
     }

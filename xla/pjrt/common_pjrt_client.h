@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -167,6 +167,17 @@ class CommonPjRtClient : public PjRtClient {
     return raw_client()->ImportForeignMemory(
         memory_space, device_ptr, on_device_bytes_count,
         std::move(on_delete_callback), is_mutable);
+  }
+
+  // Imports host memory with kImmutableZeroCopy or kMutableZeroCopy semantics.
+  virtual absl::StatusOr<PjRtRawBufferRef> ImportZeroCopyHostBuffer(
+      const void* data, absl::AnyInvocable<void() &&> on_delete_callback,
+      size_t on_device_bytes_count, PjRtMemorySpace* memory_space,
+      HostBufferSemantics host_buffer_semantics) {
+    return ImportForeignMemory(
+        const_cast<void*>(data),  // CONST_CAST_OK=flag controlled.
+        std::move(on_delete_callback), on_device_bytes_count, memory_space,
+        host_buffer_semantics == HostBufferSemantics::kMutableZeroCopy);
   }
 
   // Linearizes a literal into a raw buffer and returns a DeviceEvent
