@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package xla;
+
+import "xla/xla_data.proto";
+
+// A relocatable represents a fully compiled computation that can be linked
+// into and called by another program. It is comparable to a .o file.
+message PjRtRelocatableProto {
+  // A unique identifier for this object, computed from the inputs that
+  // produced this object. Its precise meaning is internal to the compiler
+  // that produced it, and the compatible compiler that will consume it.
+  string build_id = 1;
+  message CallInterface {
+    // The shape of the program, with layout.
+    ProgramShapeProto shape = 1;
+    // Opaque bytes representing the low-level call interface. Its precise
+    // meaning is internal to the compiler the produced it, and the compatible
+    // compiler that will consume it.
+    bytes backend_call_config = 2;
+    // Whether or not the program has side effects.
+    bool has_side_effects = 3;
+    // Specifies pairs of operands and outputs that alias one another.
+    repeated OutputOperandAliasing output_operand_aliasing = 4;
+  }
+  // The interface to call the program. Comparable to a C function declaration.
+  CallInterface call_interface = 2;
+  // A set of partial programs representing the precompiled artifacts that make
+  // up the program. This includes not only the executable parts, but also
+  // metadata such as debug information.
+  repeated bytes programs = 3;
+  // A human-friendly identifier for the program.
+  string name = 4;
+}
