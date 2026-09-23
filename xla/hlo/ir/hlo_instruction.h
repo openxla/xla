@@ -89,6 +89,9 @@ struct HloProtoOptions {
   // Configs smaller than this threshold are kept inline.
   int64_t min_backend_config_size = 0;
   HloPayloadDeduplicator* payload_deduplicator = nullptr;
+  // When set, instructions whose backend config protos are equal compute the
+  // raw string once and share it. HloModule::ToProto provides one per call.
+  BackendConfigRawStringCache* backend_config_raw_string_cache = nullptr;
 };
 
 // A small holder that is used to keep some immutable info alongside an
@@ -1720,10 +1723,12 @@ class HloInstruction {
   // Returns a serialized representation of this instruction.
   HloInstructionProto ToProto() const {
     HloInstructionProto proto;
-    ToProto(&proto);
+    ToProto(&proto, HloProtoOptions());
     return proto;
   }
 
+  // Serializes everything but the backend config, which the overloads above
+  // and below write.
   virtual void ToProto(HloInstructionProto* proto) const;
 
   // Non-virtual overload that handles payload deduplication options.

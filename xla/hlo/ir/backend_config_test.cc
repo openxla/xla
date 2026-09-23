@@ -21,11 +21,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -112,6 +115,65 @@ TEST(BackendConfigWrapperTest, ComparisonDoesNotDeadlock) {
     BackendConfigWrapper other_second(proto);
     EXPECT_TRUE(source == other_second);
   });
+}
+
+TEST(BackendConfigRawStringCacheTest, EqualBytesOfDifferentTypesDoNotShare) {
+  // Both messages serialize field 1 as the same string, so only the type
+  // tells them apart.
+  OpMetadata metadata;
+  metadata.set_op_type("x");
+  Payload payload;
+  payload.set_value("x");
+  ASSERT_EQ(metadata.SerializeAsString(), payload.SerializeAsString());
+
+  BackendConfigRawStringCache cache;
+  BackendConfigWrapper metadata_wrapper(metadata);
+  BackendConfigWrapper payload_wrapper(payload);
+  metadata_wrapper.GetRawString(&cache);
+  payload_wrapper.GetRawString(&cache);
+
+  EXPECT_EQ(cache.size(), 2);
+  EXPECT_EQ(metadata_wrapper.GetRawString(),
+            BackendConfigWrapper(metadata).GetRawString());
+  EXPECT_EQ(payload_wrapper.GetRawString(),
+            BackendConfigWrapper(payload).GetRawString());
+  EXPECT_NE(metadata_wrapper.GetRawString(), payload_wrapper.GetRawString());
+}
+
+// GpuBackendConfig reaches AlgorithmProto.tuning_knobs, a map field. A map
+// parsed from JSON prints in the text order of its entries, so equal maps in
+// different text orders must never share a string.
+TEST(BackendConfigRawStringCacheTest, TypesWithMapFieldsBypassTheCache) {
+  constexpr absl::string_view kKnobsAscending =
+      R"({"cudnn_conv_backend_config":{"algorithm":{"tuning_knobs":{"1":"10","2":"20"}}}})";
+  constexpr absl::string_view kKnobsDescending =
+      R"({"cudnn_conv_backend_config":{"algorithm":{"tuning_knobs":{"2":"20","1":"10"}}}})";
+  auto parsed = [](absl::string_view raw_string) {
+    auto wrapper =
+        std::make_unique<BackendConfigWrapper>(std::string{raw_string});
+    CHECK_OK(wrapper->ApplyFnOnProto<gpu::GpuBackendConfig>(
+        [](gpu::GpuBackendConfig*) { return absl::OkStatus(); }));
+    return wrapper;
+  };
+  gpu::GpuBackendConfig proto;
+  ASSERT_OK(BackendConfigWrapper(std::string{kRawString}).GetProto(&proto));
+
+  BackendConfigRawStringCache cache;
+  BackendConfigWrapper first(proto);
+  BackendConfigWrapper second(proto);
+  std::unique_ptr<BackendConfigWrapper> ascending = parsed(kKnobsAscending);
+  std::unique_ptr<BackendConfigWrapper> descending = parsed(kKnobsDescending);
+  first.GetRawString(&cache);
+  second.GetRawString(&cache);
+  ascending->GetRawString(&cache);
+  descending->GetRawString(&cache);
+
+  EXPECT_EQ(cache.size(), 0);
+  EXPECT_EQ(first.GetRawString(), kRawString);
+  EXPECT_EQ(second.GetRawString(), kRawString);
+  EXPECT_EQ(ascending->GetRawString(), parsed(kKnobsAscending)->GetRawString());
+  EXPECT_EQ(descending->GetRawString(),
+            parsed(kKnobsDescending)->GetRawString());
 }
 
 }  // namespace
