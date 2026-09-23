@@ -5446,6 +5446,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
     ],
 )
