@@ -19,6 +19,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <iostream>
 #include <list>
@@ -347,9 +348,15 @@ class NoFragmentationStatsHeap : public HeapAlgorithm<BufferType> {
   int64_t max_heap_size_ = 0;
 };
 
+// Sorts `chunks` in ascending order of `Chunk::offset` using an adaptive hybrid
+// sort strategy.
+void AdaptiveHybridSortChunks(std::vector<HeapSimulator::Chunk>& chunks,
+                              std::vector<HeapSimulator::Chunk>& scratch);
+
 // Node in BufferIntervalTree that stores the alloc and free times of a buffer,
 // and the chunk assigned to it.
-struct BufferIntervalTreeNode {
+struct alignas(64) BufferIntervalTreeNode {
+  // Hot query fields (56 bytes — fits in a single 64-byte L1 cache line):
   // Alloc time.
   int64_t start;
   // Free time.
@@ -362,6 +369,7 @@ struct BufferIntervalTreeNode {
   BufferIntervalTreeNode* left;
   // Right child.
   BufferIntervalTreeNode* right;
+  // Cold update-only fields:
   // parent
   BufferIntervalTreeNode* parent;
   // Treap heap priority. It is a deterministic hash of the node's key, ensuring
@@ -475,7 +483,7 @@ class BufferIntervalTree {
   void RotateRight(BufferIntervalTreeNode* x);
 
   BufferIntervalTreeNode* root_ = nullptr;
-  std::list<BufferIntervalTreeNode> node_storage_;
+  std::deque<BufferIntervalTreeNode> node_storage_;
 };
 
 // An iterator that is passed to
@@ -1064,6 +1072,10 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
       const SlicedBufferInterval& sliced_buffer_interval,
       int64_t max_colocation_size, int64_t preferred_offset) const;
 
+  Chunk FindUnslicedChunkCandidate(const BufferInterval& buffer_interval,
+                                   int64_t max_colocation_size,
+                                   int64_t preferred_offset) const;
+
   int64_t alignment_;
 
   // The current time represented as an integer. It increments by 1 at each
@@ -1075,6 +1087,7 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
 
   // Temporary buffers used by MakeFreeChunks to avoid reallocating memory.
   mutable std::vector<Chunk> used_chunks_;
+  mutable std::vector<Chunk> radix_scratch_;
   mutable std::vector<std::pair<int64_t, int64_t>> free_chunks_list_;
 
  protected:
