@@ -203,10 +203,12 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_value",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -215,12 +217,15 @@ xla_cc_test(
     srcs = ["memory_space_propagation_test.cc"],
     deps = [
         ":memory_space_propagation",
+        "//xla:literal_util",
+        "//xla:shape_util",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
