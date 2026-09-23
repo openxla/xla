@@ -793,6 +793,12 @@ class HloModule {
     return cache_.try_emplace(key, std::move(entry)).second;
   }
 
+  // SetCacheEntry for every entry 'other' holds at the time of the call: the
+  // entry objects are shared, not copied, and entries this module already has
+  // are kept. Lets a module that clones instructions of 'other' look up the
+  // same cached data through the clones.
+  void AddCacheEntriesFrom(const HloModule& other);
+
   // Describes a buffer to be used for cross program prefetching.
   struct CrossProgramPrefetchInfo {
     // The parameter to prefetch.
