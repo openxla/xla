@@ -68,8 +68,6 @@ bool IsCanonical(Shape operand_shape,
 HloInstruction* CanonicalizeOperand(
     HloInstruction* operand, absl::Span<const int64_t> original_batch_dims,
     absl::Span<const int64_t> original_contracting_dims,
-    absl::Span<const int64_t> canonical_batch_dims,
-    const std::vector<bool>& canonical_batch_dynamic_dims,
     tsl::protobuf::RepeatedField<int64_t>* canonical_contracting_dims,
     bool contracting_dim_as_most_minor) {
   const Shape& operand_shape = operand->shape();
@@ -115,12 +113,17 @@ HloInstruction* CanonicalizeOperand(
           operand, permutation),
       &operand->metadata());
 
-  std::vector<int64_t> reshape_dims(canonical_batch_dims.begin(),
-                                    canonical_batch_dims.end());
-  std::vector<bool> reshape_dynamic_dims(canonical_batch_dynamic_dims.begin(),
-                                         canonical_batch_dynamic_dims.end());
+  // Keep this operand's own batch dimensions: the lhs and rhs ones can differ
+  // in dynamism, and the reshape must not make a static dimension dynamic.
+  std::vector<int64_t> reshape_dims;
+  std::vector<bool> reshape_dynamic_dims;
+  for (int64_t batch_dim : original_batch_dims) {
+    reshape_dims.push_back(operand_shape.dimensions(batch_dim));
+    reshape_dynamic_dims.push_back(
+        operand_shape.is_dynamic_dimension(batch_dim));
+  }
   if (contracting_dim_as_most_minor) {
-    canonical_contracting_dims->Add(canonical_batch_dims.size() +
+    canonical_contracting_dims->Add(original_batch_dims.size() +
                                     (non_contracting_size != 1 ? 1 : 0));
     if (non_contracting_size != 1) {
       reshape_dims.push_back(non_contracting_size);
@@ -129,7 +132,7 @@ HloInstruction* CanonicalizeOperand(
     reshape_dims.push_back(contracting_size);
     reshape_dynamic_dims.push_back(contracting_dynamic);
   } else {
-    canonical_contracting_dims->Add(canonical_batch_dims.size());
+    canonical_contracting_dims->Add(original_batch_dims.size());
     reshape_dims.push_back(contracting_size);
     reshape_dynamic_dims.push_back(contracting_dynamic);
     if (non_contracting_size != 1) {
@@ -156,24 +159,10 @@ absl::Status CanonicalizeDot(HloDotInstruction* original_dot) {
   auto computation = original_dot->parent();
   const auto& original_dnums = original_dot->dot_dimension_numbers();
   const int64_t num_batch_dims = original_dnums.lhs_batch_dimensions_size();
-  std::vector<int64_t> canonical_batch_dims;
-  canonical_batch_dims.reserve(num_batch_dims);
-  std::vector<bool> canonical_batch_dynamic_dims;
-  canonical_batch_dynamic_dims.reserve(num_batch_dims);
 
   HloInstruction* lhs_operand = original_dot->mutable_operand(0);
   HloInstruction* rhs_operand = original_dot->mutable_operand(1);
-  const auto& lhs_shape = lhs_operand->shape();
-  const int64_t lhs_rank = lhs_shape.dimensions().size();
-  for (int64_t i = 0; i < lhs_rank; ++i) {
-    if (absl::c_linear_search(original_dnums.lhs_batch_dimensions(), i)) {
-      canonical_batch_dims.push_back(lhs_shape.dimensions(i));
-      canonical_batch_dynamic_dims.push_back(lhs_shape.is_dynamic_dimension(i));
-    }
-  }
   DotDimensionNumbers canonical_dnums;
-  std::vector<int64_t> canonical_dot_dims = canonical_batch_dims;
-  std::vector<bool> canonical_dot_dynamic_dims = canonical_batch_dynamic_dims;
   for (int64_t i = 0; i < num_batch_dims; ++i) {
     canonical_dnums.add_lhs_batch_dimensions(i);
     canonical_dnums.add_rhs_batch_dimensions(i);
@@ -187,10 +176,17 @@ absl::Status CanonicalizeDot(HloDotInstruction* original_dot) {
   HloInstruction* reshaped_lhs =
       CanonicalizeOperand(lhs_operand, original_dnums.lhs_batch_dimensions(),
                           original_dnums.lhs_contracting_dimensions(),
-                          canonical_batch_dims, canonical_batch_dynamic_dims,
                           canonical_dnums.mutable_lhs_contracting_dimensions(),
                           /*contracting_dim_as_most_minor=*/true);
   const auto& canonical_lhs_shape = reshaped_lhs->shape();
+  // Like shape inference, take the batch dimensions of the result from the lhs.
+  std::vector<int64_t> canonical_dot_dims;
+  std::vector<bool> canonical_dot_dynamic_dims;
+  for (int64_t i = 0; i < num_batch_dims; ++i) {
+    canonical_dot_dims.push_back(canonical_lhs_shape.dimensions(i));
+    canonical_dot_dynamic_dims.push_back(
+        canonical_lhs_shape.is_dynamic_dimension(i));
+  }
   const auto& canonical_lhs_non_contracting_dims =
       GetNonContractingDims(canonical_lhs_shape.dimensions().size(),
                             canonical_dnums.lhs_batch_dimensions(),
@@ -211,7 +207,6 @@ absl::Status CanonicalizeDot(HloDotInstruction* original_dot) {
   HloInstruction* reshaped_rhs =
       CanonicalizeOperand(rhs_operand, original_dnums.rhs_batch_dimensions(),
                           original_dnums.rhs_contracting_dimensions(),
-                          canonical_batch_dims, canonical_batch_dynamic_dims,
                           canonical_dnums.mutable_rhs_contracting_dimensions(),
                           /*contracting_dim_as_most_minor=*/false);
 
