@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/ffi/invoke.h"
 
 #include <exception>
+#include <memory>
 #include <variant>
 
 #include "absl/base/optimization.h"
@@ -23,8 +24,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "xla/custom_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attributes_storage.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/ffi_interop.h"
@@ -83,6 +86,7 @@ static XLA_FFI_InvokeContext CreateExecutionContext(
                                           context.state_context.initialize},
       context.called_computation,
       internal::ScopedExecutionContext::GetCallExecutionContext(context),
+      /*custom_options=*/nullptr,
       context.extension_start};
 }
 
@@ -93,6 +97,15 @@ static absl::StatusOr<XLA_FFI_Future*> Invoke(const XLA_FFI_Api* api,
                                               const InvokeContext& context,
                                               ExecutionStage stage) {
   XLA_FFI_InvokeContext ctx = CreateExecutionContext(context);
+
+  // Keep encoded options alive only until the handler returns, not until its
+  // future completes. The common empty case needs no allocation or conversion.
+  std::shared_ptr<const AttributesStorage> custom_options;
+  if (context.custom_options != nullptr && !context.custom_options->empty()) {
+    custom_options = AttributesStorage::Create(*context.custom_options);
+    ctx.custom_options = &custom_options->ffi_attrs();
+  }
+
   XLA_FFI_CallFrame ffi_call_frame =
       call_frame.Build(api, &ctx, static_cast<XLA_FFI_ExecutionStage>(stage));
 

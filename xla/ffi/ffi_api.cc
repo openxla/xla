@@ -423,6 +423,19 @@ static XLA_FFI_Error* XLA_FFI_InvokeContext_Get(
   return nullptr;
 }
 
+static XLA_FFI_Error* XLA_FFI_CustomOptions_Get(
+    XLA_FFI_CustomOptions_Get_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_CustomOptions_Get_Args",
+      XLA_FFI_CustomOptions_Get_Args_STRUCT_SIZE, args->struct_size));
+
+  static constexpr XLA_FFI_Attrs kEmptyAttrs = {
+      XLA_FFI_Attrs_STRUCT_SIZE, nullptr, 0, nullptr, nullptr, nullptr};
+  args->attrs = args->ctx->custom_options != nullptr ? args->ctx->custom_options
+                                                     : &kEmptyAttrs;
+  return nullptr;
+}
+
 static ExecutionState* GetExecutionState(XLA_FFI_InvokeContext* ctx,
                                          XLA_FFI_ExecutionStage stage) {
   switch (stage) {
@@ -698,6 +711,7 @@ const XLA_FFI_Api* GetXlaFfiApi() {
       XLA_FFI_RunId_Get,
       XLA_FFI_DeviceOrdinal_Get,
       XLA_FFI_InvokeContext_FindExtension,
+      XLA_FFI_CustomOptions_Get,
   };
 
   return &api;

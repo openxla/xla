@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/ffi/attributes_storage.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -26,6 +27,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "xla/custom_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
@@ -138,6 +140,30 @@ struct AttributesStorage::ConvertAttribute {
   }
 };
 
+// An std::visit overload set for converting an `xla::CustomOptions::Value` to
+// an `AttributesStorage::Attribute`.
+struct AttributesStorage::ConvertOption {
+  AttributesStorage::Attribute operator()(bool value) {
+    return AttributesStorage::Scalar{xla::ffi::Scalar{value}};
+  }
+
+  AttributesStorage::Attribute operator()(int64_t value) {
+    return AttributesStorage::Scalar{xla::ffi::Scalar{value}};
+  }
+
+  AttributesStorage::Attribute operator()(float value) {
+    return AttributesStorage::Scalar{xla::ffi::Scalar{value}};
+  }
+
+  AttributesStorage::Attribute operator()(const std::string& str) {
+    return AttributesStorage::String{str};
+  }
+
+  AttributesStorage::Attribute operator()(const std::vector<int64_t>& array) {
+    return AttributesStorage::Array{xla::ffi::Array{array}};
+  }
+};
+
 // An std::visit overload set to fix up AttributesStorage::Attribute storage and
 // initialize XLA FFI structs with valid pointers into storage objects.
 struct AttributesStorage::FixUpAttribute {
@@ -218,17 +244,29 @@ std::unique_ptr<AttributesStorage::Attributes> AttributesStorage::CreateAttrs(
     attrs->attributes.push_back(std::move(attr));
   }
 
+  return FixUpAttrs(std::move(attrs));
+}
+
+std::shared_ptr<const AttributesStorage> AttributesStorage::Create(
+    const xla::CustomOptions& options) {
+  auto attrs = std::make_unique<Attributes>();
+  attrs->attributes.reserve(options.size());
+  for (const auto& [name, value] : options.map()) {
+    NamedAttribute attr = {String{name}, std::visit(ConvertOption(), value)};
+    attrs->attributes.push_back(std::move(attr));
+  }
+  return std::shared_ptr<const AttributesStorage>(
+      new AttributesStorage(FixUpAttrs(std::move(attrs))));
+}
+
+std::unique_ptr<AttributesStorage::Attributes> AttributesStorage::FixUpAttrs(
+    std::unique_ptr<Attributes> attrs) {
   // Sort attributes by name to enable binary search at run time.
   absl::c_sort(attrs->attributes,
                [](const NamedAttribute& a, const NamedAttribute& b) {
                  return a.name.value < b.name.value;
                });
 
-  return FixUpAttrs(std::move(attrs));
-}
-
-std::unique_ptr<AttributesStorage::Attributes> AttributesStorage::FixUpAttrs(
-    std::unique_ptr<AttributesStorage::Attributes> attrs) {
   size_t num_attrs = attrs->attributes.size();
   DCHECK(attrs->names.empty() && attrs->types.empty() && attrs->attrs.empty());
 
