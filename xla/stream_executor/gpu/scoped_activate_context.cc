@@ -80,4 +80,38 @@ ScopedActivateContext::~ScopedActivateContext() {
   tls->device_ordinal = to_restore_->device_ordinal();
   tls->context = to_restore_;
 }
+
+ScopedDeactivateContext::ScopedDeactivateContext() {
+  auto* tls = &tls_data;
+
+  tls->depth++;
+  if (tls->context == nullptr) {
+    // Nothing tracked as active on this thread by ScopedActivateContext, so
+    // there is nothing we know how to clear. In particular, this avoids
+    // needing a Context instance just to dispatch a "clear" call.
+    to_restore_ = nullptr;
+    return;
+  }
+
+  VLOG(3) << "ScopedDeactivateContext clearing context for device "
+          << tls->device_ordinal;
+  to_restore_ = tls->context;
+  to_restore_->SetInactive();
+  tls->context = nullptr;
+  tls->device_ordinal = -1;
+}
+
+ScopedDeactivateContext::~ScopedDeactivateContext() {
+  auto* tls = &tls_data;
+
+  tls->depth--;
+  DCHECK_GE(tls->depth, 0);
+  if (to_restore_ == nullptr) {
+    return;
+  }
+
+  to_restore_->SetActive();
+  tls->device_ordinal = to_restore_->device_ordinal();
+  tls->context = to_restore_;
+}
 }  // namespace stream_executor::gpu
