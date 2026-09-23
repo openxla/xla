@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -29,6 +26,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/log_severity.h"
 #include "absl/log/log.h"
@@ -37,9 +36,9 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "google/protobuf/text_format.h"
+#include "xla/backends/gpu/transforms/copy_fusion.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -66,6 +65,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -2018,6 +2018,85 @@ TEST_F(GpuHloScheduleTest, ReturnsValidScheduleMetadata) {
   ASSERT_OK_AND_ASSIGN(auto metadata, ScheduleGpuModule(module.get()));
   EXPECT_GT(metadata.scheduler_mem_limit, 0);
   EXPECT_EQ(metadata.peak_memory_usage, 12288);  // 3*32*32 * 4 bytes
+}
+
+TEST_F(GpuHloScheduleTest, RematerializedConstantFillDoesNotSpanMiddleWork) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule shared_fill
+
+    sum {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    fill {
+      zero = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+    }
+
+    ENTRY main {
+      update = f32[1,512]{1,0} parameter(0)
+      zero = s32[] constant(0)
+      one = s32[] constant(1)
+      initial_sum = f32[] constant(0)
+      shared_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      early_copy = f32[512,512]{1,0} copy(shared_fill)
+      early_update = f32[512,512]{1,0}
+          dynamic-update-slice(early_copy, update, zero, zero)
+      early_sum = f32[] reduce(early_update, initial_sum), dimensions={0,1},
+          to_apply=sum
+      middle = f32[1024,1024]{1,0} broadcast(early_sum), dimensions={}
+      middle_sum = f32[] reduce(middle, initial_sum), dimensions={0,1},
+          to_apply=sum
+      late_update = f32[1,512]{1,0} broadcast(middle_sum), dimensions={}
+      ROOT result = f32[512,512]{1,0}
+          dynamic-update-slice(shared_fill, late_update, one, zero)
+    })";
+
+  // Test the memory scheduler directly, without later optimizations changing
+  // the dependency chain or latency hiding trading memory for overlap.
+  ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kHloText, GetModuleConfig({})));
+  auto baseline = module->Clone();
+  ASSERT_OK_AND_ASSIGN(auto baseline_metadata,
+                       ScheduleGpuModule(baseline.get()));
+
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* original_fill = entry->GetInstructionWithName("shared_fill");
+  HloInstruction* early_update = entry->GetInstructionWithName("early_update");
+  HloInstruction* middle_sum = entry->GetInstructionWithName("middle_sum");
+  ASSERT_NE(original_fill, nullptr);
+  ASSERT_NE(early_update, nullptr);
+  ASSERT_NE(middle_sum, nullptr);
+  const se::DeviceDescription& gpu_device_info =
+      backend().default_stream_executor()->GetDeviceDescription();
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CopyFusion(gpu_device_info).Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* early_fill = early_update->operand(0);
+  ASSERT_EQ(early_fill->opcode(), HloOpcode::kFusion);
+  ASSERT_NE(early_fill, original_fill);
+  EXPECT_EQ(early_fill->operand_count(), 0);
+
+  ASSERT_OK_AND_ASSIGN(auto metadata, ScheduleGpuModule(module.get()));
+  SCOPED_TRACE(module->ToString());
+  const std::vector<HloInstruction*>& sequence =
+      module->schedule().sequence(entry).instructions();
+  auto position = [&](const HloInstruction* instruction) {
+    return std::distance(
+        sequence.begin(),
+        std::find(sequence.begin(), sequence.end(), instruction));
+  };
+
+  // The baseline must keep the 1 MiB original fill alive while the 4 MiB
+  // middle buffer is in use. Independent materialization lets the original
+  // fill wait until that middle buffer has been consumed.
+  EXPECT_LT(position(early_fill), position(early_update));
+  EXPECT_LT(position(early_update), position(middle_sum));
+  EXPECT_LT(position(middle_sum), position(original_fill));
+  EXPECT_LT(position(original_fill), position(entry->root_instruction()));
+  EXPECT_LT(metadata.peak_memory_usage, baseline_metadata.peak_memory_usage);
 }
 
 // This test verifies that the scheduling logs an error if the size of

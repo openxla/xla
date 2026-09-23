@@ -13,17 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <cstdint>
 #include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
+#include "xla/backends/gpu/transforms/copy_fusion.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
@@ -77,6 +79,65 @@ TEST_F(GpuCopyTest, CopyTranspose) {
                        ParseAndReturnVerifiedModule(hlo_text));
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
+}
+
+TEST_F(GpuCopyTest, RematerializedFillPreservesZerosForLaterUpdate) {
+  constexpr char hlo_text[] = R"(
+    HloModule test
+
+    fill {
+      zero = s32[] constant(0)
+      ROOT broadcast = s32[262144]{0} broadcast(zero), dimensions={}
+    }
+
+    first_update {
+      buffer = s32[262144]{0} parameter(0)
+      update = s32[1]{0} parameter(1)
+      zero = s32[] constant(0)
+      ROOT updated = s32[262144]{0} dynamic-update-slice(buffer, update, zero)
+    }
+
+    last_update {
+      buffer = s32[262144]{0} parameter(0)
+      first = s32[262144]{0} parameter(1)
+      update = s32[1]{0} slice(first), slice={[0:1]}
+      one = s32[] constant(1)
+      ROOT updated = s32[262144]{0} dynamic-update-slice(buffer, update, one)
+    }
+
+    ENTRY main {
+      update = s32[1]{0} parameter(0)
+      init = s32[262144]{0} fusion(), kind=kLoop, calls=fill
+      copied_init = s32[262144]{0} copy(init)
+      first = s32[262144]{0} fusion(copied_init, update), kind=kLoop,
+          calls=first_update
+      last = s32[262144]{0} fusion(init, first), kind=kLoop, calls=last_update
+      ROOT result = (s32[262144]{0}, s32[262144]{0}) tuple(first, last)
+    })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+
+  // The late update depends on the early update's output, but still needs the
+  // original zeros. In particular, index 0 of the late output must stay zero
+  // after the early output has written 7 there. Compare the transformed GPU
+  // module with the original shared-fill/copy module on the interpreter.
+  Literal update = LiteralUtil::CreateR1<int32_t>({7});
+  auto rematerialize = [this](HloModule* module) {
+    CopyFusion copy_fusion(device_description());
+    ASSERT_OK_AND_ASSIGN(bool changed, copy_fusion.Run(module));
+    ASSERT_TRUE(changed);
+    const HloInstruction* result =
+        module->entry_computation()->root_instruction();
+    const HloInstruction* first_init = result->operand(0)->operand(0);
+    const HloInstruction* last_init = result->operand(1)->operand(0);
+    ASSERT_EQ(first_init->opcode(), HloOpcode::kFusion);
+    ASSERT_EQ(last_init->opcode(), HloOpcode::kFusion);
+    EXPECT_NE(first_init, last_init);
+    EXPECT_EQ(first_init->operand_count(), 0);
+    EXPECT_EQ(last_init->operand_count(), 0);
+  };
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), {&update}, ErrorSpec{0, 0},
+      /*reference_preprocessor=*/nullptr, rematerialize));
 }
 
 TEST_F(GpuCopyTest, UseMemcpyForTrivialStaticSliceFusion) {

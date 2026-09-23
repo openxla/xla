@@ -33,12 +33,42 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/call_graph.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/reduction_utils.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
+namespace {
+
+Decision ShouldRematerializeConstantFill(const HloInstruction& fusion) {
+  // Keep small fills together to avoid additional kernel launches.
+  constexpr int64_t kMinRematerializedFillBytes = 1024 * 1024;
+  if (fusion.fusion_kind() != HloInstruction::FusionKind::kLoop ||
+      fusion.operand_count() != 0 || !fusion.shape().IsArray() ||
+      fusion.HasControlDependencies() || fusion.has_sharding()) {
+    return Decision::Forbid("Not an independent loop fill");
+  }
+  const HloComputation* computation = fusion.fused_instructions_computation();
+  const HloInstruction* root = computation->root_instruction();
+  if (computation->instruction_count() != 2 ||
+      root->opcode() != HloOpcode::kBroadcast ||
+      root->operand(0)->opcode() != HloOpcode::kConstant ||
+      !ShapeUtil::IsScalar(root->operand(0)->shape()) ||
+      root->HasControlDependencies() ||
+      root->operand(0)->HasControlDependencies()) {
+    return Decision::Forbid("Not a broadcast of a scalar literal");
+  }
+  if (ShapeUtil::ByteSizeOfElements(fusion.shape()) <
+      kMinRematerializedFillBytes) {
+    return Decision::Forbid("Fill is too small to split");
+  }
+  return Decision::Allow();
+}
+
+}  // namespace
 
 bool OnlyElementwiseOpsReachableFromParams(HloComputation* fused_computation) {
   std::queue<const HloInstruction*> q;
@@ -119,6 +149,30 @@ absl::StatusOr<bool> CopyFusion::DoCopyFusion(
     if (copies.empty()) {
       continue;
     }
+
+    // Sharing a constant fill between an early copy and a later in-place user
+    // keeps the original fill live until that later user. Materialize the copy
+    // independently so the scheduler can delay the original fill. Unlike the
+    // multi-output rewrite below, this preserves independent lifetimes while
+    // still producing the separate writable values required by copy insertion.
+    if (ShouldRematerializeConstantFill(*hlo).IsAllowed() &&
+        absl::c_any_of(other_users,
+                       [](const HloInstruction* user) {
+                         return user->opcode() != HloOpcode::kCopy;
+                       }) &&
+        absl::c_all_of(copies, [hlo](const HloInstruction* copy) {
+          return copy->operand(0) == hlo && !copy->has_sharding();
+        })) {
+      for (HloInstruction* copy : copies) {
+        ABSL_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
+            copy, hlo->Clone("rematerialized"),
+            /*preserve_sharding=*/false, /*relay_control_dependency=*/false,
+            /*remove_unused_operands=*/false));
+      }
+      changed = true;
+      continue;
+    }
+
     auto fusion_adaptor = HloFusionAdaptor::ForComputation(fused_computation);
     auto dynamic_update_slices =
         GetOutputDefiningDynamicUpdateSlices(fusion_adaptor->GetRoots());

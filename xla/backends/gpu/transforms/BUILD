@@ -761,11 +761,13 @@ cc_library(
     srcs = ["copy_fusion.cc"],
     hdrs = ["copy_fusion.h"],
     deps = [
+        "//xla:shape_util",
         "//xla/codegen:ir_emission_utils",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:call_graph",
+        "//xla/service:decision",
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:reduction_utils",
         "//xla/stream_executor:device_description",

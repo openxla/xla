@@ -373,6 +373,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms:copy_fusion",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
