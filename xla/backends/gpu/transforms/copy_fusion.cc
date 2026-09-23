@@ -28,7 +28,9 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/codegen/ir_emission_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
@@ -43,34 +45,66 @@ namespace xla {
 namespace gpu {
 namespace {
 
-// Follow buffer-forwarding instructions to the operations that need the
-// buffers. A root tuple also needs its buffers together. Traversing all GTEs
-// conservatively treats unrelated tuple elements as possible consumers.
+// Returns the instructions that need the buffer of `value`, reached through
+// the given `users` of `value`. Bitcasts, tuples and get-tuple-elements only
+// forward the buffer, so the search continues through them; it follows a tuple
+// only into the get-tuple-elements that read the element holding the value. A
+// root tuple needs all of its buffers together and is itself a consumer.
 absl::flat_hash_set<const HloInstruction*> FindMaterializingConsumers(
-    std::vector<const HloInstruction*> worklist) {
-  absl::flat_hash_set<const HloInstruction*> visited;
+    const HloInstruction* value, absl::Span<HloInstruction* const> users) {
+  // An instruction that forwards the value, and where in its shape it lives.
+  using ForwardedValue = std::pair<const HloInstruction*, ShapeIndex>;
+  std::vector<ForwardedValue> worklist;
+  absl::flat_hash_set<ForwardedValue> visited;
   absl::flat_hash_set<const HloInstruction*> consumers;
+  auto visit_users = [&](const HloInstruction* instruction,
+                         const ShapeIndex& index,
+                         absl::Span<HloInstruction* const> users) {
+    for (const HloInstruction* user : users) {
+      switch (user->opcode()) {
+        case HloOpcode::kBitcast:
+          worklist.emplace_back(user, index);
+          break;
+        case HloOpcode::kTuple:
+          for (int64_t i = 0; i < user->operand_count(); ++i) {
+            if (user->operand(i) == instruction) {
+              ShapeIndex nested_index = index;
+              nested_index.push_front(i);
+              worklist.emplace_back(user, std::move(nested_index));
+            }
+          }
+          break;
+        case HloOpcode::kGetTupleElement:
+          if (!index.empty() && user->tuple_index() == index.front()) {
+            worklist.emplace_back(user,
+                                  ShapeIndex(ShapeIndexView(index).subspan(1)));
+          }
+          break;
+        default:
+          consumers.insert(user);
+      }
+    }
+  };
+  visit_users(value, ShapeIndex(), users);
   while (!worklist.empty()) {
-    const HloInstruction* instruction = worklist.back();
+    ForwardedValue forwarded = std::move(worklist.back());
     worklist.pop_back();
-    if (!visited.insert(instruction).second) {
+    if (!visited.insert(forwarded).second) {
       continue;
     }
-    if (!instruction->IsRoot() &&
-        HloPredicateIsOp<HloOpcode::kTuple, HloOpcode::kGetTupleElement,
-                         HloOpcode::kBitcast>(instruction)) {
-      worklist.insert(worklist.end(), instruction->users().begin(),
-                      instruction->users().end());
-    } else {
+    const HloInstruction* instruction = forwarded.first;
+    if (instruction->IsRoot()) {
       consumers.insert(instruction);
+      continue;
     }
+    visit_users(instruction, forwarded.second, instruction->users());
   }
   return consumers;
 }
 
-Decision ShouldRematerializeConstantFill(
-    const HloInstruction& fusion, const std::vector<HloInstruction*>& copies,
-    const std::vector<HloInstruction*>& other_users) {
+// Whether `fusion` is a large fill with a scalar literal that can be
+// materialized again anywhere without changing the program.
+Decision IsRematerializableConstantFill(const HloInstruction& fusion) {
   // Keep small fills together to avoid additional kernel launches.
   constexpr int64_t kMinRematerializedFillBytes = 1024 * 1024;
   if (fusion.fusion_kind() != HloInstruction::FusionKind::kLoop ||
@@ -92,36 +126,86 @@ Decision ShouldRematerializeConstantFill(
       kMinRematerializedFillBytes) {
     return Decision::Forbid("Fill is too small to split");
   }
-  // Rejected copies also retain the original fill. Their opcode does not
-  // determine whether independent materialization can shorten its lifetime.
+  return Decision::Allow();
+}
+
+// Whether `copy` can be replaced by an independent instance of `fill`.
+bool IsRematerializableCopy(const HloInstruction& fill,
+                            const HloInstruction& copy) {
+  return copy.operand(0) == &fill && !copy.has_sharding();
+}
+
+// Replaces copies of the constant `fill` with independent fills when their
+// consumers are disjoint from the consumers that keep the original fill
+// alive: its `other_users`, including copies this pass could not fuse, and the
+// copies that stay fused with it. Splitting the initialization of buffers that
+// a consumer needs together would add launches without separating lifetimes.
+// This only screens obvious overlaps; the scheduler still decides whether the
+// independent fills reduce peak memory.
+//
+// Rematerialized copies are removed from `copies`. The remaining copies are
+// left to the multi-output rewrite. Returns whether the computation changed.
+absl::StatusOr<bool> RematerializeIndependentCopies(
+    HloComputation* computation, HloInstruction* fill,
+    std::vector<HloInstruction*>& copies,
+    std::vector<HloInstruction*>& other_users) {
+  bool changed = false;
+  // When nothing else uses the fill, one copy is redundant: the fill can take
+  // its place, and that copy's consumers then keep the original fill alive.
   if (other_users.empty()) {
-    return Decision::Forbid("No remaining user of the original fill");
-  }
-  if (!absl::c_all_of(copies, [&fusion](const HloInstruction* copy) {
-        return copy->operand(0) == &fusion && !copy->has_sharding();
-      })) {
-    return Decision::Forbid("Copies must be direct and unsharded");
+    auto redundant =
+        absl::c_find_if(copies, [fill](const HloInstruction* copy) {
+          return IsRematerializableCopy(*fill, *copy);
+        });
+    if (redundant == copies.end()) {
+      return false;
+    }
+    HloInstruction* copy = *redundant;
+    other_users.assign(copy->users().begin(), copy->users().end());
+    ABSL_RETURN_IF_ERROR(
+        computation
+            ->ReplaceInstruction(copy, fill, /*preserve_sharding=*/false,
+                                 /*relay_control_dependency=*/false,
+                                 /*remove_unused_operands=*/false)
+            .status());
+    copies.erase(redundant);
+    changed = true;
   }
 
-  // If a consumer needs both buffers together, splitting their initialization
-  // adds launches without separating their lifetimes. Look through forwarding
-  // instructions, but keep distinct consumers (including distinct whiles) as
-  // candidates. This screens obvious overlapping lifetimes; the scheduler still
-  // decides whether independent fills actually reduce peak memory.
-  const absl::flat_hash_set<const HloInstruction*> original_consumers =
-      FindMaterializingConsumers({other_users.begin(), other_users.end()});
-  std::vector<const HloInstruction*> copy_users;
+  absl::flat_hash_set<const HloInstruction*> retaining_consumers =
+      FindMaterializingConsumers(fill, other_users);
   for (const HloInstruction* copy : copies) {
-    copy_users.insert(copy_users.end(), copy->users().begin(),
-                      copy->users().end());
-  }
-  for (const HloInstruction* consumer :
-       FindMaterializingConsumers(std::move(copy_users))) {
-    if (original_consumers.contains(consumer)) {
-      return Decision::Forbid("Original fill and copy share a consumer");
+    if (!IsRematerializableCopy(*fill, *copy)) {
+      retaining_consumers.merge(
+          FindMaterializingConsumers(copy, copy->users()));
     }
   }
-  return Decision::Allow();
+
+  std::vector<HloInstruction*> remaining_copies;
+  for (HloInstruction* copy : copies) {
+    if (!IsRematerializableCopy(*fill, *copy)) {
+      remaining_copies.push_back(copy);
+      continue;
+    }
+    const bool shares_consumer =
+        absl::c_any_of(FindMaterializingConsumers(copy, copy->users()),
+                       [&retaining_consumers](const HloInstruction* consumer) {
+                         return retaining_consumers.contains(consumer);
+                       });
+    if (shares_consumer) {
+      VLOG(4) << "Not rematerializing " << copy->name()
+              << ": it shares a consumer with the original fill";
+      remaining_copies.push_back(copy);
+      continue;
+    }
+    ABSL_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
+        copy, fill->Clone("rematerialized"),
+        /*preserve_sharding=*/false, /*relay_control_dependency=*/false,
+        /*remove_unused_operands=*/false));
+    changed = true;
+  }
+  copies = std::move(remaining_copies);
+  return changed;
 }
 
 }  // namespace
@@ -207,24 +291,24 @@ absl::StatusOr<bool> CopyFusion::DoCopyFusion(
     }
 
     // Sharing a constant fill between an early copy and a later in-place user
-    // keeps the original fill live until that later user. Materialize the copy
-    // independently so the scheduler can delay the original fill. Unlike the
-    // multi-output rewrite below, this preserves independent lifetimes while
-    // still producing the separate writable values required by copy insertion.
-    const Decision rematerialize =
-        ShouldRematerializeConstantFill(*hlo, copies, other_users);
-    if (rematerialize.IsAllowed()) {
-      for (HloInstruction* copy : copies) {
-        ABSL_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
-            copy, hlo->Clone("rematerialized"),
-            /*preserve_sharding=*/false, /*relay_control_dependency=*/false,
-            /*remove_unused_operands=*/false));
+    // keeps the original fill live until that later user. Materialize such
+    // copies independently so the scheduler can delay the original fill.
+    // Unlike the multi-output rewrite below, this preserves independent
+    // lifetimes while still producing the separate writable values required
+    // by copy insertion.
+    if (const Decision fill = IsRematerializableConstantFill(*hlo);
+        fill.IsAllowed()) {
+      ABSL_ASSIGN_OR_RETURN(const bool rematerialized,
+                            RematerializeIndependentCopies(
+                                computation, hlo, copies, other_users));
+      changed |= rematerialized;
+      if (copies.empty()) {
+        continue;
       }
-      changed = true;
-      continue;
+    } else {
+      VLOG(4) << "Not rematerializing copies of " << hlo->name() << ": "
+              << fill.Explain();
     }
-    VLOG(4) << "Not rematerializing copies of " << hlo->name() << ": "
-            << rematerialize.Explain();
 
     auto fusion_adaptor = HloFusionAdaptor::ForComputation(fused_computation);
     auto dynamic_update_slices =

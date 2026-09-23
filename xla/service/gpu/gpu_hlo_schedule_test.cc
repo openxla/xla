@@ -80,11 +80,15 @@ class GpuHloScheduleTest : public HloTestBaseLegacy {
  protected:
   using HloVec = std::vector<HloInstruction*>;
 
-  int64_t InstructionPosition(const HloVec& sequence,
-                              const HloInstruction* instruction) {
-    return std::distance(
-        sequence.begin(),
-        std::find(sequence.begin(), sequence.end(), instruction));
+  // Returns the position of `instruction` in `sequence`, and fails the test
+  // if it is not scheduled.
+  static int64_t InstructionPosition(const HloVec& sequence,
+                                     const HloInstruction* instruction) {
+    auto it = std::find(sequence.begin(), sequence.end(), instruction);
+    if (it == sequence.end()) {
+      ADD_FAILURE() << instruction->name() << " is not in the schedule";
+    }
+    return std::distance(sequence.begin(), it);
   }
 
   // Pre-canned shapes.
