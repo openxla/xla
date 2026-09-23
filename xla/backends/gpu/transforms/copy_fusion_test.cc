@@ -691,23 +691,27 @@ TEST_F(CopyFusionTest, RematerializeCopiesOfConstantFill) {
       fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
       copy.1 = f32[512,512]{1,0} copy(fusion)
       copy.2 = f32[512,512]{1,0} copy(fusion)
+      early = f32[512,512]{1,0} negate(copy.1)
+      middle = f32[512,512]{1,0} negate(copy.2), control-predecessors={early}
+      late = f32[512,512]{1,0} negate(fusion), control-predecessors={middle}
       ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0},
-                     f32[512,512]{1,0}) tuple(fusion, copy.1, copy.2)
+                     f32[512,512]{1,0}) tuple(late, early, middle)
     })"));
   HloInstruction* original =
-      module->entry_computation()->root_instruction()->mutable_operand(0);
+      module->entry_computation()->GetInstructionWithName("fusion");
 
   ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
   ASSERT_TRUE(changed);
   SCOPED_TRACE(module->ToString());
   const HloInstruction* root = module->entry_computation()->root_instruction();
-  const HloInstruction* first_copy = root->operand(1);
-  const HloInstruction* second_copy = root->operand(2);
-  EXPECT_EQ(root->operand(0), original);
+  const HloInstruction* first_copy = root->operand(1)->operand(0);
+  const HloInstruction* second_copy = root->operand(2)->operand(0);
+  EXPECT_EQ(root->operand(0)->operand(0), original);
   EXPECT_NE(first_copy, original);
   EXPECT_NE(second_copy, original);
   EXPECT_NE(first_copy, second_copy);
-  for (const HloInstruction* fill : root->operands()) {
+  for (const HloInstruction* consumer : root->operands()) {
+    const HloInstruction* fill = consumer->operand(0);
     ASSERT_EQ(fill->opcode(), HloOpcode::kFusion);
     EXPECT_EQ(fill->fusion_kind(), HloInstruction::FusionKind::kLoop);
     // There must be no data dependence on the original fill: each copy can
@@ -719,6 +723,278 @@ TEST_F(CopyFusionTest, RematerializeCopiesOfConstantFill) {
   }
   ASSERT_OK_AND_ASSIGN(changed, cf_.Run(module.get()));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(CopyFusionTest, DoNotRematerializeConstantFillWithSharedRootTuple) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      copy = f32[512,512]{1,0} copy(fusion)
+      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(fusion, copy)
+    })"));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
+                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Broadcast(), m::Copy())));
+}
+
+TEST_F(CopyFusionTest, DoNotRematerializeConstantFillWithSharedWhileInitTuple) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    condition {
+      state = (f32[512,512]{1,0}, f32[512,512]{1,0}) parameter(0)
+      ROOT done = pred[] constant(false)
+    }
+
+    body {
+      ROOT state = (f32[512,512]{1,0}, f32[512,512]{1,0}) parameter(0)
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      copy = f32[512,512]{1,0} copy(fusion)
+      init = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(fusion, copy)
+      ROOT loop = (f32[512,512]{1,0}, f32[512,512]{1,0}) while(init),
+          condition=condition, body=body
+    })"));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(module->entry_computation()->root_instruction()->operand(0),
+              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
+                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Broadcast(), m::Copy())));
+}
+
+TEST_F(CopyFusionTest, RematerializeConstantFillForSeparateWhileInitTuples) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    condition {
+      state = (f32[512,512]{1,0}) parameter(0)
+      ROOT done = pred[] constant(false)
+    }
+
+    body {
+      ROOT state = (f32[512,512]{1,0}) parameter(0)
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      copy = f32[512,512]{1,0} copy(fusion)
+      early_init = (f32[512,512]{1,0}) tuple(copy)
+      early = (f32[512,512]{1,0}) while(early_init),
+          condition=condition, body=body
+      late_init = (f32[512,512]{1,0}) tuple(fusion)
+      late = (f32[512,512]{1,0}) while(late_init),
+          condition=condition, body=body, control-predecessors={early}
+      ROOT result = ((f32[512,512]{1,0}), (f32[512,512]{1,0})) tuple(early, late)
+    })"));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* original = entry->GetInstructionWithName("fusion");
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* early_fill =
+      entry->GetInstructionWithName("early_init")->operand(0);
+  const HloInstruction* late_fill =
+      entry->GetInstructionWithName("late_init")->operand(0);
+  ASSERT_EQ(early_fill->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(early_fill->operand_count(), 0);
+  EXPECT_NE(early_fill, original);
+  EXPECT_EQ(late_fill, original);
+  EXPECT_THAT(early_fill->fused_expression_root(),
+              GmockMatch(m::Broadcast(m::ConstantScalar(0.0f))));
+}
+
+TEST_F(CopyFusionTest,
+       DoNotRematerializeWithSharedConsumerThroughForwardingOps) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      copy = f32[512,512]{1,0} copy(fusion)
+      copy_view = f32[262144]{0} bitcast(copy)
+      fill_tuple = (f32[512,512]{1,0}) tuple(fusion)
+      fill_value = f32[512,512]{1,0} get-tuple-element(fill_tuple), index=0
+      fill_view = f32[262144]{0} bitcast(fill_value)
+      ROOT result = f32[262144]{0} add(fill_view, copy_view)
+    })"));
+  HloComputation* entry = module->entry_computation();
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(entry->GetInstructionWithName("fill_tuple")->operand(0),
+              GmockMatch(m::GetTupleElement(m::Fusion(&fusion))));
+  ASSERT_THAT(entry->GetInstructionWithName("copy_view")->operand(0),
+              GmockMatch(m::GetTupleElement(m::Fusion(&fusion))));
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Broadcast(), m::Copy())));
+}
+
+TEST_F(CopyFusionTest, RematerializeWithRejectedLayoutChangingCopy) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      early_copy = f32[512,512]{0,1} copy(fusion)
+      early = f32[512,512]{0,1} negate(early_copy)
+      late_copy = f32[512,512]{1,0} copy(fusion)
+      late = f32[512,512]{1,0} negate(late_copy), control-predecessors={early}
+      ROOT result = (f32[512,512]{0,1}, f32[512,512]{1,0}) tuple(early, late)
+    })"));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* original = entry->GetInstructionWithName("fusion");
+  const HloInstruction* early_copy =
+      entry->GetInstructionWithName("early_copy");
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* late_fill =
+      entry->GetInstructionWithName("late")->operand(0);
+  ASSERT_EQ(late_fill->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(late_fill->operand_count(), 0);
+  EXPECT_NE(late_fill, original);
+  EXPECT_EQ(early_copy->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(early_copy->operand(0), original);
+  EXPECT_FALSE(early_copy->HasControlDependencies());
+  EXPECT_THAT(late_fill->fused_expression_root(),
+              GmockMatch(m::Broadcast(m::ConstantScalar(0.0f))));
+}
+
+TEST_F(CopyFusionTest, RematerializeWithRejectedControlDependentCopy) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      early_copy = f32[512,512]{1,0} copy(fusion)
+      early = f32[512,512]{1,0} negate(early_copy)
+      late_copy = f32[512,512]{1,0} copy(fusion), control-predecessors={early}
+      late = f32[512,512]{1,0} negate(late_copy)
+      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(early, late)
+    })"));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* original = entry->GetInstructionWithName("fusion");
+  const HloInstruction* late_copy = entry->GetInstructionWithName("late_copy");
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* early_fill =
+      entry->GetInstructionWithName("early")->operand(0);
+  ASSERT_EQ(early_fill->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(early_fill->operand_count(), 0);
+  EXPECT_NE(early_fill, original);
+  EXPECT_EQ(late_copy->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(late_copy->operand(0), original);
+  EXPECT_TRUE(late_copy->HasControlDependencies());
+  EXPECT_THAT(early_fill->fused_expression_root(),
+              GmockMatch(m::Broadcast(m::ConstantScalar(0.0f))));
+}
+
+TEST_F(CopyFusionTest, DoNotRematerializeConstantFillThroughBitcast) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      bitcast = f32[262144]{0} bitcast(fusion)
+      copy = f32[262144]{0} copy(bitcast)
+      early = f32[262144]{0} negate(copy)
+      late = f32[512,512]{1,0} negate(fusion), control-predecessors={early}
+      ROOT result = (f32[262144]{0}, f32[512,512]{1,0}) tuple(early, late)
+    })"));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Broadcast(), m::Copy(m::Bitcast()))));
+}
+
+TEST_F(CopyFusionTest, DoNotRematerializeMixedDirectAndBitcastCopies) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fill {
+      value = f32[] constant(0)
+      ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+    }
+
+    ENTRY main {
+      fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
+      direct_copy = f32[512,512]{1,0} copy(fusion)
+      bitcast = f32[262144]{0} bitcast(fusion)
+      indirect_copy = f32[262144]{0} copy(bitcast)
+      early = f32[512,512]{1,0} negate(direct_copy)
+      middle = f32[262144]{0} negate(indirect_copy), control-predecessors={early}
+      late = f32[512,512]{1,0} negate(fusion), control-predecessors={middle}
+      ROOT result = (f32[512,512]{1,0}, f32[262144]{0},
+                     f32[512,512]{1,0}) tuple(early, middle, late)
+    })"));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Broadcast(), m::Copy(), m::Copy())));
 }
 
 TEST_F(CopyFusionTest, DoNotRematerializeUnsharedConstantFill) {
@@ -756,15 +1032,18 @@ TEST_F(CopyFusionTest, DoNotRematerializeSmallConstantFill) {
     ENTRY main {
       fusion = f32[511,512]{1,0} fusion(), kind=kLoop, calls=fill
       copy = f32[511,512]{1,0} copy(fusion)
-      ROOT result = (f32[511,512]{1,0}, f32[511,512]{1,0}) tuple(fusion, copy)
+      early = f32[511,512]{1,0} negate(copy)
+      late = f32[511,512]{1,0} negate(fusion), control-predecessors={early}
+      ROOT result = (f32[511,512]{1,0}, f32[511,512]{1,0}) tuple(late, early)
     })"));
 
   ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
   ASSERT_TRUE(changed);
   const HloInstruction* fusion = nullptr;
-  ASSERT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
-                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
   EXPECT_THAT(fusion->fused_expression_root(),
               GmockMatch(m::Tuple(m::Broadcast(), m::Copy())));
 }
@@ -802,15 +1081,18 @@ TEST_F(CopyFusionTest, DoNotRematerializeComputedFill) {
     ENTRY main {
       fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
       copy = f32[512,512]{1,0} copy(fusion)
-      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(fusion, copy)
+      early = f32[512,512]{1,0} negate(copy)
+      late = f32[512,512]{1,0} negate(fusion), control-predecessors={early}
+      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(late, early)
     })"));
 
   ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
   ASSERT_TRUE(changed);
   const HloInstruction* fusion = nullptr;
-  ASSERT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
-                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
   EXPECT_THAT(fusion->fused_expression_root(),
               GmockMatch(m::Tuple(m::Broadcast(m::Exp()), m::Copy())));
 }
@@ -827,15 +1109,18 @@ TEST_F(CopyFusionTest, DoNotRematerializeNonscalarConstantBroadcast) {
     ENTRY main {
       fusion = f32[2,131072]{1,0} fusion(), kind=kLoop, calls=fill
       copy = f32[2,131072]{1,0} copy(fusion)
-      ROOT result = (f32[2,131072]{1,0}, f32[2,131072]{1,0}) tuple(fusion, copy)
+      early = f32[2,131072]{1,0} negate(copy)
+      late = f32[2,131072]{1,0} negate(fusion), control-predecessors={early}
+      ROOT result = (f32[2,131072]{1,0}, f32[2,131072]{1,0}) tuple(late, early)
     })"));
 
   ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
   ASSERT_TRUE(changed);
   const HloInstruction* fusion = nullptr;
-  ASSERT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
-                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
   EXPECT_THAT(fusion->fused_expression_root(),
               GmockMatch(m::Tuple(m::Broadcast(), m::Copy())));
 }
@@ -873,15 +1158,18 @@ TEST_F(CopyFusionTest, DoNotRematerializeFillWithControlDependency) {
       fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill,
           control-predecessors={predecessor}
       copy = f32[512,512]{1,0} copy(fusion)
-      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(fusion, copy)
+      early = f32[512,512]{1,0} negate(copy)
+      late = f32[512,512]{1,0} negate(fusion), control-predecessors={early}
+      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(late, early)
     })"));
 
   ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
   ASSERT_TRUE(changed);
   const HloInstruction* fusion = nullptr;
-  ASSERT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
-                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
   EXPECT_TRUE(fusion->HasControlDependencies());
 }
 
@@ -918,15 +1206,18 @@ TEST_F(CopyFusionTest, DoNotRematerializeFillWithInternalControlDependency) {
     ENTRY main {
       fusion = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill
       copy = f32[512,512]{1,0} copy(fusion)
-      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(fusion, copy)
+      early = f32[512,512]{1,0} negate(copy)
+      late = f32[512,512]{1,0} negate(fusion), control-predecessors={early}
+      ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(late, early)
     })"));
 
   ASSERT_OK_AND_ASSIGN(bool changed, cf_.Run(module.get()));
   ASSERT_TRUE(changed);
   const HloInstruction* fusion = nullptr;
-  ASSERT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion(&fusion)),
-                                  m::GetTupleElement(m::Fusion(&fusion)))));
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(m::Negate(m::GetTupleElement(m::Fusion(&fusion))),
+                          m::Negate(m::GetTupleElement(m::Fusion(&fusion))))));
   EXPECT_TRUE(
       fusion->fused_expression_root()->operand(0)->HasControlDependencies());
 }

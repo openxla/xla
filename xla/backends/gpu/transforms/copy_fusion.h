@@ -33,7 +33,8 @@ namespace gpu {
 // CopyFusion checks if a fusion is followed by multiple copies and if so, adds
 // those copies to the fusion, replacing the copies with get_tuple_elements.
 // Copies of large scalar-constant fills can instead be materialized separately
-// to avoid extending the lifetime of a shared initializer.
+// to avoid extending the lifetime of a shared initializer, unless the fill and
+// its copies feed a common consumer that needs their buffers together.
 class CopyFusion : public HloModulePass {
  public:
   explicit CopyFusion(const se::DeviceDescription& device_description)

@@ -80,6 +80,13 @@ class GpuHloScheduleTest : public HloTestBaseLegacy {
  protected:
   using HloVec = std::vector<HloInstruction*>;
 
+  int64_t InstructionPosition(const HloVec& sequence,
+                              const HloInstruction* instruction) {
+    return std::distance(
+        sequence.begin(),
+        std::find(sequence.begin(), sequence.end(), instruction));
+  }
+
   // Pre-canned shapes.
   Shape f32_2x2_ = ShapeUtil::MakeShape(F32, {2, 2});
 
@@ -215,18 +222,13 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingAddsScheduleRespectedFences) {
   HloComputation* entry = module->entry_computation();
   const std::vector<HloInstruction*>& sequence =
       module->schedule().sequence(entry).instructions();
-  auto position = [&](const HloInstruction* instruction) {
-    return std::distance(
-        sequence.begin(),
-        std::find(sequence.begin(), sequence.end(), instruction));
-  };
-
   const HloInstruction* wg = entry->GetInstructionWithName("wg");
   const HloInstruction* cp2s = entry->GetInstructionWithName("cp2s");
   ASSERT_NE(wg, nullptr);
   ASSERT_NE(cp2s, nullptr);
   EXPECT_THAT(wg->control_successors(), Contains(cp2s));
-  EXPECT_LT(position(wg), position(cp2s));
+  EXPECT_LT(InstructionPosition(sequence, wg),
+            InstructionPosition(sequence, cp2s));
 }
 
 TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledOmitsFence) {
@@ -2083,19 +2085,17 @@ TEST_F(GpuHloScheduleTest, RematerializedConstantFillDoesNotSpanMiddleWork) {
   SCOPED_TRACE(module->ToString());
   const std::vector<HloInstruction*>& sequence =
       module->schedule().sequence(entry).instructions();
-  auto position = [&](const HloInstruction* instruction) {
-    return std::distance(
-        sequence.begin(),
-        std::find(sequence.begin(), sequence.end(), instruction));
-  };
-
   // The baseline must keep the 1 MiB original fill alive while the 4 MiB
   // middle buffer is in use. Independent materialization lets the original
   // fill wait until that middle buffer has been consumed.
-  EXPECT_LT(position(early_fill), position(early_update));
-  EXPECT_LT(position(early_update), position(middle_sum));
-  EXPECT_LT(position(middle_sum), position(original_fill));
-  EXPECT_LT(position(original_fill), position(entry->root_instruction()));
+  EXPECT_LT(InstructionPosition(sequence, early_fill),
+            InstructionPosition(sequence, early_update));
+  EXPECT_LT(InstructionPosition(sequence, early_update),
+            InstructionPosition(sequence, middle_sum));
+  EXPECT_LT(InstructionPosition(sequence, middle_sum),
+            InstructionPosition(sequence, original_fill));
+  EXPECT_LT(InstructionPosition(sequence, original_fill),
+            InstructionPosition(sequence, entry->root_instruction()));
   EXPECT_LT(metadata.peak_memory_usage, baseline_metadata.peak_memory_usage);
 }
 
