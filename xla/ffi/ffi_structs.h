@@ -66,6 +66,7 @@ struct XLA_FFI_Future {
   tsl::AsyncValueRef<tsl::Chain> async_value;
 };
 
+struct XLA_FFI_Attrs;
 struct XLA_FFI_Extension;
 
 // This struct corresponds to `InvokeContext` available to XLA:FFI C++ clients,
@@ -106,6 +107,9 @@ struct XLA_FFI_InvokeContext {
 
   const xla::HloComputation* called_computation = nullptr;
   const xla::ffi::ExecutionContext* execution_context = nullptr;
+
+  // Encoded options owned by the invocation, valid until the handler returns.
+  const XLA_FFI_Attrs* custom_options = nullptr;
 
   const XLA_FFI_Extension* extension_start = nullptr;
 };
