@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 
 #include "hwy//highway.h"
@@ -81,6 +82,68 @@ template <class D, size_t bytes, size_t... lane>
 HWY_INLINE void StoreLanes(D d, char* b, int64_t ldb, hn::Vec<D> v, size_t i,
                            std::index_sequence<lane...>) {
   (StoreLane<D, bytes, lane>(d, b + ldb * (i + lane), v), ...);
+}
+
+// Extracts the I-th element from a parameter pack (0-indexed).
+template <size_t I, class T, class... Ts>
+HWY_INLINE decltype(auto) GetFromPack(T&& t, Ts&&... ts) {
+  static_assert(I < 1 + sizeof...(Ts), "Index out of bounds");
+  if constexpr (I == 0) {
+    return std::forward<T>(t);
+  } else {
+    return GetFromPack<I - 1>(std::forward<Ts>(ts)...);
+  }
+}
+
+// Pack iteration helper (pack -> stream): ForEachIndexed
+template <class F, size_t... I, class... Ts>
+HWY_INLINE void ForEachIndexedImpl(F&& f, std::index_sequence<I...>,
+                                   Ts&&... ts) {
+  (std::forward<F>(f)(std::integral_constant<size_t, I>{},
+                      std::forward<Ts>(ts)),
+   ...);
+}
+template <class F, class... Ts>
+HWY_INLINE void ForEachIndexed(F&& f, Ts&&... ts) {
+  ForEachIndexedImpl(std::forward<F>(f),
+                     std::make_index_sequence<sizeof...(Ts)>{},
+                     std::forward<Ts>(ts)...);
+}
+
+// CPS: UnpackStep (pack -> pack), lvalue-only inputs
+template <size_t out_i, size_t element_size, size_t step_size, class... Vs>
+HWY_INLINE auto UnpackOutFromPack(Vs&... vs) {
+  constexpr size_t group = 2 * step_size;
+  constexpr size_t base = (out_i / group) * group;
+  constexpr size_t p = out_i - base;
+  constexpr size_t j = p / 2;
+  constexpr bool is_lo = (p % 2) == 0;
+  constexpr size_t ia = base + j;
+  constexpr size_t ib = base + j + step_size;
+  auto& a = GetFromPack<ia>(vs...);
+  auto& b = GetFromPack<ib>(vs...);
+  if constexpr (is_lo) {
+    return Unpack<element_size * step_size, Extract::kLo>(a, b);
+  } else {
+    return Unpack<element_size * step_size, Extract::kHi>(a, b);
+  }
+}
+
+template <size_t element_size, size_t step_size, class Cont, size_t... I,
+          class... Vs>
+HWY_INLINE void UnpackStepCPSImpl(Cont&& cont, std::index_sequence<I...>,
+                                  Vs&... vs) {
+  std::forward<Cont>(cont)(
+      UnpackOutFromPack<I, element_size, step_size>(vs...)...);
+}
+
+template <size_t element_size, size_t step_size, class Cont, class... Vs>
+HWY_INLINE void UnpackStepCPS(Cont&& cont, Vs&... in) {
+  constexpr size_t N = sizeof...(Vs);
+  static_assert(N % (step_size * 2) == 0);
+  static_assert(element_size * step_size <= kMaxLaneBytes);
+  UnpackStepCPSImpl<element_size, step_size>(
+      std::forward<Cont>(cont), std::make_index_sequence<N>{}, in...);
 }
 
 }  // namespace HWY_NAMESPACE
