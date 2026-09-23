@@ -23,9 +23,12 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <list>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
+#include <random>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -84,6 +87,7 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/slice.h"
 #include "xla/service/memory_space_assignment/testing_utils.h"
 #include "xla/service/memory_space_assignment/utils.h"
+#include "xla/service/time_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/test_utils.h"
@@ -11301,6 +11305,398 @@ TEST_F(AsynchronousCopyResourceTest,
   // resources in a manner that fits the check.
   EXPECT_FALSE(
       resource.HasEnoughResourceMultiCheck({{0, 4, 170.8}, {1, 4, 170.8}}));
+}
+
+// The smallest floats above 4.0, 2.0 and 1.0; scaled to integers they exceed
+// the exact values by 2^19, 2^18 and 2^17.
+constexpr float kJustAbove4 = 0x1.000002p2f;
+constexpr float kJustAbove2 = 0x1.000002p1f;
+constexpr float kJustAbove1 = 0x1.000002p0f;
+
+// A copy that uses its window's resource exactly is accepted; the next float
+// above is rejected. Checks leave the resources untouched.
+TEST_F(AsynchronousCopyResourceTest, ExactResourceBoundary) {
+  // time:      0 1 2 3 4
+  // resource:  2 2 2 2 2
+  // -1,2,4    +---+                    OK, uses times 0 and 1 in full
+  // -1,2,4+   +---+                    Violate
+  AsynchronousCopyResource resource({2.0, 2.0, 2.0, 2.0, 2.0});
+  const std::vector<float> initial = resource.GetCurrentResources();
+  EXPECT_TRUE(resource.HasEnoughResource(-1, 2, 4.0));
+  EXPECT_FALSE(resource.HasEnoughResource(-1, 2, kJustAbove4));
+  // An empty window holds no resource, and so does a window that ends before
+  // it starts; a copy of no resource always fits.
+  EXPECT_FALSE(resource.HasEnoughResource(1, 2, kJustAbove4));
+  EXPECT_FALSE(resource.HasEnoughResource(2, 2, 1.0));
+  EXPECT_FALSE(
+      resource.HasEnoughResourceMultiCheck({{2, 2, 1.0}, {-1, 2, 1.0}}));
+  EXPECT_TRUE(resource.HasEnoughResource(1, 2, 0.0));
+  EXPECT_TRUE(resource.HasEnoughResource(2, 2, 0.0));
+  EXPECT_EQ(resource.GetCurrentResources(), initial);
+}
+
+// A committed copy of zero resource is admitted without a check, but once it
+// is pushed, its window must still absorb the work pending at its start. A
+// copy whose work runs out exactly when the next copies start pushes nothing.
+TEST_F(AsynchronousCopyResourceTest, PushedZeroResourceCopyIsADeadline) {
+  // time:      0 1 2 3 4 5 6 7 8 9
+  // resource:  1 1 1 1 1 1 1 1 1 1
+  //  2,4,0          +-+                OK, admitted unseen
+  // -1,10,3   +-------------------+    OK, done before the 2,4 copy starts
+  // -1,10,4   +-------------------+    OK, the 2,4 copy absorbs the 1 left
+  // -1,10,4+  +-------------------+    Violate: more than the 2,4 copy's window
+  {
+    auto alternate_mem_space = MemorySpace::kAlternate;
+    AsynchronousCopyResource resource(std::vector<float>(10, 1.0));
+    resource.AddCopy({2, 4, 0.0, alternate_mem_space, 0});
+    EXPECT_EQ(resource.GetCurrentResources(), std::vector<float>(10, 1.0));
+    EXPECT_TRUE(resource.HasEnoughResource(-1, 10, 3.0));
+    EXPECT_TRUE(resource.HasEnoughResource(-1, 10, 4.0));
+    EXPECT_FALSE(resource.HasEnoughResource(-1, 10, kJustAbove4));
+    EXPECT_FALSE(resource.HasEnoughResource(-1, 10, 8.0));
+    EXPECT_EQ(resource.GetCurrentResources(), std::vector<float>(10, 1.0));
+  }
+  // time:      0 1 2 3 4 5
+  // resource:  1 1 1 1 1 1
+  //  0,6,2      +---------+            OK, uses times 1 and 2
+  //  0,2,0      +-+                    OK, admitted unseen, queued last
+  // -1,6,1    +-----------+            OK, done when the copies at time 1 start
+  // -1,6,1+   +-----------+            Violate: pushes both; the 0,2 copy's
+  //                                     window cannot absorb the 0,6 work
+  {
+    auto alternate_mem_space = MemorySpace::kAlternate;
+    AsynchronousCopyResource resource(std::vector<float>(6, 1.0));
+    resource.AddCopy({0, 6, 2.0, alternate_mem_space, 0});
+    resource.AddCopy({0, 2, 0.0, alternate_mem_space, 1});
+    EXPECT_EQ(resource.GetCurrentResources(),
+              std::vector<float>({1.0, 0.0, 0.0, 1.0, 1.0, 1.0}));
+    EXPECT_TRUE(resource.HasEnoughResource(-1, 6, 1.0));
+    EXPECT_FALSE(resource.HasEnoughResource(-1, 6, kJustAbove1));
+    EXPECT_EQ(resource.GetCurrentResources(),
+              std::vector<float>({1.0, 0.0, 0.0, 1.0, 1.0, 1.0}));
+  }
+}
+
+// A copy whose resource runs out exactly when the next copy starts does not
+// push that copy; the next float above pushes it, and the pushed copy decides.
+TEST_F(AsynchronousCopyResourceTest, PushBoundaryAtNextCopyStart) {
+  // time:      0 1 2 3 4
+  // resource:  2 2 2 2 2
+  //  1,3,2        +-+                  OK, time 2 in full
+  // resource:  2 2 0 2 2
+  // -1,3,4    +-----+                  OK, done before the 1,3 copy starts
+  // -1,3,4+   +-----+                  Violate: pushes the 1,3 copy too far
+  {
+    auto alternate_mem_space = MemorySpace::kAlternate;
+    AsynchronousCopyResource resource({2.0, 2.0, 2.0, 2.0, 2.0});
+    resource.AddCopy({1, 3, 2.0, alternate_mem_space, 0});
+    EXPECT_EQ(resource.GetCurrentResources(),
+              std::vector<float>({2.0, 2.0, 0.0, 2.0, 2.0}));
+    EXPECT_TRUE(resource.HasEnoughResource(-1, 3, 4.0));
+    EXPECT_FALSE(resource.HasEnoughResource(-1, 3, kJustAbove4));
+    EXPECT_EQ(resource.GetCurrentResources(),
+              std::vector<float>({2.0, 2.0, 0.0, 2.0, 2.0}));
+  }
+  // time:      0 1 2 3 4
+  // resource:  2 2 2 2 2
+  //  1,4,2        +---+                OK
+  // resource:  2 2 0 2 2
+  // -1,3,4+   +-----+                  OK: the pushed 1,4 copy ends in time
+  {
+    auto alternate_mem_space = MemorySpace::kAlternate;
+    AsynchronousCopyResource resource({2.0, 2.0, 2.0, 2.0, 2.0});
+    resource.AddCopy({1, 4, 2.0, alternate_mem_space, 0});
+    EXPECT_TRUE(resource.HasEnoughResource(-1, 3, kJustAbove4));
+    EXPECT_EQ(resource.GetCurrentResources(),
+              std::vector<float>({2.0, 2.0, 0.0, 2.0, 2.0}));
+  }
+}
+
+// A later spec of a multi check starts under the pending work of an earlier
+// spec, or of a committed copy the earlier spec pushed, and waits for it. An
+// earlier spec is seen only through the pending work at a later spec's start
+// time, so the reverse order does not see it.
+TEST_F(AsynchronousCopyResourceTest, MultiCheckLaterSpecWaitsForEarlierSpec) {
+  // time:      0 1 2 3 4 5
+  // resource:  2 2 2 2 2 2
+  // -1,4,4    +-------+                uses times 0 and 1
+  //  0,3,2      +---+                  waits at time 1 for the 2 left, uses 2
+  //  0,3,2+     +---+                  Violate
+  {
+    AsynchronousCopyResource resource({2.0, 2.0, 2.0, 2.0, 2.0, 2.0});
+    EXPECT_TRUE(
+        resource.HasEnoughResourceMultiCheck({{-1, 4, 4.0}, {0, 3, 2.0}}));
+    EXPECT_FALSE(resource.HasEnoughResourceMultiCheck(
+        {{-1, 4, 4.0}, {0, 3, kJustAbove2}}));
+    EXPECT_TRUE(resource.HasEnoughResourceMultiCheck(
+        {{0, 3, kJustAbove2}, {-1, 4, 4.0}}));
+  }
+  // time:      0 1 2 3 4 5
+  // resource:  2 2 2 2 2 2
+  //  1,5,2        +-----+              OK, uses time 2
+  // -1,4,6    +-------+                uses times 0 and 1, pushes the 1,5
+  //                                     copy to times 2 and 3
+  //  2,5,2          +---+              waits at time 3 for the 2 left, uses 4
+  //  2,5,2+         +---+              Violate
+  {
+    auto alternate_mem_space = MemorySpace::kAlternate;
+    AsynchronousCopyResource resource({2.0, 2.0, 2.0, 2.0, 2.0, 2.0});
+    resource.AddCopy({1, 5, 2.0, alternate_mem_space, 0});
+    EXPECT_TRUE(
+        resource.HasEnoughResourceMultiCheck({{-1, 4, 6.0}, {2, 5, 2.0}}));
+    EXPECT_FALSE(resource.HasEnoughResourceMultiCheck(
+        {{-1, 4, 6.0}, {2, 5, kJustAbove2}}));
+    EXPECT_EQ(resource.GetCurrentResources(),
+              std::vector<float>({2.0, 2.0, 0.0, 2.0, 2.0, 2.0}));
+  }
+}
+
+// AsynchronousCopyResource as it was before the cumulative resources: the
+// check walks the logical times of the copy and of the copies it pushes,
+// updates the delay per time and undoes the updates afterwards. Adding and
+// removing copies is the same code as today.
+class WalkingCopyResource {
+ public:
+  using ResourceSpec = AsynchronousCopyResource::ResourceSpec;
+
+  explicit WalkingCopyResource(absl::Span<const float> initial_resources)
+      : delay_(initial_resources.size(), 0) {
+    for (float initial_resource : initial_resources) {
+      initial_resources_scaled_.push_back(Scale(initial_resource));
+    }
+  }
+
+  void AddCopy(const AsynchronousCopy& copy) {
+    CHECK(ConsumeResource(copy.exclusive_start_time, copy.end_time,
+                          Scale(copy.resource), nullptr));
+    auto time_it = async_copy_time_map_.upper_bound(copy.exclusive_start_time);
+    auto insertion_it = time_it == async_copy_time_map_.end()
+                            ? async_copies_.end()
+                            : time_it->second;
+    auto inserted_it = async_copies_.insert(insertion_it, copy);
+    async_copy_time_map_.try_emplace(copy.exclusive_start_time, inserted_it);
+  }
+
+  void RemoveCopy(const AsynchronousCopy& copy) {
+    auto time_it = async_copy_time_map_.upper_bound(copy.exclusive_start_time);
+    auto copy_it = time_it == async_copy_time_map_.end() ? async_copies_.end()
+                                                         : time_it->second;
+    --copy_it;
+    std::list<AsynchronousCopy> copies_to_add_back;
+    auto prev_copy_it = copy_it;
+    for (; *copy_it != copy; copy_it = prev_copy_it) {
+      copies_to_add_back.push_front(*copy_it);
+      prev_copy_it = std::prev(copy_it);
+      RemoveCopy(copy_it);
+    }
+    RemoveCopy(copy_it);
+    for (const AsynchronousCopy& copy_to_add_back : copies_to_add_back) {
+      AddCopy(copy_to_add_back);
+    }
+  }
+
+  bool HasEnoughResourceMultiCheck(const std::vector<ResourceSpec>& specs) {
+    std::vector<std::pair<int64_t, int64_t>> delay_changes;
+    bool result = absl::c_all_of(specs, [&](const ResourceSpec& spec) {
+      return ConsumeResource(spec.exclusive_start_time, spec.end_time,
+                             Scale(spec.resource), &delay_changes);
+    });
+    for (auto it = delay_changes.rbegin(); it != delay_changes.rend(); ++it) {
+      delay_[it->first] = it->second;
+    }
+    return result;
+  }
+
+  const std::vector<int64_t>& delays() const { return delay_; }
+
+ private:
+  static int64_t Scale(float resource) {
+    return static_cast<int64_t>(
+        resource * AsynchronousCopyResource::kCopyResourceIntScale);
+  }
+
+  bool ConsumeResource(int64_t exclusive_start_time, int64_t end_time,
+                       int64_t resource,
+                       std::vector<std::pair<int64_t, int64_t>>* delay_changes,
+                       int64_t resource_to_free = 0) {
+    auto current_copy = async_copies_.end();
+    while (true) {
+      if (resource == 0 && resource_to_free == 0) {
+        return true;
+      }
+      if (current_copy == async_copies_.end()) {
+        resource += delay_[ExclusiveToInclusiveStartTime(exclusive_start_time)];
+      }
+      auto next_copy = async_copies_.end();
+      if (current_copy != async_copies_.end()) {
+        next_copy = std::next(current_copy);
+      } else {
+        auto time_it = async_copy_time_map_.upper_bound(exclusive_start_time);
+        if (time_it != async_copy_time_map_.end()) {
+          next_copy = time_it->second;
+        }
+      }
+      std::optional<int64_t> delay_for_next_copy;
+      int64_t resource_freed = 0;
+      for (int64_t time = ExclusiveToInclusiveStartTime(exclusive_start_time);
+           time < end_time && resource != 0; ++time) {
+        const int64_t initial_resource_scaled = initial_resources_scaled_[time];
+        const int64_t used_resource =
+            std::min(resource, initial_resource_scaled);
+        if (next_copy != async_copies_.end() &&
+            next_copy->exclusive_start_time ==
+                InclusiveToExclusiveStartTime(time)) {
+          delay_for_next_copy = resource;
+          resource_to_free -= resource_freed;
+        }
+        if (!delay_for_next_copy.has_value()) {
+          const int64_t old_delay = delay_[time];
+          const int64_t old_resource =
+              std::max<int64_t>(0, initial_resource_scaled - old_delay);
+          const int64_t new_delay =
+              std::max<int64_t>(0, resource - resource_to_free);
+          const int64_t new_resource =
+              std::max<int64_t>(0, initial_resource_scaled - new_delay);
+          resource_freed += std::max<int64_t>(0, new_resource - old_resource);
+          delay_[time] = new_delay;
+          if (delay_changes) {
+            delay_changes->emplace_back(time, old_delay);
+          }
+        }
+        resource -= used_resource;
+      }
+      if (resource > 0) {
+        return false;
+      }
+      if (!delay_for_next_copy.has_value()) {
+        return true;
+      }
+      exclusive_start_time = next_copy->exclusive_start_time;
+      end_time = next_copy->end_time;
+      resource = *delay_for_next_copy + Scale(next_copy->resource);
+      current_copy = next_copy;
+    }
+  }
+
+  void RemoveCopy(std::list<AsynchronousCopy>::iterator& copy_it) {
+    CHECK(ConsumeResource(copy_it->exclusive_start_time, copy_it->end_time,
+                          /*resource=*/0, /*delay_changes=*/nullptr,
+                          /*resource_to_free=*/Scale(copy_it->resource)));
+    auto time_it = async_copy_time_map_.find(copy_it->exclusive_start_time);
+    if (copy_it == time_it->second) {
+      if (std::next(copy_it) != async_copies_.end() &&
+          std::next(copy_it)->exclusive_start_time ==
+              copy_it->exclusive_start_time) {
+        time_it->second = std::next(copy_it);
+      } else {
+        async_copy_time_map_.erase(time_it);
+      }
+    }
+    async_copies_.erase(copy_it);
+  }
+
+  std::list<AsynchronousCopy> async_copies_;
+  std::map<int64_t, std::list<AsynchronousCopy>::iterator> async_copy_time_map_;
+  std::vector<int64_t> initial_resources_scaled_;
+  std::vector<int64_t> delay_;
+};
+
+// Random copies against the walking implementation: every check answers the
+// same and the committed state stays the same, over windows that run into
+// each other, zero resources committed and checked, empty windows, specs in
+// any order, and copies removed in any order.
+TEST_F(AsynchronousCopyResourceTest, ChecksMatchTheWalkingImplementation) {
+  constexpr int kNumTimes = 12;
+  std::mt19937 rng(2026);
+  std::uniform_int_distribution<int> resource_dist(0, 3);
+  std::uniform_int_distribution<int> copy_resource_dist(0, 6);
+  std::uniform_int_distribution<int64_t> start_dist(-1, kNumTimes - 2);
+  std::uniform_int_distribution<int> length_dist(1, 6);
+  std::uniform_int_distribution<int> num_specs_dist(1, 6);
+  std::bernoulli_distribution remove_dist(0.05);
+  auto alternate_mem_space = MemorySpace::kAlternate;
+  int64_t next_id = 0;
+  int num_accepted = 0;
+  int num_removed = 0;
+  int num_removed_before_a_same_start_copy = 0;
+  for (int round = 0; round < 40; ++round) {
+    std::vector<float> initial_resources(kNumTimes);
+    for (float& initial_resource : initial_resources) {
+      initial_resource = resource_dist(rng);
+    }
+    AsynchronousCopyResource resource(initial_resources);
+    WalkingCopyResource walking(initial_resources);
+    std::vector<AsynchronousCopy> committed;
+    for (int step = 0; step < 300; ++step) {
+      std::vector<AsynchronousCopyResource::ResourceSpec> specs;
+      const int num_specs = num_specs_dist(rng);
+      for (int i = 0; i < num_specs; ++i) {
+        const int64_t exclusive_start_time = start_dist(rng);
+        const int64_t end_time = std::min<int64_t>(
+            exclusive_start_time + length_dist(rng), kNumTimes);
+        specs.push_back({exclusive_start_time, end_time,
+                         static_cast<float>(copy_resource_dist(rng))});
+      }
+      const bool expected = walking.HasEnoughResourceMultiCheck(specs);
+      ASSERT_EQ(resource.HasEnoughResourceMultiCheck(specs), expected)
+          << "round " << round << " step " << step;
+      if (specs.size() == 1) {
+        ASSERT_EQ(
+            resource.HasEnoughResource(specs[0].exclusive_start_time,
+                                       specs[0].end_time, specs[0].resource),
+            expected)
+            << "round " << round << " step " << step;
+      }
+      if (expected && specs.size() == 1) {
+        const AsynchronousCopy copy{specs[0].exclusive_start_time,
+                                    specs[0].end_time, specs[0].resource,
+                                    alternate_mem_space, next_id++};
+        resource.AddCopy(copy);
+        walking.AddCopy(copy);
+        committed.push_back(copy);
+        ++num_accepted;
+      } else if (!committed.empty() && remove_dist(rng)) {
+        // A zero resource copy is admitted without a check, and RemoveCopy
+        // CHECK fails, in both implementations, for an older copy whose
+        // pending work reaches such a copy's window. So only the copies from
+        // the newest zero resource copy on are removed.
+        int oldest_removable = 0;
+        for (int i = 0; i < committed.size(); ++i) {
+          if (committed[i].resource == 0) {
+            oldest_removable = i;
+          }
+        }
+        std::uniform_int_distribution<int> index_dist(oldest_removable,
+                                                      committed.size() - 1);
+        const int index = index_dist(rng);
+        for (int i = index + 1; i < committed.size(); ++i) {
+          if (committed[i].exclusive_start_time ==
+              committed[index].exclusive_start_time) {
+            ++num_removed_before_a_same_start_copy;
+            break;
+          }
+        }
+        resource.RemoveCopy(committed[index]);
+        walking.RemoveCopy(committed[index]);
+        committed.erase(committed.begin() + index);
+        ++num_removed;
+      }
+      std::vector<float> expected_resources = initial_resources;
+      for (int time = 0; time < kNumTimes; ++time) {
+        expected_resources[time] -=
+            std::min(expected_resources[time],
+                     resource.GetDescaledFloatResource(walking.delays()[time]));
+      }
+      ASSERT_EQ(resource.GetCurrentResources(), expected_resources)
+          << "round " << round << " step " << step;
+    }
+  }
+  LOG(INFO) << "accepted " << num_accepted << ", removed " << num_removed
+            << ", of which before a copy with the same start "
+            << num_removed_before_a_same_start_copy;
+  EXPECT_GT(num_accepted, 400);
+  EXPECT_GT(num_removed, 200);
+  EXPECT_GT(num_removed_before_a_same_start_copy, 0);
 }
 
 TEST_F(MemorySpaceAssignmentTest, CrossProgramPrefetchTest) {
