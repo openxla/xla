@@ -338,7 +338,6 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
       results.push_back(
           params.buffer_allocations->GetDeviceAddressUnchecked(slice));
     }
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(results[i].opaque(), results[i].size());
     VLOG(3) << absl::StreamFormat("  res: %s in slice %s (%p)",
                                   op_buffers_.results_shapes[i].ToString(true),
                                   slice.ToString(), results[i].opaque());
@@ -360,8 +359,16 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
       custom_call_params->ffi_execution_context};
 
   ffi::HandlerRegistration& handler = std::get<1>(target_);
-  return ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
-                          *call_frame, invoke_context);
+  auto future = ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
+                                 *call_frame, invoke_context);
+  future.AndThen([results = std::move(results)]() {
+    // Custom calls may dispatch to external code that is not MSan-instrumented,
+    // e.g. hand-written assembly or libraries built without msan.
+    for ([[maybe_unused]] const auto& res : results) {
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(res.opaque(), res.size());
+    }
+  });
+  return future;
 }
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(

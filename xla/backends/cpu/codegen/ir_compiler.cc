@@ -68,6 +68,7 @@ limitations under the License.
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
+#include "xla/backends/cpu/codegen/object_buffer_identifier.h"
 #include "xla/backends/cpu/codegen/polynomial_approximations.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
@@ -232,6 +233,39 @@ static llvm::PipelineTuningOptions GetPipelineTuningOptions(
 
 static bool FunctionHasInternalLinkage(const llvm::Function& function) {
   return function.hasInternalLinkage();
+}
+
+// Sinks every single-use `fmul contract` in front of its `fadd/fsub contract`
+// user when both are in the same basic block.
+// This helps maintain the same numerics when sanitizers are enabled,
+// e.g. msan's instrumentation can split fmul->{fadd,sub} pairs into separate
+// basic blocks if there's an unrelated load/store between the pair, and that
+// transformation would preclude LLVM from merging the pair into an fma.
+//
+// Note: this is a workaround until we stop relying on LLVM passes to emit
+// fma's -- see b/560320144.
+static void SinkContractableFMulToFAddFSub(llvm::Module& module) {
+  for (llvm::Function& function : module) {
+    for (llvm::BasicBlock& block : function) {
+      for (llvm::Instruction& instruction : block) {
+        const unsigned opcode = instruction.getOpcode();
+        if ((opcode != llvm::Instruction::FAdd &&
+             opcode != llvm::Instruction::FSub) ||
+            !instruction.hasAllowContract()) {
+          continue;
+        }
+        for (llvm::Value* operand : instruction.operands()) {
+          auto* fmul = llvm::dyn_cast<llvm::BinaryOperator>(operand);
+          if (fmul != nullptr && fmul->getOpcode() == llvm::Instruction::FMul &&
+              fmul->hasAllowContract() && fmul->hasOneUse() &&
+              fmul->getParent() == &block &&
+              fmul->getNextNode() != &instruction) {
+            fmul->moveBefore(instruction.getIterator());
+          }
+        }
+      }
+    }
+  }
 }
 
 std::unique_ptr<IrCompiler> IrCompiler::Create(
@@ -430,10 +464,6 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
 
   llvm::ModulePassManager pm;
 
-  if (options_.dfsan_enabled) {
-    pm.addPass(llvm::DataFlowSanitizerPass(options_.dfsan_abi_list_files));
-  }
-
   llvm::OptimizationLevel opt_level = GetOptimizationLevel(options_);
   if (opt_level == llvm::OptimizationLevel::O0) {
     pm.addPass(pb.buildO0DefaultPipeline(opt_level));
@@ -473,17 +503,31 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     codegen::intrinsic::RunInlineAndOptPasses(module);
   }
 
-  // Must stay last: middle-end passes behave differently on instructions that
-  // already carry `contract`.
-  //
-  // TODO(b/560320144): `AllowFPOpFusion = Fast` is deliberately still set in
-  // service/cpu/cpu_aot_loader.cc:53, tools/hlo_opt/cpu_opt.cc:217,
-  // backends/cpu/testlib/kernel_runner.cc:132 and
-  // service/cpu/ir_emitter_test.cc:258. Drop those once the upstream change
-  // has landed.
+  // Must run after all optimization passes: middle-end passes behave
+  // differently on instructions that already carry `contract`.
   llvm_ir::SetAllowContractOnFpArithmetic(module);
+  SinkContractableFMulToFAddFSub(module);
+
+  // Sanitizer instrumentation must be the last IR transformation.
+  if (options_.dfsan_enabled) {
+    // The transformations immediately above are not visible to the analysis
+    // manager; clear its cache.
+    mam.clear();
+
+    RunSanitizerPasses(module, mam);
+  }
 
   return llvm::Error::success();
+}
+
+void IrCompiler::RunSanitizerPasses(llvm::Module& module,
+                                    llvm::ModuleAnalysisManager& mam) const {
+  llvm::ModulePassManager pm;
+
+  if (options_.dfsan_enabled) {
+    pm.addPass(llvm::DataFlowSanitizerPass(options_.dfsan_abi_list_files));
+  }
+  pm.run(module, mam);
 }
 
 std::unique_ptr<llvm::MemoryBuffer> IrCompiler::EmitMachineCode(
@@ -513,8 +557,17 @@ std::unique_ptr<llvm::MemoryBuffer> IrCompiler::EmitMachineCode(
   CHECK(md_str != nullptr);
   llvm::StringRef mem_region_name_str = md_str->getString();
 
+  // Each module gets assigned two names encoded into the buffer identifier:
+  // - Memory region name: human-friendly name shared among related kernels,
+  //   so that profilers can aggregate results per kernel.
+  // - Buffer identifier: to refer to each module uniquely. Necessary for
+  //   sanitizers.
+  std::string buffer_identifier = EncodeBufferIdentifier(
+      absl::string_view(mem_region_name_str.data(), mem_region_name_str.size()),
+      module.getModuleIdentifier());
+
   return std::make_unique<llvm::SmallVectorMemoryBuffer>(
-      std::move(mc_stream_buffer), mem_region_name_str);
+      std::move(mc_stream_buffer), buffer_identifier);
 }
 
 llvm::CodeGenOptLevel IrCompiler::GetCodeGenOptLevel(
