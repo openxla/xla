@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
