@@ -54,9 +54,9 @@ class MemorySpacePropagation : public HloModulePass {
   // in the fused computation (parameter or root), propagates the memory space
   // (and associated split config) in the callee side. Returns true if the
   // module is modified.
-  bool Propagate(ShapeIndexView index, const HloInstruction* callee_instruction,
+  bool Propagate(ShapeIndexView index, HloInstruction* callee_instruction,
                  const Shape& src_shape,
-                 absl::flat_hash_set<const HloValue*>& visited) const;
+                 absl::flat_hash_set<HloPosition>& visited) const;
 
   std::unique_ptr<HloDataflowAnalysis> dataflow_analysis_;
 };
