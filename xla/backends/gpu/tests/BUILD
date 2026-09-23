@@ -379,7 +379,7 @@ xla_test(
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status:status_matchers",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest_main",  # fixdeps: keep
     ],
 )
 
