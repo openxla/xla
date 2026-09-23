@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/reduce_window_util.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
+#include "xla/service/call_inliner.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -787,6 +788,9 @@ static absl::StatusOr<bool> TryOptimizeAssociativeScan(
   builder.AddInstruction(HloInstruction::CreateGetTupleElement(call, 1));
   HloComputation* rw_to_apply =
       parent->parent()->AddEmbeddedComputation(builder.Build());
+  // The emitter cannot compute indexing maps for the Call opcode. Hence, inline
+  // the created call.
+  ABSL_RETURN_IF_ERROR(CallInliner::Inline(call).status());
 
   HloInstruction* result = nullptr;
   HloInstruction* input = scan->inputs()[0];
