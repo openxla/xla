@@ -32,6 +32,7 @@ class YnnE2eTest : public HloTestBase {
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_CONVOLUTION);
     debug_options.clear_xla_cpu_experimental_ynn_fusion_type();
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };
@@ -61,6 +62,7 @@ class YnnReduceTest : public HloTestBase {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_REDUCE);
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };
@@ -219,6 +221,7 @@ class YnnDotTest : public HloTestBase,
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };
@@ -280,6 +283,7 @@ class YnnReduceEltwiseTest : public HloTestBase {
         DebugOptions::LIBRARY_FUSION_TYPE_REDUCE);
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_ELTWISE);
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };

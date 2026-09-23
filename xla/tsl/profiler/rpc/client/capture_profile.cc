@@ -330,7 +330,7 @@ absl::Status ExportToTensorBoard(const XSpace& xspace,
 
 absl::Status ExportToTensorBoard(absl::string_view logdir,
                                  absl::string_view run,
-                                 std::vector<XSpace>& xspaces) {
+                                 const std::vector<XSpace>& xspaces) {
   if (xspaces.empty()) {
     return absl::OkStatus();
   }
@@ -342,7 +342,7 @@ absl::Status ExportToTensorBoard(absl::string_view logdir,
 }
 
 absl::Status ExportToTensorBoard(absl::string_view logdir,
-                                 std::vector<XSpace>& xspaces) {
+                                 const std::vector<XSpace>& xspaces) {
   return ExportToTensorBoard(logdir, GetCurrentTimeStampAsString(), xspaces);
 }
 
