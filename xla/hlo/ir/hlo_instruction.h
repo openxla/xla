@@ -80,6 +80,7 @@ namespace xla {
 class HloComputation;
 class HloModule;
 class HloInstruction;
+class BackendConfigRawStringCache;
 class BackendConfigWrapper;
 class HloPayloadDeduplicator;
 struct HloProtoOptions {
@@ -89,6 +90,9 @@ struct HloProtoOptions {
   // Configs smaller than this threshold are kept inline.
   int64_t min_backend_config_size = 0;
   HloPayloadDeduplicator* payload_deduplicator = nullptr;
+  // When set, instructions whose backend config protos are equal compute the
+  // raw string once and share it. HloModule::ToProto provides one per call.
+  BackendConfigRawStringCache* backend_config_raw_string_cache = nullptr;
 };
 
 // A small holder that is used to keep some immutable info alongside an

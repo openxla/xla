@@ -4756,6 +4756,11 @@ void HloInstruction::ToProto(HloInstructionProto* proto) const {
 
 void HloInstruction::ToProto(HloInstructionProto* proto,
                              HloProtoOptions options) const {
+  if (options.backend_config_raw_string_cache != nullptr) {
+    // The virtual ToProto below reads the cached raw string, so equal configs
+    // of different instructions are encoded once.
+    backend_config_->EnsureRawString(*options.backend_config_raw_string_cache);
+  }
   ToProto(proto);
   if (options.deduplicate_backend_config && !backend_config_->empty() &&
       backend_config_->GetRawString().size() >=
