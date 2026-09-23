@@ -1720,7 +1720,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/utils:hlo_query",
-        "//xla/service:call_inliner",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
