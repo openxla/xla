@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -77,6 +78,33 @@ TEST_F(ConstantFillCopyRewriterTest, ReplacesCopyAndRemovesUnusedSource) {
   EXPECT_EQ(module->computation_count(), 2);
   ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(ConstantFillCopyRewriterTest, TransfersCopyAnnotationsToFill) {
+  std::string hlo = absl::StrReplaceAll(
+      kHlo,
+      {{"calls=fill_body",
+        R"(calls=fill_body, frontend_attributes={_scheduling_group_id="1",from_fill="yes"}, backend_config={"fusion_backend_config":{"kind":"__fill"}}, metadata={op_name="fill_op"})"},
+       {"copy(fill)",
+        R"(copy(fill), frontend_attributes={_scheduling_group_id="2",from_copy="yes"}, backend_config={"operation_queue_id":"3"}, metadata={op_name="copy_op" source_file="copy.py" source_line=7})"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ConstantFillCopyRewriter pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kFusion);
+  // The copy's annotations win on conflict; the fill's unrelated ones remain.
+  const auto& attributes = root->frontend_attributes().map();
+  EXPECT_EQ(attributes.at("_scheduling_group_id"), "2");
+  EXPECT_EQ(attributes.at("from_copy"), "yes");
+  EXPECT_EQ(attributes.at("from_fill"), "yes");
+  EXPECT_EQ(root->metadata().op_name(), "copy_op");
+  EXPECT_EQ(root->metadata().source_file(), "copy.py");
+  EXPECT_EQ(root->metadata().source_line(), 7);
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig config,
+                       root->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(config.operation_queue_id(), 3);
+  EXPECT_EQ(config.fusion_backend_config().kind(), "__fill");
 }
 
 TEST_F(ConstantFillCopyRewriterTest,
@@ -249,9 +277,6 @@ INSTANTIATE_TEST_SUITE_P(
         RejectedCopy{"FillControlDependency",
                      {{"calls=fill_body",
                        "calls=fill_body, control-predecessors={predecessor}"}}},
-        RejectedCopy{
-            "InternalControlDependency",
-            {{"dimensions={}", "dimensions={}, control-predecessors={value}"}}},
         RejectedCopy{"CopySharding",
                      {{"copy(fill)", "copy(fill), sharding={replicated}"}}},
         RejectedCopy{

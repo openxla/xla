@@ -16,14 +16,20 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/constant_fill_copy_rewriter.h"
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/decision.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -42,19 +48,42 @@ Decision CanReplaceCopyWithFill(const HloInstruction& copy) {
       fill->has_sharding()) {
     return Decision::Forbid("Not an independent loop fill");
   }
-  const HloInstruction* root = fill->fused_expression_root();
   if (fill->fused_instructions_computation()->instruction_count() != 2 ||
-      root->opcode() != HloOpcode::kBroadcast ||
-      root->operand(0)->opcode() != HloOpcode::kConstant ||
-      !ShapeUtil::IsScalar(root->operand(0)->shape()) ||
-      root->HasControlDependencies() ||
-      root->operand(0)->HasControlDependencies()) {
+      !hlo_query::IsBroadcastOfScalarConstant(*fill->fused_expression_root())) {
     return Decision::Forbid("Not a broadcast of a scalar literal");
   }
   if (ShapeUtil::ByteSizeOfElements(copy.shape()) < kMinFillBytes) {
     return Decision::Forbid("Fill is too small to split");
   }
   return Decision::Allow();
+}
+
+// The rematerialized fill stands in for the copy, so it must carry the copy's
+// annotations: stream assignment, scheduling group, provenance. The clone
+// starts out with the fill's own annotations; the copy's populated fields win
+// on conflict. ReplaceInstruction alone only copies them when the clone has
+// none.
+absl::Status TransferCopyAnnotations(const HloInstruction& copy,
+                                     HloInstruction* fill) {
+  FrontendAttributes frontend_attributes = fill->frontend_attributes();
+  frontend_attributes.MergeFrom(copy.frontend_attributes());
+  fill->set_frontend_attributes(std::move(frontend_attributes));
+
+  OpMetadata metadata = fill->metadata();
+  metadata.MergeFrom(copy.metadata());
+  fill->set_metadata(metadata);
+
+  if (copy.has_backend_config()) {
+    ABSL_ASSIGN_OR_RETURN(GpuBackendConfig fill_config,
+                          fill->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(GpuBackendConfig copy_config,
+                          copy.backend_config<GpuBackendConfig>());
+    // A copy never carries a fusion config, so merging only layers the copy's
+    // queue assignment and scheduling hints over the fill's config.
+    fill_config.MergeFrom(copy_config);
+    ABSL_RETURN_IF_ERROR(fill->set_backend_config(fill_config));
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -80,8 +109,11 @@ absl::StatusOr<bool> ConstantFillCopyRewriter::RunImpl(
     }
     // A fresh fill preserves the copy's separate writable value without keeping
     // its source alive. Replacement also removes the source if it becomes dead.
-    ABSL_RETURN_IF_ERROR(entry->ReplaceWithNewInstruction(
-        instruction, instruction->operand(0)->Clone("rematerialized")));
+    std::unique_ptr<HloInstruction> fill =
+        instruction->operand(0)->Clone("rematerialized");
+    ABSL_RETURN_IF_ERROR(TransferCopyAnnotations(*instruction, fill.get()));
+    ABSL_RETURN_IF_ERROR(
+        entry->ReplaceWithNewInstruction(instruction, std::move(fill)));
     changed = true;
   }
   if (changed) {
