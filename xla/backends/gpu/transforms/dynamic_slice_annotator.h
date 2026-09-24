@@ -25,9 +25,8 @@ limitations under the License.
 namespace xla::gpu {
 
 // Annotates dynamic-slice and dynamic-update-slice instructions with a
-// DynamicSliceConfig backend config (offset + stride * iteration). Handles
-// both loop-dependent offsets (linear function of a while loop's induction
-// variable, stride != 0) and fully static offsets (all constants, stride = 0).
+// DynamicSliceConfig backend config. Stores loop-dependent offsets as a linear
+// progression or a table indexed by iteration; static offsets use zero stride.
 class DynamicSliceAnnotator : public HloModulePass {
  public:
   absl::string_view name() const override { return "dynamic-slice-annotator"; }

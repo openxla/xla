@@ -64,8 +64,7 @@ using Offset = DynamicSliceFusion::Offset;
 // Helpers
 //===----------------------------------------------------------------------===//
 
-// Computes the raw byte offset from the annotated DynamicSliceConfig:
-//   byte_offset + loop_iteration[loop_index] * byte_stride
+// Computes the byte offset from the annotated linear progression or table.
 static int64_t ComputeSliceOffset(const DynamicSliceConfig& config,
                                   absl::Span<const WhileLoopState> loop_nest) {
   int64_t iteration = 0;
@@ -73,7 +72,16 @@ static int64_t ComputeSliceOffset(const DynamicSliceConfig& config,
     iteration =
         loop_nest[loop_nest.size() - 1 - config.loop_index()].loop_iteration;
   }
-  return config.byte_offset() + iteration * config.byte_stride();
+
+  if (config.has_table()) {
+    const auto& offsets = config.table().offsets();
+    CHECK_GE(iteration, 0);
+    CHECK_LT(iteration, offsets.size());
+    return offsets.at(iteration);
+  }
+
+  const auto& linear = config.linear();
+  return linear.byte_offset() + iteration * linear.byte_stride();
 }
 
 // Computes the byte offset from actual offset expressions, clamping each
@@ -134,7 +142,7 @@ DynamicSliceFusionV2Thunk::DynamicSliceFusionV2Thunk(
 
 static bool IsLoopDependent(const std::optional<DynamicSliceConfig>& config) {
   return config.has_value() && config->has_loop_index() &&
-         config->byte_stride() != 0;
+         (config->has_table() || config->linear().byte_stride() != 0);
 }
 
 bool DynamicSliceFusionV2Thunk::HasLoopDependentOffsets() const {
@@ -756,6 +764,20 @@ absl::StatusOr<ThunkProto> DynamicSliceFusionV2Thunk::ToProto() const {
   return proto;
 }
 
+static DynamicSliceConfig NormalizeDynamicSliceConfig(
+    DynamicSliceConfig config) {
+  // Older executables stored linear offsets in top-level fields.
+  if (config.offsets_case() == DynamicSliceConfig::OFFSETS_NOT_SET) {
+    auto* linear = config.mutable_linear();
+    linear->set_byte_offset(config.byte_offset());
+    linear->set_byte_stride(config.byte_stride());
+  }
+
+  config.clear_byte_offset();
+  config.clear_byte_stride();
+  return config;
+}
+
 absl::StatusOr<std::unique_ptr<DynamicSliceFusionV2Thunk>>
 DynamicSliceFusionV2Thunk::FromProto(
     ThunkInfo thunk_info, const DynamicSliceFusionThunkProto& proto,
@@ -766,7 +788,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   for (const auto& p : proto.parameters()) {
     std::optional<DynamicSliceConfig> config;
     if (p.has_slice_config()) {
-      config = p.slice_config();
+      config = NormalizeDynamicSliceConfig(p.slice_config());
     }
     ABSL_ASSIGN_OR_RETURN(Shape parameter_shape,
                           Shape::FromProto(p.parameter_shape()));
@@ -793,7 +815,7 @@ DynamicSliceFusionV2Thunk::FromProto(
   for (const auto& r : proto.results()) {
     std::optional<DynamicSliceConfig> update_config;
     if (r.has_update_config()) {
-      update_config = r.update_config();
+      update_config = NormalizeDynamicSliceConfig(r.update_config());
     }
     ABSL_ASSIGN_OR_RETURN(Shape result_shape,
                           Shape::FromProto(r.result_shape()));

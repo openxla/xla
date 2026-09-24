@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -32,16 +33,9 @@ namespace xla::gpu {
 //===-----------------------------------------------------------------------===/
 
 // Fully resolved description of a dynamic-slice or dynamic-update-slice whose
-// offset is either a linear function of a parent while loop's induction
-// variable, or fully static (all-constant offsets).
-//
-// Loop-dependent case (byte_stride != 0):
-//   buffer address at iteration i = base + byte_offset + byte_stride * i
-//   while_loop and loop_index are set.
-//
-// Fully static case (byte_stride == 0):
-//   buffer address = base + byte_offset
-//   while_loop and loop_index are nullopt.
+// offsets are known for every iteration of a parent while loop, or fully
+// static. Prefer a linear progression; otherwise store one byte offset per
+// iteration.
 struct DynamicSliceDescriptor {
   // The while loop whose induction variable drives the slice offset.
   // Nullopt when the offset is fully static (all-constant offsets).
@@ -55,28 +49,38 @@ struct DynamicSliceDescriptor {
   // nesting depths.
   std::optional<int64_t> loop_index;
 
-  // Byte offset into the buffer at iteration 0 (or the static byte offset).
-  int64_t byte_offset;
+  struct Linear {
+    int64_t byte_offset;
+    int64_t byte_stride;
+  };
 
-  // Byte stride per loop iteration. Zero when the offset is fully static.
-  int64_t byte_stride;
+  struct Table {
+    std::vector<int64_t> byte_offsets;
+  };
+
+  // Linear offsets are evaluated as byte_offset + iteration * byte_stride and
+  // clamped to the buffer bounds at run time. Table entries already account for
+  // per-dimension clamping and are indexed by loop iteration (not induction
+  // variable value). Static offsets use Linear with a zero stride.
+  std::variant<Linear, Table> offsets;
+
+  int64_t ByteOffset(int64_t iteration) const {
+    if (const Linear* linear = std::get_if<Linear>(&offsets)) {
+      return linear->byte_offset + iteration * linear->byte_stride;
+    }
+
+    return std::get<Table>(offsets).byte_offsets.at(iteration);
+  }
 };
 
-// Analyzes a dynamic-slice or dynamic-update-slice instruction and resolves its
-// runtime offset into a DynamicSliceDescriptor. Handles two cases:
+// Analyzes a contiguous dynamic-slice or dynamic-update-slice. Constant offsets
+// produce a static descriptor. Offsets depending on a parent while loop's
+// induction variable are evaluated for every iteration using HloEvaluator.
+// A linear representation is preferred whenever runtime buffer clamping makes
+// it equivalent to per-dimension HLO clamping; otherwise a table is returned.
 //
-//  1. Loop-dependent offsets: at least one offset operand depends on a parent
-//     while loop's induction variable. Evaluates the offset expression for all
-//     loop iterations using HloEvaluator, verifies linearity (constant stride),
-//     and returns byte_offset, byte_stride, while_loop, and loop_index.
-//
-//  2. Fully static offsets: all offset operands are compile-time constants.
-//     Computes the byte offset directly and returns byte_stride=0 with
-//     while_loop and loop_index unset.
-//
-// Returns nullopt when the instruction is not a DS/DUS, the slice is not
-// contiguous, an offset depends on runtime data that is not an induction
-// variable, or the offset pattern is not linear.
+// Returns nullopt if the slice is not contiguous, offsets depend on runtime
+// data other than a supported induction variable, or loop metadata is missing.
 absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     const HloInstruction* instr);
 
@@ -131,7 +135,7 @@ absl::StatusOr<DynamicSliceChain> FindDynamicSliceChain(
 // Returns true if all DUS operations in the chain write to non-overlapping byte
 // ranges at every loop iteration. DS reads are not checked — it is valid for a
 // DS and DUS to access the same slice (read before write within an iteration).
-// Returns nullopt if any DUS cannot be analyzed (e.g. non-linear offsets or
+// Returns nullopt if any DUS cannot be analyzed (e.g. data-dependent offsets or
 // missing loop metadata).
 std::optional<bool> IsNonOverlapping(const DynamicSliceChain& chain);
 
