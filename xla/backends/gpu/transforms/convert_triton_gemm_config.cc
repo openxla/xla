@@ -308,6 +308,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
     params.is_warp_specialization_allowed =
         config.is_warp_specialization_allowed;
     params.waves_per_eu = config.waves_per_eu;
+    params.mfma_size = config.mfma_size;
     return params;
   } while (absl::c_next_permutation(parallel_tile_sizes));
 
@@ -429,6 +430,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       params.is_warp_specialization_allowed =
           config.is_warp_specialization_allowed;
       params.waves_per_eu = config.waves_per_eu;
+      params.mfma_size = config.mfma_size;
       return params;
     }
     VLOG(4) << "mapped_dot_tile_sizes: "
