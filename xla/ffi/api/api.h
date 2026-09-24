@@ -2032,6 +2032,7 @@ class DictionaryBase {
   };
 
   size_t size() const { return attrs_->size; }
+  bool empty() const { return size() == 0; }
 
   bool contains(std::string_view name) const { return Find(name).has_value(); }
 

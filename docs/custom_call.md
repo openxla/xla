@@ -447,6 +447,13 @@ auto handler =
     });
 ```
 
+**WARNING:** GPU command buffers can replay recorded or captured work without
+invoking the FFI handler again. Changing custom options does not trigger a
+command buffer update or invalidate the stream-capture cache, so replay may use
+work recorded with earlier option values. Custom calls whose recorded work
+depends on options that change between executions must stay out of GPU command
+buffers until this is supported.
+
 ### User-defined Struct Attributes
 
 XLA FFI can decode dictionary attributes into user-defined structs.
