@@ -32,9 +32,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/shape_inference.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -178,28 +178,6 @@ absl::Status CanonicalizeDot(HloDotInstruction* original_dot) {
                           original_dnums.lhs_contracting_dimensions(),
                           canonical_dnums.mutable_lhs_contracting_dimensions(),
                           /*contracting_dim_as_most_minor=*/true);
-  const auto& canonical_lhs_shape = reshaped_lhs->shape();
-  // Like shape inference, take the batch dimensions of the result from the lhs.
-  std::vector<int64_t> canonical_dot_dims;
-  std::vector<bool> canonical_dot_dynamic_dims;
-  for (int64_t i = 0; i < num_batch_dims; ++i) {
-    canonical_dot_dims.push_back(canonical_lhs_shape.dimensions(i));
-    canonical_dot_dynamic_dims.push_back(
-        canonical_lhs_shape.is_dynamic_dimension(i));
-  }
-  const auto& canonical_lhs_non_contracting_dims =
-      GetNonContractingDims(canonical_lhs_shape.dimensions().size(),
-                            canonical_dnums.lhs_batch_dimensions(),
-                            canonical_dnums.lhs_contracting_dimensions());
-  // At this point of canonicalization, there are 0 or 1 non-contracting dims.
-  if (canonical_lhs_non_contracting_dims.size() == 1) {
-    int64_t lhs_non_contracting_dim = canonical_lhs_non_contracting_dims.at(0);
-    canonical_dot_dims.push_back(
-        canonical_lhs_shape.dimensions(lhs_non_contracting_dim));
-    canonical_dot_dynamic_dims.push_back(
-        canonical_lhs_shape.is_dynamic_dimension(lhs_non_contracting_dim));
-  }
-
   // The canonical form of the rhs is
   // [BatchDims, ContractingsDimsProduct, NonContractingDimsProduct]
   // However, [NonContractingDim, ContractingDim] is considered canonical too.
@@ -210,24 +188,13 @@ absl::Status CanonicalizeDot(HloDotInstruction* original_dot) {
                           canonical_dnums.mutable_rhs_contracting_dimensions(),
                           /*contracting_dim_as_most_minor=*/false);
 
-  const auto& canonical_rhs_shape = reshaped_rhs->shape();
-  const auto& canonical_rhs_non_contracting_dims =
-      GetNonContractingDims(canonical_rhs_shape.dimensions().size(),
-                            canonical_dnums.rhs_batch_dimensions(),
-                            canonical_dnums.rhs_contracting_dimensions());
-  // At this point of canonicalization, there are 0 or 1 non-contracting dims.
-  if (canonical_rhs_non_contracting_dims.size() == 1) {
-    int64_t rhs_non_contracting_dim = canonical_rhs_non_contracting_dims.at(0);
-    canonical_dot_dims.push_back(
-        canonical_rhs_shape.dimensions(rhs_non_contracting_dim));
-    canonical_dot_dynamic_dims.push_back(
-        canonical_rhs_shape.is_dynamic_dimension(rhs_non_contracting_dim));
-  }
-
+  ABSL_ASSIGN_OR_RETURN(
+      Shape canonical_dot_shape,
+      ShapeInference::InferDotOpShape(reshaped_lhs->shape(),
+                                      reshaped_rhs->shape(), canonical_dnums,
+                                      original_dot->shape().element_type()));
   HloInstruction* dot = computation->AddInstruction(HloInstruction::CreateDot(
-      ShapeUtil::MakeShape(original_dot->shape().element_type(),
-                           canonical_dot_dims, canonical_dot_dynamic_dims),
-      reshaped_lhs, reshaped_rhs, canonical_dnums,
+      canonical_dot_shape, reshaped_lhs, reshaped_rhs, canonical_dnums,
       original_dot->precision_config()));
   original_dot->SetupDerivedInstruction(dot);
 
