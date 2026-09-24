@@ -62,6 +62,13 @@ limitations under the License.
 
 namespace xla {
 
+// Sorted unique incarnations of the source and destination tasks. An empty
+// snapshot returns an empty vector. A non-empty snapshot that is missing a
+// participating task returns FailedPrecondition.
+absl::StatusOr<std::vector<IncarnationId>> SortedTransferIncarnations(
+    int src_process_index, int dst_process_index,
+    const absl::flat_hash_map<int, IncarnationId>& incarnations);
+
 // A common base class for Pjrt clients based on raw buffers.
 class CommonPjRtClient : public PjRtClient {
  public:
@@ -447,13 +454,15 @@ class CommonPjRtClient : public PjRtClient {
   absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
       absl::Span<PjRtBuffer* const> buffers,
       absl::Span<const GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<int, IncarnationId> incarnations = {}) override;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   CrossHostReceiveBuffers(
       xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
       absl::Span<const GlobalDeviceId> src_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<int, IncarnationId> incarnations = {}) override;
 
   using CrossHostTransferSpec = PjRtRawClient::CrossHostTransferSpec;
 

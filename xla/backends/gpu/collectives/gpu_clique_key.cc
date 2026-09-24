@@ -148,4 +148,14 @@ bool operator>(const GpuCliqueKey& a, const GpuCliqueKey& b) {
   return CmpKey(a) > CmpKey(b);
 }
 
+GpuCliqueKey CrossHostTransferCliqueKey(
+    GlobalDeviceId src, GlobalDeviceId dst,
+    absl::Span<const IncarnationId> incarnations) {
+  return GpuCliqueKey(
+      /*devices=*/{src, dst},
+      /*num_local_participants=*/1,
+      /*communication_id=*/CommunicationId(0),
+      std::vector<IncarnationId>(incarnations.begin(), incarnations.end()));
+}
+
 }  // namespace xla::gpu

@@ -268,6 +268,9 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
     send_args.transfer_keys = transfer_keys.data();
     std::vector<PJRT_Event*> temp_events(raw_buffers.size());
     send_args.send_events = temp_events.data();
+    send_args.num_tasks = 0;
+    send_args.task_ids = nullptr;
+    send_args.incarnation_ids = nullptr;
     cross_host_transfers_extension
         ->PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(&send_args);
 
@@ -330,6 +333,9 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
     recv_args.transfer_keys = transfer_keys.data();
     std::vector<PJRT_Buffer*> temp_buffers(shapes.size());
     recv_args.buffers = temp_buffers.data();
+    recv_args.num_tasks = 0;
+    recv_args.task_ids = nullptr;
+    recv_args.incarnation_ids = nullptr;
     cross_host_transfers_extension
         ->PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(&recv_args);
 

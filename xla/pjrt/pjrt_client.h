@@ -1078,10 +1078,14 @@ class PjRtClient {
   // cross-host transfers API.
 
   // Send buffers to remote devices specified by dst_global_device_ids.
+  // `incarnations` is the last GetAliveTasks snapshot, keyed by task id. An
+  // empty map keeps the historical clique key. The cross-host transfers
+  // extension carries the same snapshot as task id and incarnation arrays.
   virtual absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
       absl::Span<PjRtBuffer* const> buffers,
       absl::Span<const GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) {
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<int, IncarnationId> /*incarnations*/ = {}) {
     return absl::UnimplementedError(
         "Cross-host data transfers are not supported by this client.");
   }
@@ -1091,7 +1095,8 @@ class PjRtClient {
   CrossHostReceiveBuffers(
       xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
       absl::Span<const GlobalDeviceId> src_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) {
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<int, IncarnationId> /*incarnations*/ = {}) {
     return absl::UnimplementedError(
         "Cross-host data transfers are not supported.");
   }
