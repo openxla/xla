@@ -101,10 +101,10 @@ AttributesStorage::AttributesStorage(std::unique_ptr<Attributes> attributes)
 
 AttributesStorage::~AttributesStorage() = default;
 
-std::shared_ptr<const AttributesStorage> AttributesStorage::Create(
+std::unique_ptr<const AttributesStorage> AttributesStorage::Create(
     const AttributesMap& attrs) {
-  // Not `std::make_shared`: the constructor is private.
-  return std::shared_ptr<const AttributesStorage>(
+  // Not `std::make_unique`: the constructor is private.
+  return std::unique_ptr<const AttributesStorage>(
       new AttributesStorage(CreateAttrs(attrs)));
 }
 
@@ -247,7 +247,7 @@ std::unique_ptr<AttributesStorage::Attributes> AttributesStorage::CreateAttrs(
   return FixUpAttrs(std::move(attrs));
 }
 
-std::shared_ptr<const AttributesStorage> AttributesStorage::Create(
+std::unique_ptr<const AttributesStorage> AttributesStorage::Create(
     const xla::CustomOptions& options) {
   auto attrs = std::make_unique<Attributes>();
   attrs->attributes.reserve(options.size());
@@ -255,7 +255,7 @@ std::shared_ptr<const AttributesStorage> AttributesStorage::Create(
     NamedAttribute attr = {String{name}, std::visit(ConvertOption(), value)};
     attrs->attributes.push_back(std::move(attr));
   }
-  return std::shared_ptr<const AttributesStorage>(
+  return std::unique_ptr<const AttributesStorage>(
       new AttributesStorage(FixUpAttrs(std::move(attrs))));
 }
 

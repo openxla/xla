@@ -42,18 +42,16 @@ namespace xla::ffi {
 // defined decodings registered with `XLA_FFI_REGISTER_ENUM_ATTR_DECODING` and
 // `XLA_FFI_REGISTER_STRUCT_ATTR_DECODING`) work.
 //
-// Storage is immutable and shared: `Create` hands out a `std::shared_ptr` that
-// can be held by any number of call frames (see `CallFrame::Copy`) and
-// `ffi::Attributes` views. Static attributes can be shared across executions,
-// while custom options are encoded for each invocation.
+// Custom options use the same C API format as attributes and represent per-call
+// values and passed to FFI handlers as XLA_FFI_Attrs.
 class AttributesStorage {
  public:
   // Builds the C API storage for `attrs`.
-  static std::shared_ptr<const AttributesStorage> Create(
+  static std::unique_ptr<const AttributesStorage> Create(
       const AttributesMap& attrs);
 
-  // Builds the same C API representation for per-execution custom options.
-  static std::shared_ptr<const AttributesStorage> Create(
+  // Builds the same C API representation for per-call custom options.
+  static std::unique_ptr<const AttributesStorage> Create(
       const xla::CustomOptions& options);
 
   ~AttributesStorage();

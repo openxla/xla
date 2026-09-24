@@ -214,7 +214,7 @@ TEST(CustomCallThunkTest, CustomCallWithOwnedHandlers) {
   bundle.instantiate = ffi::Ffi::Bind<ffi::ExecutionStage::kInstantiate>()
                            .Ctx<ffi::CustomOptions>()
                            .To([&](ffi::Dictionary options) {
-                             EXPECT_EQ(options.size(), 0);
+                             EXPECT_TRUE(options.empty());
                              ++instantiate_calls;
                              return absl::OkStatus();
                            });
