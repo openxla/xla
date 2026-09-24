@@ -84,8 +84,8 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDsInWhileLoop) {
   auto config = GetDynamicSliceConfig(slice);
   ASSERT_TRUE(config.has_value());
   EXPECT_EQ(config->loop_index(), 0);
-  EXPECT_EQ(config->byte_offset(), 0);
-  EXPECT_EQ(config->byte_stride(), 256);
+  EXPECT_EQ(config->linear().byte_offset(), 0);
+  EXPECT_EQ(config->linear().byte_stride(), 256);
 }
 
 TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInWhileLoop) {
@@ -130,8 +130,56 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInWhileLoop) {
   auto config = GetDynamicSliceConfig(updated);
   ASSERT_TRUE(config.has_value());
   EXPECT_EQ(config->loop_index(), 0);
-  EXPECT_EQ(config->byte_offset(), 32);
-  EXPECT_EQ(config->byte_stride(), 256);
+  EXPECT_EQ(config->linear().byte_offset(), 32);
+  EXPECT_EQ(config->linear().byte_stride(), 256);
+}
+
+TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusOffsetTable) {
+  constexpr absl::string_view kHlo = R"(
+    body {
+      p0 = (s32[], s32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      input = s32[4,8,8] get-tuple-element(p0), index=1
+      val = s32[1,1,8] constant({{{1,2,3,4,5,6,7,8}}})
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      updated = s32[4,8,8] dynamic-update-slice(input, val, ivar, c1, c0)
+      next_ivar = s32[] add(ivar, c1)
+      ROOT result = (s32[], s32[4,8,8]) tuple(next_ivar, updated)
+    }
+
+    condition {
+      p0 = (s32[], s32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c4 = s32[] constant(6)
+      ROOT cmp = pred[] compare(ivar, c4), direction=LT
+    }
+
+    ENTRY main {
+      input = s32[4,8,8] parameter(0)
+      c0 = s32[] constant(0)
+      tuple = (s32[], s32[4,8,8]) tuple(c0, input)
+      ROOT while = (s32[], s32[4,8,8]) while(tuple),
+          condition=condition, body=body,
+          backend_config={"known_trip_count":{"n":"6"},
+                          "known_init_step":{"init":"0","step":"1"},
+                          "known_induction_variable":{"tuple_index":"0"}}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  auto* updated =
+      module->GetComputationWithName("body")->GetInstructionWithName("updated");
+  auto config = GetDynamicSliceConfig(updated);
+  ASSERT_TRUE(config.has_value());
+  EXPECT_EQ(config->loop_index(), 0);
+  EXPECT_TRUE(config->has_table());
+  EXPECT_FALSE(config->has_linear());
+  EXPECT_THAT(config->table().offsets(),
+              ::testing::ElementsAre(32, 288, 544, 800, 800, 800));
 }
 
 TEST_F(DynamicSliceAnnotatorTest, AnnotatesConstantOffsetOutsideWhileLoop) {
@@ -153,8 +201,8 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesConstantOffsetOutsideWhileLoop) {
   auto config = GetDynamicSliceConfig(slice);
   ASSERT_TRUE(config.has_value());
   EXPECT_FALSE(config->has_loop_index());
-  EXPECT_EQ(config->byte_offset(), 32);
-  EXPECT_EQ(config->byte_stride(), 0);
+  EXPECT_EQ(config->linear().byte_offset(), 32);
+  EXPECT_EQ(config->linear().byte_stride(), 0);
 }
 
 TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInAsyncComputation) {
@@ -208,8 +256,8 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInAsyncComputation) {
   auto config = GetDynamicSliceConfig(dus);
   ASSERT_TRUE(config.has_value());
   EXPECT_EQ(config->loop_index(), 0);
-  EXPECT_EQ(config->byte_offset(), 0);
-  EXPECT_EQ(config->byte_stride(), 4);
+  EXPECT_EQ(config->linear().byte_offset(), 0);
+  EXPECT_EQ(config->linear().byte_stride(), 4);
 }
 
 TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInNestedCalls) {
@@ -270,8 +318,8 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInNestedCalls) {
   auto config = GetDynamicSliceConfig(dus);
   ASSERT_TRUE(config.has_value());
   EXPECT_EQ(config->loop_index(), 0);
-  EXPECT_EQ(config->byte_offset(), 0);
-  EXPECT_EQ(config->byte_stride(), 4);
+  EXPECT_EQ(config->linear().byte_offset(), 0);
+  EXPECT_EQ(config->linear().byte_stride(), 4);
 }
 
 TEST_F(DynamicSliceAnnotatorTest,
@@ -328,8 +376,8 @@ TEST_F(DynamicSliceAnnotatorTest,
   auto config = GetDynamicSliceConfig(slice);
   ASSERT_TRUE(config.has_value());
   EXPECT_EQ(config->loop_index(), 0);
-  EXPECT_EQ(config->byte_offset(), 3 * 256);
-  EXPECT_EQ(config->byte_stride(), -256);
+  EXPECT_EQ(config->linear().byte_offset(), 3 * 256);
+  EXPECT_EQ(config->linear().byte_stride(), -256);
 }
 
 }  // namespace

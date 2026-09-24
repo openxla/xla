@@ -483,7 +483,10 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
       }
       byte_offset += ClampDimensionOffset(instr, i, *value) * (*strides)[i];
     }
-    return DynamicSliceDescriptor{std::nullopt, std::nullopt, byte_offset, 0};
+
+    return DynamicSliceDescriptor{
+        std::nullopt, std::nullopt,
+        DynamicSliceDescriptor::Linear{byte_offset, 0}};
   }
 
   // Step 5: All resolved offsets must be consistent — same while loop, same
@@ -542,14 +545,7 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
             << ", clamped_byte_offset=" << offsets[iter].clamped;
   }
 
-  // Step 9: Verify linearity of the affine progression and ensure that the
-  // runtime 1D buffer clamping performed by DynamicSliceFusionV2Thunk matches
-  // the per-dimension clamped HLO byte offset on every iteration. First check
-  // whether the per-dimension clamped offsets already form a linear progression
-  // (which covers all in-bounds slices as well as slices whose inner-dimension
-  // offsets clamp to a constant across all iterations). Otherwise, check
-  // whether the unclamped offsets form a linear progression whose 1D buffer
-  // clamping matches the per-dimension clamped offset on every iteration.
+  // Step 9: Use a compact linear representation whenever possible.
   const Shape& slice_shape = (instr->opcode() == HloOpcode::kDynamicSlice)
                                  ? instr->shape()
                                  : instr->operand(1)->shape();
@@ -570,35 +566,37 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     return stride;
   };
 
-  int64_t byte_offset = 0;
-  int64_t byte_stride = 0;
+  // Prefer a linear progression of the per-dimension clamped offsets.
   if (auto stride = get_linear_stride(
           [](const EvaluatedByteOffsets& o) { return o.clamped; })) {
-    byte_offset = offsets[0].clamped;
-    byte_stride = *stride;
-  } else if (auto stride = get_linear_stride(
-                 [](const EvaluatedByteOffsets& o) { return o.unclamped; });
-             stride.has_value() &&
-             absl::c_all_of(offsets, [&](const EvaluatedByteOffsets& o) {
-               return std::clamp<int64_t>(o.unclamped, 0, max_buffer_offset) ==
-                      o.clamped;
-             })) {
-    byte_offset = offsets[0].unclamped;
-    byte_stride = *stride;
-  } else {
-    VLOG(3) << instr->name()
-            << ": neither unclamped nor clamped offsets form a valid linear "
-               "progression over "
-            << trip_count << " iterations";
-    return std::nullopt;
+    return DynamicSliceDescriptor{
+        while_loop, front.loop_index,
+        DynamicSliceDescriptor::Linear{offsets[0].clamped, *stride}};
   }
 
-  VLOG(2) << instr->name() << ": linear pattern confirmed over " << trip_count
-          << " iterations: offset=" << byte_offset
-          << ", stride=" << byte_stride;
+  // Otherwise, use the unclamped progression if runtime buffer clamping
+  // reproduces the per-dimension clamped offsets on every iteration.
+  if (auto stride = get_linear_stride(
+          [](const EvaluatedByteOffsets& o) { return o.unclamped; });
+      stride.has_value() &&
+      absl::c_all_of(offsets, [&](const EvaluatedByteOffsets& o) {
+        return std::clamp<int64_t>(o.unclamped, 0, max_buffer_offset) ==
+               o.clamped;
+      })) {
+    return DynamicSliceDescriptor{
+        while_loop, front.loop_index,
+        DynamicSliceDescriptor::Linear{offsets[0].unclamped, *stride}};
+  }
 
-  return DynamicSliceDescriptor{while_loop, front.loop_index, byte_offset,
-                                byte_stride};
+  std::vector<int64_t> byte_offsets;
+  byte_offsets.reserve(trip_count);
+  for (const auto& offset : offsets) {
+    byte_offsets.push_back(offset.clamped);
+  }
+
+  return DynamicSliceDescriptor{
+      while_loop, front.loop_index,
+      DynamicSliceDescriptor::Table{std::move(byte_offsets)}};
 }
 
 //===-----------------------------------------------------------------------===/
@@ -709,7 +707,7 @@ std::optional<bool> IsNonOverlapping(const DynamicSliceChain& chain) {
       return std::nullopt;
     }
     int64_t slice_byte_size = ShapeUtil::ByteSizeOf(instr->operand(1)->shape());
-    return std::make_pair(**result, slice_byte_size);
+    return std::make_pair(std::move(**result), slice_byte_size);
   };
 
   // Only check DUS-vs-DUS overlap. DS reads and DUS writes to the same slice
@@ -752,8 +750,8 @@ std::optional<bool> IsNonOverlapping(const DynamicSliceChain& chain) {
     ranges.reserve(dus_descriptors.size());
     for (const auto& [desc, byte_size] : dus_descriptors) {
       int64_t max_offset = std::max<int64_t>(0, buffer_byte_size - byte_size);
-      int64_t offset = std::clamp<int64_t>(
-          desc.byte_offset + desc.byte_stride * iter, 0, max_offset);
+      int64_t offset =
+          std::clamp<int64_t>(desc.ByteOffset(iter), 0, max_offset);
       ranges.push_back({offset, byte_size});
     }
 
