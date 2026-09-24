@@ -232,10 +232,6 @@ bool ShouldKeepSharding(const HloInstruction* hlo,
       DynCast<HloSendRecvInstruction>(hlo) != nullptr) {
     return true;
   }
-  if (hlo->opcode() == HloOpcode::kParameter &&
-      hlo->parent() == hlo->GetModule()->entry_computation()) {
-    return true;
-  }
   if (keep_valid_shardings && hlo->has_sharding()) {
     // SPMD partitioner can generate invalid shardings since sharding is
     // meaningless after this pass. We only keep valid shardings to avoid
@@ -253,13 +249,6 @@ absl::Status ClearShardingAttributes(
   auto has_unreduced_axes = [](const HloInstruction* hlo) -> bool {
     return hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
   };
-  for (int64_t i = 0; i < module->entry_computation()->num_parameters(); ++i) {
-    // Recover the unreduced sharding for parameters.
-    auto param = module->entry_computation()->parameter_instruction(i);
-    if (has_unreduced_axes(param)) {
-      param->set_sharding(module->spmd_parameters_shardings()[i]);
-    }
-  }
   const bool keep_shardings_after_spmd =
       module->config().debug_options().xla_keep_shardings_after_spmd();
   for (HloComputation* computation : module->computations(execution_threads)) {
@@ -7415,13 +7404,6 @@ absl::StatusOr<bool> SpmdPartitioner::RunImpl(
   ABSL_RETURN_IF_ERROR(ClearShardingAttributes(
       module, num_replicas() * num_partitions(), execution_threads));
 
-  auto entry_root = module->entry_computation()->root_instruction();
-  if (entry_root->has_sharding()) {
-    HloSharding final_sharding =
-        ResolveReductionOpForSharding(entry_root, entry_root->sharding());
-    entry_root->set_sharding(std::move(final_sharding));
-  }
-
   if (changed) {
     HloPassPipeline pass("spmd-cleanup");
     pass.AddPass<HloDCE>(/*remove_cross_partition_collective_ops=*/true);
@@ -7430,7 +7412,6 @@ absl::StatusOr<bool> SpmdPartitioner::RunImpl(
     pass.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     ABSL_RETURN_IF_ERROR(pass.Run(module, execution_threads).status());
   }
-
   return changed;
 }
 
