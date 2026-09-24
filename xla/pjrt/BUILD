@@ -937,9 +937,11 @@ xla_cc_test(
 
 cc_library(
     name = "transpose_kernels",
+    srcs = ["transpose_kernels.cc"],
     hdrs = ["transpose_kernels.h"],
     deps = [
-        "//xla:compiler_macros",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
         "@highway//:hwy",
     ],
 )
@@ -1012,6 +1014,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
+        "@highway//:hwy",
     ],
 )
 
