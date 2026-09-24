@@ -95,6 +95,35 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "hlo_reachability_from_sources",
+    srcs = ["hlo_reachability_from_sources.cc"],
+    hdrs = ["hlo_reachability_from_sources.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_reachability_from_sources_test",
+    srcs = ["hlo_reachability_from_sources_test.cc"],
+    deps = [
+        ":hlo_reachability",
+        ":hlo_reachability_from_sources",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "hlo_ordering",
     srcs = ["hlo_ordering.cc"],
     hdrs = ["hlo_ordering.h"],
