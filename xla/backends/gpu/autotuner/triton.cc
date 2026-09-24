@@ -217,6 +217,15 @@ TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
 
   const bool exhaustive_search =
       debug_options().xla_gpu_exhaustive_tiling_search();
+
+  // WMMA ignores mfma_size. It showed no gains on MI350, so only the exhaustive
+  // search tries it there.
+  const bool autotune_mfma_size =
+      gpu_cc.IsRocm() &&
+      gpu_cc.rocm_compute_capability()->has_mfma_instr_support() &&
+      (exhaustive_search || !gpu_cc.rocm_compute_capability()->gfx9_mi350());
+  constexpr int kSmallMfmaSize = 16;
+  constexpr int kLargeMfmaSize = 32;
   for (int block_m = 128; block_m <= 256; block_m *= 2) {
     for (int block_n = 16; block_n <= 256; block_n *= 2) {
       for (int block_k = 128; block_k <= 256; block_k *= 2) {
@@ -230,12 +239,20 @@ TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
           continue;
         }
 
-        configs.push_back(TritonGemmConfig(block_m, block_n,
-                                           /*block_k=*/block_k,
-                                           /*num_stages=*/1,
-                                           /*num_warps=*/4,
-                                           /*num_ctas=*/1,
-                                           /*is_tma_allowed=*/false));
+        TritonGemmConfig config(block_m, block_n,
+                                /*block_k=*/block_k,
+                                /*num_stages=*/1,
+                                /*num_warps=*/4,
+                                /*num_ctas=*/1,
+                                /*is_tma_allowed=*/false);
+        configs.push_back(config);
+
+        // Below kLargeMfmaSize the backend already defaults to kSmallMfmaSize.
+        if (autotune_mfma_size && block_m >= kLargeMfmaSize &&
+            block_n >= kLargeMfmaSize) {
+          config.mfma_size = kSmallMfmaSize;
+          configs.push_back(config);
+        }
       }
     }
   }

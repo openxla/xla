@@ -392,6 +392,33 @@ TEST(TritonGemmConfigTest, ToStringIncludesWavesPerEu) {
   EXPECT_NE(str.find("waves_per_eu:4"), std::string::npos);
 }
 
+TEST(TritonGemmConfigTest, ProtoRoundTripPreservesMfmaSize) {
+  TritonGemmConfig config(/*block_m=*/64, /*block_n=*/128, /*block_k=*/32,
+                          /*num_stages=*/2, /*num_warps=*/4,
+                          /*num_ctas=*/1, /*is_tma_allowed=*/false,
+                          /*is_warp_specialization_allowed=*/false,
+                          /*waves_per_eu=*/0, /*group_size=*/1,
+                          /*mfma_size=*/16);
+
+  AutotuneResult::TritonGemmKey key = config.ToProto();
+  EXPECT_EQ(key.mfma_size(), 16);
+
+  TF_ASSERT_OK_AND_ASSIGN(TritonGemmConfig restored,
+                          TritonGemmConfig::FromProto(key));
+  EXPECT_EQ(restored.mfma_size, 16);
+}
+
+TEST(TritonGemmConfigTest, ToStringIncludesMfmaSize) {
+  TritonGemmConfig config(/*block_m=*/64, /*block_n=*/128, /*block_k=*/32,
+                          /*num_stages=*/2, /*num_warps=*/4,
+                          /*num_ctas=*/1, /*is_tma_allowed=*/false,
+                          /*is_warp_specialization_allowed=*/false,
+                          /*waves_per_eu=*/0, /*group_size=*/1,
+                          /*mfma_size=*/16);
+  std::string str = config.ToString();
+  EXPECT_NE(str.find("mfma_size:16"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

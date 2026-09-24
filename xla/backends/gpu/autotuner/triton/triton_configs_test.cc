@@ -38,8 +38,9 @@ TEST(TritonConfigsTest, PlatformsReturnNonEmptyConfig) {
               SizeIs(2));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kHopper),
               SizeIs(25));
+  // 33 tuned configs + 26 mfma_size=16 variants.
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kMI300),
-              SizeIs(33));
+              SizeIs(59));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kMI350),
               SizeIs(58));
 }
