@@ -243,7 +243,8 @@ absl::Status WindowRequestImpl(const XLA_FFI_Collectives_Extension* self,
   if (state == nullptr || state->collective_params == nullptr) {
     return InvalidArgument("Collective params are not available");
   }
-  if (state->collective_memory_requests == nullptr) {
+  if (state->collective_memory_requests == nullptr ||
+      state->collective_clique_requests == nullptr) {
     return FailedPrecondition(
         "GPU collective memory window request is only available during the "
         "prepare stage");
@@ -259,9 +260,21 @@ absl::Status WindowRequestImpl(const XLA_FFI_Collectives_Extension* self,
       GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
                    args->communication_id));
 
+  const std::vector<GpuCliqueKey> requested_cliques =
+      state->collective_clique_requests->RequestedCliques();
+  if (absl::c_find(requested_cliques, clique_key) == requested_cliques.end()) {
+    return FailedPrecondition(
+        "GPU collective memory window request for clique %s requires the "
+        "clique to be requested first via request_communicator",
+        clique_key.ToString());
+  }
+
   std::vector<se::DeviceAddressBase> addrs;
   addrs.reserve(args->num_regions);
   for (size_t i = 0; i < args->num_regions; ++i) {
+    if (args->regions[i].buffer == nullptr) {
+      return InvalidArgument("regions[%d].buffer must not be null", i);
+    }
     addrs.emplace_back(const_cast<void*>(args->regions[i].buffer),
                        args->regions[i].byte_size);
   }
@@ -297,6 +310,10 @@ absl::Status WindowGetImpl(const XLA_FFI_Collectives_Extension* self,
       GpuCliqueKey clique_key,
       GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
                    args->communication_id));
+
+  if (args->buffer == nullptr) {
+    return InvalidArgument("buffer must not be null");
+  }
 
   se::DeviceAddressBase addr(const_cast<void*>(args->buffer), 0);
   auto [sym_mem, offset] =

@@ -29,7 +29,8 @@ namespace xla::gpu {
 // callbacks via `XLA_FFI_Collectives_Extension::state`. Pointers are non-owning
 // and only valid for the stage they belong to:
 //   * `collective_clique_requests` / `collective_memory_requests` — Prepare.
-//   * `collective_cliques` / `collective_memory` — Initialize / Execute.
+//   * `collective_cliques` / `collective_memory` — Initialize / Execute /
+//   Record.
 struct GpuCollectivesState {
   const CollectiveParams* collective_params = nullptr;
   CollectiveCliqueRequests* collective_clique_requests = nullptr;

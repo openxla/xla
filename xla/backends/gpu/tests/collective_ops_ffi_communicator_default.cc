@@ -13,9 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/ffi/api/collectives_c_api.h"
 
 namespace stream_executor {
@@ -31,10 +33,9 @@ absl::Status CommunicatorAllReduceU32(stream_executor::Stream*,
       "Communicator all-reduce is not implemented for this platform");
 }
 
-absl::Status WindowPeerAllReduceU32(stream_executor::Stream*, XLA_FFI_Window*,
-                                    size_t, void*, int64_t) {
+absl::StatusOr<void*> GetWindowPeerDevicePointer(XLA_FFI_Window*, size_t, int) {
   return absl::UnimplementedError(
-      "Window peer all-reduce is not implemented for this platform");
+      "GetWindowPeerDevicePointer is not implemented for this platform");
 }
 
 }  // namespace xla::gpu
