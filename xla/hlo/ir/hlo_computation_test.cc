@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -180,6 +181,29 @@ ENTRY entry {
   // Verify that MakeInstructionPostOrder() is idempotent.
   auto post_order_2 = module->entry_computation()->MakeInstructionPostOrder();
   EXPECT_EQ(post_order, post_order_2);
+}
+
+TEST_F(HLOComputationTest, ForEachInstructionPostOrderFastPath) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[100] parameter(0)
+  p1 = f32[100] parameter(1)
+  add0 = f32[100] add(p0, p1)
+  mul0 = f32[100] multiply(p0, add0)
+  ROOT div0 = f32[100] divide(p1, mul0)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  std::vector<HloInstruction*> visited;
+  module->entry_computation()->ForEachInstructionPostOrder(
+      [&visited](HloInstruction* inst) { visited.push_back(inst); });
+
+  EXPECT_EQ(visited.size(), 5);
+  EXPECT_EQ(visited.back()->name(), "div0");
 }
 
 // Test AddCallee
