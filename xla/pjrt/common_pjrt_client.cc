@@ -1320,7 +1320,8 @@ CommonPjRtClient::CreateViewOfDeviceBuffer(
     }
     ABSL_ASSIGN_OR_RETURN(
         PjRtDeviceEventRef stream_event,
-        raw_client()->CreateDeviceEventForStream(memory_space, *stream));
+        raw_client()->CreateDeviceEventForStream(
+            memory_space->devices()[0]->local_device_id(), *stream));
     definition_events.emplace_back(std::move(stream_event));
   }
 
@@ -2470,6 +2471,9 @@ CommonPjRtLoadedExecutable::LookupDeviceAndAssignment(
   }
   CHECK_EQ(device->process_index(), client()->process_index());
   result.device = device;
+  result.local_device_id = device->local_device_id();
+  result.global_device_id = device->global_device_id();
+  result.process_index = device->process_index();
   result.replica = replica;
   result.partition = partition;
   return result;
@@ -2482,11 +2486,11 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
     size_t host_callback_idx, PjRtDevice* device, int attempt) const {
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::ExecutePrepare");
   ABSL_ASSIGN_OR_RETURN(
-      auto device_and_assign,
+      DeviceAndAssignment device_and_assign,
       LookupDeviceAndAssignment(options, replica, partition, device));
+  device = device_and_assign.device;
   // Fill in device to launch_args so it will be present even if ExecutePrepare
   // fails with OOM.
-  device = device_and_assign.device;
   launch_args.device = device;
 
   // Execute takes `extra_deps` and waits for those to be
