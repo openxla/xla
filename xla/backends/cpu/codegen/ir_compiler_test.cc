@@ -44,8 +44,10 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
+#include "xla/backends/cpu/codegen/object_buffer_identifier.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/cpu/backend_config.pb.h"
@@ -94,7 +96,8 @@ constexpr absl::string_view kUnoptimizedIr = R"(
 
 // Parses the LLVM IR into a ThreadSafeModule.
 static absl::StatusOr<std::unique_ptr<llvm::Module>> ParseModule(
-    llvm::LLVMContext& context, absl::string_view ir, absl::string_view name) {
+    llvm::LLVMContext& context, absl::string_view ir, absl::string_view name,
+    absl::string_view memory_region_name = "ir_compiler_test") {
   llvm::SMDiagnostic diagnostic;
   llvm::MemoryBufferRef ir_buffer(ir, name);
 
@@ -104,7 +107,7 @@ static absl::StatusOr<std::unique_ptr<llvm::Module>> ParseModule(
                     diagnostic.getMessage().str());
   }
 
-  SetModuleMemoryRegionName(*m, "ir_compiler_test");
+  SetModuleMemoryRegionName(*m, memory_region_name);
 
   return m;
 }
@@ -284,6 +287,19 @@ TEST(IrCompilerTest, TargetMachineOptionsAreCorrectlySet) {
             "+foo-feature,-bar-feature");
 }
 
+TEST(IrCompilerTest, InferTargetMachineWithEmptyTriple) {
+  ASSERT_OK_AND_ASSIGN(
+      TargetMachineOptions target_machine_options,
+      TargetMachineOptions::FromProto(TargetMachineOptionsProto()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<llvm::TargetMachine> target_machine,
+      IrCompiler::InferTargetMachine(llvm::TargetOptions(),
+                                     llvm::CodeGenOptLevel::Default,
+                                     target_machine_options));
+  EXPECT_EQ(target_machine->getTargetTriple().getTriple(),
+            llvm::sys::getProcessTriple());
+}
+
 TEST(IrCompilerTest, EmitIntrinsicCall) {
   constexpr absl::string_view kModuleName = "test_module";
   constexpr absl::string_view kMemcpyCall = R"(
@@ -435,6 +451,45 @@ INSTANTIATE_TEST_SUITE_P(IrCompilerParameterizedTestInstantiation,
                          IrCompilerParameterizedTest,
                          ::testing::Values("x86_64-grtev4-linux-gnu",
                                            "aarch64-unknown-linux-gnu"));
+
+TEST(IrCompilerTest, EmitsBufferIdentifierWithCoarseAndUniqueNames) {
+  auto context = std::make_unique<llvm::LLVMContext>();
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create(llvm::TargetOptions(), IrCompiler::Options(),
+                         IrCompiler::CompilationHooks());
+
+  ASSERT_OK_AND_ASSIGN(auto ir_module, ParseModule(*context, kUnoptimizedIr,
+                                                   "unique_kernel_module_name",
+                                                   "coarse_emitter_fusion"));
+
+  ASSERT_OK_AND_ASSIGN(auto target_machine,
+                       ir_compiler->build_target_machine());
+
+  ir_module->setDataLayout(target_machine->createDataLayout());
+  ir_module->setTargetTriple(target_machine->getTargetTriple());
+
+  auto memory_buffer = cantFail((*ir_compiler)(*ir_module));
+  ASSERT_NE(memory_buffer, nullptr);
+
+  absl::string_view buffer_identifier = memory_buffer->getBufferIdentifier();
+  EXPECT_EQ(ExtractMemoryRegionName(buffer_identifier),
+            "coarse_emitter_fusion");
+  EXPECT_EQ(ExtractModuleIdentifier(buffer_identifier),
+            "unique_kernel_module_name");
+}
+
+TEST(ObjectBufferIdentifierTest, EncodeAndExtract) {
+  std::string encoded =
+      EncodeBufferIdentifier("my_region", "unique_module_123");
+  EXPECT_EQ(ExtractMemoryRegionName(encoded), "my_region");
+  EXPECT_EQ(ExtractModuleIdentifier(encoded), "unique_module_123");
+
+  // Backward compatibility with raw / un-delimited identifiers.
+  EXPECT_EQ(ExtractMemoryRegionName("legacy_region"), "legacy_region");
+  EXPECT_EQ(ExtractModuleIdentifier("legacy_region"), "legacy_region");
+  EXPECT_EQ(ExtractMemoryRegionName(""), "");
+  EXPECT_EQ(ExtractModuleIdentifier(""), "");
+}
 
 }  // namespace
 
