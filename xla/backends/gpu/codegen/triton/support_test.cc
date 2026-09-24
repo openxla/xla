@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/support.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <iterator>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -37,10 +38,12 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/gpu/codegen/triton/support_test_base.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/codegen/triton/triton_wrapper_result.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -48,7 +51,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -57,7 +59,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -65,6 +66,7 @@ namespace {
 
 using ::testing::HasSubstr;
 using ::testing::Not;
+using ::xla::xtile::BlockLevelParameters;
 
 // Returns true if the given `opcode` supports the given `type` with respect to
 // HLO semantics. This is completely independent of the what Triton supports or
@@ -1714,6 +1716,7 @@ constexpr std::array kTestedOpsCollectives = {
     HloOpcode::kCollectivePermute,
     HloOpcode::kCollectivePermuteDone,
     HloOpcode::kCollectivePermuteStart,
+    HloOpcode::kCollectiveReduce,
     HloOpcode::kPartitionId,
     HloOpcode::kRaggedAllToAll,
     HloOpcode::kReduceScatter,
@@ -2625,6 +2628,27 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::ValuesIn(AllOpSupportedTypes(HloOpcode::kScaledDot)),
         ::testing::Bool()),
     ScaledDotTestName);
+
+TEST_F(HloHardwareIndependentTestBase, ScaledDotPreAmpereIsRejected) {
+  const std::string kHlo = R"(
+HloModule ScaledDotPreAmpere
+
+ENTRY triton_computation {
+  lhs = f8e4m3fn[16, 32] parameter(0)
+  lhs_scale = f8e8m0fnu[16, 1] parameter(1)
+  rhs = f8e4m3fn[32, 16] parameter(2)
+  rhs_scale = f8e8m0fnu[1, 16] parameter(3)
+  ROOT dot = f32[16, 16] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+      lhs_contracting_dims={1},
+      rhs_contracting_dims={0},
+      backend_config={sizes:[16]}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* dot = module->entry_computation()->root_instruction();
+  EXPECT_FALSE(IsTritonSupportedInstruction(
+      *dot, se::GpuComputeCapability(se::CudaComputeCapability::Volta())));
+}
 
 TEST_P(SupportTestWithTilingParam, NestedFusionsAreRejected) {
   // Nested fusions are not supported by xtile emitter.

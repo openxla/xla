@@ -16,11 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_CPU_METADATA_UTILS_H_
 #define XLA_BACKENDS_PROFILER_CPU_METADATA_UTILS_H_
 
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/profiler/convert/xla_op_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

@@ -43,6 +43,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_dfs_reachability.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/combined_gpu_performance_model.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -82,6 +82,8 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+using ::xla::xtile::BlockLevelParameters;
 
 // Bitcasts are fusible if they don't change the bit width.
 bool IsFusibleBitcast(const HloInstruction& instr) {
@@ -189,7 +191,8 @@ class PriorityFusionQueue {
       instructions.push_back(instruction);
     }
 
-    ABSL_RETURN_IF_ERROR(queue->ComputeAndSetPriorities(std::move(instructions)));
+    ABSL_RETURN_IF_ERROR(
+        queue->ComputeAndSetPriorities(std::move(instructions)));
 
     return queue;
   }
@@ -232,7 +235,7 @@ class PriorityFusionQueue {
   absl::Status ComputeAndSetPriorities(
       const std::vector<HloInstruction*>& instructions) {
     ABSL_ASSIGN_OR_RETURN(std::vector<Priority> priorities,
-                     ComputePriorities(instructions));
+                          ComputePriorities(instructions));
 
     for (auto [instruction, priority] : llvm::zip(instructions, priorities)) {
       auto key = std::make_pair(priority, instruction->unique_id());
@@ -613,9 +616,9 @@ class PriorityFusionQueue {
       if (CanFuseTritonMultiOutputWithSingleUser(producer,
                                                  possible_consumers)) {
         ABSL_ASSIGN_OR_RETURN(CombinedGpuPerformanceModel::RunTimes run_times,
-                         combined_gpu_performance_model_.EstimateRunTimes(
-                             producer, cost_analysis_.get(),
-                             /*fused_consumers=*/possible_consumers));
+                              combined_gpu_performance_model_.EstimateRunTimes(
+                                  producer, cost_analysis_.get(),
+                                  /*fused_consumers=*/possible_consumers));
         absl::MutexLock lock(preferred_consumer_mutex_);
         preferred_consumer_[producer] = possible_consumers[0];
         return run_times.time_unfused - run_times.time_fused;
@@ -648,8 +651,8 @@ class PriorityFusionQueue {
     // Note that `gpu_performance_model_cache_` may contain a runtime estimate
     // from the Triton cost model.
     ABSL_ASSIGN_OR_RETURN(CombinedGpuPerformanceModel::RunTimes run_times,
-                     combined_gpu_performance_model_.EstimateRunTimes(
-                         producer, cost_analysis_.get(), fused_consumers));
+                          combined_gpu_performance_model_.EstimateRunTimes(
+                              producer, cost_analysis_.get(), fused_consumers));
     Priority current_priority;
     if (is_incremental_update) {
       // subtract the runtimes of removed consumers
@@ -757,6 +760,11 @@ class PriorityFusionQueue {
 
     if (!IsFusible(*consumer)) {
       return FusionDecision::Forbid("the consumer is not fusible");
+    }
+
+    if (ContainsScan(*producer, &fusion_info_cache_)) {
+      return FusionDecision::Forbid(
+          "epilogue fusion for scan is not supported");
     }
 
     if (!(IsGenericTritonFusion(*producer) ||

@@ -15,19 +15,21 @@ limitations under the License.
 
 #include "xla/python/ifrt_proxy/client/mpmd_executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/mock.h"
@@ -42,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::_;
 using ::testing::ElementsAre;

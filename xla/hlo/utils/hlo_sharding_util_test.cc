@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/utils/hlo_sharding_util.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <initializer_list>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/spmd/spmd_partitioner_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/hlo_sharding.h"

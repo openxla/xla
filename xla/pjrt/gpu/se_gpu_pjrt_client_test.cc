@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -28,9 +31,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -41,6 +43,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -51,9 +54,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/debug_options_flags.h"
@@ -68,6 +71,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/parse_flags_from_env.h"
+#include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -88,11 +92,13 @@ limitations under the License.
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/tsl/platform/env.h"
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -100,7 +106,12 @@ limitations under the License.
 #elif TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #endif  // GOOGLE_CUDA
+#include "tsl/platform/casts.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/platform.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/literal_test_util.h"
@@ -116,10 +127,6 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/platform.h"
 namespace xla {
 namespace {
 
@@ -137,6 +144,173 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::SizeIs;
+
+absl::StatusOr<PjRtDeviceEventPtr::DefinitionStreamInfo>
+GetDefinitionStreamInfo(PjRtBuffer* buffer) {
+  ABSL_RETURN_IF_ERROR(buffer->GetReadyFuture().Await());
+
+  auto* common_buffer = dynamic_cast<CommonPjRtBuffer*>(buffer);
+  TF_RET_CHECK(common_buffer != nullptr);
+  auto hold =
+      common_buffer->GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kUsage);
+  ABSL_RETURN_IF_ERROR(hold.status());
+
+  absl::Span<const PjRtDeviceEventRef> definition_events =
+      hold.buffer()->definition_events();
+  TF_RET_CHECK(definition_events.size() == 1);
+  auto stream_info = definition_events.front().ptr().GetDefinitionStream();
+  TF_RET_CHECK(stream_info.has_value());
+  return *stream_info;
+}
+
+TEST(StreamExecutorGpuClientTest, ResultsHaveIndividualDefinitionEvents) {
+  constexpr absl::string_view kProgram = R"(
+    HloModule IndividualResultDefinitionEvents
+
+    ENTRY main {
+      p = s32[4]{0} parameter(0)
+      negate = s32[4]{0} negate(p)
+      add = s32[4]{0} add(p, p)
+      ROOT tuple = (s32[4]{0}, s32[4]{0}) tuple(negate, add)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+#if !(defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
+      defined(TENSORFLOW_USE_SYCL))
+  GTEST_SKIP() << "Individual definition events not supported";
+#endif
+  ASSERT_OK_AND_ASSIGN(auto input, CreateDeviceBufferForTest(client.get()));
+  CompileOptions compile_options;
+  compile_options.individually_defined_output_indices = {0, 1};
+  ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CompileExecutable(kProgram, *client, std::move(compile_options)));
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       executable->Execute({{input.get()}}, ExecuteOptions()));
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].size(), 2);
+
+  ASSERT_OK_AND_ASSIGN(auto first,
+                       GetDefinitionStreamInfo(results[0][0].get()));
+  ASSERT_OK_AND_ASSIGN(auto second,
+                       GetDefinitionStreamInfo(results[0][1].get()));
+  EXPECT_EQ(first.stream, second.stream);
+  EXPECT_NE(first.sequence_id, second.sequence_id);
+}
+
+TEST(StreamExecutorGpuClientTest, AsyncResultDefinitionEventUsesAsyncStream) {
+  constexpr absl::string_view kProgram = R"(
+    HloModule AsyncResultDefinitionEvent
+
+    async_computation {
+      p = s32[4]{0} parameter(0)
+      ROOT add = s32[4]{0} add(p, p)
+    }
+
+    ENTRY main {
+      p = s32[4]{0} parameter(0)
+      call-start = ((s32[4]{0}), s32[4]{0}) call-start(p),
+        to_apply=async_computation,
+        frontend_attributes={_xla_stream_annotation="1"}
+      ROOT call-done = s32[4]{0} call-done(call-start),
+        frontend_attributes={_xla_stream_annotation="1"}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+#if !(defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
+      defined(TENSORFLOW_USE_SYCL))
+  GTEST_SKIP() << "Individual definition events not supported";
+#endif
+  ASSERT_OK_AND_ASSIGN(auto input, CreateDeviceBufferForTest(client.get()));
+  CompileOptions compile_options;
+  compile_options.individually_defined_output_indices = {0};
+  auto* debug_options =
+      compile_options.executable_build_options.mutable_debug_options();
+  debug_options->set_xla_gpu_experimental_stream_annotation(true);
+  debug_options->clear_xla_gpu_enable_command_buffer();
+  ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CompileExecutable(kProgram, *client, std::move(compile_options)));
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       executable->Execute({{input.get()}}, ExecuteOptions()));
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].size(), 1);
+
+  ASSERT_OK_AND_ASSIGN(auto definition,
+                       GetDefinitionStreamInfo(results[0][0].get()));
+  auto raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  TF_ASSERT_OK_AND_ASSIGN(
+      LocalDeviceState * local_device_state,
+      raw_client->GetLocalDeviceState(
+          client->addressable_devices().front()->local_device_id()));
+  intptr_t compute_stream = reinterpret_cast<intptr_t>(
+      local_device_state->compute_stream()->platform_specific_handle().stream);
+  EXPECT_NE(definition.stream, compute_stream);
+
+  ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteral().Await());
+  EXPECT_THAT(literal->data<int32_t>(), ElementsAre(2, 4, 6, 8));
+}
+
+TEST(StreamExecutorGpuClientTest,
+     IndividualDefinitionEventsWithPredeterminedError) {
+  constexpr absl::string_view kProgram = R"(
+    HloModule PredeterminedError
+
+    ENTRY main {
+      p = f32[4]{0} parameter(0)
+      negate = f32[4]{0} negate(p)
+      add = f32[4]{0} add(p, p)
+      ROOT tuple = (f32[4]{0}, f32[4]{0}) tuple(negate, add)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  absl::Status input_error = absl::InvalidArgumentError("input error");
+  ASSERT_OK_AND_ASSIGN(
+      auto input,
+      client->CreateErrorBuffer(
+          input_error, ShapeUtil::MakeShape(F32, {4}),
+          *client->addressable_devices()[0]->default_memory_space()));
+
+  CompileOptions compile_options;
+  compile_options.individually_defined_output_indices = {0, 1};
+  ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CompileExecutable(kProgram, *client, std::move(compile_options)));
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       executable->Execute({{input.get()}}, ExecuteOptions()));
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].size(), 2);
+
+  // With a predetermined error there are no result buffers to define; all
+  // outputs must propagate the error via the primary execute event.
+  for (const auto& result : results[0]) {
+    EXPECT_THAT(result->GetReadyFuture().Await(),
+                StatusIs(input_error.code(), HasSubstr(input_error.message())));
+  }
+}
+
+TEST(StreamExecutorGpuClientTest,
+     IndividuallyDefinedOutputIndexOutOfRangeIsAnError) {
+  constexpr absl::string_view kProgram = R"(
+    HloModule OutOfRangeIndex
+
+    ENTRY main {
+      p = s32[4]{0} parameter(0)
+      ROOT negate = s32[4]{0} negate(p)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  CompileOptions compile_options;
+  compile_options.individually_defined_output_indices = {1};
+  EXPECT_THAT(
+      CompileExecutable(kProgram, *client, std::move(compile_options)),
+      StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("out of range")));
+}
 
 TEST(StreamExecutorGpuClientTest, MemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(
@@ -171,7 +345,8 @@ TEST(StreamExecutorGpuClientTest, PlatformVersionIsDerivedAtRuntime) {
   const absl::string_view version = client->platform_version();
   EXPECT_NE(version, "<unknown>");
   EXPECT_TRUE(absl::StartsWith(version, "cuda ") ||
-              absl::StartsWith(version, "rocm "))
+              absl::StartsWith(version, "rocm ") ||
+              absl::StartsWith(version, "oneapi"))
       << "unexpected platform version: " << version;
 }
 
@@ -1249,9 +1424,10 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   for (int device_index = 0; device_index < client->device_count();
        device_index++) {
-    auto device =
-        static_cast<PjRtStreamExecutorDevice*>(client->devices()[device_index]);
-    auto coords = device->description().coords();
+    PjRtDevice* device = client->devices()[device_index];
+    auto coords = absl::down_cast<const PjRtStreamExecutorDeviceDescription&>(
+                      device->description())
+                      .coords();
     // All devices are in the same partition & process.
     EXPECT_THAT(coords, ElementsAre(0, 0, device->local_device_id().value()));
   }
@@ -1273,8 +1449,7 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   for (const auto& device : client->devices()) {
-    auto value = static_cast<PjRtStreamExecutorDevice*>(device)
-                     ->description()
+    auto value = device->description()
                      .Attributes()
                      .find("shared_memory_per_block_optin")
                      ->second;
@@ -1325,11 +1500,10 @@ TEST(StreamExecutorGpuClientTest, ShouldStageHostToDeviceTransfersSetToTrue) {
   std::vector<float> data(1024, 1.0f);
   Shape shape = ShapeUtil::MakeShape(F32, {1024});
 
-  // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-  [[deprecated("remove after absl upgrade")]] auto* staging_client =
-      absl::down_cast<StreamExecutorGpuClient*>(client_staging.get());
+  auto* staging_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client_staging.get())->raw_client());
 
-  EXPECT_TRUE(staging_client->raw_client()->ShouldStageHostToDeviceTransfers(
+  EXPECT_TRUE(staging_client->ShouldStageHostToDeviceTransfers(
       data.data(), sizeof(float) * data.size()));
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -1356,13 +1530,12 @@ TEST(StreamExecutorGpuClientTest, ShouldStageHostToDeviceTransfersSetToFalse) {
   std::vector<float> data(1024, 1.0f);
   Shape shape = ShapeUtil::MakeShape(F32, {1024});
 
-  // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-  [[deprecated("remove after absl upgrade")]] auto* no_staging_client =
-      absl::down_cast<StreamExecutorGpuClient*>(client_no_staging.get());
+  auto* no_staging_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client_no_staging.get())
+          ->raw_client());
 
-  EXPECT_FALSE(
-      no_staging_client->raw_client()->ShouldStageHostToDeviceTransfers(
-          data.data(), sizeof(float) * data.size()));
+  EXPECT_FALSE(no_staging_client->ShouldStageHostToDeviceTransfers(
+      data.data(), sizeof(float) * data.size()));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto buffer,
@@ -1928,10 +2101,8 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto executable,
                           CompileExecutable(kAddProgram, *client));
-  auto gpu_exe = static_cast<PjRtStreamExecutorLoadedExecutable*>(
-      std::move(executable).get());
-  TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
-                          gpu_exe->SerializeExecutable());
+  ASSERT_OK_AND_ASSIGN(std::string serialized,
+                       executable->SerializeExecutable());
 
   ExecutableAndOptionsProto proto;
   ASSERT_OK(ReadSplitProto(
@@ -2025,9 +2196,8 @@ TEST(StreamExecutorGpuClientTest, DeserializeExecutableWithOptionsOverrides) {
       {"xla_gpu_graph_min_graph_size", int64_t{42}});
   ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kAddProgram, *client,
                                                           compile_options));
-  auto gpu_exe =
-      static_cast<PjRtStreamExecutorLoadedExecutable*>(executable.get());
-  ASSERT_OK_AND_ASSIGN(std::string serialized, gpu_exe->SerializeExecutable());
+  ASSERT_OK_AND_ASSIGN(std::string serialized,
+                       executable->SerializeExecutable());
   // Reload without passing explicit CompileOptions (so it deserializes from
   // proto)
   ASSERT_OK_AND_ASSIGN(auto reloaded_executable,
@@ -2223,9 +2393,8 @@ TEST(StreamExecutorGpuClientTest, NonZeroGPUDeviceTimeMeasurementSingleGPU) {
 TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto gpu_client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
-  // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-  [[deprecated("remove after absl upgrade")]] auto client =
-      absl::down_cast<PjRtStreamExecutorClient*>(gpu_client.get());
+  auto client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(gpu_client.get())->raw_client());
   size_t dma_size = 1024;
   size_t alignment = 4096;
   auto host_dma_ptr = tsl::port::AlignedMalloc(
@@ -2237,7 +2406,7 @@ TEST(StreamExecutorGpuClientTest, DmaMapUnmap) {
       });
   TF_EXPECT_OK(client->DmaMap(host_dma_ptr, dma_size));
   EXPECT_TRUE(client->IsHostMemoryPinned(host_dma_ptr, dma_size));
-  if (client->platform_name() != xla::RocmName()) {
+  if (gpu_client->platform_name() != xla::RocmName()) {
     // Some ROCm driver versions report page-granularity range size (4096) for
     // hipDrvPointerGetAttributes, so querying host_dma_ptr + 5 (size 1024)
     // stays within the 4KB pinned page and returns true on those ROCm runners.
@@ -2403,17 +2572,13 @@ ENTRY main.5 {
 TEST(StreamExecutorGpuClientTest, EventCaching) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
-  // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-  [[deprecated("remove after absl upgrade")]] auto* async_work_runner =
-      absl::down_cast<PjRtStreamExecutorClient*>(client.get())
-          ->async_work_runner();
+  auto raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  auto* async_work_runner = raw_client->async_work_runner();
   const auto& device = client->addressable_devices()[0];
-  // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-  [[deprecated(
-      "remove after absl upgrade")]] LocalDeviceState* local_device_state =
-      absl::down_cast<const PjRtStreamExecutorDevice*>(device)
-          ->local_device_state();
-  ASSERT_TRUE(local_device_state != nullptr);
+  TF_ASSERT_OK_AND_ASSIGN(
+      LocalDeviceState * local_device_state,
+      raw_client->GetLocalDeviceState(device->local_device_id()));
   size_t sync_point0 = local_device_state->GetNextComputeStreamSyncPoint();
   TF_ASSERT_OK_AND_ASSIGN(auto event0,
                           local_device_state->GetEventForComputeStreamSyncPoint(
@@ -2458,9 +2623,7 @@ TEST(StreamExecutorGpuClientTest, EventCaching) {
 TEST(StreamExecutorGpuClientTest, LinkedEventPromise) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto pjrt_client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
-  // TODO(b/b/482307468) Switch to absl::down_cast after upgrade.
-  [[deprecated("remove after absl upgrade")]] auto* client =
-      absl::down_cast<PjRtStreamExecutorClient*>(pjrt_client.get());
+  auto* client = absl::down_cast<CommonPjRtClient*>(pjrt_client.get());
   auto* memory_space = client->memory_spaces()[0];
   auto literal = LiteralUtil::CreateR1<float>({41.0f, 42.0f, 43.0f, 44.0f});
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2553,10 +2716,149 @@ TEST(StreamExecutorGpuClientTest, PlatformAllocatorIsSynchronousPassthrough) {
 
   ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
-  auto* pjrt_se_client =
-      absl::down_cast<PjRtStreamExecutorClient*>(client.get());
-  EXPECT_NE(dynamic_cast<se::MultiDeviceAdapter*>(pjrt_se_client->allocator()),
+  auto raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  EXPECT_NE(dynamic_cast<se::MultiDeviceAdapter*>(raw_client->allocator()),
             nullptr);
+}
+
+// With a preallocated, spatially partitioned BFC allocator, one shared arena
+// serves collective memory from its lower end and default memory from its
+// upper end. Anchoring collective memory at the base keeps its offsets
+// identical across ranks even if the top of the arena were ever to move.
+TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
+  const DebugOptions debug_options = GetDebugOptionsFromFlags();
+  if (!debug_options.xla_gpu_enable_allocator_spatial_partitioning()) {
+    GTEST_SKIP() << "Requires xla_gpu_enable_allocator_spatial_partitioning.";
+  }
+  if (debug_options.xla_gpu_command_buffer_update_mode() !=
+      DebugOptions::ALWAYS_UPDATE) {
+    GTEST_SKIP() << "xla_gpu_command_buffer_update_mode overrides the "
+                    "allocator kind to kVmm.";
+  }
+
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.preallocate = true;
+  // The layout does not depend on the arena size; keep preallocation small.
+  options.allocator_config.memory_fraction = 0.05;
+  options.allowed_devices = {0};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  se::DeviceAddressAllocator* allocator = raw_client->allocator();
+  ASSERT_NE(allocator, nullptr);
+
+  constexpr int kDefault = static_cast<int>(gpu::MemorySpaceColor::kDefault);
+  constexpr int kCollective =
+      static_cast<int>(gpu::MemorySpaceColor::kCollective);
+  constexpr uint64_t kBytes = uint64_t{1} << 20;
+  auto address = [](const se::ScopedDeviceAddress<uint8_t>& memory) {
+    return absl::bit_cast<uintptr_t>(memory->opaque());
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective0,
+      allocator->Allocate(/*device_ordinal=*/0, 8 * kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective1,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default0,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default1,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+
+  // Collective memory grows upward from the arena base ...
+  EXPECT_LT(address(collective0), address(collective1));
+  // ... default memory grows downward from the arena top ...
+  EXPECT_GT(address(default0), address(default1));
+  // ... and every collective buffer sits below every default buffer.
+  EXPECT_LT(address(collective1), address(default1));
+
+  // Collective hole reuse keeps exact splitting after the direction swap.
+  // The live collective1 allocation keeps collective0's hole out of the gap.
+  const uintptr_t collective_hole = address(collective0);
+  ASSERT_OK(collective0.Free());
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective_reuse,
+      allocator->Allocate(/*device_ordinal=*/0, 6 * kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  EXPECT_EQ(address(collective_reuse), collective_hole);
+  ASSERT_OK_AND_ASSIGN(
+      tsl::Allocator * bfc,
+      absl::down_cast<se::MultiDeviceAdapter*>(allocator)->GetAllocator(0));
+  EXPECT_EQ(bfc->AllocatedSize(collective_reuse->opaque()), 6 * kBytes);
+
+  // Equal-size default holes prefer the high address, leaving the hole next
+  // to the central boundary available to coalesce with a later boundary free.
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default2,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default3,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  const uintptr_t default_hole = address(default0);
+  const uintptr_t default_boundary = address(default3);
+  ASSERT_OK(default0.Free());
+  ASSERT_OK(default2.Free());
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_reuse,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  EXPECT_EQ(address(default_reuse), default_hole);
+  ASSERT_OK(default3.Free());
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_coalesced,
+      allocator->Allocate(/*device_ordinal=*/0, 2 * kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  EXPECT_EQ(address(default_coalesced), default_boundary);
+}
+
+// Without preallocation there is no shared partitioned pool: default memory
+// comes from a growable BFC allocator that only serves its lower end, and
+// collective memory comes from a separate allocator. Both must keep working.
+TEST(StreamExecutorGpuClientTest, GrowableBfcServesBothMemorySpaces) {
+  if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
+      DebugOptions::ALWAYS_UPDATE) {
+    GTEST_SKIP() << "xla_gpu_command_buffer_update_mode overrides the "
+                    "allocator kind to kVmm.";
+  }
+
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.preallocate = false;
+  options.allowed_devices = {0};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  se::DeviceAddressAllocator* allocator = raw_client->allocator();
+  ASSERT_NE(allocator, nullptr);
+
+  constexpr int kDefault = static_cast<int>(gpu::MemorySpaceColor::kDefault);
+  constexpr int kCollective =
+      static_cast<int>(gpu::MemorySpaceColor::kCollective);
+  constexpr uint64_t kBytes = uint64_t{1} << 20;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_memory,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  EXPECT_NE(default_memory->opaque(), nullptr);
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective_memory,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  EXPECT_NE(collective_memory->opaque(), nullptr);
 }
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -2604,15 +2906,15 @@ TEST_F(VmmTest, VmmAllocatorCanBeSet) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
-  auto* pjrt_se_client =
-      absl::down_cast<PjRtStreamExecutorClient*>(client.get());
+  auto raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
 #if GOOGLE_CUDA
   EXPECT_NE(dynamic_cast<se::gpu::CudaDeviceAddressVmmAllocator*>(
-                pjrt_se_client->allocator()),
+                raw_client->allocator()),
             nullptr);
 #elif TENSORFLOW_USE_ROCM
   EXPECT_NE(dynamic_cast<se::gpu::RocmDeviceAddressVmmAllocator*>(
-                pjrt_se_client->allocator()),
+                raw_client->allocator()),
             nullptr);
 #endif
 }

@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -41,8 +42,9 @@ class CollectiveOpsCseTest : public HloHardwareIndependentTestBase {
  public:
   absl::StatusOr<std::unique_ptr<HloModule>> RunPass(
       absl::string_view hlo_module, int64_t distance_threshold = 100) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(
-                                      hlo_module, GetModuleConfigForTest()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto module,
+        ParseAndReturnVerifiedModule(hlo_module, GetModuleConfigForTest()));
     HloPassPipeline pipeline("all-gather-cse");
     pipeline.AddPass<ScheduleAwareCollectiveOpsCSE>(distance_threshold,
                                                     /*for_replicas=*/false);
@@ -93,6 +95,27 @@ ENTRY entry {
   EXPECT_EQ(tuple->operand(0), tuple->operand(1));
 }
 
+TEST_F(CollectiveOpsCseTest, SimpleCseAllToAll) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  param0 = s32[2,8]{1,0} parameter(0)
+  a2a1 = s32[2,8]{1,0} all-to-all(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=0
+  a2a2 = s32[2,8]{1,0} all-to-all(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=1
+  ROOT tuple = (s32[2,8]{1,0}, s32[2,8]{1,0}) tuple(a2a1, a2a2)
+})";
+  auto module_status = RunPass(hlo_string);
+  EXPECT_TRUE(module_status.status().ok());
+  auto module = std::move(module_status).value();
+  HloInstruction* tuple = module->entry_computation()->root_instruction();
+  EXPECT_EQ(tuple->opcode(), HloOpcode::kTuple);
+  EXPECT_EQ(tuple->operand_count(), 2);
+  EXPECT_EQ(tuple->operand(0), tuple->operand(1));
+}
+
 TEST_F(CollectiveOpsCseTest, SimpleCseReshapeLookthroughAllGather) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -129,6 +152,29 @@ ENTRY entry {
   cp2 = s32[1,8]{1,0} collective-permute(rshp2), source_target_pairs={{0,1},{1,0}},
     channel_id=1
   ROOT tuple = (s32[1,8]{1,0}, s32[1,8]{1,0}) tuple(cp1, cp2)
+})";
+  auto module_status = RunPass(hlo_string);
+  EXPECT_TRUE(module_status.status().ok());
+  auto module = std::move(module_status).value();
+  HloInstruction* tuple = module->entry_computation()->root_instruction();
+  EXPECT_EQ(tuple->opcode(), HloOpcode::kTuple);
+  EXPECT_EQ(tuple->operand_count(), 2);
+  EXPECT_EQ(tuple->operand(0), tuple->operand(1));
+}
+
+TEST_F(CollectiveOpsCseTest, SimpleCseReshapeLookthroughAllToAll) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  param0 = s32[8]{0} parameter(0)
+  rshp = s32[1,8]{1,0} reshape(param0)
+  rshp2 = s32[1,8]{1,0} reshape(param0)
+  a2a1 = s32[1,8]{1,0} all-to-all(rshp), replica_groups={{0,1}}, dimensions={1},
+    channel_id=0
+  a2a2 = s32[1,8]{1,0} all-to-all(rshp2), replica_groups={{0,1}}, dimensions={1},
+    channel_id=1
+  ROOT tuple = (s32[1,8]{1,0}, s32[1,8]{1,0}) tuple(a2a1, a2a2)
 })";
   auto module_status = RunPass(hlo_string);
   EXPECT_TRUE(module_status.status().ok());
@@ -323,6 +369,71 @@ ENTRY entry {
   EXPECT_TRUE(module_status.status().ok());
   auto module = std::move(module_status).value();
   EXPECT_TRUE(RunFileCheck(module->ToString(), hlo_string).value());
+}
+
+TEST_F(CollectiveOpsCseTest, MultipleCollectivesWithDistantPredecessor) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  param0 = s32[1,8]{1,0} parameter(0)
+  ag0 = s32[2,8]{1,0} all-gather(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=0, use_global_device_ids=true
+  chain0 = s32[2,8]{1,0} negate(ag0)
+  chain1 = s32[2,8]{1,0} negate(chain0)
+  chain2 = s32[2,8]{1,0} negate(chain1)
+  chain3 = s32[2,8]{1,0} negate(chain2)
+  chain4 = s32[2,8]{1,0} negate(chain3)
+  chain5 = s32[2,8]{1,0} negate(chain4)
+  ag1 = s32[2,8]{1,0} all-gather(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=0, use_global_device_ids=true
+  ag2 = s32[2,8]{1,0} all-gather(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=0, use_global_device_ids=true
+  add1 = s32[2,8]{1,0} add(chain5, ag1)
+  add2 = s32[2,8]{1,0} add(chain5, ag2)
+  ROOT tuple = (s32[2,8]{1,0}, s32[2,8]{1,0}) tuple(add1, add2)
+})";
+  // Run with distance_threshold = 3
+  auto module_status = RunPass(hlo_string, /*distance_threshold=*/3);
+  EXPECT_TRUE(module_status.status().ok());
+  auto module = std::move(module_status).value();
+  HloInstruction* tuple = module->entry_computation()->root_instruction();
+  EXPECT_EQ(tuple->opcode(), HloOpcode::kTuple);
+  HloInstruction* add1 = tuple->mutable_operand(0);
+  HloInstruction* add2 = tuple->mutable_operand(1);
+  EXPECT_EQ(add1->opcode(), HloOpcode::kAdd);
+  EXPECT_EQ(add2->opcode(), HloOpcode::kAdd);
+  // ag1 and ag2 are close to each other, so ag2 should have been replaced with
+  // ag1!
+  EXPECT_EQ(add1->operand(1), add2->operand(1));
+}
+
+TEST_F(CollectiveOpsCseTest, DistantAllToAllCseIgnoresSchedule) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  param0 = s32[2,8]{1,0} parameter(0)
+  a2a0 = s32[2,8]{1,0} all-to-all(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=0
+  chain0 = s32[2,8]{1,0} negate(a2a0)
+  chain1 = s32[2,8]{1,0} negate(chain0)
+  chain2 = s32[2,8]{1,0} negate(chain1)
+  chain3 = s32[2,8]{1,0} negate(chain2)
+  chain4 = s32[2,8]{1,0} negate(chain3)
+  chain5 = s32[2,8]{1,0} negate(chain4)
+  a2a1 = s32[2,8]{1,0} all-to-all(param0), replica_groups={{0,1}}, dimensions={0},
+    channel_id=1
+  ROOT add = s32[2,8]{1,0} add(chain5, a2a1)
+})";
+  // Even with distance_threshold = 1, a2a1 should be replaced by a2a0.
+  auto module_status = RunPass(hlo_string, /*distance_threshold=*/1);
+  EXPECT_TRUE(module_status.status().ok());
+  auto module = std::move(module_status).value();
+  HloInstruction* add = module->entry_computation()->root_instruction();
+  EXPECT_EQ(add->opcode(), HloOpcode::kAdd);
+  EXPECT_EQ(add->operand(1)->opcode(), HloOpcode::kAllToAll);
+  EXPECT_EQ(add->operand(1)->channel_id(), 0);
 }
 
 }  // namespace

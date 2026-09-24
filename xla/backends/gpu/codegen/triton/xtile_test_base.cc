@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/codegen/experimental_fusion_emitter.h"
 #include "xla/codegen/xtile/codegen/fusion_emitter.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/status_macros.h"
@@ -57,6 +57,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
+using ::xla::xtile::BlockLevelParameters;
 using ::xla::xtile::GetTilingSpaceConcreteSizes;
 using ::xla::xtile::TilingFromAnnotatedFusion;
 
@@ -75,8 +76,8 @@ XTileTestBase::CreateXTileIrAndFileCheck(std::unique_ptr<HloModule> hlo_module,
       BlockLevelParameters::FromBlockLevelFusionConfig(
           fusion_backend_config.block_level_fusion_config());
   ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
-                   CreateXTileIrAndFileCheck(*comp, block_level_parameters,
-                                             filecheck_pattern));
+                        CreateXTileIrAndFileCheck(*comp, block_level_parameters,
+                                                  filecheck_pattern));
   return std::make_pair(std::move(xtile_dialect_module), std::move(hlo_module));
 }
 
@@ -102,8 +103,8 @@ CreateXTileIrAndFileCheckLegacy(
       std::get<SymbolicTileAnalysis>(symbolic_tile_analysis_or);
 
   ABSL_ASSIGN_OR_RETURN(Tiling tiling,
-                   TilingFromAnnotatedFusion(symbolic_tile_analysis,
-                                             block_level_parameters));
+                        TilingFromAnnotatedFusion(symbolic_tile_analysis,
+                                                  block_level_parameters));
 
   ABSL_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
@@ -126,8 +127,9 @@ XTileTestBase::CreateXTileIrAndFileCheck(
     namespace ge = ::xla::gpu::experimental;
     auto* fusion = Cast<HloFusionInstruction>(computation.FusionInstruction());
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(fusion);
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<ge::TilingSpace> tiling_space,
-                     ge::TilingSpace::Create(*fusion_adaptor, mlir_context()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<ge::TilingSpace> tiling_space,
+        ge::TilingSpace::Create(*fusion_adaptor, mlir_context()));
     ABSL_ASSIGN_OR_RETURN(
         llvm::SmallVector<int64_t> concrete_sizes,
         GetTilingSpaceConcreteSizes(
@@ -139,8 +141,8 @@ XTileTestBase::CreateXTileIrAndFileCheck(
     ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(
         xtile::GetPaddedTileSizes(concrete_sizes)));
     ABSL_ASSIGN_OR_RETURN(ge::TiledHloComputation tiled_computation,
-                     ge::TiledHloComputation::Tile(*fusion_adaptor,
-                                                   std::move(tiling_space)));
+                          ge::TiledHloComputation::Tile(
+                              *fusion_adaptor, std::move(tiling_space)));
     tiled_computation.Simplify();
     tiled_computation.SortInstructionsPostOrder();
     if (Decision constraints = ge::VerifyTritonConstraints(
@@ -156,9 +158,9 @@ XTileTestBase::CreateXTileIrAndFileCheck(
                                *mlir_context()));
   } else {
     ABSL_ASSIGN_OR_RETURN(xtile_dialect_module,
-                     CreateXTileIrAndFileCheckLegacy(
-                         mlir_context(), computation, block_level_parameters,
-                         filecheck_pattern));
+                          CreateXTileIrAndFileCheckLegacy(
+                              mlir_context(), computation,
+                              block_level_parameters, filecheck_pattern));
   }
   std::string out;
   llvm::raw_string_ostream os(out);

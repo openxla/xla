@@ -17,13 +17,12 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "absl/memory/memory.h"
 #include "absl/status/status.h"
-#include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 namespace profiler {

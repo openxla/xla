@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/while_util.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
@@ -29,9 +31,7 @@ limitations under the License.
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -65,7 +65,8 @@ ENTRY entry {
 }
 )";
 
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
 
     *entry_computation = module->entry_computation();
     *param0 = (*entry_computation)->parameter_instruction(0);
@@ -80,14 +81,13 @@ TEST_F(WhileUtilTest, MakeZeroInstructionsLiveOp) {
   HloInstruction *param0, *param1, *param2;
   HloComputation* entry_computation;
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      GetParsedModule(&entry_computation, &param0, &param1, &param2));
+  ASSERT_OK_AND_ASSIGN(auto module, GetParsedModule(&entry_computation, &param0,
+                                                    &param1, &param2));
 
   HloInstruction* while_instr = entry_computation->root_instruction();
   ASSERT_EQ(while_instr->opcode(), HloOpcode::kWhile);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       WhileUtil::MakeInstructionsLiveInResult make_live_in_result,
       WhileUtil::MakeInstructionsLiveIn(while_instr, /*instructions=*/{}));
 
@@ -111,14 +111,13 @@ TEST_F(WhileUtilTest, MakeTwoInstructionsLive) {
   HloInstruction *param0, *param1, *param2;
   HloComputation* entry_computation;
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      GetParsedModule(&entry_computation, &param0, &param1, &param2));
+  ASSERT_OK_AND_ASSIGN(auto module, GetParsedModule(&entry_computation, &param0,
+                                                    &param1, &param2));
 
   HloInstruction* while_instr = entry_computation->root_instruction();
   ASSERT_EQ(while_instr->opcode(), HloOpcode::kWhile);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       WhileUtil::MakeInstructionsLiveInResult make_live_in_result,
       WhileUtil::MakeInstructionsLiveIn(while_instr,
                                         /*instructions=*/{param0, param1}));
@@ -167,8 +166,7 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   HloComputation* entry_computation = module->entry_computation();
   HloInstruction* while_instr = entry_computation->root_instruction();
   ASSERT_EQ(while_instr->opcode(), HloOpcode::kWhile);
@@ -177,7 +175,7 @@ ENTRY entry {
   HloInstruction* live_tuple =
       entry_computation->GetInstructionWithName("live_tuple");
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       WhileUtil::MakeInstructionsLiveInResult make_live_in_result,
       WhileUtil::MakeInstructionsLiveIn(
           while_instr,
@@ -213,8 +211,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   HloComputation* while_body = module->GetComputationWithName("body");
 
@@ -254,14 +251,13 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   HloComputation* main = module->GetComputationWithName("main");
   HloInstruction* while_instr = main->root_instruction();
   HloInstruction* to_make_live_in = main->parameter_instruction(1);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       WhileUtil::MakeInstructionsLiveInResult make_live_in_result,
       WhileUtil::MakeInstructionsLiveIn(while_instr,
                                         /*instructions=*/{to_make_live_in}));
@@ -299,7 +295,7 @@ ENTRY main {
   ROOT while = while(param.0), condition=cond, body=body
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   const HloComputation* main = module->GetComputationWithName("main");
   const HloInstruction* while_instr = main->root_instruction();
   // Loop body increments induction variable by 2, in this case we should fail.
@@ -336,7 +332,7 @@ ENTRY main {
   ROOT while = while(param.0), condition=cond, body=body
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   const HloComputation* main = module->GetComputationWithName("main");
   const HloInstruction* while_instr = main->root_instruction();
   // Loop body increments trip count, in this case we should fail.
@@ -372,7 +368,7 @@ ENTRY main {
   ROOT while = while(param.0), condition=cond, body=body
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   const HloComputation* main = module->GetComputationWithName("main");
   const HloInstruction* while_instr = main->root_instruction();
   // The trip count is modified with a side effecting op, in this case we
@@ -409,10 +405,10 @@ ENTRY main {
   ROOT while = while(param.0), condition=cond, body=body
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   const HloComputation* main = module->GetComputationWithName("main");
   const HloInstruction* while_instr = main->root_instruction();
-  TF_EXPECT_OK(
+  EXPECT_OK(
       WhileUtil::IncrementWhileLoopTripCount(*while_instr, /*increment=*/1));
 
   const HloComputation* cond = module->GetComputationWithName("cond");
@@ -447,10 +443,10 @@ ENTRY main {
   ROOT while = while(param.0), condition=cond, body=body
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   const HloComputation* main = module->GetComputationWithName("main");
   const HloInstruction* while_instr = main->root_instruction();
-  TF_EXPECT_OK(
+  EXPECT_OK(
       WhileUtil::IncrementWhileLoopTripCount(*while_instr, /*increment=*/1));
 
   const HloComputation* cond = module->GetComputationWithName("cond");
@@ -488,8 +484,7 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   HloInstruction* dus1 = FindInstruction(module.get(), "dus1");
   HloInstruction* dus2 = FindInstruction(module.get(), "dus2");

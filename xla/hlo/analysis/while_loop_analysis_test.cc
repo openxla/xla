@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/analysis/while_loop_analysis.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -93,7 +94,7 @@ absl::StatusOr<int64_t> WhileLoopAnalysisTest::MakeWhileLoopAndGetTripCount(
                            {"{{COMP_DIR}}", ComparisonDirectionToString(dir)}});
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   ParseAndReturnVerifiedModule(hlo_string));
+                        ParseAndReturnVerifiedModule(hlo_string));
 
   HloInstruction* while_op = module->entry_computation()->root_instruction();
   std::optional<int64_t> trip_count = MatchTrivialLoopTripCount(
@@ -145,7 +146,7 @@ absl::StatusOr<Range> WhileLoopAnalysisTest::MakeWhileLoopAndGetRange(
                            {"{{COMP_DIR}}", ComparisonDirectionToString(dir)}});
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   ParseAndReturnVerifiedModule(hlo_string));
+                        ParseAndReturnVerifiedModule(hlo_string));
 
   HloInstruction* while_op = module->entry_computation()->root_instruction();
   std::optional<Range> range = MatchTrivialLoopRange(while_op);
@@ -1066,7 +1067,7 @@ TEST_F(WhileLoopAnalysisTest, GetIndvarIndexShouldWorkWhenParamIsCopied) {
 }
 
 TEST_F(WhileLoopAnalysisTest,
-       MatchTrivialLoopCountFailsWhenIndvarIsNotIncrementedByConstant) {
+       MatchTrivialLoopFailsWhenIndvarIsNotIncrementedByConstant) {
   absl::string_view hlo_with_constant = R"(
   HloModule test
   body {
@@ -1125,6 +1126,7 @@ TEST_F(WhileLoopAnalysisTest,
       MatchTrivialLoopTripCount(while_op_without_constant, 0,
                                 LiteralUtil::CreateR0<int32_t>(0));
   EXPECT_EQ(trip_count_without_constant, std::nullopt);
+  EXPECT_EQ(MatchTrivialLoopRange(while_op_without_constant), std::nullopt);
 }
 
 TEST_F(WhileLoopAnalysisTest,

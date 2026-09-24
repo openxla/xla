@@ -15,19 +15,20 @@ limitations under the License.
 
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "json/json.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
@@ -137,6 +138,21 @@ TEST(CudnnDevicePropsTest, MatchesLiveDevice) {
 
     VLOG(1) << "live : " << Dump(live_json);
     VLOG(1) << "synth: " << Dump(synth_json);
+
+    constexpr char kOversizedSharedMemoryField[] =
+        "oversizedSharedMemoryPerBlock";
+    const int64_t live_oversized_shared_memory =
+        live_json.get(kOversizedSharedMemoryField, 0).asInt64();
+    const int64_t synth_oversized_shared_memory =
+        synth_json.get(kOversizedSharedMemoryField, 0).asInt64();
+    EXPECT_EQ(synth_oversized_shared_memory,
+              desc.oversized_shared_memory_per_block());
+    // cuDNN may omit this property or report zero.
+    if (live_oversized_shared_memory != 0) {
+      EXPECT_EQ(synth_oversized_shared_memory, live_oversized_shared_memory);
+    }
+    live_json.removeMember(kOversizedSharedMemoryField);
+    synth_json.removeMember(kOversizedSharedMemoryField);
 
     StripIgnoredFields(live_json);
     StripIgnoredFields(synth_json);

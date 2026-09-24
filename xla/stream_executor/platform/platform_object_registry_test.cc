@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -155,7 +156,7 @@ TEST(PlatformObjectRegistryTest, FindObjectReturnsConstNonDanglingReference) {
                   stream_executor::cuda::kCudaPlatformId, 33),
               absl_testing::IsOk());
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const int& value,
       registry.FindObject<TestTrait>(stream_executor::cuda::kCudaPlatformId));
   EXPECT_THAT(value, 33);

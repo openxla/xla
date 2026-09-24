@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
 namespace xla {
@@ -24,7 +25,11 @@ namespace xla {
 TEST(XlaCpuPjrtClientTest, GetXlaPjrtGpuClient) {
   ASSERT_OK_AND_ASSIGN(auto client, GetXlaPjrtGpuClient({}));
   EXPECT_EQ(client->platform_name(), "cuda");
-  EXPECT_NE(dynamic_cast<StreamExecutorGpuClient*>(client.get()), nullptr);
+  auto* common_client = dynamic_cast<CommonPjRtClient*>(client.get());
+  ASSERT_NE(common_client, nullptr);
+  ASSERT_NE(
+      dynamic_cast<StreamExecutorGpuRawClient*>(common_client->raw_client()),
+      nullptr);
 }
 
 }  // namespace xla

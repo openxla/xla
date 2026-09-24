@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -43,7 +45,6 @@ limitations under the License.
 #include "xla/runtime/object_pool.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
@@ -55,6 +56,7 @@ namespace xla::gpu {
 namespace {
 
 using ::xla::xtile::BlockLevelFusionConfig;
+using ::xla::xtile::BlockLevelParameters;
 
 TEST(CubinCustomKernelCompilerTest, CallbackInvoked) {
   int compiler_invoked = 0;

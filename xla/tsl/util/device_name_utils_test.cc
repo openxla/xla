@@ -19,11 +19,11 @@ limitations under the License.
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
+#include "tsl/platform/strcat.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
-#include "tsl/platform/strcat.h"
 
 namespace tsl {
 

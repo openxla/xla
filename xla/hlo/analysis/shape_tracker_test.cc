@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/analysis/shape_tracker.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
@@ -1902,6 +1903,14 @@ TEST(ShapeTrackerMapsToOneStrideTest, ContiguousTransposeReshapeIsContiguous) {
   ASSERT_TRUE(tracker.AppendTranspose({3, 1, 2, 0}).ok());
   ASSERT_TRUE(tracker.AppendReshape({2, 6, 4}).ok());
   EXPECT_TRUE(tracker.MapsToOneStride({1, 2}));
+}
+
+TEST(ShapeTrackerMapsToOneStrideTest, AllowSwapsSwappedIsContiguous) {
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 3, 4});
+  ShapeTracker tracker(shape);
+  ASSERT_TRUE(tracker.AppendTranspose({0, 2, 1}).ok());
+  EXPECT_FALSE(tracker.MapsToOneStride({1, 2}, /*allow_swaps=*/false));
+  EXPECT_TRUE(tracker.MapsToOneStride({1, 2}, /*allow_swaps=*/true));
 }
 
 }  // namespace

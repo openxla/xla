@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -699,7 +699,7 @@ absl::StatusOr<bool> ConditionalSimplifier::RunImpl(
     auto entry = calling_conditionals.find(comp);
     CHECK(entry != calling_conditionals.end());
     ABSL_ASSIGN_OR_RETURN(bool result, TryRemoveUnusedConditionalOperands(
-                                      entry->first, entry->second));
+                                           entry->first, entry->second));
     changed |= result;
   }
 

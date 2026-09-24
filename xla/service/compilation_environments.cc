@@ -20,11 +20,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
 #include "absl/base/const_init.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "google/protobuf/any.pb.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/message.h"
 #include "google/protobuf/unknown_field_set.h"
@@ -122,6 +123,7 @@ CompilationEnvironments& CompilationEnvironments::operator=(
     env->CopyFrom(*descriptor_message_pair.second);
     environments_.insert({descriptor_message_pair.first, std::move(env)});
   }
+  unknown_environments_ = rhs.unknown_environments_;
   return *this;
 }
 
@@ -145,12 +147,23 @@ CompilationEnvironments::CreateFromProto(
     const google::protobuf::Descriptor* const descriptor =
         pool->FindMessageTypeByName(fullname);
     if (descriptor == nullptr) {
-      return absl::DataLossError(absl::StrCat(
-          "Unknown CompilationEnvironment message type: ", fullname));
+      // The proto type is not linked into this binary. Preserve the raw Any
+      // so that ToProto() can round-trip it without data loss.
+      const bool inserted =
+          envs->unknown_environments_.emplace(fullname, env_proto).second;
+      if (!inserted) {
+        return absl::AlreadyExistsError(absl::StrCat(
+            "Replacing unknown CompilationEnvironment of type ", fullname));
+      }
+      LOG(WARNING) << "Preserving unknown CompilationEnvironment message type "
+                      "as opaque bytes: "
+                   << fullname;
+      continue;
     }
 
     const google::protobuf::Message* const prototype =
-        google::protobuf::MessageFactory::generated_factory()->GetPrototype(descriptor);
+        google::protobuf::MessageFactory::generated_factory()->GetPrototype(
+            descriptor);
     if (prototype == nullptr) {
       return absl::InternalError(absl::StrCat(
           "Unsupported CompilationEnvironment message type: ", fullname));
@@ -170,7 +183,8 @@ CompilationEnvironments::CreateFromProto(
 }
 
 void CompilationEnvironments::RegisterProcessNewEnvFn(
-    const google::protobuf::Descriptor* descriptor, ProcessNewEnvFn process_new_env) {
+    const google::protobuf::Descriptor* descriptor,
+    ProcessNewEnvFn process_new_env) {
   absl::MutexLock l(process_new_env_fns_mu);
   if (process_new_env_fns == nullptr) {
     process_new_env_fns =
@@ -247,6 +261,10 @@ CompilationEnvironmentsProto CompilationEnvironments::ToProto() const {
   for (const auto* const descriptor : descriptors) {
     proto.add_environments()->PackFrom(*environments_.at(descriptor));
   }
+  // Re-emit any environments whose proto type was not linked into this binary.
+  for (const auto& [fullname, unknown_env] : unknown_environments_) {
+    *proto.add_environments() = unknown_env;
+  }
   return proto;
 }
 
@@ -289,8 +307,9 @@ absl::Status CompilationEnvironments::AddEnvImpl(
     return absl::InvalidArgumentError(absl::StrCat(
         "Unknown CompilationEnvironment type ", descriptor.full_name()));
   }
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<google::protobuf::Message> processed_env,
-                   process_new_env(std::move(env)));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<google::protobuf::Message> processed_env,
+      process_new_env(std::move(env)));
 
   // Check for unknown fields
   const google::protobuf::UnknownFieldSet& unknown_fields =

@@ -116,7 +116,7 @@ class CApiCustomCallPartitioner : public xla::CustomCallPartitioner {
     std::optional<HloSharding> result_sharding;
     std::string mlir_module;
     ABSL_ASSIGN_OR_RETURN(std::tie(mlir_module, arg_shardings, result_sharding),
-                     jax::ConsumeResults(&args));
+                          jax::ConsumeResults(&args));
     ABSL_RETURN_IF_ERROR(ParseMlirModuleStringAndConvertToXlaComputation(
         mlir_module, computation, /*use_tuple_args=*/false,
         /*return_tuple=*/false));
@@ -125,8 +125,8 @@ class CApiCustomCallPartitioner : public xla::CustomCallPartitioner {
             computation.proto(), xla::DefaultDebugOptionsIgnoringFlags())
             .value();
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                     xla::HloModule::CreateFromProto(computation.proto(),
-                                                     hlo_module_config));
+                          xla::HloModule::CreateFromProto(computation.proto(),
+                                                          hlo_module_config));
     std::vector<HloInstruction*> operands;
     operands.reserve(instruction->operand_count());
     if (arg_shardings.size() != instruction->operand_count()) {
@@ -148,12 +148,13 @@ class CApiCustomCallPartitioner : public xla::CustomCallPartitioner {
     pipeline.AddPass<CallInliner>();
     ABSL_RETURN_IF_ERROR(pipeline.Run(hlo_module.get(), {}).status());
 
-    ABSL_ASSIGN_OR_RETURN(auto* partitioned_hlo,
-                     InlineHloComputation(
-                         instruction, hlo_module->entry_computation(),
-                         partitioner->builder(), operands,
-                         [partitioner]() { return partitioner->NewChannel(); },
-                         "_custom_call_lowering_rule"));
+    ABSL_ASSIGN_OR_RETURN(
+        auto* partitioned_hlo,
+        InlineHloComputation(
+            instruction, hlo_module->entry_computation(),
+            partitioner->builder(), operands,
+            [partitioner]() { return partitioner->NewChannel(); },
+            "_custom_call_lowering_rule"));
     partitioned_hlo->set_sharding(result_sharding.value());
 
     spmd::PartitionedHlo result_partitioned =
@@ -241,7 +242,7 @@ absl::StatusOr<xla::HloSharding> ReadHloSharding(
         "custom_call_sharding.cc: error parsing OpShardingProto");
   }
   ABSL_ASSIGN_OR_RETURN(xla::HloSharding sharding,
-                   xla::HloSharding::FromProto(std::move(proto)));
+                        xla::HloSharding::FromProto(std::move(proto)));
   sharding = xla::HloSharding::V3ToV2Sharding(sharding);
   return sharding;
 }
@@ -314,12 +315,12 @@ ConsumeResults(JAX_CustomCallPartitioner_Partition_Args* args) {
   };
   ABSL_RETURN_IF_ERROR(ConsumeHeader(args->header));
   ABSL_ASSIGN_OR_RETURN(auto result_sharding,
-                   ReadHloSharding(args->result_sharding));
+                        ReadHloSharding(args->result_sharding));
   std::vector<xla::HloSharding> arg_shardings;
   arg_shardings.reserve(args->num_args);
   for (size_t i = 0; i < args->num_args; ++i) {
     ABSL_ASSIGN_OR_RETURN(auto arg_sharding,
-                     ReadHloSharding(args->args_sharding[i]));
+                          ReadHloSharding(args->args_sharding[i]));
     arg_shardings.push_back(std::move(arg_sharding));
   }
   return std::tuple<std::string, std::vector<xla::HloSharding>,
@@ -362,7 +363,7 @@ ReadArgs(JAX_CustomCallPartitioner_Partition_Args* args) {
     shapes.push_back(shape);
     if (args->op_args[i].has_sharding) {
       ABSL_ASSIGN_OR_RETURN(auto sharding,
-                       ReadHloSharding(args->op_args[i].sharding));
+                            ReadHloSharding(args->op_args[i].sharding));
       shardings.push_back(std::move(sharding));
     } else {
       shardings.push_back(std::nullopt);
@@ -373,7 +374,7 @@ ReadArgs(JAX_CustomCallPartitioner_Partition_Args* args) {
   std::optional<xla::HloSharding> result_sharding;
   if (args->op_result.has_sharding) {
     ABSL_ASSIGN_OR_RETURN(result_sharding,
-                     ReadHloSharding(args->op_result.sharding));
+                          ReadHloSharding(args->op_result.sharding));
   }
   return std::tuple<std::vector<xla::Shape>,
                     std::vector<std::optional<xla::HloSharding>>, xla::Shape,
@@ -395,7 +396,7 @@ ReadArgs(JAX_CustomCallPartitioner_InferShardingFromOperands_Args* args) {
     shapes.push_back(shape);
     if (args->op_args[i].has_sharding) {
       ABSL_ASSIGN_OR_RETURN(auto sharding,
-                       ReadHloSharding(args->op_args[i].sharding));
+                            ReadHloSharding(args->op_args[i].sharding));
       shardings.push_back(std::move(sharding));
     } else {
       shardings.push_back(std::nullopt);

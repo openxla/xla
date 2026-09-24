@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -137,7 +137,8 @@ XlaOp DynamicSliceInMinorDims(XlaOp x, absl::Span<const XlaOp> starts,
     auto major_dims = shape.dimensions().subspan(
         /*pos=*/0,
         /*len=*/n_dims - sizes.size());
-    ABSL_ASSIGN_OR_RETURN(auto padded_starts, PrependZerosInMajorDims(x, starts));
+    ABSL_ASSIGN_OR_RETURN(auto padded_starts,
+                          PrependZerosInMajorDims(x, starts));
     auto padded_sizes = ConcatVectors(major_dims, sizes);
     return DynamicSlice(x, padded_starts, padded_sizes);
   });
@@ -147,7 +148,8 @@ XlaOp DynamicUpdateSliceInMinorDims(XlaOp x, XlaOp update,
                                     absl::Span<const XlaOp> starts) {
   XlaBuilder* builder = x.builder();
   return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
-    ABSL_ASSIGN_OR_RETURN(auto padded_starts, PrependZerosInMajorDims(x, starts));
+    ABSL_ASSIGN_OR_RETURN(auto padded_starts,
+                          PrependZerosInMajorDims(x, starts));
     return DynamicUpdateSlice(x, update, padded_starts);
   });
 }

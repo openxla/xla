@@ -165,7 +165,7 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
   }
   TF_RET_CHECK(slack_windows_ >= 0);
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                   HloAliasAnalysis::Run(module, alias_info_));
+                        HloAliasAnalysis::Run(module, alias_info_));
   const HloSchedule& schedule = module->schedule();
 
   absl::flat_hash_set<const HloComputation*> fenceable_computations;

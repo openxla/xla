@@ -31,6 +31,7 @@ load("//third_party/brotli:workspace.bzl", brotli = "repo")
 load("//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
 load("//third_party/compute_library:workspace.bzl", compute_library = "repo")
 load("//third_party/cpuinfo:workspace.bzl", cpuinfo = "repo")
+load("//third_party/cuda_tile:workspace.bzl", cuda_tile = "repo")
 load("//third_party/cudnn_frontend:workspace.bzl", cudnn_frontend = "repo")
 load("//third_party/cutlass:workspace.bzl", cutlass = "repo")
 load("//third_party/cutlass_cutedsl_runtime:workspace.bzl", cutlass_cutedsl_runtime = "repo")
@@ -62,6 +63,7 @@ load("//third_party/net_zstd:workspace.bzl", net_zstd = "repo")
 load("//third_party/nvshmem:workspace.bzl", nvshmem = "repo")
 load("//third_party/nvtx:workspace.bzl", nvtx = "repo")
 load("//third_party/oneccl:workspace.bzl", oneccl_v1 = "repo_v1", oneccl_v2 = "repo_v2")
+load("//third_party/onedpl:workspace.bzl", onedpl = "repo")
 load("//third_party/pthreadpool:workspace.bzl", pthreadpool = "repo")
 load("//third_party/py:python_configure.bzl", "python_configure")
 load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
@@ -81,6 +83,7 @@ load("//third_party/spdlog:workspace.bzl", spdlog = "repo")
 load("//third_party/sqlite:workspace.bzl", sqlite = "repo")
 load("//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
 load("//third_party/system_libpci:workspace.bzl", system_libpci = "repo")
+load("//third_party/tensor_ir:workspace.bzl", tensor_ir = "repo")
 load("//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
 load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 load("//third_party/transformer_engine:workspace.bzl", transformer_engine = "repo")
@@ -129,6 +132,7 @@ def _initialize_third_party():
     nvshmem()
     nvtx()
     onednn()
+    onedpl()
     oneccl_v1()
     oneccl_v2()
     pybind11_abseil()
@@ -147,11 +151,13 @@ def _initialize_third_party():
     spdlog()
     sqlite()
     stablehlo()
+    tensor_ir()
     tensorrt()
     transformer_engine()
     triton()
     uv()
     xnnpack()
+    cuda_tile()
     cutlass()
     cutlass_cutedsl_runtime()
 
@@ -367,9 +373,9 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "//third_party:curl.BUILD",
-        sha256 = "264537d90e58d2b09dddc50944baf3c38e7089151c8986715e2aaeaaf2b8118f",
-        strip_prefix = "curl-8.11.0",
-        urls = tf_mirror_urls("https://curl.se/download/curl-8.11.0.tar.gz"),
+        sha256 = "d9b327997999045a24cda50f3983e69e51c516bd8be6ef9842fc7f99135e33bb",
+        strip_prefix = "curl-8.21.0",
+        urls = tf_mirror_urls("https://curl.se/download/curl-8.21.0.tar.gz"),
     )
 
     tf_http_archive(

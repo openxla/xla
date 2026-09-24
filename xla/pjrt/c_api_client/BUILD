@@ -53,6 +53,7 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         ":pjrt_c_api_multi_slice_config",
+        "//xla:custom_options",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
@@ -130,6 +131,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -182,7 +184,6 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",

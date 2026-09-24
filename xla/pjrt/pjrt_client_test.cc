@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -799,6 +799,11 @@ ENTRY RuntimeDonationDenialMustAliasFails() -> f32[2, 2] {
 
 TEST(PjRtClientTest, GetDefaultLayout) {}
 
+TEST(PjRtClientTest, IsCApiTest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  EXPECT_FALSE(client->IsCApi());
+}
+
 TEST(PjRtClientTest, ClearPeakMemory) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
   PjRtDevice* device = client->addressable_devices()[0];
@@ -830,17 +835,21 @@ TEST(PjRtClientTest, ClearPeakMemory) {
   ASSERT_OK(buffer->GetReadyFuture().Await());
 
   TF_ASSERT_OK_AND_ASSIGN(auto alloc_stats, device->GetAllocatorStats());
-  EXPECT_EQ(alloc_stats.bytes_in_use, initial_stats.bytes_in_use + kAllocSize);
-  EXPECT_EQ(alloc_stats.peak_bytes_in_use,
+  ASSERT_EQ(alloc_stats.bytes_in_use, initial_stats.bytes_in_use + kAllocSize);
+  ASSERT_EQ(alloc_stats.peak_bytes_in_use,
             initial_stats.peak_bytes_in_use + kAllocSize);
-  EXPECT_EQ(alloc_stats.bytes_in_use, alloc_stats.peak_bytes_in_use);
+  ASSERT_EQ(alloc_stats.bytes_in_use, alloc_stats.peak_bytes_in_use);
+  ASSERT_EQ(alloc_stats.peak_allocated_bytes,
+            initial_stats.peak_allocated_bytes + kAllocSize);
 
   // dealloc
   buffer.reset();
 
   TF_ASSERT_OK_AND_ASSIGN(auto dealloc_stats, device->GetAllocatorStats());
-  EXPECT_EQ(initial_stats.bytes_in_use, dealloc_stats.bytes_in_use);
-  EXPECT_EQ(dealloc_stats.peak_bytes_in_use, alloc_stats.peak_bytes_in_use);
+  ASSERT_EQ(initial_stats.bytes_in_use, dealloc_stats.bytes_in_use);
+  ASSERT_EQ(dealloc_stats.peak_bytes_in_use, alloc_stats.peak_bytes_in_use);
+  ASSERT_EQ(dealloc_stats.peak_allocated_bytes,
+            alloc_stats.peak_allocated_bytes);
 
   absl::Status clear_status = device->ClearMemoryStats();
   if (!absl::IsUnimplemented(clear_status)) {
@@ -848,6 +857,8 @@ TEST(PjRtClientTest, ClearPeakMemory) {
     TF_ASSERT_OK_AND_ASSIGN(auto clear_stats, device->GetAllocatorStats());
     EXPECT_EQ(clear_stats.bytes_in_use, dealloc_stats.bytes_in_use);
     EXPECT_EQ(clear_stats.peak_bytes_in_use, dealloc_stats.bytes_in_use);
+    EXPECT_EQ(clear_stats.peak_allocated_bytes,
+              dealloc_stats.bytes_in_use + dealloc_stats.bytes_reserved);
   }
 }
 struct LinearizePackTestParam {

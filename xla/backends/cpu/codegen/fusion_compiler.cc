@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/config.h"  // IWYU pragma: keep
-#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -104,6 +103,8 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/transforms/Passes.h"
 #include "stablehlo/transforms/optimization/Passes.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_dialect.h"
 #include "xla/backends/cpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
@@ -127,11 +128,17 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 namespace {
+
+emitters::SimplifyArithPassOptions GetSimplifyArithPassOptions(
+    bool fast_min_max) {
+  emitters::SimplifyArithPassOptions options;
+  options.fast_min_max_ = fast_min_max;
+  options.explicit_nan_propagation_ = false;
+  return options;
+}
 
 absl::Status RunPassPipeline(mlir::ModuleOp module, mlir::PassManager& pm,
                              mlir::interpreter::MlirCompilationTrace* trace,
@@ -231,11 +238,8 @@ void AddScalarOptimizationPasses(mlir::OpPassManager& pm,
 // These passes are primarily responsible for lowering individual ops to
 // their LLVM equivalent.
 void AddGenericLoweringPasses(mlir::OpPassManager& pm, bool fast_min_max) {
-  emitters::SimplifyArithPassOptions simplify_arith_options;
-  simplify_arith_options.fast_min_max_ = fast_min_max;
-  simplify_arith_options.explicit_nan_propagation_ = false;
-  pm.addNestedPass<mlir::func::FuncOp>(
-      emitters::createSimplifyArithPass(simplify_arith_options));
+  pm.addNestedPass<mlir::func::FuncOp>(emitters::createSimplifyArithPass(
+      GetSimplifyArithPassOptions(fast_min_max)));
   pm.addPass(emitters::createExpandIntegerPowerPass());
   pm.addPass(emitters::createSimplifyAffinePass());
   pm.addPass(mlir::createCanonicalizerPass());
@@ -405,8 +409,12 @@ void AddNewXtileToVectorPasses(mlir::OpPassManager& pm) {
   pm.addPass(xtile::createLegalizeUnsignedIntegersAsSignlessPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(cpu::createVectorizeXTilePass());
-
   pm.addPass(cpu::createLowerXTileEntryPass());
+
+  pm.addNestedPass<mlir::func::FuncOp>(emitters::createSimplifyArithPass(
+      GetSimplifyArithPassOptions(/*fast_min_max=*/false)));
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
 
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::stablehlo::createStablehloTargetIndependentOptimizationPass());
@@ -453,26 +461,30 @@ void AddVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max) {
 // Lowering passes for the new tiled emitter.
 // The input IR is from the xtile dialect which uses tensors that are converted
 // first to the vector dialect and then to LLVM.
-void AddNewVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max) {
+void AddNewVectorToLLVMPasses(mlir::OpPassManager& pm, bool fast_min_max,
+                              int32_t vector_width) {
+  // Get rid of 0d vectors.
   pm.addPass(cpu::createVectorToScalarPass());
-  pm.addPass(cpu::createMemrefCopyToLoopsPass());
-  pm.addPass(cpu::createLowerToLLVMPass());
+  // Get rid of multi-dimensional vectors.
+  pm.addPass(cpu::createUnrollVectorsPass());
+  // Get rid of unit dimensions.
+  pm.addPass(cpu::createDropVectorUnitDimsPass());
   pm.addPass(mlir::createConvertVectorToSCFPass(
       mlir::VectorTransferToSCFOptions().enableFullUnroll(true)));
+  pm.addPass(mlir::createCanonicalizerPass());
   pm.addNestedPass<mlir::func::FuncOp>(cpu::createHoistAllocaPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
+
   pm.addPass(cpu::createUnpackSubByteVectorWritePass());
 
+  pm.addPass(cpu::createLowerToLLVMPass(
+      cpu::LowerToLLVMPassOptions{/*prefer_vector_width =*/vector_width}));
   mlir::ConvertVectorToLLVMPassOptions options;
-
-  // If the tile size is 16x16 this will generate the most efficient code for
-  // avx512 platforms.
   options.vectorTransposeLowering =
       mlir::vector::VectorTransposeLowering::Shuffle16x16;
   pm.addPass(mlir::createConvertVectorToLLVMPass(options));
-
-  pm.addPass(mlir::createConvertComplexToStandardPass());
   pm.addPass(mlir::memref::createExpandStridedMetadataPass());
-
   pm.addPass(emitters::createSafeIntegerArithmeticPass());
 
   AddGenericLoweringPasses(pm, fast_min_max);
@@ -515,7 +527,8 @@ FusionCompiler::FusionCompiler(mlir::MLIRContext* context, Options options,
         std::make_unique<ModuleCallbackPass>(hlo_module_, "post-optimization"));
   }
   if (options_.use_new_xtile_lowering) {
-    AddNewVectorToLLVMPasses(tiled_pass_manager_, options_.fast_min_max);
+    AddNewVectorToLLVMPasses(tiled_pass_manager_, options_.fast_min_max,
+                             options_.vector_width);
   } else {
     AddVectorToLLVMPasses(tiled_pass_manager_, options_.fast_min_max);
   }
@@ -634,7 +647,7 @@ absl::StatusOr<LlvmKernelSource> FusionCompiler::Compile(
     MlirKernelSource mlir_kernel_source) {
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> llvm_module,
-                   Compile(*llvm_context, mlir_kernel_source.module()));
+                        Compile(*llvm_context, mlir_kernel_source.module()));
   return LlvmKernelSource(std::move(llvm_context), std::move(llvm_module));
 }
 

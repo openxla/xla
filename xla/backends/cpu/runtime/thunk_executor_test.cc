@@ -164,10 +164,10 @@ absl::Status AddI32Thunk::Execute(const BufferAllocations* allocations,
                                   BufferAllocation::Slice src_slice,
                                   BufferAllocation::Slice dst_slice) {
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase src,
-                   allocations->GetDeviceAddress(src_slice));
+                        allocations->GetDeviceAddress(src_slice));
 
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase dst,
-                   allocations->GetDeviceAddress(dst_slice));
+                        allocations->GetDeviceAddress(dst_slice));
 
   CHECK_EQ(src.size() % sizeof(int32_t), 0);
   CHECK_EQ(dst.size() % sizeof(int32_t), 0);

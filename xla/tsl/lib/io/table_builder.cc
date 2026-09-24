@@ -18,6 +18,8 @@ limitations under the License.
 #include <assert.h>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/snappy.h"
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/lib/io/block_builder.h"
 #include "xla/tsl/lib/io/format.h"
@@ -25,8 +27,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/coding.h"
-#include "tsl/platform/snappy.h"
 
 namespace tsl {
 namespace table {

@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
-#include "xla/ffi/ffi.h"  // IWYU pragma: export
+#include "xla/ffi/ffi.h"                 // IWYU pragma: export
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/scratch_allocator.h"

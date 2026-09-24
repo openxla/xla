@@ -15,14 +15,16 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_spec.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -118,6 +120,49 @@ TEST(KernelLoaderSpec, OwningCudaPtx) {
   EXPECT_THAT(spec.kernel_name(), "kernel24");
 }
 
+TEST(KernelLoaderSpec, SharedCudaCubin) {
+  static constexpr std::array<uint8_t, 4> kCubinData = {0xDE, 0xAD, 0xBE, 0xEF};
+  auto shared_cubin = std::make_shared<const std::vector<uint8_t>>(
+      kCubinData.begin(), kCubinData.end());
+  auto spec = KernelLoaderSpec::CreateSharedCudaCubinInMemorySpec(
+      shared_cubin, "kernel24", /*arity=*/2);
+  KernelLoaderSpec copy = spec;
+
+  EXPECT_TRUE(spec.has_cuda_cubin_in_memory());
+  EXPECT_FALSE(spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(spec.has_in_process_symbol());
+
+  ASSERT_TRUE(spec.cuda_cubin_in_memory().has_value());
+  ASSERT_TRUE(copy.cuda_cubin_in_memory().has_value());
+  EXPECT_THAT(spec.cuda_cubin_in_memory(),
+              Optional(Field(&CudaCubinInMemory::cubin_bytes, kCubinData)));
+  EXPECT_EQ(spec.cuda_cubin_in_memory()->cubin_bytes.data(),
+            shared_cubin->data());
+  EXPECT_EQ(copy.cuda_cubin_in_memory()->cubin_bytes.data(),
+            shared_cubin->data());
+  EXPECT_THAT(spec.kernel_name(), "kernel24");
+}
+
+TEST(KernelLoaderSpec, SharedCudaPtx) {
+  static constexpr absl::string_view kPtxData = "PTX DEADBEEF";
+  auto shared_ptx = std::make_shared<const std::string>(kPtxData);
+  auto spec = KernelLoaderSpec::CreateSharedCudaPtxInMemorySpec(
+      shared_ptx, "kernel24", /*arity=*/2);
+  KernelLoaderSpec copy = spec;
+
+  EXPECT_FALSE(spec.has_cuda_cubin_in_memory());
+  EXPECT_TRUE(spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(spec.has_in_process_symbol());
+
+  ASSERT_TRUE(spec.cuda_ptx_in_memory().has_value());
+  ASSERT_TRUE(copy.cuda_ptx_in_memory().has_value());
+  EXPECT_THAT(spec.cuda_ptx_in_memory(),
+              Optional(Field(&CudaPtxInMemory::ptx, kPtxData)));
+  EXPECT_EQ(spec.cuda_ptx_in_memory()->ptx.data(), shared_ptx->data());
+  EXPECT_EQ(copy.cuda_ptx_in_memory()->ptx.data(), shared_ptx->data());
+  EXPECT_THAT(spec.kernel_name(), "kernel24");
+}
+
 TEST(KernelLoaderSpec, PtxKernelFromProto) {
   auto proto = ParseTextProtoOrDie<KernelLoaderSpecProto>(R"pb(
     ptx { data: "PTX!" }
@@ -125,8 +170,8 @@ TEST(KernelLoaderSpec, PtxKernelFromProto) {
     arity: 42
   )pb");
 
-  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
-                          KernelLoaderSpec::FromProto(proto));
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
+                       KernelLoaderSpec::FromProto(proto));
   EXPECT_THAT(spec.kernel_name(), "kernel_name");
   EXPECT_THAT(spec.arity(), 42);
   EXPECT_THAT(spec.cuda_ptx_in_memory(),
@@ -151,8 +196,8 @@ TEST(KernelLoaderSpec, CubinKernelFromProto) {
     arity: 42
   )pb");
 
-  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
-                          KernelLoaderSpec::FromProto(proto));
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
+                       KernelLoaderSpec::FromProto(proto));
   EXPECT_THAT(spec.kernel_name(), "kernel_name");
   std::array<uint8_t, 5> kCubin = {'C', 'U', 'B', 'I', 'N'};
   EXPECT_THAT(spec.arity(), 42);
@@ -164,6 +209,30 @@ TEST(KernelLoaderSpec, CubinKernelToProto) {
   std::array<uint8_t, 5> kCubin = {'C', 'U', 'B', 'I', 'N'};
   auto spec = KernelLoaderSpec::CreateCudaCubinInMemorySpec(
       kCubin, "kernel_name", /*arity=*/42);
+
+  EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
+                cubin { data: "CUBIN" }
+                kernel_name: "kernel_name"
+                arity: 42
+              )pb")));
+}
+
+TEST(KernelLoaderSpec, SharedPtxKernelToProto) {
+  auto spec = KernelLoaderSpec::CreateSharedCudaPtxInMemorySpec(
+      std::make_shared<const std::string>("PTX!"), "kernel_name", /*arity=*/42);
+
+  EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
+                ptx { data: "PTX!" }
+                kernel_name: "kernel_name"
+                arity: 42
+              )pb")));
+}
+
+TEST(KernelLoaderSpec, SharedCubinKernelToProto) {
+  auto spec = KernelLoaderSpec::CreateSharedCudaCubinInMemorySpec(
+      std::make_shared<const std::vector<uint8_t>>(
+          std::vector<uint8_t>{'C', 'U', 'B', 'I', 'N'}),
+      "kernel_name", /*arity=*/42);
 
   EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
                 cubin { data: "CUBIN" }
@@ -189,8 +258,8 @@ TEST(KernelLoaderSpec, InProcessSymbolFromProto) {
     return InventPointerToCudaKernel(0x1234567890);
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
-                          KernelLoaderSpec::FromProto(proto, symbol_resolver));
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
+                       KernelLoaderSpec::FromProto(proto, symbol_resolver));
   EXPECT_EQ(spec.kernel_name(), "kernel_name");
   EXPECT_EQ(spec.arity(), 42);
   EXPECT_THAT(spec.in_process_symbol(),
@@ -241,15 +310,12 @@ TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
       ParseTextProtoOrDie<KernelArgsPackingSpecProto>(
           R"pb(
             kernel_arguments {
-              relocations {
-                kind: KIND_BITS64_ABSOLUTE
-                argument_index: 0
-              }
+              relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
             }
             kernel_arguments { data: "\x34\x12\x00\x00" }
           )pb");
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       KernelArgsPackingSpec kernel_args_packing_spec,
       KernelArgsPackingSpec::FromProto(kernel_args_packing_spec_proto));
 
@@ -263,10 +329,7 @@ TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
                 arity: 42
                 kernel_args_packing_spec {
                   kernel_arguments {
-                    relocations {
-                      kind: KIND_BITS64_ABSOLUTE
-                      argument_index: 0
-                    }
+                    relocations { kind: KIND_BITS64_ABSOLUTE argument_index: 0 }
                   }
                   kernel_arguments { data: "\x34\x12\x00\x00" }
                 }

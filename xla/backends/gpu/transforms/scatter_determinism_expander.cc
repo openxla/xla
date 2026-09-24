@@ -369,11 +369,7 @@ static absl::StatusOr<HloInstruction*> CreateScanWithIndices(
         shifted_indices_shape, indices, start_indices, end_indices, strides));
     // Use the total size of the operand tensor as out-of-bounds value
     // This matches how FlattenIndices works - it uses the total tensor size
-    int64_t total_size = 1;
-    for (int64_t dim : operand_dims) {
-      total_size *= dim;
-    }
-    int64_t out_of_bounds_value = total_size;
+    int64_t out_of_bounds_value = xla::Product(operand_dims);
     auto* padding_indices =
         parent->AddInstruction(HloInstruction::CreateBroadcast(
             padding_indices_shape,
@@ -395,7 +391,7 @@ static absl::StatusOr<HloInstruction*> CreateScanWithIndices(
     std::vector<HloInstruction*> map_operands = {current_updates,
                                                  concatenated_updates};
     ABSL_ASSIGN_OR_RETURN(HloInstruction * reduced_updates,
-                     MakeMapHlo(map_operands, to_apply));
+                          MakeMapHlo(map_operands, to_apply));
     current_updates = parent->AddInstruction(HloInstruction::CreateTernary(
         updates_shape, HloOpcode::kSelect, indices_mask, reduced_updates,
         current_updates));
@@ -627,23 +623,32 @@ absl::StatusOr<HloInstruction*> AddImplicitDimensionsToIndices(
     int64_t operand_rank, absl::Span<const int64_t> indices_to_operand_map,
     HloInstruction* indices) {
   const Shape& indices_shape = indices->shape();
-  HloComputation* computation = indices->parent();
 
   // Get the batch size (N) and S (number of dimensions in index_vector)
   int64_t batch_size = indices_shape.dimensions(0);
   int64_t num_indices_dims = indices_to_operand_map.size();
 
+  // If the operand rank is the same as the number of indices dimensions, we
+  // don't need to pad the indices.
+  if (operand_rank == num_indices_dims) {
+    return indices;
+  }
+
+  HloComputation* computation = indices->parent();
+
   // Create a tensor of zeros with the target shape [N, operand_rank]
   Shape expanded_shape = ShapeUtil::MakeShape(indices_shape.element_type(),
                                               {batch_size, operand_rank});
+  Shape padding_shape =
+      ShapeUtil::MakeShape(indices_shape.element_type(),
+                           {batch_size, operand_rank - num_indices_dims});
 
-  HloInstruction* zero_filled_tensor =
+  HloInstruction* zero =
       computation->AddInstruction(HloInstruction::CreateConstant(
-          indices->shape().element_type() == S64
-              ? LiteralUtil::CreateR2FromArray2D<int64_t>(Array2D<int64_t>(
-                    batch_size, operand_rank - num_indices_dims, 0))
-              : LiteralUtil::CreateR2FromArray2D<int32_t>(Array2D<int32_t>(
-                    batch_size, operand_rank - num_indices_dims, 0))));
+          LiteralUtil::Zero(indices_shape.element_type())));
+  HloInstruction* zero_filled_tensor = computation->AddInstruction(
+      HloInstruction::CreateBroadcast(padding_shape, zero, {}));
+
   // Concatenate the zero-filled tensor with the index_vector
   HloInstruction* expanded_indices =
       computation->AddInstruction(HloInstruction::CreateConcatenate(
@@ -703,8 +708,8 @@ absl::StatusOr<HloInstruction*> ScatterDeterminismExpander::ExpandInstruction(
   // dimension must be same as the while loop trip count.
   HloInstruction* original_scatter_indices = scatter_indices;
   ABSL_ASSIGN_OR_RETURN(scatter_indices,
-                   CanonicalizeScatterIndices(scatter_indices,
-                                              dim_numbers.index_vector_dim()));
+                        CanonicalizeScatterIndices(
+                            scatter_indices, dim_numbers.index_vector_dim()));
   CHECK_EQ(scatter_indices_count, scatter_indices->shape().dimensions(0));
   // We compromise for maintainability and make the scatter_indices always 2D,
   // so that the implementation could be easier, as we do not need to maintain

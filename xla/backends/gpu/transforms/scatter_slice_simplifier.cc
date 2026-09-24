@@ -255,8 +255,8 @@ class ScatterSliceSimplifierVisitor : public DfsHloRewriteVisitor {
     } else {
       auto* gte = Cast<HloGetTupleElementInstruction>(user);
       ABSL_ASSIGN_OR_RETURN(new_user,
-                       MakeGetTupleElementHlo(operand, gte->tuple_index(),
-                                              &user->metadata()));
+                            MakeGetTupleElementHlo(operand, gte->tuple_index(),
+                                                   &user->metadata()));
     }
 
     // Replace slice user instructions recursively.

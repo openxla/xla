@@ -616,6 +616,12 @@ static absl::StatusOr<bool> TryOptimizeCumSumOrProd(
   const int64_t scan_dim = non_trivial_window_dimensions.front();
   const int64_t scan_length = operand_shape.dimensions(scan_dim);
 
+  // Tiling reshapes the scan dimension, which DynamicDimensionInference
+  // cannot track exactly for dynamic sizes.
+  if (operand_shape.is_dynamic_dimension(scan_dim)) {
+    return false;
+  }
+
   // Early checks to avoid unnecessary work.
   if (scan_length <= base_length) {
     return false;
@@ -733,8 +739,11 @@ static absl::StatusOr<bool> TryOptimizeAssociativeScan(
     return false;
   }
 
+  // Dynamic scan dimensions cannot use the tree rewrite (it reshapes the
+  // scan dimension); keep the single reduce-window form.
   const bool use_single_reduce_window =
-      base_length == 0 || scan_length <= base_length;
+      base_length == 0 || scan_length <= base_length ||
+      operand_shape.is_dynamic_dimension(scan_dim);
   if (!use_single_reduce_window && !IsTreeRewriteSafeInit(scan, init_source)) {
     // The tree rewrite folds the init into both tree levels, which is only
     // correct when the extra fold is a no-op (an identity, idempotent, or
@@ -752,7 +761,8 @@ static absl::StatusOr<bool> TryOptimizeAssociativeScan(
     // does not modify the module when it fails.
     return false;
   }
-  ABSL_ASSIGN_OR_RETURN(HloComputation * scan_to_apply, std::move(scan_to_apply_or));
+  ABSL_ASSIGN_OR_RETURN(HloComputation * scan_to_apply,
+                        std::move(scan_to_apply_or));
 
   // Every gate has passed; from here on the module is modified. Materialize
   // the scalar init: the scalar instruction itself, or a scalar constant
@@ -821,15 +831,17 @@ absl::StatusOr<bool> ReduceWindowRewriter::RunImpl(
          computation->MakeInstructionPostOrder()) {
       if (auto* reduce_window =
               DynCast<HloReduceWindowInstruction>(instruction)) {
-        ABSL_ASSIGN_OR_RETURN(bool result, TryOptimizeCumSumOrProd(
-                                          this, base_length_, reduce_window));
+        ABSL_ASSIGN_OR_RETURN(
+            bool result,
+            TryOptimizeCumSumOrProd(this, base_length_, reduce_window));
         if (result) {
           changed = true;
           continue;
         }
         if (reduce_window->inputs().front()->shape().dimensions().size() == 1) {
-          ABSL_RETURN_IF_ERROR(reduce_window_util::Replace1DReduceWindowWithReshape(
-              reduce_window));
+          ABSL_RETURN_IF_ERROR(
+              reduce_window_util::Replace1DReduceWindowWithReshape(
+                  reduce_window));
           changed = true;
         }
       }
@@ -848,15 +860,13 @@ absl::StatusOr<bool> AssociativeScanRewriter::RunImpl(
   }
 
   bool changed = false;
-  for (const auto& computation : module->computations(execution_threads)) {
-    if (computation->IsFusionComputation()) {
-      continue;
-    }
+  for (const HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (auto* scan = DynCast<HloScanInstruction>(instruction)) {
-        ABSL_ASSIGN_OR_RETURN(bool result,
-                         TryOptimizeAssociativeScan(this, base_length_, scan));
+        ABSL_ASSIGN_OR_RETURN(
+            bool result, TryOptimizeAssociativeScan(this, base_length_, scan));
         changed |= result;
       }
     }

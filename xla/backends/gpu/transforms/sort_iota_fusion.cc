@@ -64,7 +64,7 @@ absl::StatusOr<bool> SortIotaFusion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(bool changed, SortIotaFusionGroupVisitor().RunOnModule(
-                                     module, execution_threads));
+                                          module, execution_threads));
   return changed;
 }
 }  // namespace xla::gpu

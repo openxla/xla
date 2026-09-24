@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "google/protobuf/text_format.h"
@@ -40,7 +41,7 @@ TEST(Dim3DTest, FromProto) {
   Dim3DProto proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(x: 1, y: 2, z: 3)pb", &proto));
-  TF_ASSERT_OK_AND_ASSIGN(Dim3D dimensions, Dim3D::FromProto(proto));
+  ASSERT_OK_AND_ASSIGN(Dim3D dimensions, Dim3D::FromProto(proto));
   EXPECT_EQ(proto.x(), dimensions.x);
   EXPECT_EQ(proto.y(), dimensions.y);
   EXPECT_EQ(proto.z(), dimensions.z);
@@ -72,8 +73,8 @@ TEST(ThreadDimTest, FromAndToProto) {
   ThreadDimProto thread_dimensions_proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(coordinates { x: 2, y: 4, z: 6 })pb", &thread_dimensions_proto));
-  TF_ASSERT_OK_AND_ASSIGN(ThreadDim thread_dimensions,
-                          ThreadDim::FromProto(thread_dimensions_proto));
+  ASSERT_OK_AND_ASSIGN(ThreadDim thread_dimensions,
+                       ThreadDim::FromProto(thread_dimensions_proto));
   EXPECT_THAT(thread_dimensions.ToProto(),
               EqualsProto(thread_dimensions_proto));
 }
@@ -82,8 +83,8 @@ TEST(BlockDimTest, FromAndToProto) {
   BlockDimProto block_dimensions_proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(coordinates { x: 2, y: 4, z: 6 })pb", &block_dimensions_proto));
-  TF_ASSERT_OK_AND_ASSIGN(BlockDim block_dimensions,
-                          BlockDim::FromProto(block_dimensions_proto));
+  ASSERT_OK_AND_ASSIGN(BlockDim block_dimensions,
+                       BlockDim::FromProto(block_dimensions_proto));
   EXPECT_THAT(block_dimensions.ToProto(), EqualsProto(block_dimensions_proto));
 }
 
@@ -91,8 +92,8 @@ TEST(ClusterDimTest, FromAndToProto) {
   ClusterDimProto cluster_dimensions_proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(coordinates { x: 2, y: 4, z: 6 })pb", &cluster_dimensions_proto));
-  TF_ASSERT_OK_AND_ASSIGN(ClusterDim cluster_dimensions,
-                          ClusterDim::FromProto(cluster_dimensions_proto));
+  ASSERT_OK_AND_ASSIGN(ClusterDim cluster_dimensions,
+                       ClusterDim::FromProto(cluster_dimensions_proto));
   EXPECT_THAT(cluster_dimensions.ToProto(),
               EqualsProto(cluster_dimensions_proto));
 }

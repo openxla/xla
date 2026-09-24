@@ -216,7 +216,7 @@ absl::StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
   }
   if (input.has_result_layout()) {
     ABSL_ASSIGN_OR_RETURN(Shape result_layout,
-                     Shape::FromProto(input.result_layout()));
+                          Shape::FromProto(input.result_layout()));
     output.set_result_layout(result_layout);
   }
   if (input.has_comp_envs()) {
@@ -260,7 +260,7 @@ absl::StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
   output.set_process_count(input.process_count());
   if (input.has_gpu_topology()) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<const GpuTopology> gpu_topology,
-                     GpuTopology::FromProto(input.gpu_topology()));
+                          GpuTopology::FromProto(input.gpu_topology()));
     output.set_gpu_topology(*gpu_topology);
   }
   return output;

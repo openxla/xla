@@ -88,6 +88,5 @@ bool StatefulRngSpmdPartitioner::CanSideEffectingHaveReplicatedSharding(
   return spmd::SpmdPartitioner::CanSideEffectingHaveReplicatedSharding(hlo);
 }
 
-
 }  // namespace spmd
 }  // namespace xla

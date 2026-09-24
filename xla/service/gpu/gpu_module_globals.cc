@@ -69,7 +69,7 @@ GpuModuleGlobals::ConstantInfo::FromProto(
     }
     const HloInstruction* instr = it->second;
     ABSL_ASSIGN_OR_RETURN(DenseDataIntermediate content,
-                     LiteralToXlaFormat(instr->literal()));
+                          LiteralToXlaFormat(instr->literal()));
     return ConstantInfo{proto.symbol_name(), content,
                         static_cast<int>(proto.allocation_index())};
   }
@@ -126,7 +126,7 @@ GpuModuleGlobals::Resolve(se::Stream* stream) {
       // This means the constant did not have an initializer in the PTX and
       // therefore must be initialized by XLA here.
       ABSL_RETURN_IF_ERROR(stream->Memcpy(&global, info.content.span().data(),
-                                     info.content.span().size()));
+                                          info.content.span().size()));
       submitted_mem_copies = true;
     }
 

@@ -33,12 +33,12 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_registry.h"
 #include "xla/python/ifrt_proxy/contrib/pathways/status_annotator.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_to_from_proto.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace ifrt_proxy_contrib_pathways {
 

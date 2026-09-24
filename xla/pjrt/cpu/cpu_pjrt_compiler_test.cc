@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/pjrt/cpu/cpu_pjrt_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -49,7 +51,6 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/path.h"
 
 namespace xla::cpu {
 namespace {
@@ -275,7 +276,7 @@ TEST_F(CpuPjrtCompilerTest, CompileClientlessAndExecuteOnClient) {
   ASSERT_EQ(results.size(), 1);
   ASSERT_EQ(results[0].size(), 1);
 
-  ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteralSync());
+  ASSERT_OK_AND_ASSIGN(auto literal, results[0][0]->ToLiteral().Await());
   EXPECT_EQ(literal->Get<int32_t>({}), 2);
 }
 

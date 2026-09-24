@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tsl/lib/io/table.h"
 
 #include "absl/status/status.h"
+#include "tsl/platform/coding.h"
 #include "xla/tsl/lib/io/block.h"
 #include "xla/tsl/lib/io/cache.h"
 #include "xla/tsl/lib/io/format.h"
@@ -24,7 +25,6 @@ limitations under the License.
 #include "xla/tsl/lib/io/two_level_iterator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/coding.h"
 
 namespace tsl {
 namespace table {

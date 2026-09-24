@@ -42,6 +42,9 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
@@ -110,9 +113,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -356,7 +356,7 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   return absl::OkStatus();
 }
 
-absl::Status NVPTXCompiler::AddAutotunerPass(
+absl::Status NVPTXCompiler::AddConfigAssignerPass(
     HloPassPipeline* pipeline, HloModule* hlo_module,
     const se::GpuComputeCapability& gpu_version, const CompileOptions& options,
     tsl::thread::ThreadPool* thread_pool,
@@ -370,7 +370,7 @@ absl::Status NVPTXCompiler::AddAutotunerPass(
   // enumerates their plans. Runs after ConvFusionRewriter (which created the
   // fusions) and probes devicelessly, so it also covers AOT compilation.
   pipeline->AddPass<ConvFp8Fallback>(target_config->device_description);
-  return GpuCompiler::AddAutotunerPass(
+  return GpuCompiler::AddConfigAssignerPass(
       pipeline, hlo_module, gpu_version, options, thread_pool, stream_executor,
       target_config, alias_info, mlir_context, shape_size_fn, key_value_store);
 }
@@ -562,10 +562,11 @@ NVPTXCompiler::GetCompilationProvider(const DebugOptions& debug_options,
       compilation_providers_[se::cuda::CompilationProviderOptions::
                                  FromDebugOptions(debug_options)];
   if (compilation_provider == nullptr) {
-    ABSL_ASSIGN_OR_RETURN(compilation_provider,
-                     se::cuda::AssembleCompilationProvider(
-                         se::cuda::CompilationProviderOptions::FromDebugOptions(
-                             debug_options, stream_exec)));
+    ABSL_ASSIGN_OR_RETURN(
+        compilation_provider,
+        se::cuda::AssembleCompilationProvider(
+            se::cuda::CompilationProviderOptions::FromDebugOptions(
+                debug_options, stream_exec)));
   }
   return compilation_provider.get();
 }
@@ -673,16 +674,17 @@ NVPTXCompiler::CompileTargetBinary(
 
   if (relocatable) {
     ABSL_ASSIGN_OR_RETURN(se::cuda::RelocatableModule relocatable_module,
-                     compilation_provider->CompileToRelocatableModule(
-                         cc, ptx, compilation_options));
+                          compilation_provider->CompileToRelocatableModule(
+                              cc, ptx, compilation_options));
     record_ptx_to_cubin_metric();
     return BackendCompileResult{std::move(ptx),
                                 std::move(relocatable_module.cubin),
                                 std::move(relocatable_module.module_stats)};
   }
 
-  ABSL_ASSIGN_OR_RETURN(se::cuda::Assembly assembly,
-                   compilation_provider->Compile(cc, ptx, compilation_options));
+  ABSL_ASSIGN_OR_RETURN(
+      se::cuda::Assembly assembly,
+      compilation_provider->Compile(cc, ptx, compilation_options));
   record_ptx_to_cubin_metric();
   return BackendCompileResult{std::move(ptx), std::move(assembly.cubin),
                               std::move(assembly.module_stats)};
@@ -710,8 +712,9 @@ absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
   se::CudaComputeCapability cc = nvptx::ResolveSupportedComputeCapability(
       *device_description.gpu_compute_capability().cuda_compute_capability());
 
-  ABSL_ASSIGN_OR_RETURN(const se::cuda::CompilationProvider* compilation_provider,
-                   GetCompilationProvider(debug_options, stream_exec));
+  ABSL_ASSIGN_OR_RETURN(
+      const se::cuda::CompilationProvider* compilation_provider,
+      GetCompilationProvider(debug_options, stream_exec));
 
   std::vector<se::cuda::CompilationProvider::RelocatableModuleOrPtx> inputs;
   inputs.reserve(modules.size());

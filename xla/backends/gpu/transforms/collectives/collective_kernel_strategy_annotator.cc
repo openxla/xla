@@ -104,7 +104,7 @@ absl::StatusOr<bool> TryAnnotateAllReduce(HloInstruction* instr,
       ToProtoStrategy(info.all_reduce_strategy);
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr->backend_config<GpuBackendConfig>());
+                        instr->backend_config<GpuBackendConfig>());
   gpu_config.mutable_collective_backend_config()->set_kernel_strategy(
       proto_strategy);
   ABSL_RETURN_IF_ERROR(instr->set_backend_config(gpu_config));
@@ -144,7 +144,7 @@ absl::StatusOr<bool> TryAnnotateAllGather(HloInstruction* instr,
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instr->backend_config<GpuBackendConfig>());
+                        instr->backend_config<GpuBackendConfig>());
   gpu_config.mutable_collective_backend_config()->set_kernel_strategy(
       CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT);
   ABSL_RETURN_IF_ERROR(instr->set_backend_config(gpu_config));
@@ -193,7 +193,7 @@ absl::StatusOr<bool> CollectiveKernelStrategyAnnotator::RunImpl(
         changed |= annotated;
       } else if (instr->opcode() == HloOpcode::kAllGather) {
         ABSL_ASSIGN_OR_RETURN(bool annotated,
-                         TryAnnotateAllGather(instr, gpu_topology_));
+                              TryAnnotateAllGather(instr, gpu_topology_));
         changed |= annotated;
       }
     }

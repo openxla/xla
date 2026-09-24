@@ -20,10 +20,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -44,6 +44,11 @@ std::string GetCodegenOptionsFingerprint(const DebugOptions& options) {
   google::protobuf::TextFormat::PrintToString(options, &proto_str);
   uint64_t fprint = tsl::Fingerprint64(proto_str);
   return absl::StrCat(absl::Hex(fprint, absl::kZeroPad16));
+}
+
+std::string AutotuneFingerprintToString(tsl::Fprint128 fingerprint) {
+  return absl::StrCat(absl::Hex(fingerprint.high64, absl::kZeroPad16),
+                      absl::Hex(fingerprint.low64, absl::kZeroPad16));
 }
 
 }  // namespace xla

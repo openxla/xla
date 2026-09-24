@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/frontend_attributes.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -61,7 +62,6 @@ limitations under the License.
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
@@ -71,6 +71,8 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+using ::xla::xtile::BlockLevelParameters;
 
 struct EmitArgs {
   TritonFusion::EmitThunk emit_thunk;
@@ -94,21 +96,25 @@ absl::StatusOr<EmitArgs> EmitCollectiveFusion(
                                                 use_global_device_ids);
   const HloFusionInstruction* fusion_instr = &fusion;
   std::vector<CollectiveThunk::Buffer> buffers;
-  ABSL_ASSIGN_OR_RETURN(buffers, GetCollectiveBuffers(
-                                ir_emitter_context.buffer_assignment(),
-                                fusion_instr, Thunk::Kind::kCollectiveKernel,
-                                /*has_dynamic_root=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      buffers,
+      GetCollectiveBuffers(ir_emitter_context.buffer_assignment(), fusion_instr,
+                           Thunk::Kind::kCollectiveKernel,
+                           /*has_dynamic_root=*/false));
 
   TritonFusion::EmitThunk make_thunk =
       [info = std::move(info), buffers = std::move(buffers), config,
        fusion_instr](TritonFusion::EmitResult result) mutable
       -> absl::StatusOr<ThunkSequence> {
     ABSL_ASSIGN_OR_RETURN(CollectiveKernelSpec kernel_spec,
-                     CreateCollectiveKernelSpec(
-                         fusion_instr, result.entry.launch_dimensions));
-    auto cubin = result.entry.binary.empty()
-                     ? std::nullopt
-                     : std::make_optional(std::move(result.entry.binary));
+                          CreateCollectiveKernelSpec(
+                              fusion_instr, result.entry.launch_dimensions));
+    // `CollectiveKernelThunk` owns its cubin, so we have to copy it out of the
+    // shared buffer here.
+    std::optional<std::vector<uint8_t>> cubin;
+    if (result.entry.binary != nullptr && !result.entry.binary->empty()) {
+      cubin = *result.entry.binary;
+    }
     return ThunkSequence::Of<CollectiveKernelThunk>(
         std::move(info), config, std::move(kernel_spec), std::move(buffers),
         /*is_collective_kernel_enabled=*/true, result.entry.kernel_name,
@@ -116,7 +122,7 @@ absl::StatusOr<EmitArgs> EmitCollectiveFusion(
         std::move(cubin), result.entry.use_pdl);
   };
   ABSL_ASSIGN_OR_RETURN(std::vector<Shape> unmanaged_arguments,
-                   GetCollectiveUnmanagedKernelArguments(fusion_instr));
+                        GetCollectiveUnmanagedKernelArguments(fusion_instr));
   return EmitArgs{std::move(make_thunk), std::move(unmanaged_arguments)};
 }
 }  // namespace
@@ -185,16 +191,17 @@ AsyncThunkSequence TritonFusion::Emit(
   EmitArgs emit_args;
   if (analysis_.fusion_backend_config().kind() == kTritonCollectiveFusionKind) {
     ABSL_ASSIGN_OR_RETURN(emit_args,
-                     EmitCollectiveFusion(std::move(thunk_info), analysis_,
-                                          ir_emitter_context, fusion));
+                          EmitCollectiveFusion(std::move(thunk_info), analysis_,
+                                               ir_emitter_context, fusion));
   } else {
     EmitThunk make_thunk =
         [thunk_info = std::move(thunk_info)](
             EmitResult result) -> absl::StatusOr<ThunkSequence> {
       ABSL_ASSIGN_OR_RETURN(
           CustomKernel custom_kernel,
-          kernel::CreateOwnedCubinCustomKernel(
-              result.entry.kernel_name, result.entry.binary,
+          kernel::CreateSharedCubinCustomKernel(
+              std::move(result.entry.kernel_name),
+              std::move(result.entry.binary),
               result.kernel_arguments.args().size(),
               result.entry.launch_dimensions.block_counts(),
               result.entry.launch_dimensions.thread_counts_per_block(),
@@ -202,7 +209,7 @@ AsyncThunkSequence TritonFusion::Emit(
       return ThunkSequence::Of<CustomKernelThunk>(
           thunk_info, std::move(custom_kernel), result.kernel_arguments,
           result.entry.use_pdl, std::vector<int64_t>{},
-          result.entry.tma_metadata);
+          std::move(result.entry.tma_metadata));
     };
     emit_args = {
         std::move(make_thunk),
@@ -258,7 +265,7 @@ xla::Future<TritonFusion::EmitResult> TritonFusion::Emit(
                                   .thread_safe_module();
 
           ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                           fusion->backend_config<GpuBackendConfig>());
+                                fusion->backend_config<GpuBackendConfig>());
           absl::string_view fusion_kind =
               gpu_backend_config.fusion_backend_config().kind();
 
@@ -318,13 +325,14 @@ xla::Future<TritonFusion::EmitResult> TritonFusion::Emit(
                     shmem_bytes = triton_wrapper_result.shmem_bytes,
                     use_pdl = triton_wrapper_result.use_pdl](
                        const std::vector<uint8_t>& cubin) mutable {
-                return KernelReuseCache::Entry{std::move(kernel_name),
-                                               launch_dims,
-                                               /*cluster_dim=*/std::nullopt,
-                                               shmem_bytes,
-                                               cubin,
-                                               tma_metadata,
-                                               use_pdl};
+                return KernelReuseCache::Entry{
+                    std::move(kernel_name),
+                    launch_dims,
+                    /*cluster_dim=*/std::nullopt,
+                    shmem_bytes,
+                    std::make_shared<const std::vector<uint8_t>>(cubin),
+                    tma_metadata,
+                    use_pdl};
               });
         });
   };
@@ -334,9 +342,9 @@ xla::Future<TritonFusion::EmitResult> TritonFusion::Emit(
           hlo_computation, kernel_arguments.args(),
           /*discriminator=*/"TritonFusion", generate);
   return status_or_entry.Map([kernel_arguments = std::move(kernel_arguments)](
-                                 const KernelReuseCache::Entry* entry) mutable
+                                 const KernelReuseCache::Entry& entry) mutable
                                  -> absl::StatusOr<EmitResult> {
-    return EmitResult{*entry, std::move(kernel_arguments)};
+    return EmitResult{entry, std::move(kernel_arguments)};
   });
 }
 

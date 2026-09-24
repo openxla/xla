@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
-#include "xla/ffi/ffi.h"  // IWYU pragma: export
+#include "xla/ffi/ffi.h"                 // IWYU pragma: export
 
 namespace Eigen {
 struct ThreadPoolDevice;

@@ -13,24 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "nvidia/hopper/include/Transforms/Passes.h"
-#include "nvidia/include/NVGPUToLLVM/Passes.h"
-#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "absl/strings/str_format.h"
 #include "mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
-#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
-#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "nvidia/hopper/include/Transforms/Passes.h"
+#include "nvidia/include/NVGPUToLLVM/Passes.h"
+#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
 #include "triton/Dialect/Gluon/Transforms/Passes.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
+#include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
+#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 
 namespace xla {
 namespace gpu {
@@ -71,6 +71,7 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(mt::gpu::createTritonGPUOptimizeThreadLocality());
   pm->addPass(mt::gpu::createTritonGPUAccelerateMatmul());
+  pm->addPass(ttng::createTritonNvidiaGPUCheckMatmulTwoCTAPass());
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(
       mt::gpu::createTritonGPUOptimizeDotOperands({cuda_cc.IsAtLeastAmpere()}));
@@ -118,6 +119,9 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   if (cuda_cc.IsAtLeastHopper()) {
     pm->addPass(ttng::createTritonNvidiaGPUTMALoweringPass());
   }
+  if (cuda_cc.IsAtLeastBlackwell()) {
+    pm->addPass(ttng::createTritonNvidiaGPULowerCLCPass());
+  }
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(ttng::createTritonNvidiaGPUInterleaveTMemPass());
   pm->addPass(mt::gpu::createTritonGPUReduceDataDuplication());
@@ -126,6 +130,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createSymbolDCEPass());
   pm->addPass(ttng::createTritonGPUFenceInsertion({cuda_cc_as_int}));
   pm->addPass(ttng::createTritonNvidiaGPUMMALoweringPass());
+  pm->addPass(
+      ttng::createTritonNvidiaGPUHoistMBarrierLifecyclePass({cuda_cc_as_int}));
   pm->addPass(mlir::createSCCPPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createCanonicalizerPass());
@@ -160,7 +166,6 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(
       mt::createAllocateSharedMemoryNvPass(cuda_cc_as_int, final_ptx_version));
   pm->addPass(ttng::createTritonTensorMemoryAllocationPass());
-  pm->addPass(ttng::createTritonNvidiaGPUCheckMatmulTwoCTAPass());
   // We could add a flag to XLA to optionally enable the following passes:
   // if "consan" in options.instrumentation_mode
   // pm->addPass(mt::instrument::createTritonInstrumentConcurrencySanitizer());

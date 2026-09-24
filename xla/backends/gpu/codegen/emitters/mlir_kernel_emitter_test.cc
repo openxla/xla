@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -21,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"

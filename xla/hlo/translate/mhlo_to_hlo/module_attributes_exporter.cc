@@ -161,7 +161,8 @@ void ExportHloModuleConfig(xla::HloModuleConfig& config, ModuleOp module) {
 absl::Status ExportModuleEntryComputationParameterLayouts(
     const ArrayAttr& xla_entry_computation_parameter_layout,
     xla::HloModuleProto& hlo_module) {
-  ABSL_ASSIGN_OR_RETURN(auto entry_computation, FindEntryComputation(hlo_module));
+  ABSL_ASSIGN_OR_RETURN(auto entry_computation,
+                        FindEntryComputation(hlo_module));
 
   LLVM_DEBUG(llvm::dbgs() << "Setting "
                           << xla_entry_computation_parameter_layout.size()
@@ -184,7 +185,8 @@ absl::Status ExportModuleEntryComputationParameterLayouts(
 absl::Status ExportModuleEntryComputationParameterTiles(
     const ArrayAttr& xla_entry_computation_parameter_tiles,
     xla::HloModuleProto& hlo_module) {
-  ABSL_ASSIGN_OR_RETURN(auto entry_computation, FindEntryComputation(hlo_module));
+  ABSL_ASSIGN_OR_RETURN(auto entry_computation,
+                        FindEntryComputation(hlo_module));
 
   LLVM_DEBUG(llvm::dbgs() << "Setting "
                           << xla_entry_computation_parameter_tiles.size()
@@ -207,7 +209,8 @@ absl::Status ExportModuleEntryComputationParameterTiles(
 absl::Status ExportModuleEntryComputationResultLayout(
     const ArrayAttr& xla_entry_computation_result_layout,
     xla::HloModuleProto& hlo_module) {
-  ABSL_ASSIGN_OR_RETURN(auto entry_computation, FindEntryComputation(hlo_module));
+  ABSL_ASSIGN_OR_RETURN(auto entry_computation,
+                        FindEntryComputation(hlo_module));
   return AddLayoutToShapeProto(
       (xla_entry_computation_result_layout.size() == 1)
           ? xla_entry_computation_result_layout[0]
@@ -219,7 +222,8 @@ absl::Status ExportModuleEntryComputationResultLayout(
 absl::Status ExportModuleEntryComputationResultTiles(
     const ArrayAttr& xla_entry_computation_result_tiles,
     xla::HloModuleProto& hlo_module) {
-  ABSL_ASSIGN_OR_RETURN(auto entry_computation, FindEntryComputation(hlo_module));
+  ABSL_ASSIGN_OR_RETURN(auto entry_computation,
+                        FindEntryComputation(hlo_module));
   return AddTileToShapeProto(
       (xla_entry_computation_result_tiles.size() == 1)
           ? xla_entry_computation_result_tiles[0]

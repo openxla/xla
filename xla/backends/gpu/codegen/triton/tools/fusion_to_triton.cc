@@ -27,37 +27,40 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/target_config/target_config.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::gpu {
 namespace {
 
+using ::xla::xtile::BlockLevelParameters;
+
 absl::Status RealMain(absl::string_view input_file) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   xla::LoadModuleFromFile(std::string(input_file)));
+                        xla::LoadModuleFromFile(std::string(input_file)));
 
   HloInstruction* fusion = hlo_module->entry_computation()->root_instruction();
   if (!fusion->IsCustomFusion()) {
     return absl::InvalidArgumentError("Instruction is not a custom fusion.");
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto gpu_config, fusion->backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                        fusion->backend_config<GpuBackendConfig>());
   const HloFusionInstruction* fusion_instr = Cast<HloFusionInstruction>(fusion);
   const FusionBackendConfig& backend_config =
       gpu_config.fusion_backend_config();
@@ -75,7 +78,7 @@ absl::Status RealMain(absl::string_view input_file) {
       hlo_module->config().debug_options().xla_gpu_target_config_filename();
   if (!target_config_filename.empty()) {
     ABSL_ASSIGN_OR_RETURN(auto target_config,
-                     GetTargetConfigFromFile(target_config_filename));
+                          GetTargetConfigFromFile(target_config_filename));
     device_info = target_config.device_description;
   }
 

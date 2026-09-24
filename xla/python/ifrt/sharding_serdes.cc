@@ -68,8 +68,9 @@ class SingleDeviceShardingSerDes
     SingleDeviceShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
     proto.set_device_id(sharding.devices()->devices().front()->Id().value());
-    if (sharding.memory_kind().memory_kind().has_value()) {
-      proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
+    if (!sharding.memory_kind().is_default()) {
+      // NOLINTNEXTLINE(*-readability-redundant-string-conversions)
+      proto.set_memory_kind(std::string(sharding.memory_kind().value()));
     }
     return proto.SerializeAsCord();
   }
@@ -96,8 +97,8 @@ class SingleDeviceShardingSerDes
                        " for SingleDeviceSharding deserialization"));
     }
     ABSL_ASSIGN_OR_RETURN(Device * device,
-                     deserialize_sharding_options->client->LookupDevice(
-                         DeviceId(proto.device_id())));
+                          deserialize_sharding_options->client->LookupDevice(
+                              DeviceId(proto.device_id())));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
@@ -128,8 +129,9 @@ class OpaqueShardingSerDes : public RTTIExtends<OpaqueShardingSerDes, SerDes> {
     OpaqueShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
     sharding.devices()->ToProto(*proto.mutable_devices(), version);
-    if (sharding.memory_kind().memory_kind().has_value()) {
-      proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
+    if (!sharding.memory_kind().is_default()) {
+      // NOLINTNEXTLINE(*-readability-redundant-string-conversions)
+      proto.set_memory_kind(std::string(sharding.memory_kind().value()));
     }
     return proto.SerializeAsCord();
   }
@@ -155,9 +157,10 @@ class OpaqueShardingSerDes : public RTTIExtends<OpaqueShardingSerDes, SerDes> {
           absl::StrCat("Unsupported ", version_number,
                        " for OpaqueSharding deserialization"));
     }
-    ABSL_ASSIGN_OR_RETURN(auto devices,
-                     DeviceList::FromProto(deserialize_sharding_options->client,
-                                           proto.devices()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto devices,
+        DeviceList::FromProto(deserialize_sharding_options->client,
+                              proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
@@ -189,8 +192,9 @@ class ConcreteShardingSerDes
     ConcreteShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
     sharding.devices()->ToProto(*proto.mutable_devices(), version);
-    if (sharding.memory_kind().memory_kind().has_value()) {
-      proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
+    if (!sharding.memory_kind().is_default()) {
+      // NOLINTNEXTLINE(*-readability-redundant-string-conversions)
+      proto.set_memory_kind(std::string(sharding.memory_kind().value()));
     }
     if (sharding.has_static_shape()) {
       sharding.shape().ToProto(*proto.mutable_shape(), version);
@@ -228,9 +232,10 @@ class ConcreteShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for ConcreteSharding deserialization"));
     }
-    ABSL_ASSIGN_OR_RETURN(auto devices,
-                     DeviceList::FromProto(deserialize_sharding_options->client,
-                                           proto.devices()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto devices,
+        DeviceList::FromProto(deserialize_sharding_options->client,
+                              proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
@@ -240,7 +245,8 @@ class ConcreteShardingSerDes
       std::vector<Shape> shard_shapes;
       shard_shapes.reserve(proto.shard_shapes_size());
       for (const auto& shard_shape_proto : proto.shard_shapes()) {
-        ABSL_ASSIGN_OR_RETURN(auto shard_shape, Shape::FromProto(shard_shape_proto));
+        ABSL_ASSIGN_OR_RETURN(auto shard_shape,
+                              Shape::FromProto(shard_shape_proto));
         shard_shapes.push_back(std::move(shard_shape));
       }
       return ConcreteSharding::Create(std::move(devices), memory_kind,
@@ -252,12 +258,12 @@ class ConcreteShardingSerDes
           "ConcreteSharding must have Shape or DynamicShape.");
     }
     ABSL_ASSIGN_OR_RETURN(auto dynamic_shape,
-                     DynamicShape::FromProto(proto.dynamic_shape()));
+                          DynamicShape::FromProto(proto.dynamic_shape()));
     std::vector<DynamicShape> shard_dynamic_shapes;
     shard_dynamic_shapes.reserve(proto.shard_dynamic_shapes_size());
     for (const auto& shard_dynamic_shape_proto : proto.shard_dynamic_shapes()) {
       ABSL_ASSIGN_OR_RETURN(auto dynamic_shape,
-                       DynamicShape::FromProto(shard_dynamic_shape_proto));
+                            DynamicShape::FromProto(shard_dynamic_shape_proto));
       shard_dynamic_shapes.push_back(std::move(dynamic_shape));
     }
     return ConcreteSharding::Create(std::move(devices), memory_kind,
@@ -290,8 +296,9 @@ class ConcreteEvenShardingSerDes
     ConcreteEvenShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
     sharding.devices()->ToProto(*proto.mutable_devices(), version);
-    if (sharding.memory_kind().memory_kind().has_value()) {
-      proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
+    if (!sharding.memory_kind().is_default()) {
+      // NOLINTNEXTLINE(*-readability-redundant-string-conversions)
+      proto.set_memory_kind(std::string(sharding.memory_kind().value()));
     }
     sharding.shape().ToProto(*proto.mutable_shape(), version);
     sharding.shard_shape().ToProto(*proto.mutable_shard_shape(), version);
@@ -320,15 +327,17 @@ class ConcreteEvenShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for ConcreteEvenSharding deserialization"));
     }
-    ABSL_ASSIGN_OR_RETURN(auto devices,
-                     DeviceList::FromProto(deserialize_sharding_options->client,
-                                           proto.devices()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto devices,
+        DeviceList::FromProto(deserialize_sharding_options->client,
+                              proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
     ABSL_ASSIGN_OR_RETURN(auto shape, Shape::FromProto(proto.shape()));
-    ABSL_ASSIGN_OR_RETURN(auto shard_shape, Shape::FromProto(proto.shard_shape()));
+    ABSL_ASSIGN_OR_RETURN(auto shard_shape,
+                          Shape::FromProto(proto.shard_shape()));
     return ConcreteEvenSharding::Create(
         std::move(devices), memory_kind, std::move(shape),
         std::move(shard_shape), proto.is_fully_replicated());
@@ -358,8 +367,9 @@ class ShardingParamShardingSerDes
     ShardingParamShardingProto proto;
     proto.set_version_number(SerDesVersionNumber(0).value());
     sharding.devices()->ToProto(*proto.mutable_devices(), version);
-    if (sharding.memory_kind().memory_kind().has_value()) {
-      proto.set_memory_kind(std::string(*sharding.memory_kind().memory_kind()));
+    if (!sharding.memory_kind().is_default()) {
+      // NOLINTNEXTLINE(*-readability-redundant-string-conversions)
+      proto.set_memory_kind(std::string(sharding.memory_kind().value()));
     }
     ABSL_RETURN_IF_ERROR(sharding.sharding_param().ToProto(
         *proto.mutable_sharding_param(), version));
@@ -386,15 +396,16 @@ class ShardingParamShardingSerDes
           absl::StrCat("Unsupported ", version_number,
                        " for ShardingParamSharding deserialization"));
     }
-    ABSL_ASSIGN_OR_RETURN(auto devices,
-                     DeviceList::FromProto(deserialize_sharding_options->client,
-                                           proto.devices()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto devices,
+        DeviceList::FromProto(deserialize_sharding_options->client,
+                              proto.devices()));
     MemoryKind memory_kind;
     if (proto.has_memory_kind()) {
       memory_kind = MemoryKind(proto.memory_kind());
     }
     ABSL_ASSIGN_OR_RETURN(ShardingParam sharding_param,
-                     ShardingParam::FromProto(proto.sharding_param()));
+                          ShardingParam::FromProto(proto.sharding_param()));
     return ShardingParamSharding::Create(std::move(sharding_param),
                                          std::move(devices), memory_kind);
   }

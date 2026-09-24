@@ -124,7 +124,7 @@ absl::StatusOr<AsyncExecution::ExecutionGuard> AsyncExecution::Start(
       "Start async execution for `%s`: stream=%p, async_stream=%p",
       start_thunk_info_.profile_annotation, stream, async_stream);
   ABSL_ASSIGN_OR_RETURN(ExecutionState * es,
-                   GetExecutionState(state, start_thunk_info_.thunk_id));
+                        GetExecutionState(state, start_thunk_info_.thunk_id));
 
   if (++es->counter > 1) {
     return Internal(
@@ -138,9 +138,11 @@ absl::StatusOr<AsyncExecution::ExecutionGuard> AsyncExecution::Start(
   // Wait for all prior operations on `stream` before launching operations on
   // `async_stream`. We use a stream-level wait (not the shared event) so that
   // the event remains exclusively used for the async→main completion signal.
-  // This is critical for pipelined send/recv where multiple Start() calls can
-  // happen before Done() (the event is safely overwritten on the async stream
-  // because the stream is ordered).
+  // This matters for pipelined send/recv, where several start thunks share one
+  // execution and Start()/Done() alternate across loop iterations: each Start()
+  // re-records the shared event on the ordered async stream after the previous
+  // Done() has waited on it. A second Start() before the matching Done() is
+  // rejected by the counter check above.
   ABSL_RETURN_IF_ERROR(async_stream->WaitFor(stream));
 
   return ExecutionGuard(event, async_stream);
@@ -152,7 +154,7 @@ absl::Status AsyncExecution::Done(Thunk::ExecutionScopedState* state,
       << absl::StreamFormat("Done async execution for `%s`: stream=%p",
                             start_thunk_info_.profile_annotation, stream);
   ABSL_ASSIGN_OR_RETURN(ExecutionState * es,
-                   GetExecutionState(state, start_thunk_info_.thunk_id));
+                        GetExecutionState(state, start_thunk_info_.thunk_id));
 
   if (--es->counter < 0) {
     return Internal("Async execution for `%s` not started (counter=%d)",

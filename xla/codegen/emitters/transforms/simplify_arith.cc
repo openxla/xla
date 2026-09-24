@@ -34,7 +34,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
+#include "xla/codegen/emitters/ir/xla_ops.h"         // IWYU pragma: keep
 #include "xla/codegen/emitters/transforms/passes.h"  // IWYU pragma: keep
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"

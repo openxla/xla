@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -28,7 +29,7 @@ namespace {
 // Test FP8 floating-point types
 template <typename T>
 class Float8Test : public ClientLibraryTestRunnerMixin<
-                       HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
+                       HloInterpreterReferenceMixin<HloTestBase>> {};
 
 using DataTypes = ::testing::Types<tsl::float8_e5m2, tsl::float8_e4m3,
                                    tsl::float8_e4m3fn, tsl::float8_e3m4>;

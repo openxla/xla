@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/call_graph.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -22,11 +25,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "tsl/platform/errors.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,11 +38,8 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -393,18 +392,17 @@ TEST_P(CallGraphTest, ComplexGraph) {
   // order.
   std::vector<const HloComputation*> visited;
   if (GetParam()) {
-    TF_ASSERT_OK(call_graph->VisitNodes([&visited](const CallGraphNode& node) {
+    ASSERT_OK(call_graph->VisitNodes([&visited](const CallGraphNode& node) {
       visited.push_back(node.computation());
       return absl::OkStatus();
     }));
   } else {
-    TF_ASSERT_OK(
-        call_graph
-            ->VisitNodesWithReturn([&visited](const CallGraphNode& node) {
-              visited.push_back(node.computation());
-              return false;
-            })
-            .status());
+    ASSERT_OK(call_graph
+                  ->VisitNodesWithReturn([&visited](const CallGraphNode& node) {
+                    visited.push_back(node.computation());
+                    return false;
+                  })
+                  .status());
   }
   EXPECT_EQ(visited.size(), 5);
   // All values in visited should be unique.
@@ -546,8 +544,8 @@ TEST_F(CallGraphTest, NearestCommonAncestorInstructions) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
   namespace op = testing::opcode_matchers;
   auto p0 = FindInstruction(hlo_module.get(), "p.0");
@@ -684,7 +682,7 @@ TEST_F(CallGraphTest, VisitSingletonComputation) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
 
   std::vector<HloComputation*> visited;
-  TF_ASSERT_OK(call_graph->VisitNodes([&visited](const CallGraphNode& node) {
+  ASSERT_OK(call_graph->VisitNodes([&visited](const CallGraphNode& node) {
     visited.push_back(node.computation());
     return absl::OkStatus();
   }));
@@ -703,7 +701,7 @@ TEST_F(CallGraphTest, VisitUnreachableComputation) {
   // Test visitation of only reachable nodes.
   {
     std::vector<const HloComputation*> visited;
-    TF_ASSERT_OK(call_graph->VisitNodes(
+    ASSERT_OK(call_graph->VisitNodes(
         [&visited](const CallGraphNode& node) {
           visited.push_back(node.computation());
           return absl::OkStatus();
@@ -716,7 +714,7 @@ TEST_F(CallGraphTest, VisitUnreachableComputation) {
   // Test visitation of all nodes (reachable and unreachable).
   {
     std::vector<HloComputation*> visited;
-    TF_ASSERT_OK(call_graph->VisitNodes(
+    ASSERT_OK(call_graph->VisitNodes(
         [&visited](const CallGraphNode& node) {
           visited.push_back(node.computation());
           return absl::OkStatus();
@@ -750,7 +748,7 @@ TEST_F(CallGraphTest, VisitComputationWithReturn) {
       });
   EXPECT_THAT(visited_false,
               UnorderedElementsAre(entry_computation, callee_computation));
-  TF_ASSERT_OK(result);
+  ASSERT_OK(result);
   EXPECT_FALSE(result.value());
 
   std::vector<HloComputation*> visited_true_entry;
@@ -760,7 +758,7 @@ TEST_F(CallGraphTest, VisitComputationWithReturn) {
   });
   EXPECT_THAT(visited_true_entry,
               UnorderedElementsAre(entry_computation, callee_computation));
-  TF_ASSERT_OK(result);
+  ASSERT_OK(result);
   EXPECT_TRUE(result.value());
 
   std::vector<HloComputation*> visited_true_callee;
@@ -770,7 +768,7 @@ TEST_F(CallGraphTest, VisitComputationWithReturn) {
   });
   EXPECT_THAT(visited_true_callee,
               UnorderedElementsAre(entry_computation, callee_computation));
-  TF_ASSERT_OK(result);
+  ASSERT_OK(result);
   EXPECT_TRUE(result.value());
 }
 
@@ -803,7 +801,7 @@ TEST_F(CallGraphTest, ExecutionThread) {
       kScalarShape, HloOpcode::kAdd, constant1, constant2));
   auto module = CreateNewVerifiedModule();
   auto* main_thread_computation = module->AddEntryComputation(builder.Build());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto* async_done,
       main_thread_computation->CreateAsyncInstructions(
           add, {ShapeUtil::MakeScalarShape(U32)}, kParallelThreadName));

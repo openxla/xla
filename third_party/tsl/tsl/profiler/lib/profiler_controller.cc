@@ -19,10 +19,10 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace profiler {
@@ -88,7 +88,7 @@ absl::Status ProfilerController::CollectData(
 }
 
 absl::StatusOr<ConsumeResult> ProfilerController::Consume() {
-  if (state_ != ProfilerState::kStart && state_ != ProfilerState::kStop) {
+  if (state_ == ProfilerState::kInit) {
     return absl::AbortedError("Consume called in the wrong order.");
   }
   if (!status_.ok()) {

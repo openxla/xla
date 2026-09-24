@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/util/split_proto/split_proto_write_record.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "riegeli/bytes/string_writer.h"

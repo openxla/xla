@@ -13,17 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiled_module.h"
@@ -49,6 +51,7 @@ class Gb200CrossCompilationTest : public HloTestBase {
       GpuModel gpu_model) {
     // Clear any existing autotuning results.
     AutotunerCache::ClearAutotuneResults();
+    InMemoryStore::Clear();
 
     const absl::string_view hlo_string = R"hlo(
       HloModule Test
@@ -61,23 +64,23 @@ class Gb200CrossCompilationTest : public HloTestBase {
     )hlo";
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_string));
+                          ParseAndReturnVerifiedModule(hlo_string));
 
     ABSL_ASSIGN_OR_RETURN(std::string name,
-                     PlatformUtil::CanonicalPlatformName("gpu"));
+                          PlatformUtil::CanonicalPlatformName("gpu"));
     name = absl::AsciiStrToUpper(name);
     ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                     se::PlatformManager::PlatformWithName(name));
+                          se::PlatformManager::PlatformWithName(name));
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                     Compiler::GetForPlatform(platform->id()));
+                          Compiler::GetForPlatform(platform->id()));
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_exec,
-                     platform->ExecutorForDevice(0));
+                          platform->ExecutorForDevice(0));
 
     // Create a different gpu_topology.
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto target_proto,
-                     GetGpuTargetConfig(gpu_model));
+                          GetGpuTargetConfig(gpu_model));
     ABSL_ASSIGN_OR_RETURN(Compiler::GpuTargetConfig gpu_target_config,
-                     Compiler::GpuTargetConfig::FromProto(target_proto));
+                          Compiler::GpuTargetConfig::FromProto(target_proto));
 
     // Set options to cross compilation but attach the local executor for
     // auto-tuning.
@@ -102,14 +105,20 @@ TEST_F(Gb200CrossCompilationTest, CrossCompilationToB200) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CompiledModule> result,
                        CrossCompileTo(GpuModel::B200));
   // Verify that the auto tuner ran.
-  EXPECT_FALSE(AutotunerCache::ResultCacheIsEmpty());
+  ASSERT_OK_AND_ASSIGN(std::vector<autotuner::AutotuneEntry> entries,
+                       InMemoryStore().ReadAll());
+  EXPECT_TRUE(!AutotunerCache::ResultCacheIsEmpty() || !entries.empty());
 }
 
-TEST_F(Gb200CrossCompilationTest, CrossCompilationToRTX6000PRO) {
+// TODO(b/565341904): RTX6000PRO has compute capability 12, while gb200
+// only 10.a. Test used to pass as we didn't do any autotuning.
+TEST_F(Gb200CrossCompilationTest, DISABLED_CrossCompilationToRTX6000PRO) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CompiledModule> result,
                        CrossCompileTo(GpuModel::RTX6000PRO));
   // Verify that the auto tuner ran.
-  EXPECT_FALSE(AutotunerCache::ResultCacheIsEmpty());
+  ASSERT_OK_AND_ASSIGN(std::vector<autotuner::AutotuneEntry> entries,
+                       InMemoryStore().ReadAll());
+  EXPECT_TRUE(!AutotunerCache::ResultCacheIsEmpty() || !entries.empty());
 }
 
 }  // namespace

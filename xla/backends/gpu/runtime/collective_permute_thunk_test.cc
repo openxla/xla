@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -55,7 +57,7 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/backend.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -82,7 +84,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
@@ -271,6 +272,12 @@ ENTRY test_computation {
                        ParseAndReturnVerifiedModule(hlo_text, config));
 
   se::StreamExecutor* executor = backend().default_stream_executor();
+
+  if (executor->GetDeviceDescription()
+          .gpu_compute_capability()
+          .oneapi_compute_capability()) {
+    GTEST_SKIP() << "oneAPI command buffers are not implemented yet.";
+  }
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> compiled_module,

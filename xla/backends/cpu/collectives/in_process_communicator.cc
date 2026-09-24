@@ -38,10 +38,11 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/reduction_kind.h"
 #include "xla/debug_options_flags.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
-#include "xla/service/collective_ops_utils.h"
+#include "xla/service/collective_rendezvous.h"
 #include "xla/service/rendezvous.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/lib/math/math_util.h"
@@ -427,13 +428,14 @@ Future<> InProcessCommunicator::AllReduce(se::DeviceAddressBase send_buffer,
   std::string name = absl::StrCat("all reduce ", key.ToString());
   AllReduceParticipant partiticipant{rank_, send_buffer, recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(auto op,
-                   Rendezvous<OpParticipants<AllReduceParticipant>>(
-                       name, key, partiticipant, key.num_local_participants,
-                       CollectParticipants<AllReduceParticipant>,
-                       WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto op, Rendezvous<OpParticipants<AllReduceParticipant>>(
+                   name, key, partiticipant, key.num_local_participants,
+                   CollectParticipants<AllReduceParticipant>,
+                   WarnStuckTimeout(), TerminateTimeout()));
 
-  ABSL_RETURN_IF_ERROR(op->Invoke(AllReduceOp, rank_, dtype, count, reduction_kind));
+  ABSL_RETURN_IF_ERROR(
+      op->Invoke(AllReduceOp, rank_, dtype, count, reduction_kind));
 
   return Future<>(absl::OkStatus());
 }
@@ -449,11 +451,11 @@ Future<> InProcessCommunicator::ReduceScatter(se::DeviceAddressBase send_buffer,
   std::string name = absl::StrCat("reduce scatter ", key.ToString());
   ReduceScatterParticipant partiticipant{rank_, send_buffer, recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(auto op,
-                   Rendezvous<OpParticipants<ReduceScatterParticipant>>(
-                       name, key, partiticipant, key.num_local_participants,
-                       CollectParticipants<ReduceScatterParticipant>,
-                       WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto op, Rendezvous<OpParticipants<ReduceScatterParticipant>>(
+                   name, key, partiticipant, key.num_local_participants,
+                   CollectParticipants<ReduceScatterParticipant>,
+                   WarnStuckTimeout(), TerminateTimeout()));
 
   ABSL_RETURN_IF_ERROR(
       op->Invoke(ReduceScatterOp, rank_, dtype, count, reduction_kind));
@@ -472,11 +474,11 @@ Future<> InProcessCommunicator::CollectivePermute(
   CollectivePermuteParticipant partiticipant{rank_, source_rank, send_buffer,
                                              recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(auto op,
-                   Rendezvous<OpParticipants<CollectivePermuteParticipant>>(
-                       name, key, partiticipant, key.num_local_participants,
-                       CollectParticipants<CollectivePermuteParticipant>,
-                       WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto op, Rendezvous<OpParticipants<CollectivePermuteParticipant>>(
+                   name, key, partiticipant, key.num_local_participants,
+                   CollectParticipants<CollectivePermuteParticipant>,
+                   WarnStuckTimeout(), TerminateTimeout()));
 
   size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 
@@ -520,11 +522,11 @@ Future<> InProcessCommunicator::AllGather(se::DeviceAddressBase send_buffer,
   std::string name = absl::StrCat("all gather ", key.ToString());
   AllGatherParticipant partiticipant{rank_, send_buffer, recv_buffer};
 
-  ABSL_ASSIGN_OR_RETURN(auto op,
-                   Rendezvous<OpParticipants<AllGatherParticipant>>(
-                       name, key, partiticipant, key.num_local_participants,
-                       CollectParticipants<AllGatherParticipant>,
-                       WarnStuckTimeout(), TerminateTimeout()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto op, Rendezvous<OpParticipants<AllGatherParticipant>>(
+                   name, key, partiticipant, key.num_local_participants,
+                   CollectParticipants<AllGatherParticipant>,
+                   WarnStuckTimeout(), TerminateTimeout()));
 
   size_t num_bytes = count * primitive_util::ByteWidth(dtype);
 

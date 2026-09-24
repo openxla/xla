@@ -18,12 +18,15 @@ limitations under the License.
 
 #include <functional>
 #include <memory>
+#include <string>
 
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/any.pb.h"
 #include "google/protobuf/descriptor.h"
 #include "xla/xla.pb.h"
 
@@ -74,12 +77,14 @@ class CompilationEnvironments {
   // - The output is *not* allowed to be null, even for null input.
   // - `descriptor` must stay alive until the process ends, or until
   //   `DeregisterProcessNewEnvFn` is called.
-  static void RegisterProcessNewEnvFn(const google::protobuf::Descriptor* descriptor,
-                                      ProcessNewEnvFn process_new_env);
+  static void RegisterProcessNewEnvFn(
+      const google::protobuf::Descriptor* descriptor,
+      ProcessNewEnvFn process_new_env);
 
   // Deregisters the ProcessNewEnvFn for the given proto descriptor, if one
   // exists.
-  static void DeregisterProcessNewEnvFn(const google::protobuf::Descriptor* descriptor);
+  static void DeregisterProcessNewEnvFn(
+      const google::protobuf::Descriptor* descriptor);
 
   // Adds env to the list of CompilationEnvironments. If an environment with
   // the same proto descriptor has already been added, returns an error.
@@ -112,7 +117,10 @@ class CompilationEnvironments {
   absl::Status InitializeAllKnownEnvs();
 
   // Removes all added environments.
-  void Clear() { environments_.clear(); }
+  void Clear() {
+    environments_.clear();
+    unknown_environments_.clear();
+  }
 
   // Serializes this CompilationEnvironments into a protobuf message.
   CompilationEnvironmentsProto ToProto() const;
@@ -139,6 +147,11 @@ class CompilationEnvironments {
   absl::flat_hash_map<const google::protobuf::Descriptor*,
                       std::unique_ptr<google::protobuf::Message>>
       environments_;
+
+  // Stores serialized environments whose proto type is not linked into this
+  // binary, as opaque google.protobuf.Any entries so that ToProto() can
+  // round-trip them back without data loss.
+  absl::btree_map<std::string, google::protobuf::Any> unknown_environments_;
 };
 
 // ----- Template implementation below -----

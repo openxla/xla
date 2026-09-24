@@ -60,7 +60,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
@@ -219,6 +219,14 @@ class CompileOnlyIfRtClient final
         "MakeErrorArrays not available with compile-only client.");
   }
 
+  absl::StatusOr<std::vector<tsl::Future<>>> CopyArraysToHostBufferShards(
+      absl::Span<CopyArraysToHostBufferShardsSpec> specs,
+      ifrt::ArrayCopySemantics semantics) override {
+    return absl::UnimplementedError(
+        "CopyArraysToHostBufferShards not available with compile-only "
+        "client");
+  }
+
   absl::StatusOr<ifrt::ArrayRef> AssembleArrayFromSingleDeviceArrays(
       ifrt::DType dtype, ifrt::Shape shape, ifrt::ShardingRef sharding,
       absl::Span<ifrt::ArrayRef> arrays,
@@ -365,14 +373,14 @@ class CompileOnlyIfRtClient final
     }
     ABSL_ASSIGN_OR_RETURN(PrimitiveType element_type, ToPrimitiveType(dtype));
     ABSL_ASSIGN_OR_RETURN(xla::Layout layout,
-                     topology_->GetDefaultLayout(element_type, dims));
+                          topology_->GetDefaultLayout(element_type, dims));
     return std::make_shared<PjRtLayout>(std::move(layout));
   }
   absl::StatusOr<ifrt::CustomLayoutRef> GetDefaultLayout(
       ifrt::DType dtype, const ifrt::Shape& shape,
       const ifrt::ShardingRef& sharding) const override {
     ABSL_ASSIGN_OR_RETURN(const ifrt::Shape shard_shape,
-                     sharding->GetShardShape(shape));
+                          sharding->GetShardShape(shape));
     ABSL_ASSIGN_OR_RETURN(
         std::shared_ptr<const xla::PjRtLayout> layout,
         GetDefaultPjRtLayout(dtype, shard_shape.dims(),

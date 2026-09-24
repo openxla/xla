@@ -15,14 +15,17 @@ limitations under the License.
 
 #include "xla/service/llvm_compiler.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "llvm/IR/Module.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal_util.h"
@@ -30,8 +33,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/restricted/hlo_test_base_legacy.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

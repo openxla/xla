@@ -25,9 +25,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "mhlo/transforms/passes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -46,6 +46,7 @@ limitations under the License.
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mhlo/transforms/passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1222,7 +1223,7 @@ class ConvertToHloModule {
     // function and so the main proto shouldn't be consumed in that case.
     TF_RET_CHECK(main) << "requires module to have main function";
     ABSL_ASSIGN_OR_RETURN(xla::XlaComputation computation,
-                     module_builder_.Build(lowered_computation_[main]));
+                          module_builder_.Build(lowered_computation_[main]));
     return std::move(*computation.mutable_proto());
   }
 
@@ -2481,8 +2482,8 @@ LogicalResult ExportXlaOp(BitcastConvertOp op, OpLoweringContext ctx) {
 
 LogicalResult ExportXlaOp(CollectiveBroadcastOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
-  xla::XlaOp operand;
-  if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op))) {
+  SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op.getOperation(), op.getOperands(), ctx, operands))) {
     return failure();
   }
   auto replica_groups = Convert_replica_groups(op.getReplicaGroups(), op);
@@ -2490,15 +2491,61 @@ LogicalResult ExportXlaOp(CollectiveBroadcastOp op, OpLoweringContext ctx) {
     return op.emitOpError(replica_groups.status().ToString());
   }
   auto result = xla::CollectiveBroadcastWithDeviceList(
-      operand, **replica_groups, Convert_channel_handle(op.getChannelHandle()));
-  value_map[op->getResult(0)] = result;
+      operands, **replica_groups, Convert_channel_handle(op.getChannelHandle()),
+      op.getHasDynamicRoot());
+
+  // A collective_broadcast with more than one data operand produces a tuple.
+  mlir::FailureOr<xla::Shape> shape_or =
+      xla::ExtractXlaShape(op.getOperation());
+  if (failed(shape_or)) {
+    return failure();
+  }
+  if (shape_or->IsTuple()) {
+    BuildGetTupleElementsForTupleResults(op, result, ctx);
+  } else {
+    value_map[op->getResult(0)] = result;
+  }
 
   return success();
 }
 
 LogicalResult ExportXlaOp(CollectiveReduceOp op, OpLoweringContext ctx) {
-  // TODO(cl/958226692): Map CollectiveReduceOp to the corresponding HLO op.
-  return failure();
+  auto& value_map = *ctx.values;
+  // Unlike CollectiveBroadcast, CollectiveReduce carries a reduction region.
+  xla::XlaComputationId computation;
+  if (failed(ctx.converter->LowerRegionAsComputation(&op.getComputation(),
+                                                     computation))) {
+    return failure();
+  }
+
+  SmallVector<xla::XlaOp> operands;
+  if (failed(GetTuple(op.getOperation(), op.getOperands(), ctx, operands))) {
+    return failure();
+  }
+
+  auto replica_groups = Convert_replica_groups(op.getReplicaGroups(), op);
+  if (!replica_groups.ok()) {
+    return op.emitOpError(replica_groups.status().ToString());
+  }
+
+  auto result = xla::CollectiveReduceWithDeviceList(
+      operands, computation, **replica_groups,
+      Convert_channel_handle(op.getChannelHandle()),
+      Convert_use_global_device_ids(op.getUseGlobalDeviceIds()),
+      op.getHasDynamicRoot());
+
+  // A collective_reduce with more than one data operand produces a tuple.
+  mlir::FailureOr<xla::Shape> shape_or =
+      xla::ExtractXlaShape(op.getOperation());
+  if (failed(shape_or)) {
+    return failure();
+  }
+  if (shape_or->IsTuple()) {
+    BuildGetTupleElementsForTupleResults(op, result, ctx);
+  } else {
+    value_map[op->getResult(0)] = result;
+  }
+  return success();
 }
 
 // Specialize CompareOp export to set broadcast_dimensions argument.
@@ -2520,10 +2567,21 @@ mlir::LogicalResult ExportXlaOp(mlir::stablehlo::CompareOp op,
   xla::XlaOp xla_result;
   if (type_attr &&
       type_attr.getValue() != mlir::stablehlo::ComparisonType::NOTYPE) {
-    auto type = xla::StringToComparisonType(
-                    stringifyComparisonType(type_attr.getValue()).str())
-                    .value();
-    xla_result = xla::Compare(lhs, rhs, /*broadcast_dimensions=*/{}, dir, type);
+    xla::ComparisonOrder order;
+    switch (type_attr.getValue()) {
+      case mlir::stablehlo::ComparisonType::FLOAT:
+        order = xla::ComparisonOrder::kPartial;
+        break;
+      case mlir::stablehlo::ComparisonType::TOTALORDER:
+      case mlir::stablehlo::ComparisonType::SIGNED:
+      case mlir::stablehlo::ComparisonType::UNSIGNED:
+        order = xla::ComparisonOrder::kTotal;
+        break;
+      case mlir::stablehlo::ComparisonType::NOTYPE:
+        LOG(FATAL) << "Unreachable";
+    }
+    xla_result =
+        xla::Compare(lhs, rhs, /*broadcast_dimensions=*/{}, dir, order);
   } else {
     xla_result = xla::Compare(lhs, rhs, dir);
   }
@@ -3582,7 +3640,7 @@ LogicalResult ExportXlaOp(AsyncStartOp op, OpLoweringContext ctx) {
 
     xla::Shape input_shape = xla::ShapeUtil::MakeTupleShape(
         {xla::TypeToShape(op.getOperand(0).getType())});
-    xla::Shape output_shape = xla::TypeToShape(collective_broadcast.getType());
+    xla::Shape output_shape = xla::TypeToShape(collective_broadcast.getType(0));
     xla::Shape start_shape =
         xla::ShapeUtil::MakeTupleShape({input_shape, output_shape});
     (*ctx.values)[op.getResult()] =
@@ -3664,7 +3722,7 @@ LogicalResult ExportXlaOp(AsyncDoneOp op, OpLoweringContext ctx) {
     (*ctx.values)[op.getResult()] =
         xla::internal::XlaBuilderFriend::BuildAsyncDone(
             ctx.builder, operand,
-            xla::TypeToShape(collective_broadcast.getType()));
+            xla::TypeToShape(collective_broadcast.getType(0)));
     return success();
   }
 
@@ -6142,7 +6200,7 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
     return diag_handler.ConsumeStatus();
   }
   ABSL_ASSIGN_OR_RETURN(xla::HloModuleProto hlo_module,
-                   converter.ConsumeMainProto());
+                        converter.ConsumeMainProto());
   StringRef module_name = module.getName() ? *module.getName() : kMain;
   hlo_module.set_name(module_name.str());
   if (auto cross_program_prefetches = module->getAttrOfType<mlir::ArrayAttr>(
@@ -6237,8 +6295,8 @@ absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertMlirHloToHloModule(
   // Create default config.
   const xla::HloModuleProto& module_proto = hlo_proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(xla::HloModuleConfig config,
-                   xla::HloModule::CreateModuleConfigFromProto(
-                       module_proto, xla::GetDebugOptionsFromFlags()));
+                        xla::HloModule::CreateModuleConfigFromProto(
+                            module_proto, xla::GetDebugOptionsFromFlags()));
 
   // Modify config with values stored in MLIR module attributes
   mhlo::ExportHloModuleConfig(config, module);

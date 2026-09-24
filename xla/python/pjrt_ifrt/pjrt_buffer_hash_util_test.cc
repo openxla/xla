@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/pjrt_buffer_hash_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"

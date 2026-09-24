@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/stream_attribute_annotator.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -38,8 +39,8 @@ namespace {
 
 absl::StatusOr<se::DeviceDescription> MakeDeviceDescription() {
   ABSL_ASSIGN_OR_RETURN(stream_executor::DeviceDescription device_description,
-                   stream_executor::DeviceDescription::FromProto(
-                       stream_executor::GpuDeviceInfoProto{}));
+                        stream_executor::DeviceDescription::FromProto(
+                            stream_executor::GpuDeviceInfoProto{}));
   device_description.set_threads_per_warp(32);
   return device_description;
 }

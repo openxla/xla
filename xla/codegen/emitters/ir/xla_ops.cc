@@ -39,7 +39,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/IR/MLIRContext.h"  // IWYU pragma: keep
+#include "mlir/IR/MLIRContext.h"            // IWYU pragma: keep
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OpImplementation.h"

@@ -23,6 +23,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -40,9 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {

@@ -33,8 +33,9 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/util/split_proto/human_readable_aot_executable.pb.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -43,6 +44,12 @@ namespace xla {
 enum class AOTTestMode {
   kGoldenVerification,
   kBackwardsCompatibility,
+  kUpdateGolden,
+};
+
+enum class AOTTestPlatform {
+  kGpu,
+  kCpu,
 };
 
 // A wrapper around an existing PjRtClient that intercepts compilation
@@ -59,9 +66,32 @@ class AOTInterceptionPjrtClient : public PjRtClient {
 
   absl::StatusOr<std::string> PackArtifactForInnerClient();
 
+  // cuda, rocm and gpu map to kGpu; everything else maps to kCpu.
+  static absl::StatusOr<AOTTestPlatform> PlatformFromName(
+      absl::string_view platform_name);
+
+  // Returns the on-disk executables subdirectory segment ("gpu" or "cpu") for a
+  // Platform.
+  static absl::string_view PlatformSubdir(AOTTestPlatform platform);
+
   static absl::Status CompareGPUExecutables(
       const HumanReadableAotExecutable& fresh,
       const HumanReadableAotExecutable& golden);
+  static absl::Status CompareGoldenCPUExecutable(
+      const HumanReadableAotExecutable& fresh,
+      const HumanReadableAotExecutable& golden);
+
+  // Unpacks a serialized PjRtExecutable into the human-readable proto form.
+  static absl::StatusOr<HumanReadableAotExecutable> DeserializeToHumanReadable(
+      absl::string_view serialized, AOTTestPlatform platform);
+
+  static absl::Status WriteGoldenTextProto(
+      const HumanReadableAotExecutable& unpacked, absl::string_view path);
+
+  // Modifies `debug_options` to configure deterministic AOT compilation for
+  // golden generation and verification.
+  static void ApplyAotDeterminismDebugOptions(DebugOptions& debug_options);
+
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;
 
@@ -140,14 +170,10 @@ class AOTInterceptionPjrtClient : public PjRtClient {
       const LoadOptions& load_options) override;
 
  private:
-  // Unpacks a serialized PjRtExecutable into a human-readable proto format
-  // which separates the options and the GPU executable bytes naturally.
-  static absl::StatusOr<HumanReadableAotExecutable> DeserializeToHumanReadable(
-      absl::string_view serialized);
   absl::Status VerifyAgainstGolden(const PjRtExecutable& fresh_executable);
+  absl::Status DumpGolden(const PjRtExecutable& fresh_executable);
 
-  // Loads the artifact at artifact_path_ and parses it into its human-readable
-  // proto form. Used internally by the compile and verification paths.
+  // Loads the artifact at artifact_path_ into its human-readable proto form.
   absl::StatusOr<HumanReadableAotExecutable> LoadHumanReadableArtifact();
 
   std::unique_ptr<PjRtClient> inner_client_;

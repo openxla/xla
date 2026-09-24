@@ -15,13 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/analysis/interval.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <utility>
-
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 
 namespace xla {
 namespace {

@@ -155,6 +155,14 @@ bool ShouldRewriteReductionFusion(
   return true;
 }
 
+bool IsScanFusion(const HloFusionInstruction* fusion) {
+  const HloInstruction* root =
+      fusion->fused_instructions_computation()->root_instruction();
+  return root->opcode() == HloOpcode::kGetTupleElement &&
+         root->operand(0)->opcode() == HloOpcode::kScan &&
+         root->tuple_index() == 0;
+}
+
 absl::StatusOr<bool> ShouldTryRewriteFusion(
     const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_description) {
@@ -170,16 +178,25 @@ absl::StatusOr<bool> ShouldTryRewriteFusion(
 
   const DebugOptions& debug_options =
       fusion->GetModule()->config().debug_options();
-  const bool can_emit_same_shape_multi_output_fusion =
-      IsSameShapeMultiOutputFusion(*fusion,
+
+  // Same-shape multi-output fusions require the new tiling propagation
+  // infrastructure.
+  if (IsSameShapeMultiOutputFusion(*fusion,
                                    Shape::Equal().IgnoreElementType()) &&
       debug_options
           .xla_gpu_experimental_enable_same_shape_multi_output_fusion() &&
-      debug_options.xla_gpu_experimental_enable_tiling_propagation();
+      debug_options.xla_gpu_experimental_enable_tiling_propagation()) {
+    return true;
+  }
 
   if (fusion->IsMultiOutputFusion() &&
-      !can_emit_same_shape_multi_output_fusion &&
       !debug_options.xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
+    return false;
+  }
+
+  // Scan fusions require the new tiling propagation infrastructure.
+  if (IsScanFusion(fusion) &&
+      !debug_options.xla_gpu_experimental_enable_tiling_propagation()) {
     return false;
   }
 
@@ -190,7 +207,8 @@ absl::StatusOr<bool> ShouldTryRewriteFusion(
   // TODO(b/370690811): ShouldRewriteLoopTransposeFusion rewrite may no longer
   // be necessary once MLIR emitters transposes are faster.
   return ShouldRewriteLoopTransposeFusion(fusion, device_description) ||
-         ShouldRewriteReductionFusion(fusion, device_description);
+         ShouldRewriteReductionFusion(fusion, device_description) ||
+         IsScanFusion(fusion);
 }
 
 absl::StatusOr<bool> ProcessFusionInstruction(
@@ -203,8 +221,9 @@ absl::StatusOr<bool> ProcessFusionInstruction(
                                        .debug_options()
                                        .xla_dump_fusion_visualization();
 
-  ABSL_ASSIGN_OR_RETURN(bool should_try_rewrite,
-                   ShouldTryRewriteFusion(fusion_instruction, device_info));
+  ABSL_ASSIGN_OR_RETURN(
+      bool should_try_rewrite,
+      ShouldTryRewriteFusion(fusion_instruction, device_info));
   if (!should_try_rewrite) {
     VLOG(2) << "Not rewriting fusion " << fusion_instruction->ToString()
             << " because it is not supported.";
@@ -230,7 +249,7 @@ absl::StatusOr<bool> ProcessFusionInstruction(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                   fusion_instruction->backend_config<GpuBackendConfig>());
+                        fusion_instruction->backend_config<GpuBackendConfig>());
 
   if (backend_config.has_fusion_backend_config() &&
       backend_config.fusion_backend_config().has_block_level_fusion_config()) {

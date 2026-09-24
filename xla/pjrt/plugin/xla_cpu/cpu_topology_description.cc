@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -77,7 +77,15 @@ absl::StatusOr<Layout> CpuTopologyDescription::GetDefaultLayout(
                            PrimitiveType_Name(element_type));
   }
   Shape shape = ShapeUtil::MakeShape(element_type, dims);
-  return LayoutUtil::GetWithDefaultLayout(shape).layout();
+  Layout layout = LayoutUtil::GetWithDefaultLayout(shape).layout();
+  // `GetWithDefaultLayout` returns a padded layout for sub-byte types since the
+  // notion of "default" is context dependent and in this case means the default
+  // for literals for historical reasons. Because of this, we need to manually
+  // populate the `element_size_in_bits` for sub-byte types here.
+  if (primitive_util::IsSubByteNonPredType(element_type)) {
+    layout.set_element_size_in_bits(primitive_util::BitWidth(element_type));
+  }
+  return layout;
 }
 
 absl::StatusOr<int> CpuTopologyDescription::GetMemorySpaceKindForShape(
@@ -217,7 +225,7 @@ CpuTopologyDescription::FromProto(
         "Any.");
   }
   ABSL_ASSIGN_OR_RETURN(auto cpu_topology,
-                   CpuTopology::FromProto(cpu_topology_proto));
+                        CpuTopology::FromProto(cpu_topology_proto));
   return std::make_unique<CpuTopologyDescription>(
       proto.platform_id(), proto.platform_name(), proto.platform_version(),
       *cpu_topology);

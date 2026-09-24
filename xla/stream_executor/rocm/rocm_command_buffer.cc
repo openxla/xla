@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "rocm/include/hip/driver_types.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "tsl/platform/casts.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -55,7 +55,7 @@ absl::StatusOr<hipGraph_t> CreateGraph() {
   VLOG(2) << "Create new HIP graph";
   hipGraph_t graph;
   ABSL_RETURN_IF_ERROR(ToStatus(hipGraphCreate(&graph, /*flags=*/0),
-                           "Failed to create HIP graph"));
+                                "Failed to create HIP graph"));
   VLOG(2) << "Created HIP graph " << graph;
   return graph;
 }
@@ -215,6 +215,71 @@ absl::Status RocmCommandBuffer::UpdateMemcpyD2DNode(
           exec_, ToHipGraphHandle(node_handle), AsDevicePtr(destination),
           AsDevicePtr(source), size, hipMemcpyDeviceToDevice),
       "Failed to set memcpy d2d node params");
+}
+
+absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemcpyD2HNode(
+    absl::Span<const GraphNodeHandle> dependencies, void* destination,
+    DeviceAddressBase source, uint64_t size) {
+  VLOG(2) << "Add memcpy d2h node to a graph " << graph_
+          << "; dst: " << destination << "; src: " << source.opaque()
+          << "; size: " << size << "; deps: " << dependencies.size();
+
+  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+
+  hipGraphNode_t node_handle = nullptr;
+  ABSL_RETURN_IF_ERROR(ToStatus(
+      hipGraphAddMemcpyNode1D(&node_handle, graph_, deps.data(), deps.size(),
+                              destination, AsDevicePtr(source), size,
+                              hipMemcpyDeviceToHost),
+      "Failed to add memcpy d2h node to a HIP graph"));
+  return FromHipGraphHandle(node_handle);
+}
+
+absl::Status RocmCommandBuffer::UpdateMemcpyD2HNode(GraphNodeHandle node_handle,
+                                                    void* destination,
+                                                    DeviceAddressBase source,
+                                                    uint64_t size) {
+  VLOG(2) << "Set memcpy d2h node params " << node_handle
+          << " in graph executable " << exec_ << "; dst: " << destination
+          << "; src: " << source.opaque() << "; size: " << size;
+
+  return ToStatus(hipGraphExecMemcpyNodeSetParams1D(
+                      exec_, ToHipGraphHandle(node_handle), destination,
+                      AsDevicePtr(source), size, hipMemcpyDeviceToHost),
+                  "Failed to set memcpy d2h node params");
+}
+
+absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemcpyH2DNode(
+    absl::Span<const GraphNodeHandle> dependencies,
+    DeviceAddressBase destination, const void* source, uint64_t size) {
+  VLOG(2) << "Add memcpy h2d node to a graph " << graph_
+          << "; dst: " << destination.opaque() << "; src: " << source
+          << "; size: " << size << "; deps: " << dependencies.size();
+
+  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+
+  hipGraphNode_t node_handle = nullptr;
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipGraphAddMemcpyNode1D(&node_handle, graph_, deps.data(),
+                                       deps.size(), AsDevicePtr(destination),
+                                       source, size, hipMemcpyHostToDevice),
+               "Failed to add memcpy h2d node to a HIP graph"));
+  return FromHipGraphHandle(node_handle);
+}
+
+absl::Status RocmCommandBuffer::UpdateMemcpyH2DNode(
+    GraphNodeHandle node_handle, DeviceAddressBase destination,
+    const void* source, uint64_t size) {
+  VLOG(2) << "Set memcpy h2d node params " << node_handle
+          << " in graph executable " << exec_
+          << "; dst: " << destination.opaque() << "; src: " << source
+          << "; size: " << size;
+
+  return ToStatus(
+      hipGraphExecMemcpyNodeSetParams1D(exec_, ToHipGraphHandle(node_handle),
+                                        AsDevicePtr(destination), source, size,
+                                        hipMemcpyHostToDevice),
+      "Failed to set memcpy h2d node params");
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateClonedChildNode(
@@ -402,8 +467,9 @@ absl::Status RocmCommandBuffer::Trace(
   // Always stop capturing the stream before checking `traced` result.
   VLOG(5) << "End stream " << stream << " capture";
   hipGraph_t captured_graph;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipStreamEndCapture(stream_handle, &captured_graph),
-                           "Failed to end stream capture"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipStreamEndCapture(stream_handle, &captured_graph),
+               "Failed to end stream capture"));
   ABSL_RETURN_IF_ERROR(
       ToStatus(hipGraphDestroy(std::exchange(graph_, captured_graph)),
                "Failed to destroy HIP graph"));
@@ -423,7 +489,8 @@ absl::Status RocmCommandBuffer::Trace(
 
   if (num_root_nodes == 0) {
     VLOG(5) << "Traced HIP graph is empty; adding an empty node";
-    ABSL_ASSIGN_OR_RETURN(auto* empty, CreateEmptyCmd({}, StreamPriority::Default));
+    ABSL_ASSIGN_OR_RETURN(auto* empty,
+                          CreateEmptyCmd({}, StreamPriority::Default));
     (void)empty;
   }
 
@@ -457,10 +524,11 @@ absl::Status RocmCommandBuffer::PrepareFinalization() {
   // graphs. Insert an empty node so the graph is non-empty, analogous to
   // CUDA's NoOp kernel insertion for the same case.
   hipGraphNode_t node_handle = nullptr;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipGraphAddEmptyNode(&node_handle, graph_,
-                                                /*pDependencies=*/nullptr,
-                                                /*numDependencies=*/0),
-                           "Failed to add empty node in PrepareFinalization"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipGraphAddEmptyNode(&node_handle, graph_,
+                                    /*pDependencies=*/nullptr,
+                                    /*numDependencies=*/0),
+               "Failed to add empty node in PrepareFinalization"));
   return absl::OkStatus();
 }
 

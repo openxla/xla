@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/qr.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -41,7 +42,7 @@ namespace xla {
 namespace {
 
 using QrTest =
-    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(QrTest, Simple) {
   Array2D<float> data({

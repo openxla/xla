@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/gpu_dot_fusion_cost_model.h"
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
@@ -45,6 +45,8 @@ namespace gpu {
 
 namespace {
 
+using ::xla::xtile::BlockLevelParameters;
+
 absl::StatusOr<EstimateRunTimeData> MaybeGetGemmCostModelForGemmTritonFusion(
     const se::DeviceDescription& device_info,
     const HloInstruction& instruction) {
@@ -56,7 +58,7 @@ absl::StatusOr<EstimateRunTimeData> MaybeGetGemmCostModelForGemmTritonFusion(
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   fusion->backend_config<GpuBackendConfig>());
+                        fusion->backend_config<GpuBackendConfig>());
   if (config.fusion_backend_config().kind() != kTritonNestedGemmFusionKind) {
     return absl::FailedPreconditionError("Not a Triton GeMM fusion.");
   }
@@ -105,7 +107,7 @@ absl::Status RecordGemmCostModelEstimateIfApplicable(
   VLOG(1) << "Adding GeMM fusion cost model estimate: " << cost.DebugString();
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   *gpu_config.add_reification_cost() = cost;
   return instruction.set_backend_config(gpu_config);
 }
@@ -121,7 +123,7 @@ absl::StatusOr<EstimateRunTimeData> MaybeGetIndexingCostModelForFusion(
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   fusion->backend_config<GpuBackendConfig>());
+                        fusion->backend_config<GpuBackendConfig>());
 
   if (config.fusion_backend_config().has_block_level_fusion_config()) {
     const BlockLevelParameters block_params =
@@ -148,7 +150,7 @@ absl::Status RecordIndexingPerformanceModelEstimateIfApplicable(
           << cost.DebugString();
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   *gpu_config.add_reification_cost() = cost;
   return instruction.set_backend_config(gpu_config);
 }

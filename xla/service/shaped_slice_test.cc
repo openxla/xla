@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/shaped_slice.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "xla/primitive_util.h"

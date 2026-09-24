@@ -28,9 +28,9 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/IR/MLIRContext.h"  // IWYU pragma: keep
+#include "mlir/IR/MLIRContext.h"            // IWYU pragma: keep
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/IR/PatternMatch.h"  // IWYU pragma: keep
+#include "mlir/IR/PatternMatch.h"   // IWYU pragma: keep
 #include "mlir/IR/TypeUtilities.h"  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -57,7 +57,13 @@ ParseResult parseAsMemRefType(OpAsmParser& parser, Type& type,
   if (auto attr = dyn_cast_or_null<IntegerAttr>(memref_type.getMemorySpace())) {
     address_space = attr.getInt();
   }
-  type = PointerType::get(memref_type.getElementType(), address_space);
+  auto addr_space = mlir::triton::symbolizePtrAddrSpace(address_space);
+  if (!addr_space) {
+    parser.emitError(parser.getCurrentLocation())
+        << "invalid address space " << address_space;
+    return failure();
+  }
+  type = PointerType::get(memref_type.getElementType(), *addr_space);
   shape = DenseI64ArrayAttr::get(parser.getContext(), memref_type.getShape());
 
   LayoutAttr layout = dyn_cast<LayoutAttr>(memref_type.getLayout());
@@ -77,8 +83,10 @@ void printAsMemRefType(OpAsmPrinter& printer, Operation* op, PointerType type,
   auto layout = LayoutAttr::get(
       op->getContext(), DenseI64ArrayAttr::get(op->getContext(), order));
   Attribute memory_space;
-  if (int addr_space = type.getAddressSpace(); addr_space != 1) {
-    memory_space = Builder(op).getI32IntegerAttr(addr_space);
+  if (auto addr_space = type.getAddressSpace();
+      addr_space != mlir::triton::PtrAddrSpace::Global) {
+    memory_space =
+        Builder(op).getI32IntegerAttr(static_cast<int32_t>(addr_space));
   }
   printer << MemRefType::get(shape, type.getPointeeType(), layout,
                              memory_space);

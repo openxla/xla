@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/topk_splitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <stdint.h>
 
 #include <cstddef>
@@ -23,8 +25,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -56,7 +56,7 @@ constexpr absl::string_view kComparator = R"(
     %broadcast.40631 = pred[] broadcast(pred[] %constant.40630), dimensions={}
     %p.0.lhs.40626 = f32[] parameter(0)
     %p.0.rhs.40627 = f32[] parameter(1)
-    %compare.40632 = pred[] compare(f32[] %p.0.lhs.40626, f32[] %p.0.rhs.40627), direction=GT, type=TOTALORDER
+    %compare.40632 = pred[] compare(f32[] %p.0.lhs.40626, f32[] %p.0.rhs.40627), direction=GT, order=TOTAL
     ROOT %select.40633 = pred[] select(pred[] %broadcast.40631, pred[] %compare.40632, pred[] %broadcast.40631)
   })";
 

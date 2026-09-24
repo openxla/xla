@@ -22,9 +22,9 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace profiler {
@@ -70,7 +70,7 @@ absl::StatusOr<ConsumeResult> ProfilerCollection::Consume() {
       data_vector.push_back(std::move(result->data));
       total_estimated_size_bytes += result->estimated_size_bytes;
     } else if (absl::IsUnimplemented(result.status())) {
-      LOG(WARNING) << "Profiler consume not implemented: " << result.status();
+      VLOG(1) << "Profiler consume not implemented: " << result.status();
       data_vector.push_back(std::any());
     } else {
       LOG(ERROR) << "Profiler consume failed: " << result.status();

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -123,6 +124,7 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
         all_gather_thunk {
           collective_config {}
           collectives_mode: COLLECTIVES_SYMMETRIC_MEMORY
+          enable_gxl: true
         }
       )pb");
 

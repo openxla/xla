@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/buffer_debug_float_check_kernel.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -24,12 +27,11 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_format.h"
@@ -73,10 +75,10 @@ class FloatCheckKernelTest : public ::testing::Test {
   void SetUp() override {
     std::string name = absl::AsciiStrToUpper(
         xla::PlatformUtil::CanonicalPlatformName("gpu").value());
-    TF_ASSERT_OK_AND_ASSIGN(platform_,
-                            se::PlatformManager::PlatformWithName(name));
-    TF_ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
-    TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream(std::nullopt));
+    ASSERT_OK_AND_ASSIGN(platform_,
+                         se::PlatformManager::PlatformWithName(name));
+    ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream(std::nullopt));
     allocator_ =
         std::make_unique<StreamExecutorAddressAllocator>(stream_->parent());
 
@@ -110,7 +112,7 @@ class FloatCheckKernelTest : public ::testing::Test {
     gpu::GpuKernelRegistry registry =
         gpu::GpuKernelRegistry::GetGlobalRegistry();
     ABSL_ASSIGN_OR_RETURN(auto check_kernel,
-                     registry.LoadKernel<CheckKernel>(executor_));
+                          registry.LoadKernel<CheckKernel>(executor_));
     ABSL_ASSIGN_OR_RETURN(
         auto reduce_kernel,
         registry
@@ -137,7 +139,7 @@ class FloatCheckKernelTest : public ::testing::Test {
 
     // Call kernel
     ABSL_RETURN_IF_ERROR(stream_->Memcpy(&device_input, input.data(),
-                                    input.size() * sizeof(input[0])));
+                                         input.size() * sizeof(input[0])));
     ABSL_RETURN_IF_ERROR(check_kernel.Launch(
         thread_dim, block_dim, stream_.get(), device_input,
         device_input.ElementCount(), device_tmp, device_tmp.ElementCount()));
@@ -191,16 +193,16 @@ TYPED_TEST(FloatCheckKernelTypedTest, ChecksFloats) {
 
   se::DeviceAddress<uint8_t> mem =
       this->executor_->template AllocateArray<uint8_t>(1024);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, mem));
 
-  TF_EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
+  EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
       BufferDebugLogEntryId{0}, input, device_log)));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto host_log,
-                          device_log.ReadFromDevice(*this->stream_));
+  ASSERT_OK_AND_ASSIGN(auto host_log,
+                       device_log.ReadFromDevice(*this->stream_));
   ASSERT_GE(host_log.size(), 1);
   EXPECT_THAT(host_log[0], NanCountIs(2));
   EXPECT_THAT(host_log[0], InfCountIs(3));
@@ -220,16 +222,16 @@ TYPED_TEST(FloatCheckKernelTypedTest, ChecksFloatsWithNoFiniteValues) {
 
   se::DeviceAddress<uint8_t> mem =
       this->executor_->template AllocateArray<uint8_t>(1024);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, mem));
 
-  TF_EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
+  EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
       BufferDebugLogEntryId{0}, input, device_log)));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto host_log,
-                          device_log.ReadFromDevice(*this->stream_));
+  ASSERT_OK_AND_ASSIGN(auto host_log,
+                       device_log.ReadFromDevice(*this->stream_));
   ASSERT_GE(host_log.size(), 1);
   // If the input buffer contains no finite values, the min/max values are
   // undefined. The implementation returns +/- infinity for min/max in this
@@ -278,7 +280,7 @@ TYPED_TEST(FloatCheckKernelTypedTest, ChecksFloatsInParallel) {
 
   se::DeviceAddress<uint8_t> log_mem =
       this->executor_->template AllocateArray<uint8_t>(1024);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, log_mem));
@@ -288,13 +290,13 @@ TYPED_TEST(FloatCheckKernelTypedTest, ChecksFloatsInParallel) {
   CalculateDimensionality(this->executor_->GetDeviceDescription(), input.size(),
                           &threads_per_block, &num_blocks);
   const se::BlockDim block_dim(num_blocks);
-  TF_EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
+  EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
       BufferDebugLogEntryId{0}, input, device_log, block_dim)));
-  TF_EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
+  EXPECT_OK((this->template AppendFloatCheckOnDevice<CheckKernel>(
       BufferDebugLogEntryId{0}, input, device_log, block_dim)));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto host_log,
-                          device_log.ReadFromDevice(*this->stream_));
+  ASSERT_OK_AND_ASSIGN(auto host_log,
+                       device_log.ReadFromDevice(*this->stream_));
   ASSERT_GE(host_log.size(), 2);
   EXPECT_THAT(host_log[0], NanCountIs(kNumNaNs));
   EXPECT_THAT(host_log[0], InfCountIs(kNumInfs));
@@ -328,7 +330,7 @@ TYPED_TEST(FloatCheckKernelTypedTest, ReduceFloatCheckResults) {
   results[20].max_value = 10.0;
 
   gpu::GpuKernelRegistry registry = gpu::GpuKernelRegistry::GetGlobalRegistry();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto reduce_kernel,
       registry.template LoadKernel<
           gpu::BufferDebugAppendReducedFloatCheckResultsKernel>(
@@ -336,11 +338,11 @@ TYPED_TEST(FloatCheckKernelTypedTest, ReduceFloatCheckResults) {
 
   se::DeviceAddress<uint8_t> log_mem =
       this->executor_->template AllocateArray<uint8_t>(1024);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, log_mem));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       se::DeviceAddress<xla::gpu::FloatCheckResult> device_results,
       this->CheckNotNull(
           this->executor_->template AllocateArray<xla::gpu::FloatCheckResult>(
@@ -349,14 +351,14 @@ TYPED_TEST(FloatCheckKernelTypedTest, ReduceFloatCheckResults) {
   auto cleanup_results = absl::MakeCleanup(
       [&]() { this->executor_->Deallocate(&device_results); });
 
-  TF_ASSERT_OK(this->stream_->Memcpy(&device_results, results.data(),
-                                     results.size() * sizeof(results[0])));
-  TF_ASSERT_OK(reduce_kernel.Launch(
+  ASSERT_OK(this->stream_->Memcpy(&device_results, results.data(),
+                                  results.size() * sizeof(results[0])));
+  ASSERT_OK(reduce_kernel.Launch(
       se::ThreadDim(1024, 1, 1), se::BlockDim(1, 1, 1), this->stream_.get(),
       device_results, device_results.ElementCount(), BufferDebugLogEntryId{0},
       device_log.GetDeviceHeader(), device_log.GetDeviceEntries()));
-  TF_ASSERT_OK_AND_ASSIGN(auto host_log,
-                          device_log.ReadFromDevice(*this->stream_));
+  ASSERT_OK_AND_ASSIGN(auto host_log,
+                       device_log.ReadFromDevice(*this->stream_));
 
   ASSERT_GE(host_log.size(), 1);
   EXPECT_THAT(host_log[0], NanCountIs(kNumNaNs));

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/cpu/tests/cpu_pjrt_codegen_test.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -23,6 +25,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
@@ -30,9 +33,6 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/tests/codegen_utils.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 
@@ -64,7 +64,7 @@ void CpuPjRtCodegenTest::CompileAndVerifyIr(
     std::unique_ptr<HloModule> hlo_module, absl::string_view expected_llvm_ir,
     bool match_optimized_ir, bool run_optimization_passes) {
   auto llvm_compiler = absl::down_cast<LLVMCompiler*>(compiler());
-  TF_ASSERT_OK(xla::CompileAndVerifyIr(
+  ASSERT_OK(xla::CompileAndVerifyIr(
       llvm_compiler, compile_options_, std::move(hlo_module), expected_llvm_ir,
       match_optimized_ir, run_optimization_passes));
 }
@@ -73,8 +73,8 @@ void CpuPjRtCodegenTest::CompileAndVerifyIr(absl::string_view hlo_text,
                                             absl::string_view expected_llvm_ir,
                                             bool match_optimized_ir,
                                             bool run_optimization_passes) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   CompileAndVerifyIr(std::move(hlo_module), expected_llvm_ir,
                      match_optimized_ir, run_optimization_passes);
 }
@@ -84,7 +84,7 @@ void CpuPjRtCodegenTest::CompileAheadOfTimeAndVerifyIr(
     const AotCompilationOptions& aot_options,
     absl::string_view expected_llvm_ir, bool match_optimized_ir) {
   auto llvm_compiler = absl::down_cast<LLVMCompiler*>(compiler());
-  TF_ASSERT_OK(xla::CompileAheadOfTimeAndVerifyIr(
+  ASSERT_OK(xla::CompileAheadOfTimeAndVerifyIr(
       llvm_compiler, aot_options, std::move(hlo_module), expected_llvm_ir,
       match_optimized_ir));
 }

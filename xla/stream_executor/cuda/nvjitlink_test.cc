@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/nvjitlink.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <sys/types.h>
 
 #include <cstdint>
@@ -22,10 +24,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -199,7 +199,7 @@ TEST_F(NvJitLinkTest, CancelsOnRegSpill) {
               absl_testing::StatusIs(absl::StatusCode::kCancelled));
 
   // We also test the converse to ensure our test case isn't broken.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       stream_executor::cuda::Assembly assembly,
       CompileAndLinkHelper(kDefaultComputeCapability,
                            {dependent_ptx.c_str(), kDependeePtx},

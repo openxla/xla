@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/device_address.h"
@@ -34,12 +35,12 @@ namespace {
 using testing::Ge;
 
 TEST(CudaKernelTest, GetMaxOccupiedBlocksPerCore) {
-  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
-                          PlatformManager::PlatformWithName("CUDA"));
-  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
-                          platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto cuda_kernel, LoadAddI32TestKernel(executor));
+  ASSERT_OK_AND_ASSIGN(auto cuda_kernel, LoadAddI32TestKernel(executor));
 
   EXPECT_EQ(cuda_kernel->Arity(), 3);
   EXPECT_THAT(cuda_kernel->GetMaxOccupiedBlocksPerCore(

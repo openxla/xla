@@ -20,8 +20,8 @@ limitations under the License.
 #include <cstring>
 #include <string>
 
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/ctstring_internal.h"
+#include "xla/tsl/platform/test.h"
 
 static const char kLongString[] =
     "abcdefghij"
@@ -393,7 +393,7 @@ TEST(TF_CTStringTest, OffsetType) {
 
     memcpy(buf + sizeof(TF_TString), str, str_size);
 
-    TF_TString *offsets = (TF_TString *)buf;
+    TF_TString* offsets = (TF_TString*)buf;
     TF_TString_Init(offsets);
     // using existing TF_le32toh to achieve htole32
     offsets[0].u.offset.size = TF_le32toh(str_size << 2 | TF_TSTR_OFFSET);

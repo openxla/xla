@@ -45,10 +45,10 @@ limitations under the License.
         // defined(PLATFORM_GOOGLE)
 
 #include "absl/status/status_macros.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/scanner.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace tsl {
 

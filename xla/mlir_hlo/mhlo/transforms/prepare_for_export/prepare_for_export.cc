@@ -114,28 +114,28 @@ void prepareBroadcastInDim(BroadcastInDimOp bcast) {
 
 // Make implicitly captured constant explicit before exporting
 void prepareExplicitCapturedConstants(Operation* op) {
-  for (Region &region : op->getRegions()) {
+  for (Region& region : op->getRegions()) {
     assert(region.getBlocks().size() == 1 &&
            "Only OPs with single block regions are allowed");
     llvm::SetVector<Value> implicitInputs;
     // Get implicit inputs, i.e. those are used in the region
     // but defined outside
     getUsedValuesDefinedAbove(region, implicitInputs);
-    Block &block = region.getBlocks().front();
+    Block& block = region.getBlocks().front();
     OpBuilder builder(&block.front());
     for (Value input : implicitInputs) {
       // If the captured value is defined by a constant OP,
       // Create a clone constant OP within a block to make
       // it explicit and replace uses within the block
-      Operation *definingOp = input.getDefiningOp();
+      Operation* definingOp = input.getDefiningOp();
       mlir::DenseElementsAttr attr;
       if (mlir::isa_and_present<ConstantOp>(input.getDefiningOp()) &&
           matchPattern(input, m_Constant(&attr))) {
-        Operation *clonedOp = builder.clone(*definingOp);
+        Operation* clonedOp = builder.clone(*definingOp);
         // Find which uses belong to the block and replace
         // with the cloned/explicit one
         input.replaceUsesWithIf(
-            clonedOp->getResult(0), [&block](OpOperand &use) {
+            clonedOp->getResult(0), [&block](OpOperand& use) {
               return block.getParentOp()->isProperAncestor(use.getOwner());
             });
       }

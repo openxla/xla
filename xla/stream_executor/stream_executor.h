@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numa.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/allocator_stats.h"
 #include "xla/stream_executor/blas.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/tensor_map.h"
 #include "xla/tsl/lib/gtl/int_type.h"
-#include "tsl/platform/numa.h"
 
 // TODO(ezhulenev): Remove this once transitive dependencies are fixed.
 #include "xla/stream_executor/device_memory.h"
@@ -347,34 +347,6 @@ class StreamExecutor {
   // The following methods access an internal log of some subset
   // of arguments passed to other class methods.
   // Used for testing/debugging purposes.
-
-  struct GemmCallTrace {
-    enum class GemmType {
-      kPlain = 0,
-      kStridedBatched = 1,
-      kBatched = 2,
-      kBlasLt = 3
-    };
-    GemmType op;
-    int flags;
-    uint64_t size1, size2;
-  };
-  // This may be expanded as necessary to trace other calls
-  using ApiTrace = std::variant<GemmCallTrace>;
-
-  // Retrieves and clears internal argument logs.
-  virtual absl::StatusOr<std::vector<ApiTrace>> ExtractApiTrace() {
-    return absl::UnimplementedError("Not implemented");
-  }
-  virtual absl::Status RecordApiTrace(ApiTrace call) {
-    return absl::UnimplementedError("Not implemented");
-  }
-
-  static constexpr uint64_t kLogGemm = 1 << 0;
-
-  // Sets the argument logging mode. Returns true if 'mode' is valid.
-  // The mode is a bitmask of the kLog* constants.
-  virtual bool SetArgumentLoggingMode(uint64_t mode) { return false; }
 
   // Creates, allocates, and copies a CUtensorMap object for the given TMA
   // descriptor. Returns a TensorMap, which is 128 bytes of storage, to be

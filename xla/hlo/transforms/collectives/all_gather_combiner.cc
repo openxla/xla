@@ -137,7 +137,8 @@ absl::Status CombineAllGathers(
                                        replacement->shape()),
           replacement));
     }
-    ABSL_RETURN_IF_ERROR(computation.ReplaceInstruction(to_combine[i], replacement));
+    ABSL_RETURN_IF_ERROR(
+        computation.ReplaceInstruction(to_combine[i], replacement));
   }
 
   return absl::OkStatus();
@@ -235,7 +236,8 @@ absl::StatusOr<bool> AllGatherCombiner::RunWithKeyCombiner(
               << computation->ToString();
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
+    ABSL_ASSIGN_OR_RETURN(auto domain_map,
+                          HloDomainMap::Create(computation, ""));
 
     auto key_fn = [&](const HloInstruction* instruction) {
       return combine_key(instruction, *domain_map, combine_by_dim_,
@@ -260,8 +262,8 @@ absl::StatusOr<bool> AllGatherCombiner::RunWithKeyCombiner(
 absl::StatusOr<bool> AllGatherCombiner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_ASSIGN_OR_RETURN(bool changed,
-                   RunWithKeyCombiner(module, execution_threads, CombineKey));
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed, RunWithKeyCombiner(module, execution_threads, CombineKey));
   return changed;
 }
 

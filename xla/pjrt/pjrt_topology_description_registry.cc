@@ -126,9 +126,10 @@ PjRtTopologyDescriptionFromProto(const PjRtTopologyDescriptionProto& proto) {
         "platform_name or recognized platform_id.");
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtCompiler> compiler,
-                   PjRtTopologyDescriptionRegistry::Global().GetDynamicCompiler(
-                       platform_name));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtCompiler> compiler,
+      PjRtTopologyDescriptionRegistry::Global().GetDynamicCompiler(
+          platform_name));
   return compiler->DeserializePjRtTopologyDescription(
       proto.SerializeAsString());
 }

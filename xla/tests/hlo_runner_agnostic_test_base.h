@@ -47,7 +47,7 @@ limitations under the License.
 #include "xla/hlo/transforms/despecializer.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/literal.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
@@ -193,12 +193,12 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
   GetOptimizedModuleForExecutable(absl::string_view hlo_text,
                                   const HloModuleConfig& config) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text, config));
+                          ParseAndReturnVerifiedModule(hlo_text, config));
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<OpaqueExecutable> executable,
         CreateExecutable(std::move(module), /*run_hlo_passes=*/true));
     ABSL_ASSIGN_OR_RETURN(const HloModule* optimized_module,
-                     test_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner_->HloModuleFromWrapped(executable.get()));
     return {{optimized_module, std::move(executable)}};
   }
 
@@ -207,7 +207,7 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<HloModule>> GetOptimizedModule(
       absl::string_view hlo_text, const HloModuleConfig& config) {
     ABSL_ASSIGN_OR_RETURN(auto module_and_executable,
-                     GetOptimizedModuleForExecutable(hlo_text, config));
+                          GetOptimizedModuleForExecutable(hlo_text, config));
     return module_and_executable.first->Clone();
   }
 

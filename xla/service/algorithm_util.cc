@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace algorithm_util {
@@ -148,7 +148,8 @@ absl::StatusOr<PrimitiveType> GetDotAccumulatorType(
 absl::StatusOr<PrimitiveType> GetDefaultGemmAlgorithmAccumulatorType(
     const HloInstruction* dot) {
   TF_RET_CHECK(dot != nullptr);
-  TF_RET_CHECK(dot->opcode() == HloOpcode::kDot);
+  TF_RET_CHECK(dot->opcode() == HloOpcode::kDot ||
+               dot->opcode() == HloOpcode::kRaggedDot);
 
   PrimitiveType lhs_type = dot->operand(0)->shape().element_type();
   PrimitiveType rhs_type = dot->operand(1)->shape().element_type();

@@ -299,39 +299,39 @@ absl::Status LogicalBufferAnalysis::HandleAsyncUpdate(
     aliased_contexts.insert(output_index);
   }
 
-  ShapeUtil::ForEachSubshape(async_update_shape, [&](const Shape& subshape,
-                                                     const ShapeIndex& index) {
-    // Operands, ignore.
-    if (index.size() >= 2 && index.front() == 0) {
-      return;
-    }
+  ShapeUtil::ForEachSubshape(
+      async_update_shape, [&](const Shape& subshape, const ShapeIndex& index) {
+        // Operands, ignore.
+        if (index.size() >= 2 && index.front() == 0) {
+          return;
+        }
 
-    // If explicitly aliased output, and not an empty tuple, ignore (we want to
-    // avoid creating values for buffer not bound yet).
-    bool has_explicit_alias = explicitly_aliased_outputs.contains(index);
-    if (has_explicit_alias &&
-        !IsEmptyOutputSubshapeInAsync(async_update_shape, index)) {
-      return;
-    }
+        // If explicitly aliased output, and not an empty tuple, ignore (we want
+        // to avoid creating values for buffer not bound yet).
+        bool has_explicit_alias = explicitly_aliased_outputs.contains(index);
+        if (has_explicit_alias &&
+            !IsEmptyOutputSubshapeInAsync(async_update_shape, index)) {
+          return;
+        }
 
-    // Forwarded operand/output from the previous async op.
-    if (!index.empty() && index.front() < 2 &&
-        ShapeUtil::IndexIsValid(prev_async_op_shape, index)) {
-      const Shape& prev_subshape =
-          ShapeUtil::GetSubshape(prev_async_op_shape, index);
-      if (ShapeUtil::Compatible(prev_subshape, subshape)) {
-        return;
-      }
-    }
+        // Forwarded operand/output from the previous async op.
+        if (!index.empty() && index.front() < 2 &&
+            ShapeUtil::IndexIsValid(prev_async_op_shape, index)) {
+          const Shape& prev_subshape =
+              ShapeUtil::GetSubshape(prev_async_op_shape, index);
+          if (ShapeUtil::Compatible(prev_subshape, subshape)) {
+            return;
+          }
+        }
 
-    // Aliased context.
-    if (aliased_contexts.contains(index)) {
-      return;
-    }
+        // Aliased context.
+        if (aliased_contexts.contains(index)) {
+          return;
+        }
 
-    // Otherwise, new output or new context or new tuple container
-    NewLogicalBuffer(async_update, index);
-  });
+        // Otherwise, new output or new context or new tuple container
+        NewLogicalBuffer(async_update, index);
+      });
 
   return absl::OkStatus();
 }

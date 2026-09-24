@@ -27,6 +27,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -46,6 +47,10 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "xla/custom_options.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -86,9 +91,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace pjrt {
 
@@ -123,7 +125,7 @@ static absl::Status PopulateExecutableCostAnalysis(
   using PropertiesMapType =
       absl::flat_hash_map<std::string, xla::PjRtValueType>;
   ABSL_ASSIGN_OR_RETURN(const PropertiesMapType properties,
-                   executable->get()->GetCostAnalysis());
+                        executable->get()->GetCostAnalysis());
   // If no output, return empty result
   if (properties.empty()) {
     return absl::OkStatus();
@@ -204,7 +206,7 @@ static absl::Status EnsureExecutableParameterShardingsPopulated(
 static absl::Status PopulateExecutableOutputElementTypes(
     PJRT_Executable* executable) {
   ABSL_ASSIGN_OR_RETURN(auto output_types,
-                   executable->get()->GetOutputElementTypes());
+                        executable->get()->GetOutputElementTypes());
   if (output_types.empty()) {
     return xla::InvalidArgument(
         "Can't get output element types, the list is empty for executable "
@@ -229,7 +231,8 @@ static absl::Status PopulateExecutableOutputElementTypes(
 
 static absl::Status PopulateExecutableOutputDimensions(
     PJRT_Executable* executable) {
-  ABSL_ASSIGN_OR_RETURN(auto output_dims, executable->get()->GetOutputDimensions());
+  ABSL_ASSIGN_OR_RETURN(auto output_dims,
+                        executable->get()->GetOutputDimensions());
   if (output_dims.empty()) {
     return xla::InvalidArgument(
         "Can't get output dimensions, the list is empty for executable %s.",
@@ -399,8 +402,9 @@ static absl::Status PopulateExecutableParameterMemoryKinds(
 
 static absl::Status PopulateExecutableOutputMemoryKinds(
     PJRT_Executable* executable) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::vector<absl::string_view>> output_memories,
-                   executable->get()->GetOutputMemoryKinds());
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::vector<absl::string_view>> output_memories,
+      executable->get()->GetOutputMemoryKinds());
   if (output_memories.empty()) {
     return xla::InvalidArgument(
         "Can't get output memory kinds, the list is empty for executable %s.",
@@ -1126,7 +1130,7 @@ absl::StatusOr<ProgramVariant> ParsePjrtProgram(const PJRT_Program* program) {
   if (format_str == pjrt::kMlirFormat) {
     auto context = std::make_unique<mlir::MLIRContext>();
     ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                     xla::ParseMlirModuleString(module_str, *context));
+                          xla::ParseMlirModuleString(module_str, *context));
     return ProgramVariant(
         xla::MaybeOwningMlirModule(std::move(context), std::move(module)));
   }
@@ -1957,8 +1961,9 @@ static absl::Status VerifyOptimizedProgramArgs(
 
 static absl::StatusOr<std::shared_ptr<xla::HloModule>>
 GetOptimizedProgramModule(const PJRT_Executable_OptimizedProgram_Args* args) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
-                   args->executable->get()->GetHloModules());
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
+      args->executable->get()->GetHloModules());
   if (hlo_modules.empty()) {
     return xla::InvalidArgument(
         "Can't get the optimized program for executable "
@@ -2336,9 +2341,21 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
     execute_context = args->options->context->execute_context;
   }
   options.context = execute_context.get();
+
+  // Custom options are owned by the caller only for the duration of the C API
+  // call, so we copy them.
+  if (args->options->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, num_custom_options) &&
+      args->options->num_custom_options > 0) {
+    options.custom_options = std::make_shared<const xla::CustomOptions>(
+        ConvertFromPjRtNamedValueList(args->options->custom_options,
+                                      args->options->num_custom_options));
+  }
+
   options.multi_slice_config = nullptr;
   // TODO(b/485591964): Remove this check after 12week compatibility window.
-  if (args->options->struct_size >= PJRT_ExecuteOptions_STRUCT_SIZE &&
+  if (args->options->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, multi_slice_config) &&
       args->options->multi_slice_config != nullptr) {
     options.multi_slice_config =
         args->options->multi_slice_config->config.get();
@@ -2579,6 +2596,17 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
   return nullptr;
 }
 
+ABSL_ATTRIBUTE_NOINLINE
+absl::StatusOr<std::unique_ptr<std::optional<xla::CompileOptions>>>
+ParseOptionalCompileOptions(absl::string_view options_str) {
+  if (options_str.empty() || !options_str.data()) {
+    return std::make_unique<std::optional<xla::CompileOptions>>(std::nullopt);
+  }
+  ABSL_ASSIGN_OR_RETURN(auto options, ParseCompileOptions(options_str));
+  return std::make_unique<std::optional<xla::CompileOptions>>(
+      std::move(options));
+}
+
 PJRT_Error* PJRT_Executable_DeserializeAndLoad(
     PJRT_Executable_DeserializeAndLoad_Args* args) {
   // TODO: b/516902012 - Make this check stricter after 12week compatibility
@@ -2591,16 +2619,11 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
-  std::optional<xla::CompileOptions> overridden_options;
-
-  if (args->overridden_serialized_compile_options &&
-      args->overridden_serialized_compile_options_size > 0) {
-    PJRT_ASSIGN_OR_RETURN(
-        overridden_options,
-        ParseCompileOptions(absl::string_view(
-            args->overridden_serialized_compile_options,
-            args->overridden_serialized_compile_options_size)));
-  }
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<std::optional<xla::CompileOptions>> overridden_options,
+      ParseOptionalCompileOptions(
+          absl::string_view(args->overridden_serialized_compile_options,
+                            args->overridden_serialized_compile_options_size)));
 
   xla::LoadOptions load_options;
   if (args->struct_size >=
@@ -2623,9 +2646,10 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
     }
   }
 
-  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-                        args->client->client->LoadSerializedExecutable(
-                            serialized, overridden_options, load_options));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      args->client->client->LoadSerializedExecutable(
+          serialized, std::move(*overridden_options), load_options));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);

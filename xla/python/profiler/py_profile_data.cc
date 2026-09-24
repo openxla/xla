@@ -16,12 +16,12 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "nanobind/make_iterator.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "google/protobuf/text_format.h"
-#include "xla/python/profiler/profile_data_lib.h"
+#include "nanobind/make_iterator.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"     // IWYU pragma: keep
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/python/profiler/profile_data_lib.h"
 
 namespace {
 

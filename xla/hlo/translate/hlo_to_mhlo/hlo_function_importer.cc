@@ -396,10 +396,11 @@ absl::StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
   }
 
   llvm::SmallVector<Type, 4> args;
-  ABSL_RETURN_IF_ERROR(GetMlirTypes(computation.parameter_instructions(), &args));
-  ABSL_ASSIGN_OR_RETURN(Type retType,
-                   ConvertShapeToType<RankedTensorType>(
-                       computation.root_instruction()->shape(), *builder_));
+  ABSL_RETURN_IF_ERROR(
+      GetMlirTypes(computation.parameter_instructions(), &args));
+  ABSL_ASSIGN_OR_RETURN(
+      Type retType, ConvertShapeToType<RankedTensorType>(
+                        computation.root_instruction()->shape(), *builder_));
 
   mlir::FunctionType func_type;
   if (flatten_computation_args_result_) {
@@ -566,7 +567,8 @@ absl::Status HloFunctionImporter::ImportAsRegion(
   region->push_back(block);
 
   llvm::SmallVector<Type, 4> args;
-  ABSL_RETURN_IF_ERROR(GetMlirTypes(computation.parameter_instructions(), &args));
+  ABSL_RETURN_IF_ERROR(
+      GetMlirTypes(computation.parameter_instructions(), &args));
 
   // Flatten the tuple-typed arguments.
   if (!llvm::isa<FuncOp>(region->getParentOp()) ||
@@ -607,8 +609,9 @@ absl::StatusOr<Value> HloFunctionImporter::ImportInstructionsImpl(
 
   for (auto instruction : computation.MakeInstructionPostOrder()) {
     ABSL_ASSIGN_OR_RETURN(auto operands, GetOperands(instruction));
-    ABSL_ASSIGN_OR_RETURN(auto new_operation, ImportInstructionWithLayout(
-                                             instruction, operands, builder));
+    ABSL_ASSIGN_OR_RETURN(
+        auto new_operation,
+        ImportInstructionWithLayout(instruction, operands, builder));
     if (new_operation) {
       unsigned int idx =
           (instruction->opcode() == HloOpcode::kRngBitGenerator &&
@@ -642,7 +645,7 @@ absl::Status HloFunctionImporter::ImportInstructions(
 
     llvm::SmallVector<Type> computation_arg_types;
     ABSL_RETURN_IF_ERROR(GetMlirTypes(computation.parameter_instructions(),
-                                 &computation_arg_types));
+                                      &computation_arg_types));
     int flatten_idx = 0;
     for (Type computation_arg_type : computation_arg_types) {
       auto orig_tuple_arg_type =
@@ -675,11 +678,12 @@ absl::Status HloFunctionImporter::ImportInstructions(
       flatten_idx += flattened_arg_type.size();
     }
 
-    ABSL_ASSIGN_OR_RETURN(result, ImportInstructionsImpl(
-                                 computation, effective_arguments, &builder));
+    ABSL_ASSIGN_OR_RETURN(
+        result,
+        ImportInstructionsImpl(computation, effective_arguments, &builder));
   } else {
-    ABSL_ASSIGN_OR_RETURN(result,
-                     ImportInstructionsImpl(computation, arguments, &builder));
+    ABSL_ASSIGN_OR_RETURN(
+        result, ImportInstructionsImpl(computation, arguments, &builder));
   }
 
   // Create terminator op depending on the parent op of this region.
@@ -739,7 +743,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
                            ? ShapeUtil::MakeStaticShape(instruction_shape)
                            : instruction_shape;
   ABSL_ASSIGN_OR_RETURN(auto result_type,
-                   ConvertShapeToType<RankedTensorType>(shape, *builder_));
+                        ConvertShapeToType<RankedTensorType>(shape, *builder_));
   mlir::Location loc = mlir::hlo::GenerateInstructionLocation(
       instruction, func_builder->getContext());
 
@@ -838,15 +842,15 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
                 "expected async done to have exactly one operand");
           }
           ABSL_ASSIGN_OR_RETURN(auto result_type,
-                           ConvertShapeToType<RankedTensorType>(
-                               instruction->shape(), *builder_));
+                                ConvertShapeToType<RankedTensorType>(
+                                    instruction->shape(), *builder_));
           auto async_done = mlir::stablehlo::AsyncDoneOp::create(
               *func_builder, loc, result_type, operands[0]);
           return async_done.getOperation();
         }
       }
-      ABSL_ASSIGN_OR_RETURN(FuncOp function,
-                       ImportAsFunc(*called_computation, /*is_main=*/false));
+      ABSL_ASSIGN_OR_RETURN(FuncOp function, ImportAsFunc(*called_computation,
+                                                          /*is_main=*/false));
       attributes.push_back(builder_->getNamedAttr(
           "called_computation",
           mlir::FlatSymbolRefAttr::get(builder_->getContext(),
@@ -993,8 +997,9 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
           .getOperation();
     }
     case HloOpcode::kCall: {
-      ABSL_ASSIGN_OR_RETURN(FuncOp function, ImportAsFunc(*instruction->to_apply(),
-                                                     /*is_main=*/false));
+      ABSL_ASSIGN_OR_RETURN(FuncOp function,
+                            ImportAsFunc(*instruction->to_apply(),
+                                         /*is_main=*/false));
       mlir::Operation* new_operation;
       if (instruction->is_composite()) {
         // TODO: b/354721812 -  Support flatten_computation_args_result_ flag
@@ -1094,19 +1099,25 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       annotateCallOp(call);
       // Flatten the tuple-typed results.
       mlir::ValueRange flattened_results_ref(call->getResults());
-      ABSL_ASSIGN_OR_RETURN(auto result_type, ConvertShapeToType<RankedTensorType>(
-                                             instruction->shape(), *builder_));
+      ABSL_ASSIGN_OR_RETURN(auto result_type,
+                            ConvertShapeToType<RankedTensorType>(
+                                instruction->shape(), *builder_));
       return CreateTupleValue(func_builder, loc, flattened_results_ref,
                               result_type)
           .getDefiningOp();
     }
     case HloOpcode::kCollectiveBroadcast: {
-      auto collective_broadcast = Cast<HloChannelInstruction>(instruction);
+      auto collective_broadcast =
+          Cast<HloCollectiveBroadcastInstruction>(instruction);
       attributes.push_back(ConvertReplicaGroups(collective_broadcast,
                                                 &symbol_table_, func_builder));
       if (collective_broadcast->channel_id().has_value()) {
         attributes.push_back(stablehlo::ConvertChannelHandle(
             collective_broadcast->channel_id().value(), builder_));
+      }
+      if (collective_broadcast->has_dynamic_root()) {
+        attributes.push_back(builder_->getNamedAttr("has_dynamic_root",
+                                                    builder_->getUnitAttr()));
       }
       return mlir::stablehlo::CollectiveBroadcastOp::create(
                  *func_builder, loc, result_type, operands, attributes)
@@ -1145,8 +1156,9 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
         llvm::SmallVector<mlir::Attribute> callees;
         callees.reserve(called_computations.size());
         for (HloComputation* callee : called_computations) {
-          ABSL_ASSIGN_OR_RETURN(FuncOp function, ImportAsFunc(*callee,
-                                                         /*is_main=*/false));
+          ABSL_ASSIGN_OR_RETURN(FuncOp function,
+                                ImportAsFunc(*callee,
+                                             /*is_main=*/false));
           callees.push_back(mlir::FlatSymbolRefAttr::get(builder_->getContext(),
                                                          function.getName()));
         }
@@ -1172,10 +1184,12 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
         mlir::ArrayAttr result_layouts;
         mlir::ArrayAttr result_tilings;
         if (custom_call->shape().IsTuple()) {
-          ABSL_ASSIGN_OR_RETURN(result_layouts, ExtractLayoutsFromTuple(
-                                               custom_call->shape(), builder_));
-          ABSL_ASSIGN_OR_RETURN(result_tilings, ExtractTilingsFromTuple(
-                                               custom_call->shape(), builder_));
+          ABSL_ASSIGN_OR_RETURN(
+              result_layouts,
+              ExtractLayoutsFromTuple(custom_call->shape(), builder_));
+          ABSL_ASSIGN_OR_RETURN(
+              result_tilings,
+              ExtractTilingsFromTuple(custom_call->shape(), builder_));
         } else {
           ABSL_ASSIGN_OR_RETURN(
               result_layouts,
@@ -1289,10 +1303,10 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
     case HloOpcode::kCompare: {
       auto compare = Cast<HloCompareInstruction>(instruction);
       attributes.push_back(ConvertComparisonDirection(compare->direction()));
-      auto default_type = Comparison::DefaultComparisonType(
+      auto default_order = Comparison::DefaultOrdering(
           compare->operand(0)->shape().element_type());
-      if (compare->type() != default_type) {
-        attributes.push_back(ConvertComparisonType(compare->type()));
+      if (compare->order() != default_order) {
+        attributes.push_back(ConvertComparisonOrder(compare->order()));
       }
       return mlir::stablehlo::CompareOp::create(*func_builder, loc, result_type,
                                                 operands, attributes)
@@ -1483,9 +1497,10 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       auto scatter_op = mlir::stablehlo::ScatterOp::create(
           *func_builder, loc, flattened_types, operands, attributes);
       ABSL_RETURN_IF_ERROR(ImportAsRegion(*scatter->to_apply(),
-                                     &scatter_op.getUpdateComputation()));
-      ABSL_ASSIGN_OR_RETURN(auto result_type, ConvertShapeToType<RankedTensorType>(
-                                             instruction->shape(), *builder_));
+                                          &scatter_op.getUpdateComputation()));
+      ABSL_ASSIGN_OR_RETURN(auto result_type,
+                            ConvertShapeToType<RankedTensorType>(
+                                instruction->shape(), *builder_));
       return CreateTupleFromOpResults(func_builder, loc,
                                       scatter_op.getOperation(), result_type);
     }
@@ -1507,9 +1522,9 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       auto select_scatter_op = mlir::stablehlo::SelectAndScatterOp::create(
           *func_builder, loc, result_type, operands, attributes);
       ABSL_RETURN_IF_ERROR(ImportAsRegion(*select_scatter->select(),
-                                     &select_scatter_op.getSelect()));
+                                          &select_scatter_op.getSelect()));
       ABSL_RETURN_IF_ERROR(ImportAsRegion(*select_scatter->scatter(),
-                                     &select_scatter_op.getScatter()));
+                                          &select_scatter_op.getScatter()));
       return select_scatter_op.getOperation();
     }
     case HloOpcode::kSetDimensionSize: {
@@ -1547,7 +1562,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
         sort_op->setAttr(attr.getName(), attr.getValue());
       }
       ABSL_RETURN_IF_ERROR(ImportAsRegion(*sort_instruction->to_apply(),
-                                     &sort_op.getComparator()));
+                                          &sort_op.getComparator()));
 
       // Check if the output needs to be tupled.
       if (return_types.size() == 1 && return_types.front() == result_type) {
@@ -1620,9 +1635,9 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
             *func_builder, loc, flattened_ret_types, flattened_operands[0],
             attributes);
         ABSL_RETURN_IF_ERROR(ImportAsRegion(*instruction->true_computation(),
-                                       &op.getTrueBranch()));
+                                            &op.getTrueBranch()));
         ABSL_RETURN_IF_ERROR(ImportAsRegion(*instruction->false_computation(),
-                                       &op.getFalseBranch()));
+                                            &op.getFalseBranch()));
 
         // Replace the uses of block-arguments of the IfOp with the
         // implicit_operands.
@@ -1651,7 +1666,8 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
            llvm::enumerate(instruction->branch_computations())) {
         auto index = index_and_computation.index();
         HloComputation* computation = index_and_computation.value();
-        ABSL_RETURN_IF_ERROR(ImportAsRegion(*computation, &op.getBranches()[index]));
+        ABSL_RETURN_IF_ERROR(
+            ImportAsRegion(*computation, &op.getBranches()[index]));
       }
 
       // Replace the uses of block-arguments of the CaseOp with the
@@ -1727,7 +1743,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       auto all_reduce_op = mlir::stablehlo::AllReduceOp::create(
           *func_builder, loc, result_types, operands, attributes);
       ABSL_RETURN_IF_ERROR(ImportAsRegion(*all_reduce->to_apply(),
-                                     &all_reduce_op.getComputation()));
+                                          &all_reduce_op.getComputation()));
       if (result_tuple_ty) {
         return WrapInTuple(func_builder, all_reduce_op);
       }
@@ -1737,7 +1753,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       auto appendRegion =
           [&](mlir::stablehlo::AllReduceOp all_reduce_sync) -> absl::Status {
         ABSL_RETURN_IF_ERROR(ImportAsRegion(*instruction->to_apply(),
-                                       &all_reduce_sync.getComputation()));
+                                            &all_reduce_sync.getComputation()));
         return absl::OkStatus();
       };
 
@@ -1748,6 +1764,39 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
     case HloOpcode::kAllReduceDone: {
       return ImportAsyncOpDone(instruction, loc, operands, attributes,
                                result_type, func_builder);
+    }
+    case HloOpcode::kCollectiveReduce: {
+      auto collective_reduce =
+          Cast<HloCollectiveReduceInstruction>(instruction);
+      auto result_tuple_ty = mlir::dyn_cast<mlir::TupleType>(result_type);
+
+      llvm::SmallVector<Type> result_types = {result_type};
+      if (result_tuple_ty) {
+        result_types = llvm::to_vector(result_tuple_ty.getTypes());
+      }
+
+      attributes.push_back(ConvertReplicaGroups(collective_reduce,
+                                                &symbol_table_, func_builder));
+      if (collective_reduce->channel_id().has_value()) {
+        attributes.push_back(stablehlo::ConvertChannelHandle(
+            collective_reduce->channel_id().value(), builder_));
+      }
+      if (collective_reduce->use_global_device_ids()) {
+        attributes.push_back(ConvertUseGlobalDeviceIds(builder_));
+      }
+      if (collective_reduce->has_dynamic_root()) {
+        attributes.push_back(builder_->getNamedAttr("has_dynamic_root",
+                                                    builder_->getUnitAttr()));
+      }
+      auto collective_reduce_op = mlir::stablehlo::CollectiveReduceOp::create(
+          *func_builder, loc, result_types, operands, attributes);
+      ABSL_RETURN_IF_ERROR(
+          ImportAsRegion(*collective_reduce->to_apply(),
+                         &collective_reduce_op.getComputation()));
+      if (result_tuple_ty) {
+        return WrapInTuple(func_builder, collective_reduce_op);
+      }
+      return collective_reduce_op.getOperation();
     }
     case HloOpcode::kAllToAll: {
       auto all_to_all = Cast<HloAllToAllInstruction>(instruction);
@@ -1902,8 +1951,8 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       FlattenTupleType(result_type, flattened_ret_types);
       if (rng_op->shape().IsArray()) {
         ABSL_ASSIGN_OR_RETURN(auto state_type,
-                         ConvertShapeToType<RankedTensorType>(
-                             rng_op->operand(0)->shape(), *builder_));
+                              ConvertShapeToType<RankedTensorType>(
+                                  rng_op->operand(0)->shape(), *builder_));
         flattened_ret_types.insert(flattened_ret_types.begin(), state_type);
 
         if (instruction->has_sharding()) {
@@ -2014,7 +2063,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       auto reduce_scatter_op = mlir::stablehlo::ReduceScatterOp::create(
           *func_builder, loc, result_type, operands, attributes);
       ABSL_RETURN_IF_ERROR(ImportAsRegion(*reduce_scatter->to_apply(),
-                                     &reduce_scatter_op.getComputation()));
+                                          &reduce_scatter_op.getComputation()));
 
       return reduce_scatter_op.getOperation();
     }
@@ -2111,9 +2160,12 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       auto lhs_element_type = instruction->operand(0)->shape().element_type();
       auto rhs_element_type = instruction->operand(1)->shape().element_type();
       if (lhs_element_type != rhs_element_type) {
-        // Cast LHS or RHS to the common element type.
-        if (primitive_util::CastPreservesValues(lhs_element_type,
-                                                rhs_element_type)) {
+        if (primitive_util::IsF8Type(lhs_element_type) &&
+            primitive_util::IsF8Type(rhs_element_type)) {
+          // Allow mixed FP8 without conversion.
+        } else if (primitive_util::CastPreservesValues(lhs_element_type,
+                                                       rhs_element_type)) {
+          // Cast LHS to the common element type.
           auto convert_op_return_type =
               mlir::cast<mlir::ShapedType>(lhs.getType())
                   .clone(mlir::getElementTypeOrSelf(rhs));
@@ -2121,6 +2173,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
                                                    convert_op_return_type, lhs);
         } else if (primitive_util::CastPreservesValues(rhs_element_type,
                                                        lhs_element_type)) {
+          // Cast RHS to the common element type.
           auto convert_op_return_type =
               mlir::cast<mlir::ShapedType>(rhs.getType())
                   .clone(mlir::getElementTypeOrSelf(lhs));
@@ -2524,7 +2577,7 @@ absl::Status HloFunctionImporter::GetMlirTypes(
     llvm::SmallVectorImpl<mlir::Type>* types) {
   for (auto instruction : instructions) {
     ABSL_ASSIGN_OR_RETURN(auto ret_type, ConvertShapeToType<RankedTensorType>(
-                                        instruction->shape(), *builder_));
+                                             instruction->shape(), *builder_));
     types->push_back(ret_type);
   }
   return absl::OkStatus();
@@ -2551,14 +2604,20 @@ mlir::NamedAttribute HloFunctionImporter::ConvertComparisonDirection(
                                       .value()));
 }
 
-mlir::NamedAttribute HloFunctionImporter::ConvertComparisonType(
-    Comparison::Type type) {
+mlir::NamedAttribute HloFunctionImporter::ConvertComparisonOrder(
+    ComparisonOrder order) {
+  mlir::stablehlo::ComparisonType type;
+  switch (order) {
+    case ComparisonOrder::kPartial:
+      type = mlir::stablehlo::ComparisonType::FLOAT;
+      break;
+    case ComparisonOrder::kTotal:
+      type = mlir::stablehlo::ComparisonType::TOTALORDER;
+      break;
+  }
   return builder_->getNamedAttr(
       "compare_type",
-      mlir::stablehlo::ComparisonTypeAttr::get(
-          builder_->getContext(),
-          mlir::stablehlo::symbolizeComparisonType(ComparisonTypeToString(type))
-              .value()));
+      mlir::stablehlo::ComparisonTypeAttr::get(builder_->getContext(), type));
 }
 
 mlir::DenseIntElementsAttr HloFunctionImporter::ConvertDimensions(

@@ -21,7 +21,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
@@ -47,6 +46,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
@@ -56,7 +56,7 @@ namespace xla {
 namespace {
 
 class DynamicSliceTest : public ClientLibraryTestRunnerMixin<
-                             HloPjRtInterpreterReferenceMixin<HloTestBase>> {
+                             HloInterpreterReferenceMixin<HloTestBase>> {
  protected:
   template <typename IndexT, typename DataT>
   void TestR1() {
@@ -319,9 +319,8 @@ TEST_F(DynamicSliceTest, Int32R3Pred) {
   // clang-format on
 }
 
-class DynamicUpdateSliceTest
-    : public ClientLibraryTestRunnerMixin<
-          HloPjRtInterpreterReferenceMixin<HloTestBase>> {
+class DynamicUpdateSliceTest : public ClientLibraryTestRunnerMixin<
+                                   HloInterpreterReferenceMixin<HloTestBase>> {
  protected:
   template <typename IndexT, typename DataT>
   void TestR0() {
@@ -753,7 +752,7 @@ TEST_F(DynamicUpdateSliceTest, R3ContiguousLargerBF16) {
   RunR3Contiguous<bfloat16>(operand_shape, /*index=*/7, /*size=*/1);
 }
 
-using DynamicOpsTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
+using DynamicOpsTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 // This test that buffer assignment does not alias constants with the output of
 // dynamic update slice.

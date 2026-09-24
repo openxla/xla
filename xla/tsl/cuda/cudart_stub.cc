@@ -19,13 +19,13 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace {
-void *GetDsoHandle() {
-  static auto handle = []() -> void * {
+void* GetDsoHandle() {
+  static auto handle = []() -> void* {
     auto handle_or = tsl::internal::DsoLoader::GetCudaRuntimeDsoHandle();
     if (!handle_or.ok()) {
       LOG(INFO) << "Could not find cuda drivers on your machine, "
@@ -37,21 +37,21 @@ void *GetDsoHandle() {
   return handle;
 }
 
-void *LoadSymbol(const char *symbol_name) {
-  void *symbol = nullptr;
+void* LoadSymbol(const char* symbol_name) {
+  void* symbol = nullptr;
   tsl::internal::GetSymbolFromLibrary(GetDsoHandle(), symbol_name, &symbol)
       .IgnoreError();
   return symbol;
 }
 
-const char *kSymbols[] = {
+const char* kSymbols[] = {
 #include "xla/tsl/cuda/cudart.inc"
 };
 
-constexpr size_t kNumSymbols = sizeof(kSymbols) / sizeof(const char *);
+constexpr size_t kNumSymbols = sizeof(kSymbols) / sizeof(const char*);
 
-absl::flat_hash_set<absl::string_view> const &ErrorStringSymbols() {
-  static auto *syms = new absl::flat_hash_set<absl::string_view>{
+absl::flat_hash_set<absl::string_view> const& ErrorStringSymbols() {
+  static auto* syms = new absl::flat_hash_set<absl::string_view>{
       "cudaGetErrorName",
       "cudaGetErrorString",
   };
@@ -62,7 +62,7 @@ absl::flat_hash_set<absl::string_view> const &ErrorStringSymbols() {
 
 extern "C" {
 
-static const char *ReturnStringError() {
+static const char* ReturnStringError() {
   return "Error loading CUDA libraries. GPU will not be used.";
 }
 
@@ -70,18 +70,18 @@ static cudaError_t GetSymbolNotFoundError() {
   return cudaErrorSharedObjectSymbolNotFound;
 }
 
-extern void *_cudart_tramp_table[];
+extern void* _cudart_tramp_table[];
 
 void _cudart_tramp_resolve(int i) {
   CHECK_LE(0, i);
   CHECK_LT(i, kNumSymbols);
-  void *p = LoadSymbol(kSymbols[i]);
+  void* p = LoadSymbol(kSymbols[i]);
   if (!p) {
-    const auto &error_string_symbols = ErrorStringSymbols();
+    const auto& error_string_symbols = ErrorStringSymbols();
     if (error_string_symbols.find(kSymbols[i]) != error_string_symbols.end()) {
-      p = reinterpret_cast<void *>(&ReturnStringError);
+      p = reinterpret_cast<void*>(&ReturnStringError);
     } else {
-      p = reinterpret_cast<void *>(&GetSymbolNotFoundError);
+      p = reinterpret_cast<void*>(&GetSymbolNotFoundError);
     }
   }
   _cudart_tramp_table[i] = p;

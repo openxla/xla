@@ -22,14 +22,14 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
-#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
+#include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::cpu {
 
@@ -127,14 +127,6 @@ class YnnMatcher : public LibraryMatcher {
       return true;
     }
     return fuse_eltwise_ && instr->IsElementwise();
-  }
-
-  PrimitiveType LibraryOpOutputType(const HloInstruction* instr) override {
-    auto out_type = instr->shape().element_type();
-    if (instr->opcode() != HloOpcode::kDot) {
-      return out_type;
-    }
-    return out_type == BF16 ? F32 : out_type;
   }
 
   // Returns a prefix string for the fusion op's name.

@@ -103,7 +103,7 @@ void ExecutionWatchdogScope::Arm(HangWatchdog::CancelCallback pre_abort) {
 
       if (std::shared_ptr<GuardHolder> guard_holder =
               weak_guard_holder.lock()) {
-        absl::MutexLock lock(&guard_holder->mu);
+        absl::MutexLock lock(guard_holder->mu);
         guard_holder->guard = HangWatchdog::Global().Watch(
             "post-abort ...", absl::Minutes(1),
             HangWatchdog::Abort("post-abort ...", absl::Minutes(1)));
@@ -120,7 +120,7 @@ void ExecutionWatchdogScope::Arm(HangWatchdog::CancelCallback pre_abort) {
   std::shared_ptr<HangWatchdog::Guard> guard = HangWatchdog::Global().Watch(
       watchdog_name_, watchdog_timeout_, std::move(on_timeout));
   {
-    absl::MutexLock lock(&guard_holder_->mu);
+    absl::MutexLock lock(guard_holder_->mu);
     guard_holder_->guard = std::move(guard);
   }
 }
@@ -132,19 +132,31 @@ ExecutionWatchdogScope::~ExecutionWatchdogScope() {
 
   // When using an async allocator, thunk dispatch returns before GPU work
   // completes. Keep the watchdog alive until the execution stream finishes.
+  bool cleanup_scheduled = false;
   if (!block_host_until_done_ && stream_ != nullptr) {
-    absl::Status block_status = stream_->BlockHostUntilDone();
-    if (!block_status.ok()) {
-      LOG(ERROR) << "Failed to sync execution stream before releasing "
-                    "execution watchdog: "
-                 << block_status;
+    absl::Status status =
+        stream_->DoHostCallback([guard_holder = guard_holder_]() {
+          // Drop the HangWatchdog guard now that execution is done (or
+          // abandoned).
+          if (guard_holder != nullptr) {
+            absl::MutexLock lock(guard_holder->mu);
+            guard_holder->guard = nullptr;
+          }
+        });
+    if (status.ok()) {
+      cleanup_scheduled = true;
+    } else {
+      LOG(ERROR) << "Failed to schedule host callback on execution stream for "
+                    "releasing execution watchdog: "
+                 << status;
     }
   }
-
-  // Drop the HangWatchdog guard now that execution is done (or abandoned).
-  if (guard_holder_ != nullptr) {
-    absl::MutexLock lock(&guard_holder_->mu);
-    guard_holder_->guard = nullptr;
+  if (!cleanup_scheduled) {
+    // Drop the HangWatchdog guard.
+    if (guard_holder_ != nullptr) {
+      absl::MutexLock lock(guard_holder_->mu);
+      guard_holder_->guard = nullptr;
+    }
   }
 }
 

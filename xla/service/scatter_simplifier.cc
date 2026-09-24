@@ -58,7 +58,8 @@ absl::StatusOr<HloInstruction*> FlattenAndTransposeUpdates(
 
   // Collapse scatter dimensions to one.
   if (num_scatter_dims > 1) {
-    ABSL_ASSIGN_OR_RETURN(updates, CollapseFirstNDims(updates, num_scatter_dims));
+    ABSL_ASSIGN_OR_RETURN(updates,
+                          CollapseFirstNDims(updates, num_scatter_dims));
   } else if (num_scatter_dims == 0) {
     ABSL_ASSIGN_OR_RETURN(updates, InsertDegenerateDims(updates, {0}));
   }
@@ -75,20 +76,19 @@ absl::StatusOr<HloInstruction*> FlattenAndTransposeUpdates(
   return updates;
 }
 
-
 // Transforms the scatter_updates field of scatter. scatter_indices_size is the
 // size of the scatter dimension in scatter_indices.
 absl::StatusOr<std::vector<HloInstruction*>> TransformScatterUpdates(
-    HloScatterInstruction* scatter,
-    int64_t scatter_indices_size) {
+    HloScatterInstruction* scatter, int64_t scatter_indices_size) {
   std::vector<HloInstruction*> scatter_updates;
   const auto& attrs = scatter->scatter_dimension_numbers();
   scatter_updates.reserve(scatter->scatter_updates().size());
   for (auto* update : scatter->scatter_updates()) {
-    ABSL_ASSIGN_OR_RETURN(scatter_updates.emplace_back(),
-                     FlattenAndTransposeUpdates(
-                         update, attrs.update_window_dims(),
-                         attrs.inserted_window_dims(), scatter_indices_size));
+    ABSL_ASSIGN_OR_RETURN(
+        scatter_updates.emplace_back(),
+        FlattenAndTransposeUpdates(update, attrs.update_window_dims(),
+                                   attrs.inserted_window_dims(),
+                                   scatter_indices_size));
   }
   return scatter_updates;
 }
@@ -147,8 +147,8 @@ absl::StatusOr<HloInstruction*> ScatterSimplifier::ExpandInstruction(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto* scatter_indices,
-                   TransformStartIndices(scatter->scatter_indices(),
-                                         attrs.index_vector_dim()));
+                        TransformStartIndices(scatter->scatter_indices(),
+                                              attrs.index_vector_dim()));
   ABSL_ASSIGN_OR_RETURN(
       auto scatter_updates,
       TransformScatterUpdates(scatter, scatter_indices->shape().dimensions(0)));
@@ -174,7 +174,7 @@ absl::StatusOr<HloInstruction*> ScatterSimplifier::ExpandInstruction(
       // TODO(unknown): Is this still correct?
       scatter->indices_are_sorted(), scatter->unique_indices()));
 
-    return result;
+  return result;
 }
 
 bool ScatterSimplifier::IsSimplifiedScatter(

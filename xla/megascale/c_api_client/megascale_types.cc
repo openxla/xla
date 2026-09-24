@@ -57,7 +57,8 @@ absl::StatusOr<const PJRT_Megascale_Extension*> GetExtension(
 absl::StatusOr<MultiSliceDeviceId> MultiSliceDeviceId::Create(
     int64_t megascale_id) {
   const PJRT_Api* c_api;
-  ABSL_ASSIGN_OR_RETURN(const PJRT_Megascale_Extension* ext, GetExtension(&c_api));
+  ABSL_ASSIGN_OR_RETURN(const PJRT_Megascale_Extension* ext,
+                        GetExtension(&c_api));
   PJRT_Megascale_MegascaleId_To_DeviceId_Args args;
   args.struct_size = PJRT_Megascale_MegascaleId_To_DeviceId_Args_STRUCT_SIZE;
   args.megascale_id = megascale_id;
@@ -69,7 +70,8 @@ absl::StatusOr<MultiSliceDeviceId> MultiSliceDeviceId::Create(
 absl::StatusOr<MultiSliceDeviceId> MultiSliceDeviceId::Create(
     int32_t slice_id, int32_t per_slice_device_id) {
   const PJRT_Api* c_api;
-  ABSL_ASSIGN_OR_RETURN(const PJRT_Megascale_Extension* ext, GetExtension(&c_api));
+  ABSL_ASSIGN_OR_RETURN(const PJRT_Megascale_Extension* ext,
+                        GetExtension(&c_api));
   PJRT_Megascale_DeviceId_To_MegascaleId_Args args;
   args.struct_size = PJRT_Megascale_DeviceId_To_MegascaleId_Args_STRUCT_SIZE;
   args.slice_id = slice_id;

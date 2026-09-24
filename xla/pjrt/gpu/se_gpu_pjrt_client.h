@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numa.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -70,27 +71,8 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/numa.h"
 
 namespace xla {
-
-class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
- public:
-  StreamExecutorGpuDevice(int id, LocalDeviceState* local_device_state,
-                          std::string device_kind, std::string device_vendor,
-                          std::string compute_capability, int core_count,
-                          int64_t device_memory_bytes_limit,
-                          int64_t shared_memory_per_block_optin,
-                          int local_device_id, int process_index,
-                          int process_index_in_partition, int partition_index,
-                          int numa_node, std::string fabric_uuid);
-
-  absl::StatusOr<tsl::AllocatorStats> GetAllocatorStats() const override;
-
-  absl::StatusOr<PjRtMemorySpace*> default_memory_space() const override;
-
-  absl::Status ClearMemoryStats() override;
-};
 
 class StreamExecutorGpuHbmMemorySpace : public PjRtStreamExecutorMemorySpace {
  public:
@@ -203,12 +185,6 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       imported_fabric_handles_ ABSL_GUARDED_BY(mu_);
 
   std::shared_ptr<gpu::AllocatorMemoryRegistration> memory_registration_;
-};
-
-// A custom PjRtClient that overrides the device assignment method.
-class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
- public:
-  using PjRtStreamExecutorClient::PjRtStreamExecutorClient;
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(

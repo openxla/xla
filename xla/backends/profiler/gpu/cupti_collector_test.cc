@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -22,17 +25,15 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -452,6 +453,23 @@ TEST(CuptiCollectorTest, AggregatedTracingOutOfRangeEvents) {
           value { name: "kernel2" }
         }
       )pb"))));
+}
+
+TEST(CuptiCollectorTest, ExportScopeRangeIdTreeSkipsIfEmpty) {
+  CuptiTracerCollectorOptions options;
+  options.num_gpus = 1;
+  std::unique_ptr<CuptiTraceCollector> collector =
+      CreateCuptiCollector(options, 0, 0);
+
+  // No events with scope_range_id_tree are added.
+
+  XSpace space;
+  collector->Export(&space, /*end_gpu_ns=*/210);
+
+  tensorflow::profiler::XPlane* tree_plane =
+      tsl::profiler::FindMutablePlaneWithName(
+          &space, tsl::profiler::kScopeRangeIdTreePlaneName);
+  EXPECT_EQ(tree_plane, nullptr);
 }
 
 TEST(CuptiCollectorTest, ExportScopeRangeIdTreePreventsIdOverlap) {

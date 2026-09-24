@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/sorting.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <random>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -40,7 +41,7 @@ namespace xla {
 namespace {
 
 using SortingTest =
-    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(SortingTest, TopK3From8Values) {
   XlaBuilder builder(TestName());

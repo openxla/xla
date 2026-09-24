@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <limits>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
@@ -27,7 +28,7 @@ namespace xla {
 namespace {
 
 using Atan2Test =
-    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(Atan2Test, atan2) {
   XlaBuilder builder("atan2 with special and non-special float values");

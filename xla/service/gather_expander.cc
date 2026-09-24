@@ -183,7 +183,8 @@ absl::StatusOr<std::vector<HloInstruction*>> GatherLoopBody(
         MakeDynamicSliceHlo(start_indices, index_into_start_indices,
                             {1, index_vector_size}));
 
-    ABSL_ASSIGN_OR_RETURN(index_vector, ElideDegenerateDims(index_vector_2d, {0}));
+    ABSL_ASSIGN_OR_RETURN(index_vector,
+                          ElideDegenerateDims(index_vector_2d, {0}));
   }
 
   ABSL_ASSIGN_OR_RETURN(
@@ -195,12 +196,13 @@ absl::StatusOr<std::vector<HloInstruction*>> GatherLoopBody(
           dim_numbers.operand_batching_dims(), index_vector, induction_var));
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * gathered_slice,
-                   MakeDynamicSliceHlo(operand, gathered_slice_start,
-                                       gather.gather_slice_sizes()));
+                        MakeDynamicSliceHlo(operand, gathered_slice_start,
+                                            gather.gather_slice_sizes()));
 
-  ABSL_ASSIGN_OR_RETURN(HloInstruction* const gathered_slice_with_dims_collapsed,
-                   ElideDegenerateDims(gathered_slice,
-                                       GetDegeneratedSliceDims(dim_numbers)));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction* const gathered_slice_with_dims_collapsed,
+      ElideDegenerateDims(gathered_slice,
+                          GetDegeneratedSliceDims(dim_numbers)));
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction* const gathered_slice_for_update,
@@ -335,8 +337,8 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
         GetDegeneratedSliceDims(gather_instr->gather_dimension_numbers()),
         gather_instr->operand(0)->shape());
     ABSL_ASSIGN_OR_RETURN(HloInstruction * broadcast_operand,
-                     MakeReshapeHlo(broadcast_operand_shape,
-                                    gather_instr->mutable_operand(0)));
+                          MakeReshapeHlo(broadcast_operand_shape,
+                                         gather_instr->mutable_operand(0)));
     gather_instr->SetupDerivedInstruction(broadcast_operand);
     HloInstruction* broadcast =
         MakeBroadcastHlo(broadcast_operand,
@@ -386,7 +388,7 @@ absl::StatusOr<HloInstruction*> GatherExpander::ExpandInstruction(
           gather_instr->metadata());
 
   ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> gather_loop_result,
-                   gather_loop_result_or_error);
+                        gather_loop_result_or_error);
 
   HloInstruction* accumulator_result = gather_loop_result.back();
 

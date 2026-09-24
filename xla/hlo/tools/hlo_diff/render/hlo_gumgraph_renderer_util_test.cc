@@ -14,10 +14,11 @@
 
 #include "xla/hlo/tools/hlo_diff/render/hlo_gumgraph_renderer_util.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_instruction.h"

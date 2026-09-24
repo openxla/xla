@@ -16,6 +16,9 @@ limitations under the License.
 #define XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
 
 #include <Python.h>
+#if PY_VERSION_HEX < 0x030b0000
+#include <frameobject.h>
+#endif
 
 #include <array>
 #include <cstddef>
@@ -31,8 +34,8 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/macros.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/macros.h"
 
 #ifdef Py_GIL_DISABLED
 #include "absl/synchronization/mutex.h"

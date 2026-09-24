@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/tpu/c_api_conversions.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -36,7 +38,6 @@ limitations under the License.
 #include "xla/tpu/proto_helper.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace ApiConverter {
 
@@ -321,6 +322,27 @@ TEST(ProtoHelper, EmptyProto) {
           serialized_proto);
 
   stream_executor::tpu::SerializedProto_Free(serialized_proto);
+}
+
+TEST(StackHelper, DefaultConstruct) {
+  {
+    StackHelper<XLA_Shape> stack_shape;
+    EXPECT_EQ(stack_shape.value.dimensions.size, 0);
+  }
+  {
+    StackHelper<XLA_Layout> stack_layout;
+    EXPECT_EQ(stack_layout.value.minor_to_major.size, 0);
+  }
+  {
+    StackHelper<XLA_Tile> stack_tile;
+    EXPECT_EQ(stack_tile.value.dimensions.size, 0);
+  }
+}
+
+TEST(StackHelper, Conversion) {
+  xla::Shape cpp_shape = xla::ShapeUtil::MakeShapeWithType<float>({4, 3});
+  StackHelper<XLA_Shape> stack_shape(cpp_shape);
+  EXPECT_EQ(stack_shape.AsCpp<xla::Shape>(), cpp_shape);
 }
 
 // TODO(b/290654348): SE_DeviceAddressBase, SE_DeviceAddressAllocator,

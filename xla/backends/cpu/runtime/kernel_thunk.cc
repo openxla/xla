@@ -177,7 +177,8 @@ KernelThunk<num_arguments, num_results>::ExecuteInternal(
 
   for (const ShapedSlice& buffer : arguments_buffers_) {
     if constexpr (ShouldCheckBufferSlices()) {
-      ABSL_ASSIGN_OR_RETURN(auto mem, allocations->GetDeviceAddress(buffer.slice));
+      ABSL_ASSIGN_OR_RETURN(auto mem,
+                            allocations->GetDeviceAddress(buffer.slice));
       kernel_args_ptr++->data = mem.opaque();
     } else {
       auto mem = allocations->GetDeviceAddressUnchecked(buffer.slice);
@@ -187,7 +188,8 @@ KernelThunk<num_arguments, num_results>::ExecuteInternal(
 
   for (const ShapedSlice& buffer : results_buffers_) {
     if constexpr (ShouldCheckBufferSlices()) {
-      ABSL_ASSIGN_OR_RETURN(auto mem, allocations->GetDeviceAddress(buffer.slice));
+      ABSL_ASSIGN_OR_RETURN(auto mem,
+                            allocations->GetDeviceAddress(buffer.slice));
       kernel_args_ptr++->data = mem.opaque();
     } else {
       auto mem = allocations->GetDeviceAddressUnchecked(buffer.slice);

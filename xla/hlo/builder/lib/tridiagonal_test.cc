@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/tridiagonal.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "xla/array3d.h"
 #include "xla/hlo/builder/lib/slicing.h"
@@ -41,7 +42,7 @@ namespace {
 
 class TridiagonalTest
     : public ClientLibraryTestRunnerMixin<
-          HloPjRtInterpreterReferenceMixin<HloTestBase>>,
+          HloInterpreterReferenceMixin<HloTestBase>>,
       public ::testing::WithParamInterface<std::tuple<int, int, int>> {};
 
 TEST_P(TridiagonalTest, SimpleTridiagonalMatMulOk) {

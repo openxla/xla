@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/prng.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/builder/lib/constants.h"
@@ -35,7 +36,7 @@ namespace xla {
 namespace {
 
 class PrngTest : public ClientLibraryTestRunnerMixin<
-                     HloPjRtInterpreterReferenceMixin<HloTestBase>> {
+                     HloInterpreterReferenceMixin<HloTestBase>> {
  public:
   template <PrimitiveType value_type, PrimitiveType bit_type,
             typename ValueT = typename primitive_util::PrimitiveTypeToNative<

@@ -31,12 +31,17 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/autotuner/autotuner.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/directory_store.h"
@@ -50,8 +55,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
-#include "xla/service/gpu/autotuning/autotuner_pass.h"
-#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/autotuning/config_assigner_pass.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/status_macros.h"
@@ -61,14 +65,13 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/tools/hlo_module_loader.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/framework/bfc_allocator.h"
 #include "xla/tsl/framework/device_id.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/init_main.h"
 
 namespace {
 
@@ -164,7 +167,7 @@ CreateMultiDeviceAllocator(se::Platform* platform,
 
   for (int i = 0; i < device_count; ++i) {
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor,
-                     platform->ExecutorForDevice(i));
+                          platform->ExecutorForDevice(i));
     TF_RET_CHECK(stream_executor->GetDeviceDescription().name() ==
                  stream_executor_0->GetDeviceDescription().name())
         << "Devices are not the same: device 0 is "
@@ -185,7 +188,7 @@ CreateMultiDeviceAllocator(se::Platform* platform,
         absl::StrCat("gpu_profiler_", i, "_bfc"), opts);
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                     stream_executor->CreateStream());
+                          stream_executor->CreateStream());
     se::Stream* stream_ptr = stream.get();
     streams.push_back(std::move(stream));
 
@@ -202,21 +205,21 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
   CodegenOrchestrator::Options orchestrator_options =
       GetCodegenOrchestratorOptions(debug_options);
   ABSL_ASSIGN_OR_RETURN(std::string platform_name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
 
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(
-                       absl::AsciiStrToUpper(platform_name)));
+                        se::PlatformManager::PlatformWithName(
+                            absl::AsciiStrToUpper(platform_name)));
   if (platform->VisibleDeviceCount() == 0) {
     return absl::InternalError("No devices found");
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler_base,
-                   xla::Compiler::GetForPlatform(platform->id()));
+                        xla::Compiler::GetForPlatform(platform->id()));
   auto compiler = std::unique_ptr<GpuCompiler>(
       absl::down_cast<GpuCompiler*>(compiler_base.release()));
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor_0,
-                   platform->ExecutorForDevice(0));
+                        platform->ExecutorForDevice(0));
   auto alias_info =
       compiler->GetAliasInfo(stream_executor_0->GetDeviceDescription());
   auto target_config =
@@ -241,7 +244,7 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
 
   for (int i = 0; i < device_count; ++i) {
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor,
-                     platform->ExecutorForDevice(i));
+                          platform->ExecutorForDevice(i));
     std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
         stream_executor, GetProfileOptions(debug_options), allocator.get());
     TF_RET_CHECK(profiler != nullptr)
@@ -252,7 +255,7 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<CodegenBackend>> autotuner_backends,
-      AutotunerPass::GetGpuAutotunerBackends(
+      ConfigAssignerPass::GetEnabledBackends(
           stream_executor_0, allocator.get(), target_config.get(),
           alias_info.get(), debug_options, mlir_context.get(),
           compiler->ShapeSizeBytesFunction(), compiler.get(), platform->id()));
@@ -260,20 +263,58 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
   AutotuneCacheContext ctx = AutotuneCacheContext::Create(
       target_config->device_description, autotuner_backends);
 
-  ABSL_ASSIGN_OR_RETURN(auto autotuner_orchestrator,
-                   CodegenOrchestrator::Create(std::move(autotuner_backends),
-                                               orchestrator_options));
+  ABSL_ASSIGN_OR_RETURN(
+      auto autotuner_orchestrator,
+      CodegenOrchestrator::Create(std::move(autotuner_backends),
+                                  orchestrator_options));
 
   Autotuner::Options autotuner_options = GetAutotunerOptions(debug_options);
-  ABSL_ASSIGN_OR_RETURN(auto autotuner,
-                   Autotuner::Create(std::move(autotuner_orchestrator),
-                                     std::move(autotuner_profilers),
-                                     autotuner_options, thread_pool.get()));
+  autotuner_options.cache_context = ctx;
+  ABSL_ASSIGN_OR_RETURN(
+      auto autotuner, Autotuner::Create(std::move(autotuner_orchestrator),
+                                        std::move(autotuner_profilers),
+                                        autotuner_options, thread_pool.get()));
 
   return AutotunerEnvironment{
       std::move(compiler),      std::move(mlir_context), std::move(alias_info),
       std::move(target_config), std::move(streams),      std::move(allocator),
       std::move(ctx),           std::move(thread_pool),  std::move(autotuner)};
+}
+
+absl::Status InsertTuningResultsToCache(
+    absl::Span<const Autotuner::TuningResult> results,
+    AutotunerCacheInterface* autotuner_cache,
+    tsl::thread::ThreadPool* thread_pool) {
+  if (results.empty()) {
+    return absl::OkStatus();
+  }
+
+  tsl::Executor* executor = thread_pool != nullptr
+                                ? thread_pool->AsExecutor()
+                                : &tsl::InlineExecutor::Instance();
+
+  absl::BlockingCounter counter(results.size());
+  absl::Mutex status_mu;
+  absl::Status insert_status = absl::OkStatus();
+
+  for (const auto& result : results) {
+    AutotunerCacheInterface::Config cached_config;
+    cached_config.codegen_backend = result.config.codegen_backend->backend();
+    cached_config.backend_config = *result.config.backend_config;
+    const HloInstruction* instr = result.instruction;
+
+    executor->Execute([instr, cached_config, autotuner_cache, &counter,
+                       &status_mu, &insert_status]() {
+      absl::Status s = autotuner_cache->Insert(instr, cached_config);
+      if (!s.ok()) {
+        absl::MutexLock lock(status_mu);
+        insert_status.Update(s);
+      }
+      counter.DecrementCount();
+    });
+  }
+  counter.Wait();
+  return insert_status;
 }
 
 }  // namespace
@@ -282,7 +323,7 @@ absl::Status RunAutotuning(const std::vector<std::string>& hlo_files,
                            const DebugOptions& debug_options,
                            absl::string_view cache_dir) {
   ABSL_ASSIGN_OR_RETURN(AutotunerEnvironment env,
-                   CreateAutotunerEnvironment(debug_options));
+                        CreateAutotunerEnvironment(debug_options));
 
   std::unique_ptr<AutotunerCacheInterface> autotuner_cache;
   if (!cache_dir.empty()) {
@@ -296,41 +337,51 @@ absl::Status RunAutotuning(const std::vector<std::string>& hlo_files,
     autotuner_cache = std::make_unique<PrintingAutotunerCache>();
   }
 
-  InstructionFilterFn should_autotune_instr = GetShouldAutotuneInstructionFn(
-      debug_options,
-      env.target_config->device_description.gpu_compute_capability());
+  InstructionFilterFn should_assign_config_to_instr =
+      GetShouldAssignConfigToInstructionFn(
+          debug_options,
+          env.target_config->device_description.gpu_compute_capability());
 
-  auto should_autotune = [&autotuner_cache, &should_autotune_instr](
+  auto should_autotune = [&autotuner_cache, &should_assign_config_to_instr](
                              const xla::HloInstruction& instr) {
-    if (!should_autotune_instr(instr)) {
+    if (!should_assign_config_to_instr(instr)) {
       return false;
     }
     return !autotuner_cache->Lookup(&instr).has_value();
   };
+  absl::Status combined_status = absl::OkStatus();
 
   for (const auto& hlo_file : hlo_files) {
     LOG(INFO) << "Autotuning " << hlo_file;
     absl::Time start_time = absl::Now();
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     LoadModuleFromFile(hlo_file));
-    ABSL_ASSIGN_OR_RETURN(std::vector<Autotuner::TuningResult> results,
-                     env.autotuner->TuneConfigs(*module, should_autotune));
-    absl::Duration autotune_duration = absl::Now() - start_time;
-    for (const auto& result : results) {
-      AutotunerCacheInterface::Config cached_config;
-      cached_config.codegen_backend = result.config.codegen_backend->backend();
-      cached_config.backend_config = *result.config.backend_config;
-      ABSL_RETURN_IF_ERROR(
-          autotuner_cache->Insert(result.instruction, cached_config));
+                          LoadModuleFromFile(hlo_file));
+    absl::Duration module_load_time = absl::Now() - start_time;
+    absl::Time autotune_start_time = absl::Now();
+    absl::StatusOr<std::vector<Autotuner::TuningResult>> results =
+        env.autotuner->TuneConfigs(*module, should_autotune);
+    if (!results.ok()) {
+      LOG(ERROR) << "Failed to autotune " << module->name() << ": "
+                 << results.status();
+      combined_status.Update(results.status());
+      continue;
     }
+    absl::Duration autotune_duration = absl::Now() - autotune_start_time;
+
+    combined_status.Update(InsertTuningResultsToCache(
+        *results, autotuner_cache.get(),
+        cache_dir.empty() ? nullptr : env.thread_pool.get()));
+
     env.compiler->ClearMlirContextPool();
-    absl::Duration duration_with_cache_update = absl::Now() - start_time;
+    absl::Duration total_duration = absl::Now() - start_time;
+    absl::Duration cache_update_duration =
+        total_duration - autotune_duration - module_load_time;
     LOG(INFO) << "Autotuning " << module->name() << " took "
-              << autotune_duration
-              << " (with cache update: " << duration_with_cache_update
-              << " total)";
+              << autotune_duration << " (module load: " << module_load_time
+              << ", cache update: " << cache_update_duration
+              << ", total: " << total_duration << ")";
   }
-  return absl::OkStatus();
+  return combined_status;
 }
 
 }  // namespace gpu

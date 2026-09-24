@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/pjrt/proto/compile_options.pb.h"

@@ -26,9 +26,9 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"        // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "xla/backends/cpu/codegen/computation_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/concatenate_kernel_emitter.h"
@@ -270,16 +270,19 @@ NB_MODULE(_extension, kernel_runner_module) {
 
   kernel_runner_module.def(
       "run_fusion_wrapper_pass",
-      [](std::unique_ptr<HloModule, nb::deleter<HloModule>> hlo_module) {
-        FusionWrapper fusion_wrapper(/*using_new_fusion_emitter=*/true,
-                                     /*use_tiled_emitter=*/true);
+      [](std::unique_ptr<HloModule, nb::deleter<HloModule>> hlo_module,
+         const TargetMachineFeatures* target_machine_features) {
+        FusionWrapper fusion_wrapper(
+            /*using_new_fusion_emitter=*/true,
+            /*use_tiled_emitter=*/true, target_machine_features);
         absl::StatusOr<bool> result = fusion_wrapper.Run(hlo_module.get());
         if (!result.ok()) {
           throw std::runtime_error(std::string(result.status().message()));
         }
 
         return hlo_module->Clone();
-      });
+      },
+      nb::arg("hlo_module"), nb::arg("target_machine_features") = nullptr);
 }
 
 }  // namespace xla::cpu

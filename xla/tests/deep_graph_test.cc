@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
@@ -23,7 +24,7 @@ namespace xla {
 namespace {
 
 class DeepGraphTest : public ClientLibraryTestRunnerMixin<
-                          HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
+                          HloInterpreterReferenceMixin<HloTestBase>> {};
 
 TEST_F(DeepGraphTest, DeepGraph) {
   // TODO(b/62624812): To trigger the stack overflow this test is

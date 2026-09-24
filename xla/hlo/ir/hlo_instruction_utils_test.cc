@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -671,7 +672,7 @@ TEST_F(HloInstructionUtilsTest, IsTopKStable) {
       p.1.rhs = s32[] parameter(3)
       p.0.lhs = f32[] parameter(0)
       p.0.rhs = f32[] parameter(1)
-      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, type=TOTALORDER
+      ROOT compare = pred[] compare(p.0.lhs, p.0.rhs), direction=GT, order=TOTAL
     }
 
     ENTRY main {

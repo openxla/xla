@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -864,7 +865,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
   }
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * custom_call,
-                   CreateCustomCallHelper(conv, cc, dnn_version));
+                        CreateCustomCallHelper(conv, cc, dnn_version));
   if (custom_call == nullptr) {
     return false;
   }

@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "google/protobuf/arena.h"
 #include "riegeli/bytes/reader.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/service/compiled_module.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla::gpu {
 

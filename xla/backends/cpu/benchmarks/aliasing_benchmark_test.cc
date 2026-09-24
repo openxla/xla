@@ -17,12 +17,12 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/stacktrace_handler.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
 #include "xla/backends/cpu/benchmarks/multi_benchmark_config.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/stacktrace_handler.h"
 
 namespace xla::cpu {
 namespace {

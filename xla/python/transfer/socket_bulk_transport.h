@@ -30,9 +30,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/env.h"
 #include "xla/python/transfer/event_loop.h"
 #include "xla/python/transfer/streaming.h"
-#include "tsl/platform/env.h"
 
 namespace aux {
 
@@ -172,8 +172,8 @@ class RecvThreadState {
   struct recv_work_item {
     size_t recv_size;
     std::shared_ptr<int> fd;
-    absl::AnyInvocable<
-        void(absl::StatusOr<aux::BulkTransportInterface::Message> msg) &&>
+    absl::AnyInvocable<void(
+        absl::StatusOr<aux::BulkTransportInterface::Message> msg) &&>
         on_recv;
   };
 

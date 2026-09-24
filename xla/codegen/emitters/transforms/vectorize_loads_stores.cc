@@ -17,13 +17,14 @@ limitations under the License.
 #include <memory>
 #include <numeric>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/numeric/bits.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -45,7 +46,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace emitters {
@@ -297,8 +297,12 @@ struct VectorizeLoad : mlir::OpRewritePattern<mlir::tensor::ExtractOp> {
     // trunc (extractelement <4 x i8> %X, i64 0) to i2 ->
     // extractelement <16 x i2> (bitcast <4 x i8> %X to <16 x i2>), i64 0. The
     // sub-byte vector types are not supported in the LLVM SPIR-V backend.
+    llvm::DenseSet<mlir::Operation*> visited;
     std::function<bool(mlir::Operation*)> has_sub_byte_trunc_user =
         [&](mlir::Operation* op) {
+          if (!visited.insert(op).second) {
+            return false;
+          }
           return absl::c_any_of(op->getUsers(), [&](mlir::Operation* user) {
             auto trunc = mlir::dyn_cast<mlir::arith::TruncIOp>(user);
             if (trunc && IsSubByteIntOrFloatType(trunc.getResult().getType()))

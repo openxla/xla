@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/analysis/symbolic_expr.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/DenseMap.h"

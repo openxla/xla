@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/abi/runtime_abi_version_manager.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"

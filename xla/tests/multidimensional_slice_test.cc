@@ -15,7 +15,6 @@ limitations under the License.
 
 // Tests that slice operations can be performed.
 
-
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/error_spec.h"
@@ -29,7 +28,7 @@ namespace xla {
 namespace {
 
 class SliceTest : public ClientLibraryTestRunnerMixin<
-                      HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
+                      HloInterpreterReferenceMixin<HloTestBase>> {};
 
 TEST_F(SliceTest, Slice2D) {
   XlaBuilder builder("slice_2d");

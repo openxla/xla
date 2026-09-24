@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tsl/util/proto/parse_text_proto.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/tsl/util/proto/proto_matchers_test_protos.pb.h"
 
 namespace tsl::proto_testing {

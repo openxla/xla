@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/convert_async_collectives_to_sync.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
@@ -48,7 +49,7 @@ class ConvertAsyncCollectivesToSyncTest
   absl::Status RunPass(HloModule* module, bool expect_change,
                        HloPredicate is_nop = {}) {
     ABSL_ASSIGN_OR_RETURN(bool changed,
-                     ConvertAsyncCollectivesToSync{is_nop}.Run(module));
+                          ConvertAsyncCollectivesToSync{is_nop}.Run(module));
     EXPECT_EQ(changed, expect_change);
     return absl::OkStatus();
   }

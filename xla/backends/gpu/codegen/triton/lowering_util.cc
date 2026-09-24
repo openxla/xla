@@ -41,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla::gpu::triton {
 namespace {
@@ -73,7 +73,7 @@ absl::StatusOr<stream_executor::ThreadDim> ExtractThreadDims(
   if (!num_warps_attr) {
     return absl::InternalError("ttg.num-warps attribute not found.");
   }
-  // AMD/ROCm Triton backend does not support warp specialization.
+  // AMD/ROCm and Intel XPU Triton backends do not support warp specialization.
   // Consequently, `ttg.total-num-warps` and  `nvvm.reqntid` are not added
   // to triton module/function.
   // ThreadDim is therefore calculated from the Module attributes and not
@@ -82,7 +82,8 @@ absl::StatusOr<stream_executor::ThreadDim> ExtractThreadDims(
   if (!target) {
     return absl::InternalError("ttg.target attribute not found.");
   }
-  if (target.getValue().find("gfx") != std::string::npos) {
+  if (target.getValue().find("gfx") != std::string::npos ||
+      target.getValue().find("xpu") != std::string::npos) {
     stream_executor::ThreadDim thread_dims(
         num_warps_attr.getInt() * threads_per_warp_attr.getInt(), 1, 1);
     return thread_dims;

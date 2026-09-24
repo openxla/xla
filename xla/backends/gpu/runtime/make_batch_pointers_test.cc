@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/make_batch_pointers.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -36,7 +37,7 @@ using ::testing::ElementsAreArray;
 
 static absl::StatusOr<stream_executor::StreamExecutor*> GpuExecutor() {
   ABSL_ASSIGN_OR_RETURN(stream_executor::Platform * platform,
-                   PlatformUtil::GetDefaultPlatform());
+                        PlatformUtil::GetDefaultPlatform());
   return platform->ExecutorForDevice(0);
 }
 

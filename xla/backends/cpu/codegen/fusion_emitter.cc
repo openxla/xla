@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/mlir_kernel_source.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -62,7 +63,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -72,6 +72,7 @@ limitations under the License.
 namespace xla::cpu {
 
 using ::mlir::MLIRContext;
+using ::xla::xtile::BlockLevelParameters;
 
 static absl::StatusOr<std::string> GetName(const HloFusionInstruction& fusion,
                                            bool use_unique_c_name) {
@@ -143,6 +144,11 @@ static int64_t GetWorkGroupCount(const HloFusionInstruction& fusion) {
 
 WorkDimensions GetWorkDimensions(const Shape& shape,
                                  const HloFusionInstruction& fusion) {
+  if (!shape.has_layout()) {
+    Shape shape_with_layout = shape;
+    LayoutUtil::SetToDefaultLayout(&shape_with_layout);
+    return GetWorkDimensions(shape_with_layout, fusion);
+  }
   auto minor_to_major = LayoutUtil::MinorToMajor(shape.layout());
 
   if (minor_to_major.empty()) {
@@ -227,7 +233,7 @@ static absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitLoopFusionKernel(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                   loop_fusion_emitter.EmitKernelDefinition());
+                        loop_fusion_emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -251,7 +257,7 @@ EmitConcatenateFusionKernel(MLIRContext& context,
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                   concatenate_fusion_emitter.EmitKernelDefinition());
+                        concatenate_fusion_emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -275,7 +281,8 @@ EmitDynamicUpdateSliceFusionKernel(MLIRContext& context,
   emitters::DynamicUpdateSliceKernelEmitter emitter(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
-  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition, emitter.EmitKernelDefinition());
+  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
+                        emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -292,13 +299,12 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     bool enable_tiled_emitter) {
   ABSL_ASSIGN_OR_RETURN(std::string name, GetName(fusion, use_unique_c_name));
 
-  std::optional<gpu::BlockLevelParameters> block_level_parameters;
+  std::optional<BlockLevelParameters> block_level_parameters;
   auto gpu_config_or = fusion.backend_config<gpu::GpuBackendConfig>();
   if (gpu_config_or.ok() && gpu_config_or->has_fusion_backend_config() &&
       gpu_config_or->fusion_backend_config().has_block_level_fusion_config()) {
-    block_level_parameters =
-        gpu::BlockLevelParameters::FromBlockLevelFusionConfig(
-            gpu_config_or->fusion_backend_config().block_level_fusion_config());
+    block_level_parameters = BlockLevelParameters::FromBlockLevelFusionConfig(
+        gpu_config_or->fusion_backend_config().block_level_fusion_config());
   }
 
   if (enable_tiled_emitter || block_level_parameters.has_value()) {
@@ -332,10 +338,9 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     }
     auto fusion_spec = GetLoopFusionSpec(fusion);
     if (IsDynamicUpdateSliceFusion(fusion_spec)) {
-      ABSL_ASSIGN_OR_RETURN(bool dus_inplace,
-                       CanEmitFusedDynamicUpdateSliceInPlace(
-                           fusion_spec.fusion(), buffer_assignment, &fusion));
-      if (dus_inplace) {
+      ABSL_ASSIGN_OR_RETURN(bool can_emit_dus, CanEmitFusedDynamicUpdateSlice(
+                                                   fusion_spec.fusion()));
+      if (can_emit_dus) {
         return EmitDynamicUpdateSliceFusionKernel(mlir_context, fusion,
                                                   buffer_assignment, name);
       }

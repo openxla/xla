@@ -144,7 +144,7 @@ absl::StatusOr<CustomKernel> GetTypedTopK(std::string name, size_t num_elements,
   }
 
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(platform_name));
+                        se::PlatformManager::PlatformWithName(platform_name));
   ABSL_ASSIGN_OR_RETURN(
       se::KernelLoaderSpec spec,
       GetTopKKernelForKAndPlatformAndN<T>(k, platform->id(), num_elements));

@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/testlib/test_helpers.h"
@@ -37,7 +38,7 @@ namespace xla {
 namespace {
 
 class ClientTest : public ClientLibraryTestRunnerMixin<
-                       HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
+                       HloInterpreterReferenceMixin<HloTestBase>> {};
 
 TEST_F(ClientTest, ExecuteWithLayout) {
   XlaBuilder b(TestName());

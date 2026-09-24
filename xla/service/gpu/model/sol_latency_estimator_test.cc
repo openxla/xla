@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/model/sol_latency_estimator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -779,7 +780,7 @@ class IsSolLatencyEstimatorEnabledTest : public HloTestBaseLegacy {
     HloInstruction* call =
         entry->AddInstruction(HloInstruction::CreateCall(shape, dummy_operand));
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig new_backend_config,
-                     call->backend_config<GpuBackendConfig>());
+                          call->backend_config<GpuBackendConfig>());
     new_backend_config.set_device_type(DEVICE_TYPE_HOST);
     return call->set_backend_config(new_backend_config);
   }
@@ -892,6 +893,19 @@ TEST_F(IsSolLatencyEstimatorEnabledTest, EnabledBySolEstimatorFlagOnGfx950) {
       SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
 }
 
+TEST_F(IsSolLatencyEstimatorEnabledTest, EnabledBySolEstimatorFlagOnGfx942) {
+  HloModuleConfig config;
+  config.mutable_debug_options()
+      .set_xla_gpu_enable_analytical_sol_latency_estimator(true);
+  gpu_device_info_.set_rocm_compute_capability("gfx942");
+
+  auto module = CreateTestModule(config);
+  AddAllReduce(module.get());
+
+  EXPECT_TRUE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
+}
+
 TEST_F(IsSolLatencyEstimatorEnabledTest, DisabledIfFlagIsOffOnGfx950) {
   HloModuleConfig config;
   config.mutable_debug_options()
@@ -912,11 +926,9 @@ TEST_F(IsSolLatencyEstimatorEnabledTest, DisabledForUnsupportedRocmArch) {
   auto module = CreateTestModule(config);
   AddAllReduce(module.get());
 
-  for (absl::string_view architecture : {"gfx942", "gfx90a"}) {
-    gpu_device_info_.set_rocm_compute_capability(std::string(architecture));
-    EXPECT_FALSE(
-        SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
-  }
+  gpu_device_info_.set_rocm_compute_capability("gfx90a");
+  EXPECT_FALSE(
+      SolLatencyEstimator::IsSupportedForModule(*module, gpu_device_info_));
 }
 
 TEST_F(IsSolLatencyEstimatorEnabledTest,
@@ -969,8 +981,56 @@ TEST_F(IsSolLatencyEstimatorEnabledTest, CreatesEstimatorWithGfx950Profiles) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  gpu_device_info_ = TestGpuDeviceInfo::AMDMI210DeviceInfo();
-  gpu_device_info_.set_rocm_compute_capability("gfx950");
+  gpu_device_info_ = TestGpuDeviceInfo::AMDMI350DeviceInfo();
+
+  SchedulerConfig scheduler_config;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SolLatencyEstimator> estimator,
+      SolLatencyEstimator::Create(
+          scheduler_config, std::make_unique<DummyLatencyEstimator>(),
+          gpu_device_info_, HloCostAnalysis::DefaultShapeSize,
+          module->entry_computation()));
+
+  HloInstruction* dot =
+      module->entry_computation()->GetInstructionWithName("dot");
+  HloInstruction* all_reduce_start =
+      module->entry_computation()->GetInstructionWithName("ar-start");
+  HloInstruction* all_reduce_done =
+      module->entry_computation()->GetInstructionWithName("ar-done");
+  ASSERT_NE(dot, nullptr);
+  ASSERT_NE(all_reduce_start, nullptr);
+  ASSERT_NE(all_reduce_done, nullptr);
+  EXPECT_GT(estimator->NodeCost(dot), 0);
+  EXPECT_GT(estimator->GetLatencyBetween(
+                HloGraphNode(all_reduce_start, /*original_position=*/-1),
+                HloGraphNode(all_reduce_done, /*original_position=*/-1)),
+            0);
+}
+
+TEST_F(IsSolLatencyEstimatorEnabledTest, CreatesEstimatorWithGfx942Profiles) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m, num_partitions=8
+
+    add {
+      x = f32[] parameter(0)
+      y = f32[] parameter(1)
+      ROOT sum = f32[] add(x, y)
+    }
+
+    ENTRY main {
+      lhs = f32[256,256] parameter(0)
+      rhs = f32[256,256] parameter(1)
+      dot = f32[256,256] dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      p = f32[256] parameter(2)
+      ar-start = f32[256] all-reduce-start(p), to_apply=add,
+        replica_groups=[1,8]<=[8], channel_id=1, use_global_device_ids=true
+      ar-done = f32[256] all-reduce-done(ar-start)
+      ROOT result = (f32[256,256], f32[256]) tuple(dot, ar-done)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  gpu_device_info_ = TestGpuDeviceInfo::AMDMI300DeviceInfo();
 
   SchedulerConfig scheduler_config;
   ASSERT_OK_AND_ASSIGN(

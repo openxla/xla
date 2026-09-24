@@ -24,9 +24,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "tsl/platform/numa.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "tsl/platform/numa.h"
 
 namespace tsl {
 
@@ -105,8 +105,8 @@ struct AllocatorStats {
   std::optional<int64_t> bytes_limit;
 
   // Stats for reserved memory usage.
-  int64_t bytes_reserved;       // Number of bytes reserved.
-  int64_t peak_bytes_reserved;  // The peak number of bytes reserved.
+  int64_t bytes_reserved;        // Number of bytes reserved.
+  int64_t peak_bytes_reserved;   // The peak number of bytes reserved.
   int64_t peak_allocated_bytes;  // Peak of reserved and in-use bytes.
   // The upper limit on the number bytes of reservable memory,
   // if such a limit is known.
@@ -284,7 +284,7 @@ class Allocator {
   //  true if implemented.
   //
   // REQUIRES: GetStats is overridden.
-  virtual bool ClearStats() TF_MUST_USE_RESULT { return false; }
+  TF_MUST_USE_RESULT virtual bool ClearStats() { return false; }
 
   virtual void SetSafeFrontier(uint64_t count) {}
 
@@ -323,7 +323,27 @@ class AllocatorWrapper : public Allocator {
     return wrapped_->AllocateRaw(alignment, num_bytes, allocation_attr);
   }
 
+  void* AllocateRawAlignedNew(size_t alignment, size_t num_bytes) override {
+    return wrapped_->AllocateRawAlignedNew(alignment, num_bytes);
+  }
+
+  void* AllocateRawAlignedNew(
+      size_t alignment, size_t num_bytes,
+      const AllocationAttributes& allocation_attr) override {
+    return wrapped_->AllocateRawAlignedNew(alignment, num_bytes,
+                                           allocation_attr);
+  }
+
   void DeallocateRaw(void* ptr) override { wrapped_->DeallocateRaw(ptr); }
+
+  void DeallocateRaw(void* ptr, size_t alignment, size_t num_bytes) override {
+    wrapped_->DeallocateRaw(ptr, alignment, num_bytes);
+  }
+
+  void DeallocateRawAlignedDelete(void* ptr, size_t alignment,
+                                  size_t num_bytes) override {
+    wrapped_->DeallocateRawAlignedDelete(ptr, alignment, num_bytes);
+  }
 
   bool TracksAllocationSizes() const override {
     return wrapped_->TracksAllocationSizes();
@@ -347,6 +367,20 @@ class AllocatorWrapper : public Allocator {
 
   size_t AllocatedSizeSlow(const void* ptr) const override {
     return wrapped_->AllocatedSizeSlow(ptr);
+  }
+
+  std::optional<AllocatorStats> GetStats() override {
+    return wrapped_->GetStats();
+  }
+
+  bool ClearStats() override { return wrapped_->ClearStats(); }
+
+  void SetSafeFrontier(uint64_t count) override {
+    wrapped_->SetSafeFrontier(count);
+  }
+
+  void SetStreamAndPreallocateMemory(void* stream) override {
+    wrapped_->SetStreamAndPreallocateMemory(stream);
   }
 
   AllocatorMemoryType GetMemoryType() const override {

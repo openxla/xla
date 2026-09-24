@@ -49,6 +49,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
@@ -73,7 +74,6 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -85,6 +85,9 @@ class HloPayloadDeduplicator;
 struct HloProtoOptions {
   bool deduplicate_backend_config = false;
   bool deduplicate_metadata = true;
+  // Minimum backend_config size (in bytes) to be eligible for deduplication.
+  // Configs smaller than this threshold are kept inline.
+  int64_t min_backend_config_size = 0;
   HloPayloadDeduplicator* payload_deduplicator = nullptr;
 };
 
@@ -304,6 +307,7 @@ class HloInstruction {
 
   inline static constexpr char kMainExecutionThread[] = "main";
   inline static constexpr char kHostThread[] = "host";
+  inline static constexpr char kParallelExecutionThread[] = "parallel";
   // Iota based id unique inside parent computation.
   using LocalId = int32_t;
 
@@ -437,6 +441,7 @@ class HloInstruction {
       const ConvolutionDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config,
       const SparsityConfig& sparsity_config = SparsityConfig(),
+      const BlockScalingConfig& block_scaling_config = BlockScalingConfig(),
       ConvolutionKind convolution_kind = CONVOLUTION_KIND_UNSET);
 
   // Creates an FFT op, of the type indicated by fft_type.
@@ -473,7 +478,7 @@ class HloInstruction {
   static std::unique_ptr<HloInstruction> CreateCompare(
       const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
       Comparison::Direction direction,
-      std::optional<Comparison::Type> type = std::nullopt);
+      std::optional<ComparisonOrder> order = std::nullopt);
 
   static std::unique_ptr<HloInstruction> CreateTriangularSolve(
       const Shape& shape, HloInstruction* a, HloInstruction* b,
@@ -786,6 +791,15 @@ class HloInstruction {
       const Shape& shape, absl::Span<HloInstruction* const> operand,
       absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id, bool has_dynamic_root = false);
+
+  // Creates a collective reduce operation which reduces data from ranks in
+  // replica groups and stores the result only on the root rank.
+  static std::unique_ptr<HloInstruction> CreateCollectiveReduce(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* reduce_computation,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
+      bool use_global_device_ids, bool has_dynamic_root = false);
 
   // Creates a communication instruction that permutes data cross replicas.
   // Data is sent/received according to the (source_replica_id,
@@ -2522,6 +2536,10 @@ class HloInstruction {
   const SparsityConfig& sparsity_config() const;
   void set_sparsity_config(const SparsityConfig& config);
 
+  // Delegates to HloConvolutionInstruction::block_scaling_config.
+  const BlockScalingConfig& block_scaling_config() const;
+  void set_block_scaling_config(const BlockScalingConfig& config);
+
   // Returns true if the instruction is an async-start, async-update, or
   // async-done.
   bool IsAsynchronous() const { return HloOpcodeIsAsync(opcode_); }
@@ -2946,6 +2964,9 @@ std::string ConvolutionDimensionNumbersToString(
     const ConvolutionDimensionNumbers& dnums);
 std::string SparsityConfigToString(const SparsityConfig& sparsity_config);
 
+std::string BlockScalingConfigToString(
+    const BlockScalingConfig& block_scaling_config);
+
 absl::StatusOr<RandomAlgorithm> StringToRandomAlgorithm(
     const std::string& name);
 absl::StatusOr<RandomDistribution> StringToRandomDistribution(
@@ -3030,6 +3051,7 @@ bool HloPredicateIsNotOp(const HloInstruction* instruction) {
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kCall:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kMap:
     case HloOpcode::kReduce:
     case HloOpcode::kReduceScatter:

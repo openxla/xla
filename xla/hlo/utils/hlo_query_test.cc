@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/utils/hlo_query.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -308,6 +309,30 @@ TEST_F(HloQueryTest, GetFirstInstructionWithOpcodeListTest) {
                                             HloOpcode::kTuple};
   EXPECT_EQ(hlo_query::GetFirstInstructionWithOpcode(*entry, param_and_tuple),
             nullptr);
+}
+
+TEST_F(HloQueryTest, IsCollectiveCommunicationOpCollectiveReduce) {
+  const char* const kHloString = R"(
+  HloModule test, replica_count=2
+
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY entry {
+    input = f32[8]{0} parameter(0)
+    ROOT cr = f32[8]{0} collective-reduce(input), replica_groups={{0,1}},
+                        to_apply=add, has_dynamic_root=false
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloString));
+  const HloInstruction* cr =
+      module->entry_computation()->GetInstructionWithName("cr");
+  ASSERT_NE(cr, nullptr);
+  EXPECT_EQ(cr->opcode(), HloOpcode::kCollectiveReduce);
+  EXPECT_TRUE(hlo_query::IsCollectiveCommunicationOp(cr->opcode()));
 }
 
 }  // namespace

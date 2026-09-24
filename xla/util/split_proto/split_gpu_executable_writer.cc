@@ -96,7 +96,7 @@ absl::Status NormalizeBackendConfig(gpu::GpuExecutableProto& executable) {
     for (HloInstructionProto& instruction :
          *computation.mutable_instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::string backend_config_str,
-                       GetBackendConfigString(instruction, module));
+                            GetBackendConfigString(instruction, module));
 
       absl::StatusOr<std::string> normalized_or = SortJson(backend_config_str);
       if (normalized_or.ok()) {
@@ -136,7 +136,7 @@ absl::Status NormalizeBackendConfig(gpu::GpuExecutableProto& executable) {
 absl::Status WriteSplitGpuExecutable(gpu::GpuExecutableProto executable,
                                      std::unique_ptr<riegeli::Writer> writer) {
   riegeli::RecordWriter record_writer(std::move(writer),
-                                      GetSplitProtoRiegeliOptions());
+                                      GetGpuSplitProtoOptions());
   SplitProtoManifest manifest = BuildManifest(executable.constants_size());
   TF_RETURN_WITH_CONTEXT_IF_ERROR(
       WriteRecord(record_writer, manifest),

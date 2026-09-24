@@ -13,15 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/subprocess.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/test.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/subprocess.h"
 
 namespace xla {
 namespace {
@@ -118,9 +119,9 @@ TEST_F(HloExpandTest, SpmdHloWithHloShardingV3) {
       R"(HloModule module, entry_computation_layout={(f32[24,64]{1,0}, f32[39296,64]{1,0})->f32[24,19648]{1,0}}, num_partitions=2
 
 ENTRY %entry_spmd (param: f32[24,64], param.1: f32[39296,64]) -> f32[24,19648] {
-  %param = f32[24,64]{1,0} parameter(0), sharding={replicated}
+  %param = f32[24,64]{1,0} parameter(0), sharding={mesh[], replicated}
   %lhs.copy.1 = f32[24,64]{1,0} copy(%param)
-  %param.1 = f32[39296,64]{1,0} parameter(1), sharding={replicated}
+  %param.1 = f32[39296,64]{1,0} parameter(1), sharding={mesh[], replicated}
   %constant = s32[2]{0} constant({0, 19648})
   %partition-id = u32[] partition-id()
   %dynamic-slice = s32[1]{0} dynamic-slice(%constant, %partition-id), dynamic_slice_sizes={1}

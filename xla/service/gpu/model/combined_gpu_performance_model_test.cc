@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/model/combined_gpu_performance_model.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"

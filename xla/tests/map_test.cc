@@ -17,7 +17,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -37,6 +36,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
@@ -44,7 +44,7 @@ namespace xla {
 namespace {
 
 class MapTest : public ClientLibraryTestRunnerMixin<
-                    HloPjRtInterpreterReferenceMixin<HloTestBase>> {
+                    HloInterpreterReferenceMixin<HloTestBase>> {
  public:
   MapTest() {
     mutable_debug_options()->add_xla_disable_hlo_passes("algsimp");
@@ -456,7 +456,7 @@ TEST_F(MapTest, MapOperationWithBuildError) {
                                    "different element types: f32[] and u16[]"));
 }
 
-using MapHloTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
+using MapHloTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 // TODO(b/230123847): Enable this on GPU once mhlo allows mixed-type map.
 TEST_F(MapHloTest, MapWithMixedInputTypes) {
@@ -487,7 +487,7 @@ TEST_F(MapHloTest, MapWithMixedInputTypes) {
 // MapTest disables inline and algsimp. MapTestWithFullOpt runs all
 // optimizations.
 using MapTestWithFullOpt =
-    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 // Regression test for b/31466798. The inliner simplifies map(param0, param1,
 // power) to power(param0, param1) without deleting the old subcomputation which

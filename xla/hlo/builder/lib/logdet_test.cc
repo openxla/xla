@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/logdet.h"
 
+#include <gtest/gtest.h>
+
 #include <limits>
 
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -32,7 +33,7 @@ limitations under the License.
 namespace {
 
 using LogDetTest = xla::ClientLibraryTestRunnerMixin<
-    xla::HloPjRtInterpreterReferenceMixin<xla::HloTestBase>>;
+    xla::HloInterpreterReferenceMixin<xla::HloTestBase>>;
 
 TEST_F(LogDetTest, Simple) {
   xla::XlaBuilder builder(TestName());

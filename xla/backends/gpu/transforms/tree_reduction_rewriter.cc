@@ -52,15 +52,15 @@ namespace gpu {
 namespace {
 
 absl::InlinedVector<int64_t, 2> GetSortedReducedDims(
-    HloReduceInstruction *reduce) {
+    HloReduceInstruction* reduce) {
   absl::InlinedVector<int64_t, 2> reduced_dims{reduce->dimensions().begin(),
                                                reduce->dimensions().end()};
   absl::c_sort(reduced_dims);
   return reduced_dims;
 }
 
-bool IsMinMaxReduction(HloReduceInstruction *reduce) {
-  HloComputation *called = &reduce->to_apply()[0];
+bool IsMinMaxReduction(HloReduceInstruction* reduce) {
+  HloComputation* called = &reduce->to_apply()[0];
   if (auto reduction_kind = MatchReductionComputation(called)) {
     return reduction_kind == ReductionKind::MAX ||
            reduction_kind == ReductionKind::MIN;
@@ -73,14 +73,14 @@ bool IsMinMaxReduction(HloReduceInstruction *reduce) {
 class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit ReductionRewriterVisitor(
-      const se::DeviceDescription &device_description)
+      const se::DeviceDescription& device_description)
       : device_description_(device_description) {}
 
-  absl::Status HandleReduce(HloInstruction *hlo) override {
-    auto *reduce = Cast<HloReduceInstruction>(hlo);
+  absl::Status HandleReduce(HloInstruction* hlo) override {
+    auto* reduce = Cast<HloReduceInstruction>(hlo);
     VLOG(3) << "Reduction instruction: " << reduce->ToString();
 
-    const HloModuleConfig &config = reduce->GetModule()->config();
+    const HloModuleConfig& config = reduce->GetModule()->config();
     if (!MatchReductionForSplit(reduce, config)) {
       return absl::OkStatus();
     }
@@ -109,8 +109,8 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  bool MatchReductionForSplit(HloReduceInstruction *reduce,
-                              const HloModuleConfig &config) {
+  bool MatchReductionForSplit(HloReduceInstruction* reduce,
+                              const HloModuleConfig& config) {
     // MLIR emitters only support race-free reductions.
     // TODO(jreiffers): Verify performance and implement atomics for reductions
     // if needed.
@@ -167,7 +167,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
   // Attempts to find the best way to split a dimension `dim` with `k` elements
   // into `k1` x `k2`.
   SplitParams ComputeSplitParams(
-      HloReduceInstruction *reduce, const ReductionDimensions &reduction_dims,
+      HloReduceInstruction* reduce, const ReductionDimensions& reduction_dims,
       absl::Span<const int64_t> sorted_dims_to_reduce) {
     absl::Span<int64_t const> input_shape_dims =
         reduce->inputs()[0]->shape().dimensions();
@@ -239,7 +239,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
   //      Instead of reducing the split dimension, reduces K2.
   // * 4. outer_reduction reduces K1 only.
   absl::Status SplitReductionDimension(
-      HloReduceInstruction *reduce, const SplitParams &split_params,
+      HloReduceInstruction* reduce, const SplitParams& split_params,
       absl::Span<const int64_t> sorted_dims_to_reduce) {
     absl::Span<int64_t const> reduce_input_dims =
         reduce->inputs()[0]->shape().dimensions();
@@ -262,7 +262,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
           ->set_edge_padding_high(padded_size - split_dim_size);
 
       for (int input_idx = 0; input_idx < padded_inputs.size(); ++input_idx) {
-        auto &reduction_input = padded_inputs[input_idx];
+        auto& reduction_input = padded_inputs[input_idx];
         Shape padded_shape = ShapeUtil::MakeShape(
             reduction_input->shape().element_type(), padded_dimensions);
         VLOG(2) << "Generated padded shape: " << padded_shape.ToString();
@@ -305,10 +305,10 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     // Reshape the split dimensions of the padded inputs into [k1, k2].
     HloInstruction::InstructionVector reshaped_padded_inputs;
     absl::InlinedVector<Shape, 2> inner_reduce_shapes;
-    for (HloInstruction *padded_input : padded_inputs) {
+    for (HloInstruction* padded_input : padded_inputs) {
       Shape reshaped_shape = ShapeUtil::MakeShape(
           padded_input->shape().element_type(), reshaped_dimensions);
-      HloInstruction *reshaped_padded_input = reduce->parent()->AddInstruction(
+      HloInstruction* reshaped_padded_input = reduce->parent()->AddInstruction(
           HloInstruction::CreateBitcast(reshaped_shape, padded_input),
           &padded_input->metadata());
       VLOG(2) << "Generated reshape: " << reshaped_padded_input->ToString();
@@ -318,9 +318,10 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     // Inner reduce that reduces [k1, k2] to [k1].
-    ABSL_ASSIGN_OR_RETURN(auto tuple_shape, ShapeUtil::MakeValidatedMaybeTupleShape(
-                                           inner_reduce_shapes));
-    HloInstruction *inner_reduce = reduce->parent()->AddInstruction(
+    ABSL_ASSIGN_OR_RETURN(
+        auto tuple_shape,
+        ShapeUtil::MakeValidatedMaybeTupleShape(inner_reduce_shapes));
+    HloInstruction* inner_reduce = reduce->parent()->AddInstruction(
         HloInstruction::CreateReduce(tuple_shape, reshaped_padded_inputs,
                                      reduce->init_values(), inner_reduce_dims,
                                      reduce->to_apply()),
@@ -338,8 +339,8 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
 
   // Rewrites batch dimension reduction into a separate reduce operation.
   absl::Status RewriteBatchDimensionLargerThanTile(
-      HloReduceInstruction *hlo,
-      const ReductionDimensions &reduction_dimensions,
+      HloReduceInstruction* hlo,
+      const ReductionDimensions& reduction_dimensions,
       absl::Span<const int64_t> sorted_dims_to_reduce) {
     // TODO(cheshire): this codepath is essentially the exact reverse of what
     // algebraic_simplifier is doing, we need to make sure they don't keep
@@ -348,14 +349,15 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
 
     absl::InlinedVector<Shape, 2> tuple_shapes;
     int64_t minor_reduction_dim = sorted_dims_to_reduce.back();
-    for (HloInstruction *input : hlo->inputs()) {
+    for (HloInstruction* input : hlo->inputs()) {
       tuple_shapes.push_back(
           ShapeUtil::DeleteDimension(minor_reduction_dim, input->shape()));
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto tuple_shape,
-                     ShapeUtil::MakeValidatedMaybeTupleShape(tuple_shapes));
-    HloInstruction *inner_reduce =
+    ABSL_ASSIGN_OR_RETURN(
+        auto tuple_shape,
+        ShapeUtil::MakeValidatedMaybeTupleShape(tuple_shapes));
+    HloInstruction* inner_reduce =
         hlo->parent()->AddInstruction(HloInstruction::CreateReduce(
             tuple_shape, hlo->inputs(), hlo->init_values(),
             {minor_reduction_dim}, hlo->to_apply()));
@@ -367,15 +369,16 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     return ReplaceWithNewInstruction(hlo, std::move(out));
   }
 
-  const se::DeviceDescription &device_description_;
+  const se::DeviceDescription& device_description_;
 };
 
 absl::StatusOr<bool> TreeReductionRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(5) << "Rewriter input: " << module->ToString();
-  ABSL_ASSIGN_OR_RETURN(bool changed, ReductionRewriterVisitor(device_description_)
-                                     .RunOnModule(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool changed,
+                        ReductionRewriterVisitor(device_description_)
+                            .RunOnModule(module, execution_threads));
   VLOG(5) << "Rewriter output: " << module->ToString();
   return changed;
 }

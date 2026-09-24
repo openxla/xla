@@ -32,6 +32,10 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
+#include "xla/backends/autotuner/autotune_fingerprint.h"
+#include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_orchestrator.h"
 #include "xla/backends/autotuner/config_runner.h"
 #include "xla/backends/autotuner/config_selector.h"
@@ -44,8 +48,25 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/util/sorted_range.h"
 
 namespace xla {
+namespace {
+
+void PopulateMetadata(autotuner::AllRawConfigProfiles& profiles,
+                      const AutotuneCacheContext& cache_context) {
+  profiles.set_device(cache_context.device());
+  profiles.set_explicit_version(cache_context.explicit_version());
+  profiles.set_codegen_version(cache_context.codegen_version());
+  for (const auto& [backend, version] :
+       tsl::SortedRange(cache_context.per_backend_versions())) {
+    (*profiles
+          .mutable_per_backend_versions())[autotuner::Backend_Name(backend)] =
+        version;
+  }
+}
+
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
     absl_nonnull std::unique_ptr<CodegenOrchestrator> orchestrator,
@@ -58,9 +79,10 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
       << "CodegenOrchestrator is required to create an Autotuner.";
   config_runners.reserve(profilers.size());
   for (auto& profiler : profilers) {
-    ABSL_ASSIGN_OR_RETURN(config_runners.emplace_back(),
-                     ConfigRunner::Create(std::move(profiler),
-                                          options.correctness_check_options));
+    ABSL_ASSIGN_OR_RETURN(
+        config_runners.emplace_back(),
+        ConfigRunner::Create(std::move(profiler),
+                             options.correctness_check_options));
   }
 
   CodegenOrchestrator* orchestrator_ptr = orchestrator.get();
@@ -78,9 +100,10 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
       << "At least one profiler is required to create an Autotuner.";
   config_runners.reserve(profilers.size());
   for (auto& profiler : profilers) {
-    ABSL_ASSIGN_OR_RETURN(config_runners.emplace_back(),
-                     ConfigRunner::Create(std::move(profiler),
-                                          options.correctness_check_options));
+    ABSL_ASSIGN_OR_RETURN(
+        config_runners.emplace_back(),
+        ConfigRunner::Create(std::move(profiler),
+                             options.correctness_check_options));
   }
 
   return absl::WrapUnique(new Autotuner(nullptr, orchestrator,
@@ -155,8 +178,9 @@ tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
 
 tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
     const HloInstruction* absl_nonnull instr, int runner_index) const {
-  ABSL_ASSIGN_OR_RETURN(std::vector<CodegenOrchestrator::Config> supported_configs,
-                   orchestrator_->GetSupportedConfigs(*instr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<CodegenOrchestrator::Config> supported_configs,
+      orchestrator_->GetSupportedConfigs(*instr));
   if (supported_configs.empty()) {
     return absl::NotFoundError(absl::StrCat(
         "No supported configs found for HLO: ", instr->ToString()));
@@ -217,7 +241,9 @@ tsl::Future<Autotuner::Config> Autotuner::GetTunedConfig(
 
         ABSL_ASSIGN_OR_RETURN(
             ConfigRunner::ConfigProfile best_profile,
-            PickBestConfig(profiles, options_.scratch_bytes_window_size_us));
+            PickBestConfig(profiles, options_.scratch_bytes_window_size_us,
+                           options_.excluded_backends,
+                           options_.preferred_backend));
 
         return std::move(best_profile.config);
       });
@@ -238,40 +264,87 @@ void Autotuner::LogConfigProfiles(
     return;
   }
 
-  AutotuningLog log;
-  log.mutable_instr()->PackFrom(instr.ToProto());
-  for (const auto& profile : profiles) {
-    *log.add_results() = profile.ToProto();
+  if (options_.use_new_logging_format) {
+    autotuner::InstructionRawConfigProfiles instruction_profile;
+    instruction_profile.set_hlo_fingerprint(
+        xla::AutotuneFingerprintToString(GetHloFingerprint(instr)));
+    instruction_profile.set_hlo_text(instr.ToString());
+
+    for (const auto& profile : profiles) {
+      if (profile.failure.has_value()) {
+        *instruction_profile.add_failed_configs() =
+            profile.ToFailedConfigsProto();
+      } else {
+        *instruction_profile.add_config_profiles() =
+            profile.ToConfigProfileProto();
+      }
+    }
+    for (const auto& failed_config : compilation_failures) {
+      *instruction_profile.add_failed_configs() =
+          failed_config.ToFailedConfigsProto();
+    }
+
+    absl::MutexLock lock(logs_mutex_);
+    if (raw_profiles_.codegen_options_fingerprint().empty() &&
+        instr.GetModule() != nullptr) {
+      raw_profiles_.set_codegen_options_fingerprint(
+          GetCodegenOptionsFingerprint(
+              instr.GetModule()->config().debug_options()));
+    }
+    *raw_profiles_.add_instruction_profiles() = std::move(instruction_profile);
+  } else {
+    AutotuningLog log;
+    log.mutable_instr()->PackFrom(instr.ToProto());
+    for (const auto& profile : profiles) {
+      *log.add_results() = profile.ToProto();
+    }
+    for (const auto& failed_config : compilation_failures) {
+      *log.add_results() = failed_config.ToProto();
+    }
+    absl::MutexLock lock(logs_mutex_);
+    *logs_.add_logs() = std::move(log);
   }
-  for (const auto& failed_config : compilation_failures) {
-    *log.add_results() = failed_config.ToProto();
-  }
-  absl::MutexLock lock(logs_mutex_);
-  *logs_.add_logs() = std::move(log);
 }
 
 absl::Status Autotuner::DumpTuningLogs() {
   if (options_.dump_logs_to.empty()) {
     return absl::OkStatus();
   }
-
-  AutotuningLogs logs_to_dump;
-  {
-    absl::MutexLock lock(logs_mutex_);
-    if (logs_.logs().empty()) {
-      return absl::OkStatus();
-    }
-    logs_to_dump.Swap(&logs_);
-  }
-
   std::string textproto;
-  if (!tsl::protobuf::TextFormat::PrintToString(logs_to_dump, &textproto)) {
-    return absl::InternalError(
-        "Failed to convert AutotuningLogs to textproto.");
+  tsl::protobuf::TextFormat::Printer printer;
+  printer.SetExpandAny(true);
+  if (options_.use_new_logging_format) {
+    autotuner::AllRawConfigProfiles profiles_to_dump;
+    {
+      absl::MutexLock lock(logs_mutex_);
+      if (raw_profiles_.instruction_profiles().empty()) {
+        return absl::OkStatus();
+      }
+      if (options_.cache_context.has_value()) {
+        PopulateMetadata(raw_profiles_, options_.cache_context.value());
+      }
+      profiles_to_dump = std::move(raw_profiles_);
+    }
+    if (!printer.PrintToString(profiles_to_dump, &textproto)) {
+      return absl::InternalError(
+          "Failed to convert AllRawConfigProfiles to textproto.");
+    }
+  } else {
+    AutotuningLogs logs_to_dump;
+    {
+      absl::MutexLock lock(logs_mutex_);
+      if (logs_.logs().empty()) {
+        return absl::OkStatus();
+      }
+      logs_to_dump = std::move(logs_);
+    }
+    if (!printer.PrintToString(logs_to_dump, &textproto)) {
+      return absl::InternalError(
+          "Failed to convert AutotuningLogs to textproto.");
+    }
   }
-
-  ABSL_RETURN_IF_ERROR(tsl::AppendStringToFile(tsl::Env::Default(),
-                                          options_.dump_logs_to, textproto));
+  ABSL_RETURN_IF_ERROR(tsl::AppendStringToFile(
+      tsl::Env::Default(), options_.dump_logs_to, textproto));
   VLOG(1) << "Autotune logs appended to file: " << options_.dump_logs_to;
   return absl::OkStatus();
 }

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_module.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -32,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "google/protobuf/message_lite.h"
+#include "tsl/platform/casts.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -54,13 +57,10 @@ limitations under the License.
 #include "xla/service/test_compilation_environment.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tuple_tree.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 
@@ -150,7 +150,7 @@ TEST_F(HloModuleTest, CloneTest) {
   // Add a compilation environment to module
   auto env = std::make_unique<test::TestCompilationEnvironment1>();
   env->set_some_flag(10);
-  TF_ASSERT_OK(module->comp_envs().AddEnv(std::move(env)));
+  ASSERT_OK(module->comp_envs().AddEnv(std::move(env)));
 
   auto post_order = module->MakeComputationPostOrder();
   auto cloned_module = module->Clone("copy");
@@ -239,8 +239,7 @@ ENTRY entry () -> s32[] {
     backend_config="this string is opaque",
     to_apply=add_s32
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   std::unique_ptr<HloModule> cloned_module = module->Clone();
   HloComputation* cloned_computation =
@@ -277,8 +276,7 @@ ENTRY entry () -> s32[] {
     backend_config="this string is opaque",
     called_computations={%add_s32_0, %add_s32_1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   std::unique_ptr<HloModule> cloned_module = module->Clone();
   HloComputation* cloned_computation_0 =
@@ -307,8 +305,7 @@ ENTRY main {
   ROOT %fusion = s32[] fusion(%c), kind=kLoop, calls=fused_computation
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   std::unique_ptr<HloModule> cloned_module = module->Clone();
   HloComputation* cloned_computation =
@@ -382,9 +379,9 @@ ENTRY %axpy.v5 (alpha: f32[], x: f32[2,4], y: f32[2,4]) -> f32[2,4] {
   ROOT %add = f32[2,4]{1,0} add(f32[2,4]{1,0} %multiply, f32[2,4]{1,0} %y)
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
   ASSERT_FALSE(module->has_schedule());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module_copy,
       HloModule::CreateFromProto(module->ToProto(), module->config()));
   ASSERT_FALSE(module_copy->has_schedule());
@@ -403,13 +400,13 @@ ENTRY %axpy.v5 (alpha: f32[], x: f32[2,4], y: f32[2,4]) -> f32[2,4] {
   ROOT %add = f32[2,4]{1,0} add(f32[2,4]{1,0} %multiply, f32[2,4]{1,0} %y)
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
   ASSERT_TRUE(module->has_schedule());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module_copy,
       HloModule::CreateFromProto(module->ToProto(), module->config()));
   ASSERT_TRUE(module_copy->has_schedule());
-  TF_ASSERT_OK(module_copy->schedule().Verify());
+  ASSERT_OK(module_copy->schedule().Verify());
   EXPECT_EQ(module_copy->schedule().sequences().size(), 1);
   ASSERT_TRUE(module_copy->schedule().is_computation_scheduled(
       module_copy->entry_computation()));
@@ -439,7 +436,7 @@ ENTRY ReduceR3ToR2.v3 {
   ROOT reduce = f32[8,16]{1,0} reduce(input, constant), dimensions={2}, to_apply=add_F32.v3
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
 
   // Perform various transformations on the graph:
   //
@@ -455,7 +452,7 @@ ENTRY ReduceR3ToR2.v3 {
   HloComputation* reduction_clone =
       module->AddEmbeddedComputation(reduction->Clone());
   root->set_to_apply(reduction_clone);
-  TF_ASSERT_OK(module->RemoveEmbeddedComputation(reduction));
+  ASSERT_OK(module->RemoveEmbeddedComputation(reduction));
   HloInstruction* negate = entry->AddInstruction(
       HloInstruction::CreateUnary(root->shape(), HloOpcode::kNegate, root));
   entry->set_root_instruction(negate);
@@ -467,12 +464,12 @@ ENTRY ReduceR3ToR2.v3 {
   };
   AliasInfo alias_info;
   HloMemoryScheduler scheduler(&alias_info, size_fn);
-  TF_ASSERT_OK(scheduler.Run(module.get()).status());
+  ASSERT_OK(scheduler.Run(module.get()).status());
   ASSERT_TRUE(module->has_schedule());
 
   // Serialize and deserialize and verify that the instruction and computations
   // unique ids are the same.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module_copy,
       HloModule::CreateFromProto(module->ToProto(), module->config()));
 
@@ -537,7 +534,7 @@ TEST_F(HloModuleTest, VerifyReplaceComputationsWithReduceScatter) {
     ROOT %rs = f32[4,8,128]{2,1,0} reduce-scatter(f32[16,8,128]{2,1,0} %param), replica_groups={}, to_apply=%sum, dimensions={0}
   }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
 
   // Create a replacement computation
   HloComputation* new_comp;
@@ -582,7 +579,7 @@ TEST_F(HloModuleTest, VerifyReplaceComputationsWithSortOp) {
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
 
   // Create a replacement computation
   HloComputation* new_comp;
@@ -713,7 +710,7 @@ TEST_F(HloModuleTest, TwoComputationsFilterexecution_threads) {
       r0f32_, HloOpcode::kAdd, constant1, constant2));
   auto module = CreateNewVerifiedModule();
   auto* main_thread_computation = module->AddEntryComputation(builder.Build());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto* async_done,
       main_thread_computation->CreateAsyncInstructions(
           add, {ShapeUtil::MakeScalarShape(U32)}, kParallelThreadName));
@@ -769,8 +766,8 @@ ENTRY ReduceR3ToR2.v3 {
   ROOT reduce = f32[8,16]{1,0} reduce(input, constant), dimensions={2}, to_apply=add_F32.v3
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(computation_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(computation_text));
 
   xla::HloModuleProtoWithConfig proto = module->ToProtoWithConfig();
   std::string serialized_module;
@@ -778,8 +775,8 @@ ENTRY ReduceR3ToR2.v3 {
   RecordProperty("serialized_module", proto.DebugString());
 
   // Verify that we can create a module from our parsed proto copy
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> reconstructed_module,
-                          HloModule::CreateFromProtoWithConfig(proto));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> reconstructed_module,
+                       HloModule::CreateFromProtoWithConfig(proto));
   xla::HloModuleProtoWithConfig reconstructed_module_proto =
       reconstructed_module->ToProtoWithConfig();
 
@@ -901,10 +898,10 @@ static absl::StatusOr<HloModuleConfigProto> MakeTestModuleConfigProto() {
 }
 
 TEST_F(HloModuleTest, HloModuleConfigCreateFromProto) {
-  TF_ASSERT_OK_AND_ASSIGN(HloModuleConfigProto input_proto,
-                          MakeTestModuleConfigProto());
-  TF_ASSERT_OK_AND_ASSIGN(auto good_config,
-                          HloModuleConfig::CreateFromProto(input_proto));
+  ASSERT_OK_AND_ASSIGN(HloModuleConfigProto input_proto,
+                       MakeTestModuleConfigProto());
+  ASSERT_OK_AND_ASSIGN(auto good_config,
+                       HloModuleConfig::CreateFromProto(input_proto));
   HloModuleConfigProto output_proto = good_config->ToProto();
 
   google::protobuf::util::MessageDifferencer diff;
@@ -917,8 +914,8 @@ TEST_F(HloModuleTest, HloModuleConfigToProto) {
   auto module = CreateNewVerifiedModule();
   const HloModuleConfig& good_config = module->config();
   HloModuleConfigProto first_proto = good_config.ToProto();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModuleConfig> remade_config,
-                          HloModuleConfig::CreateFromProto(first_proto));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModuleConfig> remade_config,
+                       HloModuleConfig::CreateFromProto(first_proto));
   ASSERT_NE(remade_config, nullptr);
   HloModuleConfigProto second_proto = remade_config->ToProto();
 
@@ -937,7 +934,7 @@ ENTRY main {
   ROOT %result = s32[] parameter(0)
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(text));
   EXPECT_TRUE(module->get_stack_frame(StackFrameId{1}).empty());
 
   auto module_proto = module->ToProto();
@@ -958,7 +955,7 @@ ENTRY main {
       ->mutable_metadata()
       ->set_stack_frame_id(1);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module_with_stack_frames,
       HloModule::CreateFromProto(module_proto, module->config()));
 

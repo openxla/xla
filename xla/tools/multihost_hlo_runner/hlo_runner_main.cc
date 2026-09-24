@@ -35,6 +35,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
@@ -46,8 +48,6 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
 namespace {
 const char* const kUsage = R"(
 This tool lets you run an HLO module on one or more GPUs.
@@ -114,6 +114,8 @@ struct HloRunnerConfig {
   bool use_layouts_from_hlo_module = false;
   bool force_auto_layout = false;
   int32_t num_repeats = 1;
+  int32_t num_repeats_with_profiler = 1;
+  bool recreate_profiler_session_between_repeats = false;
   std::string execution_options_path = "";
   int64_t gpu_client_initialization_timeout_sec = 300;
   float gpu_client_mem_fraction = xla::GpuAllocatorConfig{}.memory_fraction;
@@ -178,7 +180,7 @@ static absl::StatusOr<FunctionalHloRunner::RunningOptions>
 RunningOptionsFromFlags(const HloRunnerConfig& opts) {
   FunctionalHloRunner::RunningOptions out;
   ABSL_ASSIGN_OR_RETURN(out.module_argument_mode,
-                   ArgumentModeFromString(opts.hlo_argument_mode));
+                        ArgumentModeFromString(opts.hlo_argument_mode));
   std::string error;
   if (!FunctionalHloRunner::AbslParseFlag(opts.output_mode_str,
                                           &out.module_output_mode, &error)) {
@@ -187,7 +189,22 @@ RunningOptionsFromFlags(const HloRunnerConfig& opts) {
                      " Got: ", opts.output_mode_str));
   }
 
+  if (opts.num_repeats < 1) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "--num_repeats must be at least 1, got: ", opts.num_repeats));
+  }
+  if (opts.num_repeats_with_profiler < 0 ||
+      opts.num_repeats_with_profiler > opts.num_repeats) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "--num_repeats_with_profiler must be between 0 and --num_repeats (",
+        opts.num_repeats, "), got: ", opts.num_repeats_with_profiler));
+  }
+
   out.num_repeats = static_cast<size_t>(opts.num_repeats);
+  out.num_repeats_with_profiler =
+      static_cast<size_t>(opts.num_repeats_with_profiler);
+  out.recreate_profiler_session_between_repeats =
+      opts.recreate_profiler_session_between_repeats;
   out.log_input_output_mode =
       opts.log_output ? FunctionalHloRunner::LogOutputMode::kLogOutput
                       : FunctionalHloRunner::LogOutputMode::kNotLogOutput;
@@ -317,9 +334,9 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
 
     std::string hlo_file = (argc > 1) ? argv[1] : "";
     ABSL_ASSIGN_OR_RETURN(auto resolve_result,
-                     FunctionalHloRunner::ResolveTopology(
-                         opts.num_replicas, opts.num_partitions, hlo_file,
-                         opts.input_format));
+                          FunctionalHloRunner::ResolveTopology(
+                              opts.num_replicas, opts.num_partitions, hlo_file,
+                              opts.input_format));
 
     opts.num_replicas = resolve_result.topology.num_replicas;
     opts.num_partitions = resolve_result.topology.num_partitions;
@@ -338,8 +355,9 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
   ABSL_ASSIGN_OR_RETURN(
       xla::FunctionalHloRunner::RawCompileOptions raw_compile_options,
       RawCompileOptionsFromFlags(opts, debug_options));
-  ABSL_ASSIGN_OR_RETURN(xla::FunctionalHloRunner::RunningOptions running_options,
-                   RunningOptionsFromFlags(opts));
+  ABSL_ASSIGN_OR_RETURN(
+      xla::FunctionalHloRunner::RunningOptions running_options,
+      RunningOptionsFromFlags(opts));
 
   // tsl::Flags::Parse() leaves unknown flags in argv, we assume that those are
   // HLO files to run. Note that argv[0] is the binary name and is excluded.
@@ -370,17 +388,19 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
     // Create a GPURunnerProfiler to profile GPU executions to save xspace data
     // to disk.
     if (env.client != nullptr && !opts.xla_gpu_dump_xspace_to.empty()) {
-      ABSL_ASSIGN_OR_RETURN(hlo_runner_profiler,
-                       HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
-                                                 /*keep_xspace=*/false));
+      ABSL_ASSIGN_OR_RETURN(
+          hlo_runner_profiler,
+          HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
+                                    /*keep_xspace=*/false));
       running_options.profiler = hlo_runner_profiler.get();
     }
   } else if (opts.device_type_str == "host") {
     ABSL_ASSIGN_OR_RETURN(env, xla::GetPjRtEnvironmentForHostCpu());
     if (env.client != nullptr && !opts.xla_gpu_dump_xspace_to.empty()) {
-      ABSL_ASSIGN_OR_RETURN(hlo_runner_profiler,
-                       HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
-                                                 /*keep_xspace=*/false));
+      ABSL_ASSIGN_OR_RETURN(
+          hlo_runner_profiler,
+          HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
+                                    /*keep_xspace=*/false));
       running_options.profiler = hlo_runner_profiler.get();
     }
   } else {
@@ -411,10 +431,11 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
           opts.task_id, opts.num_nodes, env.kv_store, engine.get()));
     } else {
       std::cout << "\n** Compiling " << hlo_file << " **\n";
-      ABSL_RETURN_IF_ERROR(FunctionalHloRunner::LoadAndCompile(
-                          *env.client, preproc_options, raw_compile_options,
-                          argv[c], opts.input_format, opts.task_id)
-                          .status());
+      ABSL_RETURN_IF_ERROR(
+          FunctionalHloRunner::LoadAndCompile(*env.client, preproc_options,
+                                              raw_compile_options, argv[c],
+                                              opts.input_format, opts.task_id)
+              .status());
     }
 
     for (size_t i = 0; i < execution_profiles.size(); ++i) {
@@ -560,6 +581,13 @@ int main(int argc, char** argv) {
                 "If set, force auto layout."),
       tsl::Flag("num_repeats", &opts.num_repeats,
                 "Repeatedly execute the HLO for this many times."),
+      tsl::Flag("num_repeats_with_profiler", &opts.num_repeats_with_profiler,
+                "The last `num_repeats_with_profiler` repeats out of "
+                "`num_repeats` will be profiled."),
+      tsl::Flag("recreate_profiler_session_between_repeats",
+                &opts.recreate_profiler_session_between_repeats,
+                "Whether to recreate the profiler session between repeats when "
+                "profiling more than one repeat."),
       tsl::Flag("execution_options_path", &opts.execution_options_path,
                 "A path to a protobuf text file which stores the "
                 "ExecutionOptions message for this HLO module."),

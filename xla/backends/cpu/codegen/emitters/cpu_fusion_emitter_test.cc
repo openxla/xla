@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/LLVMContext.h"
@@ -103,7 +104,7 @@ TEST_F(CpuFusionEmitterTest, ScatterMlir) {
     CHECK:           xla.pure_call
     CHECK:           scf.if
     CHECK:             xla.pure_call
-    CHECK:             xla.pure_call
+    CHECK:             tensor.extract
     CHECK:             arith.addf
     CHECK:           return %[[XLA_LOOP]]
   )";

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/cudnn_simplify_padding.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -49,15 +50,16 @@ namespace m = ::xla::match;
 class CudnnSimplifyPaddingTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<bool> RunJustThisPass(HloModule* module) {
-    ABSL_ASSIGN_OR_RETURN(bool changed, RunHloPass(CudnnSimplifyPadding(), module));
+    ABSL_ASSIGN_OR_RETURN(bool changed,
+                          RunHloPass(CudnnSimplifyPadding(), module));
     VLOG(1) << "after simplify_padding:\n" << module->ToString();
 
     // I know the name says "just this pass", but you really want algsimp too,
     // otherwise the resulting patterns are ugly/hard to match.
     ABSL_RETURN_IF_ERROR(RunHloPass(HloPassFix<AlgebraicSimplifier>(
-                                   AlgebraicSimplifierOptions()),
-                               module)
-                        .status());
+                                        AlgebraicSimplifierOptions()),
+                                    module)
+                             .status());
     return changed;
   }
 };

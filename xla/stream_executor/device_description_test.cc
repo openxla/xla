@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/stream_executor/device_description.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -138,6 +139,13 @@ TEST(RocmComputeCapability, Accessors) {
   EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_tdm_support());
   EXPECT_FALSE(RocmComputeCapability{"gfx942"}.has_tdm_support());
   EXPECT_FALSE(RocmComputeCapability{"gfx1201"}.has_tdm_support());
+
+  EXPECT_TRUE(RocmComputeCapability{"gfx942"}.has_peer_visible_atomics());
+  EXPECT_TRUE(RocmComputeCapability{"gfx950"}.has_peer_visible_atomics());
+  EXPECT_FALSE(RocmComputeCapability{"gfx90a"}.has_peer_visible_atomics());
+  EXPECT_FALSE(RocmComputeCapability{"gfx908"}.has_peer_visible_atomics());
+  EXPECT_FALSE(RocmComputeCapability{"gfx1201"}.has_peer_visible_atomics());
+  EXPECT_FALSE(RocmComputeCapability{"gfx1250"}.has_peer_visible_atomics());
 }
 
 TEST(GpuComputeCapability, ProtoConversion) {
@@ -179,6 +187,17 @@ TEST(DeviceDescription, ExecutionUnitDescriptionProtoConversion) {
               Pointee(Eq(*desc.scalar_unit_description())));
   EXPECT_THAT(from_proto.matrix_unit_description(),
               Pointee(Eq(*desc.matrix_unit_description())));
+}
+
+TEST(DeviceDescription, OversizedSharedMemoryPerBlockProtoConversion) {
+  DeviceDescription desc;
+  desc.set_oversized_shared_memory_per_block(123456);
+
+  ASSERT_OK_AND_ASSIGN(DeviceDescription from_proto,
+                       DeviceDescription::FromProto(desc.ToProto()));
+
+  EXPECT_EQ(from_proto.oversized_shared_memory_per_block(),
+            desc.oversized_shared_memory_per_block());
 }
 
 TEST(DeviceDescription, ProtoConversion) {

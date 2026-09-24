@@ -175,6 +175,4 @@ tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateSlice(
   return slice_av;
 }
 
-
-
 }  // namespace xla

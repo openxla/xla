@@ -105,7 +105,7 @@ absl::StatusOr<HloInstruction*> CanonicalizeScatterIndices(
     auto new_shape =
         ShapeUtil::DeleteDimension(index_vector_dim, scatter_indices->shape());
     ABSL_ASSIGN_OR_RETURN(scatter_indices,
-                     MakeReshapeHlo(new_shape, scatter_indices));
+                          MakeReshapeHlo(new_shape, scatter_indices));
   }
   bool indices_are_scalar =
       index_vector_dim == scatter_indices->shape().dimensions().size();
@@ -148,7 +148,8 @@ absl::StatusOr<HloComputation*> CallAndGetOutput(HloComputation* original,
       HloInstruction::CreateCall(original_root->shape(),
                                  new_comp->parameter_instructions(), original));
   call_original->set_original_value(
-      std::make_shared<OriginalValue>(OriginalValue::SyntheticCall()));
+      std::make_shared<OriginalValue>(call_original->shape(),
+                                      /*call_hierarchy=*/""));
   new_comp->set_root_instruction(
       new_comp->AddInstruction(
           HloInstruction::CreateGetTupleElement(call_original, output_index)),
@@ -192,7 +193,8 @@ absl::StatusOr<HloComputation*> CallComputationAndGetIthOutputWithBinaryParams(
   HloInstruction* call_original = new_comp->AddInstruction(
       HloInstruction::CreateCall(original_root->shape(), operands, original));
   call_original->set_original_value(
-      std::make_shared<OriginalValue>(OriginalValue::SyntheticCall()));
+      std::make_shared<OriginalValue>(call_original->shape(),
+                                      /*call_hierarchy=*/""));
   new_comp->set_root_instruction(
       new_comp->AddInstruction(
           HloInstruction::CreateGetTupleElement(call_original, output_index)),

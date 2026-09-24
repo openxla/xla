@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/sharding_propagation.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -239,12 +239,11 @@ ENTRY %elementwise {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%param0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -271,12 +270,11 @@ ENTRY %elementwise {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%param0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          ShardingPropagation(/*is_spmd=*/false,
-                                              /*propagate_metadata=*/true)
-                              .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       ShardingPropagation(/*is_spmd=*/false,
+                                           /*propagate_metadata=*/true)
+                           .Run(module.get()));
   EXPECT_FALSE(changed);
   auto* instruction = FindInstruction(module.get(), "param0");
   ASSERT_NE(instruction, nullptr);
@@ -294,12 +292,11 @@ ENTRY %elementwise {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%param0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          ShardingPropagation(/*is_spmd=*/false,
-                                              /*propagate_metadata=*/true)
-                              .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       ShardingPropagation(/*is_spmd=*/false,
+                                           /*propagate_metadata=*/true)
+                           .Run(module.get()));
   EXPECT_FALSE(changed);
   auto* instruction = FindInstruction(module.get(), "param0");
   ASSERT_NE(instruction, nullptr);
@@ -317,12 +314,11 @@ ENTRY %elementwise {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%param0)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          ShardingPropagation(/*is_spmd=*/false,
-                                              /*propagate_metadata=*/true)
-                              .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       ShardingPropagation(/*is_spmd=*/false,
+                                           /*propagate_metadata=*/true)
+                           .Run(module.get()));
   EXPECT_FALSE(changed);
   auto* instruction = FindInstruction(module.get(), "param0");
   ASSERT_NE(instruction, nullptr);
@@ -340,12 +336,11 @@ ENTRY %elementwise {
   %add = f32[5,7,11,13]{3,2,1,0} add(%param0, %param1)
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -372,12 +367,11 @@ ENTRY %elementwise {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%add),
     sharding={devices=[1,2,2,1]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -404,12 +398,11 @@ ENTRY %broadcast {
   %broadcast = f32[3,2048,2048,3]{3,2,1,0} broadcast(%param0), dimensions={0,1,2}
   ROOT %copy = f32[3,2048,2048,3]{3,2,1,0} copy(%broadcast)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -442,12 +435,11 @@ ENTRY %broadcast {
   %broadcast = f32[3,2048,2048,3]{3,2,1,0} broadcast(%shard-barrier-from), dimensions={0,1,2}
   ROOT %copy = f32[3,2048,2048,3]{3,2,1,0} copy(%broadcast)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -467,12 +459,11 @@ ENTRY %broadcast {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%broadcast),
     sharding={devices=[1,2,2,1]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -500,12 +491,11 @@ ENTRY %broadcast {
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%broadcast),
     sharding={devices=[1,1,2,2]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -525,12 +515,11 @@ ENTRY %broadcast {
   ROOT %compare = pred[128]{0} compare(s32[128]{0} %param0, s32[128]{0} %broadcast),
     direction=NE, sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -549,12 +538,11 @@ ENTRY %broadcast {
   %broadcast = f32[3,2048,3] broadcast(%param0), dimensions={0,1}
   ROOT %copy = f32[3,2048,3] copy(%broadcast)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -589,12 +577,11 @@ ENTRY %broadcast {
   ROOT %copy = f32[3,2048,3] copy(%broadcast),
     sharding={devices=[1,1,2,2]0,2,1,3 last_tile_dim_replicate metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -620,12 +607,11 @@ ENTRY %broadcast {
   ROOT %broadcast = f32[4,24,6,8]{3,2,1,0} broadcast(%copy), dimensions={1,3},
     sharding={devices=[1,2,1,4]0,1,2,3,4,5,6,7 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -651,12 +637,11 @@ ENTRY %broadcast {
   ROOT %broadcast = f32[4,24,6,8] broadcast(%copy), dimensions={1,3},
     sharding={devices=[4,2,1,1]0,1,2,3,4,5,6,7 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -696,12 +681,11 @@ ENTRY %reduce {
   %reduce = f32[5,7]{1,0} reduce(%param0, %init), dimensions={2,3}, to_apply=%add
   ROOT %copy = f32[5,7]{0,1} copy(%reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -742,9 +726,8 @@ ENTRY %reduce {
     dimensions={2}, to_apply=minmax_func
   ROOT %copy = (f32[2,1]{1,0}, s32[2,1]{1,0}) copy(%reduce.418)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -770,12 +753,11 @@ ENTRY %reduce {
   %reduce = f32[7,11]{1,0} reduce(%param0, %init), dimensions={0,3}, to_apply=%add
   ROOT %copy = f32[7,11]{0,1} copy(f32[7,11]{1,0} %reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -808,12 +790,11 @@ ENTRY %reduce {
   %reduce = f32[7,11]{1,0} reduce(%shard-barrier-from, %init), dimensions={0,3}, to_apply=%add
   ROOT %copy = f32[7,11]{0,1} copy(f32[7,11]{1,0} %reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -838,12 +819,11 @@ ENTRY %reduce {
   %reduce = f32[8] reduce(%param0, %init), dimensions={0}, to_apply=%add
   ROOT %copy = f32[8] copy(%reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -876,12 +856,11 @@ ENTRY %reduce {
   %reduce = f32[8] reduce(%param0, %init), dimensions={0}, to_apply=%add
   ROOT %copy = f32[8] copy(%reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -916,12 +895,11 @@ ENTRY %reduce {
     sharding={devices=[2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = f32[8] copy(%reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -956,12 +934,11 @@ ENTRY %reduce {
     sharding={devices=[2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = f32[8] copy(%reduce)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1001,12 +978,11 @@ ENTRY %main {
   %copy1 = s32[28] copy(%gte1)
   ROOT %tuple = (f32[28], s32[28]) tuple(%copy0, %copy1)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -1064,12 +1040,11 @@ ENTRY %main {
   %copy1 = s32[28] copy(%gte1)
   ROOT %tuple = (f32[28], s32[28]) tuple(%copy0, %copy1)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -1120,12 +1095,11 @@ ENTRY %gte {
   %gte.2 = f32[5,7,11,13]{3,2,1,0} get-tuple-element(%gte.1), index=0
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%gte.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -1174,12 +1148,11 @@ ENTRY %gte {
   %gte = f32[5,7,11,13]{3,2,1,0} get-tuple-element(%shard-barrier-from), index=0
   ROOT %copy = f32[5,7,11,13]{3,2,1,0} copy(%gte)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -1208,12 +1181,11 @@ ENTRY %tuple {
                 (f32[5,7,11,13]{3,2,1,0}, f32[5,7,11,13]{3,2,1,0})) copy(
     %tuple.1)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1260,12 +1232,11 @@ ENTRY %tuple {
     %param1, %param2)
   ROOT %copy = (f32[5,7,11,13]{3,2,1,0}, f32[5,7,11,13]{3,2,1,0}) copy(%tuple)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1301,12 +1272,11 @@ ENTRY %tuple {
     %gather, %param1)
   ROOT %copy = (f32[1,32,2]{2,1,0}, f32[256,2]{1,0}) copy(%tuple)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1358,12 +1328,11 @@ ENTRY %entry {
               {manual metadata={op_name="d"}}}
   ROOT %result = f32[] get-tuple-element(%while), index=1
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1413,12 +1382,11 @@ ENTRY %entry {
   %while = (s32[], s32[], s32[]) while(%tuple), body=%body, condition=%cond
   ROOT %copy = (s32[], s32[], s32[]) copy(%while)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1453,12 +1421,11 @@ ENTRY %conv {
     window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f
   ROOT %copy = f32[5,7,11,17]{3,2,1,0} copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1486,12 +1453,11 @@ ENTRY %conv {
     window={size=3 rhs_dilate=16}, dim_labels=b0f_0io->b0f
   ROOT %copy = f32[8,32,2]{2,1,0} copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1522,12 +1488,11 @@ ENTRY %conv {
     dim_labels=01b2f_012io->01b2f
   ROOT %copy = bf16[16,16,8,3,256]{4,3,2,1,0} copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1553,12 +1518,11 @@ ENTRY %transpose {
   %transpose = f32[11,13,7]{2,1,0} transpose(%param), dimensions={1,2,0}
   ROOT %copy = f32[11,13,7]{2,1,0} copy(%transpose)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1585,12 +1549,11 @@ ENTRY %transpose {
   %transpose = f32[11,13,7]{2,1,0} transpose(%shard-barrier-from), dimensions={1,2,0}
   ROOT %copy = f32[11,13,7]{2,1,0} copy(%transpose)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1609,12 +1572,11 @@ ENTRY %transpose {
   ROOT %transpose = f32[11,13,7]{2,1,0} transpose(%copy), dimensions={1,2,0},
     sharding={devices=[1,2,2]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1641,12 +1603,11 @@ ENTRY %transpose {
   ROOT %transpose = f32[11,13,7]{2,1,0} transpose(%shard-barrier-to), dimensions={1,2,0},
     sharding={devices=[1,2,2]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1665,12 +1626,11 @@ ENTRY %reshape {
   %reshape = f32[10,11,13]{2,1,0} reshape(%param0)
   ROOT %copy = f32[10,11,13]{2,1,0} copy(%reshape)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1697,12 +1657,11 @@ ENTRY %reshape {
   %reshape = f32[10,11,13]{2,1,0} reshape(%shard-barrier-from)
   ROOT %copy = f32[10,11,13]{2,1,0} copy(%reshape)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1721,12 +1680,11 @@ ENTRY %reshape {
   %reshape = f32[7,2,2,16] reshape(%param0)
   ROOT %copy = f32[7,2,2,16] copy(%reshape)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1754,12 +1712,11 @@ ENTRY %reshape {
   %reshape = f32[8,12] reshape(%param0)
   ROOT %copy = f32[8,12] copy(%reshape)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1791,12 +1748,11 @@ ENTRY %reshape {
   %reshape.6 = f32[5,8,3] reshape(%param0)
   ROOT %tuple = tuple(%reshape.1, %reshape.2, %reshape.3, %reshape.4, %reshape.5, %reshape.6)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1832,12 +1788,11 @@ ENTRY %reshape {
   ROOT %reshape = f32[14,11,13]{2,1,0} reshape(%copy),
     sharding={devices=[2,1,1]0,1 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1864,12 +1819,11 @@ ENTRY %reshape {
   ROOT %reshape = f32[14,11,13]{2,1,0} reshape(%shard-barrier-to),
     sharding={devices=[2,1,1]0,1 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1889,12 +1843,11 @@ ENTRY %pad {
   %pad = f32[27,51]{1,0} pad(%input, %pad_value), padding=2_4_1x1_1_2
   ROOT %copy = f32[27,51]{1,0} copy(%pad)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1922,12 +1875,11 @@ ENTRY %pad {
     sharding={devices=[2,2]0,1,2,3 metadata={op_name="a"}}
   ROOT %result = f32[27,51]{1,0} copy(%pad)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1954,12 +1906,11 @@ ENTRY %pad {
   %pad = f32[27,51]{1,0} pad(%input, %pad_value), padding=2_4_1x1_1_2
   ROOT %copy = f32[27,51]{1,0} copy(%pad)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -1991,12 +1942,11 @@ ENTRY %replicated {
   %add = f32[5,7,11,13]{3,2,1,0} add(%copy, %copy.1)
   ROOT %copy.2 = f32[5,7,11,13]{3,2,1,0} copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2030,12 +1980,11 @@ ENTRY %reshape {
   %reshape = f32[10,11,13]{2,1,0} reshape(%param0)
   ROOT %copy = f32[10,11,13]{2,1,0} copy(%reshape)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2063,12 +2012,11 @@ ENTRY %reshape {
   ROOT %reshape = f32[14,11,13]{2,1,0} reshape(%copy),
     sharding={devices=[2,1,1,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2098,12 +2046,11 @@ ENTRY %tuple {
     %param0, %param1)
   ROOT %copy = (f32[5,7,11,13]{3,2,1,0}, f32[5,7,11,13]{3,2,1,0}) copy(%tuple)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2126,12 +2073,11 @@ ENTRY conv {
     window={size=5}, dim_labels=b0f_i0o->b0f
   ROOT %tuple = (f32[13,13,19]{2,1,0}) tuple(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2158,12 +2104,11 @@ ENTRY %slice {
   %slice = f32[7,5]{1,0} slice(%param), slice={[1:15:2], [5:10:1]}
   ROOT %tuple = (f32[7,5]{1,0}) tuple(%slice)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2190,12 +2135,11 @@ ENTRY %slice {
   %slice = f32[7,5]{1,0} slice(%param), slice={[1:15:2], [5:10:1]}
   ROOT %tuple = (f32[7,5]{1,0}) tuple(%slice)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2229,12 +2173,11 @@ ENTRY %reduce_window {
     window={size=3x2 stride=2x1 pad=1_1x0_1}, to_apply=%add,
     sharding={devices=[2,1]0,1 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2274,12 +2217,11 @@ ENTRY %reduce_window {
     window={size=3x2 stride=2x1 pad=1_1x0_1}, to_apply=%add,
     sharding={devices=[2,1]0,1 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2312,12 +2254,11 @@ ENTRY %reduce_window {
     window={size=3x2 stride=2x1 pad=1_1x0_1}, to_apply=%add,
     sharding={{devices=[2,1]0,1 metadata={op_name="a"}}, {devices=[2,1]0,1 metadata={op_name="b"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2361,12 +2302,11 @@ ENTRY conv {
     window={size=1}, dim_labels=bf0_oi0->bf0
   ROOT %tuple = (f32[3,2,3]{2,1,0}) tuple(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2399,12 +2339,11 @@ ENTRY conv {
     window={size=1}, dim_labels=bf0_oi0->bf0
   ROOT %tuple = (f32[3,2,3]{2,1,0}) tuple(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2434,12 +2373,11 @@ ENTRY conv {
     dim_labels=f0b_i0o->0bf
   ROOT %tuple = (f32[3,512,512]) tuple(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2469,12 +2407,11 @@ ENTRY %concat {
     dimensions={1}
   ROOT %tuple = (f32[5,16]) tuple(%concat)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2506,12 +2443,11 @@ ENTRY %concat {
     dimensions={1}
   ROOT %tuple = (f32[5,16]) tuple(%concat)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2535,12 +2471,11 @@ ENTRY %concat {
     dimensions={1}, sharding={devices=[2,1]0,1 metadata={op_name="a"}}
   ROOT %tuple = (f32[5,16]) tuple(%concat)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2563,12 +2498,11 @@ ENTRY %tuple {
     sharding={{replicated metadata={op_name="a"}},
               {devices=[2]0,1 metadata={op_name="b"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2616,12 +2550,11 @@ ENTRY %entry {
   ROOT %tuple = (f32[3], f32[3], f32[3]) tuple(
     %crs_f.tiled, crs_f.none, %copy_b_r)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2689,7 +2622,7 @@ ENTRY %entry {
         if (GetParam().clear_metadata) {
           ClearMetadata(module);
         }
-        TF_ASSERT_OK_AND_ASSIGN(
+        ASSERT_OK_AND_ASSIGN(
             bool changed,
             ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
                 .Run(module));
@@ -2720,8 +2653,7 @@ ENTRY %entry {
   {
     // Propagation of user-defined partial sharding of while-related instruction
     // (body root in this test).
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     auto body_root = FindInstruction(module.get(), "tuple");
     EXPECT_NE(nullptr, body_root);
     auto sharding = ParseSharding(
@@ -2734,8 +2666,7 @@ ENTRY %entry {
   }
   {
     // Propagation from acc.1 to the rest of the loop.
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     auto acc_1 = FindInstruction(module.get(), "acc.1");
     EXPECT_NE(nullptr, acc_1);
     acc_1->set_sharding(
@@ -2748,8 +2679,7 @@ ENTRY %entry {
   }
   {
     // Merge partial sharding from operand and body.
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     auto acc_1 = FindInstruction(module.get(), "acc.1");
     EXPECT_NE(nullptr, acc_1);
     acc_1->set_sharding(
@@ -2799,9 +2729,8 @@ ENTRY %entry {
   ROOT %while = (u32[], f32[]) while(%init), body=%body, condition=%cond
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, /*propagate_metadata=*/false,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -2855,12 +2784,11 @@ ENTRY %entry {
   ROOT %result = f32[] get-tuple-element(%while), index=1
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -2916,8 +2844,7 @@ ENTRY %entry {
   ROOT %result = f32[] get-tuple-element(%while), index=1
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
@@ -2962,8 +2889,7 @@ ENTRY %entry {
   ROOT %result = f32[] get-tuple-element(%while), index=1
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
@@ -3008,8 +2934,7 @@ ENTRY %entry {
   ROOT %result = f32[] get-tuple-element(%while), index=1
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
@@ -3070,12 +2995,11 @@ ENTRY %entry {
   ROOT %result = bf16[128,512,768] get-tuple-element(%while), index=3, sharding={replicated}
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3100,12 +3024,11 @@ ENTRY %entry {
   ROOT %result = bf16[32,2048,768] copy(%add)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3130,12 +3053,11 @@ ENTRY %entry {
   ROOT %result = bf16[32,2048,768] copy(%add)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3164,12 +3086,11 @@ ENTRY %entry {
   ROOT %result = bf16[32,2048,768] copy(%add)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3215,12 +3136,11 @@ ENTRY %conv {
   ROOT %tuple = (f32[8,512,256], f32[8,256,512], f32[8,256], f32[8,256,512])
     tuple(%dot_prop_lhs, %dot_prop_rhs, %dot_mat_vec, %copy_back_prop_rhs)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3286,12 +3206,11 @@ ENTRY %conv {
 
   ROOT %tuple = (f32[8,32768]) tuple(%res)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3321,12 +3240,11 @@ ENTRY %conv {
     lhs_contracting_dims={2}, rhs_contracting_dims={2}
   ROOT %copy = f32[8,256,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3356,12 +3274,11 @@ ENTRY %conv {
     lhs_contracting_dims={2}, rhs_contracting_dims={2}
   ROOT %copy = f32[8,256,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3393,12 +3310,11 @@ ENTRY %conv {
     lhs_contracting_dims={1}, rhs_contracting_dims={1}
   ROOT %copy = f32[256,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3428,12 +3344,11 @@ ENTRY %conv {
     lhs_contracting_dims={2}, rhs_contracting_dims={2}
   ROOT %copy = f32[8,256,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3458,12 +3373,11 @@ ENTRY %conv {
     sharding={devices=[2,1,2,2]0,1,2,3,4,5,6,7 last_tile_dim_replicate metadata={op_name="b"}}
   ROOT %copy = f32[8,256,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3487,12 +3401,11 @@ ENTRY %conv {
     sharding={devices=[2,1,2,2]0,1,2,3,4,5,6,7 last_tile_dim_replicate metadata={op_name="b"}}
   ROOT %copy = f32[8,256,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3523,12 +3436,11 @@ ENTRY %dot {
     sharding={devices=[1,1,2,2]0,1,2,3 last_tile_dims={replicated, manual} metadata={op_name="b"}}
   ROOT %copy = f32[8,128] copy(%dot)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3558,12 +3470,11 @@ ENTRY %conv {
     window={size=1x1 rhs_reversal=1x1}, dim_labels=b01f_01oi->b01f
   ROOT %copy = f32[128,1,1,1024] copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3593,12 +3504,11 @@ ENTRY %conv {
     window={size=1x1 rhs_reversal=1x1}, dim_labels=b01f_01oi->b01f
   ROOT %copy = f32[128,1,1,1024] copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3621,12 +3531,11 @@ ENTRY %conv {
     sharding={devices=[1,2,1,1]0,1 metadata={op_name="a"}}
   ROOT %copy = f32[128,1,1,768] copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3661,12 +3570,11 @@ ENTRY %conv {
     sharding={devices=[1,2,1,1]0,1 metadata={op_name="a"}}
   ROOT %copy = f32[128,1,1,768] copy(%convolution)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3697,12 +3605,11 @@ ENTRY entry {
   ROOT %copy = f32[128,56,56,64] copy(conv)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3732,12 +3639,11 @@ ENTRY entry {
   ROOT copy = f32[256,512,5,5] copy(conv)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3770,12 +3676,11 @@ ENTRY %conv {
     sharding={devices=[1,2]0,1 metadata={op_name="a"}}
   ROOT %tuple = (f32[16,128]) tuple(%concat)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3810,12 +3715,11 @@ ENTRY %conv {
     sharding={devices=[3,1]0,1,2 metadata={op_name="a"}}
   ROOT %tuple = (f32[16,128]) tuple(%concat)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3851,12 +3755,11 @@ ENTRY %conv {
     sharding={devices=[4,1]0,1,2,3 metadata={op_name="a"}}
   ROOT %tuple = (f32[32,128]) tuple(%concat)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3887,12 +3790,11 @@ ENTRY entry_computation {
     distribution=rng_uniform
   ROOT %root = (s32[4]{0}) tuple(%rng)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3916,12 +3818,11 @@ ENTRY entry_computation {
               {replicated metadata={op_name="b"}},
               {maximal device=1 metadata={op_name="c"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -3989,12 +3890,11 @@ ENTRY entry {
     false_computation=%false_comp
   ROOT %root = f32[5,3] get-tuple-element(%conditional), index=0
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4092,12 +3992,11 @@ ENTRY %entry {
               {devices=[2]0,1 metadata={op_name="b"}},
               {devices=[3]1,2,3 metadata={op_name="c"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4145,12 +4044,11 @@ ENTRY %entry {
     dynamic_slice_sizes={11,1,15}
   ROOT %root = (f32[11,1,15]) tuple(%ds)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4173,12 +4071,11 @@ ENTRY %entry {
     dynamic_slice_sizes={11,1,15}
   ROOT %root = (f32[11,1,15]) tuple(%ds)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4211,12 +4108,11 @@ ENTRY %entry {
     sharding={devices=[2,2,2]<=[8] metadata={op_name="a"}}
   ROOT %root = (f32[11,1,15]) tuple(%ds)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4250,12 +4146,11 @@ ENTRY %entry {
     sharding={devices=[1,1,2]0,1 metadata={op_name="a"}}
   ROOT %root = (f32[11,1,15]) tuple(%ds)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4279,12 +4174,11 @@ ENTRY %entry {
   %dus = f32[11,13,15] dynamic-update-slice(%c0, %c1, %i0, %p2, %i0)
   ROOT %root = (f32[11,13,15]) tuple(%dus)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4323,12 +4217,11 @@ ENTRY %entry {
   %dus = f32[11,13,15] dynamic-update-slice(%shard-barrier-from, %c1, %i0, %p2, %i0)
   ROOT %root = (f32[11,13,15]) tuple(%dus)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4352,12 +4245,11 @@ ENTRY %entry {
   %dus = f32[11,13,15] dynamic-update-slice(%c0, %c1, %i0, %p2, %i0)
   ROOT %root = (f32[11,13,15]) tuple(%dus)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4397,12 +4289,11 @@ ENTRY %entry {
     sharding={devices=[2,2,2]<=[8] metadata={op_name="a"}}
   ROOT %root = (f32[11,13,15]) tuple(%dus)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4441,12 +4332,11 @@ ENTRY %entry {
     sharding={devices=[1,1,2]0,1 metadata={op_name="a"}}
   ROOT %root = (f32[11,13,15]) tuple(%dus)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4470,12 +4360,11 @@ ENTRY entry {
     dim_labels=0bf_0oi->0bf, window={size=32 stride=31 lhs_dilate=32}
   ROOT %copy = f32[32,24,39296] copy(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata,
                           {GetParam().allow_root_sharding_propagation})
@@ -4515,12 +4404,11 @@ ENTRY entry {
     dim_labels=0bf_0oi->0bf, window={size=32 stride=31 lhs_dilate=32},
     sharding={devices=[2,1,1]0,1 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4556,12 +4444,11 @@ ENTRY entry {
     dim_labels=0bf1_0oi1->0bf1, window={size=32x1 stride=31x1 lhs_dilate=32x1}
   ROOT %copy = f32[32,24,39296,128] copy(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4591,12 +4478,11 @@ ENTRY entry {
     dim_labels=0bf1_0oi1->0bf1, window={size=32x1 stride=31x1 lhs_dilate=32x1},
     sharding={devices=[1,2,1,2]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4628,12 +4514,11 @@ ENTRY entry {
     window={size=32x128 stride=31x1 pad=0_0x127_127 lhs_dilate=32x1 rhs_reversal=0x1}
   ROOT %copy = f32[32,24,39296,128] copy(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4664,12 +4549,11 @@ ENTRY entry {
     window={size=32x128 stride=31x1 pad=0_0x127_127 lhs_dilate=32x1 rhs_reversal=0x1},
     sharding={devices=[1,1,2,2]0,1,2,3 metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4702,12 +4586,11 @@ ENTRY entry {
     window={size=32x128 stride=31x1 pad=0_0x127_127 lhs_dilate=32x1 rhs_reversal=0x1}
   ROOT %copy = f32[32,24,39296,128] copy(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4740,12 +4623,11 @@ ENTRY entry {
     window={size=32x128 stride=31x1 pad=0_0x127_127 lhs_dilate=32x1 rhs_reversal=0x1}
   ROOT %copy = f32[32,24,39296,128] copy(%conv)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4776,12 +4658,11 @@ ENTRY entry {
     slice_sizes={1,1,9}
   ROOT %copy = f32[3,4,9] copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4812,12 +4693,11 @@ ENTRY entry {
     slice_sizes={1,9}
   ROOT %copy = f32[3,9] copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4849,12 +4729,11 @@ ENTRY entry {
     slice_sizes={1,9}
   ROOT %copy = f32[3,9] copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4885,12 +4764,11 @@ ENTRY entry {
     slice_sizes={1,9}
   ROOT %copy = f32[3,9] copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4922,12 +4800,11 @@ ENTRY entry {
     slice_sizes={1,9},
     sharding={devices=[2,1]0,1 metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4958,12 +4835,11 @@ ENTRY entry {
     slice_sizes={1,9},
     sharding={devices=[2,1,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -4996,12 +4872,11 @@ ENTRY entry {
     start_index_map={0,1}, index_vector_dim=2, slice_sizes={1,1,4},
     sharding={devices=[1,2,1]0,1 metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5033,12 +4908,11 @@ ENTRY entry {
     start_index_map={0,1}, index_vector_dim=2, slice_sizes={1,1,4},
     sharding={devices=[1,2,1,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5072,12 +4946,11 @@ ENTRY entry {
     start_index_map={0,1}, index_vector_dim=1, slice_sizes={1,1,4},
     sharding={devices=[1,2,1]0,1 metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5108,12 +4981,11 @@ ENTRY entry {
     slice_sizes={1,9},
     sharding={devices=[1,2]0,1 metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5144,12 +5016,11 @@ ENTRY entry {
     slice_sizes={1,9},
     sharding={devices=[1,2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5192,12 +5063,11 @@ ENTRY entry {
       index_vector_dim=1
   ROOT %copy = f32[2,9] copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5239,12 +5109,11 @@ ENTRY entry {
       index_vector_dim=1
   ROOT %copy = f32[2,9] copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5295,12 +5164,11 @@ ENTRY entry {
       index_vector_dim=1
   ROOT %copy = (f32[2,9],f32[2,9]) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5346,12 +5214,11 @@ ENTRY entry {
       index_vector_dim=1
   ROOT %copy = f32[2,9] copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5393,12 +5260,11 @@ ENTRY entry {
       index_vector_dim=1
   ROOT %copy = f32[2,9] copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5449,12 +5315,11 @@ ENTRY entry {
       index_vector_dim=1
   ROOT %copy = (f32[2,9],f32[2,9]) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5500,12 +5365,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={devices=[1,2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="c"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5548,12 +5412,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={devices=[1,2]0,1 metadata={op_name="c"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5603,12 +5466,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={{devices=[1,4]0,1,2,3 metadata={op_name="d"}}, {devices=[1,2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="e"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5660,12 +5522,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={devices=[1,2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5707,12 +5568,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={devices=[1,2]0,1 metadata={op_name="b"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5760,12 +5620,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={{devices=[1,4]0,1,2,3 metadata={op_name="b"}}, {devices=[1,2,2]0,1,2,3 last_tile_dim_replicate metadata={op_name="c"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5819,12 +5678,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5867,12 +5725,11 @@ ENTRY entry {
       index_vector_dim=0,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5915,12 +5772,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -5965,12 +5821,11 @@ ENTRY entry {
       sharding={replicated metadata={op_name="d"}}
   ROOT %copy = f32[1,24,24,24,3,3] copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6022,12 +5877,11 @@ ENTRY entry {
       index_vector_dim=2,
       sharding={{replicated metadata={op_name="d"}}, {replicated metadata={op_name="e"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6070,12 +5924,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6118,12 +5971,11 @@ ENTRY entry {
       index_vector_dim=1,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6167,12 +6019,11 @@ ENTRY entry {
     scatter_dims_to_operand_dims={0}, index_vector_dim=2, to_apply=%add,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6227,12 +6078,11 @@ ENTRY entry {
       index_vector_dim=2,
       sharding={replicated metadata={op_name="d"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6273,12 +6123,11 @@ ENTRY entry {
   %add = f32[2,9] add(%lhs, %rhs)
   ROOT %copy = f32[2,9] copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6317,12 +6166,11 @@ ENTRY entry {
   %add = f32[2,9] add(%lhs, %rhs)
   ROOT %copy = f32[2,9] copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6367,12 +6215,11 @@ ENTRY %transpose {
   %transpose = f32[11,13,7]{2,1,0} transpose(%param), dimensions={1,2,0}
   ROOT %copy = f32[11,13,7]{2,1,0} copy(%transpose)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6401,12 +6248,11 @@ ENTRY %transpose {
   ROOT %transpose = f32[11,13,7]{2,1,0} transpose(%copy), dimensions={1,2,0},
     sharding={devices=[1,2,2,2]0,1,2,3,4,5,6,7 last_tile_dim_replicate metadata={op_name="a"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6446,12 +6292,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6481,12 +6326,11 @@ ENTRY %module {
     sharding={devices=[8,1,1,1]0,1,4,5,2,3,6,7 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6512,9 +6356,8 @@ ENTRY entry {
     start_indices_batching_dims={1,0}, start_index_map={1,3},
     index_vector_dim=3, slice_sizes={1,1,1,4}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -6538,9 +6381,8 @@ ENTRY entry {
     start_indices_batching_dims={1,0}, start_index_map={1,3},
     index_vector_dim=3, slice_sizes={1,1,1,4}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -6565,9 +6407,8 @@ ENTRY entry {
     index_vector_dim=3, slice_sizes={1,1,1,4},
     sharding={devices=[2,2,2,2]<=[16]}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -6597,9 +6438,8 @@ ENTRY %module {
     start_indices_batching_dims={0}, index_vector_dim=2, slice_sizes={1,1},
     sharding={devices=[2,2]<=[4]}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -6634,9 +6474,8 @@ ENTRY entry {
     scatter_dims_to_operand_dims={1,3}, input_batching_dims={0,2},
     scatter_indices_batching_dims={1,0}, index_vector_dim=3
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -6666,9 +6505,8 @@ ENTRY entry {
     scatter_dims_to_operand_dims={1,3}, input_batching_dims={0,2},
     scatter_indices_batching_dims={1,0}, index_vector_dim=3
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -6700,9 +6538,8 @@ ENTRY entry {
     scatter_dims_to_operand_dims={1,3}, input_batching_dims={0,2},
     scatter_indices_batching_dims={1,0}, index_vector_dim=3
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -6733,9 +6570,8 @@ ENTRY entry {
     scatter_dims_to_operand_dims={1,3}, input_batching_dims={0,2},
     scatter_indices_batching_dims={1,0}, index_vector_dim=3, sharding={devices=[2,2,2,2]<=[16]}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -6773,12 +6609,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6813,12 +6648,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6854,12 +6688,11 @@ ENTRY %module {
     sharding={devices=[8,1,1,1]0,1,4,5,2,3,6,7 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6900,12 +6733,11 @@ ENTRY %module {
     sharding={devices=[1,4,1,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6946,12 +6778,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -6990,12 +6821,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7034,12 +6864,11 @@ ENTRY %module {
     sharding={devices=[4,1,1,1,2]0,1,4,5,2,3,6,7 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7086,12 +6915,11 @@ ENTRY %module {
     sharding={devices=[1,2,1,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7149,12 +6977,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7196,12 +7023,11 @@ ENTRY %module {
     sharding={devices=[8,1,1,1]0,1,4,5,2,3,6,7 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7247,12 +7073,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7298,12 +7123,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7349,12 +7173,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7402,12 +7225,11 @@ ENTRY %module {
     sharding={devices=[8,1,1,1]0,1,4,5,2,3,6,7 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7463,12 +7285,11 @@ ENTRY %module {
     sharding={devices=[4,1,1,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[4,8,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7523,12 +7344,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7578,12 +7398,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7633,12 +7452,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7689,12 +7507,11 @@ ENTRY %module {
     sharding={devices=[4,1,1,1,2]0,1,4,5,2,3,6,7 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7759,12 +7576,11 @@ ENTRY %module {
     sharding={devices=[2,1,1,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[4,8,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7834,12 +7650,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = (s32[8,4,2,2]{3,2,1,0},s32[8,4,2,2]{3,2,1,0}) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7898,12 +7713,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = (s32[8,4,2,2]{3,2,1,0},s32[8,4,2,2]{3,2,1,0}) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -7964,12 +7778,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = (s32[8,4,2,2]{3,2,1,0},s32[8,4,2,2]{3,2,1,0}) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8032,12 +7845,11 @@ ENTRY %module {
               {devices=[4,1,1,1,2]0,1,4,5,2,3,6,7 last_tile_dim_replicate metadata={op_name="b"}}}
   ROOT %copy = (s32[8,4,2,2]{3,2,1,0},s32[8,4,2,2]{3,2,1,0}) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8124,12 +7936,11 @@ ENTRY %module {
               {devices=[2,1,1,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="b"}}}
   ROOT %copy = (s32[4,8,2,2]{3,2,1,0},s32[4,8,2,2]{3,2,1,0}) copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8193,12 +8004,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8247,12 +8057,11 @@ ENTRY %module {
     sharding={devices=[2,1,2,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8301,12 +8110,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8355,12 +8163,11 @@ ENTRY %module {
     sharding={devices=[2,2,1,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8409,12 +8216,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8466,12 +8272,11 @@ ENTRY %module {
     sharding={devices=[2,1,1,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8520,12 +8325,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8572,12 +8376,11 @@ ENTRY %module {
     sharding={devices=[1,1,2,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8624,12 +8427,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8677,12 +8479,11 @@ ENTRY %module {
     sharding={devices=[2,1,2,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8732,12 +8533,11 @@ ENTRY %module {
     slice_sizes={1,1,2,2}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8788,12 +8588,11 @@ ENTRY %module {
     sharding={devices=[1,1,2,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8854,12 +8653,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8924,12 +8722,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -8994,12 +8791,11 @@ ENTRY %module {
     sharding={devices=[2,1,2,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9065,12 +8861,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9137,12 +8932,11 @@ ENTRY %module {
     sharding={devices=[2,2,1,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9209,12 +9003,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9281,12 +9074,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9354,12 +9146,11 @@ ENTRY %module {
     sharding={devices=[2,1,1,1,2]0,1,4,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9424,12 +9215,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9491,12 +9281,11 @@ ENTRY %module {
     sharding={devices=[1,2,2,1]0,1,4,5 metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9559,12 +9348,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9631,12 +9419,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9703,12 +9490,11 @@ ENTRY %module {
     sharding={devices=[1,1,2,1,2]0,4,1,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9776,12 +9562,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9851,12 +9636,11 @@ ENTRY %module {
     index_vector_dim=0
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9925,12 +9709,11 @@ ENTRY %module {
     sharding={devices=[1,2,1,1,2]0,4,1,5 last_tile_dim_replicate metadata={op_name="a"}}
   ROOT %copy = s32[8,4,2,2]{3,2,1,0} copy(%scatter)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -9983,12 +9766,11 @@ ENTRY %module {
     sharding={devices=[1,1,2,1,1]0,1 metadata={op_name="a"}}
   ROOT %copy = bf16[1,2,2,2,8]{4,3,2,1,0} copy(%gather)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10025,12 +9807,11 @@ ENTRY %module {
     index_vector_dim=2, slice_sizes={1,1,4},
     sharding={devices=[1,4,1]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10055,12 +9836,11 @@ ENTRY %entry {
   %add = f32[6,3]{1,0} add(%copy, %copy.1)
   ROOT %copy.2 = f32[6,3]{1,0} copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10091,12 +9871,11 @@ ENTRY %entry {
   %add = f32[6,3]{1,0} add(%copy, %copy.1)
   ROOT %copy.2 = f32[6,3]{1,0} copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10139,12 +9918,11 @@ ENTRY %entry {
   %add = f32[6,3]{1,0} add(%copy, %copy.1)
   ROOT %copy.2 = f32[6,3]{1,0} copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10186,12 +9964,11 @@ ENTRY %entry {
     sharding={devices=[1,2,2]0,1,2,3 last_tile_dims={manual} metadata={op_name="a"}}
   ROOT %copy.2 = f32[6,3]{1,0} copy(%add)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10234,9 +10011,8 @@ ENTRY %entry {
     custom_call_target="SPMDShardToFullShape", sharding={devices=[2]0,1}
   ROOT %copy.2 = f32[6] copy(%to_auto)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10270,9 +10046,8 @@ ENTRY %entry {
     custom_call_target="SPMDShardToFullShape", sharding={devices=[2,1]0,1}
   ROOT %copy.2 = f32[3,3] copy(%to_auto)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10302,9 +10077,8 @@ ENTRY %entry {
   ROOT %copy.3 = (f32[], f32[6,3]{1,0}) copy(%custom-call)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10329,9 +10103,8 @@ ENTRY %entry {
   %copy.2 = f32[6,3] copy(%annotate)
   ROOT %copy.3 = f32[6,3] copy(%copy.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10368,9 +10141,8 @@ ENTRY %entry {
   ROOT %copy.3 = f32[6,3,8] copy(%copy.2),
     sharding={devices=[1,1,2,4]0,2,4,6,1,3,5,7 last_tile_dim_replicate}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10418,9 +10190,8 @@ ENTRY %entry {
     sharding={devices=[1,2,1,4]0,1,2,3,4,5,6,7 last_tile_dim_replicate}
   ROOT %copy.3 = f32[6,3,8] copy(%copy.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10443,9 +10214,8 @@ ENTRY %entry {
     backend_config="unspecified_dims=[1]", sharding={manual}
   ROOT %copy.2 = f32[6,3] copy(%annotate), sharding={manual}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10467,9 +10237,8 @@ ENTRY %entry {
   custom-call.4 = f32[2,3]{1,0} custom-call(custom-call.3), custom_call_target="Sharding", sharding={manual}
   ROOT custom-call.5 = f32[16,3]{1,0} custom-call(custom-call.4), custom_call_target="SPMDShardToFullShape", sharding={replicated}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -10496,15 +10265,14 @@ ENTRY %entry {
   add.1 = f32[2,3]{1,0} add(constant, p.1)
   ROOT tuple = (f32[2,3]{1,0}, f32[2,3]{1,0}) tuple(custom-call.2, add.1)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool is_split,
       HloConstantSplitter(/*split_expressions=*/true).Run(module.get()));
   EXPECT_TRUE(is_split);
-  TF_ASSERT_OK_AND_ASSIGN(auto _, HloDCE().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto _, HloDCE().Run(module.get()));
   (void)_;  // Suppress unused variable warning in OSS
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10530,9 +10298,8 @@ ENTRY %reshape {
   %reshape = f32[3,1,3,1] reshape(%param0)
   ROOT %copy = f32[3,1,3,1] copy(%reshape)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10558,9 +10325,8 @@ ENTRY %reshape {
   ROOT %copy = f64[102,192,192] copy(%custom-call),
     sharding={devices=[1,2,1,2]0,1,2,3 last_tile_dim_replicate}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10581,9 +10347,8 @@ ENTRY %reshape {
   ROOT %copy = f32[102,192,192] copy(%custom-call),
     sharding={devices=[1,2,1,2]0,1,2,3 last_tile_dim_replicate}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10610,9 +10375,8 @@ ENTRY %offloading {
   %custom-call.1 = f32[1,256,128] custom-call(f32[1,256,128] %dynamic-slice), custom_call_target="MoveToDevice"
   ROOT %copy = f32[1,256,128] copy(%custom-call.1), sharding={devices=[1,4,1]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10670,14 +10434,13 @@ ENTRY %entry {
 
   // Propagation of user-defined partial sharding of while-related instruction
   // (body root in this test).
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   auto body_root = FindInstruction(module.get(), "tuple");
   EXPECT_NE(nullptr, body_root);
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10737,14 +10500,13 @@ ENTRY %entry {
   ROOT %t = (u32[], f32[10,10], f32[10,10]) tuple(%g1, %g2.0.0, %g3)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   auto body_root = FindInstruction(module.get(), "tuple");
   EXPECT_NE(nullptr, body_root);
   if (GetParam().clear_metadata) {
     ClearMetadata(module.get());
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
           .Run(module.get()));
@@ -10768,9 +10530,8 @@ ENTRY %entry {
     backend_config="unspecified_dims=[0]", sharding={replicated}
   ROOT %copy = f32[4] copy(%annotate), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -10802,9 +10563,8 @@ ENTRY %entry {
     backend_config="unspecified_dims=[0]", sharding={replicated}
   ROOT %copy = f32[4] copy(%annotate), sharding={devices=[4]3,2,1,0}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10829,9 +10589,8 @@ ENTRY %entry {
   ROOT %copy = f32[8,1,128] copy(%rsp),
     sharding={devices=[1,2,4]0,1,2,3,4,5,6,7}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10853,9 +10612,8 @@ ENTRY %entry {
   ROOT %copy = (f32[2], (), (), f32[2]) copy(%tuple)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10874,9 +10632,8 @@ ENTRY %entry {
   ROOT %copy = f32[20,256,56,56]{3,2,1,0} copy(%convolution.4512)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10907,9 +10664,8 @@ ENTRY %main.21 {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10934,9 +10690,8 @@ ENTRY %main.21 {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10960,9 +10715,8 @@ ENTRY %main.21 {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -10992,9 +10746,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11028,9 +10781,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11062,9 +10814,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11096,9 +10847,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11129,9 +10879,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11165,9 +10914,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       std::ignore,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11198,9 +10946,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11230,9 +10977,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11283,9 +11029,8 @@ ENTRY entry {
     true_computation=%true_comp,
     false_computation=%false_comp
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11327,9 +11072,8 @@ ENTRY entry {
   tuple.13 = (s32[], pred[2,8,4]) tuple(zero, preds)
   ROOT result = while(tuple.13), condition=while.condition, body=while.body
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));
@@ -11351,9 +11095,8 @@ ENTRY %entry {
     backend_config="unspecified_dims=[0]", sharding={devices=[4]0,1,2,3}
   ROOT %add = f32[4] add(%annotate, %annotate), sharding={replicated}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -11381,9 +11124,8 @@ ENTRY %entry {
   %add1 = f32[4] add(%annotate1, %annotate1)
   ROOT t = (f32[4], f32[4]) tuple(add, add1), sharding={{replicated},{replicated}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11412,9 +11154,8 @@ ENTRY %entry {
   %add1 = f32[4] add(%annotate1, %annotate1)
   ROOT t = (f32[4], f32[4]) tuple(add, add1), sharding={{replicated},{replicated}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true,
                           /*allow_spmd_sharding_propagation_to_output=*/{true})
@@ -11433,9 +11174,8 @@ ENTRY %entry {
   %param0 = f32[4] parameter(0)
   ROOT %add = f32[4] add(%param0, %param0), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11455,10 +11195,9 @@ ENTRY %entry {
   %param0 = f32[4] parameter(0), sharding={replicated}
   ROOT %add = f32[4] add(%param0, %param0), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, ShardingPropagation(/*is_spmd=*/true).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       ShardingPropagation(/*is_spmd=*/true).Run(module.get()));
   EXPECT_FALSE(changed);
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{replicated}"));
@@ -11473,9 +11212,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1), sharding={replicated}
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11498,9 +11236,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1), sharding={replicated}
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11523,9 +11260,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1), sharding={replicated}
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11549,9 +11285,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1), sharding={replicated}
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11575,9 +11310,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1)
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11601,9 +11335,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1)
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11627,9 +11360,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1)
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11653,9 +11385,8 @@ ENTRY %entry {
   %param1 = f32[4] parameter(1)
   ROOT %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11680,9 +11411,8 @@ ENTRY %entry {
   %gte1 = f32[4] get-tuple-element(%param), index=1
   ROOT %add = f32[4] add(%gte0, %gte1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11705,9 +11435,8 @@ ENTRY %entry {
   %gte1 = f32[4] get-tuple-element(%param), index=1
   ROOT %add = f32[4] add(%gte0, %gte1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11730,9 +11459,8 @@ ENTRY %entry {
   %gte1 = f32[4] get-tuple-element(%param), index=1
   ROOT %add = f32[4] add(%gte0, %gte1), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11760,9 +11488,8 @@ ENTRY %entry {
   outfeed.2 = token[] outfeed(tuple.1, outfeed.1), outfeed_shape=(f32[8]{0}), sharding={{manual}, {manual}}
   ROOT tuple.15 = (f32[1]{0}, token[]) tuple(p1, outfeed.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11786,9 +11513,8 @@ ENTRY %entry {
   ROOT mul = s32[40000]{0} multiply(add, add)
 
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11798,7 +11524,7 @@ ENTRY %entry {
   EXPECT_TRUE(changed);
 
   HloDCE dce;
-  TF_ASSERT_OK_AND_ASSIGN(bool dce_ed, RunHloPass(&dce, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool dce_ed, RunHloPass(&dce, module.get()));
   EXPECT_TRUE(dce_ed);
 
   XLA_VLOG_LINES(1, module->ToString());
@@ -11823,9 +11549,8 @@ ENTRY %entry {
   %pad = f32[4] pad(%param1, %pad_value), padding=0_1
   ROOT %add = f32[4] add(%param0, %pad), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11854,9 +11579,8 @@ ENTRY %entry {
   %pad = f32[4] pad(%param1, %pad_value), padding=0_1
   ROOT %add = f32[4] add(%param0, %pad), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11885,9 +11609,8 @@ ENTRY %entry {
   %pad = f32[4] pad(%gte1, %pad_value), padding=0_1
   ROOT %add = f32[4] add(%gte0, %pad), sharding={devices=[4]0,1,2,3}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11913,9 +11636,8 @@ ENTRY %entry {
   %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
   ROOT %slice = f32[3] slice(%add), slice={[0:3:1]}, sharding={replicated}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11941,9 +11663,8 @@ ENTRY %entry {
   %add = f32[4] add(%param0, %param1), sharding={devices=[4]0,1,2,3}
   ROOT %slice = f32[3] slice(%add), slice={[0:3:1]}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11970,9 +11691,8 @@ ENTRY %entry {
   %slice = f32[3] slice(%add), slice={[0:3:1]}
   ROOT %tuple = (f32[4], f32[3]) tuple(%add, %slice), sharding={{replicated}, {replicated}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -11999,9 +11719,8 @@ ENTRY %entry {
   %slice = f32[3] slice(%add), slice={[0:3:1]}
   ROOT %tuple = (f32[4], f32[3]) tuple(%add, %slice)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12029,9 +11748,8 @@ ENTRY %entry {
   sharding.2 = s32[16,16] custom-call(add.2), custom_call_target="Sharding", sharding={unknown shard_like 0}
   ROOT mul = s32[16,16] multiply(add.1, add.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12074,9 +11792,8 @@ ENTRY %entry {
   reduce.2 = s32[] reduce(add.2, init), dimensions={0,1}, to_apply=%add
   ROOT mul = s32[] multiply(reduce.1, reduce.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12109,9 +11826,8 @@ ENTRY %entry {
   sharding.2 = s32[16,16] custom-call(add.2), custom_call_target="Sharding", sharding={unknown shard_as 0}
   ROOT mul = s32[16,16] multiply(add.1, add.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12152,9 +11868,8 @@ ENTRY %entry {
   reduce.2 = s32[] reduce(add.2, init), dimensions={0,1}, to_apply=%add
   ROOT mul = s32[] multiply(reduce.1, reduce.2)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12193,9 +11908,8 @@ ENTRY %entry {
   broadcast.1 = s32[16,16] broadcast(reduce.1), dimensions={}
   ROOT mul = s32[16,16] multiply(broadcast.1, broadcast.1), sharding={unknown shard_as 0}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12229,9 +11943,8 @@ ENTRY main.6 {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12258,9 +11971,8 @@ ENTRY main.9 {
   custom-call.7 = f32[8]{0} custom-call(multiply.5), custom_call_target="Sharding", custom_call_has_side_effect=true, sharding={unknown shard_as 0}, metadata={op_name="jit(f)/jit(main)/shard_alike" source_file="third_party/py/jax/tests/shard_alike_test.py" source_line=206}
   ROOT tuple.8 = (f32[8]{0}, f32[8]{0}) tuple(custom-call.6, custom-call.7)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12287,9 +11999,8 @@ ENTRY %entry {
   constant.1 = s32[] constant(0)
   ROOT dynamic-update-slice.113 = bf16[16,1024,16,128]{3,2,1,0} dynamic-update-slice(p2, reshape.1, p3, constant.1, constant.1, /*index=5*/constant.1), sharding={devices=[1,4,4,1,4]<=[4,16]T(1,0) last_tile_dim_replicate}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12329,9 +12040,8 @@ ENTRY entry_computation {
 
   {
     // Test with execution_threads = {"thread_0"}
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(
         bool changed,
         ShardingPropagation(
             /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12354,9 +12064,8 @@ ENTRY entry_computation {
 
   {
     // Test with execution_threads = {"thread_0", "thread_1"}
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(
         bool changed,
         ShardingPropagation(
             /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12369,9 +12078,8 @@ ENTRY entry_computation {
   {
     // Test with execution_threads = {}. Empty execution_threads means all
     // execution_threads are included.
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(
         bool changed,
         ShardingPropagation(
             /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12405,9 +12113,8 @@ ENTRY entry_computation {
 
   {
     // Test with execution_threads = {"thread_0"}
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(
         bool changed,
         ShardingPropagation(
             /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12431,9 +12138,8 @@ ENTRY entry_computation {
 
   {
     // Test with execution_threads = {"thread_0", "thread_1"}
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(
         bool changed,
         ShardingPropagation(
             /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12446,9 +12152,8 @@ ENTRY entry_computation {
   {
     // Test with execution_threads = {}. Empty execution_threads means all
     // execution_threads are included.
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ASSERT_OK_AND_ASSIGN(
         bool changed,
         ShardingPropagation(
             /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12477,9 +12182,8 @@ ENTRY main.11 {
   get-tuple-element.10 = bf16[384,1408]{1,0} get-tuple-element(tuple.9), index=0, sharding={devices=[16,1,512]<=[8,16,64]T(1,0,2) last_tile_dim_replicate}
   ROOT tuple.13 = (bf16[384,1408]{1,0}, bf16[8,384,1408]{2,1,0}) tuple(get-tuple-element.10, custom-call.5)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12514,9 +12218,8 @@ ENTRY %elementwise {
   %custom-call.3 = f32[5,7,11,13]{3,2,1,0} custom-call(custom-call.1), custom_call_target="Sharding", custom_call_has_side_effect=true, sharding={unknown shard_as 1}
   ROOT %tuple = (f32[5,7,11,13]{3,2,1,0}, f32[5,7,11,13]{3,2,1,0}) tuple(%custom-call.0, %custom-call.3)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12548,9 +12251,8 @@ ENTRY main {
   %add = bf16[20,2,68096,8512] add(param0, param0)
   ROOT %call = (bf16[20,2,68096,8512]) call(add), to_apply=%called_computation, sharding={{devices=[1,1,16,64]<=[64,16]T(1,0)}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12585,9 +12287,8 @@ ENTRY main {
   %custom-call.4 = bf16[4096,4096]{1,0} custom-call(bf16[2048,4096]{1,0} %custom-call.3), custom_call_target="SPMDShardToFullShape", sharding={devices=[2,1,2]<=[4] last_tile_dim_replicate}
   ROOT %call = (bf16[4096,4096]) call(custom-call.4), to_apply=%called_computation, sharding={devices=[2,2]<=[4]}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12621,9 +12322,8 @@ ENTRY main {
   rbg = u32[2048,4096] rng-bit-generator(seed), algorithm=rng_default
   ROOT s = u32[2048,4096]{1,0} custom-call(rbg), custom_call_target="Sharding", sharding={devices=[2,2]<=[4]}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(
           /*is_spmd=*/true, /*propagate_metadata=*/true,
@@ -12650,13 +12350,12 @@ ENTRY %main.6 (Arg_0.1: s32[8,2]) -> s32[8,2] {
   %broadcast.0 = s32[8,2]{1,0} broadcast(s32[] %constant.0), dimensions={}
   ROOT %multiply.5 = s32[8,2]{1,0} multiply(s32[8,2]{1,0} %custom-call, s32[8,2]{1,0} %broadcast.0)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   HloInstruction* original_custom_call =
       FindInstruction(module.get(), "custom-call");
   ASSERT_NE(original_custom_call, nullptr);
   EXPECT_THAT(original_custom_call, op::NoSharding());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
           .Run(module.get()));

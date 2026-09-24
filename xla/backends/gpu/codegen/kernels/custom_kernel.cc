@@ -104,12 +104,12 @@ absl::StatusOr<CustomKernel> CustomKernel::FromProto(
       se::KernelLoaderSpec kernel_spec,
       se::KernelLoaderSpec::FromProto(proto.kernel_spec(), symbol_resolver));
   ABSL_ASSIGN_OR_RETURN(se::BlockDim block_dims,
-                   se::BlockDim::FromProto(proto.block_dims()));
+                        se::BlockDim::FromProto(proto.block_dims()));
   ABSL_ASSIGN_OR_RETURN(se::ThreadDim thread_dims,
-                   se::ThreadDim::FromProto(proto.thread_dims()));
+                        se::ThreadDim::FromProto(proto.thread_dims()));
   if (proto.has_cluster_dim()) {
     ABSL_ASSIGN_OR_RETURN(se::ClusterDim cluster_dims,
-                     se::ClusterDim::FromProto(proto.cluster_dim()));
+                          se::ClusterDim::FromProto(proto.cluster_dim()));
     return CustomKernel(proto.name(), std::move(kernel_spec), block_dims,
                         thread_dims, cluster_dims, proto.shared_memory_bytes());
   }

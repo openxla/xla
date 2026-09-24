@@ -448,13 +448,13 @@ class HloCopyStartInstruction : public HloInstruction {
 
 class HloCompareInstruction : public HloInstruction {
  public:
-  explicit HloCompareInstruction(const Shape& shape, HloInstruction* lhs,
-                                 HloInstruction* rhs,
-                                 ComparisonDirection direction,
-                                 std::optional<Comparison::Type> type);
+  explicit HloCompareInstruction(
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      ComparisonDirection direction,
+      std::optional<ComparisonOrder> order = std::nullopt);
   ComparisonDirection direction() const { return compare_.GetDirection(); }
   ComparisonOrder order() const { return compare_.GetOrder(); }
-  Comparison::Type type() const { return compare_.GetType(); }
+  const Comparison& comparison() const { return compare_; }
   void ToProto(HloInstructionProto* proto) const override;
 
   static bool ClassOf(const HloInstruction* hlo) {
@@ -1101,9 +1101,51 @@ class HloCollectivePermuteInstruction : public HloChannelInstruction {
   const std::vector<std::vector<int64_t>> slice_sizes_;
 };
 
+class HloCollectiveReduceInstruction : public HloAllReduceInstructionBase {
+ public:
+  explicit HloCollectiveReduceInstruction(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* reduce_computation,
+      std::shared_ptr<CollectiveDeviceListBase> device_list,
+      bool constrain_layout, const std::optional<int64_t>& channel_id,
+      bool use_global_device_ids, bool has_dynamic_root);
+
+  ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
+  explicit HloCollectiveReduceInstruction(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloComputation* reduce_computation,
+      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids,
+      bool has_dynamic_root);
+
+  bool has_dynamic_root() const { return has_dynamic_root_; }
+
+  static bool ClassOf(const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kCollectiveReduce;
+  }
+
+ protected:
+  void PrintExtraAttributesImpl(AttributePrinter& printer,
+                                const HloPrintOptions& options) const override;
+  void ToProto(HloInstructionProto* proto) const override;
+
+ private:
+  bool IdenticalSlowPathIgnoringChannelIdValues(
+      const HloInstruction& other,
+      absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+          eq_computations) const override;
+
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloCloneContext* context) const override;
+
+  bool has_dynamic_root_;
+};
+
 inline bool HloAllReduceInstructionBase::ClassOf(const HloInstruction* hlo) {
   return HloAllReduceInstruction::ClassOf(hlo) ||
-         hlo->opcode() == HloOpcode::kReduceScatter;
+         hlo->opcode() == HloOpcode::kReduceScatter ||
+         HloCollectiveReduceInstruction::ClassOf(hlo);
 }
 
 inline bool HloCollectiveInstruction::ClassOf(const HloInstruction* hlo) {
@@ -2026,6 +2068,7 @@ class HloConvolutionInstruction : public HloInstruction {
       const ConvolutionDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config,
       const SparsityConfig& sparsity_config,
+      const BlockScalingConfig& block_scaling_config,
       ConvolutionKind convolution_kind = CONVOLUTION_KIND_UNSET);
   const Window& window() const override { return window_; }
   void set_window(const Window& window) override { window_ = window; }
@@ -2068,6 +2111,13 @@ class HloConvolutionInstruction : public HloInstruction {
     sparsity_config_ = sparsity_config;
   }
 
+  const BlockScalingConfig& block_scaling_config() const {
+    return block_scaling_config_;
+  }
+  void set_block_scaling_config(const BlockScalingConfig& config) {
+    block_scaling_config_ = config;
+  }
+
   std::string ToCategory() const override;
   void ToProto(HloInstructionProto* proto) const override;
 
@@ -2101,6 +2151,7 @@ class HloConvolutionInstruction : public HloInstruction {
   // The sparsity configuration used for the convolution.
   SparsityConfig sparsity_config_;
   // Convolution block scaling config.
+  BlockScalingConfig block_scaling_config_;
   // Conv type (fprop, dgrad, wgrad)
   ConvolutionKind convolution_kind_ = CONVOLUTION_KIND_UNSET;
 };

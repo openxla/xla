@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/composite_compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/mock_compilation_provider.h"
 #include "xla/stream_executor/device_description.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor::cuda {
 
@@ -56,7 +57,7 @@ TEST(CompositeCompilationProviderTest, Name) {
   providers.push_back(std::move(provider0));
   providers.push_back(std::move(provider1));
   providers.push_back(std::move(provider2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto combining_provider,
       CompositeCompilationProvider::Create(std::move(providers)));
 
@@ -84,7 +85,7 @@ TEST(CompositeCompilationProviderTest, SupportsCompileToRelocatableModule) {
   providers.push_back(std::move(provider0));
   providers.push_back(std::move(provider1));
   providers.push_back(std::move(provider2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto combining_provider,
       CompositeCompilationProvider::Create(std::move(providers)));
   EXPECT_TRUE(combining_provider->SupportsCompileToRelocatableModule());
@@ -104,7 +105,7 @@ TEST(CompositeCompilationProviderTest, SupportsCompileAndLink) {
   providers.push_back(std::move(provider0));
   providers.push_back(std::move(provider1));
   providers.push_back(std::move(provider2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto combining_provider,
       CompositeCompilationProvider::Create(std::move(providers)));
   EXPECT_TRUE(combining_provider->SupportsCompileAndLink());
@@ -121,7 +122,7 @@ TEST(CompositeCompilationProviderTest, Compile) {
   providers.push_back(std::move(provider0));
   providers.push_back(std::move(provider1));
   providers.push_back(std::move(provider2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto combining_provider,
       CompositeCompilationProvider::Create(std::move(providers)));
   EXPECT_THAT(combining_provider->Compile(CudaComputeCapability{10, 0}, "ptx",
@@ -155,7 +156,7 @@ TEST(CompositeCompilationProviderTest, CompileToRelocatableModule) {
   providers.push_back(std::move(provider0));
   providers.push_back(std::move(provider1));
   providers.push_back(std::move(provider2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto combining_provider,
       CompositeCompilationProvider::Create(std::move(providers)));
   EXPECT_THAT(combining_provider->CompileToRelocatableModule(
@@ -186,7 +187,7 @@ TEST(CompositeCompilationProviderTest, CompileAndLink) {
   providers.push_back(std::move(provider0));
   providers.push_back(std::move(provider1));
   providers.push_back(std::move(provider2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto combining_provider,
       CompositeCompilationProvider::Create(std::move(providers)));
   EXPECT_THAT(

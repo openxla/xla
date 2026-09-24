@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -71,6 +71,18 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
 // Returns true if the given instruction is supported by gpuBLASLt
 // GroupedMatMul.
 bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr);
+
+// Returns true if the ragged-dot instruction can be lowered by the Triton
+// XTile backend.  Criteria:
+//   - Exactly one LHS ragged dimension.
+//   - Tiling propagation enabled
+//   (xla_gpu_experimental_enable_tiling_propagation).
+//   - Element types supported by the xtile emitter: F16, BF16, F32, F64,
+//     F8E5M2, F8E4M3FN; nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) on ROCm only.
+//     Complex types (C64, C128) are not supported.
+bool IsTritonSupportedRaggedDot(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    const HloInstruction& instr);
 
 constexpr int64_t WarpSize(const se::DeviceDescription& gpu_device_info) {
   return gpu_device_info.threads_per_warp();
@@ -108,7 +120,7 @@ inline constexpr absl::string_view kTritonGemmFusionKind = "__triton_gemm";
 inline constexpr absl::string_view kTritonNestedGemmFusionKind =
     "__triton_nested_gemm_fusion";
 
-// Fusions that use Triton have FusionBackendConfig.kind equal to this string.
+// Fusions that use cuDNN have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kCuDnnFusionKind = "__cudnn$fusion";
 
 inline constexpr absl::string_view kUncompilableFusion =
@@ -141,17 +153,9 @@ bool IsCustomCallToTopK(const HloInstruction& hlo);
 // implementation.
 bool IsCustomCallToPtxKernel(const HloInstruction& hlo);
 
-
-// Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
-// with multimem.
-bool IsMosaicWithMultimem(const HloInstruction& hlo);
-
 // Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
 // with collective metadata.
 bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo);
-
-// Returns true if instruction is a Mosaic GPU collective instruction.
-bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo);
 
 // Returns true if `instr` is a slice (or dynamic slice) instruction and
 // operates on a contiguous slice of the input buffer.
@@ -305,7 +309,8 @@ template <typename ConfigType>
 absl::StatusOr<std::string> FingerprintWithBackendConfig(
     const HloInstruction& hlo) {
   ABSL_ASSIGN_OR_RETURN(const auto config, hlo.backend_config<ConfigType>());
-  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint, GetProtoFingerprint(config));
+  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint,
+                        GetProtoFingerprint(config));
   return absl::StrCat(hlo.ToString(HloPrintOptions::Fingerprint()),
                       ", backend_config_fingerprint=", fingerprint);
 }

@@ -20,9 +20,9 @@ limitations under the License.
 #include <numeric>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/array2d.h"
 #include "xla/hlo/testlib/test.h"
 
@@ -183,7 +183,9 @@ TEST(Array4dTest, FillRasterDimensionDepthOne) {
 TEST(Array4dTest, FillWithPzTestDepthOne) {
   Array2D<float> matrix(3, 2);
   std::initializer_list<std::initializer_list<float>> values = {
-      {-3.f, -0.1f}, {0.f, -0.1f}, {3.f, 0.2f},
+      {-3.f, -0.1f},
+      {0.f, -0.1f},
+      {3.f, 0.2f},
   };
   int rowno = 0;
   for (auto row : values) {

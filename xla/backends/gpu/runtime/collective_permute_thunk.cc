@@ -286,8 +286,9 @@ absl::Status CollectivePermuteThunk::RunCollective(
       ConvertToDeviceBuffers(params.buffer_allocations,
                              std::vector<CollectiveThunk::Buffer>(buffers()),
                              config_.config.operand_element_type));
-  ABSL_ASSIGN_OR_RETURN(int64_t current_id,
-                   GetCollectiveCurrentId(params.collective_params, config_));
+  ABSL_ASSIGN_OR_RETURN(
+      int64_t current_id,
+      GetCollectiveCurrentId(params.collective_params, config_));
   std::string device_string = GetDeviceString(*params.collective_params);
 
   const P2PConfig::SourceTargetMapEntry source_target =
@@ -440,7 +441,7 @@ static absl::Status RunPeerAccessPermute(
 
     // Wait for target's stream to be ready before writing to its buffers.
     ABSL_ASSIGN_OR_RETURN(const Events& target_events,
-                     rendezvous->at<Events>(target));
+                          rendezvous->at<Events>(target));
     ABSL_RETURN_IF_ERROR(stream.WaitFor(target_events.ready->get()));
 
     // Perform D2D copies from our source to target's destination.
@@ -452,7 +453,7 @@ static absl::Status RunPeerAccessPermute(
                         target.value());
       }
       ABSL_RETURN_IF_ERROR(stream.MemcpyD2D(&*dst_addr, buf.source_buffer,
-                                       buf.source_buffer.size()));
+                                            buf.source_buffer.size()));
     }
 
     // Record a "done" event and fulfill the promise so the target knows
@@ -478,7 +479,7 @@ static absl::Status RunPeerAccessPermute(
   if (source_target.source) {
     RankId source = *source_target.source;
     ABSL_ASSIGN_OR_RETURN(const Events& source_events,
-                     rendezvous->at<Events>(source));
+                          rendezvous->at<Events>(source));
 
     // Await the source's done future (blocks until sender sets promise).
     const absl::StatusOr<EventPool::Event>& done_result =
@@ -530,8 +531,8 @@ static absl::Status RunOneSidedPermute(
         << "OneSidedPermute: WaitSignal from peer " << target
         << " (recv buffer ready)";
     ABSL_RETURN_IF_ERROR(comm.WaitSignal(target, /*op_cnt=*/1, signal_desc,
-                                    GpuCollectives::On(stream))
-                        .Await());
+                                         GpuCollectives::On(stream))
+                             .Await());
 
     // Fuse multiple Puts into a single NCCL group to avoid per-buffer
     // kernel launch overhead.
@@ -554,9 +555,9 @@ static absl::Status RunOneSidedPermute(
             << "OneSidedPermute: Put " << buf.source_buffer.size()
             << " bytes to peer " << target << " at offset " << offset;
 
-        ABSL_RETURN_IF_ERROR(gpu_comm->LaunchPut(buf.source_buffer, sym_mem, offset,
-                                            buf.source_buffer.size(), target,
-                                            GpuCollectives::On(stream)));
+        ABSL_RETURN_IF_ERROR(gpu_comm->LaunchPut(
+            buf.source_buffer, sym_mem, offset, buf.source_buffer.size(),
+            target, GpuCollectives::On(stream)));
       }
       return absl::OkStatus();
     };
@@ -581,9 +582,10 @@ static absl::Status RunOneSidedPermute(
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "OneSidedPermute: WaitSignal from peer " << source
         << " op_cnt=" << device_buffers.size() << " (data written)";
-    ABSL_RETURN_IF_ERROR(comm.WaitSignal(source, /*op_cnt=*/device_buffers.size(),
-                                    signal_desc, GpuCollectives::On(stream))
-                        .Await());
+    ABSL_RETURN_IF_ERROR(
+        comm.WaitSignal(source, /*op_cnt=*/device_buffers.size(), signal_desc,
+                        GpuCollectives::On(stream))
+            .Await());
   }
 
   return absl::OkStatus();
@@ -634,7 +636,7 @@ absl::StatusOr<P2PConfig::SourceTargetRanks> RemapSourceTargetToCliqueRanks(
     const GpuCliqueKey& clique_key, const DeviceAssignment& device_assn,
     CollectiveOpGroupMode group_mode, GlobalDeviceId global_device_id) {
   ABSL_ASSIGN_OR_RETURN(auto logical_id,
-                   device_assn.LogicalIdForDevice(global_device_id));
+                        device_assn.LogicalIdForDevice(global_device_id));
 
   // Map a logical ID (partition or replica) to its GlobalDeviceId.
   auto id_to_global = [&](int64_t id) -> GlobalDeviceId {

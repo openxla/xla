@@ -96,7 +96,8 @@ absl::Status ParseProto(riegeli::Reader& reader, ProtoFormat format,
       bool parse_success = false;
       {
         riegeli::ReaderInputStream zero_copy_stream(&reader);
-        parse_success = google::protobuf::TextFormat::Parse(&zero_copy_stream, &message);
+        parse_success =
+            google::protobuf::TextFormat::Parse(&zero_copy_stream, &message);
       }
       if (!parse_success) {
         return absl::InvalidArgumentError("Failed to parse text proto");
@@ -108,7 +109,8 @@ absl::Status ParseProto(riegeli::Reader& reader, ProtoFormat format,
       bool parse_success = false;
       {
         riegeli::ReaderInputStream zero_copy_stream(&reader);
-        parse_success = google::protobuf::TextFormat::Parse(&zero_copy_stream, &message);
+        parse_success =
+            google::protobuf::TextFormat::Parse(&zero_copy_stream, &message);
       }
       if (parse_success) {
         return absl::OkStatus();
@@ -149,18 +151,21 @@ absl::Status Pack(std::unique_ptr<riegeli::Reader> reader,
 
   if (options.proto_type == "xla.gpu.GpuExecutableProto") {
     auto* gpu_proto =
-        google::protobuf::DownCastMessage<xla::gpu::GpuExecutableProto>(message.get());
+        google::protobuf::DownCastMessage<xla::gpu::GpuExecutableProto>(
+            message.get());
     return WriteSplitGpuExecutable(std::move(*gpu_proto), std::move(writer));
   }
 
   if (options.proto_type == "xla.ExecutableAndOptionsProto") {
     auto* options_proto =
-        google::protobuf::DownCastMessage<xla::ExecutableAndOptionsProto>(message.get());
+        google::protobuf::DownCastMessage<xla::ExecutableAndOptionsProto>(
+            message.get());
     return WriteSplitExecutableAndOptions(*options_proto, std::move(writer));
   }
 
   if (options.proto_type == "xla.HloProto") {
-    auto* hlo_proto = google::protobuf::DownCastMessage<xla::HloProto>(message.get());
+    auto* hlo_proto =
+        google::protobuf::DownCastMessage<xla::HloProto>(message.get());
     return WriteSplitHloProto(*hlo_proto, std::move(writer));
   }
 
@@ -189,13 +194,14 @@ absl::StatusOr<SplitProtoManifest> ReadManifest(riegeli::Reader& reader) {
   return manifest;
 }
 
-absl::Status SerializeProto(const google::protobuf::Message& message, ProtoFormat format,
-                            riegeli::Writer& writer) {
+absl::Status SerializeProto(const google::protobuf::Message& message,
+                            ProtoFormat format, riegeli::Writer& writer) {
   if (format == ProtoFormat::kText) {
     bool print_success = false;
     {
       riegeli::WriterOutputStream zero_copy_stream(&writer);
-      print_success = google::protobuf::TextFormat::Print(message, &zero_copy_stream);
+      print_success =
+          google::protobuf::TextFormat::Print(message, &zero_copy_stream);
     }
     if (!writer.ok()) {
       return writer.status();
@@ -232,7 +238,8 @@ absl::Status Unpack(std::unique_ptr<riegeli::Reader> reader,
 
   ABSL_RETURN_IF_ERROR(ReadSplitProto(std::move(reader), *message));
 
-  ABSL_RETURN_IF_ERROR(SerializeProto(*message, options.output_format, *writer));
+  ABSL_RETURN_IF_ERROR(
+      SerializeProto(*message, options.output_format, *writer));
 
   if (!writer->Close()) {
     return writer->status();

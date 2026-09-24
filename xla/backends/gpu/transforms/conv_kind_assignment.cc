@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/conv_utils.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -518,6 +519,16 @@ absl::StatusOr<HloInstruction*> AssignConvKind(
     }
   }
 
+  // cuDNN graph API does not have engine execution plans for INT8 convolutions
+  // on pre-Ampere GPUs.
+  if ((primitive_util::Is8BitIntegralType(element_type) ||
+       primitive_util::Is8BitIntegralType(
+           conv->operand(0)->shape().element_type())) &&
+      cc.cuda_compute_capability() != nullptr &&
+      !cc.cuda_compute_capability()->IsAtLeastAmpere()) {
+    return nullptr;
+  }
+
   if (ConvolutionMatch m = MatchBackwardInput(conv)) {
     conv = CreateGpuConv(CONVOLUTION_KIND_DGRAD, conv, conv->mutable_operand(0),
                          *m);
@@ -546,7 +557,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
                                       const se::dnn::VersionInfo& dnn_version) {
   CHECK_EQ(conv->opcode(), HloOpcode::kConvolution);
   ABSL_ASSIGN_OR_RETURN(HloInstruction * conv_with_kind,
-                   AssignConvKind(conv, cc, dnn_version));
+                        AssignConvKind(conv, cc, dnn_version));
   if (conv_with_kind == nullptr || conv_with_kind == conv ||
       Cast<HloConvolutionInstruction>(conv_with_kind)->convolution_kind() ==
           CONVOLUTION_KIND_UNSET) {
@@ -555,7 +566,8 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
 
   VLOG(1) << "Replacing convolution " << conv->ToString() << " with "
           << conv_with_kind->ToString();
-  ABSL_RETURN_IF_ERROR(conv->parent()->ReplaceInstruction(conv, conv_with_kind));
+  ABSL_RETURN_IF_ERROR(
+      conv->parent()->ReplaceInstruction(conv, conv_with_kind));
   return true;
 }
 

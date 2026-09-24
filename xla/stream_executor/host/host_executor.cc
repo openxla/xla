@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/mem.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/event.h"
@@ -45,14 +46,11 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/profile_utils/cpu_utils.h"
-#include "tsl/platform/mem.h"
 
 namespace stream_executor {
 namespace host {
 
-absl::Status HostExecutor::Init() {
-  return absl::OkStatus();
-}
+absl::Status HostExecutor::Init() { return absl::OkStatus(); }
 
 absl::StatusOr<std::unique_ptr<Kernel>> HostExecutor::LoadKernel(
     const KernelLoaderSpec& /*spec*/) {

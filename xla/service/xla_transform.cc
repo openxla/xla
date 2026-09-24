@@ -120,34 +120,37 @@ absl::StatusOr<bool> ApplyXlaTransformsToModule(
   }
   bool changed = false;
   for (auto& transform : transforms) {
-    auto status_or_bool = transform->Transform(module);
-    if (!status_or_bool.status().ok()) {
-      return status_or_bool.status();
-    }
-    changed |= status_or_bool.value();
+    ABSL_ASSIGN_OR_RETURN(bool transform_changed, transform->Transform(module));
+    changed |= transform_changed;
   }
   return changed;
 }
 
-ApplyXlaTransforms::ApplyXlaTransforms(HloXlaTransform::PipelineStage stage)
+ApplyXlaTransforms::ApplyXlaTransforms(
+    HloXlaTransform::PipelineStage stage,
+    std::unique_ptr<TargetVerifierMetadata> target_metadata)
     : stage_(stage) {
   static std::atomic<int64_t> next_id{0};
   name_ = absl::StrCat("apply-xla-transforms-", next_id.fetch_add(1));
+  if (target_metadata == nullptr) {
+    target_metadata = std::make_unique<DefaultVerifierMetadata>(
+        HloVerifierOpts{}.WithLayoutSensitive(false).WithAllowMixedPrecision(
+            true));
+  }
+  verifier_ = std::make_unique<HloVerifier>(std::move(target_metadata), name_);
 }
+
+ApplyXlaTransforms::~ApplyXlaTransforms() = default;
 
 absl::StatusOr<bool> ApplyXlaTransforms::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(1) << "ApplyXlaTransforms ENTRY";
   XLA_VLOG_LINES(1, module->ToString());
-  ABSL_ASSIGN_OR_RETURN(bool changed, ApplyXlaTransformsToModule(stage_, module));
+  ABSL_ASSIGN_OR_RETURN(bool changed,
+                        ApplyXlaTransformsToModule(stage_, module));
   if (changed) {
-    HloVerifier verifier(/*layout_sensitive=*/false,
-                         /*allow_mixed_precision=*/true);
-    auto verifier_status = verifier.Run(module);
-    if (!verifier_status.status().ok()) {
-      return verifier_status.status();
-    }
+    ABSL_RETURN_IF_ERROR(verifier_->Run(module, execution_threads).status());
   }
   VLOG(1) << "ApplyXlaTransforms EXIT";
   XLA_VLOG_LINES(1, module->ToString());
@@ -156,8 +159,9 @@ absl::StatusOr<bool> ApplyXlaTransforms::RunImpl(
 
 absl::Status UpdateHloModuleFromProto(HloModule* module,
                                       const HloModuleProto& transformed_proto) {
-  ABSL_ASSIGN_OR_RETURN(auto temp_module, HloModule::CreateFromProto(
-                                         transformed_proto, module->config()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto temp_module,
+      HloModule::CreateFromProto(transformed_proto, module->config()));
 
   // Capture schedule from temp_module if it has one.
   absl::flat_hash_map<HloComputation*, HloInstructionSequence> comp_to_sequence;
@@ -207,7 +211,7 @@ absl::StatusOr<xla::HloModuleMetadataProto> GetHloPassPipelineTrace(
       xla::HloModuleConfig config,
       xla::HloModule::CreateModuleConfigFromProto(proto, debug_options));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::HloModule> module,
-                   xla::HloModule::CreateFromProto(proto, config));
+                        xla::HloModule::CreateFromProto(proto, config));
 
   stream_executor::Platform* platform = nullptr;
   auto default_platform_or = xla::PlatformUtil::GetDefaultPlatform();
@@ -228,7 +232,7 @@ absl::StatusOr<xla::HloModuleMetadataProto> GetHloPassPipelineTrace(
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::Compiler> compiler,
-                   xla::Compiler::GetForPlatform(platform->id()));
+                        xla::Compiler::GetForPlatform(platform->id()));
 
   xla::Compiler::CompileOptions compile_options;
   // We pass nullptr as executor, as the TPU compiler's RunHloPasses

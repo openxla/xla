@@ -85,6 +85,9 @@ limitations under the License.
 #include "riegeli/records/record_position.h"
 #include "riegeli/records/record_reader.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/random.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/tools/comparison/comparison_hlo_dumper.h"
 #include "xla/hlo/tools/comparison/comparison_result.pb.h"
@@ -97,13 +100,10 @@ limitations under the License.
 #include "xla/hlo/tools/hlo_diff/hlo_gumgraph_diff.h"
 #include "xla/literal.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/tools/debug_event.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/random.h"
 
 ABSL_FLAG(std::string, hlo_module_name, "",
           "Name of the HLO module to compare.");

@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_partition.h"
 #include "xla/util.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {
 

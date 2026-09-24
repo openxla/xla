@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/escaping.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -43,6 +42,8 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -60,11 +61,10 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -86,6 +86,62 @@ bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr) {
   return false;
 }
 
+bool IsTritonSupportedRaggedDot(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kRaggedDot) {
+    return false;
+  }
+
+  const auto* ragged_dot = Cast<HloRaggedDotInstruction>(&instr);
+  const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
+
+  // Exactly one LHS ragged dimension is required: the emitter and autotuner
+  // access lhs_ragged_dimensions(0) unconditionally.
+  if (ragged_dims.lhs_ragged_dimensions().size() != 1) {
+    return false;
+  }
+
+  // Tiling propagation must be enabled.  TritonBackend::IsSupported gates
+  // kRaggedDot fusions on this flag — the xtile pipeline needs
+  // TiledHloComputation::Tile to drive code generation.
+  if (!instr.GetModule()
+           ->config()
+           .debug_options()
+           .xla_gpu_experimental_enable_tiling_propagation()) {
+    return false;
+  }
+
+  // The xtile emitter's PrimitiveTypeToMlirType conversion supports the
+  // following element types for ragged-dot operands and output.
+  // Complex types (C64, C128) fall to the default branch and return
+  // UnimplementedError.  Nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) are
+  // ROCm-only (NaNo format not supported on NVIDIA GPUs).
+  // Triton uses power-of-two block sizes (16..256) internally; problem
+  // dimensions need not be powers of two — masking handles boundary tiles.
+  const bool is_rocm = gpu_compute_capability.IsRocm();
+  auto is_supported_element_type = [&](PrimitiveType type) -> bool {
+    switch (type) {
+      case F16:
+      case BF16:
+      case F32:
+      case F64:
+      case F8E5M2:
+      case F8E4M3FN:
+        return true;
+      case F8E4M3FNUZ:
+      case F8E5M2FNUZ:
+        return is_rocm;
+      default:
+        return false;
+    }
+  };
+
+  return is_supported_element_type(instr.operand(0)->shape().element_type()) &&
+         is_supported_element_type(instr.operand(1)->shape().element_type()) &&
+         is_supported_element_type(instr.shape().element_type());
+}
+
 absl::StatusOr<bool> IsCublasSupportedMatMul(
     const HloInstruction& dot, bool allow_matrix_vector_multiplication) {
   if (dot.opcode() != HloOpcode::kDot) {
@@ -96,7 +152,7 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
   int num_matrix_operands = 0;
   for (int operand : {0, 1}) {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims dims,
-                     DotOperandDims::FromDotOperand(&dot, operand));
+                          DotOperandDims::FromDotOperand(&dot, operand));
     // cuBLAS only supports single contracting dimension.
     if (dims.Rank(DotOperandDims::kContracting) != 1) {
       return false;
@@ -163,21 +219,10 @@ bool IsCustomCallToMosaicGpu(const HloInstruction& hlo) {
           hlo.custom_call_target() == "mosaic_gpu_v2");
 }
 
-
-bool IsMosaicWithMultimem(const HloInstruction& hlo) {
-  return IsCustomCallToMosaicGpu(hlo) &&
-         absl::StrContains(hlo.raw_backend_config_string(),
-                           "multimem_parameters");
-}
-
 bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo) {
   return IsCustomCallToMosaicGpu(hlo) &&
          RE2::PartialMatch(hlo.raw_backend_config_string(),
                            "uses_xla_collective_metadata\\s*=\\s*[tT]rue");
-}
-
-bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo) {
-  return IsMosaicWithMultimem(hlo);
 }
 
 static bool IsContiguousSlice(

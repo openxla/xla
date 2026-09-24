@@ -40,12 +40,15 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/transforms/pgle_accuracy_checker.h"
 #include "xla/backends/gpu/transforms/scheduling_instruction_annotator.h"
-#include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -83,10 +86,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -103,7 +102,7 @@ absl::StatusOr<bool> UsesMultipleCollectiveDomains(const HloModule& module) {
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                       GetCollectiveCommunicationDomain(*instruction));
+                            GetCollectiveCommunicationDomain(*instruction));
       if (first_domain.has_value() && *first_domain != domain) {
         return true;
       }
@@ -685,7 +684,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
   ABSL_ASSIGN_OR_RETURN(bool uses_multiple_collective_domains,
-                   UsesMultipleCollectiveDomains(*module));
+                        UsesMultipleCollectiveDomains(*module));
 
   pipeline.AddPass<LegalizeSchedulingAnnotations>(
       SchedulingAnnotationsConfig());
@@ -837,34 +836,6 @@ absl::Status RunLatencyHidingSchedulerPasses(
   return pipeline.Run(module).status();
 }
 
-bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint,
-                  const se::DeviceDescription& gpu_device_info) {
-  if (IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(module)) {
-    // User specified opt level, we turn on the LHS.
-    return true;
-  }
-
-  if (module.config()
-          .debug_options()
-          .xla_gpu_enable_latency_hiding_scheduler()) {
-    // Similarly pass is enabled if the flag is on.
-    return true;
-  }
-
-  if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
-    // We also enable LHS when we satisfy requirements for enabling unified
-    // latency estimator.
-    return true;
-  }
-  if (HasValidPGLEProfile(module, fingerprint)) {
-    VLOG(1) << "Profile data detected but "
-               "`xla_gpu_enable_latency_hiding_scheduler` unset. To use it "
-               "compiler will run Latency Hiding Scheduler anyway.";
-    return true;
-  }
-  return false;
-}
-
 absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
     HloModule* module, const GpuAliasInfo* alias_info, int64_t pointer_size,
     int64_t* peak_memory_bytes) {
@@ -882,11 +853,38 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
                                                PostProcessSchedule),
                         /*execution_threads=*/
                         {HloInstruction::kMainExecutionThread,
-                         StreamAttributeAsyncWrapper::kParallelExecutionThread},
+                         HloInstruction::kParallelExecutionThread},
                         peak_memory_bytes);
 }
 
 }  // end namespace
+
+bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint,
+                  const se::DeviceDescription& gpu_device_info) {
+  const auto& debug_options = module.config().debug_options();
+  if (debug_options.has_xla_gpu_enable_latency_hiding_scheduler()) {
+    // If explicitly configured (true or false), respect the user's setting.
+    return debug_options.xla_gpu_enable_latency_hiding_scheduler();
+  }
+
+  if (IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(module)) {
+    // User specified opt level, we turn on the LHS.
+    return true;
+  }
+
+  if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
+    // We also enable LHS when we satisfy requirements for enabling unified
+    // latency estimator.
+    return true;
+  }
+  if (HasValidPGLEProfile(module, fingerprint)) {
+    VLOG(1) << "Profile data detected but "
+               "`xla_gpu_enable_latency_hiding_scheduler` unset. To use it "
+               "compiler will run Latency Hiding Scheduler anyway.";
+    return true;
+  }
+  return false;
+}
 
 absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
   HloPassPipeline pipeline("async-collective-conversion");
@@ -994,9 +992,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // See `xla::LatencyHidingScheduler::Run`.
   ABSL_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
-                   ScheduleGpuModuleWithMemoryScheduler(
-                       module, alias_info, pointer_size, &peak_memory_bytes));
+  ABSL_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
+                                           &peak_memory_bytes));
   ABSL_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =

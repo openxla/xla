@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -125,14 +126,15 @@ class GpuBlasLtThunkBuilder {
   absl::StatusOr<std::unique_ptr<CublasLtMatmulThunk>> CreateThunk(
       HloInstruction* gemm) {
     ABSL_ASSIGN_OR_RETURN(const auto gpu_config,
-                     gemm->backend_config<GpuBackendConfig>());
+                          gemm->backend_config<GpuBackendConfig>());
     const auto& backend_config = gpu_config.gemm_backend_config();
 
-    ABSL_ASSIGN_OR_RETURN(bool has_vector_bias, gpublas_lt::EpilogueAddsVectorBias(
-                                               backend_config.epilogue()));
+    ABSL_ASSIGN_OR_RETURN(
+        bool has_vector_bias,
+        gpublas_lt::EpilogueAddsVectorBias(backend_config.epilogue()));
     bool has_matrix_bias = backend_config.beta() != 0;
-    ABSL_ASSIGN_OR_RETURN(auto epilogue,
-                     gpublas_lt::AsBlasLtEpilogue(backend_config.epilogue()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto epilogue, gpublas_lt::AsBlasLtEpilogue(backend_config.epilogue()));
 
     std::vector<Shape> buf_shapes;
     for (auto op : gemm->operands()) {
@@ -150,7 +152,7 @@ class GpuBlasLtThunkBuilder {
       int64_t size = ShapeUtil::ByteSizeOf(shape);
       mem_buffers_.emplace_back();
       ABSL_ASSIGN_OR_RETURN(mem_buffers_.back(),
-                       allocator_.Allocate(exec_->device_ordinal(), size));
+                            allocator_.Allocate(exec_->device_ordinal(), size));
       allocs_.emplace_back(/*index=*/idx++, size, /*color=*/0);
       slices.push_back(
           {BufferAllocation::Slice{&allocs_.back(), /*offset*/ 0, size},
@@ -548,8 +550,8 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerialization) {
   thunk_info.profile_annotation = "test";
 
   CublasLtMatmulThunkProto proto;
-  ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(kCublasLtMatmulThunkProtoText,
-                                                  &proto));
+  ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
+      kCublasLtMatmulThunkProtoText, &proto));
 
   std::vector<BufferAllocation> allocations = {
       BufferAllocation(/*index=*/0, /*size=*/4, /*color=*/0),  // UNUSED

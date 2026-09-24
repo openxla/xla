@@ -13,22 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {

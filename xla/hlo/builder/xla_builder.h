@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/stacktrace.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -59,7 +60,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/bitmap.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 
@@ -982,6 +982,18 @@ class XlaBuilder {
       const std::optional<Shape>& shape_with_layout = std::nullopt,
       std::optional<bool> use_global_device_ids = std::nullopt);
 
+  // Reduces `operands` with `computation` and writes the result only to the
+  // root rank (the first member of each replica group, or a runtime-selected
+  // rank when `has_dynamic_root` is set and the last operand is an S32 vector
+  // of per-operand roots). Returns a single op whose shape is a tuple when
+  // there is more than one data operand.
+  XlaOp CollectiveReduceWithDeviceList(
+      absl::Span<const XlaOp> operands, XlaComputationId computation,
+      const CollectiveDeviceListBase& replica_groups,
+      const std::optional<ChannelHandle>& channel_id = std::nullopt,
+      std::optional<bool> use_global_device_ids = std::nullopt,
+      bool has_dynamic_root = false);
+
   XlaOp ReduceScatter(
       XlaOp operand, XlaComputationId computation, int64_t scatter_dimension,
       int64_t shard_count, absl::Span<const ReplicaGroup> replica_groups = {},
@@ -1242,7 +1254,7 @@ class XlaBuilder {
   XlaOp BinaryOp(HloOpcode binop, XlaOp lhs, XlaOp rhs,
                  absl::Span<const int64_t> broadcast_dimensions,
                  std::optional<ComparisonDirection> direction = std::nullopt,
-                 std::optional<Comparison::Type> type = std::nullopt);
+                 std::optional<ComparisonOrder> order = std::nullopt);
 
   absl::StatusOr<XlaOp> Compare(const Shape& shape, XlaOp lhs, XlaOp rhs,
                                 ComparisonDirection direction);
@@ -1251,7 +1263,7 @@ class XlaBuilder {
   virtual absl::StatusOr<XlaOp> Compare(const Shape& shape, XlaOp lhs,
                                         XlaOp rhs,
                                         ComparisonDirection direction,
-                                        Comparison::Type type);
+                                        ComparisonOrder order);
 
   // Internal helper method that does the building for an arbitrary binary op
   // with same ranked operands that doesn't broadcast.
@@ -1507,6 +1519,9 @@ class XlaBuilder {
   friend XlaOp Compare(XlaOp lhs, XlaOp rhs,
                        absl::Span<const int64_t> broadcast_dimensions,
                        ComparisonDirection direction);
+  friend XlaOp Compare(XlaOp lhs, XlaOp rhs,
+                       absl::Span<const int64_t> broadcast_dimensions,
+                       ComparisonDirection direction, ComparisonOrder order);
   friend XlaOp Compare(XlaOp lhs, XlaOp rhs,
                        absl::Span<const int64_t> broadcast_dimensions,
                        ComparisonDirection direction,
@@ -1805,6 +1820,11 @@ class XlaBuilder {
       const std::optional<ChannelHandle>& channel_id,
       const std::optional<Shape>& shape_with_layout,
       std::optional<bool> use_global_device_ids);
+  friend XlaOp CollectiveReduceWithDeviceList(
+      absl::Span<const XlaOp> operands, XlaComputationId computation,
+      const CollectiveDeviceListBase& replica_groups,
+      const std::optional<ChannelHandle>& channel_id,
+      std::optional<bool> use_global_device_ids, bool has_dynamic_root);
 
   friend XlaOp AllReduceTuple(absl::Span<const XlaOp> operand,
                               XlaComputationId computation,
@@ -2559,6 +2579,9 @@ XlaOp LeTotalOrder(XlaOp lhs, XlaOp rhs,
 // broadcast_dimensions for consistency with others).
 XlaOp Compare(XlaOp lhs, XlaOp rhs,
               absl::Span<const int64_t> broadcast_dimensions,
+              ComparisonDirection direction, ComparisonOrder order);
+XlaOp Compare(XlaOp lhs, XlaOp rhs,
+              absl::Span<const int64_t> broadcast_dimensions,
               ComparisonDirection direction, Comparison::Type compare_type);
 XlaOp Compare(XlaOp lhs, XlaOp rhs,
               absl::Span<const int64_t> broadcast_dimensions,
@@ -3114,6 +3137,15 @@ XlaOp AllReduceTupleWithDeviceList(
     const std::optional<ChannelHandle>& channel_id = std::nullopt,
     const std::optional<Shape>& shape_with_layout = std::nullopt,
     std::optional<bool> use_global_device_ids = std::nullopt);
+
+// Reduces `operands` to a single root rank (see
+// XlaBuilder::CollectiveReduceWithDeviceList).
+XlaOp CollectiveReduceWithDeviceList(
+    absl::Span<const XlaOp> operands, XlaComputationId computation,
+    const CollectiveDeviceListBase& replica_groups,
+    const std::optional<ChannelHandle>& channel_id = std::nullopt,
+    std::optional<bool> use_global_device_ids = std::nullopt,
+    bool has_dynamic_root = false);
 
 XlaOp ReduceScatter(
     XlaOp operand, const XlaComputation& computation, int64_t scatter_dimension,

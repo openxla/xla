@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef XLA_TSL_LIB_IO_RECORD_READER_H_
 #define XLA_TSL_LIB_IO_RECORD_READER_H_
 
+#include "tsl/platform/stringpiece.h"
 #include "xla/tsl/lib/io/inputstream_interface.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/stringpiece.h"
 #if !defined(IS_SLIM_BUILD)
 #include "xla/tsl/lib/io/snappy/snappy_compression_options.h"
 #include "xla/tsl/lib/io/snappy/snappy_inputstream.h"

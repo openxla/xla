@@ -35,7 +35,9 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/frontend_attributes.h"
@@ -88,12 +90,13 @@ WidenWhileCondition(HloComputation* narrow_condition, const Shape& wide_shape) {
       HloInstruction::CreateCall(ShapeUtil::MakeShape(PRED, {}),
                                  {truncated_parameter}, narrow_condition));
   call_narrow_cond->set_original_value(
-      std::make_shared<OriginalValue>(OriginalValue::SyntheticCall()));
+      std::make_shared<OriginalValue>(call_narrow_cond->shape(),
+                                      /*call_hierarchy=*/""));
 
   wide_while_cond->set_root_instruction(call_narrow_cond);
 
   ABSL_ASSIGN_OR_RETURN(auto inlined_instructions_map,
-                   CallInliner::Inline(call_narrow_cond));
+                        CallInliner::Inline(call_narrow_cond));
   return {{wide_while_cond, std::move(inlined_instructions_map)}};
 }
 
@@ -119,7 +122,8 @@ WidenWhileBody(HloComputation* narrow_body, const Shape& wide_shape) {
       wide_while_body->AddInstruction(HloInstruction::CreateCall(
           narrow_shape, {truncated_parameter}, narrow_body));
   call_narrow_body->set_original_value(
-      std::make_shared<OriginalValue>(OriginalValue::SyntheticCall()));
+      std::make_shared<OriginalValue>(call_narrow_body->shape(),
+                                      /*call_hierarchy=*/""));
 
   std::vector<HloInstruction*> live_through_values;
   for (int i = narrow_shape.tuple_shapes().size();
@@ -135,7 +139,7 @@ WidenWhileBody(HloComputation* narrow_body, const Shape& wide_shape) {
       TupleUtil::AppendSuffix(call_narrow_body, live_through_values));
 
   ABSL_ASSIGN_OR_RETURN(auto inlined_instructions_map,
-                   CallInliner::Inline(call_narrow_body));
+                        CallInliner::Inline(call_narrow_body));
   return {{wide_while_body, std::move(inlined_instructions_map)}};
 }
 
@@ -180,19 +184,30 @@ WidenWhileBody(HloComputation* narrow_body, const Shape& wide_shape) {
             old_instruction->CloneWithNewOperands(old_instruction->shape(),
                                                   new_operands));
 
-        std::optional<std::string> original_call_instructions;
-        if (while_instr->original_value() != nullptr) {
-          original_call_instructions =
-              while_instr->original_value()->GetOriginalCallLikeInstructions();
-        }
-        if (original_call_instructions.has_value() &&
+        if (while_instr->original_value() != nullptr &&
             old_instruction->original_value() != nullptr) {
+          std::optional<std::string> call_hierarchy =
+              while_instr->original_value()->call_hierarchy();
+
           std::string original_call_prefix;
-          if (!original_call_instructions->empty()) {
-            // We only add the wildcard iteration count if the call-like
-            // instruction is available.
-            original_call_prefix =
-                absl::StrCat(*original_call_instructions, "#*/");
+          if (call_hierarchy.has_value() && !call_hierarchy->empty()) {
+            std::string hoisted_call_hierarchy = *call_hierarchy;
+            if (absl::StrContains(hoisted_call_hierarchy, "#$")) {
+              absl::StrReplaceAll({{"#$", "#*"}}, &hoisted_call_hierarchy);
+            } else if (!absl::EndsWith(hoisted_call_hierarchy, "#*")) {
+              absl::StrAppend(&hoisted_call_hierarchy, "#*");
+            }
+            original_call_prefix = absl::StrCat(hoisted_call_hierarchy, "/");
+          } else if (!while_instr->original_value()->IsEmpty()) {
+            const auto& first_leaf = while_instr->original_value()
+                                         ->original_arrays()
+                                         .begin()
+                                         ->second;
+            if (first_leaf.has_value() &&
+                !first_leaf->instruction_name.empty()) {
+              original_call_prefix =
+                  absl::StrCat(first_leaf->instruction_name, "#*/");
+            }
           }
 
           auto new_original_value = std::make_shared<OriginalValue>(
@@ -204,6 +219,24 @@ WidenWhileBody(HloComputation* narrow_body, const Shape& wide_shape) {
                   original_call_prefix, original_array->instruction_name);
             }
           }
+
+          if (call_hierarchy.has_value()) {
+            std::string hoisted_call_hierarchy = *call_hierarchy;
+            if (absl::StrContains(hoisted_call_hierarchy, "#$")) {
+              absl::StrReplaceAll({{"#$", "#*"}}, &hoisted_call_hierarchy);
+            } else if (!absl::EndsWith(hoisted_call_hierarchy, "#*")) {
+              absl::StrAppend(&hoisted_call_hierarchy, "#*");
+            }
+            if (new_original_value->call_hierarchy().has_value()) {
+              new_original_value->set_call_hierarchy(
+                  absl::StrCat(hoisted_call_hierarchy, "/",
+                               *new_original_value->call_hierarchy()));
+            } else {
+              new_original_value->set_call_hierarchy(
+                  std::move(hoisted_call_hierarchy));
+            }
+          }
+
           new_instruction->set_original_value(std::move(new_original_value));
         }
         set_hoisted(old_instruction, new_instruction);
@@ -243,8 +276,9 @@ WhileUtil::MakeInstructionsLiveIn(
 
   HloComputation* new_while_body;
   CallInliner::InlinedInstructionMap inlined_instructions_map;
-  ABSL_ASSIGN_OR_RETURN(std::tie(new_while_body, inlined_instructions_map),
-                   WidenWhileBody(while_instr->while_body(), new_while_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      std::tie(new_while_body, inlined_instructions_map),
+      WidenWhileBody(while_instr->while_body(), new_while_shape));
 
   HloInstruction* new_while_init =
       TupleUtil::AppendSuffix(while_instr->mutable_operand(0), instructions);
@@ -253,7 +287,8 @@ WhileUtil::MakeInstructionsLiveIn(
       HloInstruction::CreateWhile(new_while_shape, new_while_condition,
                                   new_while_body, new_while_init));
   if (while_instr->original_value() != nullptr) {
-    OriginalValue new_original_value(new_while_shape);
+    OriginalValue new_original_value(
+        new_while_shape, while_instr->original_value()->call_hierarchy());
     for (auto& [shape_index, original_array] :
          new_original_value.mutable_original_arrays()) {
       // The hoisted instructions are appended to the end of the while
@@ -320,15 +355,16 @@ MakeCountedLoopConditionComputation(const Shape& loop_state_shape,
   Shape scalar_pred = ShapeUtil::MakeShape(PRED, {});
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloComputation> cond_computation,
-                   CreateComputationWithSignature({&loop_state_shape},
-                                                  scalar_pred, "while_cond"));
+                        CreateComputationWithSignature(
+                            {&loop_state_shape}, scalar_pred, "while_cond"));
 
   HloInstruction* trip_count_constant =
       cond_computation->AddInstruction(HloInstruction::CreateConstant(
           LiteralUtil::CreateR0<int32_t>(trip_count)));
 
   HloInstruction* param = cond_computation->parameter_instruction(0);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * indvar, MakeGetTupleElementHlo(param, 0));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * indvar,
+                        MakeGetTupleElementHlo(param, 0));
 
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * compare,
@@ -343,24 +379,26 @@ MakeCountedLoopBodyComputation(
     absl::FunctionRef<absl::StatusOr<WhileUtil::LoopStateTy>(
         HloInstruction*, const WhileUtil::LoopStateTy&)>
         loop_body_generator) {
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloComputation> body_computation,
-                   CreateComputationWithSignature(
-                       {&loop_state_shape}, loop_state_shape, "while_body"));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloComputation> body_computation,
+      CreateComputationWithSignature({&loop_state_shape}, loop_state_shape,
+                                     "while_body"));
   HloInstruction* one = body_computation->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(1)));
   HloInstruction* param = body_computation->parameter_instruction(0);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * indvar, MakeGetTupleElementHlo(param, 0));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * indvar,
+                        MakeGetTupleElementHlo(param, 0));
   ABSL_ASSIGN_OR_RETURN(HloInstruction * next_indvar,
-                   MakeBinaryHlo(HloOpcode::kAdd, indvar, one));
+                        MakeBinaryHlo(HloOpcode::kAdd, indvar, one));
 
   std::vector<HloInstruction*> loop_body_generator_args;
   for (int i = 1, e = loop_state_shape.tuple_shapes().size(); i < e; i++) {
     ABSL_ASSIGN_OR_RETURN(HloInstruction * tuple_element,
-                     MakeGetTupleElementHlo(param, i));
+                          MakeGetTupleElementHlo(param, i));
     loop_body_generator_args.push_back(tuple_element);
   }
   ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> next_state,
-                   loop_body_generator(indvar, loop_body_generator_args));
+                        loop_body_generator(indvar, loop_body_generator_args));
   next_state.insert(next_state.begin(), next_indvar);
   HloInstruction* next_state_tuple =
       body_computation->AddInstruction(HloInstruction::CreateTuple(next_state));
@@ -449,9 +487,10 @@ WhileUtil::MakeCountedLoop(HloModule* module, int32_t trip_count,
     const WhileUtil::LoopStateTy& init_values,
     WhileUtil::LoopBodyGeneratorTy loop_body_generator,
     const OpMetadata& metadata) {
-  ABSL_ASSIGN_OR_RETURN(auto owning_loop_state,
-                   MakeCountedLoop(computation->parent(), trip_count,
-                                   init_values, loop_body_generator, metadata));
+  ABSL_ASSIGN_OR_RETURN(
+      auto owning_loop_state,
+      MakeCountedLoop(computation->parent(), trip_count, init_values,
+                      loop_body_generator, metadata));
   for (auto& instruction_to_add : owning_loop_state.instructions_to_add) {
     computation->AddInstruction(std::move(instruction_to_add));
   }

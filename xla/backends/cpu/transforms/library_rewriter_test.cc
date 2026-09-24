@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/cpu/transforms/library_rewriter.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -31,7 +32,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/codegen/target_machine_test_base.h"
-#include "xla/backends/cpu/transforms/library_fusion_kinds.h"
+#include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -852,7 +853,7 @@ TEST_P(CpuLibraryFusionLimitTest, NoHugeFusions) {
     })";
 
   DotRewriteTestSpec spec = GetParam();
-  int lib_fusion_limit = kMaxFusionSize;
+  int lib_fusion_limit = kMaxLibraryFusionSize;
   if (spec.lib == "onednn") {
     lib_fusion_limit = kMaxOneDnnFusionSize;
   }

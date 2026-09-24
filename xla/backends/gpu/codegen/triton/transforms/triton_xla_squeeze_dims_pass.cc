@@ -41,10 +41,10 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/WalkPatternRewriteDriver.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 
@@ -62,7 +62,7 @@ SmallVector<uint32_t> GetDimsToSqueeze(RankedTensorType type) {
       result.push_back(dim);
     }
   }
-  if (result.size() == type.getRank()) {
+  if (!result.empty() && result.size() == type.getRank()) {
     result.pop_back();  // Keep one unit dimension.
   }
   return result;

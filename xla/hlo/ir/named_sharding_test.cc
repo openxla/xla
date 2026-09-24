@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/ir/named_sharding.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -233,7 +234,7 @@ TEST(NamedShardingTest, ToStringReplicated) {
   Mesh mesh({2, 8}, {"a", "b"});
 
   NamedSharding sharding_fully_replicated = NamedSharding::Replicate();
-  EXPECT_EQ(sharding_fully_replicated.ToString(), "{replicated}");
+  EXPECT_EQ(sharding_fully_replicated.ToString(), "{mesh[], replicated}");
 
   NamedSharding sharding_fully_replicated_with_dims =
       test_utils::FromAxisNames(mesh, {{}, {}});
@@ -241,7 +242,8 @@ TEST(NamedShardingTest, ToStringReplicated) {
             "{mesh['a'=2,'b'=8], [{}, {}]}");
 
   NamedSharding sharding_fully_replicated_with_mesh(mesh);
-  EXPECT_EQ(sharding_fully_replicated_with_mesh.ToString(), "{replicated}");
+  EXPECT_EQ(sharding_fully_replicated_with_mesh.ToString(),
+            "{mesh['a'=2,'b'=8], replicated}");
 
   NamedSharding sharding_replicated =
       test_utils::FromAxisNames(mesh, {}, {"b"});
@@ -253,7 +255,8 @@ TEST(NamedShardingTest, ToStringUnreduced) {
   Mesh mesh({2, 8}, {"a", "b"});
 
   NamedSharding sharding_fully_unreduced = NamedSharding::Unreduced(mesh);
-  EXPECT_EQ(sharding_fully_unreduced.ToString(), "{unreduced}");
+  EXPECT_EQ(sharding_fully_unreduced.ToString(),
+            "{mesh['a'=2,'b'=8], unreduced}");
 
   NamedSharding sharding_fully_unreduced_with_dims = test_utils::FromAxisNames(
       mesh, {{}, {}}, {}, /*unreduced_axes=*/{"a", "b"});

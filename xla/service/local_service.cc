@@ -25,6 +25,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/service/backend.h"
@@ -43,8 +45,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -61,7 +61,7 @@ LocalService::NewService(const ServiceOptions& options) {
       .set_allowed_devices(options.allowed_devices());
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Backend> backend,
-                   Backend::CreateBackend(backend_options));
+                        Backend::CreateBackend(backend_options));
 
   std::unique_ptr<LocalService> service(
       new LocalService(options, std::move(backend)));
@@ -153,9 +153,10 @@ LocalService::CompileAotResults(
 
 absl::StatusOr<int> LocalService::ReplicaNumberToDeviceOrdinal(
     int replica_number) {
-  ABSL_ASSIGN_OR_RETURN(DeviceAssignment da,
-                   backend().computation_placer()->AssignDevices(
-                       options_.number_of_replicas(), /*computation_count=*/1));
+  ABSL_ASSIGN_OR_RETURN(
+      DeviceAssignment da,
+      backend().computation_placer()->AssignDevices(
+          options_.number_of_replicas(), /*computation_count=*/1));
   return da.DeviceId(replica_number, /*computation=*/0);
 }
 

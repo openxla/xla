@@ -17,8 +17,8 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
-#include "xla/tpu/c_api_decl.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "xla/tpu/c_api_decl.h"
 
 extern "C" {
 

@@ -20,9 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/tests/aot_interception_pjrt_client.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace aot_compatibility_experimental {
@@ -36,28 +38,49 @@ struct AotTestParam {
     return mode == other.mode && version == other.version &&
            target_name == other.target_name;
   }
+
+  // Without this gtest prints the raw object bytes on a failed match.
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const AotTestParam& param) {
+    absl::Format(&sink, "AotTestParam{mode=%d, version=%d, target_name=%s}",
+                 static_cast<int>(param.mode), param.version,
+                 param.target_name);
+  }
 };
 
-// Returns the path to the executables directory for the current test target.
-std::string GetExecutablesDirectory(absl::string_view target_name);
+// Returns the path to the executables directory for the given test target and
+// platform.
+std::string GetExecutablesDirectory(absl::string_view target_name,
+                                    AOTTestPlatform platform);
 
-// Gets the list of AOT test parameters for testing backwards compatibility
-// boundaries.
-// By default we test only 2 versions for backwards compatibility: the minimum
-// and the (maximum - 1) versions to verify the boundaries of our compatibility
-// guarantees. Set XLA_AOT_TEST_ALL_VERSIONS to test all versions.
+// Returns the parameters bounding our backwards compatibility guarantee: the
+// oldest and second-newest versions. Set XLA_AOT_TEST_ALL_VERSIONS=1 to
+// return all available versions.
 absl::StatusOr<std::vector<AotTestParam>>
-GetAotTestParamsForBackwardsCompatibility(absl::string_view target_name);
+GetAotTestParamsForBackwardsCompatibility(absl::string_view target_name,
+                                          AOTTestPlatform platform);
 
-// Returns the latest version of the AOT dumped artifact, wrapped in a list for
-// test parameterization.
+// Returns the latest version, wrapped in a list for test parameterization.
 absl::StatusOr<std::vector<AotTestParam>>
-GetAotTestParamsForGoldenFileVerification(absl::string_view target_name);
+GetAotTestParamsForGoldenFileVerification(absl::string_view target_name,
+                                          AOTTestPlatform platform);
+
+// Implementation details, exposed only so test_lib_test can exercise them.
+namespace test_lib_internal {
+
+// Returns, in ascending numeric order, the version numbers of the `v<N>`
+// subdirectories of `dir` that hold at least one .pbtxt. Others are skipped.
+absl::StatusOr<std::vector<int32_t>> GetExecutableVersionsInDir(
+    absl::string_view dir);
+
+}  // namespace test_lib_internal
 
 // A parameterized test fixture base class for AOT compatibility tests.
 class AotCompatibilityTest : public HloTestBase {
  public:
   explicit AotCompatibilityTest(AotTestParam param);
+
+  DebugOptions GetDebugOptionsForTest() const override;
 };
 
 }  // namespace aot_compatibility_experimental

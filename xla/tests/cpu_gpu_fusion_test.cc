@@ -26,10 +26,10 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
+#include "tsl/platform/protobuf.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/array2d.h"
 #include "xla/client/client_library.h"
@@ -55,13 +55,13 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -75,7 +75,7 @@ const float test_float_vals[3][test_width][test_height] = {
 
 // Test whether fusion operations are emitted with no errors and compute
 // accurate outputs.
-class CpuGpuFusionTest : public HloPjRtInterpreterReferenceMixin<HloTestBase> {
+class CpuGpuFusionTest : public HloInterpreterReferenceMixin<HloTestBase> {
  protected:
   template <typename T, int Arity>
   void TestElementwise2D(
@@ -884,9 +884,9 @@ TEST_F(CpuGpuFusionTest, Clamp2D) {
   TestElementwise2D<float, 3>(HloOpcode::kClamp);
 }
 
-class FusionClientLibraryTest
-    : public ClientLibraryTestRunnerMixin<
-          HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
+class FusionClientLibraryTest : public ClientLibraryTestRunnerMixin<
+                                    HloInterpreterReferenceMixin<HloTestBase>> {
+};
 
 TEST_F(FusionClientLibraryTest, ManyLayoutTransformations) {
   // On the GPU backend, it's possible to have too many transposes within one

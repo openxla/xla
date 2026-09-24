@@ -14,11 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cassert>
-#include <memory>
 #include <utility>
 
-#include "mhlo/IR/hlo_ops.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -49,8 +48,9 @@ mlir::LogicalResult ExpandIntegerPower(mlir::math::IPowIOp op,
   llvm::SmallVector<mlir::Type> arg_types(op->getOperandTypes());
   mlir::Value result =
       mlir::mhlo::impl::mapMhloOpToStdScalarOp<mlir::mhlo::PowOp>(
-          op.getLoc(), result_types, arg_types, {op->getOperands()},
-          op->getAttrs(), &rewriter);
+          op.getLoc(), result_types, arg_types,
+          mlir::mhlo::PowOp::Adaptor(op->getOperands()), op->getAttrs(),
+          &rewriter);
 
   rewriter.replaceOp(op, result);
   return mlir::success();

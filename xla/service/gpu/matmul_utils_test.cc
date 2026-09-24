@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/matmul_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/autotuning.pb.h"
@@ -49,8 +50,8 @@ ENTRY AddDotsFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(CanFoldTransposeOperandIntoDot(*dot, 0),
               absl_testing::IsOkAndHolds(true));
@@ -68,8 +69,8 @@ ENTRY AddDotsFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(CanFoldTransposeOperandIntoDot(*dot, 1),
               absl_testing::IsOkAndHolds(true));
@@ -87,8 +88,8 @@ ENTRY AddDotsFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(CanFoldTransposeOperandIntoDot(*dot, 0),
               absl_testing::IsOkAndHolds(true));
@@ -106,8 +107,8 @@ ENTRY AddDotsFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(CanFoldTransposeOperandIntoDot(*dot, 0),
               absl_testing::IsOkAndHolds(true));
@@ -126,8 +127,8 @@ ENTRY AddDotsFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(CanFoldTransposeOperandIntoDot(*dot, 0),
               absl_testing::IsOkAndHolds(false));
@@ -146,8 +147,8 @@ ENTRY AddDotsFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(CanFoldTransposeOperandIntoDot(*dot, 1),
               absl_testing::IsOkAndHolds(false));
@@ -261,8 +262,8 @@ ENTRY DotFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(IsMatrixMultiplicationTooSmallForRewriting(*dot, 100),
               absl_testing::IsOkAndHolds(true));
@@ -279,8 +280,8 @@ ENTRY DotFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_TRUE(IsDotSupportedByClassicalEmitters(*dot));
 }
@@ -297,8 +298,8 @@ ENTRY DotFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_FALSE(IsDotSupportedByClassicalEmitters(*dot));
 }
@@ -314,8 +315,8 @@ ENTRY DotFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(IsMatrixMultiplicationTooSmallForRewriting(*dot, 100),
               absl_testing::IsOkAndHolds(false));
@@ -332,8 +333,8 @@ ENTRY DotFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(IsMatrixMultiplicationTooSmallForRewriting(*dot, 100),
               absl_testing::IsOkAndHolds(false));
@@ -350,8 +351,8 @@ ENTRY DotFunc {
 }
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto dot = module->entry_computation()->root_instruction();
   EXPECT_THAT(IsMatrixMultiplicationTooSmallForRewriting(*dot, 100),
               absl_testing::IsOkAndHolds(false));
@@ -367,8 +368,8 @@ TEST(TritonGemmConfigTest, ProtoRoundTripPreservesWavesPerEu) {
   AutotuneResult::TritonGemmKey key = config.ToProto();
   EXPECT_EQ(key.waves_per_eu(), 4);
 
-  TF_ASSERT_OK_AND_ASSIGN(TritonGemmConfig restored,
-                          TritonGemmConfig::FromProto(key));
+  ASSERT_OK_AND_ASSIGN(TritonGemmConfig restored,
+                       TritonGemmConfig::FromProto(key));
   EXPECT_EQ(restored.block_m, 64);
   EXPECT_EQ(restored.block_n, 128);
   EXPECT_EQ(restored.block_k, 32);

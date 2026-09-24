@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "google/protobuf/arena.h"
 #include "riegeli/bytes/string_writer.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -46,14 +47,13 @@ limitations under the License.
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla::gpu {
 
 static absl::StatusOr<std::pair<std::unique_ptr<HloModule>, tsl::Fprint128>>
 ParseHloModuleAndFingerprint(const HloModuleProtoWithConfig& proto) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   HloModule::CreateFromProtoWithConfig(proto));
+                        HloModule::CreateFromProtoWithConfig(proto));
   HighwayHashPrinter printer;
   module->Print(&printer, HloPrintOptions::Canonical()
                               .set_print_backend_config(true)

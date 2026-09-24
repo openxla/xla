@@ -25,13 +25,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -160,8 +160,8 @@ absl::StatusOr<bool> OptimizeInputOutputBufferAlias::RunImpl(
       &module->input_output_alias_config();
   HloBufferDonorConfig* buffer_donor_config = &module->buffer_donor_config();
 
-  ABSL_ASSIGN_OR_RETURN(bool changed, Build(input_shapes, output_shape, alias_config,
-                                       buffer_donor_config));
+  ABSL_ASSIGN_OR_RETURN(bool changed, Build(input_shapes, output_shape,
+                                            alias_config, buffer_donor_config));
   ABSL_RETURN_IF_ERROR(alias_config->Verify(*module, shape_size_fn_));
 
   return changed;

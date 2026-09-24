@@ -39,6 +39,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/protobuf.h"
+#include "xla/autotune_cache.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuner.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
@@ -58,7 +61,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/fingerprint.h"
+#include "xla/tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {
@@ -108,16 +111,48 @@ std::string GetKvStoreKey(
                       backend_fingerprint, "_", shard_index);
 }
 
+absl::StatusOr<std::optional<ConfigAssigner::Config>> ParseForcedConfig(
+    absl::string_view force_config, const CodegenOrchestrator& orchestrator) {
+  if (force_config.empty()) {
+    return std::nullopt;
+  }
+  autotuner::Config config_proto;
+  bool parsed =
+      tsl::protobuf::TextFormat::ParseFromString(force_config, &config_proto);
+  if (!parsed) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Failed to parse force_config as textproto: ", force_config));
+  }
+  CodegenBackend* matched_backend = nullptr;
+  for (const auto& backend : orchestrator.codegen_backends()) {
+    if (backend->backend() == config_proto.backend()) {
+      matched_backend = backend.get();
+      break;
+    }
+  }
+  if (matched_backend == nullptr) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Backend ", Backend_Name(config_proto.backend()),
+        " in force_config is not registered with the orchestrator."));
+  }
+  return ConfigAssigner::Config{
+      matched_backend,
+      std::make_unique<BackendConfig>(config_proto.backend_config())};
+}
+
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<ConfigAssigner>> ConfigAssigner::Create(
     Options options,
     std::unique_ptr<AutotunerCacheInterface> absl_nonnull cache,
     std::unique_ptr<CodegenOrchestrator> absl_nonnull orchestrator,
-    std::unique_ptr<Autotuner> absl_nullable autotuner) {
-  return absl::WrapUnique(
-      new ConfigAssigner(std::move(options), std::move(cache),
-                         std::move(orchestrator), std::move(autotuner)));
+    std::unique_ptr<Autotuner> absl_nullable autotuner,
+    tsl::thread::ThreadPool* thread_pool) {
+  ABSL_ASSIGN_OR_RETURN(std::optional<Config> forced_config,
+                        ParseForcedConfig(options.force_config, *orchestrator));
+  return absl::WrapUnique(new ConfigAssigner(
+      std::move(options), std::move(cache), std::move(orchestrator),
+      std::move(autotuner), thread_pool, std::move(forced_config)));
 }
 
 absl::Status ConfigAssigner::AssignConfigs(
@@ -132,7 +167,7 @@ absl::Status ConfigAssigner::AssignConfigs(
           << " unique instructions.";
 
   ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
-                   GetConfigsForAll(instruction_groups));
+                        GetConfigsForAll(instruction_groups));
 
   for (int i = 0; i < instruction_groups.size(); i++) {
     auto& instructions = instruction_groups[i];
@@ -155,7 +190,7 @@ absl::Status ConfigAssigner::AssignConfigs(
     MultiProcessKeyValueStore& sharding_kv_store) {
   // Sharding the instructions only makes sense if we can have different
   // configs for different shards, which only happens due to online tuning.
-  if (options_.select_first_config) {
+  if (!options_.allow_autotuning) {
     VLOG(1) << "Falling back to non-sharded config assignment as online "
                "tuning is disabled.";
     return AssignConfigs(module, should_assign_config);
@@ -192,7 +227,7 @@ absl::Status ConfigAssigner::AssignConfigs(
           << all_instruction_groups.size() << " unique instructions ";
 
   ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
-                   GetConfigsForAll(instruction_groups));
+                        GetConfigsForAll(instruction_groups));
 
   std::vector<const HloInstruction*> autotuned_instructions;
   autotuned_instructions.reserve(instruction_groups.size());
@@ -210,8 +245,8 @@ absl::Status ConfigAssigner::AssignConfigs(
                     options_.use_new_cache_format);
   std::string local_results;
   if (!autotuned_instructions.empty()) {
-    ABSL_ASSIGN_OR_RETURN(local_results,
-                     optimal_config_cache_->Serialize(autotuned_instructions));
+    ABSL_ASSIGN_OR_RETURN(local_results, optimal_config_cache_->Serialize(
+                                             autotuned_instructions));
   }
   absl::StatusOr<std::string> stored_result = kv_store.TryGet(local_key);
   if (stored_result.status().code() == absl::StatusCode::kNotFound) {
@@ -246,7 +281,7 @@ absl::Status ConfigAssigner::AssignConfigs(
     // TODO(b/361009609): reset to infinite duration once issue with MPI is
     // fixed. https://github.com/google/jax/issues/22995.
     ABSL_ASSIGN_OR_RETURN(std::string remote_results,
-                     kv_store.Get(remote_key, absl::Hours(24)));
+                          kv_store.Get(remote_key, absl::Hours(24)));
     if (!remote_results.empty()) {
       ABSL_RETURN_IF_ERROR(optimal_config_cache_->Deserialize(remote_results));
     }
@@ -296,6 +331,14 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
     }
     VLOG(1) << "Getting config for HLO: " << instr->ToString(print_options);
   }
+  if (forced_config_.has_value()) {
+    VLOG(1) << "Using forced config: "
+            << forced_config_->codegen_backend->name() << " : "
+            << forced_config_->backend_config->ShortDebugString();
+    return Config{
+        forced_config_->codegen_backend,
+        std::make_unique<BackendConfig>(*forced_config_->backend_config)};
+  }
   std::optional<Config> cached_config = LookUp(instr);
   if (cached_config.has_value()) {
     VLOG(1) << "Using cached config: " << cached_config->ToString();
@@ -312,32 +355,23 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
 
   // TODO (b/446870267): Improve the cache fallback logic as we move to offline
   // autotuning.
-  if (options_.select_first_config) {
-    absl::StatusOr<std::vector<Config>> supported_configs =
-        orchestrator_->GetSupportedConfigs(*instr);
+  // Autotuning disabled, pick the first config that compiles
+  if (!options_.allow_autotuning) {
+    return GetFirstCompilableConfigOrDefault(instr);
+  }
 
-    if (supported_configs.ok()) {
-      for (Config& config : *supported_configs) {
-        auto executable = orchestrator_->Compile(*instr, config);
-        if (executable.ok()) {
-          VLOG(1) << "Using first compilable config: " << config.ToString();
-          return std::move(config);
-        }
-      }
+  // Autotuning enabled but we prefer estimated configs if they are available
+  if (options_.prefer_estimated_configs) {
+    absl::StatusOr<Config> compilable_config =
+        GetFirstCompilableEstimatedConfig(instr,
+                                          /*only_with_estimates=*/true);
+    if (compilable_config.ok()) {
+      ABSL_RETURN_IF_ERROR(Insert(instr, *compilable_config));
+      return std::move(*compilable_config);
     }
 
-    absl::StatusOr<Config> default_config =
-        orchestrator_->GetDefaultConfig(*instr);
-    if (default_config.ok()) {
-      VLOG(1) << "Using default config: " << default_config->ToString();
-      return default_config;
-    }
-
-    VLOG(1) << "Failed to get default config: " << default_config.status();
-    return absl::InternalError(absl::StrCat(
-        "No supported config found for HLO: ", instr->ToString(),
-        ". Supported configs status: ", supported_configs.status().ToString(),
-        "; Default config status: ", default_config.status().ToString()));
+    VLOG(1) << "Failed to find compilable estimated config: "
+            << compilable_config.status();
   }
 
   TF_RET_CHECK(autotuner_ != nullptr)
@@ -351,6 +385,106 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
       });
 }
 
+absl::StatusOr<ConfigAssigner::Config> ConfigAssigner::GetFirstCompilableConfig(
+    const HloInstruction* instr, std::vector<Config> supported_configs) {
+  if (options_.compile_all_supported_configs) {
+    tsl::Future<std::vector<CodegenOrchestrator::MaybeExecutableCandidate>>
+        maybe_candidates = orchestrator_->CompileAll(
+            *instr, std::move(supported_configs), thread_pool_);
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<CodegenOrchestrator::MaybeExecutableCandidate> candidates,
+        std::move(maybe_candidates).Await());
+    for (auto& candidate : candidates) {
+      if (candidate.executable.ok()) {
+        VLOG(1) << "Using first compilable config after compiling all supported"
+                   " configs: "
+                << candidate.config.ToString();
+        return std::move(candidate.config);
+      }
+    }
+  } else {
+    for (Config& config : supported_configs) {
+      auto executable = orchestrator_->Compile(*instr, config);
+      if (executable.ok()) {
+        VLOG(1) << "Using first compilable config: " << config.ToString();
+        return std::move(config);
+      }
+    }
+  }
+
+  return absl::NotFoundError(
+      "All supported configs failed to compile for HLO.");
+}
+
+absl::StatusOr<ConfigAssigner::Config>
+ConfigAssigner::GetFirstCompilableEstimatedConfig(const HloInstruction* instr,
+                                                  bool only_with_estimates) {
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<CodegenOrchestrator::EstimatedConfig> estimated_configs,
+      orchestrator_->GetSupportedConfigsWithEstimates(*instr));
+
+  // Order estimated configs putting configs with estimates first.
+  absl::c_stable_sort(estimated_configs,
+                      [](const CodegenOrchestrator::EstimatedConfig& a,
+                         const CodegenOrchestrator::EstimatedConfig& b) {
+                        if (a.estimated_runtime.has_value() &&
+                            b.estimated_runtime.has_value()) {
+                          return *a.estimated_runtime < *b.estimated_runtime;
+                        }
+                        return a.estimated_runtime.has_value();
+                      });
+
+  std::vector<Config> configs;
+  configs.reserve(estimated_configs.size());
+  for (auto& config : estimated_configs) {
+    if (only_with_estimates && !config.estimated_runtime.has_value()) {
+      break;
+    }
+    configs.push_back(std::move(config.config));
+  }
+
+  return GetFirstCompilableConfig(instr, std::move(configs));
+}
+
+absl::StatusOr<ConfigAssigner::Config>
+ConfigAssigner::GetFirstCompilableConfigOrDefault(const HloInstruction* instr) {
+  if (options_.prefer_estimated_configs) {
+    // Include configs without estimates to avoid duplicated compilations in
+    // case the first good config is a config without estimates.
+    absl::StatusOr<Config> compilable_config =
+        GetFirstCompilableEstimatedConfig(instr,
+                                          /*only_with_estimates=*/false);
+    if (compilable_config.ok()) {
+      return compilable_config;
+    }
+
+    VLOG(1) << "Failed to find compilable estimated config: "
+            << compilable_config.status();
+  }
+
+  absl::StatusOr<std::vector<Config>> supported_configs =
+      orchestrator_->GetSupportedConfigs(*instr);
+  absl::StatusOr<Config> supported_config =
+      supported_configs.ok()
+          ? GetFirstCompilableConfig(instr, std::move(*supported_configs))
+          : supported_configs.status();
+  if (supported_config.ok()) {
+    return supported_config;
+  }
+
+  absl::StatusOr<Config> default_config =
+      orchestrator_->GetDefaultConfig(*instr);
+  if (default_config.ok()) {
+    VLOG(1) << "Using default config: " << default_config->ToString();
+    return default_config;
+  }
+
+  VLOG(1) << "Failed to get default config: " << default_config.status();
+  return absl::InternalError(absl::StrCat(
+      "No supported config found for HLO: ", instr->ToString(),
+      "; Supported configs status: ", supported_config.status().ToString(),
+      "; Default config status: ", default_config.status().ToString()));
+}
 
 std::optional<ConfigAssigner::Config> ConfigAssigner::LookUp(
     const HloInstruction* instr) const {
@@ -446,18 +580,20 @@ absl::Status ConfigAssigner::DumpHlo(const HloInstruction& instr,
   return absl::OkStatus();
 }
 
-
-
 std::string ConfigAssigner::Options::ToString() const {
   return absl::StrFormat(
       R"json({
   "expect_all_instructions_in_cache": %v,
-  "select_first_config": %v,
+  "allow_autotuning": %v,
+  "prefer_estimated_configs": %v,
   "dump_hlos": %v,
-  "use_new_cache_format": %v
+  "use_new_cache_format": %v,
+  "compile_all_supported_configs": %v,
+  "force_config": "%s"
 })json",
-      expect_all_instructions_in_cache, select_first_config, dump_hlos,
-      use_new_cache_format);
+      expect_all_instructions_in_cache, allow_autotuning,
+      prefer_estimated_configs, dump_hlos, use_new_cache_format,
+      compile_all_supported_configs, force_config);
 }
 
 AutotunerCacheInterface::CacheStats ConfigAssigner::GetCacheStats() const {

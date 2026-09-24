@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"

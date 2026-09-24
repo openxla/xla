@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_pjrt_compiler.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -25,6 +26,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "riegeli/base/any.h"
+#include "riegeli/bytes/reader.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -60,7 +63,7 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> CpuPjRtCompiler::Compile(
     CompileOptions options, const XlaComputation& computation,
     const PjRtTopologyDescription& topology, PjRtClient* client) {
   ABSL_ASSIGN_OR_RETURN(const CpuTopologyDescription* cpu_topology,
-                   GetCpuTopology(topology));
+                        GetCpuTopology(topology));
   if (auto* raw_client = GetRawClient(client)) {
     return raw_client->Compile(computation, *cpu_topology,
                                client->process_index(), std::move(options));
@@ -76,15 +79,15 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> CpuPjRtCompiler::Compile(
     CompileOptions options, MaybeOwningMlirModule module,
     const PjRtTopologyDescription& topology, PjRtClient* client) {
   ABSL_ASSIGN_OR_RETURN(const CpuTopologyDescription* cpu_topology,
-                   GetCpuTopology(topology));
+                        GetCpuTopology(topology));
   if (auto* raw_client = GetRawClient(client)) {
     return raw_client->Compile(std::move(module), *cpu_topology,
                                client->process_index(), std::move(options));
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto executable,
-                   CompileCpuExecutable(std::move(module), std::move(options),
-                                        *cpu_topology));
+  ABSL_ASSIGN_OR_RETURN(
+      auto executable, CompileCpuExecutable(std::move(module),
+                                            std::move(options), *cpu_topology));
   return std::unique_ptr<PjRtExecutable>(std::move(executable));
 }
 
@@ -97,6 +100,16 @@ CpuPjRtCompiler::DeserializePjRtTopologyDescription(
         "Failed to parse CpuTopologyDescription from string.");
   }
   return CpuTopologyDescription::FromProto(proto);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+CpuPjRtCompiler::DeserializeExecutable(
+    const PjRtTopologyDescription& topology,
+    riegeli::Any<riegeli::Reader*> reader,
+    std::optional<CompileOptions>&& options) {
+  ABSL_ASSIGN_OR_RETURN(auto* cpu_topology, GetCpuTopology(topology));
+  return PjRtCpuExecutable::Deserialize(std::move(reader), *cpu_topology,
+                                        std::move(options));
 }
 
 }  // namespace xla::cpu

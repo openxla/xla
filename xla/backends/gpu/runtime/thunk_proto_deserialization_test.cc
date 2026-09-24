@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -74,10 +75,11 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProto(
         symbol_resolver = std::nullopt) {
   ThunkSequenceProto thunk_sequence_proto;
   *thunk_sequence_proto.add_thunks() = thunk_proto;
-  ABSL_ASSIGN_OR_RETURN(ThunkSequence sequence,
-                   DeserializeThunkSequenceProto(
-                       thunk_sequence_proto, buffer_allocations, hlo_module,
-                       platform_name, gpu_compute_capability, symbol_resolver));
+  ABSL_ASSIGN_OR_RETURN(
+      ThunkSequence sequence,
+      DeserializeThunkSequenceProto(thunk_sequence_proto, buffer_allocations,
+                                    hlo_module, platform_name,
+                                    gpu_compute_capability, symbol_resolver));
   return std::move(sequence.front());
 }
 

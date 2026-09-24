@@ -30,6 +30,7 @@
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/status.h"
 #include "grpcpp/support/sync_stream.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/distributed/util.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/serdes_version.h"
@@ -37,7 +38,6 @@
 #include "xla/python/ifrt_proxy/common/proto_util.h"
 #include "xla/python/ifrt_proxy/server/host_buffer.h"
 #include "xla/python/ifrt_proxy/server/version.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {

@@ -83,6 +83,40 @@ DECLARE_SORT_INPLACE(uint64_t);
 
 #undef DECLARE_SORT_INPLACE
 
+// Sorts a pair of (keys, values) buffers using the sort `direction` with
+// builtin comparator functions on `keys` for slices in [start_slice,
+// end_slice).
+template <typename Key, typename Value>
+void Sort2DKeyValue(const SortDims& sort_dims, int64_t start_slice,
+                    int64_t end_slice, Key* keys, Value* values, bool is_stable,
+                    SortDirection direction);
+
+#define DECLARE_SORT_2D_KEY_VALUE(Key, Value)      \
+  extern template void Sort2DKeyValue<Key, Value>( \
+      const SortDims&, int64_t, int64_t, Key*, Value*, bool, SortDirection)
+
+#define DECLARE_SORT_2D_KEY_VALUE_KEY(Key)  \
+  DECLARE_SORT_2D_KEY_VALUE(Key, uint8_t);  \
+  DECLARE_SORT_2D_KEY_VALUE(Key, uint16_t); \
+  DECLARE_SORT_2D_KEY_VALUE(Key, uint32_t); \
+  DECLARE_SORT_2D_KEY_VALUE(Key, uint64_t)
+
+DECLARE_SORT_2D_KEY_VALUE_KEY(float);
+DECLARE_SORT_2D_KEY_VALUE_KEY(double);
+DECLARE_SORT_2D_KEY_VALUE_KEY(bfloat16);
+DECLARE_SORT_2D_KEY_VALUE_KEY(half);
+DECLARE_SORT_2D_KEY_VALUE_KEY(int8_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(int16_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(int32_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(int64_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(uint8_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(uint16_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(uint32_t);
+DECLARE_SORT_2D_KEY_VALUE_KEY(uint64_t);
+
+#undef DECLARE_SORT_2D_KEY_VALUE_KEY
+#undef DECLARE_SORT_2D_KEY_VALUE
+
 }  // namespace xla::cpu::internal
 
 #endif  // XLA_BACKENDS_CPU_RUNTIME_SORT_LIB_H_

@@ -17,9 +17,10 @@
 #ifndef XLA_PYTHON_IFRT_PROXY_CLIENT_MOCK_HOST_BUFFER_H_
 #define XLA_PYTHON_IFRT_PROXY_CLIENT_MOCK_HOST_BUFFER_H_
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 
-#include <gmock/gmock.h>
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "xla/python/ifrt_proxy/client/host_buffer.h"

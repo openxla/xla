@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/repeated_field.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/backends/cpu/transforms/ynn_matcher.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
-#include "tsl/platform/protobuf.h"
 
 #if XLA_ONEDNN_USE_GRAPH_API
 #include "xla/backends/cpu/transforms/onednn_matcher.h"

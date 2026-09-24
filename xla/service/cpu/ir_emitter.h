@@ -516,7 +516,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
                               llvm::Align alignment,
                               const llvm_ir::IrArray& containing_array);
 
-  using ReductionGenerator = std ::function<llvm::Value*(
+  using ReductionGenerator = std::function<llvm::Value*(
       llvm::IRBuilderBase*, llvm::Value*, llvm::Value*)>;
 
   // Tries to match the reduction function "function" to a known reduction
@@ -674,8 +674,6 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   absl::flat_hash_map<const HloInstruction*, llvm::Value*> emitted_value_;
 
   llvm_ir::AliasAnalysis alias_analysis_;
-
-
 
   // This struct contains all the state needed to emit instructions for
   // profiling a computation.

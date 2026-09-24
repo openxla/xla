@@ -23,12 +23,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/stream_executor/device_description.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -62,6 +62,10 @@ std::optional<int64_t> GetSchedulerMemoryFencingThresholdBytes(
 uint64_t GetSchedulerMemoryLimit(const HloModule& module,
                                  const se::DeviceDescription& gpu_device_info,
                                  int pointer_size);
+
+// Determines whether Latency Hiding Scheduler (LHS) is enabled for a module.
+bool IsLHSEnabled(const HloModule& module, absl::string_view fingerprint,
+                  const se::DeviceDescription& gpu_device_info);
 
 // Determines the schedule of HLO instructions for a module run on the GPU.
 absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(

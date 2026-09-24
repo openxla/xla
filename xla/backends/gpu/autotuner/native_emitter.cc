@@ -88,7 +88,7 @@ NativeEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BackendConfig> default_config,
-                   GetDefaultConfig(instr));
+                        GetDefaultConfig(instr));
   if (!default_config->has_native_emitter()) {
     return absl::InternalError("Expected NativeEmitterBackendConfig.");
   }
@@ -150,7 +150,7 @@ absl::Status NativeEmitterBackend::ApplyConfig(HloInstruction& instr,
     fusion_instr->set_fusion_kind(HloInstruction::FusionKind::kInput);
   }
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
-                   instr.backend_config<GpuBackendConfig>());
+                        instr.backend_config<GpuBackendConfig>());
   *gpu_backend_config.mutable_native_emitter_backend_config() =
       native_emitter_fusion_config;
   ABSL_RETURN_IF_ERROR(fusion_instr->set_backend_config(gpu_backend_config));

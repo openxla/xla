@@ -129,8 +129,8 @@ absl::StatusOr<std::vector<ConstantAllocation>> CreateConstantAllocations(
             << " from constant literal " << const_instr->name()
             << "; shape=" << const_instr->literal().shape();
     ABSL_ASSIGN_OR_RETURN(constants.emplace_back(),
-                     LiteralToConstantAllocation(allocation.index(),
-                                                 const_instr->literal()));
+                          LiteralToConstantAllocation(allocation.index(),
+                                                      const_instr->literal()));
   }
 
   return constants;

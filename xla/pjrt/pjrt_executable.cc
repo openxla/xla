@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_executable.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -38,6 +39,7 @@ limitations under the License.
 #include "google/protobuf/descriptor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -90,9 +92,17 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
   output.set_matrix_unit_operand_precision(matrix_unit_operand_precision);
   output.set_parameter_is_tupled_arguments(parameter_is_tupled_arguments);
   ABSL_ASSIGN_OR_RETURN(*output.mutable_executable_build_options(),
-                   executable_build_options.ToProto());
+                        executable_build_options.ToProto());
   output.set_compile_portable_executable(compile_portable_executable);
   output.set_profile_version(profile_version);
+  std::vector<int> sorted_individually_defined_output_indices(
+      individually_defined_output_indices.begin(),
+      individually_defined_output_indices.end());
+  std::sort(sorted_individually_defined_output_indices.begin(),
+            sorted_individually_defined_output_indices.end());
+  output.mutable_individually_defined_output_indices()->Add(
+      sorted_individually_defined_output_indices.begin(),
+      sorted_individually_defined_output_indices.end());
   if (!serialized_multi_slice_config.empty()) {
     output.set_serialized_multi_slice_config(serialized_multi_slice_config);
   } else if (multi_slice_config != nullptr) {
@@ -139,8 +149,11 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
   output.executable_build_options = executable_build_options;
   output.compile_portable_executable = proto.compile_portable_executable();
   output.profile_version = proto.profile_version();
+  output.individually_defined_output_indices.insert(
+      proto.individually_defined_output_indices().begin(),
+      proto.individually_defined_output_indices().end());
   ABSL_ASSIGN_OR_RETURN(output.env_option_overrides,
-                   LoadEnvOptionOverrides(proto.env_option_overrides()));
+                        LoadEnvOptionOverrides(proto.env_option_overrides()));
 
   if (proto.has_target_config()) {
     ABSL_ASSIGN_OR_RETURN(
@@ -151,15 +164,35 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
 }
 
 bool IsEarlyExitCompilation(const xla::CompileOptions& compile_options) {
-  for (int i = compile_options.env_option_overrides.size() - 1; i >= 0; --i) {
-    const auto& [k, v] = compile_options.env_option_overrides[i];
+  bool early_exit_with_layouts =
+      compile_options.executable_build_options.has_debug_options() &&
+      compile_options.executable_build_options.debug_options()
+          .xla_early_exit_with_layouts();
+  DebugOptions::EarlyExitPoint early_exit_point =
+      compile_options.executable_build_options.has_debug_options()
+          ? compile_options.executable_build_options.debug_options()
+                .xla_gpu_experimental_early_exit()
+          : DebugOptions::EARLY_EXIT_POINT_UNSET;
+
+  // Some callers may not have called compile_options.ApplyAllOptionOverrides,
+  // so we check the env_option_overrides directly.
+  for (const auto& [k, v] : compile_options.env_option_overrides) {
     if (k == "xla_early_exit_with_layouts") {
-      return std::get<bool>(v);
+      if (const bool* b = std::get_if<bool>(&v)) {
+        early_exit_with_layouts = *b;
+      }
+    } else if (k == "xla_gpu_experimental_early_exit") {
+      if (const std::string* s = std::get_if<std::string>(&v)) {
+        DebugOptions::EarlyExitPoint override_point;
+        if (DebugOptions::EarlyExitPoint_Parse(*s, &override_point)) {
+          early_exit_point = override_point;
+        }
+      }
     }
   }
-  return compile_options.executable_build_options.has_debug_options() &&
-         compile_options.executable_build_options.debug_options()
-             .xla_early_exit_with_layouts();
+
+  return early_exit_with_layouts ||
+         early_exit_point != DebugOptions::EARLY_EXIT_POINT_UNSET;
 }
 
 MultiSliceConfig::~MultiSliceConfig() = default;
@@ -293,14 +326,28 @@ CompiledMemoryStats CompiledMemoryStats::FromProto(
   return stats;
 }
 
-void GetOpSharding(std::vector<OpSharding>& out, const OpSharding& sharding) {
-  if (sharding.type() == OpSharding::TUPLE) {
-    for (const OpSharding& s : sharding.tuple_shardings()) {
-      GetOpSharding(out, s);
+namespace {
+
+void GetOpSharding(const HloSharding& sharding, std::vector<OpSharding>& out) {
+  if (sharding.IsTuple()) {
+    for (const HloSharding& s : sharding.tuple_elements()) {
+      GetOpSharding(s, out);
     }
   } else {
-    out.push_back(sharding);
+    if (sharding.UseNamedShardingLeaf()) {
+      out.push_back(HloSharding::V3ToV2Sharding(sharding).ToProto());
+    } else {
+      out.push_back(sharding.ToProto());
+    }
   }
+}
+
+}  // namespace
+
+absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
+PjRtExecutable::GetHloModules() const {
+  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<HloModule> hlo_module, GetHloModule());
+  return std::vector<std::shared_ptr<HloModule>>{std::move(hlo_module)};
 }
 
 std::optional<std::vector<OpSharding>> PjRtExecutable::GetOutputShardings()
@@ -312,7 +359,7 @@ std::optional<std::vector<OpSharding>> PjRtExecutable::GetOutputShardings()
   }
 
   std::vector<OpSharding> out;
-  GetOpSharding(out, (*modules)[0]->spmd_output_sharding().ToProto());
+  GetOpSharding((*modules)[0]->spmd_output_sharding(), out);
   return out;
 }
 
@@ -326,7 +373,7 @@ std::optional<std::vector<OpSharding>> PjRtExecutable::GetParameterShardings()
 
   std::vector<OpSharding> out;
   for (const auto& s : (*modules)[0]->spmd_parameters_shardings()) {
-    GetOpSharding(out, s.ToProto());
+    GetOpSharding(s, out);
   }
   return out;
 }
@@ -402,7 +449,7 @@ PjRtExecutable::GetOutputDimensions() const {
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtExecutable::GetParameterLayouts() const {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   GetHloModules());
+                        GetHloModules());
   if (hlo_modules.size() > 1) {
     return Unimplemented(
         "PjRtExecutable::GetParameterLayouts doesn't support MPMD "
@@ -415,7 +462,7 @@ PjRtExecutable::GetParameterLayouts() const {
   }
   ComputationLayout comp_layout = hlo_modules[0]->entry_computation_layout();
   ABSL_ASSIGN_OR_RETURN(std::vector<Layout> layouts,
-                   xla::FlattenedParameterLayouts(comp_layout));
+                        xla::FlattenedParameterLayouts(comp_layout));
   std::vector<std::shared_ptr<const PjRtLayout>> result;
   result.reserve(layouts.size());
   for (const Layout& layout : layouts) {
@@ -427,7 +474,7 @@ PjRtExecutable::GetParameterLayouts() const {
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
 PjRtExecutable::GetOutputLayouts() const {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                   GetHloModules());
+                        GetHloModules());
   if (hlo_modules.size() > 1) {
     return Unimplemented(
         "PjRtExecutable::GetOutputLayouts doesn't support MPMD "
@@ -440,7 +487,7 @@ PjRtExecutable::GetOutputLayouts() const {
   }
   ComputationLayout comp_layout = hlo_modules[0]->entry_computation_layout();
   ABSL_ASSIGN_OR_RETURN(std::vector<Layout> layouts,
-                   xla::FlattenedResultLayouts(comp_layout));
+                        xla::FlattenedResultLayouts(comp_layout));
   std::vector<std::shared_ptr<const PjRtLayout>> result;
   result.reserve(layouts.size());
   for (const Layout& layout : layouts) {
@@ -453,7 +500,7 @@ absl::StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
 PjRtExecutableUtil::RunHloCostAnalysis(const PjRtExecutable& executable,
                                        HloCostAnalysis* hlo_cost_analysis) {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> modules,
-                   executable.GetHloModules());
+                        executable.GetHloModules());
   if (modules.empty()) {
     return NotFound(
         "Executable '%s' did not have an HloModule to generate "

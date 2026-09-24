@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/object_loader.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -23,7 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -131,7 +132,7 @@ TEST_P(ObjectLoaderTest, Load) {
   auto add_module = [&](absl::string_view ir, absl::string_view name,
                         size_t dylib_index) -> absl::Status {
     ABSL_ASSIGN_OR_RETURN(llvm::orc::ThreadSafeModule tsm,
-                     ParseModule(tsc, ir, name));
+                          ParseModule(tsc, ir, name));
     SetModuleMemoryRegionName(*tsm.getModuleUnlocked(), "object_loader_test");
     ABSL_RETURN_IF_ERROR(compiler.AddModule(std::move(tsm), dylib_index));
     return absl::OkStatus();

@@ -32,11 +32,11 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/experimental/tiling_space_utils.h"
 #include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
 
@@ -44,6 +44,7 @@ namespace xla::xtile {
 
 namespace {
 
+using ::xla::xtile::BlockLevelParameters;
 using DimensionSemantics =
     ::xla::gpu::experimental::TilingSpace::DimensionSemantics;
 
@@ -51,7 +52,7 @@ using DimensionSemantics =
 
 absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
     const SymbolicTileAnalysis& symbolic_tile_analysis,
-    const ::xla::gpu::BlockLevelParameters& block_level_parameters,
+    const BlockLevelParameters& block_level_parameters,
     const Tile* dot_tiling_config_override) {
   Tiling::TileMapping tile_mapping;
   int64_t real_root_index = symbolic_tile_analysis.real_root_index();
@@ -74,7 +75,7 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
               " does not have a backend config for tile sizes set."));
         }
         ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile tile_config,
-                         hlo->backend_config<xla::xtile::Tile>());
+                              hlo->backend_config<xla::xtile::Tile>());
         if (tile_config.sizes().empty()) {
           return absl::FailedPreconditionError(
               absl::StrCat("Dot instruction ", hlo->name(),
@@ -107,7 +108,7 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
 
 absl::StatusOr<llvm::SmallVector<int64_t>> GetTilingSpaceConcreteSizes(
     const ::xla::gpu::experimental::TilingSpace& tiling_space,
-    const ::xla::gpu::BlockLevelParameters& block_level_parameters,
+    const BlockLevelParameters& block_level_parameters,
     bool enable_same_shape_multi_output_fusion) {
   TF_RET_CHECK(!block_level_parameters.output_tile_sizes.empty())
       << "output_tile_sizes cannot be empty.";
@@ -158,7 +159,7 @@ absl::StatusOr<llvm::SmallVector<int64_t>> GetTilingSpaceConcreteSizes(
       case DimensionSemantics::kSequential: {
         if (dim.hlo->has_backend_config()) {
           ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile config,
-                           dim.hlo->backend_config<xla::xtile::Tile>());
+                                dim.hlo->backend_config<xla::xtile::Tile>());
           // For reductions/dots, sequential (reduction/contracting) dimensions
           // are indexed after output dimensions in TilingSpace, so their index
           // in config.sizes is offset by output_rank. For scans, the sequential

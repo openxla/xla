@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_conv_runner.pb.h"
 #include "xla/tsl/platform/statusor.h"
@@ -90,8 +91,8 @@ TEST(GpuConvDescriptorTest, ProtoRoundTrip) {
     feature_group_count: 1
   )pb");
 
-  TF_ASSERT_OK_AND_ASSIGN(GpuConvDescriptor desc,
-                          GpuConvDescriptor::FromProto(proto));
+  ASSERT_OK_AND_ASSIGN(GpuConvDescriptor desc,
+                       GpuConvDescriptor::FromProto(proto));
 
   EXPECT_THAT(desc.ToProto(), EqualsProto(proto));
 }

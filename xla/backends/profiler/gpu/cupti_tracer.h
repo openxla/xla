@@ -31,11 +31,11 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/nvtx3/nvToolsExt.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_interface.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -68,6 +68,10 @@ struct CuptiTracerOptions {
   // This currently can not run second session with HES enabled, so do not turn
   // on this. TODO(b/466437495): Remove this comment once the bug is fixed.
   bool enable_activity_hardware_tracing = false;
+  // Whether to enable scope range tracking. Can be disabled to save CPU and
+  // memory overhead when hierarchical scope trees are not needed (e.g., during
+  // aggregated tracing).
+  bool enable_scope_range_tracking = true;
 };
 
 class CuptiTracer;
@@ -100,6 +104,9 @@ class CuptiTracer {
   // Only one profile session can be live in the same time.
   bool IsAvailable() const;
   bool NeedRootAccess() const { return need_root_access_; }
+  bool IsScopeRangeTrackingEnabled() const {
+    return !option_.has_value() || option_->enable_scope_range_tracking;
+  }
 
   // Enables the CUPTI tracer. XPlanes vector is optional and only needed when
   // PM sampling is enabled to store sample metrics.
@@ -150,6 +157,10 @@ class CuptiTracer {
   static int NumGpus();
   // Returns the error (if any) when using libcupti.
   static std::string ErrorIfAny();
+
+  // Enables activity hardware events tracing using HES (Hardware Event System).
+  // Once enabled, it stays enabled for the process lifetime.
+  static absl::Status EnableHES();
 
   // Returns true if the number of annotation strings is too large. The input
   // count is the per-thread count.

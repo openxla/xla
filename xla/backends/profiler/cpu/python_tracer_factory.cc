@@ -14,10 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include <memory>
 
-#include "xla/backends/profiler/cpu/python_tracer.h"
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "xla/backends/profiler/cpu/python_tracer.h"
 
 namespace xla {
 namespace profiler {

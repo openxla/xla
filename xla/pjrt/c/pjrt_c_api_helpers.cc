@@ -39,6 +39,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "stablehlo/dialect/Version.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
 #include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -60,8 +62,6 @@ limitations under the License.
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
 
 namespace pjrt {
 
@@ -449,7 +449,7 @@ absl::StatusOr<std::vector<PJRT_NamedValue>> ConvertToPjRtNamedValueList(
   c_value_list.reserve(cpp_value_map.size());
   for (const auto& [name, value] : cpp_value_map) {
     ABSL_ASSIGN_OR_RETURN(PJRT_NamedValue c_value,
-                     ConvertToPjRtNamedValue(name, value));
+                          ConvertToPjRtNamedValue(name, value));
     c_value_list.push_back(c_value);
   }
   return c_value_list;
@@ -528,7 +528,8 @@ absl::Status ValidateCreateOptions(
       return absl::InvalidArgumentError(absl::StrCat(
           "Unexpected option name passed to PJRT_Client_Create: ", name));
     }
-    ABSL_ASSIGN_OR_RETURN(PJRT_NamedValue_Type type, GetPjrtNamedValueType(value));
+    ABSL_ASSIGN_OR_RETURN(PJRT_NamedValue_Type type,
+                          GetPjrtNamedValueType(value));
     if (type != it->second) {
       return absl::InvalidArgumentError(
           absl::StrCat("Option passed to PJRT_Client_Create with name ", name,

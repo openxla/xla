@@ -25,13 +25,14 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/descriptor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "google/protobuf/descriptor.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -55,6 +55,8 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+
+using ::xla::xtile::BlockLevelParameters;
 
 std::vector<xla::PrimitiveType> AllXlaDataTypes() {
   std::vector<xla::PrimitiveType> xla_data_types;
@@ -108,10 +110,11 @@ absl::Status CreateTritonIrAndFileCheck(
       Cast<HloFusionInstruction>(computation.FusionInstruction());
 
   mlir::MLIRContext mlir_context;
-  ABSL_ASSIGN_OR_RETURN(TritonKernelSource triton_source,
-                   CreateTritonModule("triton_fn", *fusion,
-                                      TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                                      block_level_parameters, mlir_context));
+  ABSL_ASSIGN_OR_RETURN(
+      TritonKernelSource triton_source,
+      CreateTritonModule("triton_fn", *fusion,
+                         TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+                         block_level_parameters, mlir_context));
 
   std::string out;
   llvm::raw_string_ostream os(out);

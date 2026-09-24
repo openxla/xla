@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/pjrt/se/stream_executor_executable.h"
 
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,6 +29,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "riegeli/base/any.h"
 #include "riegeli/base/maker.h"
 #include "riegeli/bytes/cord_reader.h"
@@ -73,11 +73,11 @@ constexpr absl::string_view kPjRtStreamExecutorClientName =
 
 absl::StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable()
     const {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (IsEarlyExitCompilation(compile_options_)) {
     ExecutableAndOptionsProto proto;
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
-                     compile_options_.ToProto());
+                          compile_options_.ToProto());
     *proto.mutable_pjrt_client_name() = kPjRtStreamExecutorClientName;
     std::string result;
     ABSL_RETURN_IF_ERROR(WriteSplitExecutableAndOptions(
@@ -114,7 +114,7 @@ absl::StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable()
   ExecutableAndOptionsProto proto;
   *proto.mutable_serialized_executable() = std::move(serialized);
   ABSL_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
-                   compile_options_.ToProto());
+                        compile_options_.ToProto());
   *proto.mutable_pjrt_client_name() = kPjRtStreamExecutorClientName;
   std::string result;
   ABSL_RETURN_IF_ERROR(WriteSplitExecutableAndOptions(
@@ -169,6 +169,7 @@ StreamExecutorExecutable::StreamExecutorExecutable(
   if (mod != nullptr) {
     hlo_module_ = mod->shared_optimized_module();
   }
+  CHECK(hlo_module_ != nullptr);
 }
 
 StreamExecutorExecutable::StreamExecutorExecutable(
@@ -193,11 +194,12 @@ StreamExecutorExecutable::StreamExecutorExecutable(
   if (local_exec != nullptr) {
     hlo_module_ = local_exec->executable()->shared_module();
   }
+  CHECK(hlo_module_ != nullptr);
 }
 
 absl::StatusOr<CompiledMemoryStats>
 StreamExecutorExecutable::GetCompiledMemoryStats() const {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   CompiledMemoryStats memory_stats = CompiledMemoryStats();
   if (auto* aot_executable =
           std::get_if<std::unique_ptr<CompiledModule>>(&executables_)) {
@@ -219,7 +221,7 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
     HloModuleProto hlo_module_proto =
         local_exec->executable()->module().ToProto();
     ABSL_ASSIGN_OR_RETURN(auto peak_memories,
-                     ComputePeakMemorySizes(*proto, hlo_module_proto));
+                          ComputePeakMemorySizes(*proto, hlo_module_proto));
     memory_stats.peak_memory_in_bytes = peak_memories.padded;
     memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
     memory_stats.total_allocation_bytes =
@@ -235,7 +237,7 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
 }
 
 int64_t StreamExecutorExecutable::SizeOfGeneratedCodeInBytes() const {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   return SizeOfGeneratedCodeInBytesLocked();
 }
 
@@ -278,8 +280,9 @@ absl::StatusOr<absl::string_view> MemoryKindFromSimpleShape(
 absl::StatusOr<std::vector<absl::string_view>> MemoryKindsFromShape(
     const Shape& shape, absl::string_view default_memory_kind) {
   if (!shape.IsTuple()) {
-    ABSL_ASSIGN_OR_RETURN(absl::string_view memory_kind,
-                     MemoryKindFromSimpleShape(shape, default_memory_kind));
+    ABSL_ASSIGN_OR_RETURN(
+        absl::string_view memory_kind,
+        MemoryKindFromSimpleShape(shape, default_memory_kind));
     return {{memory_kind}};
   }
   std::vector<absl::string_view> result;
@@ -313,12 +316,12 @@ StreamExecutorExecutable::GetParameterMemoryKinds() const {
   for (const auto& module : modules) {
     const ComputationLayout& comp_layout = module->entry_computation_layout();
     ABSL_ASSIGN_OR_RETURN(std::vector<Layout> layouts,
-                     xla::FlattenedParameterLayouts(comp_layout));
+                          xla::FlattenedParameterLayouts(comp_layout));
     std::vector<absl::string_view>& memory_kinds = out.emplace_back();
     memory_kinds.reserve(layouts.size());
     for (const xla::Layout& layout : layouts) {
       ABSL_ASSIGN_OR_RETURN(absl::string_view memory_kind,
-                       MemoryKindFromLayout(layout, default_memory_kind_));
+                            MemoryKindFromLayout(layout, default_memory_kind_));
       memory_kinds.push_back(memory_kind);
     }
   }
@@ -332,7 +335,7 @@ StreamExecutorExecutable::GetOutputMemoryKinds() const {
   out.reserve(shapes.size());
   for (const auto& shape : shapes) {
     ABSL_ASSIGN_OR_RETURN(std::vector<absl::string_view> memory_kind,
-                     MemoryKindsFromShape(shape, default_memory_kind_));
+                          MemoryKindsFromShape(shape, default_memory_kind_));
     out.push_back(memory_kind);
   }
   return out;
@@ -340,7 +343,7 @@ StreamExecutorExecutable::GetOutputMemoryKinds() const {
 
 absl::StatusOr<std::shared_ptr<LocalExecutable>>
 StreamExecutorExecutable::GetOrLoadExecutable(LocalClient* client) {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (std::holds_alternative<std::shared_ptr<LocalExecutable>>(executables_)) {
     const auto& tmp = std::get<std::shared_ptr<LocalExecutable>>(executables_);
     if (tmp == nullptr) {
@@ -354,9 +357,10 @@ StreamExecutorExecutable::GetOrLoadExecutable(LocalClient* client) {
     if (aot_executable == nullptr) {
       return absl::InternalError("No local executable");
     }
-    ABSL_ASSIGN_OR_RETURN(auto local_executable,
-                     client->Load(std::move(aot_executable),
-                                  compile_options_.executable_build_options));
+    ABSL_ASSIGN_OR_RETURN(
+        auto local_executable,
+        client->Load(std::move(aot_executable),
+                     compile_options_.executable_build_options));
     std::shared_ptr<LocalExecutable> shared_exec = std::move(local_executable);
     executables_ = shared_exec;
     local_client_ = client;
@@ -367,7 +371,7 @@ StreamExecutorExecutable::GetOrLoadExecutable(LocalClient* client) {
 
 absl::StatusOr<stream_executor::ExecutableAbiVersion>
 StreamExecutorExecutable::ExtractExecutableAbiVersion() const {
-  absl::MutexLock lock(&mu_);
+  absl::MutexLock lock(mu_);
   if (executables_.index() == 0) {
     const std::unique_ptr<CompiledModule>& compiled_module =
         std::get<0>(executables_);
@@ -387,8 +391,9 @@ StreamExecutorExecutable::ExtractExecutableAbiVersion() const {
 
 absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
 StreamExecutorExecutable::GetAbiVersion() const {
-  ABSL_ASSIGN_OR_RETURN(stream_executor::ExecutableAbiVersion executable_abi_version,
-                   ExtractExecutableAbiVersion());
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::ExecutableAbiVersion executable_abi_version,
+      ExtractExecutableAbiVersion());
   return std::make_unique<StreamExecutorPjRtExecutableAbiVersion>(
       platform_id_, std::move(executable_abi_version));
 }
@@ -416,7 +421,8 @@ absl::StatusOr<ExecutableAndOptionsProto> SerializedGpuExecutableFromReader(
     return proto;
   }
 
-  ABSL_RETURN_IF_ERROR(riegeli::ParseMessage(std::move(reader_unique_ptr), proto));
+  ABSL_RETURN_IF_ERROR(
+      riegeli::ParseMessage(std::move(reader_unique_ptr), proto));
   return proto;
 }
 
@@ -447,7 +453,7 @@ StreamExecutorExecutable::Deserialize(riegeli::Any<riegeli::Reader*> reader,
                                       const PjRtTopologyDescription& topology,
                                       std::optional<CompileOptions> options) {
   ABSL_ASSIGN_OR_RETURN(ExecutableAndOptionsProto proto,
-                   SerializedGpuExecutableFromReader(std::move(reader)));
+                        SerializedGpuExecutableFromReader(std::move(reader)));
   if (!proto.pjrt_client_name().empty() &&
       proto.pjrt_client_name() != kPjRtStreamExecutorClientName) {
     return Internal(
@@ -461,11 +467,12 @@ StreamExecutorExecutable::Deserialize(riegeli::Any<riegeli::Reader*> reader,
     compile_options = *std::move(options);
   } else {
     ABSL_ASSIGN_OR_RETURN(compile_options,
-                     CompileOptions::FromProto(proto.compile_options()));
+                          CompileOptions::FromProto(proto.compile_options()));
   }
   ABSL_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
 
-  ABSL_ASSIGN_OR_RETURN(auto default_memory_space, GetDefaultMemoryKind(topology));
+  ABSL_ASSIGN_OR_RETURN(auto default_memory_space,
+                        GetDefaultMemoryKind(topology));
 
   PjRtPlatformId platform_id = topology.platform_id();
   if (IsEarlyExitCompilation(compile_options)) {
@@ -486,9 +493,9 @@ StreamExecutorExecutable::Deserialize(riegeli::Any<riegeli::Reader*> reader,
           platform_id));
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                   Compiler::GetForPlatform(se_platform_id));
+                        Compiler::GetForPlatform(se_platform_id));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CompiledModule> aot_result,
-                   compiler->LoadAotCompilationResult(str));
+                        compiler->LoadAotCompilationResult(str));
   if (aot_result == nullptr) {
     return Internal("Failed to deserialize compiled module");
   }

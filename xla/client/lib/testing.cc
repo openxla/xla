@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/errors.h"
 #include "xla/client/client.h"
 #include "xla/execution_options_util.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/value_or_die.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {

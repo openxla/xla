@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/symbolic_tiled_hlo_instruction.h"
 #include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/instruction_fusion.h"
@@ -71,11 +71,13 @@ namespace xla::gpu {
 namespace {
 
 using ::mlir::MLIRContext;
+using ::xla::xtile::BlockLevelParameters;
 
 // Extracts the TritonGemmConfig from the given fusion's backend config.
 absl::StatusOr<TritonGemmConfig> GetTritonGemmConfig(
     const HloFusionInstruction& fusion) {
-  ABSL_ASSIGN_OR_RETURN(auto gpu_config, fusion.backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                        fusion.backend_config<GpuBackendConfig>());
   const FusionBackendConfig& backend_config =
       gpu_config.fusion_backend_config();
   if (!backend_config.has_triton_gemm_config()) {
@@ -137,21 +139,21 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
 
     // Annotate the dot with the contraction tile size.
     ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile tile_sizes,
-                     dot->backend_config<xla::xtile::Tile>());
+                          dot->backend_config<xla::xtile::Tile>());
     tile_sizes.add_sizes(config.block_k);
     ABSL_RETURN_IF_ERROR(dot->set_backend_config(tile_sizes));
 
     // Annotate the fusion itself with the block-level parameters.
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     fusion->backend_config<GpuBackendConfig>());
+                          fusion->backend_config<GpuBackendConfig>());
     FusionBackendConfig& backend_config =
         *gpu_config.mutable_fusion_backend_config();
     backend_config.clear_triton_gemm_config();
     backend_config.set_kind(kTritonNestedGemmFusionKind);
 
     ABSL_ASSIGN_OR_RETURN(BlockLevelParameters block_level_parameters,
-                     FindBlockLevelParameters(dot, config, mlir_context_,
-                                              device_description_));
+                          FindBlockLevelParameters(dot, config, mlir_context_,
+                                                   device_description_));
 
     *backend_config.mutable_block_level_fusion_config() =
         block_level_parameters.ToBlockLevelFusionConfig();
@@ -407,13 +409,13 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
 
     Tiling tiling(std::move(tile_mapping));
     ABSL_ASSIGN_OR_RETURN(bool parameters_satisfy_constraints,
-                     analysis.ParametersSatisfyConstraints(tiling));
+                          analysis.ParametersSatisfyConstraints(tiling));
     if (!parameters_satisfy_constraints) {
       VLOG(4) << "Parameters don't satisfy constraints";
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(FlatTiling flat_tiling_parameters,
-                     tiling.Flatten(tiling_specification));
+                          tiling.Flatten(tiling_specification));
     llvm::SmallVector<int64_t> mapped_dot_tile_sizes =
         EvaluateTileSizes(tiled_dot.symbolic_tile(), flat_tiling_parameters);
     if (mapped_dot_tile_sizes == expected_dot_tile_sizes) {

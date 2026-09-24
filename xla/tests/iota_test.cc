@@ -13,14 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/primitive_util.h"
@@ -31,12 +33,11 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
 
-using IotaTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
+using IotaTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 TEST_F(IotaTest, IotaReshapeR1) {
   const std::string hlo_text = R"(
@@ -71,7 +72,7 @@ std::vector<T> GetR1Expected(const int64_t num_elements) {
 
 class IotaR1Test
     : public ClientLibraryTestRunnerMixin<
-          HloPjRtInterpreterReferenceMixin<HloTestBase>>,
+          HloInterpreterReferenceMixin<HloTestBase>>,
       public ::testing::WithParamInterface<std::tuple<PrimitiveType, int>> {};
 
 TEST_P(IotaR1Test, DoIt) {
@@ -118,7 +119,7 @@ INSTANTIATE_TEST_CASE_P(
                                         /*step=*/20)));
 
 class IotaR2Test : public ClientLibraryTestRunnerMixin<
-                       HloPjRtInterpreterReferenceMixin<HloTestBase>>,
+                       HloInterpreterReferenceMixin<HloTestBase>>,
                    public ::testing::WithParamInterface<
                        std::tuple<PrimitiveType, int, int>> {};
 
@@ -152,7 +153,7 @@ INSTANTIATE_TEST_CASE_P(
                        ::testing::Values(0, 1)));
 
 class IotaR3Test : public ClientLibraryTestRunnerMixin<
-                       HloPjRtInterpreterReferenceMixin<HloTestBase>>,
+                       HloInterpreterReferenceMixin<HloTestBase>>,
                    public ::testing::WithParamInterface<
                        std::tuple<PrimitiveType, int, int>> {};
 

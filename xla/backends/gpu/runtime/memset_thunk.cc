@@ -88,7 +88,7 @@ absl::StatusOr<ThunkProto> MemzeroThunk::ToProto() const {
 
   MemzeroThunkProto* memzero_thunk_proto = proto.mutable_memzero_thunk();
   ABSL_ASSIGN_OR_RETURN(*memzero_thunk_proto->mutable_dest_buffer(),
-                   dest_.ToProto());
+                        dest_.ToProto());
   return proto;
 }
 
@@ -133,8 +133,8 @@ Memset32BitValueThunk::FromProto(
     ThunkInfo thunk_info, const Memset32BitValueThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice dest,
-                   BufferAllocation::Slice::FromProto(thunk_proto.dest_buffer(),
-                                                      buffer_allocations));
+                        BufferAllocation::Slice::FromProto(
+                            thunk_proto.dest_buffer(), buffer_allocations));
   return std::make_unique<Memset32BitValueThunk>(std::move(thunk_info),
                                                  thunk_proto.value(), dest);
 }
@@ -145,7 +145,8 @@ absl::StatusOr<ThunkProto> Memset32BitValueThunk::ToProto() const {
 
   Memset32BitValueThunkProto* memset_thunk_proto =
       proto.mutable_memset32bit_value_thunk();
-  ABSL_ASSIGN_OR_RETURN(*memset_thunk_proto->mutable_dest_buffer(), dest_.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*memset_thunk_proto->mutable_dest_buffer(),
+                        dest_.ToProto());
   memset_thunk_proto->set_value(value_);
   return proto;
 }

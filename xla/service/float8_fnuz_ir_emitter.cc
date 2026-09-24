@@ -21,10 +21,10 @@ limitations under the License.
 #include "llvm/ADT/APFloat.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
+#include "tsl/platform/statusor.h"
 #include "xla/primitive_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace float8_fnuz_ir_emitter {
@@ -118,10 +118,10 @@ absl::StatusOr<uint64_t> ComputeMaximumValue(PrimitiveType input_type,
   TF_RET_CHECK(BitWidth(input_type) > BitWidth(output_type));
 
   ABSL_ASSIGN_OR_RETURN(auto output_semantics,
-                   PrimitiveTypeToAPFloatSemantics(output_type));
+                        PrimitiveTypeToAPFloatSemantics(output_type));
 
   ABSL_ASSIGN_OR_RETURN(auto input_semantics,
-                   PrimitiveTypeToAPFloatSemantics(input_type));
+                        PrimitiveTypeToAPFloatSemantics(input_type));
 
   // Compute the largest number of the output type and convert it to the input
   // type.
@@ -162,7 +162,7 @@ absl::StatusOr<llvm::Value*> IsInputOutsideOutputRange(
   llvm::Value* non_sign_bits = b->CreateAnd(value, bit_mask);
 
   ABSL_ASSIGN_OR_RETURN(uint64_t maximum_value,
-                   ComputeMaximumValue(input_type, output_type, b));
+                        ComputeMaximumValue(input_type, output_type, b));
 
   // Compare against the maximum value.
   llvm::Type* uint_type = b->getIntNTy(BitWidth(input_type));
@@ -391,7 +391,7 @@ absl::StatusOr<llvm::Value*> DynamicRoundingBias(PrimitiveType input_type,
 
   // Find the bit position of the last mantissa bit.
   ABSL_ASSIGN_OR_RETURN(llvm::Value * shift,
-                   LastMantissaBit(input_type, value, output_type, b));
+                        LastMantissaBit(input_type, value, output_type, b));
 
   // Compute the mask to select that bit.
   llvm::Value* last_mantissa_bit_mask =
@@ -536,9 +536,9 @@ absl::StatusOr<llvm::Value*> EmitF8fnuzToFloating(PrimitiveType input_type,
   const std::string lut_name = PrimitiveType_Name(input_type) + "To" +
                                PrimitiveType_Name(output_type) + "LUT";
   ABSL_ASSIGN_OR_RETURN(auto input_semantics,
-                   PrimitiveTypeToAPFloatSemantics(input_type));
+                        PrimitiveTypeToAPFloatSemantics(input_type));
   ABSL_ASSIGN_OR_RETURN(auto output_semantics,
-                   PrimitiveTypeToAPFloatSemantics(output_type));
+                        PrimitiveTypeToAPFloatSemantics(output_type));
 
   llvm::Constant* global_result_lut_array = module->getOrInsertGlobal(
       lut_name, result_lut_array_type, [&]() -> llvm::GlobalVariable* {

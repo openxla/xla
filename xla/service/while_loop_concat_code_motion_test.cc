@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/while_loop_concat_code_motion.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -28,8 +29,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_verifier.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -78,10 +77,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, SimpleMotion) {
       ROOT %while = (s32[], f32[1024,1024], f32[1024,1024]) while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   ASSERT_TRUE(changed);
   VLOG(1) << module->ToString();
   auto loop = op::While(
@@ -144,10 +143,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, SharedBroadcastOperandNonZeroConcatDim) {
       ROOT %while = (s32[], f32[3,5], f32[3,5]) while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   EXPECT_TRUE(changed);
 }
 
@@ -191,11 +190,11 @@ TEST_F(WhileLoopConcatCodeMotionTest, SimpleMotionMultipleUses) {
       ROOT %while.1 = (s32[], f32[1024,1024], f32[1024,1024]) while(%while.0), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, WhileLoopConcatCodeMotion(
-                                            /*min_operand_count_to_optimize=*/2)
-                                            .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed, WhileLoopConcatCodeMotion(
+                                         /*min_operand_count_to_optimize=*/2)
+                                         .Run(module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -233,10 +232,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, NoMotionWithChangedElementOrder) {
       ROOT %while = (s32[], f32[1024,1024], f32[1024,1024]) while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   ASSERT_FALSE(changed);
 }
 
@@ -284,10 +283,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, CascadedConcats) {
         while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   ASSERT_TRUE(changed);
   VLOG(1) << module->ToString();
   auto loop = op::While(
@@ -352,10 +351,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, TwoConcatsSharedGroups) {
         while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   ASSERT_TRUE(changed);
   VLOG(1) << module->ToString();
   auto loop = op::While(
@@ -424,10 +423,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, TwoConcatsDifferentOrders) {
         while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   EXPECT_TRUE(changed);
   VLOG(1) << module->ToString();
   auto loop = op::While(
@@ -514,10 +513,10 @@ TEST_F(WhileLoopConcatCodeMotionTest, NonElementwiseOps) {
         while(%while_init), condition=%cond, body=%body
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloModule));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          WhileLoopConcatCodeMotion(2).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopConcatCodeMotion(2).Run(module.get()));
   ASSERT_TRUE(changed);
   VLOG(1) << module->ToString();
   auto loop = op::While(

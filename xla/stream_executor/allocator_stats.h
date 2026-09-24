@@ -20,7 +20,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-
 namespace stream_executor {
 
 // Runtime statistics collected by an allocator. Exactly the same as
@@ -40,6 +39,7 @@ struct AllocatorStats {
   int64_t bytes_reserved;  // Number of bytes reserved on the stack.
   int64_t
       peak_bytes_reserved;  // The peak number of bytes reserved on the stack.
+  int64_t peak_allocated_bytes;  // Peak of reserved and in-use bytes.
   // The upper limit on the number bytes of reservable memory on the stack,
   // if such a limit is known.
   std::optional<int64_t> bytes_reservable_limit;
@@ -53,6 +53,7 @@ struct AllocatorStats {
         largest_alloc_size(0),
         bytes_reserved(0),
         peak_bytes_reserved(0),
+        peak_allocated_bytes(0),
         largest_free_block_bytes(0) {}
 
   std::string DebugString() const;

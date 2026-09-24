@@ -14,12 +14,13 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/transforms/softmax_rewriter_triton.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
@@ -41,7 +42,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/xla_data.pb.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {

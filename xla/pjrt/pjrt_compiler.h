@@ -32,6 +32,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "riegeli/base/any.h"
+#include "riegeli/bytes/reader.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -48,7 +51,6 @@ limitations under the License.
 #include "xla/runtime/process_id.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -179,6 +181,13 @@ class PjRtCompilerRegistry {
   absl::StatusOr<PjRtCompiler*> GetCompiler(absl::string_view platform_name,
                                             absl::string_view variant_name);
 
+  // Returns true if a compiler instance or a compiler factory is registered
+  // for the given platform and variant. Unlike GetCompiler(), this never
+  // instantiates the compiler.
+  bool IsCompilerRegistered(absl::string_view platform_name,
+                            absl::string_view variant_name)
+      ABSL_LOCKS_EXCLUDED(compiler_mutex_, factory_mutex_);
+
   // Explicitly initializes a compiler with a given variant.
   absl::Status InitializeVariant(absl::string_view platform_name,
                                  absl::string_view variant_name);
@@ -244,6 +253,12 @@ absl::Status PjRtInitializeCompilerVariant(absl::string_view platform_name,
 // Initializes all compiler variants.
 absl::Status PjRtInitializeCompilerVariants();
 
+// Returns true if a compiler or a compiler factory is registered
+// for the given platform and variant, i.e. if the variant can be served by
+// this binary. Does not instantiate the compiler.
+bool PjRtIsCompilerVariantRegistered(absl::string_view platform_name,
+                                     absl::string_view variant_name);
+
 class PjRtClient;
 
 // Abstract interface to represent device topology that is used by the compiler.
@@ -292,7 +307,8 @@ class PjRtTopologyDescription {
   // Returns the total number of cores of the default type.
   virtual absl::StatusOr<int> CoreCountOfDefaultType() const {
     ABSL_ASSIGN_OR_RETURN(int process_count, ProcessCount());
-    ABSL_ASSIGN_OR_RETURN(int cores_per_process, CoreCountOfDefaultTypePerProcess());
+    ABSL_ASSIGN_OR_RETURN(int cores_per_process,
+                          CoreCountOfDefaultTypePerProcess());
     return process_count * cores_per_process;
   }
 
@@ -300,7 +316,7 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<int> LogicalDeviceCountOfDefaultTypePerProcess()
       const {
     ABSL_ASSIGN_OR_RETURN(int logical_devices_per_chip,
-                     LogicalDeviceCountOfDefaultTypePerChip());
+                          LogicalDeviceCountOfDefaultTypePerChip());
     ABSL_ASSIGN_OR_RETURN(int chips_per_process, ChipsPerProcess());
     return chips_per_process * logical_devices_per_chip;
   }
@@ -309,7 +325,7 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<int> LogicalDeviceCountOfDefaultType() const {
     ABSL_ASSIGN_OR_RETURN(int process_count, ProcessCount());
     ABSL_ASSIGN_OR_RETURN(int logical_devices_per_process,
-                     LogicalDeviceCountOfDefaultTypePerProcess());
+                          LogicalDeviceCountOfDefaultTypePerProcess());
     return process_count * logical_devices_per_process;
   }
 
@@ -452,11 +468,22 @@ class PjRtTopologyDescription {
         "GetDefaultDeviceAssignment is not supported.");
   }
 
+  // Gets the memory_space_kind for a particular XLA layout.
+  virtual absl::StatusOr<int> GetMemorySpaceKindForShape(
+      const xla::Shape& shape) const {
+    return absl::UnimplementedError(
+        "GetMemorySpaceKindForShape is not supported.");
+  }
+
   // A list of all memory spaces kind_ids supported by this topology.
   virtual absl::Span<const int> GetMemorySpaceKindIds() const;
 
   // GetMemorySpaceKindIds()[0] should be the default memory space id.
   int GetDefaultMemorySpaceKindId() const { return GetMemorySpaceKindIds()[0]; }
+
+  virtual bool IsMemorySpaceOnCpu(int memory_space_kind_id) const {
+    return false;
+  }
 
   virtual absl::StatusOr<PjRtTopologyDescriptionProto> ToProto() const {
     return absl::UnimplementedError("ToProto is unsupported.");
@@ -524,6 +551,18 @@ class PjRtCompiler {
         "GetTargetRuntimeAbiVersion is not implemented.");
   }
 
+  // Deserializes a serialized executable as produced by
+  // PjRtExecutable::SerializeExecutable(). `serialized` must have been
+  // produced by a compiler of the same platform and version as this one.
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
+      const PjRtTopologyDescription& topology,
+      riegeli::Any<riegeli::Reader*> reader,
+      std::optional<CompileOptions>&& options) {
+    return absl::UnimplementedError(
+        absl::StrCat("DeserializeExecutable is not implemented for: ",
+                     topology.platform_name(), "."));
+  }
+
   // Allow fallible downcasting to PjRtPhaseCompiler.
   virtual PjRtPhaseCompiler* AsPhaseCompiler() { return nullptr; }
   virtual const PjRtPhaseCompiler* AsPhaseCompiler() const { return nullptr; }
@@ -565,6 +604,14 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCompile(
     CompileOptions options, MaybeOwningMlirModule module,
     const PjRtTopologyDescription& topology, PjRtCompilerVariant variant,
     PjRtClient* client = nullptr);
+
+// Deserializes a serialized executable as produced by
+// PjRtExecutable::SerializeExecutable(). `serialized` must have been
+// produced by a compiler of the same platform and version as this one.
+absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtDeserializeExecutable(
+    const PjRtTopologyDescription& topology,
+    riegeli::Any<riegeli::Reader*> reader,
+    std::optional<CompileOptions> options = std::nullopt);
 
 // Stores a compilation phase's compiler and validator functions.
 // This struct bundles the essential functional components required to define
