@@ -25,8 +25,11 @@ limitations under the License.
 namespace xla::gpu {
 
 // Replaces entry-computation copies of large scalar-constant fill fusions with
-// independent fills. Run after CopyInsertion and before CopyFusion so separate
-// writable buffers can be initialized independently by the scheduler.
+// independent fills, looking through the same single-user bitcasts as
+// CopyFusion. Copies whose consumer already receives every other use of the
+// fill are left for CopyFusion to fold into it. Run after CopyInsertion and
+// before CopyFusion so separate writable buffers can be initialized
+// independently by the scheduler.
 class ConstantFillCopyRewriter : public HloModulePass {
  public:
   absl::string_view name() const override {

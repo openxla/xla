@@ -16,31 +16,53 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/constant_fill_copy_rewriter.h"
 
 #include <cstdint>
-#include <memory>
-#include <utility>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/log.h"
-#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/decision.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape_util.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
 
+// Splitting small fills can cost more in launches than it saves in memory.
+constexpr int64_t kMinFillBytes = 1024 * 1024;
+
+// Returns the instruction that ultimately consumes `user`'s value, looking
+// through the same single-user bitcast and copy that the rewrite looks through.
+const HloInstruction* Consumer(const HloInstruction* user) {
+  if (user->opcode() == HloOpcode::kBitcast && user->user_count() == 1) {
+    user = user->users()[0];
+  }
+  if (user->opcode() == HloOpcode::kCopy && user->user_count() == 1) {
+    user = user->users()[0];
+  }
+  return user;
+}
+
 Decision CanReplaceCopyWithFill(const HloInstruction& copy) {
-  // Splitting small fills can cost more in launches than it saves in memory.
-  constexpr int64_t kMinFillBytes = 1024 * 1024;
-  const HloInstruction* fill = copy.operand(0);
-  if (!copy.shape().IsArray() || copy.shape() != fill->shape() ||
-      copy.HasControlDependencies() || copy.has_sharding()) {
-    return Decision::Forbid("Copy changes layout or has ordering or sharding");
+  const HloInstruction* source = copy.operand(0);
+  if (!copy.shape().IsArray() || copy.shape() != source->shape() ||
+      copy.HasControlDependencies() || copy.has_sharding() || copy.IsDead()) {
+    return Decision::Forbid(
+        "Copy changes layout, has ordering or sharding, or is dead");
+  }
+  const HloInstruction* fill = source;
+  if (source->opcode() == HloOpcode::kBitcast) {
+    // CopyFusion looks through such bitcasts as well, so leaving the copy in
+    // place would fuse it back into the fill.
+    if (source->user_count() != 1 || source->HasControlDependencies() ||
+        source->has_sharding() ||
+        !hlo_instruction_utils::KeepsBitwidth(*source)) {
+      return Decision::Forbid("Bitcast is shared or changes bitwidth");
+    }
+    fill = source->operand(0);
   }
   if (fill->opcode() != HloOpcode::kFusion ||
       fill->fusion_kind() != HloInstruction::FusionKind::kLoop ||
@@ -55,35 +77,17 @@ Decision CanReplaceCopyWithFill(const HloInstruction& copy) {
   if (ShapeUtil::ByteSizeOfElements(copy.shape()) < kMinFillBytes) {
     return Decision::Forbid("Fill is too small to split");
   }
-  return Decision::Allow();
-}
-
-// The rematerialized fill stands in for the copy, so it must carry the copy's
-// annotations: stream assignment, scheduling group, provenance. The clone
-// starts out with the fill's own annotations; the copy's populated fields win
-// on conflict. ReplaceInstruction alone only copies them when the clone has
-// none.
-absl::Status TransferCopyAnnotations(const HloInstruction& copy,
-                                     HloInstruction* fill) {
-  FrontendAttributes frontend_attributes = fill->frontend_attributes();
-  frontend_attributes.MergeFrom(copy.frontend_attributes());
-  fill->set_frontend_attributes(std::move(frontend_attributes));
-
-  OpMetadata metadata = fill->metadata();
-  metadata.MergeFrom(copy.metadata());
-  fill->set_metadata(metadata);
-
-  if (copy.has_backend_config()) {
-    ABSL_ASSIGN_OR_RETURN(GpuBackendConfig fill_config,
-                          fill->backend_config<GpuBackendConfig>());
-    ABSL_ASSIGN_OR_RETURN(GpuBackendConfig copy_config,
-                          copy.backend_config<GpuBackendConfig>());
-    // A copy never carries a fusion config, so merging only layers the copy's
-    // queue assignment and scheduling hints over the fill's config.
-    fill_config.MergeFrom(copy_config);
-    ABSL_RETURN_IF_ERROR(fill->set_backend_config(fill_config));
+  // When every use of the fill reaches the copy's consumer, all of those
+  // buffers are live there anyway. A separate fill would only add a launch and
+  // free the scheduler to pull it away from the consumer, so leave the copy for
+  // CopyFusion to fold into the fill.
+  if (copy.user_count() == 1 &&
+      absl::c_all_of(fill->users(), [&](const HloInstruction* user) {
+        return Consumer(user) == copy.users()[0];
+      })) {
+    return Decision::Forbid("All uses of the fill feed the same consumer");
   }
-  return absl::OkStatus();
+  return Decision::Allow();
 }
 
 }  // namespace
@@ -97,29 +101,39 @@ absl::StatusOr<bool> ConstantFillCopyRewriter::RunImpl(
     return false;
   }
   bool changed = false;
-  for (HloInstruction* instruction : entry->MakeInstructionPostOrder()) {
-    if (instruction->opcode() != HloOpcode::kCopy) {
+  // Each decision sees the replacements made so far: once the copies feeding
+  // other consumers have their own fills, the remaining copies of a fill that
+  // all feed one consumer stay with it.
+  for (HloInstruction* copy : entry->MakeInstructionPostOrder()) {
+    if (copy->opcode() != HloOpcode::kCopy) {
       continue;
     }
-    if (Decision decision = CanReplaceCopyWithFill(*instruction);
+    if (Decision decision = CanReplaceCopyWithFill(*copy);
         decision.IsForbidden()) {
-      VLOG(4) << "Not rematerializing " << instruction->name() << ": "
+      VLOG(4) << "Not rematerializing " << copy->name() << ": "
               << decision.Explain();
       continue;
     }
-    // A fresh fill preserves the copy's separate writable value without keeping
-    // its source alive. Replacement also removes the source if it becomes dead.
-    std::unique_ptr<HloInstruction> fill =
-        instruction->operand(0)->Clone("rematerialized");
-    ABSL_RETURN_IF_ERROR(TransferCopyAnnotations(*instruction, fill.get()));
-    ABSL_RETURN_IF_ERROR(
-        entry->ReplaceWithNewInstruction(instruction, std::move(fill)));
+    HloInstruction* source = copy->mutable_operand(0);
+    HloInstruction* fill = source->opcode() == HloOpcode::kBitcast
+                               ? source->mutable_operand(0)
+                               : source;
+    HloInstruction* replacement = source;
+    if (fill->user_count() > 1) {
+      // Other uses keep the original fill alive, so the copy gets a fill of its
+      // own: still a separate writable value, but one that no longer pins the
+      // original's buffer until this consumer runs.
+      replacement = entry->AddInstruction(fill->Clone("rematerialized"));
+      if (source != fill) {
+        replacement = entry->AddInstruction(
+            HloInstruction::CreateBitcast(copy->shape(), replacement));
+      }
+    }
+    // Otherwise the copy is the fill's only use and the fill stands in for it
+    // directly. Either way the original fill keeps a user, so its fusion body
+    // is never orphaned.
+    ABSL_RETURN_IF_ERROR(entry->ReplaceInstruction(copy, replacement));
     changed = true;
-  }
-  if (changed) {
-    // Removing the last user of a fill leaves its fused computation orphaned;
-    // drop it so dead bodies do not reach dumps, FusionWrapper, or scheduling.
-    ABSL_RETURN_IF_ERROR(module->RemoveUnusedComputations());
   }
   return changed;
 }

@@ -30,10 +30,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
-#include "xla/literal.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -56,90 +54,141 @@ ENTRY main {
 }
 )";
 
+constexpr absl::string_view kRootCopy =
+    "ROOT copy = f32[512,512]{1,0} copy(fill)";
+
 using ConstantFillCopyRewriterTest = HloHardwareIndependentTestBase;
 
-TEST_F(ConstantFillCopyRewriterTest, ReplacesCopyAndRemovesUnusedSource) {
+// Checks that `fill` is a fresh zero-operand fill equivalent to `original`.
+void ExpectRematerializedFill(const HloInstruction* fill,
+                              const HloInstruction* original) {
+  EXPECT_NE(fill, original);
+  ASSERT_EQ(fill->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fill->operand_count(), 0);
+  EXPECT_EQ(fill->shape(), original->shape());
+  EXPECT_EQ(*fill->fused_instructions_computation(),
+            *original->fused_instructions_computation());
+}
+
+TEST_F(ConstantFillCopyRewriterTest, ReplacesSoleCopyWithTheFillItself) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* fill = entry->GetInstructionWithName("fill");
   ConstantFillCopyRewriter pass;
   ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
-  const HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_EQ(root->opcode(), HloOpcode::kFusion);
-  EXPECT_EQ(root->operand_count(), 0);
-  EXPECT_EQ(root->fused_expression_root()
-                ->operand(0)
-                ->literal()
-                .GetFirstElement<float>(),
-            7);
-  EXPECT_EQ(module->entry_computation()->GetInstructionWithName("fill"),
-            nullptr);
-  // The removed fill's fused computation must not linger in the module.
-  EXPECT_EQ(module->GetComputationWithName("fill_body"), nullptr);
+  // The copy was the fill's only use, so the fill stands in for it directly and
+  // nothing is cloned.
+  EXPECT_EQ(entry->root_instruction(), fill);
+  EXPECT_EQ(entry->GetInstructionWithName("copy"), nullptr);
   EXPECT_EQ(module->computation_count(), 2);
   ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }
 
-TEST_F(ConstantFillCopyRewriterTest, TransfersCopyAnnotationsToFill) {
-  std::string hlo = absl::StrReplaceAll(
-      kHlo,
-      {{"calls=fill_body",
-        R"(calls=fill_body, frontend_attributes={_scheduling_group_id="1",from_fill="yes"}, backend_config={"fusion_backend_config":{"kind":"__fill"}}, metadata={op_name="fill_op"})"},
-       {"copy(fill)",
-        R"(copy(fill), frontend_attributes={_scheduling_group_id="2",from_copy="yes"}, backend_config={"operation_queue_id":"3"}, metadata={op_name="copy_op" source_file="copy.py" source_line=7})"}});
+TEST_F(ConstantFillCopyRewriterTest, RematerializesFillForItsOwnConsumer) {
+  std::string hlo = absl::StrReplaceAll(kHlo, {{kRootCopy, R"(
+  copy = f32[512,512]{1,0} copy(fill)
+  early = f32[512,512]{1,0} negate(copy)
+  ROOT late = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(early, fill))"}});
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* fill = entry->GetInstructionWithName("fill");
   ConstantFillCopyRewriter pass;
   ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
-  const HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_EQ(root->opcode(), HloOpcode::kFusion);
-  // The copy's annotations win on conflict; the fill's unrelated ones remain.
-  const auto& attributes = root->frontend_attributes().map();
-  EXPECT_EQ(attributes.at("_scheduling_group_id"), "2");
-  EXPECT_EQ(attributes.at("from_copy"), "yes");
-  EXPECT_EQ(attributes.at("from_fill"), "yes");
-  EXPECT_EQ(root->metadata().op_name(), "copy_op");
-  EXPECT_EQ(root->metadata().source_file(), "copy.py");
-  EXPECT_EQ(root->metadata().source_line(), 7);
-  ASSERT_OK_AND_ASSIGN(GpuBackendConfig config,
-                       root->backend_config<GpuBackendConfig>());
-  EXPECT_EQ(config.operation_queue_id(), 3);
-  EXPECT_EQ(config.fusion_backend_config().kind(), "__fill");
-}
-
-TEST_F(ConstantFillCopyRewriterTest,
-       CopiesAreIndependentEvenWithSharedConsumer) {
-  std::string hlo = absl::StrReplaceAll(
-      kHlo, {{"ROOT copy = f32[512,512]{1,0} copy(fill)", R"(
-  copy0 = f32[512,512]{1,0} copy(fill)
-  copy1 = f32[512,512]{1,0} copy(fill)
-  ROOT result = (f32[512,512], f32[512,512], f32[512,512])
-      tuple(fill, copy0, copy1))"}});
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  HloInstruction* original =
-      module->entry_computation()->GetInstructionWithName("fill");
-  ConstantFillCopyRewriter pass;
-  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
-  const HloInstruction* result =
-      module->entry_computation()->root_instruction();
-  EXPECT_EQ(result->operand(0), original);
-  for (const HloInstruction* fill : result->operands()) {
-    ASSERT_EQ(fill->opcode(), HloOpcode::kFusion);
-    EXPECT_EQ(fill->operand_count(), 0);
-    EXPECT_EQ(fill->shape(), original->shape());
-    EXPECT_EQ(*fill->fused_instructions_computation(),
-              *original->fused_instructions_computation());
-  }
-  EXPECT_NE(result->operand(0), result->operand(1));
-  EXPECT_NE(result->operand(0), result->operand(2));
-  EXPECT_NE(result->operand(1), result->operand(2));
+  ExpectRematerializedFill(entry->GetInstructionWithName("early")->operand(0),
+                           fill);
+  // The original fill keeps its late consumer and its fusion body.
+  EXPECT_EQ(entry->root_instruction()->operand(1), fill);
+  EXPECT_EQ(entry->GetInstructionWithName("copy"), nullptr);
+  EXPECT_EQ(module->computation_count(), 3);
 
   // The following pipeline pass must leave the independent fills intact.
   const auto device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
   CopyFusion copy_fusion(device);
   ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&copy_fusion, module.get()));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(ConstantFillCopyRewriterTest,
+       KeepsCopyWhoseConsumerReceivesEveryOtherUse) {
+  // copy0 feeds early on its own, while copy1 and the fill both feed late.
+  std::string hlo = absl::StrReplaceAll(kHlo, {{kRootCopy, R"(
+  copy0 = f32[512,512]{1,0} copy(fill)
+  early = f32[512,512]{1,0} negate(copy0)
+  copy1 = f32[512,512]{1,0} copy(fill)
+  ROOT late = (f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0})
+      tuple(early, fill, copy1))"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* fill = entry->GetInstructionWithName("fill");
+  ConstantFillCopyRewriter pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+  ExpectRematerializedFill(entry->GetInstructionWithName("early")->operand(0),
+                           fill);
+  // Once copy0 has its own fill, every remaining use of the fill feeds late,
+  // so copy1 stays a copy for CopyFusion to fold into the fill.
+  const HloInstruction* late = entry->root_instruction();
+  EXPECT_EQ(late->operand(1), fill);
+  EXPECT_EQ(late->operand(2), entry->GetInstructionWithName("copy1"));
+  EXPECT_EQ(late->operand(2)->operand(0), fill);
+
+  const auto device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  CopyFusion copy_fusion(device);
+  ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&copy_fusion, module.get()));
+  EXPECT_TRUE(changed);
+  ASSERT_EQ(late->operand(1)->opcode(), HloOpcode::kGetTupleElement);
+  ASSERT_EQ(late->operand(2)->opcode(), HloOpcode::kGetTupleElement);
+  EXPECT_EQ(late->operand(1)->operand(0), late->operand(2)->operand(0));
+  EXPECT_TRUE(late->operand(1)->operand(0)->IsMultiOutputFusion());
+}
+
+TEST_F(ConstantFillCopyRewriterTest, LooksThroughBitcastLikeCopyFusion) {
+  std::string hlo = absl::StrReplaceAll(kHlo, {{kRootCopy, R"(
+  bitcast = f32[262144]{0} bitcast(fill)
+  copy = f32[262144]{0} copy(bitcast)
+  early = f32[262144]{0} negate(copy)
+  ROOT late = (f32[262144]{0}, f32[512,512]{1,0}) tuple(early, fill))"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* fill = entry->GetInstructionWithName("fill");
+  const HloInstruction* bitcast = entry->GetInstructionWithName("bitcast");
+  ConstantFillCopyRewriter pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+  // The copy becomes a bitcast of a fresh fill and the old bitcast dies with
+  // it, leaving predecessor, fill, the new fill and bitcast, early, and late.
+  const HloInstruction* early = entry->GetInstructionWithName("early");
+  const HloInstruction* new_bitcast = early->operand(0);
+  EXPECT_NE(new_bitcast, bitcast);
+  ASSERT_EQ(new_bitcast->opcode(), HloOpcode::kBitcast);
+  EXPECT_EQ(new_bitcast->shape(), early->shape());
+  ExpectRematerializedFill(new_bitcast->operand(0), fill);
+  EXPECT_EQ(entry->root_instruction()->operand(1), fill);
+  EXPECT_EQ(entry->instruction_count(), 6);
+  EXPECT_EQ(module->computation_count(), 3);
+
+  const auto device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  CopyFusion copy_fusion(device);
+  ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&copy_fusion, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(ConstantFillCopyRewriterTest, ReplacesSoleCopyOfBitcastWithTheBitcast) {
+  std::string hlo = absl::StrReplaceAll(kHlo, {{kRootCopy, R"(
+  bitcast = f32[262144]{0} bitcast(fill)
+  ROOT copy = f32[262144]{0} copy(bitcast))"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* bitcast = entry->GetInstructionWithName("bitcast");
+  ConstantFillCopyRewriter pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(entry->root_instruction(), bitcast);
+  EXPECT_EQ(bitcast->operand(0), entry->GetInstructionWithName("fill"));
+  EXPECT_EQ(module->computation_count(), 2);
 }
 
 TEST_F(ConstantFillCopyRewriterTest, RespectsExecutionThreads) {
@@ -282,11 +331,28 @@ INSTANTIATE_TEST_SUITE_P(
         RejectedCopy{
             "FillSharding",
             {{"calls=fill_body", "calls=fill_body, sharding={replicated}"}}},
-        RejectedCopy{"BitcastSource",
-                     {{"ROOT copy",
-                       "bitcast = f32[512,512]{1,0} bitcast(fill)\n"
-                       "  ROOT copy"},
-                      {"copy(fill)", "copy(bitcast)"}}}),
+        RejectedCopy{"DeadCopy", {{kRootCopy, R"(
+  copy = f32[512,512]{1,0} copy(fill)
+  ROOT other = f32[512,512]{1,0} negate(fill))"}}},
+        // Every use of the fill feeds one consumer, so all of those buffers
+        // are live there regardless of how they are produced.
+        RejectedCopy{"SharedConsumer", {{kRootCopy, R"(
+  copy0 = f32[512,512]{1,0} copy(fill)
+  copy1 = f32[512,512]{1,0} copy(fill)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0})
+      tuple(fill, copy0, copy1))"}}},
+        RejectedCopy{"SharedConsumerOfCopiesOnly", {{kRootCopy, R"(
+  copy0 = f32[512,512]{1,0} copy(fill)
+  copy1 = f32[512,512]{1,0} copy(fill)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(copy0, copy1))"}}},
+        RejectedCopy{"SharedBitcast", {{kRootCopy, R"(
+  bitcast = f32[512,512]{1,0} bitcast(fill)
+  copy = f32[512,512]{1,0} copy(bitcast)
+  other = f32[512,512]{1,0} negate(bitcast)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(copy, other))"}}},
+        RejectedCopy{"BitcastChangesBitwidth", {{kRootCopy, R"(
+  bitcast = f16[512,1024]{1,0} bitcast(fill)
+  ROOT copy = f16[512,1024]{1,0} copy(bitcast))"}}}),
     [](const ::testing::TestParamInfo<RejectedCopy>& info) {
       return info.param.name;
     });
