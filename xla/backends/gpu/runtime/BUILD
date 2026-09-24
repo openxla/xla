@@ -135,7 +135,6 @@ cc_library(
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:platform",
         "@com_google_absl//absl/functional:function_ref",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",

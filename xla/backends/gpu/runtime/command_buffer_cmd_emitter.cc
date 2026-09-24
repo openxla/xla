@@ -64,6 +64,11 @@ struct ConversionContext {
         CommandExecutor::SynchronizationMode::kLHS) {
       // Preserve the existing serial order of the flattened command sequence.
       // The executor infers this order from token dependencies.
+      //
+      // TODO(shawnwang18): This serial chain is temporary. It serializes
+      // flattened AsyncStartThunk bodies with the main stream. Replace it with
+      // fork/join dependencies for AsyncStartThunk / AsyncDoneThunk in
+      // https://github.com/openxla/xla/pull/48900.
       Command::ResourceUses dependencies;
       if (!commands.empty()) {
         dependencies.push_back(ResourceUse::Read(commands.back()->token()));
