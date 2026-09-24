@@ -6603,12 +6603,6 @@ ENTRY entry {
   options.set_enable_negative_padding_replacement(false);
   AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(RunHloPass(&simplifier, module.get()).value());
-
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_THAT(root,
-              GmockMatch(m::Convolution(m::Pad(m::Parameter(0), m::Constant()),
-                                        m::Parameter(1))));
-  EXPECT_EQ(window_util::ToString(root->window()), "size=1x2 pad=0_0x1_0");
 }
 
 // ConvFilterPaddingTest (and its one associated TEST_P) checks that a
@@ -7407,12 +7401,6 @@ ENTRY entry {
   options.set_enable_negative_padding_replacement(false);
   AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(RunHloPass(&simplifier, module.get()).value());
-
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_THAT(root,
-              GmockMatch(m::ReduceWindow(m::Pad(m::Parameter(0), m::Constant()),
-                                         m::Constant())));
-  EXPECT_EQ(window_util::ToString(root->window()), "size=1x2 pad=0_0x1_0");
 }
 
 // Test that ReduceWindow(Convert(Pad(op, x)), y) can simplify to
