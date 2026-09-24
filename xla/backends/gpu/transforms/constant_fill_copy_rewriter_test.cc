@@ -72,6 +72,9 @@ TEST_F(ConstantFillCopyRewriterTest, ReplacesCopyAndRemovesUnusedSource) {
             7);
   EXPECT_EQ(module->entry_computation()->GetInstructionWithName("fill"),
             nullptr);
+  // The removed fill's fused computation must not linger in the module.
+  EXPECT_EQ(module->GetComputationWithName("fill_body"), nullptr);
+  EXPECT_EQ(module->computation_count(), 2);
   ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }

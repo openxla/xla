@@ -84,6 +84,11 @@ absl::StatusOr<bool> ConstantFillCopyRewriter::RunImpl(
         instruction, instruction->operand(0)->Clone("rematerialized")));
     changed = true;
   }
+  if (changed) {
+    // Removing the last user of a fill leaves its fused computation orphaned;
+    // drop it so dead bodies do not reach dumps, FusionWrapper, or scheduling.
+    ABSL_RETURN_IF_ERROR(module->RemoveUnusedComputations());
+  }
   return changed;
 }
 
