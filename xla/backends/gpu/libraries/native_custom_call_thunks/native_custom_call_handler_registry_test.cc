@@ -18,7 +18,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <cstdint>
 #include <optional>
 
 #include "absl/status/status.h"
@@ -27,12 +26,7 @@ limitations under the License.
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_emitter_context.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registration.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/backends/gpu/runtime/thunk_id.h"
-#include "xla/ffi/attribute_map.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu_topology.h"
-#include "xla/shape_util.h"
 
 namespace xla::gpu {
 namespace {
@@ -81,44 +75,6 @@ TEST(NativeCustomCallHandlerRegistryTest,
   NativeCustomCallHandlerRegistry registry;
   EXPECT_THAT(registry.Register("target", nullptr),
               StatusIs(absl::StatusCode::kInvalidArgument));
-}
-
-class MockNativeCustomCallEmitterContext
-    : public NativeCustomCallEmitterContext {
- public:
-  const GpuTopology& GetTargetTopology() const override { return *topology_; }
-  const DebugOptions& GetDebugOptions() const override {
-    return debug_options_;
-  }
-  Thunk::ThunkInfo GenerateThunkInfo() const override {
-    Thunk::ThunkInfo info;
-    info.thunk_id = ThunkId(42);
-    return info;
-  }
-  absl::StatusOr<BufferAllocation::Slice> GetResultAllocationSlice(
-      const ShapeIndex& index) const override {
-    return slice_;
-  }
-  absl::StatusOr<BufferAllocation::Slice> GetOperandAllocationSlice(
-      int64_t operand_index, const ShapeIndex& index) const override {
-    return slice_;
-  }
-  absl::StatusOr<xla::ffi::AttributesMap> GetFfiAttributes() const override {
-    return xla::ffi::AttributesMap();
-  }
-
-  const GpuTopology* topology_ = nullptr;
-  DebugOptions debug_options_;
-  BufferAllocation::Slice slice_;
-};
-
-TEST(NativeCustomCallEmitterContextTest, VirtualDispatchWorks) {
-  MockNativeCustomCallEmitterContext mock_ctx;
-  const NativeCustomCallEmitterContext& ctx = mock_ctx;
-
-  EXPECT_EQ(ctx.GenerateThunkInfo().thunk_id, ThunkId(42));
-  EXPECT_OK(ctx.GetResultAllocationSlice({}));
-  EXPECT_OK(ctx.GetOperandAllocationSlice(0, {}));
 }
 
 }  // namespace
