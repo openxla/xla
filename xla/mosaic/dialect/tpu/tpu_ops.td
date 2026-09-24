@@ -1831,6 +1831,12 @@ def TPU_DelayOp : TPU_Op<"delay"> {
   let assemblyFormat = [{ $nanos attr-dict }];
 }
 
+def TPU_SetPStateOp : TPU_Op<"set_p_state"> {
+  let arguments = (ins I32Attr:$p_state);
+  let results = (outs);
+  let assemblyFormat = [{ $p_state attr-dict }];
+}
+
 // Expands the granularity of mask to subelements.
 def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
   let description = [{
