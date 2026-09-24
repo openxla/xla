@@ -67,4 +67,8 @@ message BlockLevelFusionConfig {
   // reordering (grouping) in ragged-dot fusions. A value <= 1 disables the
   // reordering.
   int32 group_size = 10;
+
+  // AMD MFMA MN instruction size, 0 = auto or 16. Ignored on WMMA and on
+  // non-ROCm targets.
+  int32 mfma_size = 11;
 }
