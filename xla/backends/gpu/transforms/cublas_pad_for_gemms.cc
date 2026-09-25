@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/cublas_pad_for_gemms.h"
 
+// Test comment for verifying GPU-only change detection in CI.
 #include <cstdint>
 #include <vector>
 
