@@ -28,10 +28,12 @@ limitations under the License.
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla::gpu::experimental {
@@ -126,7 +128,9 @@ struct DimTile {
 
   // Simplify expressions inside the DimTile using the actual dimension and
   // symbol bounds.
-  void Simplify(const TilingSpace& space);
+  void Simplify(
+      const TilingSpace& space,
+      const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals = {});
 
   std::string ToString() const;
 
@@ -147,12 +151,14 @@ H AbslHashValue(H h, const DimTile& dim_tile) {
 // given tiling space.
 void SimplifyDimTiles(
     llvm::ArrayRef<llvm::MutableArrayRef<DimTile>> dim_tile_groups,
-    const TilingSpace& space);
+    const TilingSpace& space,
+    const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals = {});
 
 // Simplifies a list of DimTiles using the dimension and symbol bounds of the
 // given tiling space.
-void SimplifyDimTiles(llvm::MutableArrayRef<DimTile> dim_tiles,
-                      const TilingSpace& space);
+void SimplifyDimTiles(
+    llvm::MutableArrayRef<DimTile> dim_tiles, const TilingSpace& space,
+    const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals = {});
 
 // Tile is a collection of tilings for every dimension of output tensor
 // of an HLO instruction. TiledHloInstruction associates a Tile
@@ -162,8 +168,10 @@ class Tile {
   enum class DimTileType { kSpatial, kReplicaId };
 
  public:
-  Tile(const TilingSpace& tiling_space, llvm::SmallVector<DimTile> dim_tiles,
-       llvm::SmallVector<DimTile> replica_ids = {});
+  Tile(
+      const TilingSpace& tiling_space, llvm::SmallVector<DimTile> dim_tiles,
+      llvm::SmallVector<DimTile> replica_ids = {},
+      const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals = {});
 
   Tile(const TilingSpace& tiling_space, llvm::ArrayRef<SymbolicExpr> offsets,
        llvm::ArrayRef<SymbolicExpr> sizes, llvm::ArrayRef<SymbolicExpr> strides,
@@ -200,6 +208,21 @@ class Tile {
   // bounds.
   void Simplify();
 
+  // Constraints on the tiling space variables (tile IDs, tile sizes and
+  // runtime variables) that hold for this tile, e.g. the range of the offset
+  // that selects a particular operand of a concatenate.
+  const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals() const {
+    return constraint_intervals_;
+  }
+  int64_t num_constraints() const { return constraint_intervals_.size(); }
+
+  // Adds bounds for the symbolic expression `expr`. If there are already
+  // bounds for `expr`, then computes intersection of the current and new
+  // ranges.
+  void AddConstraint(SymbolicExpr expr, Interval range);
+  void ClearConstraints() { constraint_intervals_.clear(); }
+  void EraseConstraint(SymbolicExpr expr) { constraint_intervals_.erase(expr); }
+
   // Clone the tile with new dim tiles.
   // When we are propagating a tile to an input, we need to adjust the offsets
   // and upper bounds according to the input. The other fields are copied from
@@ -225,6 +248,7 @@ class Tile {
   // a replica ID, but does not change the number of dimensions so propagation
   // for ops that don't have replica IDs stays the same.
   llvm::SmallVector<DimTile> replica_ids_;
+  llvm::MapVector<SymbolicExpr, Interval> constraint_intervals_;
 };
 
 template <typename H>

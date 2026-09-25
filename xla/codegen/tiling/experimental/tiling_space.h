@@ -197,7 +197,9 @@ class TilingSpace {
   // Simplifies expressions using actual dimension and symbol bounds
   // based on the assigned tile sizes and runtime variable bounds.
   llvm::SmallVector<SymbolicExpr> SimplifyExpressions(
-      const llvm::SmallVector<SymbolicExpr>& expressions) const;
+      const llvm::SmallVector<SymbolicExpr>& expressions,
+      const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals = {})
+      const;
 
   // Returns the list of valid tilings for the tiling space.
   absl::StatusOr<std::vector<llvm::SmallVector<int64_t, 4>>> GetValidTilings();
