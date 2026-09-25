@@ -1198,8 +1198,11 @@ cc_library(
     hdrs = ["shuffle.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":literal",
+        ":shape_util",
         ":xla_data_proto_cc",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -1208,9 +1211,13 @@ xla_cc_test(
     name = "shuffle_test",
     srcs = ["shuffle_test.cc"],
     deps = [
+        ":literal",
+        ":literal_util",
+        ":shape_util",
         ":shuffle",
         ":xla_data_proto_cc",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
     ],
 )
