@@ -61,6 +61,8 @@ class Comparison {
   enum class Order : uint8_t {
     // https://en.wikipedia.org/wiki/Total_order
     kTotal,
+    // https://en.wikipedia.org/wiki/Weak_ordering
+    kWeak,
     // https://en.wikipedia.org/wiki/Partially_ordered_set
     kPartial,
   };
@@ -105,6 +107,7 @@ class Comparison {
   inline bool IsLe() const { return dir_ == Direction::kLe; }
   inline bool IsLt() const { return dir_ == Direction::kLt; }
   inline bool IsTotalOrder() const { return order_ == Order::kTotal; }
+  bool IsWeakOrder() const { return order_ == Order::kWeak; }
   inline bool IsPartialOrder() const { return order_ == Order::kPartial; }
 
   // Returns whether this is a floating point total order comparison.
@@ -160,14 +163,27 @@ class Comparison {
       case Direction::kNe:
         return +[](T l, T r) { return std::not_equal_to<T>()(l, r); };
       case Direction::kGe:
-        return +[](T l, T r) { return std::greater_equal<T>()(l, r); };
+        if constexpr (!is_complex_v<T>) {
+          return +[](T l, T r) { return std::greater_equal<T>()(l, r); };
+        }
+        break;
       case Direction::kGt:
-        return +[](T l, T r) { return std::greater<T>()(l, r); };
+        if constexpr (!is_complex_v<T>) {
+          return +[](T l, T r) { return std::greater<T>()(l, r); };
+        }
+        break;
       case Direction::kLe:
-        return +[](T l, T r) { return std::less_equal<T>()(l, r); };
+        if constexpr (!is_complex_v<T>) {
+          return +[](T l, T r) { return std::less_equal<T>()(l, r); };
+        }
+        break;
       case Direction::kLt:
-        return +[](T l, T r) { return std::less<T>()(l, r); };
+        if constexpr (!is_complex_v<T>) {
+          return +[](T l, T r) { return std::less<T>()(l, r); };
+        }
+        break;
     }
+    LOG(FATAL) << "Unsupported comparison: " << ToString();
   }
 
   template <typename T>
@@ -184,6 +200,14 @@ class Comparison {
         } else {
           using R = UnsignedIntegerTypeForSizeType<sizeof(T)>;
           return GetComparator<R>()(ToSignMagnitude(a), ToSignMagnitude(b));
+        }
+      }
+      if (IsWeakOrder()) {
+        // -Inf < -Finite < (-0 == +0) < +Finite < +Inf < NaN
+        bool a_is_nan = Eigen::numext::isnan(a);
+        bool b_is_nan = Eigen::numext::isnan(b);
+        if (a_is_nan || b_is_nan) {
+          return GetComparator<bool>()(a_is_nan, b_is_nan);
         }
       }
     }

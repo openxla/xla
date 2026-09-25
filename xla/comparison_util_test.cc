@@ -173,12 +173,14 @@ TEST(Comparison, ToString) {
 
 TEST(Comparison, ComparisonOrderToString) {
   EXPECT_EQ(ComparisonOrderToString(Comparison::Order::kTotal), "TOTALORDER");
+  EXPECT_EQ(ComparisonOrderToString(Comparison::Order::kWeak), "WEAKORDER");
   EXPECT_EQ(ComparisonOrderToString(Comparison::Order::kPartial),
             "PARTIALORDER");
 }
 
 TEST(Comparison, ComparisonOrderToShortString) {
   EXPECT_EQ(ComparisonOrderToShortString(Comparison::Order::kTotal), "TOTAL");
+  EXPECT_EQ(ComparisonOrderToShortString(Comparison::Order::kWeak), "WEAK");
   EXPECT_EQ(ComparisonOrderToShortString(Comparison::Order::kPartial),
             "PARTIAL");
 }
@@ -186,11 +188,51 @@ TEST(Comparison, ComparisonOrderToShortString) {
 TEST(Comparison, ShortStringToComparisonOrder) {
   EXPECT_THAT(ShortStringToComparisonOrder("TOTAL"),
               IsOkAndHolds(Comparison::Order::kTotal));
+  EXPECT_THAT(ShortStringToComparisonOrder("WEAK"),
+              IsOkAndHolds(Comparison::Order::kWeak));
   EXPECT_THAT(ShortStringToComparisonOrder("PARTIAL"),
               IsOkAndHolds(Comparison::Order::kPartial));
   EXPECT_FALSE(ShortStringToComparisonOrder("TOTALORDER").ok());
+  EXPECT_FALSE(ShortStringToComparisonOrder("WEAKORDER").ok());
   EXPECT_FALSE(ShortStringToComparisonOrder("PARTIALORDER").ok());
   EXPECT_FALSE(ShortStringToComparisonOrder("INVALID").ok());
+}
+
+TEST(Comparison, WeakOrderFloatComparison) {
+  const float qnan = std::numeric_limits<float>::quiet_NaN();
+  const float neg_qnan = -std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  const float neg_inf = -std::numeric_limits<float>::infinity();
+
+  EXPECT_TRUE(Comparison(Comparison::Direction::kEq, PrimitiveType::F32,
+                         Comparison::Order::kWeak)
+                  .Compare<float>(qnan, neg_qnan));
+  EXPECT_FALSE(Comparison(Comparison::Direction::kNe, PrimitiveType::F32,
+                          Comparison::Order::kWeak)
+                   .Compare<float>(qnan, neg_qnan));
+
+  EXPECT_TRUE(Comparison(Comparison::Direction::kEq, PrimitiveType::F32,
+                         Comparison::Order::kWeak)
+                  .Compare<float>(-0.0f, +0.0f));
+  EXPECT_FALSE(Comparison(Comparison::Direction::kLt, PrimitiveType::F32,
+                          Comparison::Order::kWeak)
+                   .Compare<float>(-0.0f, +0.0f));
+  EXPECT_TRUE(Comparison(Comparison::Direction::kLe, PrimitiveType::F32,
+                         Comparison::Order::kWeak)
+                  .Compare<float>(-0.0f, +0.0f));
+
+  EXPECT_TRUE(Comparison(Comparison::Direction::kLt, PrimitiveType::F32,
+                         Comparison::Order::kWeak)
+                  .Compare<float>(inf, neg_qnan));
+  EXPECT_FALSE(Comparison(Comparison::Direction::kLt, PrimitiveType::F32,
+                          Comparison::Order::kWeak)
+                   .Compare<float>(neg_qnan, neg_inf));
+  EXPECT_TRUE(Comparison(Comparison::Direction::kGt, PrimitiveType::F32,
+                         Comparison::Order::kWeak)
+                  .Compare<float>(neg_qnan, inf));
+  EXPECT_TRUE(Comparison(Comparison::Direction::kGe, PrimitiveType::F32,
+                         Comparison::Order::kWeak)
+                  .Compare<float>(neg_qnan, qnan));
 }
 
 TEST(Comparison, TotalOrderFloatComparison) {

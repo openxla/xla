@@ -97,6 +97,8 @@ absl::string_view ComparisonOrderToString(Comparison::Order order) {
   switch (order) {
     case Comparison::Order::kPartial:
       return "PARTIALORDER";
+    case Comparison::Order::kWeak:
+      return "WEAKORDER";
     case Comparison::Order::kTotal:
       return "TOTALORDER";
   }
@@ -106,6 +108,8 @@ absl::string_view ComparisonOrderToShortString(Comparison::Order order) {
   switch (order) {
     case Comparison::Order::kPartial:
       return "PARTIAL";
+    case Comparison::Order::kWeak:
+      return "WEAK";
     case Comparison::Order::kTotal:
       return "TOTAL";
   }
@@ -134,6 +138,7 @@ absl::StatusOr<Comparison::Order> ShortStringToComparisonOrder(
   static auto* const map =
       new absl::flat_hash_map<absl::string_view, Comparison::Order>({
           {"TOTAL", Comparison::Order::kTotal},
+          {"WEAK", Comparison::Order::kWeak},
           {"PARTIAL", Comparison::Order::kPartial},
       });
   auto it = map->find(order);
@@ -186,9 +191,9 @@ Comparison Comparison::Converse() const {
 
 std::optional<Comparison> Comparison::Inverse() const {
   if (IsPartialOrder()) {
-    // We assume comparisons don't have inverses unless they are total order,
-    // e.g., a partial order floating point comparison can return true if one
-    // operand is NaN.
+    // We assume comparisons don't have inverses unless they are total or weak
+    // order, e.g., a partial order floating point comparison can return false
+    // for both (a < b) and (a >= b) if one operand is NaN.
     return std::nullopt;
   }
   if (primitive_util::IsArrayType(primitive_type_)) {
@@ -202,7 +207,7 @@ bool Comparison::IsReflexive() const {
     case Direction::kEq:
     case Direction::kGe:
     case Direction::kLe:
-      return IsTotalOrder();
+      return IsTotalOrder() || IsWeakOrder();
     case Direction::kNe:
     case Direction::kGt:
     case Direction::kLt:
@@ -213,7 +218,7 @@ bool Comparison::IsReflexive() const {
 bool Comparison::IsAntireflexive() const {
   switch (dir_) {
     case Direction::kNe:
-      return IsTotalOrder();
+      return IsTotalOrder() || IsWeakOrder();
     case Direction::kGt:
     case Direction::kLt:
       return true;
