@@ -44,7 +44,8 @@ absl::StatusOr<bool> DynamicSliceAnnotator::RunImpl(
         continue;
       }
 
-      ABSL_ASSIGN_OR_RETURN(auto descriptor, AnalyzeDynamicSlice(instr));
+      ABSL_ASSIGN_OR_RETURN(auto descriptor,
+                            AnalyzeDynamicSlice(instr, enable_table_offsets_));
       if (!descriptor) {
         continue;
       }

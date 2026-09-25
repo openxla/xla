@@ -251,7 +251,9 @@ message DynamicSliceConfig {
   optional int64 loop_index = 1;
 
   // Legacy fields for loading older serialized executables. Deserialization
-  // converts these to Linear when offsets is unset.
+  // converts these to Linear when offsets is unset. Thunk serialization also
+  // populates them for Linear offsets so that older runtimes can execute newer
+  // executables (see the GPU compatibility window in docs/contributing.md).
   int64 byte_offset = 2;
   int64 byte_stride = 3;
 

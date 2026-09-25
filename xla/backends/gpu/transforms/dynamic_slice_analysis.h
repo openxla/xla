@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -37,12 +38,18 @@ namespace xla::gpu {
 // static. Prefer a linear progression; otherwise store one byte offset per
 // iteration.
 struct DynamicSliceDescriptor {
+  // Maximum number of entries in a Table. Tables are serialized into HLO
+  // backend configs and thunk protos, so their size is capped to keep them from
+  // growing with arbitrarily large trip counts.
+  static constexpr int64_t kMaxTableOffsets = 1024;
+
   // The while loop whose induction variable drives the slice offset.
-  // Nullopt when the offset is fully static (all-constant offsets).
+  // Nullopt when the offset is loop-invariant (all-constant offsets, or offsets
+  // that evaluate to the same value on every iteration).
   std::optional<const HloInstruction*> while_loop;
 
   // Index into the while loop nest (0 = innermost, 1 = one level up, etc.).
-  // Nullopt when the offset is fully static.
+  // Nullopt when the offset is loop-invariant.
   //
   // Currently always 0 (loop analysis resolves offsets only from the
   // immediately enclosing while loop), but the runtime supports arbitrary loop
@@ -69,7 +76,10 @@ struct DynamicSliceDescriptor {
       return linear->byte_offset + iteration * linear->byte_stride;
     }
 
-    return std::get<Table>(offsets).byte_offsets.at(iteration);
+    const auto& byte_offsets = std::get<Table>(offsets).byte_offsets;
+    CHECK_GE(iteration, 0);
+    CHECK_LT(iteration, byte_offsets.size());
+    return byte_offsets[iteration];
   }
 };
 
@@ -81,8 +91,16 @@ struct DynamicSliceDescriptor {
 //
 // Returns nullopt if the slice is not contiguous, offsets depend on runtime
 // data other than a supported induction variable, or loop metadata is missing.
+// Also returns nullopt if offsets require a table and `enable_table_offsets` is
+// false, or if the table would exceed DynamicSliceDescriptor::kMaxTableOffsets
+// entries.
+//
+// TODO(ezhulenev): Remove `enable_table_offsets` two weeks after the runtime
+// support for table offsets has landed (see the GPU compatibility window in
+// docs/contributing.md). Until then, the production pipeline must not emit
+// table offsets that an older runtime cannot understand.
 absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
-    const HloInstruction* instr);
+    const HloInstruction* instr, bool enable_table_offsets = false);
 
 // Returns the index of the first offset operand for a DS or DUS instruction.
 int32_t GetFirstOffsetOperandIndex(const HloInstruction* slice);

@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -25,6 +22,8 @@ limitations under the License.
 #include <set>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
@@ -190,9 +189,23 @@ TEST_F(GpuLoopDoubleBufferTransformerTest, UnrollOffsetTable) {
 
   auto single = DoubleBufferLoopUnrolling::MakeConfigForLoopIteration(
       config, DoubleBufferLoopUnrolling::DynamicLoopIteration{5, 2});
+  EXPECT_FALSE(single.has_loop_index());
   ASSERT_TRUE(single.has_linear());
   EXPECT_EQ(single.linear().byte_offset(), 68);
   EXPECT_EQ(single.linear().byte_stride(), 0);
+
+  // A loop-invariant subsequence drops the loop index.
+  DynamicSliceConfig alternating;
+  alternating.set_loop_index(0);
+  for (int64_t offset : {8, 4, 8, 4}) {
+    alternating.mutable_table()->add_offsets(offset);
+  }
+  auto invariant = DoubleBufferLoopUnrolling::MakeConfigForLoopIteration(
+      alternating, DoubleBufferLoopUnrolling::DynamicLoopIteration{0, 2});
+  EXPECT_FALSE(invariant.has_loop_index());
+  ASSERT_TRUE(invariant.has_linear());
+  EXPECT_EQ(invariant.linear().byte_offset(), 8);
+  EXPECT_EQ(invariant.linear().byte_stride(), 0);
 }
 
 TEST_F(GpuLoopDoubleBufferTransformerTest,

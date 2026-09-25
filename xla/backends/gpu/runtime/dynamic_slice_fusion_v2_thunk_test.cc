@@ -859,6 +859,49 @@ TEST(DynamicSliceFusionV2ThunkTest, SerializeDeserializeRoundTrip) {
   EXPECT_THAT(roundtrip_proto.dynamic_slice_fusion_thunk(), EqualsProto(dsf));
 }
 
+TEST(DynamicSliceFusionV2ThunkTest, SerializeLegacyLinearSliceConfigs) {
+  DynamicSliceFusionThunkProto proto;
+  Shape shape = ShapeUtil::MakeShape(F32, {64});
+  Shape slice_shape = ShapeUtil::MakeShape(F32, {1});
+
+  auto* parameter = proto.add_parameters();
+  *parameter->mutable_parameter_shape() = shape.ToProto();
+  *parameter->mutable_slice_shape() = slice_shape.ToProto();
+  *parameter->mutable_slice_config() = ParseTextProtoOrDie<DynamicSliceConfig>(
+      R"pb(
+        loop_index: 1
+        linear { byte_offset: 32 byte_stride: 8 }
+      )pb");
+
+  auto* result = proto.add_results();
+  *result->mutable_result_shape() = shape.ToProto();
+  *result->mutable_update_shape() = slice_shape.ToProto();
+  *result->mutable_update_config() = ParseTextProtoOrDie<DynamicSliceConfig>(
+      R"pb(
+        loop_index: 0
+        table { offsets: [ 0, 8, 8 ] }
+      )pb");
+
+  ASSERT_OK_AND_ASSIGN(auto thunk, DynamicSliceFusionV2Thunk::FromProto(
+                                       Thunk::ThunkInfo(), proto, {},
+                                       /*deserializer=*/nullptr));
+  ASSERT_OK_AND_ASSIGN(ThunkProto serialized, thunk->ToProto());
+  const auto& dsf = serialized.dynamic_slice_fusion_thunk();
+
+  // Linear offsets are also written to the legacy top-level fields, so that an
+  // older runtime that does not know about `linear` can still execute them.
+  EXPECT_THAT(dsf.parameters(0).slice_config(), EqualsProto(R"pb(
+                loop_index: 1
+                byte_offset: 32
+                byte_stride: 8
+                linear { byte_offset: 32 byte_stride: 8 }
+              )pb"));
+  EXPECT_THAT(dsf.results(0).update_config(), EqualsProto(R"pb(
+                loop_index: 0
+                table { offsets: [ 0, 8, 8 ] }
+              )pb"));
+}
+
 TEST(DynamicSliceFusionV2ThunkTest, DeserializeLegacySliceConfigs) {
   DynamicSliceFusionThunkProto proto;
   Shape shape = ShapeUtil::MakeShape(F32, {64});
