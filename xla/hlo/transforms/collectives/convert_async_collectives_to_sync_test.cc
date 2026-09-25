@@ -369,6 +369,38 @@ TEST_F(ConvertAsyncCollectivesToSyncTest, MultipleInFlightNestedPartial) {
   EXPECT_THAT(root, m::Add(m::AllReduceDone(), m::AllReduce()));
 }
 
+TEST_F(ConvertAsyncCollectivesToSyncTest, AsyncStartUpdateDoneRemovesChain) {
+  const absl::string_view hlo_string = R"(
+      HloModule test, is_scheduled=true
+
+      %reduce (x: f32[], y: f32[]) -> f32[] {
+        %x = f32[] parameter(0)
+        %y = f32[] parameter(1)
+        ROOT %add = f32[] add(%x, %y)
+      }
+
+      %async_comp (param_0: f32[8]) -> f32[8] {
+        %param_0 = f32[8] parameter(0)
+        ROOT %ar = f32[8] all-reduce(%param_0), to_apply=%reduce, replica_groups={{0,1}}
+      }
+
+      ENTRY test_computation {
+        p0 = f32[8] parameter(0)
+        start = ((f32[8]), f32[8]) async-start(p0), calls=%async_comp
+        update = ((f32[8]), f32[8]) async-update(start)
+        ROOT done = f32[8] async-done(update)
+      }
+    )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK(RunPass(module.get(), /*expect_change=*/true));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, m::AllReduce(m::Parameter(0)));
+  EXPECT_EQ(FindInstruction(module.get(), "start"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "update"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "done"), nullptr);
+  EXPECT_OK(module->schedule().Verify());
+}
+
 }  // namespace
 
 }  // namespace xla

@@ -679,6 +679,21 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
         absl::FunctionRef<std::vector<HloInstruction*>(const HloComputation*)>>
         computation_callers,
     bool remove_dead_parameters_from_entry_computation) {
+  absl::flat_hash_set<const HloInstruction*> async_chain_instructions;
+  if (instruction->IsAsyncProducer() || instruction->IsAsyncConsumer()) {
+    if (HloInstruction* async_done = instruction->async_chain_done();
+        async_done != nullptr && async_done->IsDead() &&
+        root_instruction() != async_done) {
+      instruction = async_done;
+    }
+    for (HloInstruction* curr = instruction->async_chain_start();
+         curr != nullptr; curr = curr->async_chain_next()) {
+      async_chain_instructions.insert(curr);
+      if (curr == instruction) {
+        break;
+      }
+    }
+  }
   TF_RET_CHECK(root_instruction() != instruction);
   TF_RET_CHECK(instruction->IsDead());
   if (instruction->opcode() == HloOpcode::kAfterAll) {
@@ -711,7 +726,8 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
         !IsSafelyRemovable(item, ignore_control_dependencies,
                            computation_callers,
                            remove_dead_parameters_from_entry_computation) ||
-        (item->HasSideEffect() && item != instruction)) {
+        (item->HasSideEffect() && item != instruction &&
+         !async_chain_instructions.contains(item))) {
       continue;
     }
     if (ignore_control_dependencies) {
@@ -806,6 +822,24 @@ absl::Status HloComputation::RemoveInstructionImpl(HloInstruction* instruction,
                                                    bool ignore_safety_check) {
   VLOG(2) << "Removing instruction " << instruction << " "
           << instruction->name() << " from computation " << name();
+  if (!instruction->IsDead() && instruction->IsAsyncProducer()) {
+    if (HloInstruction* async_done = instruction->async_chain_done();
+        async_done != nullptr && async_done->IsDead() &&
+        root_instruction() != async_done) {
+      std::vector<HloInstruction*> downstream_chain;
+      for (HloInstruction* curr = instruction->async_chain_next();
+           curr != nullptr; curr = curr->async_chain_next()) {
+        downstream_chain.push_back(curr);
+        if (curr == async_done) {
+          break;
+        }
+      }
+      for (auto it = downstream_chain.rbegin(); it != downstream_chain.rend();
+           ++it) {
+        ABSL_RETURN_IF_ERROR(RemoveInstructionImpl(*it, ignore_safety_check));
+      }
+    }
+  }
   TF_RET_CHECK(ignore_safety_check || IsSafelyRemovable(instruction))
       << "cannot remove instruction: " << instruction->ToString();
   TF_RET_CHECK(instruction->IsDead()) << "instruction " << instruction->name()
@@ -1796,8 +1830,17 @@ absl::StatusOr<bool> HloComputation::ReplaceInstruction(
     HloInstruction* old_instruction, HloInstruction* new_instruction,
     bool preserve_sharding, bool relay_control_dependency,
     bool remove_unused_operands, bool preserve_frontend_attributes) {
+  const HloInstruction* async_done =
+      ((old_instruction->IsAsyncProducer() ||
+        old_instruction->IsAsyncConsumer()) &&
+       old_instruction->opcode() != new_instruction->opcode())
+          ? old_instruction->async_chain_done()
+          : nullptr;
   TF_RET_CHECK(
-      ShapeUtil::Compatible(old_instruction->shape(), new_instruction->shape()))
+      ShapeUtil::Compatible(old_instruction->shape(),
+                            new_instruction->shape()) ||
+      (async_done != nullptr &&
+       ShapeUtil::Compatible(async_done->shape(), new_instruction->shape())))
       << absl::StreamFormat(
              "\"%s\" (%s) vs \"%s\" (%s)", old_instruction->name(),
              old_instruction->shape().ToString(/*print_layout=*/true),
@@ -1822,16 +1865,57 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
     HloInstruction* old_instruction, HloInstruction* new_instruction,
     bool preserve_sharding, bool relay_control_dependency,
     bool remove_unused_operands, bool preserve_frontend_attributes) {
+  HloInstruction* async_start = nullptr;
+  HloInstruction* async_done = nullptr;
+  absl::flat_hash_set<HloInstruction*> async_chain_set;
+  std::vector<HloInstruction*> async_chain;
+  if ((old_instruction->IsAsyncProducer() ||
+       old_instruction->IsAsyncConsumer()) &&
+      old_instruction->opcode() != new_instruction->opcode()) {
+    async_start = old_instruction->async_chain_start();
+    async_done = old_instruction->async_chain_done();
+    if (async_start != nullptr && async_done != nullptr) {
+      for (HloInstruction* curr = async_start; curr != nullptr;
+           curr = curr->async_chain_next()) {
+        async_chain.push_back(curr);
+        async_chain_set.insert(curr);
+        if (curr == async_done) {
+          break;
+        }
+      }
+    }
+  }
+  HloInstruction* sharding_source =
+      (async_done != nullptr && async_done->has_sharding()) ? async_done
+                                                            : old_instruction;
   if (preserve_sharding && new_instruction->has_sharding() &&
-      old_instruction->has_sharding() &&
-      !new_instruction->has_compatible_sharding(old_instruction)) {
+      sharding_source->has_sharding() &&
+      !new_instruction->has_compatible_sharding(sharding_source)) {
     VLOG(10) << "Skipping replacement due to incompatible sharding";
     return false;
   }
   if (relay_control_dependency) {
-    ABSL_RETURN_IF_ERROR(
-        new_instruction->CopyAllControlDepsFrom(old_instruction));
-    ABSL_RETURN_IF_ERROR(old_instruction->DropAllControlDeps());
+    if (!async_chain.empty()) {
+      for (HloInstruction* chain_inst : async_chain) {
+        for (HloInstruction* pred : chain_inst->control_predecessors()) {
+          if (!async_chain_set.contains(pred) && pred != new_instruction) {
+            ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(new_instruction));
+          }
+        }
+        for (HloInstruction* succ : chain_inst->control_successors()) {
+          if (!async_chain_set.contains(succ) && succ != new_instruction) {
+            ABSL_RETURN_IF_ERROR(new_instruction->AddControlDependencyTo(succ));
+          }
+        }
+      }
+      for (HloInstruction* chain_inst : async_chain) {
+        ABSL_RETURN_IF_ERROR(chain_inst->DropAllControlDeps());
+      }
+    } else {
+      ABSL_RETURN_IF_ERROR(
+          new_instruction->CopyAllControlDepsFrom(old_instruction));
+      ABSL_RETURN_IF_ERROR(old_instruction->DropAllControlDeps());
+    }
   } else if (old_instruction->HasControlDependencies()) {
     VLOG(10) << "Skipping replacement because old instruction has "
                 "control dependencies";
@@ -1845,28 +1929,37 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
   // function, and that they would be correlated to the same TF op. This might
   // not always be correct since HLO optimizations can cross TF op boundaries.
   // But still this seems to be better than nothing.
+  HloInstruction* metadata_source =
+      (!old_instruction->metadata().op_name().empty() || async_start == nullptr)
+          ? old_instruction
+          : async_start;
   bool overwrite_op_name = new_instruction->metadata().op_name().empty() &&
-                           !old_instruction->metadata().op_name().empty();
+                           !metadata_source->metadata().op_name().empty();
   if (overwrite_op_name) {
-    new_instruction->set_metadata(old_instruction->metadata());
+    new_instruction->set_metadata(metadata_source->metadata());
   } else if (!new_instruction->metadata().has_metadata_payload() &&
-             old_instruction->metadata().has_metadata_payload()) {
+             metadata_source->metadata().has_metadata_payload()) {
     *new_instruction->mutable_metadata().mutable_metadata_payload() =
-        old_instruction->metadata().metadata_payload();
+        metadata_source->metadata().metadata_payload();
   }
   if (preserve_frontend_attributes &&
       new_instruction->frontend_attributes().map().empty()) {
-    new_instruction->set_frontend_attributes(
-        old_instruction->frontend_attributes());
+    HloInstruction* fa_source =
+        (async_done != nullptr &&
+         !async_done->frontend_attributes().map().empty())
+            ? async_done
+            : old_instruction;
+    new_instruction->set_frontend_attributes(fa_source->frontend_attributes());
   }
 
-  new_instruction->CopyOriginalValue(old_instruction);
+  new_instruction->CopyOriginalValue(async_done != nullptr ? async_done
+                                                           : old_instruction);
 
   // Like the metadata above, if the user didn't specify any sharding
   // information on the new instruction we should copy the old sharding
   // information (if any).
   if (!new_instruction->has_sharding()) {
-    new_instruction->copy_sharding(old_instruction);
+    new_instruction->copy_sharding(sharding_source);
   }
 
   ABSL_RETURN_IF_ERROR(

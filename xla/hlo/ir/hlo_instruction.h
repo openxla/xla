@@ -2559,6 +2559,13 @@ class HloInstruction {
   // Delegates to HloAsyncInstruction::async_chain_next().
   HloInstruction* async_chain_next() const;
 
+  // Propagates `new_producer` through any allowed async intermediaries between
+  // `async_chain_start()` and `async_chain_done()`, reconnecting each async
+  // consumer in the chain directly to its async producer, and returns the
+  // resulting instruction to replace `async_chain_done()`'s uses with.
+  absl::StatusOr<HloInstruction*> PropagateAsyncChainIntermediaries(
+      HloInstruction* new_producer);
+
   // Returns the computation that will be executed asynchronously.
   HloComputation* async_wrapped_computation() const;
 

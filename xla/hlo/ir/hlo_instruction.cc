@@ -3782,14 +3782,31 @@ absl::StatusOr<HloInstruction*> HloInstruction::UnfuseInstruction(
 
 absl::Status HloInstruction::ReplaceUsesWith(
     absl::Span<HloInstruction* const> users, HloInstruction* new_producer) {
-  TF_RET_CHECK(
-      ShapeUtil::CompatibleIgnoringFpPrecision(shape(), new_producer->shape()))
+  const HloInstruction* async_done =
+      ((IsAsyncProducer() || IsAsyncConsumer()) &&
+       new_producer->opcode() != opcode())
+          ? async_chain_done()
+          : nullptr;
+  TF_RET_CHECK(ShapeUtil::CompatibleIgnoringFpPrecision(
+                   shape(), new_producer->shape()) ||
+               (async_done != nullptr &&
+                ShapeUtil::CompatibleIgnoringFpPrecision(
+                    async_done->shape(), new_producer->shape())))
       << shape() << " is not compatible with " << new_producer->shape();
   return ReplaceAllUsesWithDifferentShape(users, new_producer);
 }
 
 absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
     absl::Span<HloInstruction* const> users, HloInstruction* new_producer) {
+  if ((IsAsyncProducer() || IsAsyncConsumer()) &&
+      new_producer->opcode() != opcode()) {
+    HloInstruction* async_done = async_chain_done();
+    if (async_done != nullptr && async_done != this &&
+        users.size() == this->users().size() &&
+        absl::c_equal(users, this->users())) {
+      return ReplaceAllUsesWithDifferentShape(new_producer);
+    }
+  }
   // Make a copy since users span might get mutated during the loop
   std::vector<HloInstruction*> users_vector(users.begin(), users.end());
   for (HloInstruction* user : users_vector) {
@@ -3808,8 +3825,16 @@ absl::Status HloInstruction::ReplaceAllUsesWith(HloInstruction* new_producer,
   auto print_options = HloPrintOptions::ShortParsable()
                            .set_print_operand_shape(true)
                            .set_print_extra_attributes(false);
-  TF_RET_CHECK(
-      ShapeUtil::CompatibleIgnoringFpPrecision(shape(), new_producer->shape()))
+  const HloInstruction* async_done =
+      ((IsAsyncProducer() || IsAsyncConsumer()) &&
+       new_producer->opcode() != opcode())
+          ? async_chain_done()
+          : nullptr;
+  TF_RET_CHECK(ShapeUtil::CompatibleIgnoringFpPrecision(
+                   shape(), new_producer->shape()) ||
+               (async_done != nullptr &&
+                ShapeUtil::CompatibleIgnoringFpPrecision(
+                    async_done->shape(), new_producer->shape())))
       << "The shape doesn't match when replacing '" << ToString(print_options)
       << "' with '" << new_producer->ToString(print_options) << "'. " << shape()
       << " is not compatible with " << new_producer->shape() << "\n '"
@@ -3819,6 +3844,26 @@ absl::Status HloInstruction::ReplaceAllUsesWith(HloInstruction* new_producer,
 
 absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
     HloInstruction* new_producer) {
+  if ((IsAsyncProducer() || IsAsyncConsumer()) &&
+      new_producer->opcode() != opcode()) {
+    HloInstruction* async_done = async_chain_done();
+    if (async_done != nullptr) {
+      ABSL_ASSIGN_OR_RETURN(HloInstruction * final_result,
+                            PropagateAsyncChainIntermediaries(new_producer));
+      if (this != async_done || final_result != new_producer) {
+        return async_done->ReplaceAllUsesWithDifferentShape(final_result);
+      }
+    }
+  }
+
+  HloAsyncInstruction* old_async = DynCast<HloAsyncInstruction>(this);
+  HloAsyncInstruction* new_async = DynCast<HloAsyncInstruction>(new_producer);
+  HloAsyncInstruction* old_async_next =
+      (old_async != nullptr && new_async != nullptr &&
+       new_producer->opcode() == opcode())
+          ? old_async->async_chain_next()
+          : nullptr;
+
   bool new_producer_is_user = false;
   // Make a copy since users span might get mutated during the loop
   std::vector<HloInstruction*> users_vector(users().begin(), users().end());
@@ -3842,6 +3887,10 @@ absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
   users_.Clear();
   if (new_producer_is_user) {
     AddUser(new_producer);
+  }
+  if (old_async_next != nullptr) {
+    new_async->SetAsyncChainNext(old_async_next);
+    old_async->SetAsyncChainNext(nullptr);
   }
   if (parent_ && parent_->root_instruction() == this) {
     parent_->set_root_instruction(new_producer,
@@ -6492,27 +6541,6 @@ const DomainMetadata& HloInstruction::operand_side_metadata() const {
 
 const DomainMetadata& HloInstruction::user_side_metadata() const {
   return Cast<HloDomainInstruction>(this)->user_side_metadata();
-}
-
-HloInstruction* HloInstruction::async_chain_start() const {
-  if (auto* async_inst = DynCast<HloAsyncInstruction>(this)) {
-    return async_inst->async_chain_start();
-  }
-  return nullptr;
-}
-
-HloInstruction* HloInstruction::async_chain_next() const {
-  if (auto* async_inst = DynCast<HloAsyncInstruction>(this)) {
-    return async_inst->async_chain_next();
-  }
-  return nullptr;
-}
-
-HloInstruction* HloInstruction::async_chain_done() const {
-  if (auto* async_inst = DynCast<HloAsyncInstruction>(this)) {
-    return async_inst->async_chain_done();
-  }
-  return nullptr;
 }
 
 HloComputation* HloInstruction::async_wrapped_computation() const {
