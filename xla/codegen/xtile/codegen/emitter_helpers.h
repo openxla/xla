@@ -108,6 +108,10 @@ class EmitterContext {
     return it->second;
   }
 
+  // Binds `sequential_dim_id` to `value`. Returns false if the dimension is
+  // already bound. Bindings to loop induction variables must be released with
+  // `UnmapSequentialDim` once the loop body is emitted, because the induction
+  // variable does not dominate code outside of its loop.
   bool MapSymbolIdToSequentialDimValue(
       gpu::experimental::TiledDimId sequential_dim_id, mlir::Value value,
       Interval interval) {
@@ -115,6 +119,10 @@ class EmitterContext {
         .insert(
             std::make_pair(sequential_dim_id, std::make_pair(value, interval)))
         .second;
+  }
+
+  void UnmapSequentialDim(gpu::experimental::TiledDimId sequential_dim_id) {
+    sequential_dim_id_to_value_.erase(sequential_dim_id);
   }
 
   // Evaluates tiling parameters for the given affine expressions, e.g. offsets.
