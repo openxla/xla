@@ -1728,6 +1728,12 @@ absl::StatusOr<TensorValue> EmitReduceWithRegion(
           mlir::ImplicitLocOpBuilder nested_b(loc, loop_builder);
 
           for (int i = 0; i < sequential_dim_ids.size(); ++i) {
+            // Fully tiled dimensions were already bound to 0 by
+            // EmitFullyTiledSequentialDimensions. Their single-trip loop is
+            // kept so that masking below is handled uniformly.
+            if (loop_iteration_counts[i] == 1) {
+              continue;
+            }
             const ge::TilingSpace::DimensionInfo& dim_info =
                 tiled_hlo.tile().tiling_space().GetDimensionInfo(
                     *tiled_hlo.hlo(), sequential_dim_ids[i]);
