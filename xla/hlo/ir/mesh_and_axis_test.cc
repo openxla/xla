@@ -106,6 +106,23 @@ TEST(MeshAndAxisTest, MeshToAndFromProtoIotaTiling) {
   EXPECT_EQ(mesh, Mesh::FromProto(proto));
 }
 
+TEST(MeshAndAxisTest, FromProtoRejectsOutOfRangeIotaTransposePerm) {
+  // A mesh iota_transform (reached from an untrusted NamedSharding / mesh proto)
+  // is another path into the iota tile assignment. transpose_perm indexes
+  // reshape_dims, so an out-of-range value (here 3, with only reshape rank 3 =>
+  // valid values are {0, 1, 2}) must be rejected rather than used as an index.
+  MeshProto proto;
+  proto.add_axes()->set_name("a");
+  proto.mutable_axes(0)->set_size(8);
+  proto.mutable_iota_transform()->add_reshape_dims(2);
+  proto.mutable_iota_transform()->add_reshape_dims(2);
+  proto.mutable_iota_transform()->add_reshape_dims(2);
+  proto.mutable_iota_transform()->add_transpose_perm(0);
+  proto.mutable_iota_transform()->add_transpose_perm(1);
+  proto.mutable_iota_transform()->add_transpose_perm(3);
+  EXPECT_DEATH({ Mesh::FromProto(proto); }, "out of range");
+}
+
 TEST(MeshAndAxisTest, MeshToProtoIotaTilingWithReshapeDims) {
   MeshProto expected;
   expected.add_axes()->set_name("axis1");

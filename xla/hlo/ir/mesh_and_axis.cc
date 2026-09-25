@@ -207,9 +207,16 @@ Mesh Mesh::FromProto(const MeshProto& proto) {
   // If device ids are not specified, create a mesh with iota tiling.
   if (proto.device_ids_size() == 0) {
     if (proto.has_iota_transform()) {
-      // Transformed iota.
-      TileAssignment device_assignment = TileAssignment(
-          IotaTileAssignment::Create(mesh_axis_sizes, proto.iota_transform()));
+      // Transformed iota. transpose_perm indexes reshape_dims when the iota
+      // tile assignment is built and queried, so it must be a permutation of
+      // [0, reshape_dims.size()); otherwise the indexing goes out of bounds.
+      const MeshProto::IotaTransform& transform = proto.iota_transform();
+      std::vector<int> transpose_perm(transform.transpose_perm().begin(),
+                                      transform.transpose_perm().end());
+      CHECK_OK(
+          ValidateIotaTileAssignment(transform.reshape_dims(), transpose_perm));
+      TileAssignment device_assignment =
+          TileAssignment(IotaTileAssignment::Create(mesh_axis_sizes, transform));
       return Mesh(device_assignment, mesh_axis_names_span);
     }
     // Simple iota.

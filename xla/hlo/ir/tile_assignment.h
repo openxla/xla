@@ -171,6 +171,22 @@ Array<int64_t> ToArray(absl::Span<const int64_t> reshape_dims,
                        absl::Span<const int> transpose_perm,
                        absl::Span<const int64_t> dims);
 
+// Validates that (`reshape_dims`, `transpose_perm`) form a well-formed iota
+// tile assignment, i.e. that `transpose_perm` is a permutation of
+// [0, reshape_dims.size()) and that every reshape dim is positive.
+//
+// These are hard preconditions of IotaTileAssignment: its members index
+// `reshape_dims` and `transpose_perm` directly (see IotaTileAssignment::value_at
+// and ::index_for, CanonicalizeIotaDims, and Array::TransposeDimensions), so an
+// out-of-range or duplicate `transpose_perm` entry leads to out-of-bounds reads
+// and writes, and a non-positive reshape dim leads to a division by zero. The
+// iota constructors take these as raw spans and only DCHECK the preconditions,
+// so any caller that builds an IotaTileAssignment from untrusted input (e.g. a
+// deserialized OpSharding, MeshProto or IotaReplicaGroupListProto) MUST call
+// this first and reject the input on error.
+absl::Status ValidateIotaTileAssignment(absl::Span<const int64_t> reshape_dims,
+                                         absl::Span<const int> transpose_perm);
+
 // Internal class that represents how an ordered list of device IDs are sharded
 // along different dimensions. It manages full or compact representation of the
 // device IDs without having callers worry about what underlying format is used.
