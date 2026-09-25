@@ -2997,6 +2997,19 @@ CommonPjRtLoadedExecutable::Execute(
       options.send_callbacks, options.recv_callbacks,
       addressable_devices_.size()));
 
+  // Optimized-module snapshots for single-device runs on clients that do not
+  // take the fast path above. Executables without an HloModule skip this.
+  std::shared_ptr<HloModule> snapshot_hlo_module;
+  if (num_addressable_devices == 1) {
+    if (auto hlo_module = GetExecutable()->GetHloModule(); hlo_module.ok()) {
+      snapshot_hlo_module = *std::move(hlo_module);
+    }
+  }
+  if (snapshot_hlo_module != nullptr) {
+    // Dump once before running, in case there's a crash.
+    MaybeDumpHloSnapshot(*snapshot_hlo_module, run_id, argument_handles[0], {});
+  }
+
   std::vector<absl::StatusOr<Result>> results(num_addressable_devices);
   if (num_addressable_devices == 1) {
     // Fast-path if there is only one device — run the computation on the
@@ -3129,6 +3142,10 @@ CommonPjRtLoadedExecutable::Execute(
     if (returned_futures.has_value()) {
       returned_futures->push_back(*std::move(statusor->future));
     }
+  }
+  if (snapshot_hlo_module != nullptr) {
+    MaybeDumpHloSnapshot(*snapshot_hlo_module, run_id, argument_handles[0],
+                         wrapped_results[0]);
   }
   return wrapped_results;
 }
