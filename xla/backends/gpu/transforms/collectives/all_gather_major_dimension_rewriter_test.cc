@@ -15,8 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/all_gather_major_dimension_rewriter.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
+#include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
 namespace xla {
