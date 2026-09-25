@@ -2119,6 +2119,14 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
           Cast<HloCollectiveBroadcastInstruction>(collective), std::nullopt);
 
     case HloOpcode::kCollectiveReduce: {
+      if (!ir_emitter_context_->debug_options()
+               .xla_gpu_emit_collective_reduce()) {
+        return Internal(
+            "Unsupported collective instruction: %s. Set "
+            "--xla_gpu_emit_collective_reduce to enable CollectiveReduce "
+            "support on GPU.",
+            collective->ToString());
+      }
       auto* collective_reduce =
           Cast<HloCollectiveReduceInstruction>(collective);
       return EmitCollective<CollectiveReduceThunk,

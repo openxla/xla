@@ -49,7 +49,6 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
-#include "tsl/platform/cpu_info.h"  // NOLINT
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/hlo/pass/hlo_pass_filter.h"
@@ -61,6 +60,7 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"  // NOLINT
 
 namespace xla {
 
@@ -363,6 +363,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_nccl_user_buffers_in_default_space(false);
   opts.set_xla_gpu_enable_allocator_spatial_partitioning(true);
   opts.set_xla_gpu_experimental_enable_nccl_symmetric_buffers(false);
+  opts.set_xla_gpu_emit_collective_reduce(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
@@ -2404,6 +2405,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_nccl_symmetric_buffers(),
       "Enables NCCL symmetric buffer registration."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_emit_collective_reduce",
+      bool_setter_for(&DebugOptions::set_xla_gpu_emit_collective_reduce),
+      debug_options->xla_gpu_emit_collective_reduce(),
+      "Enables emitting a CollectiveReduceThunk for kCollectiveReduce HLO "
+      "instructions. Kept off by default to preserve the forward "
+      "compatibility window until the runtime support for the thunk has "
+      "rolled out."));
+  flag_list->push_back(tsl::Flag(
       "xla_enable_nccl_symmetric_buffers_for_collectives",
       setter_for_xla_enable_nccl_symmetric_buffers_for_collectives,
       absl::StrJoin(
@@ -4041,16 +4050,13 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_triton_gemm",
           "xla_gpu_enable_while_loop_double_buffering",
-          "xla_gpu_exhaustive_tiling_search",
-          "xla_gpu_pipeline_all_gather",
-          "xla_gpu_pipeline_all_reduce",
-          "xla_gpu_pipeline_reduce_scatter",
+          "xla_gpu_exhaustive_tiling_search", "xla_gpu_pipeline_all_gather",
+          "xla_gpu_pipeline_all_reduce", "xla_gpu_pipeline_reduce_scatter",
           "xla_gpu_reduce_scatter_combine_threshold_bytes",
           // go/keep-sorted end
       });

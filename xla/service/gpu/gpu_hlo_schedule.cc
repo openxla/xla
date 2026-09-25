@@ -897,7 +897,10 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
   config.convert_all_reduce = HloPredicateTrue;
   config.convert_all_to_all = HloPredicateTrue;
   config.convert_collective_broadcast = HloPredicateTrue;
-  config.convert_collective_reduce = HloPredicateTrue;
+  config.convert_collective_reduce =
+      module->config().debug_options().xla_gpu_emit_collective_reduce()
+          ? HloPredicateTrue
+          : HloPredicateFalse;
   config.convert_collective_permute = HloPredicateTrue;
   config.convert_ragged_all_to_all = HloPredicateTrue;
   config.convert_reduce_scatter = HloPredicateTrue;
