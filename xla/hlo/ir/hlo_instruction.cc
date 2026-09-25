@@ -3066,15 +3066,22 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
 }
 
 void HloInstruction::DetachFromOperandsAndUsers() {
+  DetachFromOperandsAndUsersOutside(/*computation=*/nullptr);
+}
+
+void HloInstruction::DetachFromOperandsAndUsersOutside(
+    const HloComputation* computation) {
   if (cleaned_up_) {
     return;
   }
+  DCHECK(computation == nullptr || computation == parent());
   cleaned_up_ = true;
   // Detach from operands. An instruction may be repeated as an operand. To
   // avoid calling RemoveUser twice on the same operand, check before remove.
   for (int64_t operand_num = 0; operand_num < operand_count(); ++operand_num) {
     HloInstruction* operand = operands_[operand_num];
-    if (operand == nullptr) {
+    if (operand == nullptr ||
+        (computation != nullptr && operand->parent() == computation)) {
       continue;
     }
     operand->users_.MaybeRemoveUser(this);
@@ -3082,7 +3089,10 @@ void HloInstruction::DetachFromOperandsAndUsers() {
   }
 
   // Update users. Set `nullptr` to the corresponding operand slot for users.
-  for (auto& user : this->users()) {
+  for (HloInstruction* user : users()) {
+    if (computation != nullptr && user->parent() == computation) {
+      continue;
+    }
     for (int i = 0; i < user->operand_count(); ++i) {
       if (user->operands_[i] == this) {
         user->operands_[i] = nullptr;
