@@ -118,11 +118,18 @@ class ConfigAssigner {
   // options:
   // 1. Check the cache.
   // 2. Check the first compilable estimated config (if cost model is enabled).
+  //    If none compiles the future fails; GetConfigsForAll then falls back to
+  //    tuning the instruction.
   // 3. Check the first compilable config or the default config (if
   //    autotuning is disabled).
   // 4. Tune the instruction.
   // Tuned config is updated in the cache if it is provided.
   tsl::Future<Config> GetConfig(const HloInstruction* instr);
+
+  // Autotunes the given instruction and caches the result. Must be called on
+  // the thread that owns this object: some backends' GetSupportedConfigs are
+  // not thread-safe.
+  tsl::Future<Config> GetTunedConfig(const HloInstruction* instr);
 
   // Gets the first compilable config under the supported configurations for the
   // given HLO instruction.
@@ -132,8 +139,9 @@ class ConfigAssigner {
   // Attempts to compile estimated configs in sorted order with fastest first.
   // If only_with_estimates is set, stops at the first config without an
   // estimated runtime. Returns the first compilable config found, or an error
-  // status.
-  absl::StatusOr<Config> GetFirstCompilableEstimatedConfig(
+  // status. The configs are looked up on the calling thread and compiled on
+  // the thread pool (if any), so many instructions can be compiled in parallel.
+  tsl::Future<Config> GetFirstCompilableEstimatedConfig(
       const HloInstruction* instr, bool only_with_estimates);
 
   // Gets the first compilable supported config or default config for the given
