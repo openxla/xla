@@ -974,7 +974,8 @@ absl::Status RunOptimizationPasses(
 
     pipeline.AddPass<GatherSimplifier>();
     pipeline.AddPass<GatherExpander>(GatherExpander::kEliminateSimpleGathers);
-    pipeline.AddPass<ScatterSimplifier>();
+    pipeline.AddPass<ScatterSimplifier>(
+        /*reorder_operand_dims_for_coalescing=*/true);
     pipeline.AddPass<ScatterExpander>(
         ScatterExpander::kEliminateSimpleScatters);
     pipeline.AddPass<ScatterSliceSimplifier>();
@@ -1660,7 +1661,8 @@ absl::Status RunLayoutNormalizationPasses(
   layout_normalization_pipeline.AddPass<BroadcastCanonicalizer>();
   // Layout normalization will create scatters that are not simplified and
   // also have unsorted update_window_dims.
-  layout_normalization_pipeline.AddPass<ScatterSimplifier>();
+  layout_normalization_pipeline.AddPass<ScatterSimplifier>(
+      /*reorder_operand_dims_for_coalescing=*/true);
   return layout_normalization_pipeline
       .Run(hlo_module, {HloInstruction::kMainExecutionThread})
       .status();
@@ -2174,7 +2176,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                                                          gpu_version);
     // Layout normalization will create scatters that are not simplified and
     // also have unsorted update_window_dims.
-    pipeline.AddPass<ScatterSimplifier>();
+    pipeline.AddPass<ScatterSimplifier>(
+        /*reorder_operand_dims_for_coalescing=*/true);
     pipeline.AddPass<BroadcastCanonicalizer>();
     pipeline.AddPass<ReductionDegenerateDimRemover>();
     pipeline.AddPass<ReductionLayoutNormalizer>();
@@ -2261,7 +2264,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   // Layout normalization will create scatters that are not simplified and
   // also have unsorted update_window_dims.
-  pipeline.AddPass<ScatterSimplifier>();
+  pipeline.AddPass<ScatterSimplifier>(
+      /*reorder_operand_dims_for_coalescing=*/true);
 
   // Verify the host memory space before the host offloader pass
   auto verifier_metadata = std::make_unique<CpuGpuVerifierMetadata>(
