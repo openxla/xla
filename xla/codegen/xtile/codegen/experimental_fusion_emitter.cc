@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -448,6 +449,9 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
             *tiled_dot.hlo(), sequential_dim_ids.front());
     TF_RET_CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
         dim_info.id, iv, Interval{0, loop_iteration_count.front() - 1}));
+    absl::Cleanup unmap_iv = [&] {
+      emitter_ctx.UnmapSequentialDim(dim_info.id);
+    };
 
     // Emit the dot region.
     const ge::TiledHloInstruction* lhs_operand = tiled_dot.operand(0);
@@ -543,6 +547,9 @@ absl::StatusOr<TensorValue> EmitScaledDot(
             *tiled_scaled_dot.hlo(), sequential_dim_ids.front());
     TF_RET_CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
         dim_info.id, iv, Interval{0, loop_iteration_counts.front() - 1}));
+    absl::Cleanup unmap_iv = [&] {
+      emitter_ctx.UnmapSequentialDim(dim_info.id);
+    };
 
     // Emit the dot region.
     const ge::TiledHloRegion& region = tiled_scaled_dot.hlo_regions().front();
@@ -759,6 +766,9 @@ absl::StatusOr<TensorValue> EmitRaggedDot(
       // RTVar offsets that depend on the G loop IV.
       CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(g_dim_info.id, g_iv,
                                                         Interval{0, G - 1}));
+      absl::Cleanup unmap_g_iv = [&] {
+        emitter_ctx.UnmapSequentialDim(g_dim_info.id);
+      };
 
       // Emit group_sizes tile (G-scoped).
       // Uses emit_gs which handles any HLO form:  parameter, inlined constant,
@@ -816,6 +826,9 @@ absl::StatusOr<TensorValue> EmitRaggedDot(
           // Register K sequential dim IV.
           CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
               k_dim_info.id, k_iv, Interval{0, K_tiles - 1}));
+          absl::Cleanup unmap_k_iv = [&] {
+            emitter_ctx.UnmapSequentialDim(k_dim_info.id);
+          };
 
           // Emit LHS and RHS tiles (K-scoped).
           // emit_operand handles the full instruction chain (parameter,
@@ -1496,6 +1509,9 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
     }
     emitter_ctx.MapSymbolIdToSequentialDimValue(dim_info.id, tile_idx,
                                                 Interval{0, loop_count - 1});
+    absl::Cleanup unmap_iv = [&] {
+      emitter_ctx.UnmapSequentialDim(dim_info.id);
+    };
 
     const auto& input_region = tiled_hlo_scan.hlo_regions().front();
     ABSL_ASSIGN_OR_RETURN(
@@ -1727,6 +1743,12 @@ absl::StatusOr<TensorValue> EmitReduceWithRegion(
         auto body = [&]() -> absl::StatusOr<mlir::scf::ValueVector> {
           mlir::ImplicitLocOpBuilder nested_b(loc, loop_builder);
 
+          SmallVector<ge::TiledDimId> bound_dim_ids;
+          absl::Cleanup unmap_ivs = [&] {
+            for (ge::TiledDimId dim_id : bound_dim_ids) {
+              emitter_ctx.UnmapSequentialDim(dim_id);
+            }
+          };
           for (int i = 0; i < sequential_dim_ids.size(); ++i) {
             const ge::TilingSpace::DimensionInfo& dim_info =
                 tiled_hlo.tile().tiling_space().GetDimensionInfo(
@@ -1735,6 +1757,7 @@ absl::StatusOr<TensorValue> EmitReduceWithRegion(
                 dim_info.id, ivs[i], Interval{0, loop_iteration_counts[i] - 1}))
                 << "MapSymbolIdToSequentialDimValue failed for symbolic "
                    "dimension";
+            bound_dim_ids.push_back(dim_info.id);
           }
 
           ABSL_ASSIGN_OR_RETURN(
