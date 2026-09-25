@@ -19,7 +19,6 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
 
-#include <Eigen/Core>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -32,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
+#include <Eigen/Core>
 #include "xla/stream_executor/cuda/cudnn_sdpa_score_mod.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
@@ -86,6 +86,11 @@ class CudnnGraph : public dnn::DnnGraph {
 
  private:
   cudnn_frontend::graph::Graph graph_;
+  // Set by Prepare() from EngineOptions::force_tensor_ir, and consulted by
+  // Build() (which isn't itself passed EngineOptions) to decide whether the
+  // TensorIR-specific context-deactivation workaround applies. See the
+  // comment on that workaround in Prepare()'s device branch.
+  bool force_tensor_ir_ = false;
   int64_t dropout_rng_seed_;
   mutable std::vector<int64_t> current_dropout_rng_offset_;
   int64_t dropout_rng_offset_increment_ = 0;
@@ -570,6 +575,7 @@ class CudnnSupport : public dnn::DnnSupport {
   // Loads complete graph from its serialized representation.
   absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> DeserializeGraph(
       Stream& stream, absl::string_view serialized_data) const override;
+  StreamExecutor* GetParent() const { return parent_; }
 
  private:
   // Uses cuDNN handle for execution.
