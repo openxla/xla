@@ -115,6 +115,9 @@ absl::Status BufferSequencingEvent::WaitForEventOnExternalStream(
   if (const auto* error = event_.GetErrorIfPresent()) {
     return *error;
   }
+  if (event_->event.event() == nullptr) {
+    return absl::OkStatus();
+  }
   return event_->event.event()->WaitForEventOnExternalStream(stream);
 }
 
@@ -141,6 +144,9 @@ bool BufferSequencingEvent::IsPredeterminedErrorOrDefinedOn(
 bool BufferSequencingEvent::IsComplete() {
   tsl::BlockUntilReady(event_);
   if (event_.IsError()) {
+    return true;
+  }
+  if (event_->event.event() == nullptr) {
     return true;
   }
 
