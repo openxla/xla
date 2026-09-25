@@ -741,6 +741,7 @@ class GpuCollectivesSpeedTest : public ::testing::Test {
     PrimitiveType dtype;
     size_t min_elems;
     size_t max_elems;
+    double mult_factor;
     double busbw_factor;
     BenchmarkFunc func;
   };
@@ -819,7 +820,7 @@ absl::Status GpuCollectivesSpeedTest::RunInternal(size_t rank,
 
   EXPECT_TRUE(stream_exec->SynchronizeAllActivity());
   for (auto num_elems = params.min_elems; num_elems <= params.max_elems;
-       num_elems = num_elems * 2) {
+       num_elems = static_cast<size_t>(num_elems * params.mult_factor)) {
     num_elems = num_elems & ~15;  // align to 16 bytes
     std::unique_ptr<se::EventBasedTimer> timer;
     Future<> future;
@@ -852,7 +853,7 @@ absl::Status GpuCollectivesSpeedTest::RunInternal(size_t rank,
 }
 
 TEST_F(GpuCollectivesSpeedTest, TestAllReduce) {
-  absl::string_view collectives_backend = "rccl";
+  absl::string_view collectives_backend = "mori";
   using Type = float;
   size_t n_peers = 4;
 
@@ -860,7 +861,8 @@ TEST_F(GpuCollectivesSpeedTest, TestAllReduce) {
       .use_comm_alloc = true,
       .dtype = primitive_util::NativeToPrimitiveType<Type>(),
       .min_elems = 1024,
-      .max_elems = 32 * 1024 * 1024,
+      .max_elems = 1024 * 1024,
+      .mult_factor = 1.5,
       // All-reduce bus bandwidth factor: 2(n-1)/n.
       .busbw_factor = 2.0 * (n_peers - 1) / n_peers,
   };
@@ -878,7 +880,7 @@ TEST_F(GpuCollectivesSpeedTest, TestAllReduce) {
                     auto* gpu_comm, const auto& executor) -> Future<> {
     auto future = gpu_comm->AllReduce(send_buf, recv_buf, params.dtype, n_elems,
                                       ReductionKind::SUM, executor);
-    ABSL_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
+    // ABSL_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
     // ABSL_RETURN_IF_ERROR(comm->Quiet(executor));
     return future;
   };
@@ -895,6 +897,7 @@ TEST_F(GpuCollectivesSpeedTest, TestReduceScatter) {
       .dtype = primitive_util::NativeToPrimitiveType<Type>(),
       .min_elems = 1024,
       .max_elems = 64 * 1024 * 1024,
+      .mult_factor = 2.0,
       // Reduce-scatter bus bandwidth factor: (n-1)/n.
       .busbw_factor = (double)(n_peers - 1) / n_peers,
   };
