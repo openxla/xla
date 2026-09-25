@@ -40,6 +40,7 @@ concurrency:
 env:
   ROCM_DISTRO_URL: https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz
   ROCM_DISTRO_HASH: 1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6
+  ROCM_TARGETS: gfx950
 
 jobs:
   rocm-config:
@@ -105,6 +106,7 @@ jobs:
             --repo_env=ROCM_PATH="" \
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="${ROCM_AMD_GPU_TARGETS}" \
             --repo_env=SYSROOT_DIST=linux_glibc_2_31 \
             --bes_keywords=jax \
             --bes_keywords=upstream \
@@ -156,9 +158,11 @@ jobs:
             --config=rocm_rbe_dynamic \
             --config=ci_single_gpu \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx950 \
             --repo_env=ROCM_PATH="" \
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="${ROCM_AMD_GPU_TARGETS}" \
             --local_test_jobs=1 \
             --bes_keywords=xla \
             --bes_keywords=upstream \
@@ -175,9 +179,11 @@ jobs:
             --config=ci_rocm_cpu \
             --local_test_jobs=200 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx950 \
             --repo_env=ROCM_PATH="" \
             --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}" \
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
+            --repo_env=TF_ROCM_AMDGPU_TARGETS="${ROCM_AMD_GPU_TARGETS}" \
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=cpu \
