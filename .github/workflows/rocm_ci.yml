@@ -139,21 +139,13 @@ jobs:
           repository: openxla/xla
           persist-credentials: false
 
-      - name: Fetch ROCm XLA Upstream Scripts from ROCm/xla
-        env:
-          ROCM_XLA_BRANCH: ${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}
-        run: |
-          wget -O build_tools/rocm/execute_ci_build_upstream.sh \
-            "https://raw.githubusercontent.com/ROCm/xla/refs/heads/${ROCM_XLA_BRANCH}/build_tools/rocm/execute_ci_build_upstream.sh"
-          chmod +x build_tools/rocm/execute_ci_build_upstream.sh
-
       - name: CPU Info
         run: lscpu
 
       - name: Test XLA [single_gpu]
         timeout-minutes: 120
         run: |
-          build_tools/rocm/execute_ci_build_upstream.sh \
+          build_tools/rocm/run_xla_ci_build.sh \
             --config=rocm_ci_hermetic \
             --config=rocm_rbe_dynamic \
             --config=ci_single_gpu \
@@ -168,12 +160,14 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
-            --build_event_json_file=xla_single_gpu_build_events.json
+            --build_event_json_file=xla_single_gpu_build_events.json \
+            -- \
+            //xla/...
 
       - name: Test XLA [rocm_cpu]
         timeout-minutes: 80
         run: |
-          build_tools/rocm/execute_ci_build_upstream.sh \
+          build_tools/rocm/run_xla_ci_build.sh \
             --config=rocm_ci_hermetic \
             --config=rocm_rbe_dynamic \
             --config=ci_rocm_cpu \
@@ -188,7 +182,9 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=cpu \
             --bes_keywords=pull_request \
-            --build_event_json_file=xla_rocm_cpu_build_events.json
+            --build_event_json_file=xla_rocm_cpu_build_events.json \
+            -- \
+            //xla/...
 
       - name: Upload XLA BEP Files
         if: always()
