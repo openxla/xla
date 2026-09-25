@@ -188,6 +188,7 @@ xla_cc_test(
         ":tile",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/analysis:interval",
         "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",

@@ -27,12 +27,13 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/experimental/tile.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
-#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/analysis/symbolic_map_serialization.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -482,35 +483,35 @@ TEST_F(TilingSpaceSimplifyExpressionsTest, ModRemovedIfLessThanDivisor) {
 
 TEST_F(TilingSpaceSimplifyExpressionsTest, MultipleExpressionsSimplified) {
   EXPECT_THAT(tiling_space_->SimplifyExpressions({ParseExpr("(d0 * 8) mod 96"),
-                                                  ParseExpr("(d1 * 2) / 10"),
+                                                  ParseExpr("(d1 * 2) / 4"),
                                                   ParseExpr("d0 * 16 + 500")}),
-              ElementsAre(ParseExpr("d0 * 8"), ParseExpr("d1 / 5"),
+              ElementsAre(ParseExpr("d0 * 8"), ParseExpr("d1 / 2"),
                           ParseExpr("d0 * 16 + 500")));
 }
 
 TEST_F(TilingSpaceSimplifyExpressionsTest, DimTileSimplify) {
-  DimTile dt{ParseExpr("(d0 * 8) mod 96"), ParseExpr("(d1 * 2) / 10"),
+  DimTile dt{ParseExpr("(d0 * 8) mod 96"), ParseExpr("(d1 * 2) / 4"),
              ParseExpr("d0 * 16 + 500"),
              ParseExpr("(d0 * 16 + d1 * 2) mod 200")};
   dt.Simplify(*tiling_space_);
   EXPECT_EQ(dt.offset, ParseExpr("d0 * 8"));
-  EXPECT_EQ(dt.size, ParseExpr("d1 / 5"));
+  EXPECT_EQ(dt.size, ParseExpr("d1 / 2"));
   EXPECT_EQ(dt.stride, ParseExpr("d0 * 16 + 500"));
   EXPECT_EQ(dt.upper_bound, ParseExpr("d0 * 16 + d1 * 2"));
 }
 
 TEST_F(TilingSpaceSimplifyExpressionsTest, SimplifyDimTiles) {
   llvm::SmallVector<DimTile> dim_tiles = {
-      {ParseExpr("(d0 * 8) mod 96"), ParseExpr("(d1 * 2) / 10"),
+      {ParseExpr("(d0 * 8) mod 96"), ParseExpr("(d1 * 2) / 4"),
        ParseExpr("d0 * 16 + 500"), ParseExpr("(d0 * 16 + d1 * 2) mod 200")},
-      {ParseExpr("(d1 * 2) / 10"), ParseExpr("(d0 * 8) mod 96"),
+      {ParseExpr("(d1 * 2) / 4"), ParseExpr("(d0 * 8) mod 96"),
        ParseExpr("d0 * 16 + 500"), ParseExpr("(d0 * 16 + d1 * 2) mod 200")}};
   SimplifyDimTiles(dim_tiles, *tiling_space_);
   EXPECT_EQ(dim_tiles[0].offset, ParseExpr("d0 * 8"));
-  EXPECT_EQ(dim_tiles[0].size, ParseExpr("d1 / 5"));
+  EXPECT_EQ(dim_tiles[0].size, ParseExpr("d1 / 2"));
   EXPECT_EQ(dim_tiles[0].stride, ParseExpr("d0 * 16 + 500"));
   EXPECT_EQ(dim_tiles[0].upper_bound, ParseExpr("d0 * 16 + d1 * 2"));
-  EXPECT_EQ(dim_tiles[1].offset, ParseExpr("d1 / 5"));
+  EXPECT_EQ(dim_tiles[1].offset, ParseExpr("d1 / 2"));
   EXPECT_EQ(dim_tiles[1].size, ParseExpr("d0 * 8"));
   EXPECT_EQ(dim_tiles[1].stride, ParseExpr("d0 * 16 + 500"));
   EXPECT_EQ(dim_tiles[1].upper_bound, ParseExpr("d0 * 16 + d1 * 2"));
@@ -522,16 +523,32 @@ TEST_F(TilingSpaceSimplifyExpressionsTest, SimplifyDimTiles) {
 
 TEST_F(TilingSpaceSimplifyExpressionsTest, SimplifyDimTilesGroups) {
   llvm::SmallVector<DimTile> group1 = {
-      {ParseExpr("(d0 * 8) mod 96"), ParseExpr("(d1 * 2) / 10"),
+      {ParseExpr("(d0 * 8) mod 96"), ParseExpr("(d1 * 2) / 4"),
        ParseExpr("d0 * 16 + 500"), ParseExpr("(d0 * 16 + d1 * 2) mod 200")}};
   llvm::SmallVector<DimTile> group2 = {
-      {ParseExpr("(d1 * 2) / 10"), ParseExpr("(d0 * 8) mod 96"),
+      {ParseExpr("(d1 * 2) / 4"), ParseExpr("(d0 * 8) mod 96"),
        ParseExpr("d0 * 16 + 500"), ParseExpr("(d0 * 16 + d1 * 2) mod 200")}};
   SimplifyDimTiles({group1, group2}, *tiling_space_);
   EXPECT_EQ(group1[0].offset, ParseExpr("d0 * 8"));
-  EXPECT_EQ(group1[0].size, ParseExpr("d1 / 5"));
-  EXPECT_EQ(group2[0].offset, ParseExpr("d1 / 5"));
+  EXPECT_EQ(group1[0].size, ParseExpr("d1 / 2"));
+  EXPECT_EQ(group2[0].offset, ParseExpr("d1 / 2"));
   EXPECT_EQ(group2[0].size, ParseExpr("d0 * 8"));
+}
+
+TEST_F(TilingSpaceSimplifyExpressionsTest, SimplifyDimTilesWithConstraints) {
+  llvm::SmallVector<DimTile> dim_tiles = {
+      {ParseExpr("d0"), ParseExpr("d1"), ParseExpr("1"),
+       ParseExpr("(d0 * 16 + d1 * 2) mod 100")}};
+  llvm::MapVector<SymbolicExpr, Interval> constraints;
+  constraints[ParseExpr("d0 * 16 + d1 * 2")] = Interval{0, 50};
+  SimplifyDimTiles(dim_tiles, *tiling_space_, constraints);
+  EXPECT_EQ(dim_tiles[0].upper_bound, ParseExpr("d0 * 16 + d1 * 2"));
+}
+
+TEST_F(TilingSpaceSimplifyExpressionsTest,
+       PointExpressionsSimplifiedToConstant) {
+  EXPECT_THAT(tiling_space_->SimplifyExpressions({ParseExpr("(d1 * 2) / 10")}),
+              ElementsAre(ParseExpr("0")));
 }
 
 TEST_F(TilingSpaceTest, ClonePerformsDeepCopies) {

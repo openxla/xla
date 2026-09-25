@@ -409,13 +409,13 @@ Root tiles:
 Tiled HLO:
   concatenate.tile_0 = concatenate(p0.1.tile_0, p1.1.tile_0, p2.1.tile_0)  offsets [tid_0 * 3] sizes [3] strides [1] upper bounds [18]
   region #0 {
-    p0.1.tile_0 = parameter(0)  offsets [tid_0 * 3] sizes [3] strides [1] upper bounds [6]
+    p0.1.tile_0 = parameter(0)  offsets [tid_0 * 3] sizes [3] strides [1] upper bounds [6] constraints {tid_0 * 3 in [0, 5]}
   }
   region #1 {
-    p1.1.tile_0 = parameter(1)  offsets [tid_0 * 3 - 6] sizes [3] strides [1] upper bounds [6]
+    p1.1.tile_0 = parameter(1)  offsets [tid_0 * 3 - 6] sizes [3] strides [1] upper bounds [6] constraints {tid_0 * 3 - 6 in [0, 5]}
   }
   region #2 {
-    p2.1.tile_0 = parameter(2)  offsets [tid_0 * 3 - 12] sizes [3] strides [1] upper bounds [6]
+    p2.1.tile_0 = parameter(2)  offsets [tid_0 * 3 - 12] sizes [3] strides [1] upper bounds [6] constraints {tid_0 * 3 - 12 in [0, 5]}
   }
   )"));
 

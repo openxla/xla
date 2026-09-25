@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
 
@@ -109,10 +111,12 @@ Tile::Tile(const TilingSpace& tiling_space, ArrayRef<SymbolicExpr> offsets,
 
 Tile::Tile(const TilingSpace& tiling_space,
            llvm::SmallVector<DimTile> dim_tiles,
-           llvm::SmallVector<DimTile> replica_ids)
+           llvm::SmallVector<DimTile> replica_ids,
+           const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals)
     : tiling_space_(&tiling_space),
       dim_tiles_(std::move(dim_tiles)),
-      replica_ids_(std::move(replica_ids)) {}
+      replica_ids_(std::move(replica_ids)),
+      constraint_intervals_(constraint_intervals) {}
 
 MLIRContext* Tile::mlir_context() const {
   return tiling_space_->mlir_context();
@@ -165,6 +169,14 @@ std::string Tile::ToString(bool print_variables) const {
     llvm::interleaveComma(upper_bounds(DimTileType::kReplicaId), ss,
                           print_expr);
     ss << ']';
+    ss << '}';
+  }
+  if (!constraint_intervals_.empty()) {
+    ss << " constraints {";
+    for (const auto& [expr, range] : constraint_intervals_) {
+      ss << expr.ToString(tid_names, symbol_names) << " in [" << range.lower
+         << ", " << range.upper << "]";
+    }
     ss << '}';
   }
   return ss.str();
@@ -228,7 +240,8 @@ void Tile::Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map) {
 
 void SimplifyDimTiles(
     llvm::ArrayRef<llvm::MutableArrayRef<DimTile>> dim_tile_groups,
-    const TilingSpace& space) {
+    const TilingSpace& space,
+    const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals) {
   int64_t total_dim_tiles = 0;
   for (const auto& group : dim_tile_groups) {
     total_dim_tiles += group.size();
@@ -246,7 +259,9 @@ void SimplifyDimTiles(
       expressions.push_back(dim_tile.upper_bound);
     }
   }
-  expressions = space.SimplifyExpressions(expressions);
+  // TODO: constraint intervals are also got simplified by indexing map, update
+  // them too?
+  expressions = space.SimplifyExpressions(expressions, constraint_intervals);
   CHECK_EQ(expressions.size(), total_dim_tiles * 4);
   int idx = 0;
   for (auto& group : dim_tile_groups) {
@@ -259,22 +274,35 @@ void SimplifyDimTiles(
   }
 }
 
-void SimplifyDimTiles(llvm::MutableArrayRef<DimTile> dim_tiles,
-                      const TilingSpace& space) {
+void SimplifyDimTiles(
+    llvm::MutableArrayRef<DimTile> dim_tiles, const TilingSpace& space,
+    const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals) {
   SimplifyDimTiles(
-      llvm::ArrayRef<llvm::MutableArrayRef<DimTile>>(&dim_tiles, 1), space);
+      llvm::ArrayRef<llvm::MutableArrayRef<DimTile>>(&dim_tiles, 1), space,
+      constraint_intervals);
 }
 
-void DimTile::Simplify(const TilingSpace& space) {
-  SimplifyDimTiles(*this, space);
+void DimTile::Simplify(
+    const TilingSpace& space,
+    const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals) {
+  SimplifyDimTiles(*this, space, constraint_intervals);
 }
 
 void Tile::Simplify() {
-  SimplifyDimTiles({dim_tiles_, replica_ids_}, *tiling_space_);
+  SimplifyDimTiles({dim_tiles_, replica_ids_}, *tiling_space_,
+                   constraint_intervals_);
+}
+
+void Tile::AddConstraint(SymbolicExpr expr, Interval range) {
+  auto [it, inserted] = constraint_intervals_.insert({expr, range});
+  if (!inserted) {
+    it->second = it->second.Intersect(range);
+  }
 }
 
 Tile Tile::CloneWithNewDims(llvm::SmallVector<DimTile> new_dim_tiles) const {
-  Tile ret{*tiling_space_, std::move(new_dim_tiles), replica_ids_};
+  Tile ret{*tiling_space_, std::move(new_dim_tiles), replica_ids_,
+           constraint_intervals_};
   return ret;
 }
 

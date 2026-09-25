@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
@@ -619,7 +620,8 @@ void TilingSpace::InitSimplificationIndexing() {
 }
 
 llvm::SmallVector<SymbolicExpr> TilingSpace::SimplifyExpressions(
-    const llvm::SmallVector<SymbolicExpr>& expressions) const {
+    const llvm::SmallVector<SymbolicExpr>& expressions,
+    const llvm::MapVector<SymbolicExpr, Interval>& constraint_intervals) const {
   if (is_symbolic_) {
     llvm::SmallVector<SymbolicExpr> simplified_expressions;
     simplified_expressions.reserve(expressions.size());
@@ -633,8 +635,8 @@ llvm::SmallVector<SymbolicExpr> TilingSpace::SimplifyExpressions(
                                      rt_vars_.size(), expressions);
 
   IndexingMap indexing_map(map, dim_vars_indexing_, range_vars_indexing_,
-                           rt_vars_indexing_);
-  indexing_map.Simplify(IndexingMap::SimplifyPointDimensions::kPreserve);
+                           rt_vars_indexing_, constraint_intervals);
+  indexing_map.Simplify(IndexingMap::SimplifyPointDimensions::kReplace);
   return std::move(indexing_map).GetSymbolicMap().GetResults();
 }
 
