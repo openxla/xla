@@ -244,6 +244,10 @@ absl::StatusOr<HloSharding> IotaTileHelper(
                ? HloSharding::IotaTile(dims)
                : HloSharding::Subgroup(TileAssignment(dims), subgroup_types);
   }
+  // transpose_perm is used to index reshape_dims when the iota tile assignment
+  // is built and queried, so it must be a permutation of
+  // [0, reshape_dims.size()); otherwise the indexing is out of bounds.
+  ABSL_RETURN_IF_ERROR(ValidateIotaTileAssignment(reshape_dims, transpose_perm));
   return subgroup_types.empty()
              ? HloSharding::IotaTile(dims, reshape_dims, transpose_perm)
              : HloSharding::Subgroup(

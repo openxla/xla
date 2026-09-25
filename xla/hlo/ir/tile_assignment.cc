@@ -321,6 +321,40 @@ Array<int64_t> IotaTileAssignment::ToArray() const {
   return ::xla::ToArray(reshape_dims(), transpose_perm(), dims());
 }
 
+absl::Status ValidateIotaTileAssignment(absl::Span<const int64_t> reshape_dims,
+                                        absl::Span<const int> transpose_perm) {
+  if (transpose_perm.size() != reshape_dims.size()) {
+    return InvalidArgument(
+        "iota transpose_perm size (%d) must match reshape_dims size (%d).",
+        transpose_perm.size(), reshape_dims.size());
+  }
+  for (const int64_t dim : reshape_dims) {
+    if (dim <= 0) {
+      return InvalidArgument("iota reshape_dims must be positive, but saw %d.",
+                             dim);
+    }
+  }
+  // transpose_perm must be a permutation of [0, n): every entry in range and
+  // no duplicates. Both conditions are required to keep the index expressions
+  // in IotaTileAssignment and Array::TransposeDimensions in bounds.
+  const int n = static_cast<int>(reshape_dims.size());
+  absl::InlinedVector<bool, 8> seen(n, false);
+  for (const int dim : transpose_perm) {
+    if (dim < 0 || dim >= n) {
+      return InvalidArgument(
+          "iota transpose_perm value %d is out of range [0, %d).", dim, n);
+    }
+    if (seen[dim]) {
+      return InvalidArgument(
+          "iota transpose_perm value %d is repeated; transpose_perm must be a "
+          "permutation of [0, %d).",
+          dim, n);
+    }
+    seen[dim] = true;
+  }
+  return absl::OkStatus();
+}
+
 IotaTileAssignment::IotaTileAssignment(const IotaTileAssignment& other)
     : IotaTileAssignment(other.ndims_, other.reshape_ndims_) {
   std::memcpy(storage_.get(), other.storage_.get(), size_bytes());

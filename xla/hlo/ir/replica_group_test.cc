@@ -616,6 +616,22 @@ TEST(CollectiveDeviceListTest, FromProtoWithIota) {
               testing::ElementsAre(2, 3));
 }
 
+TEST(IotaReplicaGroupListTest, FromProtoRejectsOutOfRangeIotaTransposePerm) {
+  // A collective device list is another untrusted path into the iota tile
+  // assignment (an attacker-supplied HloInstructionProto). iota_transpose_perm
+  // is used to index iota_reshape_dims, so an out-of-range value (here 2, with
+  // only reshape rank 2 => valid values are {0, 1}) must be rejected rather
+  // than reaching the unchecked indexing.
+  IotaReplicaGroupListProto proto;
+  proto.set_num_replica_groups(2);
+  proto.set_num_devices_per_group(2);
+  proto.add_iota_reshape_dims(2);
+  proto.add_iota_reshape_dims(2);
+  proto.add_iota_transpose_perm(0);
+  proto.add_iota_transpose_perm(2);
+  EXPECT_DEATH({ IotaReplicaGroupList::FromProto(proto); }, "out of range");
+}
+
 TEST(IotaReplicaGroupListTest, ToString) {
   EXPECT_EQ(IotaReplicaGroupList(0, 0).ToString(), "[0,0]<=[0]");
   EXPECT_EQ(IotaReplicaGroupList(2, 10).ToString(), "[2,10]<=[20]");

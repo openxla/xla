@@ -538,6 +538,13 @@ IotaReplicaGroupListProto IotaReplicaGroupList::ToProto() const {
 
 IotaReplicaGroupList IotaReplicaGroupList::FromProto(
     const IotaReplicaGroupListProto& proto) {
+  // iota_transpose_perm is used to index iota_reshape_dims when the underlying
+  // IotaTileAssignment is built and queried; a non-permutation entry would read
+  // and write out of bounds. This path has no error-returning channel, so an
+  // invalid proto is rejected here (consistent with the other CHECKs in this
+  // deserialization path) rather than reaching the unchecked indexing.
+  CHECK_OK(ValidateIotaTileAssignment(proto.iota_reshape_dims(),
+                                      proto.iota_transpose_perm()));
   return IotaReplicaGroupList(
       proto.num_replica_groups(), proto.num_devices_per_group(),
       std::vector<int64_t>(proto.iota_reshape_dims().begin(),

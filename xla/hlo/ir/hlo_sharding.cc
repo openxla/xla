@@ -1085,8 +1085,13 @@ const TileAssignment& HloSharding::TileAgnosticDeviceAssignment() const {
   const bool use_iota_tile_assignments = !proto.iota_reshape_dims().empty();
   if (use_iota_tile_assignments) {
     TF_RET_CHECK(proto.tile_assignment_devices().empty());
-    TF_RET_CHECK(proto.iota_reshape_dims().size() ==
-                 proto.iota_transpose_perm().size());
+    // iota_transpose_perm is used as an array index into iota_reshape_dims when
+    // the tile assignment is built and queried, so it must be a permutation of
+    // [0, iota_reshape_dims.size()). Only its length was validated before,
+    // which let an out-of-range or duplicate entry reach the unchecked indexing
+    // in IotaTileAssignment (out-of-bounds read/write).
+    TF_RETURN_IF_ERROR(ValidateIotaTileAssignment(proto.iota_reshape_dims(),
+                                                  proto.iota_transpose_perm()));
   } else {
     TF_RET_CHECK(!proto.tile_assignment_devices().empty());
   }

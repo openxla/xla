@@ -41,6 +41,47 @@ namespace {
 using ::absl_testing::IsOk;
 using ::absl_testing::StatusIs;
 
+TEST(ValidateIotaTileAssignmentTest, AcceptsValidPermutations) {
+  EXPECT_THAT(ValidateIotaTileAssignment({6}, {0}), IsOk());
+  EXPECT_THAT(ValidateIotaTileAssignment({3, 4}, {0, 1}), IsOk());
+  EXPECT_THAT(ValidateIotaTileAssignment({3, 4}, {1, 0}), IsOk());
+  EXPECT_THAT(ValidateIotaTileAssignment({1, 3, 1, 4, 1, 5}, {4, 3, 2, 5, 1, 0}),
+              IsOk());
+}
+
+TEST(ValidateIotaTileAssignmentTest, RejectsSizeMismatch) {
+  EXPECT_THAT(ValidateIotaTileAssignment({3, 4}, {0}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(ValidateIotaTileAssignment({3, 4}, {0, 1, 0}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(ValidateIotaTileAssignmentTest, RejectsOutOfRangePermValue) {
+  // Values must be in [0, reshape_dims.size()). Here the last value 8 equals
+  // the rank and is out of range; used as an index it reads/writes out of
+  // bounds. This is the value from the reported OpSharding PoC.
+  EXPECT_THAT(
+      ValidateIotaTileAssignment({2, 2, 2, 2, 2, 2, 2, 2}, {1, 2, 3, 4, 5, 6, 7,
+                                                            8}),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(ValidateIotaTileAssignment({2, 1}, {5, 0}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(ValidateIotaTileAssignment({2, 2}, {-1, 0}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(ValidateIotaTileAssignmentTest, RejectsDuplicatePermValue) {
+  EXPECT_THAT(ValidateIotaTileAssignment({3, 2}, {0, 0}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(ValidateIotaTileAssignmentTest, RejectsNonPositiveReshapeDim) {
+  EXPECT_THAT(ValidateIotaTileAssignment({2, 0}, {0, 1}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(ValidateIotaTileAssignment({2, -1}, {0, 1}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 TEST(IotaTileAssignmentTest, Create) {
   // Test with dims only
   IotaTileAssignment iota1 = IotaTileAssignment::Create({2, 3});

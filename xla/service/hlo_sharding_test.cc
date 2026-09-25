@@ -168,6 +168,33 @@ TEST_F(HloShardingTest, IotaProtoRoundTrip) {
   EXPECT_THAT(sharding.ToProto(), EqualsProto(proto));
 }
 
+TEST_F(HloShardingTest, FromProtoRejectsOutOfRangeIotaTransposePerm) {
+  // iota_transpose_perm must be a permutation of [0, iota_reshape_dims.size()),
+  // i.e. of [0, 8). The final value 8 is out of range. Previously only the
+  // *length* of the two arrays was checked, so this value reached the unchecked
+  // array indexing in IotaTileAssignment (heap out-of-bounds read/write). It
+  // must be rejected. (This is the input from the reported PoC.)
+  auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: OTHER
+    tile_assignment_dimensions: 256
+    iota_reshape_dims: [ 2, 2, 2, 2, 2, 2, 2, 2 ]
+    iota_transpose_perm: [ 1, 2, 3, 4, 5, 6, 7, 8 ]
+  )pb");
+  EXPECT_FALSE(HloSharding::FromProto(proto).ok());
+}
+
+TEST_F(HloShardingTest, FromProtoRejectsDuplicateIotaTransposePerm) {
+  // iota_transpose_perm entries must be unique (a true permutation); a repeated
+  // in-range value is not.
+  auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: OTHER
+    tile_assignment_dimensions: 6
+    iota_reshape_dims: [ 3, 2 ]
+    iota_transpose_perm: [ 0, 0 ]
+  )pb");
+  EXPECT_FALSE(HloSharding::FromProto(proto).ok());
+}
+
 TEST_F(HloShardingTest, NamedShardingTupleProtoRoundTrip) {
   auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
     type: TUPLE
