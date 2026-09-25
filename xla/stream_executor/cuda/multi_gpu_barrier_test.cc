@@ -63,7 +63,7 @@ class MultiGpuBarrierTest : public ::testing::Test {
                    << visible_device_count;
     }
 
-    // Limit to MultiGpuBarrierKernel::kMaxPeers (32)
+    // Limit to MultiGpuBarrierKernel::kMaxPeers
     num_devices_ =
         std::min<int>(visible_device_count, MultiGpuBarrierKernel::kMaxPeers);
 
@@ -155,6 +155,8 @@ absl::StatusOr<std::vector<T>> CopyToHost(Stream* stream,
 }
 
 TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
+  constexpr int64_t kThreadsPerBlock = 1;
+
   // 1. Allocate Signal Buffers on each device
   std::vector<DeviceAddress<uint32_t>> signal_buffers;
 
@@ -189,10 +191,10 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
           auto kernel, (GpuKernelRegistry::GetGlobalRegistry()
                             .LoadKernel<MultiGpuBarrierKernel>(executors_[i])));
 
-      ASSERT_OK(kernel.Launch(ThreadDim(num_devices_, 1, 1), BlockDim(1, 1, 1),
-                              streams_[i].get(), static_cast<int64_t>(i),
-                              static_cast<int64_t>(num_devices_),
-                              kernel_arg_ptrs, counters[i]));
+      ASSERT_OK(kernel.Launch(
+          ThreadDim(kThreadsPerBlock, 1, 1), BlockDim(1, 1, 1),
+          streams_[i].get(), static_cast<int64_t>(i),
+          static_cast<int64_t>(num_devices_), kernel_arg_ptrs, counters[i]));
     }
   }
 
@@ -230,6 +232,8 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronization) {
 }
 
 TEST_F(MultiGpuBarrierTest, BarrierSynchronizationWithNccl) {
+  constexpr int64_t kThreadsPerBlock = 1;
+
   std::vector<std::unique_ptr<MemoryAllocator>> collective_allocators;
   for (int i = 0; i < num_devices_; ++i) {
     ASSERT_OK_AND_ASSIGN(
@@ -271,8 +275,9 @@ TEST_F(MultiGpuBarrierTest, BarrierSynchronizationWithNccl) {
           (GpuKernelRegistry::GetGlobalRegistry()
                .LoadKernel<MultiGpuBarrierWithNcclKernel>(executors_[i])));
 
-      ASSERT_OK(kernel.Launch(ThreadDim(num_devices_, 1, 1), BlockDim(1, 1, 1),
-                              streams_[i].get(), static_cast<int64_t>(i),
+      ASSERT_OK(kernel.Launch(ThreadDim(kThreadsPerBlock, 1, 1),
+                              BlockDim(1, 1, 1), streams_[i].get(),
+                              static_cast<int64_t>(i),
                               static_cast<int64_t>(num_devices_),
                               signal_buffer_symmetric_memory[i].get(),
                               DeviceAddress<uint32_t>(counters[i]->address())));
