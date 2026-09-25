@@ -143,6 +143,13 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
   }
   if (device_description_.gpu_compute_capability().IsRocm()) {
     ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddWavesPerEuParameter);
+    // WMMA ignores mfma_size. It showed no gains on MI350, so mi350.txtpb has
+    // no mfma_size variants and only the exhaustive search tries them there.
+    if (device_description_.gpu_compute_capability()
+            .rocm_compute_capability()
+            ->has_mfma_instr_support()) {
+      ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddMfmaSizeParameter);
+    }
   }
 
   std::vector<TritonGemmConfig> result;
@@ -653,6 +660,26 @@ void TritonDotFusionSearchSpace::AddWavesPerEuParameter(
     ConfigWithNotes new_config = config;
     new_config.config.waves_per_eu = waves;
     VLOG(10) << "Adding waves_per_eu parameter: config = "
+             << new_config.ToString();
+    updated_configs.push_back(new_config);
+  }
+}
+
+void TritonDotFusionSearchSpace::AddMfmaSizeParameter(
+    const ConfigWithNotes& config,
+    std::vector<ConfigWithNotes>& updated_configs) const {
+  // Auto picks the largest MFMA that fits the tile, which is not always the
+  // fastest. Unsupported shapes fall back to FMA and just lose on timing.
+  static constexpr int kMfmaSizeValues[] = {0, 16};
+  const int min_mn = std::min(config.config.block_m, config.config.block_n);
+  const bool auto_picks_16 = min_mn >= 16 && min_mn < 32;
+  for (int mfma_size : kMfmaSizeValues) {
+    if (mfma_size == 16 && auto_picks_16) {
+      continue;
+    }
+    ConfigWithNotes new_config = config;
+    new_config.config.mfma_size = mfma_size;
+    VLOG(10) << "Adding mfma_size parameter: config = "
              << new_config.ToString();
     updated_configs.push_back(new_config);
   }
