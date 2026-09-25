@@ -49,5 +49,4 @@ TEST(ExecMklFuncTest, MklExceptionBecomesInternalError) {
 }
 
 }  // namespace
-
 }  // namespace stream_executor::sycl

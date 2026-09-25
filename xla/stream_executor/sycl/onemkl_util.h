@@ -25,8 +25,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "oneapi/mkl.hpp"
 
-namespace stream_executor {
-namespace sycl {
+namespace stream_executor::sycl {
 
 // Helper functions to make oneMKL calls. For MKL calls that take a queue it
 // returns a status if failed or an event object if it succeeds. The caller
@@ -76,9 +75,7 @@ MklResult<std::invoke_result_t<Callable>> ExecMklFunc(Callable&& mkl_func) {
     return absl::InternalError("Unknown (non-std::exception) thrown");
   }
 }
-}  // namespace sycl
 
-}  // namespace stream_executor
+}  // namespace stream_executor::sycl
 
 #endif  // XLA_STREAM_EXECUTOR_SYCL_ONEMKL_UTIL_H_
-
