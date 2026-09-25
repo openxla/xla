@@ -480,7 +480,7 @@ onednn_cc_test(
     name = "onednn_matmul_test",
     srcs = ["onednn_matmul_test.cc"],
     copts = tsl_copts(),
-    shard_count = 4,
+    shard_count = 8,
     deps = [
         "//xla:error_spec",
         "//xla/hlo/testlib:test",
