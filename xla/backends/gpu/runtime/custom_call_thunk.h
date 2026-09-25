@@ -143,6 +143,12 @@ class CustomCallThunk : public TracedCommand {
 
   bool use_pdl() const { return use_pdl_; }
 
+  bool has_prepare() const { return has_prepare_; }
+  bool has_initialize() const { return has_initialize_; }
+  const se::GpuComputeCapability& gpu_compute_capability() const {
+    return gpu_compute_capability_;
+  }
+
   std::optional<XLA_FFI_Handler_Bundle> bundle() const {
     const XLA_FFI_Handler_Bundle* c_bundle =
         std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
@@ -197,6 +203,7 @@ class CustomCallThunk : public TracedCommand {
       xla::ffi::AttributesMap attributes,
       std::unique_ptr<ffi::ExecutionState> execution_state,
       const HloComputation* called_computation,
+      const se::GpuComputeCapability& gpu_compute_capability,
       std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
       bool use_pdl = false);
 
@@ -249,6 +256,8 @@ class CustomCallThunk : public TracedCommand {
 
   // registry) or an owned bundle (from xla::ffi::Bind()).
   std::variant<XLA_FFI_Handler_Bundle, OwnedHandlerBundle> bundle_;
+  bool has_prepare_ = false;
+  bool has_initialize_ = false;
   bool use_pdl_ = false;
   std::optional<xla::ffi::AttributesMap> attributes_;
 
@@ -272,6 +281,7 @@ class CustomCallThunk : public TracedCommand {
   // custom calls that access called computation can only be linked statically.
   const HloComputation* called_computation_ = nullptr;
 
+  se::GpuComputeCapability gpu_compute_capability_;
   std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options_;
 };
 

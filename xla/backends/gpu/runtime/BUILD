@@ -1161,6 +1161,7 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/gpu:gpu_test_kernels",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
