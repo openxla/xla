@@ -15,12 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_annotator.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <optional>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -76,8 +75,9 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDsInWhileLoop) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* slice =
       module->GetComputationWithName("body")->GetInstructionWithName("slice");
@@ -122,8 +122,9 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInWhileLoop) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* updated =
       module->GetComputationWithName("body")->GetInstructionWithName("updated");
@@ -168,8 +169,9 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusOffsetTable) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* updated =
       module->GetComputationWithName("body")->GetInstructionWithName("updated");
@@ -194,8 +196,9 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesConstantOffsetOutsideWhileLoop) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* slice = module->entry_computation()->root_instruction();
   auto config = GetDynamicSliceConfig(slice);
@@ -248,8 +251,9 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInAsyncComputation) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* dus = module->GetComputationWithName("async_computation")
                   ->GetInstructionWithName("dus");
@@ -310,8 +314,9 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInNestedCalls) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* dus = module->GetComputationWithName("inner_computation")
                   ->GetInstructionWithName("dus");
@@ -368,8 +373,9 @@ TEST_F(DynamicSliceAnnotatorTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kHlo));
-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
-              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      DynamicSliceAnnotator(/*enable_table_offsets=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
 
   auto* slice = module->GetComputationWithName("async_slice")
                     ->GetInstructionWithName("slice");

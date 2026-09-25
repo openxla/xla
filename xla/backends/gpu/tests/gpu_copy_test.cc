@@ -13,12 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
@@ -387,14 +386,10 @@ TEST_F(GpuCopyTest, DynamicUpdateSliceOffsetTable) {
       ROOT result = s32[3,5] get-tuple-element(loop), index=1
     })";
 
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  // Only the loop condition and increment need kernels. The copy uses a linear
-  // source offset and destination offsets {0, 24, 48, 52, 56, 56}.
-  ASSERT_OK(CompileAndVerifyIr(std::move(module), R"(
-      CHECK-COUNT-2: define {{.*}}@
-      CHECK-NOT: define {{.*}}@)",
-                               /*match_optimized_ir=*/false,
-                               /*run_optimization_passes=*/true));
+  // TODO(ezhulenev): Once table offsets are enabled in DynamicSliceAnnotator,
+  // verify that only the loop condition and increment need kernels: the copy
+  // uses a linear source offset and destination offsets {0, 24, 48, 52, 56,
+  // 56}.
   EXPECT_TRUE(RunAndCompare(hlo, ErrorSpec{0, 0}));
 }
 

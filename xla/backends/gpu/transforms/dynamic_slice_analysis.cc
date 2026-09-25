@@ -380,7 +380,7 @@ static std::optional<StaggeredVariable> TryResolveStaggeredVariable(
 }
 
 absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
-    const HloInstruction* instr) {
+    const HloInstruction* instr, bool enable_table_offsets) {
   // Step 1: Only analyze dynamic-slice and dynamic-update-slice instructions.
   if (instr->opcode() != HloOpcode::kDynamicSlice &&
       instr->opcode() != HloOpcode::kDynamicUpdateSlice) {
@@ -566,12 +566,23 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     return stride;
   };
 
+  // A zero stride means that the offset is loop-invariant, and the descriptor
+  // must not reference the while loop (see `loop_index` in DynamicSliceConfig).
+  auto make_linear = [&](int64_t byte_offset, int64_t byte_stride) {
+    if (byte_stride == 0) {
+      return DynamicSliceDescriptor{
+          std::nullopt, std::nullopt,
+          DynamicSliceDescriptor::Linear{byte_offset, byte_stride}};
+    }
+    return DynamicSliceDescriptor{
+        while_loop, front.loop_index,
+        DynamicSliceDescriptor::Linear{byte_offset, byte_stride}};
+  };
+
   // Prefer a linear progression of the per-dimension clamped offsets.
   if (auto stride = get_linear_stride(
           [](const EvaluatedByteOffsets& o) { return o.clamped; })) {
-    return DynamicSliceDescriptor{
-        while_loop, front.loop_index,
-        DynamicSliceDescriptor::Linear{offsets[0].clamped, *stride}};
+    return make_linear(offsets[0].clamped, *stride);
   }
 
   // Otherwise, use the unclamped progression if runtime buffer clamping
@@ -583,9 +594,23 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
         return std::clamp<int64_t>(o.unclamped, 0, max_buffer_offset) ==
                o.clamped;
       })) {
-    return DynamicSliceDescriptor{
-        while_loop, front.loop_index,
-        DynamicSliceDescriptor::Linear{offsets[0].unclamped, *stride}};
+    return make_linear(offsets[0].unclamped, *stride);
+  }
+
+  // Otherwise, store one clamped offset per iteration.
+  if (!enable_table_offsets) {
+    VLOG(3) << instr->name()
+            << ": neither unclamped nor clamped offsets form a valid linear "
+               "progression over "
+            << trip_count << " iterations, and table offsets are disabled";
+    return std::nullopt;
+  }
+
+  if (trip_count > DynamicSliceDescriptor::kMaxTableOffsets) {
+    VLOG(3) << instr->name() << ": offset table with " << trip_count
+            << " entries exceeds the limit of "
+            << DynamicSliceDescriptor::kMaxTableOffsets;
+    return std::nullopt;
   }
 
   std::vector<int64_t> byte_offsets;
@@ -702,7 +727,9 @@ std::optional<bool> IsNonOverlapping(const DynamicSliceChain& chain) {
 
   auto analyze_instr = [](const HloInstruction* instr)
       -> std::optional<std::pair<DynamicSliceDescriptor, int64_t>> {
-    auto result = AnalyzeDynamicSlice(instr);
+    // Descriptors are only used to check for overlaps and never serialized, so
+    // it is safe to analyze offsets that require a table.
+    auto result = AnalyzeDynamicSlice(instr, /*enable_table_offsets=*/true);
     if (!result.ok() || !result->has_value()) {
       return std::nullopt;
     }
@@ -726,22 +753,28 @@ std::optional<bool> IsNonOverlapping(const DynamicSliceChain& chain) {
     return true;
   }
 
-  auto front_loop = dus_descriptors.front().first.while_loop;
-  if (!front_loop.has_value()) {
-    return std::nullopt;
-  }
-  const HloInstruction* while_loop = *front_loop;
+  // Loop-invariant updates have no while loop and write to the same byte range
+  // on every iteration. All loop-dependent updates must share the same loop.
+  std::optional<const HloInstruction*> while_loop;
   for (const auto& [desc, _] : dus_descriptors) {
-    if (desc.while_loop != front_loop) {
+    if (!desc.while_loop.has_value()) {
+      continue;
+    }
+    if (!while_loop.has_value()) {
+      while_loop = desc.while_loop;
+    } else if (desc.while_loop != while_loop) {
       return std::nullopt;
     }
   }
 
-  auto loop_config = while_loop->backend_config<WhileLoopBackendConfig>();
-  if (!loop_config.ok() || !loop_config->has_known_trip_count()) {
-    return std::nullopt;
+  int64_t trip_count = 1;
+  if (while_loop.has_value()) {
+    auto loop_config = (*while_loop)->backend_config<WhileLoopBackendConfig>();
+    if (!loop_config.ok() || !loop_config->has_known_trip_count()) {
+      return std::nullopt;
+    }
+    trip_count = loop_config->known_trip_count().n();
   }
-  int64_t trip_count = loop_config->known_trip_count().n();
   int64_t buffer_byte_size =
       ShapeUtil::ByteSizeOf(chain.updates.front()->operand(0)->shape());
 

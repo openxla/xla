@@ -91,15 +91,25 @@ DynamicSliceConfig DoubleBufferLoopUnrolling::MakeConfigForLoopIteration(
     auto* linear = new_config.mutable_linear();
     linear->set_byte_offset(byte_offset);
     linear->set_byte_stride(stride);
+    // A zero stride is a loop-invariant offset and must not reference the loop.
+    if (stride == 0) {
+      new_config.clear_loop_index();
+    }
     return new_config;
   }
 
   const auto& stat = std::get<StaticLoopIteration>(loop_iteration);
+  int64_t byte_offset;
+  if (config.has_table()) {
+    CHECK_GE(stat.iteration, 0);
+    CHECK_LT(stat.iteration, config.table().offsets_size());
+    byte_offset = config.table().offsets(stat.iteration);
+  } else {
+    byte_offset = config.linear().byte_offset() +
+                  stat.iteration * config.linear().byte_stride();
+  }
   auto* linear = new_config.mutable_linear();
-  linear->set_byte_offset(
-      config.has_table() ? config.table().offsets(stat.iteration)
-                         : config.linear().byte_offset() +
-                               stat.iteration * config.linear().byte_stride());
+  linear->set_byte_offset(byte_offset);
   linear->set_byte_stride(0);
   new_config.clear_loop_index();
   return new_config;
