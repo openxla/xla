@@ -1203,6 +1203,22 @@ class HloShuffleInstruction : public HloDimensionsInstruction {
     CHECK(mode_.has_rotate());
     return mode_.mutable_rotate();
   }
+  const ShuffleMode::Permute& permute() const {
+    CHECK(mode_.has_permute());
+    return mode_.permute();
+  }
+  ShuffleMode::Permute* mutable_permute() {
+    CHECK(mode_.has_permute());
+    return mode_.mutable_permute();
+  }
+  const ShuffleMode::MultiRotate& multi_rotate() const {
+    CHECK(mode_.has_multi_rotate());
+    return mode_.multi_rotate();
+  }
+  ShuffleMode::MultiRotate* mutable_multi_rotate() {
+    CHECK(mode_.has_multi_rotate());
+    return mode_.mutable_multi_rotate();
+  }
 
  private:
   std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(

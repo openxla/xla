@@ -18,6 +18,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
+#include "absl/status/status_matchers.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -26,6 +33,24 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
+
+TEST(ShuffleTest, PermuteSetsTheIndices) {
+  const Literal indices = LiteralUtil::CreateR2<int32_t>({{1, 0}, {0, 1}});
+
+  const ShuffleMode mode = Permute(indices);
+
+  EXPECT_EQ(mode.mode_case(), ShuffleMode::kPermute);
+  ASSERT_OK_AND_ASSIGN(const Literal mode_indices, GetPermuteIndices(mode));
+  EXPECT_EQ(mode_indices, indices);
+}
+
+TEST(ShuffleTest, GetPermuteIndicesShapeReturnsTheShapeOfTheIndices) {
+  const ShuffleMode mode =
+      Permute(LiteralUtil::CreateR2<int8_t>({{1, 0}, {0, 1}}));
+
+  EXPECT_THAT(GetPermuteIndicesShape(mode),
+              absl_testing::IsOkAndHolds(ShapeUtil::MakeShape(S8, {2, 2})));
+}
 
 TEST(ShuffleTest, RotateSetsTheShifts) {
   const ShuffleMode mode = Rotate({2, 3});
@@ -39,6 +64,100 @@ TEST(ShuffleTest, RotateWithoutShiftsIsStillInRotateMode) {
 
   EXPECT_EQ(mode.mode_case(), ShuffleMode::kRotate);
   EXPECT_THAT(mode.rotate().shifts(), IsEmpty());
+}
+
+TEST(ShuffleTest, MultiRotateSetsTheMultiShifts) {
+  const Literal multi_shifts = LiteralUtil::CreateR2<int32_t>({{1, 2}});
+
+  const ShuffleMode mode = MultiRotate(multi_shifts);
+
+  EXPECT_EQ(mode.mode_case(), ShuffleMode::kMultiRotate);
+  ASSERT_OK_AND_ASSIGN(const Literal mode_multi_shifts, GetMultiShifts(mode));
+  EXPECT_EQ(mode_multi_shifts, multi_shifts);
+}
+
+TEST(ShuffleTest, GetMultiShiftsShapeReturnsTheShapeOfTheMultiShifts) {
+  const ShuffleMode mode = MultiRotate(LiteralUtil::CreateR2<int8_t>({{1, 2}}));
+
+  EXPECT_THAT(GetMultiShiftsShape(mode),
+              absl_testing::IsOkAndHolds(ShapeUtil::MakeShape(S8, {1, 2})));
+}
+
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesRotatesEverySliceByItsShift) {
+  const ShuffleMode mode =
+      MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/0,
+                                                    /*dimension_size=*/3));
+  EXPECT_EQ(indices, LiteralUtil::CreateR2<int32_t>({{1, 2}, {2, 0}, {0, 1}}));
+}
+
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesWrapsShiftsAround) {
+  const ShuffleMode mode =
+      MultiRotate(LiteralUtil::CreateR2<int32_t>({{-1, 5}}));
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/0,
+                                                    /*dimension_size=*/3));
+  EXPECT_EQ(indices, LiteralUtil::CreateR2<int32_t>({{2, 2}, {0, 0}, {1, 1}}));
+}
+
+// A shifts array that is of size 1 along a dimension that is not rotated holds
+// one shift that every slice along that dimension is rotated by, so the
+// indices stay of size 1 there and the shuffle broadcasts them.
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesKeepsASharedShiftShared) {
+  const ShuffleMode mode = MultiRotate(LiteralUtil::CreateR2<int32_t>({{1}}));
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/0,
+                                                    /*dimension_size=*/3));
+  EXPECT_EQ(indices, LiteralUtil::CreateR2<int32_t>({{1}, {2}, {0}}));
+}
+
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesWithBroadcastDimension) {
+  // shifts has shape [1, 2, 1], rotating dimension 2 of size 4.
+  // Dimension 0 has size 1 (broadcast across dimension 0).
+  const Literal shifts = LiteralUtil::CreateR3<int32_t>({{{1}, {2}}});
+  const ShuffleMode mode = MultiRotate(shifts);
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/2,
+                                                    /*dimension_size=*/4));
+  EXPECT_EQ(indices,
+            LiteralUtil::CreateR3<int32_t>({{{1, 2, 3, 0}, {2, 3, 0, 1}}}));
+}
+
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesOfADimensionOfSizeOneAreZero) {
+  const ShuffleMode mode =
+      MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/0,
+                                                    /*dimension_size=*/1));
+  EXPECT_EQ(indices, LiteralUtil::CreateR2<int32_t>({{0, 0}}));
+}
+
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesOfAnEmptyDimensionAreEmpty) {
+  const ShuffleMode mode =
+      MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/0,
+                                                    /*dimension_size=*/0));
+  EXPECT_EQ(indices.shape(), ShapeUtil::MakeShape(S32, {0, 2}));
+}
+
+// The shifts fit in the type they are given, but an index runs up to the size
+// of the rotated dimension, which that type need not hold.
+TEST(ShuffleTest, GetMultiRotatePermuteIndicesTakeATypeThatHoldsEveryIndex) {
+  const ShuffleMode mode = MultiRotate(LiteralUtil::CreateR2<int8_t>({{1, 2}}));
+
+  ASSERT_OK_AND_ASSIGN(const Literal indices,
+                       GetMultiRotatePermuteIndices(mode, /*dimension=*/0,
+                                                    /*dimension_size=*/300));
+  EXPECT_EQ(indices.shape().element_type(), S32);
+  EXPECT_EQ(indices.GetIntegralAsS64({299, 1}), 1);
 }
 
 TEST(ShuffleTest, NormalizeShiftKeepsShiftsThatAreAlreadyInRange) {
