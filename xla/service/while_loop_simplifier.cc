@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/call_inliner.h"
@@ -60,8 +59,135 @@ limitations under the License.
 namespace xla {
 
 namespace m = match;
-using hlo_query::ContainsInstrWithOpcode;
 using std::optional;
+
+namespace {
+
+// Facts about a computation and everything it calls: whether it contains a
+// send/recv or a kDomain instruction and whether it has a side effect. Each
+// is a recursive walk, and the pass asks them for every loop, so a nested
+// body would be walked once per nesting level. The answers are cached per
+// computation.
+//
+// Invalidation: a fact depends only on the instructions of the computation
+// and of its callees, so it stays valid until an instruction is added,
+// removed or rewritten anywhere in the module. Call Invalidate() after every
+// transformation that reports a change; RunImpl does so through note_change.
+// A fact read before a transformation may be used after it only when the
+// transformation cannot change it (see contains_domain in RunImpl).
+class CalledComputationFactsCache {
+ public:
+  bool ContainsSendRecv(const HloComputation* comp) {
+    return OpcodeFacts(comp).send_recv;
+  }
+
+  // Only meaningful when ContainsSendRecv(comp) is false: the walk stops at
+  // the first send/recv because the pass never asks about kDomain then.
+  bool ContainsDomain(const HloComputation* comp) {
+    return OpcodeFacts(comp).domain;
+  }
+
+  // Same answer as HloInstruction::HasSideEffect, with the recursion into
+  // called computations served from the cache.
+  // LINT.IfChange(cached_has_side_effect)
+  bool HasSideEffect(const HloInstruction* instr) {
+    // HloAsyncInstruction overrides HasSideEffect to ask the instruction it
+    // wraps. An async-update or async-done usually reaches that instruction
+    // through its chain and has no called computation of its own.
+    if (HloAsyncInstruction::ClassOf(instr)) {
+      return instr->HasSideEffect();
+    }
+    if (instr->HasSideEffectNoRecurse()) {
+      return true;
+    }
+    for (const HloComputation* callee : instr->called_computations()) {
+      if (HasSideEffect(callee)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Forgets every fact; see the class comment for when to call it.
+  void Invalidate() { facts_.clear(); }
+
+ private:
+  struct Facts {
+    bool opcodes_known = false;
+    bool send_recv = false;
+    bool domain = false;
+    bool side_effect_known = false;
+    bool side_effect = false;
+  };
+
+  Facts OpcodeFacts(const HloComputation* comp) {
+    if (auto it = facts_.find(comp);
+        it != facts_.end() && it->second.opcodes_known) {
+      return it->second;
+    }
+    bool send_recv = false;
+    bool domain = false;
+    for (const HloInstruction* instr : comp->instructions()) {
+      switch (instr->opcode()) {
+        case HloOpcode::kSend:
+        case HloOpcode::kSendDone:
+        case HloOpcode::kRecv:
+        case HloOpcode::kRecvDone:
+          send_recv = true;
+          break;
+        case HloOpcode::kDomain:
+          domain = true;
+          break;
+        default:
+          break;
+      }
+      for (const HloComputation* callee : instr->called_computations()) {
+        if (send_recv) {
+          break;
+        }
+        const Facts callee_facts = OpcodeFacts(callee);
+        send_recv |= callee_facts.send_recv;
+        domain |= callee_facts.domain;
+      }
+      if (send_recv) {
+        break;
+      }
+    }
+    // Looked up after the walk: the recursion may have rehashed facts_.
+    Facts& result = facts_[comp];
+    result.opcodes_known = true;
+    result.send_recv = send_recv;
+    result.domain = domain;
+    return result;
+  }
+
+  bool HasSideEffect(const HloComputation* comp) {
+    if (auto it = facts_.find(comp);
+        it != facts_.end() && it->second.side_effect_known) {
+      return it->second.side_effect;
+    }
+    bool side_effect = false;
+    for (const HloInstruction* instr : comp->instructions()) {
+      if (HasSideEffect(instr)) {
+        side_effect = true;
+        break;
+      }
+    }
+    // Looked up after the walk: the recursion may have rehashed facts_.
+    Facts& result = facts_[comp];
+    result.side_effect_known = true;
+    result.side_effect = side_effect;
+    return side_effect;
+  }
+  // LINT.ThenChange(
+  //   ../hlo/ir/hlo_instruction.cc:has_side_effect,
+  //   ../hlo/ir/hlo_computation.cc:has_side_effect
+  // )
+
+  absl::flat_hash_map<const HloComputation*, Facts> facts_;
+};
+
+}  // namespace
 
 // This function removes trivial compare hlo instructions inside the while body.
 // Assuming a while loop with known trip count, k, loop induction variable i,
@@ -412,8 +538,9 @@ class WhileInputDependencies {
  public:
   WhileInputDependencies(const HloInstruction* while_op,
                          absl::Span<const int> candidate_bit,
-                         int num_candidates)
-      : while_body_(while_op->while_body()),
+                         int num_candidates, CalledComputationFactsCache& facts)
+      : facts_(facts),
+        while_body_(while_op->while_body()),
         while_cond_(while_op->while_condition()),
         while_body_root_(while_body_->root_instruction()),
         candidate_bit_(candidate_bit),
@@ -510,7 +637,8 @@ class WhileInputDependencies {
           }
         }
       }
-      if (inst->HasSideEffect() || inst == while_cond_->root_instruction()) {
+      if (facts_.HasSideEffect(inst) ||
+          inst == while_cond_->root_instruction()) {
         input_deps_.Or(side_effecting_row_, slot);
       }
     });
@@ -551,6 +679,7 @@ class WhileInputDependencies {
     }
   }
 
+  CalledComputationFactsCache& facts_;
   const HloComputation* const while_body_;
   const HloComputation* const while_cond_;
   const HloInstruction* const while_body_root_;
@@ -616,7 +745,8 @@ int64_t EraseIndicesDeadAsGroup(WhileInputDependencies& deps,
 
 }  // namespace
 
-absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
+static absl::StatusOr<bool> TryRemoveDeadWhileParamsImpl(
+    HloInstruction* while_op, CalledComputationFactsCache& facts) {
   CHECK_EQ(while_op->opcode(), HloOpcode::kWhile);
   if (HasDisableWhileLoopDceAttr(while_op)) {
     return false;
@@ -686,7 +816,7 @@ absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
             << " has no removable candidate index.";
     return false;
   }
-  WhileInputDependencies deps(while_op, candidate_bit, num_candidates);
+  WhileInputDependencies deps(while_op, candidate_bit, num_candidates, facts);
   // The indices that survive: all of them until a case removes some.
   InlinedBitSet<> used_tuple_indices(tuple_size);
   used_tuple_indices.SetAll(tuple_size);
@@ -707,6 +837,11 @@ absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
                         RemoveDeadTupleIndices(while_op, used_tuple_indices));
 
   return true;
+}
+
+absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
+  CalledComputationFactsCache facts;
+  return TryRemoveDeadWhileParamsImpl(while_op, facts);
 }
 
 // Returns if this instruction looks like an insertion inside a variable of a
@@ -1768,6 +1903,15 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
   XLA_VLOG_LINES(
       3, "WhileLoopSimplifier::RunImpl(), before:\n" + module->ToString());
   bool changed = false;
+  CalledComputationFactsCache facts;
+  // Every transformation below rewrites loop computations, so the cache is
+  // invalidated as soon as one reports a change.
+  auto note_change = [&](bool result) {
+    changed |= result;
+    if (result) {
+      facts.Invalidate();
+    }
+  };
 
   // Gather all the while ops in our module.  We do this ahead of time so we
   // don't have to worry about mutating the lists of computations or
@@ -1800,32 +1944,33 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
 
     ABSL_ASSIGN_OR_RETURN(bool result,
                           TryRemoveRepeatedWhileTupleIndices(while_op));
-    changed |= result;
+    note_change(result);
     if (result) {
       continue;
     }
 
     ABSL_ASSIGN_OR_RETURN(result, TryFlattenNestedTuples(while_op));
-    changed |= result;
+    note_change(result);
     if (result) {
       continue;
     }
 
-    ABSL_ASSIGN_OR_RETURN(result, TryRemoveDeadWhileParams(while_op));
-    changed |= result;
+    ABSL_ASSIGN_OR_RETURN(result,
+                          TryRemoveDeadWhileParamsImpl(while_op, facts));
+    note_change(result);
     if (result) {
       continue;
     }
 
     ABSL_ASSIGN_OR_RETURN(result, TryRemoveConstantParams(while_op));
-    changed |= result;
+    note_change(result);
     if (result) {
       continue;
     }
 
     if (simplify_compare_instrs_) {
       ABSL_ASSIGN_OR_RETURN(result, TryRemoveTrivialCompare(while_op));
-      changed |= result;
+      note_change(result);
       if (result) {
         continue;
       }
@@ -1835,23 +1980,25 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
     // on the particular loop structure around the node matching on the send and
     // recv sides.  Other while simplifications require us to remove the loop
     // and replace it with a new one, so we can't do that either.
-    if (ContainsInstrWithOpcode(while_op->while_body(),
-                                {HloOpcode::kSend, HloOpcode::kSendDone,
-                                 HloOpcode::kRecv, HloOpcode::kRecvDone}) ||
-        ContainsInstrWithOpcode(while_op->while_condition(),
-                                {HloOpcode::kSend, HloOpcode::kSendDone,
-                                 HloOpcode::kRecv, HloOpcode::kRecvDone})) {
+    if (facts.ContainsSendRecv(while_op->while_body()) ||
+        facts.ContainsSendRecv(while_op->while_condition())) {
       VLOG(2) << "Not attempting to simplify while loop because it contains a "
                  "send/recv node: "
               << while_op->ToShortString();
       continue;
     }
+    // Read before TryPropagateConstant: a successful propagation drops the
+    // cache, and the answer survives it because propagation never adds or
+    // removes a kDomain.
+    const bool contains_domain =
+        facts.ContainsDomain(while_op->while_body()) ||
+        facts.ContainsDomain(while_op->while_condition());
 
     ABSL_ASSIGN_OR_RETURN(result, TryPropagateConstant(while_op));
-    changed |= result;
+    note_change(result);
 
     ABSL_ASSIGN_OR_RETURN(result, TryRemoveWhileLoop(while_op));
-    changed |= result;
+    note_change(result);
 
     if (result) {
       // Don't continue simplifying after successfully removing the while loop
@@ -1862,9 +2009,7 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
     // TODO(b/119281462): Cowardly refuse to perform any of the following
     // optimizations in the presence of kDomain instructions.  It seems that
     // modifying a while loop's tuple doesn't work when kDomain is present.
-    if (ContainsInstrWithOpcode(while_op->while_body(), {HloOpcode::kDomain}) ||
-        ContainsInstrWithOpcode(while_op->while_condition(),
-                                {HloOpcode::kDomain})) {
+    if (contains_domain) {
       continue;
     }
 
@@ -1876,7 +2021,7 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
                             TryMergeInductionVariables(while_op, elem_ty));
       if (new_while_op) {
         while_op = new_while_op;
-        changed = true;
+        note_change(true);
         merged_induction_vars = true;
       }
     }
