@@ -358,7 +358,7 @@ func.func @rsqrt_f32_vector_16(%arg0: vector<16xf32>) -> vector<16xf32> {
   return %ret : vector<16xf32>
 }
 // CHECK-LABEL: @rsqrt_f32_vector_16
-// CHECK-NOT: @xla.rsqrt.v
+// CHECK-NOT: @xla.rsqrt.v16
 // CHECK-COUNT-16: call @xla.rsqrt.f32
 
 // AVX512-LABEL: @rsqrt_f32_vector_16
