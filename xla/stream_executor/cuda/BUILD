@@ -3132,6 +3132,7 @@ cuda_library(
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:topk_kernel",
         "//xla/tsl/lib/math:math_util",
+        "@com_google_absl//absl/base",
     ],
     alwayslink = 1,
 )
