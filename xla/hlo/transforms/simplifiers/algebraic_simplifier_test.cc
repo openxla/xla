@@ -8827,6 +8827,36 @@ TEST_F(AlgebraicSimplifierTest, BatchDotTransposeBatchDimsAndOperands) {
             PrecisionConfig::HIGH);
 }
 
+// The transposes rotate the batch dimensions, so the permutation is not its
+// own inverse.
+TEST_F(AlgebraicSimplifierTest, BatchDotTransposeRotatedBatchDims) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    ENTRY test {
+      lhs = f32[2,3,4,5,6] parameter(0)
+      rhs = f32[2,3,4,6,7] parameter(1)
+      lhs_t = transpose(lhs), dimensions={2,0,1,3,4}
+      rhs_t = transpose(rhs), dimensions={2,0,1,3,4}
+      ROOT root = dot(lhs_t, rhs_t),
+                  lhs_batch_dims={0,1,2}, rhs_batch_dims={0,1,2},
+                  lhs_contracting_dims={4}, rhs_contracting_dims={3}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options = default_options_;
+  AlgebraicSimplifier simplifier(options);
+  ASSERT_THAT(RunHloPass(&simplifier, module.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Transpose(m::Dot(m::Parameter(0), m::Parameter(1))
+                                          .WithShape(F32, {2, 3, 4, 5, 7}))
+                             .WithShape(F32, {4, 2, 3, 5, 7})));
+  ASSERT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+}
+
 TEST_F(AlgebraicSimplifierTest, DotIsAnnotatedWithUnreducedSharding) {
   constexpr absl::string_view hlo_string = R"(
     HloModule module
