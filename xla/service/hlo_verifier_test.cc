@@ -4474,6 +4474,49 @@ ENTRY Shuffle {
                                HasSubstr("duplicated")));
 }
 
+TEST_F(HloVerifierTest, ShufflePermuteOK) {
+  constexpr absl::string_view kHlo = R"(
+HloModule shuffle, entry_computation_layout={(f32[3,2]{1,0})->f32[3,2]{1,0}}
+
+ENTRY Shuffle {
+  x = f32[3,2]{1,0} parameter(0)
+  ROOT shuffle = f32[3,2]{1,0} shuffle(x), dimensions={0}, mode=permute, indices=s32[3,1]{1,0} { {1}, {0}, {2} }
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  ASSERT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+}
+
+TEST_F(HloVerifierTest, ShufflePermuteOutOfBoundsIndices) {
+  constexpr absl::string_view kHlo = R"(
+HloModule shuffle, entry_computation_layout={(f32[3,2]{1,0})->f32[3,2]{1,0}}
+
+ENTRY Shuffle {
+  x = f32[3,2]{1,0} parameter(0)
+  ROOT shuffle = f32[3,2]{1,0} shuffle(x), dimensions={0}, mode=permute, indices=s32[3,1]{1,0} { {1}, {0}, {3} }
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  ASSERT_THAT(
+      verifier().Run(module.get()),
+      StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("out-of-bounds")));
+}
+
+TEST_F(HloVerifierTest, ShufflePermuteMismatchedIndicesShape) {
+  constexpr absl::string_view kHlo = R"(
+HloModule shuffle, entry_computation_layout={(f32[3,2]{1,0})->f32[3,2]{1,0}}
+
+ENTRY Shuffle {
+  x = f32[3,2]{1,0} parameter(0)
+  ROOT shuffle = f32[3,2]{1,0} shuffle(x), dimensions={0}, mode=permute, indices=s32[2,1]{1,0} { {1}, {0} }
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHlo));
+  ASSERT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have size 3")));
+}
+
 TEST_F(HloVerifierTest, InputLayoutMismatchIgnored) {
   // Note: The mismatch is between the entry_computation_layout and the layout
   // of parameter(1).
