@@ -2309,7 +2309,6 @@ cc_library(
     deps = [
         ":gpu_executable",
         ":gpu_executable_proto_cc",
-        "//xla:debug_options_flags",
         "//xla:printer",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
