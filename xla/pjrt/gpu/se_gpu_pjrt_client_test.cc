@@ -366,12 +366,11 @@ TEST(StreamExecutorGpuClientTest, MemorySpacesUniqueIds) {
 }
 
 TEST(StreamExecutorGpuClientTest, NumaNode) {
-  if (IsRocm()) {
-    GTEST_SKIP();  // Not working on rocm, enable once fixed
-  }
-
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  if (client->platform_id() == RocmId()) {
+    GTEST_SKIP() << "not working on ROCm, enable once fixed";  // TODO: ROCm
+  }
   ASSERT_GE(client->devices().size(), 1);
 
   for (auto* device : client->devices()) {
