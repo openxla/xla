@@ -16,6 +16,7 @@
 name: Run Benchmarks
 
 on:
+  pull_request:
   # Allow manual runs from the Actions tab for testing
   workflow_dispatch:
     inputs:
@@ -61,9 +62,9 @@ jobs:
     with:
       registry_file: "xla/tools/benchmarks/benchmark_registry.pbtxt"
       bap_ref: "887b34acdb5c70bbd2bc93bb11c2d0a103698e7f"
-      ab_mode: ${{ inputs.ab_mode }}
-      baseline_ref: ${{ inputs.baseline_ref }}
-      experiment_ref: ${{ inputs.experiment_ref }}
-      benchmark_filter: ${{ inputs.benchmark_filter }}
-      environment_filter: ${{ inputs.environment_filter }}
-      custom_metadata: ${{ inputs.custom_metadata }}
+      ab_mode: ${{ inputs.ab_mode == true }}
+      baseline_ref: ${{ inputs.baseline_ref || '' }}
+      experiment_ref: ${{ inputs.experiment_ref || github.sha }}
+      benchmark_filter: ${{ inputs.benchmark_filter || '' }}
+      environment_filter: ${{ inputs.environment_filter || '' }}
+      custom_metadata: ${{ inputs.custom_metadata || '{}' }}
