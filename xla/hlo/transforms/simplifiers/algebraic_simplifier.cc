@@ -2868,8 +2868,9 @@ AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands(
   HloInstruction* new_rhs =
       reorder_operands ? lhs->mutable_operand(0) : rhs->mutable_operand(0);
   auto new_dot = dot->AddInstruction(HloInstruction::CreateDot(
-      ShapeUtil::PermuteDimensions(permutation, dot->shape()), new_lhs, new_rhs,
-      dnums,
+      ShapeUtil::PermuteDimensions(InversePermutation(permutation),
+                                   dot->shape()),
+      new_lhs, new_rhs, dnums,
       reorder_operands
           ? SwapOperandsInDotPrecisionConfig(dot->precision_config())
           : dot->precision_config()));
