@@ -52,6 +52,7 @@ cc_library(
 xla_cc_test(
     name = "dump_test",
     srcs = ["dump_test.cc"],
+    tags = ["notap"],  # b/565973477
     deps = [
         ":dump",
         "//xla:shape_util",
