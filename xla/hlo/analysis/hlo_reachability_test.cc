@@ -15,9 +15,27 @@ limitations under the License.
 
 #include "xla/hlo/analysis/hlo_reachability.h"
 
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <sys/prctl.h>
+#include <unistd.h>
+// The same fallbacks as hlo_reachability.cc for headers older than the
+// kernel.
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
+#ifndef PR_GET_THP_DISABLE
+#define PR_GET_THP_DISABLE 42
+#endif
+#ifndef PR_THP_DISABLE_EXCEPT_ADVISED
+#define PR_THP_DISABLE_EXCEPT_ADVISED (1 << 1)
+#endif
+#endif
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -318,6 +336,166 @@ TEST_F(HloReachabilityTest, UpdateMultipleInstructions) {
   // a is still not reachable to d, f
   EXPECT_FALSE(reachability->IsReachable(a, d));
   EXPECT_FALSE(reachability->IsReachable(a, f));
+}
+
+#if defined(__linux__)
+// A copy of the helper in hlo_reachability.cc: the selected option of a
+// sysfs setting, "always [madvise] never" giving "madvise"; empty when the
+// file cannot be read.
+std::string SelectedOption(const std::string& path) {
+  std::ifstream file(path);
+  std::string line;
+  std::getline(file, line);
+  const size_t open_bracket = line.find('[');
+  if (open_bracket == std::string::npos) {
+    return "";
+  }
+  const size_t close_bracket = line.find(']', open_bracket);
+  if (close_bracket == std::string::npos) {
+    return "";
+  }
+  return line.substr(open_bracket + 1, close_bracket - open_bracket - 1);
+}
+#endif
+
+// Whether HloReachabilityMap memory maps the 8 MiB matrices of the test
+// below on this host. It mirrors the gate in hlo_reachability.cc, so keep the
+// two in step: huge pages of at most 2 MiB, so that 8 MiB holds the four huge
+// pages a mapping must span; transparent huge pages enabled for that size and
+// not disabled for the process; and Linux 5.14 or later, which has the
+// populate advice.
+bool HostMemoryMapsLargeMatrices() {
+#if defined(__linux__)
+  const std::string thp_dir = "/sys/kernel/mm/transparent_hugepage/";
+  std::ifstream size_file(thp_dir + "hpage_pmd_size");
+  size_t huge_page_bytes = size_t{2} << 20;
+  if (size_t read_bytes = 0; size_file >> read_bytes && read_bytes > 0) {
+    huge_page_bytes = read_bytes;
+  }
+  if (huge_page_bytes > (size_t{2} << 20)) {
+    return false;
+  }
+  std::string enabled = SelectedOption(thp_dir + "enabled");
+  const std::string pmd_enabled =
+      SelectedOption(thp_dir + "hugepages-" +
+                     std::to_string(huge_page_bytes / 1024) + "kB/enabled");
+  if (!pmd_enabled.empty() && pmd_enabled != "inherit") {
+    enabled = pmd_enabled;
+  }
+  if (enabled != "always" && enabled != "madvise") {
+    return false;
+  }
+  const int disabled = prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0);
+  if (disabled > 0 && (disabled & PR_THP_DISABLE_EXCEPT_ADVISED) == 0) {
+    return false;
+  }
+  const size_t page_bytes = sysconf(_SC_PAGESIZE);
+  void* page = mmap(nullptr, page_bytes, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (page == MAP_FAILED) {
+    return false;
+  }
+  const bool populates = madvise(page, page_bytes, MADV_POPULATE_WRITE) == 0;
+  PCHECK(munmap(page, page_bytes) == 0);
+  return populates;
+#else
+  return false;
+#endif
+}
+
+// Builds a chain of `num_instructions` exponentials and its reachability map.
+std::pair<std::unique_ptr<HloReachabilityMap>, std::vector<HloInstruction*>>
+BuildChainReachability(HloModule* module, int num_instructions) {
+  Shape r0f32 = ShapeUtil::MakeShape(F32, {});
+  auto builder = HloComputation::Builder("chain");
+  std::vector<HloInstruction*> chain;
+  chain.push_back(builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(2.0f))));
+  for (int i = 1; i < num_instructions; ++i) {
+    chain.push_back(builder.AddInstruction(
+        HloInstruction::CreateUnary(r0f32, HloOpcode::kExp, chain.back())));
+  }
+  HloComputation* computation =
+      module->AddEntryComputation(builder.Build(chain.back()));
+  return {HloReachabilityMap::Build(computation), std::move(chain)};
+}
+
+}  // namespace
+
+class HloReachabilityMapTestPeer {
+ public:
+  static bool IsMemoryMapped(const HloReachabilityMap& map) {
+    return map.bit_storage_.is_memory_mapped();
+  }
+  static bool PopulateCostAcceptable(int64_t minor_faults, int64_t cpu_micros,
+                                     size_t chunk_bytes,
+                                     size_t huge_page_bytes) {
+    return HloReachabilityMap::BitStorage::PopulateCostAcceptable(
+        minor_faults, cpu_micros, chunk_bytes, huge_page_bytes);
+  }
+};
+
+namespace {
+
+// The probe judges the first chunk of a mapping by its page faults (one per
+// huge page, one per base page otherwise) and its CPU time (about 50 us per
+// MiB with huge pages, more when the kernel compacts memory for them).
+TEST(HloReachabilityMapBitStorageTest, PopulateCostAcceptable) {
+  using Peer = HloReachabilityMapTestPeer;
+  constexpr size_t kMiB = size_t{1} << 20;
+  // A 64 MiB chunk of 2 MiB huge pages on a 4 KiB page kernel.
+  EXPECT_TRUE(Peer::PopulateCostAcceptable(32, 3200, 64 * kMiB, 2 * kMiB));
+  // Up to a quarter small pages and up to 500 us per MiB pass.
+  EXPECT_TRUE(Peer::PopulateCostAcceptable(4096, 3200, 64 * kMiB, 2 * kMiB));
+  EXPECT_FALSE(Peer::PopulateCostAcceptable(4097, 3200, 64 * kMiB, 2 * kMiB));
+  EXPECT_TRUE(Peer::PopulateCostAcceptable(32, 32000, 64 * kMiB, 2 * kMiB));
+  EXPECT_FALSE(Peer::PopulateCostAcceptable(32, 32001, 64 * kMiB, 2 * kMiB));
+  // All small pages, and huge pages assembled by compaction.
+  EXPECT_FALSE(Peer::PopulateCostAcceptable(16384, 3200, 64 * kMiB, 2 * kMiB));
+  EXPECT_FALSE(Peer::PopulateCostAcceptable(32, 64000, 64 * kMiB, 2 * kMiB));
+  // A 64 KiB page kernel: one 512 MiB huge page per chunk, or 8192 small
+  // pages; 128 faults for the one huge page, 500 us per MiB as before.
+  EXPECT_TRUE(Peer::PopulateCostAcceptable(1, 25600, 512 * kMiB, 512 * kMiB));
+  EXPECT_TRUE(
+      Peer::PopulateCostAcceptable(128, 256000, 512 * kMiB, 512 * kMiB));
+  EXPECT_FALSE(
+      Peer::PopulateCostAcceptable(129, 25600, 512 * kMiB, 512 * kMiB));
+  EXPECT_FALSE(Peer::PopulateCostAcceptable(1, 256001, 512 * kMiB, 512 * kMiB));
+  EXPECT_FALSE(
+      Peer::PopulateCostAcceptable(8192, 25600, 512 * kMiB, 512 * kMiB));
+}
+
+// 8191 instructions give an 8192 row by 128 word matrix of exactly 8 MiB, the
+// smallest matrix that HloReachabilityMap memory maps where the host allows
+// it; 8192 instructions need one more block and a mapping that is not a whole
+// number of huge pages.
+TEST_F(HloReachabilityTest, LargeMatrixIsMemoryMapped) {
+  auto small_module = CreateNewVerifiedModule();
+  EXPECT_FALSE(HloReachabilityMapTestPeer::IsMemoryMapped(
+      *BuildChainReachability(small_module.get(), 8190).first));
+
+  const bool host_maps = HostMemoryMapsLargeMatrices();
+  // So that the test report shows which path ran.
+  RecordProperty("memory_mapped", host_maps);
+  for (int num_instructions : {8191, 8192}) {
+    SCOPED_TRACE(num_instructions);
+    auto module = CreateNewVerifiedModule();
+    auto [reachability, chain] =
+        BuildChainReachability(module.get(), num_instructions);
+    EXPECT_EQ(HloReachabilityMapTestPeer::IsMemoryMapped(*reachability),
+              host_maps);
+    EXPECT_TRUE(reachability->IsReachable(chain.front(), chain.back()));
+    EXPECT_FALSE(reachability->IsReachable(chain.back(), chain.front()));
+    EXPECT_TRUE(reachability->IsReachable(chain[1000], chain[7000]));
+    EXPECT_FALSE(reachability->IsReachable(chain[7000], chain[1000]));
+    // Rows 4095 and 4096 are the last row of one block and the first of the
+    // next. Recomputing an unchanged row goes through the temporary row, the
+    // last row of the matrix, and reports no change.
+    EXPECT_FALSE(
+        reachability->SetReachabilityToUnion({chain[4095]}, chain[4096]));
+    EXPECT_FALSE(reachability->SetReachabilityToUnion(
+        {chain[num_instructions - 2]}, chain.back()));
+  }
 }
 
 }  // namespace

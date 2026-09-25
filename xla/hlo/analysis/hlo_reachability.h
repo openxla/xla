@@ -302,15 +302,51 @@ class HloReachabilityMap {
     size_t words_;  // Number of bits in the set.
   };
 
+  // The rows of the bit matrix, zero filled, in blocks of kRowsPerAllocation
+  // rows. Each block is its own heap allocation, so the heap never has to find
+  // one span for the whole matrix. On Linux with transparent huge pages, a
+  // matrix of at least a few huge pages can lie in one anonymous memory
+  // mapping instead (hlo_reachability.cc says when): the kernel fills it with
+  // zeros and, on request, backs it with huge pages, and the destructor
+  // returns it to the system.
+  class BitStorage {
+   public:
+    BitStorage(size_t num_rows, size_t words_per_row);
+    BitStorage(const BitStorage&) = delete;
+    BitStorage& operator=(const BitStorage&) = delete;
+    ~BitStorage();
+
+    BitSet::Word* block(size_t index) const { return blocks_[index]; }
+    bool is_memory_mapped() const { return mapping_ != nullptr; }
+
+    // Whether a chunk of `chunk_bytes` of a mapping, populated at a cost of
+    // `minor_faults` page faults and `cpu_micros` of CPU time to the calling
+    // thread, came back as huge pages at a reasonable price. Exposed for the
+    // test; the decision lives in hlo_reachability.cc.
+    static bool PopulateCostAcceptable(int64_t minor_faults, int64_t cpu_micros,
+                                       size_t chunk_bytes,
+                                       size_t huge_page_bytes);
+
+   private:
+    // The first word of every block, whichever storage holds it.
+    std::vector<BitSet::Word*> blocks_;
+    // The memory mapping the blocks share, or nullptr when they are the heap
+    // blocks below.
+    void* mapping_ = nullptr;
+    size_t mapped_bytes_ = 0;
+    std::vector<std::unique_ptr<BitSet::Word[]>> heap_blocks_;
+  };
+
   BitSet BitSetFromIndex(Index i) const {
     const uint64_t block = i >> kRowsPerAllocationPowerLog2;
     const uint64_t row_within_block = i & (kRowsPerAllocation - 1);
     return BitSet(
-        bit_storage_[block].get() + row_within_block * words_per_bitset_,
+        bit_storage_.block(block) + row_within_block * words_per_bitset_,
         words_per_bitset_);
   }
 
   friend class HloReachabilityMapBitSetBenchmark;
+  friend class HloReachabilityMapTestPeer;
 
   using Key = HloInstruction::LocalId;
   static Key GetKey(const HloInstruction* instruction) {
@@ -332,8 +368,8 @@ class HloReachabilityMap {
   void SetReachabilityToUnionHelper(absl::Span<const Index> input_indices,
                                     Index index);
 
-  // Map from instruction to index. The index is used for bit_set_ and the bits
-  // within a BitSet.
+  // Map from instruction to index. The index is used for BitSetFromIndex and
+  // the bits within a BitSet.
   std::vector<Index> indices_;
 
   // We allocate an (instructions.size() + 1) * (roundup(instructions.size(),
@@ -342,12 +378,9 @@ class HloReachabilityMap {
   // allocate one extra so that we have one bit vector worth of temporary
   // storage for use during the reachability computation.
 
-  // To avoid allocating a single giant block of memory in one allocation, we
-  // allocate groups of up to kRowsPerAllocation bitsets at a time.  These
-  // groups of rows are stored in the elements of "bit_storage_".
-  //
-  // BitSetFromIndex(i) abstracts away this representation to give the proper
-  // pointer to the "i"th row.
+  // The rows are stored in groups of up to kRowsPerAllocation bitsets, see
+  // BitStorage. BitSetFromIndex(i) abstracts away this representation to give
+  // the proper pointer to the "i"th row.
   static constexpr int kRowsPerAllocationPowerLog2 = 10;
   static constexpr uint64_t kRowsPerAllocation = static_cast<uint64_t>(1)
                                                  << kRowsPerAllocationPowerLog2;
@@ -355,8 +388,7 @@ class HloReachabilityMap {
   static constexpr int64_t kComputationIdAbsent = -1;
 
   size_t words_per_bitset_;
-  size_t total_words_;  // Total allocated words in bit_storage_
-  std::vector<std::unique_ptr<BitSet::Word[]>> bit_storage_;
+  BitStorage bit_storage_;
 
   // A temporary used by SetReachabilityToUnion to avoid an allocation with each
   // call to the method.
