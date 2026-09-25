@@ -3417,9 +3417,15 @@ XlaOp Rev(XlaOp operand, absl::Span<const int64_t> dimensions);
 // Enqueues a shuffle instruction onto the computation. The elements are
 // shuffled along the given dimensions following the pattern selected by `mode`,
 // which also carries the attributes of that mode:
+// - permute: the element at an index in the output is taken from the index of
+//   the operand obtained by replacing the coordinates of the given dimensions
+//   with the corresponding entries of `indices`.
 // - rotate: the elements are (left) rotated by `shifts` along the given
 //   dimensions (i.e. the element at index i in the output is taken from index
 //   (i + shifts[j]) % dimension_size[j] of the operand).
+// - multi_rotate: as rotate, but a single dimension is rotated and each of its
+//   slices is rotated by its own entry of `multi_shifts` rather than all of
+//   them by one shift.
 XlaOp Shuffle(XlaOp operand, absl::Span<const int64_t> dimensions,
               const ShuffleMode& mode);
 

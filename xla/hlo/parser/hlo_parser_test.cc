@@ -778,6 +778,18 @@ ENTRY %Reverse4DFloatArrayOnDim01.v2 () -> f32[4,3,2,1] {
 
 )"
 },
+// shuffle(constant, mode=permute)
+{
+"ShufflePermute2D",
+R"(HloModule ShufflePermute2DFloatArrayOnDim0_module, entry_computation_layout={()->f32[4,3]{1,0}}
+
+ENTRY %ShufflePermute2DFloatArrayOnDim0.v2 () -> f32[4,3] {
+  %constant = f32[4,3]{1,0} constant({ { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 }, { 10, 11, 12 } })
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %constant), dimensions={0}, mode=permute, indices=s32[4,1]{1,0} { {1}, {0}, {3}, {2} }
+}
+
+)"
+},
 // shuffle(constant, mode=rotate)
 {
 "ShuffleRotate2D",
@@ -786,6 +798,18 @@ R"(HloModule ShuffleRotate2DFloatArrayOnDim01_module, entry_computation_layout={
 ENTRY %ShuffleRotate2DFloatArrayOnDim01.v2 () -> f32[4,3] {
   %constant = f32[4,3]{1,0} constant({ { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 }, { 10, 11, 12 } })
   ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %constant), dimensions={0,1}, mode=rotate, shifts={1,2}
+}
+
+)"
+},
+// shuffle(constant, mode=multi_rotate)
+{
+"ShuffleMultiRotate2D",
+R"(HloModule ShuffleMultiRotate2DFloatArrayOnDim0_module, entry_computation_layout={()->f32[4,3]{1,0}}
+
+ENTRY %ShuffleMultiRotate2DFloatArrayOnDim0.v2 () -> f32[4,3] {
+  %constant = f32[4,3]{1,0} constant({ { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 }, { 10, 11, 12 } })
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %constant), dimensions={0}, mode=multi_rotate, multi_shifts=s32[1,3]{1,0} { { 1, 2, 3 } }
 }
 
 )"
@@ -8818,8 +8842,11 @@ ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
                   "attribute dimensions is expected but not seen");
 }
 
-// The `shifts` attribute is specific to the rotate mode, so it must be present
-// if and only if the mode is rotate.
+// The `shifts`, `multi_shifts` and `indices` attributes are each specific to a
+// single mode, so each of them must be present if and only if its mode was
+// selected. The tests below cover, for every mode, the attribute being
+// missing, an attribute of another mode being present as well, and an
+// attribute of another mode being present instead.
 TEST_F(HloParserTest, ShuffleRotateWithoutShifts) {
   const std::string original = R"(HloModule shuffle_rotate_without_shifts
 
@@ -8830,7 +8857,154 @@ ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
   auto result = ParseAndReturnUnverifiedModule(original);
   EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
-                  "expects shifts for a shuffle in rotate mode");
+                  "expects only shifts for rotate mode");
+}
+
+TEST_F(HloParserTest, ShuffleRotateWithShiftsAndIndices) {
+  const std::string original = R"(HloModule shuffle_rotate_with_indices
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0,1}, mode=rotate, shifts={1,2}, indices=s32[4,1]{1,0} { {1}, {0}, {3}, {2} }
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only shifts for rotate mode");
+}
+
+TEST_F(HloParserTest, ShuffleRotateWithIndicesInsteadOfShifts) {
+  const std::string original = R"(HloModule shuffle_rotate_with_indices_only
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=rotate, indices=s32[4,1]{1,0} { {1}, {0}, {3}, {2} }
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only shifts for rotate mode");
+}
+
+TEST_F(HloParserTest, ShuffleRotateWithMultiShifts) {
+  const std::string original = R"(HloModule shuffle_rotate_with_multi_shifts
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=rotate, shifts={1}, multi_shifts=s32[1,3]{1,0} { {1, 2, 3} }
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only shifts for rotate mode");
+}
+
+TEST_F(HloParserTest, ShufflePermuteWithoutIndices) {
+  const std::string original = R"(HloModule shuffle_permute_without_indices
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=permute
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only indices for permute mode");
+}
+
+TEST_F(HloParserTest, ShufflePermuteWithIndicesAndShifts) {
+  const std::string original = R"(HloModule shuffle_permute_with_shifts
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=permute, indices=s32[4,1]{1,0} { {1}, {0}, {3}, {2} }, shifts={1}
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only indices for permute mode");
+}
+
+TEST_F(HloParserTest, ShufflePermuteWithShiftsInsteadOfIndices) {
+  const std::string original = R"(HloModule shuffle_permute_with_shifts_only
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0,1}, mode=permute, shifts={1,2}
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only indices for permute mode");
+}
+
+TEST_F(HloParserTest, ShufflePermuteWithMultiShiftsInsteadOfIndices) {
+  const std::string original =
+      R"(HloModule shuffle_permute_with_multi_shifts_only
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=permute, multi_shifts=s32[1,3]{1,0} { {1, 2, 3} }
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only indices for permute mode");
+}
+
+TEST_F(HloParserTest, ShuffleMultiRotateWithoutMultiShifts) {
+  const std::string original =
+      R"(HloModule shuffle_multi_rotate_without_multi_shifts
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=multi_rotate
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only multi_shifts for multi_rotate mode");
+}
+
+TEST_F(HloParserTest, ShuffleMultiRotateWithMultiShiftsAndIndices) {
+  const std::string original = R"(HloModule shuffle_multi_rotate_with_indices
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=multi_rotate, multi_shifts=s32[1,3]{1,0} { {1, 2, 3} }, indices=s32[4,1]{1,0} { {1}, {0}, {3}, {2} }
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only multi_shifts for multi_rotate mode");
+}
+
+TEST_F(HloParserTest, ShuffleMultiRotateWithIndicesInsteadOfMultiShifts) {
+  const std::string original =
+      R"(HloModule shuffle_multi_rotate_with_indices_only
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=multi_rotate, indices=s32[4,1]{1,0} { {1}, {0}, {3}, {2} }
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only multi_shifts for multi_rotate mode");
+}
+
+TEST_F(HloParserTest, ShuffleMultiRotateWithShiftsInsteadOfMultiShifts) {
+  const std::string original =
+      R"(HloModule shuffle_multi_rotate_with_shifts_only
+
+ENTRY %entry (p: f32[4,3]) -> f32[4,3] {
+  %p = f32[4,3]{1,0} parameter(0)
+  ROOT %shuffle = f32[4,3]{1,0} shuffle(f32[4,3]{1,0} %p), dimensions={0}, mode=multi_rotate, shifts={1,2,3}
+})";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(absl::OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects only multi_shifts for multi_rotate mode");
 }
 
 TEST_F(HloParserTest, ShuffleUnknownAttribute) {
