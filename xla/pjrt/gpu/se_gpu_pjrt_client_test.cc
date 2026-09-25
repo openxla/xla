@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +28,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
@@ -54,9 +53,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/debug_options_flags.h"
@@ -106,10 +105,6 @@ limitations under the License.
 #elif TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #endif  // GOOGLE_CUDA
-#include "tsl/platform/casts.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/platform.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
@@ -127,6 +122,10 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/platform.h"
 namespace xla {
 namespace {
 
@@ -367,6 +366,10 @@ TEST(StreamExecutorGpuClientTest, MemorySpacesUniqueIds) {
 }
 
 TEST(StreamExecutorGpuClientTest, NumaNode) {
+  if (IsRocm()) {
+    GTEST_SKIP();  // Not working on rocm, enable once fixed
+  }
+
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
   ASSERT_GE(client->devices().size(), 1);

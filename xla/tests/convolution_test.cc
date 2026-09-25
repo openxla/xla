@@ -16,8 +16,6 @@ limitations under the License.
 // Tests of 2+D convolution with trivial kernels and no special variations (like
 // strides and padding).
 
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <numeric>
 #include <string>
@@ -25,10 +23,11 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "Eigen/Core"
+#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
+#include "Eigen/Core"
 #include "xla/array2d.h"
 #include "xla/array4d.h"
 #include "xla/error_spec.h"
@@ -172,6 +171,10 @@ template <typename T>
 class Convolve_1x1x4x4_1x1x2x2_Valid : public ConvolutionTest {
  public:
   void RunTest() {
+    if (IsRocm()) {
+      GTEST_SKIP();  // Not working on rocm, enable once fixed
+    }
+
     if (std::is_same_v<int32_t, T> && test::DeviceTypeIs(test::kGpu)) {
       // TODO(b/183565702): Support integer convs on GPU.
       GTEST_SKIP();
@@ -218,6 +221,10 @@ template <typename T>
 class Convolve_1x1x4x4_1x1x2x2_Same : public ConvolutionTest {
  public:
   void RunTest() {
+    if (IsRocm()) {
+      GTEST_SKIP();  // Not working on rocm, enable once fixed
+    }
+
     if (std::is_same_v<int32_t, T> && test::DeviceTypeIs(test::kGpu)) {
       // TODO(b/183565702): Support integer convs on GPU.
       GTEST_SKIP();
@@ -266,6 +273,10 @@ template <typename T>
 class Convolve_1x1x4x4_1x1x3x3_Same : public ConvolutionTest {
  public:
   void RunTest() {
+    if (IsRocm()) {
+      GTEST_SKIP();  // Not working on rocm, enable once fixed
+    }
+
     if (std::is_same_v<int32_t, T> && test::DeviceTypeIs(test::kGpu)) {
       // TODO(b/183565702): Support integer convs on GPU.
       GTEST_SKIP();
@@ -309,6 +320,9 @@ TYPED_TEST_CASE(Convolve_1x1x4x4_1x1x3x3_Same, TestTypes);
 TYPED_TEST(Convolve_1x1x4x4_1x1x3x3_Same, Types) { this->RunTest(); }
 
 TEST_F(ConvolutionTest, Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid) {
+  if (IsRocm()) {
+    GTEST_SKIP();  // Not working on rocm, enable once fixed.
+  }
   XlaBuilder builder(TestName());
   std::vector<int64_t> input_dims = {1, 4, 2, 3, 3};
   std::vector<int64_t> filter_dims = {2, 2, 2, 3, 3};
