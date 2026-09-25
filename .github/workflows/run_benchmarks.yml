@@ -16,6 +16,7 @@
 name: Run Benchmarks
 
 on:
+  pull_request:
   # Allow manual runs from the Actions tab for testing
   workflow_dispatch:
     inputs:
