@@ -1085,5 +1085,104 @@ ENTRY %main (p0: f32[10]) -> f32[10] {
             async_update->output_operand_aliasing());
 }
 
+TEST_F(HloInstructionTest, ReplaceAllUsesOfAsyncStartOrUpdateRedirectsToDone) {
+  constexpr absl::string_view kHloString = R"(
+HloModule ReplaceAsyncChain
+
+%async_computation (param_0: f32[10]) -> f32[10] {
+  %param_0 = f32[10] parameter(0)
+  ROOT %ar = f32[10] all-reduce(%param_0), channel_id=1, replica_groups={{0,1}}, to_apply={
+    %lhs = f32[] parameter(0)
+    %rhs = f32[] parameter(1)
+    ROOT %sum = f32[] add(%lhs, %rhs)
+  }
+}
+
+ENTRY %main (p0: f32[10]) -> f32[10] {
+  %p0 = f32[10] parameter(0)
+  %unused_in = f32[10] negate(%p0)
+  %async-start = ((f32[10]), f32[10]) async-start(%unused_in), calls=%async_computation
+  %async-update = ((f32[10]), f32[10]) async-update(%async-start)
+  %async-done = f32[10] async-done(%async-update)
+  ROOT %user = f32[10] tanh(%async-done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* p0 = entry->parameter_instruction(0);
+  HloInstruction* user = entry->root_instruction();
+  HloInstruction* async_done = user->mutable_operand(0);
+  HloInstruction* async_update = async_done->mutable_operand(0);
+  HloInstruction* async_start = async_update->mutable_operand(0);
+  HloInstruction* unused_in = async_start->mutable_operand(0);
+
+  HloInstruction* replacement = entry->AddInstruction(
+      HloInstruction::CreateUnary(p0->shape(), HloOpcode::kAbs, p0));
+
+  // Replacing async-start with `replacement` redirects uses of async-done to
+  // `replacement` while keeping the async chain intact.
+  TF_ASSERT_OK(async_start->ReplaceAllUsesWithDifferentShape(replacement));
+  EXPECT_EQ(user->operand(0), replacement);
+  EXPECT_TRUE(async_done->IsDead());
+  EXPECT_EQ(async_done->operand(0), async_update);
+  EXPECT_EQ(async_update->operand(0), async_start);
+  EXPECT_NE(async_done->async_wrapped_computation(), nullptr);
+  EXPECT_TRUE(async_done->HasSideEffect());
+
+  // Removing async-start and unused operands removes the entire async chain
+  // (despite HasSideEffect() == true) as well as the now-unused `unused_in`.
+  TF_ASSERT_OK(entry->RemoveInstructionAndUnusedOperands(async_start));
+  EXPECT_TRUE(entry->IsMarkedAsDead(async_done));
+  EXPECT_TRUE(entry->IsMarkedAsDead(async_update));
+  EXPECT_TRUE(entry->IsMarkedAsDead(async_start));
+  EXPECT_TRUE(entry->IsMarkedAsDead(unused_in));
+}
+
+TEST_F(HloInstructionTest, ReplaceInstructionOnAsyncStartRelaysControlDeps) {
+  constexpr absl::string_view kHloString = R"(
+HloModule ReplaceInstructionAsyncChain
+
+%async_computation (param_0: f32[10]) -> f32[10] {
+  %param_0 = f32[10] parameter(0)
+  ROOT %neg = f32[10] negate(%param_0)
+}
+
+ENTRY %main (p0: f32[10]) -> f32[10] {
+  %p0 = f32[10] parameter(0)
+  %ctrl_pred = f32[10] exponential(%p0)
+  %async-start = ((f32[10]), f32[10], u32[]) async-start(%p0), calls=%async_computation
+  %async-update = ((f32[10]), f32[10], u32[]) async-update(%async-start)
+  %async-done = f32[10] async-done(%async-update)
+  %ctrl_succ = f32[10] tanh(%p0)
+  ROOT %out = f32[10] add(%async-done, %ctrl_succ)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* p0 = entry->parameter_instruction(0);
+  HloInstruction* out = entry->root_instruction();
+  HloInstruction* async_done = out->mutable_operand(0);
+  HloInstruction* async_update = async_done->mutable_operand(0);
+  HloInstruction* async_start = async_update->mutable_operand(0);
+  HloInstruction* pred = FindInstruction(module.get(), "ctrl_pred");
+  HloInstruction* succ = FindInstruction(module.get(), "ctrl_succ");
+  TF_ASSERT_OK(pred->AddControlDependencyTo(async_start));
+  TF_ASSERT_OK(async_done->AddControlDependencyTo(succ));
+
+  HloInstruction* replacement = entry->AddInstruction(
+      HloInstruction::CreateUnary(p0->shape(), HloOpcode::kNegate, p0));
+  TF_ASSERT_OK(entry->ReplaceInstruction(
+      async_start, replacement, /*preserve_sharding=*/false,
+      /*relay_control_dependency=*/true, /*remove_unused_operands=*/true));
+
+  EXPECT_EQ(out->operand(0), replacement);
+  EXPECT_THAT(replacement->control_predecessors(),
+              ::testing::ElementsAre(pred));
+  EXPECT_THAT(replacement->control_successors(), ::testing::ElementsAre(succ));
+  EXPECT_TRUE(entry->IsMarkedAsDead(async_done));
+  EXPECT_TRUE(entry->IsMarkedAsDead(async_update));
+  EXPECT_TRUE(entry->IsMarkedAsDead(async_start));
+}
+
 }  // namespace
 }  // namespace xla

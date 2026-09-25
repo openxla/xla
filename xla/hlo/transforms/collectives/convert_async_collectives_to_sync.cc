@@ -94,9 +94,21 @@ ConvertAsyncCollectivesToSync::ReplaceWithSyncVariant(
     case HloOpcode::kAsyncStart: {
       auto* as_start = Cast<HloAsyncInstruction>(async_start);
       HloInstruction* wrapped = as_start->async_wrapped_instruction();
-      sync_instruction =
-          computation->AddInstruction(wrapped->CloneWithNewOperands(
-              async_done->shape(), as_start->operands()));
+      std::vector<const HloInstruction*> bound_const =
+          hlo_instruction_utils::async::GetAsyncBoundOperands(
+              Cast<HloAsyncInstruction>(async_done));
+      std::vector<HloInstruction*> bound_operands;
+      if (!bound_const.empty()) {
+        bound_operands.reserve(bound_const.size());
+        for (const HloInstruction* op : bound_const) {
+          bound_operands.push_back(const_cast<HloInstruction*>(op));
+        }
+      } else {
+        bound_operands.assign(as_start->operands().begin(),
+                              as_start->operands().end());
+      }
+      sync_instruction = computation->AddInstruction(
+          wrapped->CloneWithNewOperands(async_done->shape(), bound_operands));
       break;
     }
     default:
@@ -109,20 +121,12 @@ ConvertAsyncCollectivesToSync::ReplaceWithSyncVariant(
   FrontendAttributes fas = async_done->frontend_attributes();
   sync_instruction->set_frontend_attributes(fas);
 
-  HloInstruction* final_result = sync_instruction;
-  if (async_done->operand(0) != async_start) {
-    auto forward_path = hlo_instruction_utils::async::TraceDataflowPath(
-        async_done, async_start);
-    if (!forward_path.has_value()) {
-      return Internal("Could not trace from async done %s to async start %s",
-                      async_done->name(), async_start->name());
-    }
-    ABSL_ASSIGN_OR_RETURN(final_result,
-                          hlo_instruction_utils::async::PropagateDataflow(
-                              *forward_path, sync_instruction));
-  }
-
-  ABSL_RETURN_IF_ERROR(async_done->ReplaceAllUsesWith(final_result));
+  HloInstruction* final_result =
+      (async_done->operand_count() > 0 && async_done->operand(0) != nullptr &&
+       !async_done->operand(0)->IsAsyncProducer())
+          ? async_done->mutable_operand(0)
+          : sync_instruction;
+  ABSL_RETURN_IF_ERROR(async_start->ReplaceAllUsesWith(sync_instruction));
 
   // Copy control dependencies.
   //
@@ -172,6 +176,10 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
                    << sync->name() << ".";
     }
 
+    for (HloInstruction* op = async_start; op != nullptr && op != async_done;
+         op = op->async_chain_next()) {
+      replaced_ops[op] = nullptr;
+    }
     replaced_ops[async_start] = nullptr;
     replaced_ops[async_done] = sync;
   }
@@ -198,18 +206,9 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
   }
 
   // Remove the replaced async instructions and their unused operands.
-  for (const auto& pair : async_pairs) {
-    HloInstruction* async_start = pair.first;
-    HloInstruction* async_done = pair.second;
-    bool is_async_start_removed = false;
-    auto track_async_start_removed = [&](const HloInstruction* instr) {
-      is_async_start_removed |= instr == async_start;
-    };
-    ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
-        async_done, track_async_start_removed));
-    if (!is_async_start_removed) {
-      ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(async_start));
-    }
+  for (const auto& [async_start, async_done] : async_pairs) {
+    ABSL_RETURN_IF_ERROR(
+        computation->RemoveInstructionAndUnusedOperands(async_done));
   }
 
   return absl::OkStatus();
@@ -252,6 +251,9 @@ absl::StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
         VLOG(3) << "Added pair: {" << matching_async_start->name() << ", "
                 << instruction->name();
       }
+    } else if (instruction->opcode() == HloOpcode::kAsyncUpdate &&
+               in_flight_ops.contains(instruction->async_chain_start())) {
+      continue;
     } else if (!in_flight_ops.empty() && (!is_nop_ || !is_nop_(instruction))) {
       VLOG(3) << "Found intervening non-NOP instruction "
               << instruction->ToString();
