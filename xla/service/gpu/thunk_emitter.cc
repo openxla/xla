@@ -57,8 +57,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "tsl/platform/human_readable_json.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
@@ -78,6 +76,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_group_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
+#include "xla/backends/gpu/runtime/collective_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_reorder_thunk.h"
@@ -176,6 +175,8 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/human_readable_json.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla::gpu {
 namespace {
@@ -306,6 +307,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::DispatchAsyncDone(
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kCollectiveBroadcast:
     case HloOpcode::kCollectivePermute:
+    case HloOpcode::kCollectiveReduce:
       return EmitAsyncDone(instr, instr->operand(0));
 
     // Complete a fusion or call wrapped in generic async start/done.
@@ -533,10 +535,9 @@ absl::StatusOr<std::string> CanonicalGemmHlo(
          BackendConfigWrapper(gpu_config).GetRawString();
 }
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
@@ -1611,7 +1612,7 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
               buffer_assignment = &ir_emitter_context_->buffer_assignment(),
               &gpu_device_info = ir_emitter_context_->gpu_device_info()](
                  TritonWrapperResult result) mutable
-                 -> xla::Future<KernelReuseCache::Entry> {
+             -> xla::Future<KernelReuseCache::Entry> {
           auto local_module =
               std::move(result.kernel_source).thread_safe_module();
 
@@ -1669,7 +1670,7 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
       [info = std::move(info), kernel_arguments = std::move(kernel_arguments),
        call_zeroed_outputs = std::move(call_zeroed_outputs)](
           const KernelReuseCache::Entry& entry) mutable
-          -> absl::StatusOr<ThunkSequence> {
+      -> absl::StatusOr<ThunkSequence> {
         ABSL_ASSIGN_OR_RETURN(
             CustomKernel custom_kernel,
             kernel::CreateSharedCubinCustomKernel(
@@ -2117,6 +2118,23 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
           Thunk::kCollectiveBroadcast,
           Cast<HloCollectiveBroadcastInstruction>(collective), std::nullopt);
 
+    case HloOpcode::kCollectiveReduce: {
+      if (!ir_emitter_context_->debug_options()
+               .xla_gpu_emit_collective_reduce()) {
+        return Internal(
+            "Unsupported collective instruction: %s. Set "
+            "--xla_gpu_emit_collective_reduce to enable CollectiveReduce "
+            "support on GPU.",
+            collective->ToString());
+      }
+      auto* collective_reduce =
+          Cast<HloCollectiveReduceInstruction>(collective);
+      return EmitCollective<CollectiveReduceThunk,
+                            HloCollectiveReduceInstruction>(
+          Thunk::kCollectiveReduce, collective_reduce,
+          collective_reduce->use_global_device_ids());
+    }
+
     default:
       return Internal("Unsupported collective instruction: %s",
                       collective->ToString());
@@ -2147,11 +2165,13 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
           << "; partition count: " << partition_count
           << "; operand count: " << operand_count;
 
-  // A collective-broadcast may select its root rank at runtime, in which case
-  // the last operand is a root-rank vector rather than data to broadcast.
+  // A collective-broadcast or collective-reduce may select its root rank at run
+  // time, in which case the last operand is an S32 root-rank vector rather than
+  // data being broadcast/reduced.
   const bool has_dynamic_root = [](const HloInstType* inst) {
     if constexpr (std::is_same_v<HloInstType,
-                                 HloCollectiveBroadcastInstruction>) {
+                                 HloCollectiveBroadcastInstruction> ||
+                  std::is_same_v<HloInstType, HloCollectiveReduceInstruction>) {
       return inst->has_dynamic_root();
     }
     return false;
@@ -2237,6 +2257,14 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
                                       CollectiveBroadcastThunk>) {
     // CollectiveBroadcastThunk needs the dynamic-root flag so it can treat
     // the trailing root-rank buffer specially at run time.
+    thunks = ThunkSequence::Of<CollectiveThunkType>(
+        info, inst, /*buffers=*/std::move(buffers),
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        has_dynamic_root);
+  } else if constexpr (std::is_same_v<CollectiveThunkType,
+                                      CollectiveReduceThunk>) {
+    // CollectiveReduceThunk needs the dynamic-root flag so it can treat the
+    // trailing root-rank buffer specially at run time.
     thunks = ThunkSequence::Of<CollectiveThunkType>(
         info, inst, /*buffers=*/std::move(buffers),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
@@ -2775,6 +2803,7 @@ Future<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:

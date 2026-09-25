@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/service/latency_hiding_scheduler.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -30,6 +27,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -219,6 +218,7 @@ absl::StatusOr<bool> RunScheduler(
       /*convert_all_reduce=*/HloPredicateTrue,
       /*convert_all_gather=*/HloPredicateTrue,
       /*convert_collective_broadcast=*/HloPredicateTrue,
+      /*convert_collective_reduce=*/HloPredicateFalse,
       /*convert_collective_permute=*/HloPredicateTrue};
   bool value = false;
   if (!skip_async_collective_creator) {
@@ -298,6 +298,7 @@ class LatencyHidingSchedulerTest : public HloHardwareIndependentTestBase {
         /*convert_all_reduce=*/HloPredicateTrue,
         /*convert_all_gather=*/HloPredicateTrue,
         /*convert_collective_broadcast=*/HloPredicateTrue,
+        /*convert_collective_reduce=*/HloPredicateFalse,
         /*convert_collective_permute=*/HloPredicateTrue};
     ABSL_ASSIGN_OR_RETURN(
         bool value, AsyncCollectiveCreator(std::move(config)).Run(module));
