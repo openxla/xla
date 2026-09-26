@@ -150,7 +150,7 @@ class HloDataflowAnalysis {
   HloValue& GetValue(HloValue::Id value_id);
 
   // Returns the total number of HloValues.
-  int64_t value_count() const { return values_.size(); }
+  int64_t value_count() const { return values_vector_.size(); }
 
   // Returns a vector of all HloValues stabily sorted by HloValue::Id.
   const std::vector<HloValue*>& values() const { return values_vector_; }
@@ -338,15 +338,31 @@ class HloDataflowAnalysis {
 
   std::unique_ptr<CallGraph> call_graph_;
 
-  // The map of all HloValues in the module. We pass around pointers to the
-  // mapped HloValues, so the underlying container must keep them valid despite
-  // mutations touching other map entries.
-  absl::flat_hash_map<HloValue::Id, std::unique_ptr<HloValue>> values_;
+  // Maps each HloInstruction* in an HloModule to a dense [0, num_slots) integer
+  // index in O(1) time via (computation->unique_id(), instruction->local_id()).
+  class InstructionIndexTable {
+   public:
+    InstructionIndexTable() = default;
+    explicit InstructionIndexTable(const HloModule& module);
 
-  // A map from instruction to InstructionValueSet.
-  absl::flat_hash_map<const HloInstruction*,
-                      std::unique_ptr<InstructionValueSet>>
-      value_sets_;
+    int32_t IndexOf(const HloInstruction* instruction) const;
+
+    int32_t num_slots() const { return num_slots_; }
+
+   private:
+    std::vector<int32_t> computation_offsets_;
+    int32_t num_slots_ = 0;
+  };
+
+  // The vector of all HloValues in the module indexed by HloValue::Id.
+  // We pass around pointers to the stored HloValues, so each HloValue is
+  // heap-allocated via std::unique_ptr to keep its address stable across
+  // vector resizes.
+  std::vector<std::unique_ptr<HloValue>> values_;
+
+  // Dense O(1) lookup table from HloInstruction* to InstructionValueSet.
+  InstructionIndexTable instruction_indices_;
+  std::vector<std::optional<InstructionValueSet>> value_sets_;
 
   // Values marked for deletion during construction. We don't delete them
   // immediately because references to them may remain in ValueSets temporarily

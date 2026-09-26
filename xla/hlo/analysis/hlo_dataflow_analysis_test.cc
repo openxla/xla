@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
@@ -4330,6 +4331,48 @@ ENTRY main {
                 ::testing::Contains(&analysis->GetValueDefinedAt(const0)));
     EXPECT_THAT(call1_value_set.values(),
                 ::testing::Contains(&analysis->GetValueDefinedAt(const1)));
+  }
+}
+
+TEST_F(HloDataflowAnalysisTest, DenseInstructionAndValueIndexing) {
+  constexpr absl::string_view kHloText = R"(
+HloModule module
+
+body {
+  param = (s32[], f32[4]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  v = f32[4] get-tuple-element(param), index=1
+  bc = f32[4] bitcast(v)
+  ROOT t = (s32[], f32[4]) tuple(i, bc)
+}
+
+cond {
+  param = (s32[], f32[4]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  c = s32[] constant(5)
+  ROOT cmp = pred[] compare(i, c), direction=LT
+}
+
+ENTRY main {
+  i0 = s32[] constant(0)
+  p0 = f32[4] parameter(0)
+  init = (s32[], f32[4]) tuple(i0, p0)
+  ROOT w = (s32[], f32[4]) while(init), condition=cond, body=body
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(
+                                    kHloText, GetModuleConfigForTest()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> analysis,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/true,
+                               /*bitcast_defines_value=*/false));
+  EXPECT_EQ(analysis->value_count(), analysis->values().size());
+  for (int64_t idx = 0; idx < analysis->values().size(); ++idx) {
+    const HloValue* value = analysis->values()[idx];
+    EXPECT_EQ(&analysis->GetValue(value->id()), value);
+    if (idx > 0) {
+      EXPECT_LT(analysis->values()[idx - 1]->id(), value->id());
+    }
   }
 }
 

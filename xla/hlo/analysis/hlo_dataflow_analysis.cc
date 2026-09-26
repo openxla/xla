@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
-#include "xla/map_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
@@ -64,7 +64,8 @@ namespace {
 // instruction based the postorder dependency.
 int64_t CalculatePostOrderScheduleHelper(
     const HloComputation* comp, int64_t start_ordinal,
-    absl::flat_hash_map<HloInstruction*, int64_t>* ordinal_map) {
+    absl::FunctionRef<int32_t(const HloInstruction*)> get_instruction_index,
+    std::vector<int64_t>* ordinal_map) {
   int64_t ordinal = start_ordinal;
   for (HloInstruction* instruction : comp->MakeInstructionPostOrder()) {
     if (instruction->opcode() == HloOpcode::kCall ||
@@ -72,37 +73,80 @@ int64_t CalculatePostOrderScheduleHelper(
         instruction->opcode() == HloOpcode::kConditional) {
       for (const HloComputation* called_computation :
            instruction->called_computations()) {
-        ordinal = CalculatePostOrderScheduleHelper(called_computation, ordinal,
-                                                   ordinal_map);
+        ordinal = CalculatePostOrderScheduleHelper(
+            called_computation, ordinal, get_instruction_index, ordinal_map);
       }
     }
     if (instruction->opcode() == HloOpcode::kWhile) {
       ordinal = CalculatePostOrderScheduleHelper(instruction->while_condition(),
-                                                 ordinal, ordinal_map);
-      ordinal = CalculatePostOrderScheduleHelper(instruction->while_body(),
-                                                 ordinal, ordinal_map);
+                                                 ordinal, get_instruction_index,
+                                                 ordinal_map);
+      ordinal =
+          CalculatePostOrderScheduleHelper(instruction->while_body(), ordinal,
+                                           get_instruction_index, ordinal_map);
     }
     // It's possible that in some unit tests the computation graph is not
     // flatten (meaning we could have multiple callers for one computation). In
-    // that case the oridinal_map will see the instruction multiple times. We
+    // that case the ordinal_map will see the instruction multiple times. We
     // consider that case to be ok as it only shows up in unit tests.
     VLOG(4) << "Add instruction " << instruction->name()
             << " to ordinal map with ordinal " << ordinal;
-    ordinal_map->insert({instruction, ordinal++});
+    const int32_t instruction_index = get_instruction_index(instruction);
+    if ((*ordinal_map)[instruction_index] == -1) {
+      (*ordinal_map)[instruction_index] = ordinal;
+    }
+    ++ordinal;
   }
   return ordinal;
 }
 
-absl::flat_hash_map<HloInstruction*, int64_t> CalculatePostOrderSchedule(
-    const HloModule& module) {
-  absl::flat_hash_map<HloInstruction*, int64_t> map;
-  CalculatePostOrderScheduleHelper(module.entry_computation(), 0, &map);
-  return map;
+std::vector<int64_t> CalculatePostOrderSchedule(
+    const HloModule& module, int32_t num_instruction_slots,
+    absl::FunctionRef<int32_t(const HloInstruction*)> get_instruction_index) {
+  std::vector<int64_t> ordinal_map(num_instruction_slots, -1);
+  CalculatePostOrderScheduleHelper(module.entry_computation(), 0,
+                                   get_instruction_index, &ordinal_map);
+  return ordinal_map;
 }
 
 }  // namespace
 using absl::StrAppend;
 using absl::StrCat;
+
+HloDataflowAnalysis::InstructionIndexTable::InstructionIndexTable(
+    const HloModule& module) {
+  int64_t max_comp_id = -1;
+  for (const HloComputation* comp : module.computations()) {
+    DCHECK_GE(comp->unique_id(), 0);
+    max_comp_id = std::max(max_comp_id, comp->unique_id());
+  }
+  computation_offsets_.assign(max_comp_id + 1, -1);
+  int32_t total_slots = 0;
+  for (const HloComputation* comp : module.computations()) {
+    computation_offsets_[comp->unique_id()] = total_slots;
+    int32_t max_local_id = -1;
+    for (const HloInstruction* instruction : comp->instructions()) {
+      DCHECK_GE(instruction->local_id(), 0);
+      max_local_id = std::max(max_local_id, instruction->local_id());
+    }
+    total_slots += max_local_id + 1;
+  }
+  num_slots_ = total_slots;
+}
+
+int32_t HloDataflowAnalysis::InstructionIndexTable::IndexOf(
+    const HloInstruction* instruction) const {
+  DCHECK_NE(instruction, nullptr);
+  const int64_t comp_id = instruction->parent()->unique_id();
+  DCHECK_GE(comp_id, 0);
+  DCHECK_LT(comp_id, computation_offsets_.size());
+  DCHECK_GE(computation_offsets_[comp_id], 0);
+  DCHECK_GE(instruction->local_id(), 0);
+  const int32_t index = computation_offsets_[comp_id] + instruction->local_id();
+  DCHECK_GE(index, 0);
+  DCHECK_LT(index, num_slots_);
+  return index;
+}
 
 HloDataflowAnalysis::HloDataflowAnalysis(
     const HloModule& module, bool ssa_form, bool bitcast_defines_value,
@@ -165,14 +209,14 @@ HloValue* HloDataflowAnalysis::NewHloValue(HloInstruction* instruction,
                                            const ShapeIndex& index,
                                            bool is_phi) {
   const int64_t value_id = NewValueId();
-  auto result =
-      values_.insert({value_id, std::make_unique<HloValue>(
-                                    value_id, instruction, index, is_phi)});
-  CHECK(result.second);
-
-  VLOG(4) << "NewHloValue = " << result.first->second->ToShortString();
-
-  return result.first->second.get();
+  if (value_id >= values_.size()) {
+    values_.resize(value_id + 1);
+  }
+  DCHECK(values_[value_id] == nullptr);
+  values_[value_id] =
+      std::make_unique<HloValue>(value_id, instruction, index, is_phi);
+  VLOG(4) << "NewHloValue = " << values_[value_id]->ToShortString();
+  return values_[value_id].get();
 }
 
 void HloDataflowAnalysis::MarkValueForDeletion(HloValue::Id value_id) {
@@ -183,29 +227,33 @@ void HloDataflowAnalysis::MarkValueForDeletion(HloValue::Id value_id) {
 }
 
 void HloDataflowAnalysis::DeleteMarkedValues() {
-  // Use a set to prevent deleting an id twice.
-  absl::flat_hash_set<HloValue::Id> id_set(value_ids_to_delete_.begin(),
-                                           value_ids_to_delete_.end());
 #ifndef NDEBUG
   // Verify that no marked-for-deletion values are in any of the value sets.
-  for (const auto& pair : value_sets_) {
-    const HloInstruction* instruction = pair.first;
-    const InstructionValueSet& instruction_value_set = *pair.second;
-    for (const auto& index_value_set : instruction_value_set) {
-      const HloValueSet& value_set = index_value_set.second;
-      for (const HloValue* value : value_set.values()) {
-        DCHECK(!ContainsKey(id_set, value->id()))
-            << "Value " << value->ToShortString()
-            << " marked for deletion, but still exists in value set for "
-               "instruction "
-            << instruction->name();
+  absl::flat_hash_set<HloValue::Id> id_set(value_ids_to_delete_.begin(),
+                                           value_ids_to_delete_.end());
+  for (const HloComputation* computation : module_.computations()) {
+    if (!HloInstruction::IsThreadIncluded(computation->execution_thread(),
+                                          execution_threads_)) {
+      continue;
+    }
+    for (const HloInstruction* instruction : computation->instructions()) {
+      const InstructionValueSet& instruction_value_set =
+          GetInstructionValueSet(instruction);
+      for (const auto& index_value_set : instruction_value_set) {
+        const HloValueSet& value_set = index_value_set.second;
+        for (const HloValue* value : value_set.values()) {
+          DCHECK(!id_set.contains(value->id()))
+              << "Value " << value->ToShortString()
+              << " marked for deletion, but still exists in value set for "
+                 "instruction "
+              << instruction->name();
+        }
       }
     }
   }
 #endif
-
-  for (HloValue::Id value_id : id_set) {
-    values_.erase(value_id);
+  for (HloValue::Id value_id : value_ids_to_delete_) {
+    values_[value_id].reset();
   }
   value_ids_to_delete_.clear();
 }
@@ -370,13 +418,17 @@ bool HloDataflowAnalysis::Phi(
 }
 
 const HloValue& HloDataflowAnalysis::GetValue(HloValue::Id value_id) const {
-  DCHECK(values_.contains(value_id)) << "Value not found: " << value_id;
-  return *values_.find(value_id)->second;
+  DCHECK_GE(value_id, 0);
+  DCHECK_LT(value_id, values_.size());
+  DCHECK(values_[value_id] != nullptr) << "Value not found: " << value_id;
+  return *values_[value_id];
 }
 
 HloValue& HloDataflowAnalysis::GetValue(HloValue::Id value_id) {
-  DCHECK(values_.contains(value_id)) << "Value not found: " << value_id;
-  return *values_.find(value_id)->second;
+  DCHECK_GE(value_id, 0);
+  DCHECK_LT(value_id, values_.size());
+  DCHECK(values_[value_id] != nullptr) << "Value not found: " << value_id;
+  return *values_[value_id];
 }
 
 HloValueSet HloDataflowAnalysis::GetFlattenedValueSet(
@@ -1233,14 +1285,22 @@ void HloDataflowAnalysis::Propagate() {
   // schedule. Intuitively, we start from entry parameters and propagate buffers
   // updates throughout the module only once.
   std::priority_queue<Work, std::vector<Work>, std::greater<Work>> worklist;
-  absl::flat_hash_set<HloInstruction*> workset;
-  auto priority_map = CalculatePostOrderSchedule(module_);
-  auto add_to_worklist = [&priority_map, &worklist,
-                          &workset](HloInstruction* instruction) {
-    if (workset.insert(instruction).second) {
+  std::vector<uint8_t> is_in_worklist(instruction_indices_.num_slots(), 0);
+  std::vector<int64_t> priority_map =
+      CalculatePostOrderSchedule(module_, instruction_indices_.num_slots(),
+                                 [this](const HloInstruction* inst) {
+                                   return instruction_indices_.IndexOf(inst);
+                                 });
+  auto add_to_worklist = [this, &priority_map, &worklist,
+                          &is_in_worklist](HloInstruction* instruction) {
+    const int32_t instruction_index = instruction_indices_.IndexOf(instruction);
+    if (!is_in_worklist[instruction_index]) {
+      is_in_worklist[instruction_index] = 1;
+      const int64_t priority =
+          std::max<int64_t>(0, priority_map[instruction_index]);
       VLOG(4) << "Add " << instruction->name() << " to worklist with priority "
-              << priority_map[instruction];
-      worklist.emplace(priority_map[instruction], instruction);
+              << priority;
+      worklist.emplace(priority, instruction);
     }
   };
 
@@ -1261,7 +1321,7 @@ void HloDataflowAnalysis::Propagate() {
     HloInstruction* instruction = worklist.top().second;
     worklist.pop();
 
-    workset.erase(workset.find(instruction));
+    is_in_worklist[instruction_indices_.IndexOf(instruction)] = 0;
 
     VLOG(4) << "Worklist top: " << instruction->name();
     XLA_VLOG_LINES(3, ToString());
@@ -1360,16 +1420,18 @@ void HloDataflowAnalysis::Propagate() {
 
 const InstructionValueSet& HloDataflowAnalysis::GetInstructionValueSet(
     const HloInstruction* instruction) const {
-  DCHECK(value_sets_.contains(instruction))
+  const int32_t index = instruction_indices_.IndexOf(instruction);
+  DCHECK(value_sets_[index].has_value())
       << "Instruction " << instruction->ToString() << " not found.";
-  return *value_sets_.find(instruction)->second;
+  return *value_sets_[index];
 }
 
 InstructionValueSet& HloDataflowAnalysis::GetInstructionValueSet(
     const HloInstruction* instruction) {
-  DCHECK(value_sets_.contains(instruction))
+  const int32_t index = instruction_indices_.IndexOf(instruction);
+  DCHECK(value_sets_[index].has_value())
       << "Instruction " << instruction->ToString() << " not found.";
-  return *value_sets_.find(instruction)->second;
+  return *value_sets_[index];
 }
 
 namespace {
@@ -1387,6 +1449,9 @@ bool IsRegularCallComputation(const CallGraphNode& node) {
 }  // namespace
 
 absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
+  instruction_indices_ = InstructionIndexTable(module_);
+  value_sets_.resize(instruction_indices_.num_slots());
+
   for (const HloComputation* computation : module_.MakeComputationPostOrder()) {
     if (!HloInstruction::IsThreadIncluded(computation->execution_thread(),
                                           execution_threads_)) {
@@ -1398,8 +1463,8 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       // Create an empty shape tree.
-      value_sets_.insert({instruction, std::make_unique<InstructionValueSet>(
-                                           &instruction->shape())});
+      value_sets_[instruction_indices_.IndexOf(instruction)].emplace(
+          &instruction->shape());
 
       // For each sub-shape of the instruction shape, add a new HloValue to its
       // HloValueSet. should_define may be provided to define a subset of
@@ -1706,18 +1771,16 @@ absl::Status HloDataflowAnalysis::RunImpl() {
       }
     }
   }
-  for (auto& pair : values_) {
-    HloValue::Id value_id = pair.first;
-    HloValue& value = *pair.second;
-    value.SetPositions(value_positions[value_id]);
-  }
-
-  // Construct vector of values.
+  // Construct vector of values. Because values_ is indexed by monotonically
+  // increasing HloValue::Id, iterating over it naturally populates
+  // values_vector_ in HloValue::Id order without sorting.
   values_vector_.reserve(values_.size());
-  for (const auto& pair : values_) {
-    values_vector_.push_back(pair.second.get());
+  for (const std::unique_ptr<HloValue>& value : values_) {
+    if (value != nullptr) {
+      value->SetPositions(value_positions[value->id()]);
+      values_vector_.push_back(value.get());
+    }
   }
-  absl::c_sort(values_vector_, HloValue::IdLessThan);
 
   DCHECK_OK(Verify());
 
