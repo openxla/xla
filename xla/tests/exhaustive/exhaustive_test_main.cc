@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
 #include "xla/tests/exhaustive/exhaustive_op_test_base.h"
