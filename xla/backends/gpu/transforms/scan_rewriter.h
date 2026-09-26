@@ -27,16 +27,12 @@ limitations under the License.
 namespace xla::gpu {
 
 // Rewrites Scan operations into CUB PrefixSum custom calls.
-class ScanRewriter : public HloModulePass {
+class ScanRewriter : public HloComputationPass {
  public:
   absl::string_view name() const override { return "scan-rewriter"; }
 
  protected:
-  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
-
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 };
 
 }  // namespace xla::gpu
