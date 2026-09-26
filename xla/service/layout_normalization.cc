@@ -881,10 +881,9 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
         Shape new_shape,
         ShapeInference::InferTernaryOpShape(opcode, normalized_arg0,
                                             normalized_arg1, normalized_arg2));
-    HloInstruction* normalized = hlo->parent()->AddInstruction(
+    HloInstruction* normalized = hlo->AddInstruction(
         HloInstruction::CreateTernary(new_shape, opcode, normalized_arg0,
                                       normalized_arg1, normalized_arg2));
-    hlo->SetupDerivedInstruction(normalized);
     SetVisited(*normalized);
 
     HloInstruction* bc_to_orig = MaybeBitcast(normalized, s);
