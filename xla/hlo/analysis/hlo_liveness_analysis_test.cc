@@ -17,17 +17,25 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
 #include "tsl/platform/test.h"
+#include "xla/frontend_attributes.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -704,6 +712,235 @@ TEST_F(HloLivenessAnalysisTest, DisabledWhileLoopDce) {
   EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {}));
   EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {0}));
   EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {1}));
+}
+
+// Tests that the backend option disables DCE for every instruction of the
+// module: the dead while element and the dead add outside the loop read live.
+TEST_F(HloLivenessAnalysisTest, DisabledWhileLoopDceByBackendOption) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  HloModule SimpleLoop
+  SimpleLoop.body {
+    loop_var.1 = (s32[], s32[3]{0}) parameter(0)
+    get-tuple-element.1 = s32[] get-tuple-element(loop_var.1), index=0
+    constant.1 = s32[] constant(1)
+    add.0 = s32[] add(get-tuple-element.1, constant.1)
+    get-tuple-element.2 = s32[3]{0} get-tuple-element(loop_var.1), index=1
+    multiply.0 = s32[3]{0} multiply(get-tuple-element.2, get-tuple-element.2)
+    ROOT tuple.0 = (s32[], s32[3]{0}) tuple(add.0, multiply.0)
+  }
+  SimpleLoop.condition {
+    loop_var.2 = (s32[], s32[3]{0}) parameter(0)
+    get-tuple-element.3 = s32[] get-tuple-element(loop_var.2), index=0
+    constant.2 = s32[] constant(5)
+    ROOT less-than = pred[] compare(get-tuple-element.3, constant.2), direction=LT
+  }
+  ENTRY SimpleLoop {
+    constant.3 = s32[] constant(0)
+    constant.4 = s32[3]{0} constant({0, 1, 2})
+    tuple.1 = (s32[], s32[3]{0}) tuple(constant.3, constant.4)
+    while.0 = (s32[], s32[3]{0}) while(tuple.1), condition=
+      SimpleLoop.condition, body=SimpleLoop.body
+    add.1 = s32[] add(constant.3, constant.3)
+    ROOT get-tuple-element.4 = s32[] get-tuple-element(while.0), index=0
+  })"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .mutable_xla_backend_extra_options()
+      ->insert({kXlaDisableWhileLoopDce, "true"});
+  const HloLivenessAnalysis& liveness = RunLiveness(module.get());
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {1}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "add.1"), {}));
+}
+
+// Tests that liveness of nested tuple elements is tracked per leaf through a
+// while loop: the leaf {1, 0} is read by the entry root, the leaf {1, 1} only
+// by the loop condition, and the leaf {1, 2} by nothing.
+TEST_F(HloLivenessAnalysisTest, WhileWithNestedTupleLeaves) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  HloModule NestedLoop
+  add_S32 {
+    lhs = s32[] parameter(0)
+    rhs = s32[] parameter(1)
+    ROOT add = s32[] add(lhs, rhs)
+  }
+  NestedLoop.body {
+    loop_var.1 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0})) parameter(0)
+    get-tuple-element.1 = s32[] get-tuple-element(loop_var.1), index=0
+    constant.1 = s32[] constant(1)
+    add.0 = s32[] add(get-tuple-element.1, constant.1)
+    get-tuple-element.2 = (s32[3]{0}, s32[3]{0}, s32[3]{0}) get-tuple-element(loop_var.1), index=1
+    get-tuple-element.5 = s32[3]{0} get-tuple-element(get-tuple-element.2), index=0
+    get-tuple-element.6 = s32[3]{0} get-tuple-element(get-tuple-element.2), index=1
+    get-tuple-element.10 = s32[3]{0} get-tuple-element(get-tuple-element.2), index=2
+    multiply.0 = s32[3]{0} multiply(get-tuple-element.5, get-tuple-element.5)
+    multiply.1 = s32[3]{0} multiply(get-tuple-element.6, get-tuple-element.6)
+    multiply.2 = s32[3]{0} multiply(get-tuple-element.10, get-tuple-element.10)
+    tuple.2 = (s32[3]{0}, s32[3]{0}, s32[3]{0}) tuple(multiply.0, multiply.1, multiply.2)
+    ROOT tuple.0 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0})) tuple(add.0, tuple.2)
+  }
+  NestedLoop.condition {
+    loop_var.2 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0})) parameter(0)
+    get-tuple-element.3 = s32[] get-tuple-element(loop_var.2), index=0
+    get-tuple-element.8 = (s32[3]{0}, s32[3]{0}, s32[3]{0}) get-tuple-element(loop_var.2), index=1
+    get-tuple-element.9 = s32[3]{0} get-tuple-element(get-tuple-element.8), index=1
+    constant.0 = s32[] constant(0)
+    reduce.0 = s32[] reduce(get-tuple-element.9, constant.0), dimensions={0}, to_apply=add_S32
+    add.1 = s32[] add(get-tuple-element.3, reduce.0)
+    constant.2 = s32[] constant(5)
+    ROOT less-than = pred[] compare(add.1, constant.2), direction=LT
+  }
+  ENTRY NestedLoop {
+    constant.3 = s32[] constant(0)
+    constant.4 = s32[3]{0} constant({0, 1, 2})
+    constant.5 = s32[3]{0} constant({3, 4, 5})
+    constant.6 = s32[3]{0} constant({6, 7, 8})
+    tuple.3 = (s32[3]{0}, s32[3]{0}, s32[3]{0}) tuple(constant.4, constant.5, constant.6)
+    tuple.1 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0})) tuple(constant.3, tuple.3)
+    while.0 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0})) while(tuple.1), condition=
+      NestedLoop.condition, body=NestedLoop.body
+    get-tuple-element.4 = (s32[3]{0}, s32[3]{0}, s32[3]{0}) get-tuple-element(while.0), index=1
+    ROOT get-tuple-element.7 = s32[3]{0} get-tuple-element(get-tuple-element.4), index=0
+  })"));
+  const HloLivenessAnalysis& liveness = RunLiveness(module.get());
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {0}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {1}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {1, 0}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "while.0"), {1, 1}));
+  EXPECT_FALSE(
+      liveness.IsLive(GetInstruction(module.get(), "while.0"), {1, 2}));
+
+  // While operand.
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.1"), {1, 0}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.1"), {1, 1}));
+  EXPECT_FALSE(
+      liveness.IsLive(GetInstruction(module.get(), "tuple.1"), {1, 2}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.3"), {0}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.3"), {1}));
+  EXPECT_FALSE(liveness.IsLive(GetInstruction(module.get(), "tuple.3"), {2}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "constant.4"), {}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "constant.5"), {}));
+  EXPECT_FALSE(liveness.IsLive(GetInstruction(module.get(), "constant.6"), {}));
+
+  // While body.
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.0"), {1, 0}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.0"), {1, 1}));
+  EXPECT_FALSE(
+      liveness.IsLive(GetInstruction(module.get(), "tuple.0"), {1, 2}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.2"), {0}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "tuple.2"), {1}));
+  EXPECT_FALSE(liveness.IsLive(GetInstruction(module.get(), "tuple.2"), {2}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "multiply.0"), {}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "multiply.1"), {}));
+  EXPECT_FALSE(liveness.IsLive(GetInstruction(module.get(), "multiply.2"), {}));
+  EXPECT_FALSE(liveness.IsLive(
+      GetInstruction(module.get(), "get-tuple-element.10"), {}));
+  EXPECT_TRUE(
+      liveness.IsLive(GetInstruction(module.get(), "loop_var.1"), {1, 0}));
+  EXPECT_TRUE(
+      liveness.IsLive(GetInstruction(module.get(), "loop_var.1"), {1, 1}));
+  EXPECT_FALSE(
+      liveness.IsLive(GetInstruction(module.get(), "loop_var.1"), {1, 2}));
+
+  // While condition: only the leaf it reads is live in its parameter.
+  EXPECT_TRUE(
+      liveness.IsLive(GetInstruction(module.get(), "loop_var.2"), {1, 1}));
+  EXPECT_FALSE(
+      liveness.IsLive(GetInstruction(module.get(), "loop_var.2"), {1, 0}));
+  EXPECT_FALSE(
+      liveness.IsLive(GetInstruction(module.get(), "loop_var.2"), {1, 2}));
+}
+
+// Tests the table behind IsLive around the instruction and computation
+// lists: a computation and an instruction removed before the analysis leave
+// gaps in the unique ids and local ids, and instructions removed or added
+// afterwards, or belonging to another module, are dead.
+TEST_F(HloLivenessAnalysisTest, RemovedAddedAndForeignInstructions) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  HloModule SimpleModule
+  unused {
+    ROOT constant.0 = s32[] constant(7)
+  }
+  ENTRY SimpleComputation {
+    constant.1 = s32[] constant(0)
+    constant.2 = s32[] constant(1)
+    add.1 = s32[] add(constant.1, constant.2)
+    add.2 = s32[] add(constant.1, constant.2)
+    add.3 = s32[] add(constant.1, constant.2)
+    ROOT add.4 = s32[] add(constant.1, constant.2)
+  })"));
+  HloComputation* entry = module->entry_computation();
+  ASSERT_OK(module->RemoveEmbeddedComputation(
+      GetInstruction(module.get(), "constant.0")->parent()));
+  // Not compacted, so add.2 to add.4 keep their local ids behind the gap.
+  ASSERT_OK(entry->RemoveInstruction(GetInstruction(module.get(), "add.1")));
+  const HloLivenessAnalysis& liveness = RunLiveness(module.get());
+  HloInstruction* add_2 = GetInstruction(module.get(), "add.2");
+  HloInstruction* add_3 = GetInstruction(module.get(), "add.3");
+  HloInstruction* add_4 = GetInstruction(module.get(), "add.4");
+  EXPECT_TRUE(liveness.IsLive(add_4, {}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "constant.1"), {}));
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "constant.2"), {}));
+  EXPECT_FALSE(liveness.IsLive(add_2, {}));
+  EXPECT_FALSE(liveness.IsLive(add_3, {}));
+
+  // A clone has the same computation and local ids but other instructions.
+  std::unique_ptr<HloModule> clone = module->Clone();
+  EXPECT_FALSE(liveness.IsLive(GetInstruction(clone.get(), "add.4"), {}));
+
+  ASSERT_OK(entry->RemoveInstruction(add_3));
+  HloInstruction* added = entry->AddInstruction(HloInstruction::CreateUnary(
+      ShapeUtil::MakeShape(S32, {}), HloOpcode::kNegate, add_4));
+  EXPECT_FALSE(liveness.IsLive(add_3, {}));
+  EXPECT_FALSE(liveness.IsLive(added, {}));
+  EXPECT_TRUE(liveness.IsLive(add_4, {}));
+}
+
+// Tests that a query for a live instruction that Cleanup moved to a lower
+// local id fails instead of reading the slot it moved into.
+TEST_F(HloLivenessAnalysisTest, InstructionRenumberedByCleanup) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  HloModule SimpleModule
+  ENTRY SimpleComputation {
+    constant.1 = s32[] constant(0)
+    constant.2 = s32[] constant(1)
+    add.1 = s32[] add(constant.1, constant.2)
+    ROOT add.2 = s32[] add(constant.1, constant.2)
+  })"));
+  const HloLivenessAnalysis& liveness = RunLiveness(module.get());
+  HloComputation* entry = module->entry_computation();
+  ASSERT_OK(entry->RemoveInstruction(GetInstruction(module.get(), "add.1")));
+  entry->Cleanup();
+  EXPECT_TRUE(liveness.IsLive(GetInstruction(module.get(), "constant.1"), {}));
+  EXPECT_DEATH(liveness.IsLive(GetInstruction(module.get(), "add.2"), {}),
+               "renumbered after the liveness analysis");
+}
+
+// Tests that a query for a live instruction that CanonicalizeLocalIds moved
+// past the analyzed local ids fails, while an instruction added after the
+// analysis still reads dead.
+TEST_F(HloLivenessAnalysisTest, InstructionRenumberedByCanonicalizeLocalIds) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  HloModule SimpleModule
+  ENTRY SimpleComputation {
+    constant.1 = s32[] constant(0)
+    ROOT negate.1 = s32[] negate(constant.1)
+  })"));
+  const HloLivenessAnalysis& liveness = RunLiveness(module.get());
+  HloComputation* entry = module->entry_computation();
+  const Shape scalar = ShapeUtil::MakeShape(S32, {});
+  HloInstruction* constant_2 = entry->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(1)));
+  HloInstruction* constant_3 = entry->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(2)));
+  HloInstruction* add = entry->AddInstruction(HloInstruction::CreateBinary(
+      scalar, HloOpcode::kAdd, constant_2, constant_3));
+  HloInstruction* negate = GetInstruction(module.get(), "negate.1");
+  ASSERT_OK(negate->ReplaceOperandWith(0, add));
+  entry->CanonicalizeLocalIds();
+  EXPECT_FALSE(liveness.IsLive(add, {}));
+  EXPECT_DEATH(liveness.IsLive(negate, {}),
+               "renumbered after the liveness analysis");
 }
 
 }  // namespace

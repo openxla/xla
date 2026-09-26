@@ -17,6 +17,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 
 namespace xla {
 
@@ -65,6 +66,12 @@ inline constexpr char kXlaPreserveTupleIndices[] = "xla_preserve_tuple_indices";
 // Returns 'true' if while loop DCE / tuple pruning should be disabled for
 // 'instruction'.
 bool HasDisableWhileLoopDceAttr(const HloInstruction* instruction);
+
+// The two halves of HasDisableWhileLoopDceAttr, for callers that visit every
+// instruction of a module: the frontend attributes of 'instruction', and the
+// xla_backend_extra_options of 'module', which cover all of its instructions.
+bool HasDisableWhileLoopDceFrontendAttr(const HloInstruction* instruction);
+bool HasDisableWhileLoopDceOption(const HloModule& module);
 }  // namespace xla
 
 #endif  // XLA_FRONTEND_ATTRIBUTES_H_
