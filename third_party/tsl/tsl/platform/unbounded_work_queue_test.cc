@@ -15,11 +15,16 @@ limitations under the License.
 
 #include "tsl/platform/unbounded_work_queue.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/cpu_info.h"
 #include "tsl/platform/random.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
@@ -123,6 +128,58 @@ TEST(UnboundedWorkQueueOptionsTest, DefaultThreadOptions) {
     queue.Schedule([&counter]() { counter.DecrementCount(); });
   }
   counter.Wait();
+}
+
+// Like a regular thread, a "logical" thread scheduled on a default
+// UnboundedWorkQueue may block on other threads, and the pool must grow so that
+// progress is made. This mirrors ParallelInterleaveDatasetOp, which schedules
+// O(NumCPUs) long-lived worker closures that block until the iterator is
+// destroyed (b/566567502).
+TEST(UnboundedWorkQueueOptionsTest, BlockingClosuresExceedingNumCpus) {
+  const int num_closures = 4 * std::max(4, port::NumTotalCPUs()) + 16;
+  absl::Mutex mu;
+  int num_started = 0;
+  absl::Notification release;
+  auto queue =
+      std::make_unique<UnboundedWorkQueue>(Env::Default(), "blocking_test");
+  for (int i = 0; i < num_closures; ++i) {
+    queue->Schedule([&mu, &num_started, &release]() {
+      {
+        absl::MutexLock l(mu);
+        ++num_started;
+      }
+      release.WaitForNotification();
+    });
+  }
+  bool all_started;
+  {
+    absl::MutexLock l(mu);
+    auto all_running = [&num_started, num_closures]() {
+      return num_started >= num_closures;
+    };
+    all_started =
+        mu.AwaitWithTimeout(absl::Condition(&all_running), absl::Seconds(20));
+  }
+  release.Notify();
+  queue.reset();
+  EXPECT_TRUE(all_started);
+}
+
+TEST(UnboundedWorkQueueOptionsTest, DestructorWaitsForCallbackDestruction) {
+  absl::Notification callback_running;
+  bool capture_destroyed = false;
+  {
+    UnboundedWorkQueue queue(Env::Default(), "callback_destruction_test");
+    auto on_destroy = std::shared_ptr<void>(nullptr, [&](void*) {
+      Env::Default()->SleepForMicroseconds(10000);
+      capture_destroyed = true;
+    });
+    queue.Schedule([&callback_running, on_destroy = std::move(on_destroy)]() {
+      callback_running.Notify();
+    });
+    callback_running.WaitForNotification();
+  }
+  EXPECT_TRUE(capture_destroyed);
 }
 
 }  // namespace
