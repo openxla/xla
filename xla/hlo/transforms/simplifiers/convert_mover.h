@@ -19,10 +19,9 @@ limitations under the License.
 #include <functional>
 #include <utility>
 
-#include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 
 namespace xla {
@@ -38,16 +37,14 @@ namespace xla {
 //    commute one of the converts with one of the reshapes.  This leaves us with
 //    convert(convert(reshape(reshape))), which can probably be simplified
 //    further by algsimp.
-class ConvertMover : public HloModulePass {
+class ConvertMover : public HloComputationPass {
  public:
   ConvertMover() = default;
 
   absl::string_view name() const override { return "convert-mover"; }
 
  protected:
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 };
 
 }  // namespace xla

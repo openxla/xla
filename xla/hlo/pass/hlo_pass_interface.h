@@ -156,6 +156,35 @@ class HloModulePass : public HloPassInterface {
   }
 };
 
+// Base class for module-scoped passes which transform every non-fusion
+// computation independently.
+//
+// Subclasses implement RunOnComputation(), which is invoked once for each
+// non-fusion computation of the module that belongs to one of the requested
+// `execution_threads` (all threads if empty). Computations are visited in post
+// order (callees before callers). The list of computations is snapshotted
+// before the first call, so computations added by RunOnComputation() are not
+// visited.
+class HloComputationPass : public HloModulePass {
+ protected:
+  // Runs the pass on `computation`. Returns whether `computation` was changed.
+  virtual absl::StatusOr<bool> RunOnComputation(
+      HloComputation* computation) = 0;
+
+  absl::StatusOr<bool> RunImpl(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) final {
+    bool changed = false;
+    for (HloComputation* computation :
+         module->MakeNonfusionComputations(execution_threads)) {
+      ABSL_ASSIGN_OR_RETURN(bool computation_changed,
+                            RunOnComputation(computation));
+      changed |= computation_changed;
+    }
+    return changed;
+  }
+};
+
 }  // namespace xla
 
 #endif  // XLA_HLO_PASS_HLO_PASS_INTERFACE_H_

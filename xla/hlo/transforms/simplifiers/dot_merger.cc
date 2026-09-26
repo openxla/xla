@@ -1134,17 +1134,8 @@ absl::StatusOr<bool> MergeDots(
 
 }  // anonymous namespace
 
-absl::StatusOr<bool> DotMerger::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-  for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool changed_computation,
-                          MergeDots(comp, max_size_to_merge_, queue_id_));
-    changed |= changed_computation;
-  }
-  return changed;
+absl::StatusOr<bool> DotMerger::RunOnComputation(HloComputation* computation) {
+  return MergeDots(computation, max_size_to_merge_, queue_id_);
 }
 
 }  // namespace xla
