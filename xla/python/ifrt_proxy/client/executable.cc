@@ -360,7 +360,6 @@ LoadedExecutable::LoadedExecutable(
       name_(std::move(name)),
       num_devices_(num_devices),
       devices_(devices),
-      addressable_devices_(std::move(addressable_devices)),
       fingerprint_(std::move(fingerprint)),
       user_context_(xla::ifrt::UserContextScope::current()),
       output_spec_cache_(
@@ -879,11 +878,6 @@ LoadedExecutable::ExecuteBundle(absl::Span<BundleRef> args,
 }
 std::optional<DeviceListRef> LoadedExecutable::devices() const {
   return devices_;
-}
-
-absl::Span<xla::ifrt::Device* const> LoadedExecutable::addressable_devices()
-    const {
-  return addressable_devices_;
 }
 
 tsl::Future<> LoadedExecutable::FetchExecuteResult(
