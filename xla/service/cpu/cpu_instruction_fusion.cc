@@ -41,6 +41,37 @@ namespace cpu {
 
 namespace {
 
+// A reduce-window whose windows tile its input exactly -- no overlap, no
+// padding, no dilation -- reads every input element exactly once. Fusing a
+// producer into such a window therefore duplicates no work, so it is as safe
+// to fuse into as a plain reduce.
+//
+// Overlapping windows are excluded: there each input element is covered by
+// several windows, and fusing would recompute the producer once per covering
+// window. TreeReductionRewriter splits large reductions into a tiling
+// reduce-window plus a final reduce, and that rewrite would otherwise force
+// the whole reduced-over intermediate into memory.
+bool IsNonOverlappingReduceWindow(const HloInstruction& hlo) {
+  if (hlo.opcode() != HloOpcode::kReduceWindow) {
+    return false;
+  }
+  for (const WindowDimension& dim : hlo.window().dimensions()) {
+    // Overlapping windows would read each input element once per covering
+    // window, so fusing a producer in would recompute it that many times.
+    if (dim.stride() < dim.size()) return false;
+    // Dilation breaks the correspondence between window position and input
+    // position, so stride >= size no longer implies each element is read once.
+    if (dim.window_dilation() != 1 || dim.base_dilation() != 1) return false;
+    if (dim.window_reversal()) return false;
+    // Padding is fine: it only makes some window positions read the init
+    // value instead of an input element. The windows still tile, so every
+    // real input element is still read exactly once. This matters because
+    // TreeReductionRewriter pads whenever the reduced dimension is not an
+    // exact multiple of the window size.
+  }
+  return true;
+}
+
 bool CanBeLoopFused(const HloInstruction& hlo) {
   // These are the only ones we fuse since we rely on effective elemental IR
   // generation.
@@ -52,6 +83,7 @@ bool CanBeLoopFused(const HloInstruction& hlo) {
          hlo.opcode() == HloOpcode::kGather ||
          hlo.opcode() == HloOpcode::kIota || hlo.opcode() == HloOpcode::kPad ||
          hlo.opcode() == HloOpcode::kReduce ||
+         IsNonOverlappingReduceWindow(hlo) ||
          hlo.opcode() == HloOpcode::kReshape ||
          hlo.opcode() == HloOpcode::kReverse ||
          hlo.opcode() == HloOpcode::kSlice ||
