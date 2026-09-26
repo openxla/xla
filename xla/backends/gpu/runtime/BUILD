@@ -1343,6 +1343,7 @@ cc_library(
     srcs = ["gpublas_lt_matmul_thunk.cc"],
     hdrs = ["gpublas_lt_matmul_thunk.h"],
     deps = [
+        ":optional_buffer_use",
         ":thunk",
         ":thunk_proto_cc",
         ":traced_command",
@@ -3294,6 +3295,7 @@ cc_library(
     srcs = ["norm_thunk.cc"],
     hdrs = ["norm_thunk.h"],
     deps = [
+        ":optional_buffer_use",
         ":thunk",
         ":thunk_proto_cc",
         "//xla:util",
@@ -3329,6 +3331,34 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "optional_buffer_use",
+    srcs = ["optional_buffer_use.cc"],
+    hdrs = ["optional_buffer_use.h"],
+    deps = [
+        ":thunk",
+        "//xla:shape_util",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+xla_cc_test(
+    name = "optional_buffer_use_test",
+    srcs = ["optional_buffer_use_test.cc"],
+    deps = [
+        ":optional_buffer_use",
+        ":thunk",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "//xla/service:shaped_slice",
         "@com_google_googletest//:gtest_main",
     ],
 )

@@ -59,7 +59,9 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -82,6 +84,7 @@ namespace xla::gpu {
 
 namespace {
 using absl_testing::IsOkAndHolds;
+using ::testing::Contains;
 using tsl::proto_testing::EqualsProto;
 
 class GpuBlasLtMatmulThunkTest : public HloTestBaseLegacy {
@@ -650,6 +653,14 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerializationGroupedMatmul) {
   *reference_thunk_proto.mutable_cublas_lt_matmul_thunk() = proto;
   EXPECT_THAT(thunk->ToProto(),
               IsOkAndHolds(EqualsProto(reference_thunk_proto)));
+
+  // Grouped matmul reads `group_sizes` at run time, so it must be reported as
+  // a buffer use for command buffer dependency tracking and trace caching.
+  EXPECT_THAT(thunk->buffer_uses(),
+              Contains(BufferUse::Read(
+                  BufferAllocation::Slice(&allocations[6], /*offset=*/0,
+                                          /*size=*/8),
+                  Shape())));
 }
 
 //===----------------------------------------------------------------------===//
@@ -657,10 +668,14 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerializationGroupedMatmul) {
 //===----------------------------------------------------------------------===//
 
 static se::StreamExecutor* GpuExecutor() {
-  auto name =
-      absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
-  auto* platform = se::PlatformManager::PlatformWithName(name).value();
-  return platform->ExecutorForDevice(0).value();
+  auto name_or = PlatformUtil::CanonicalPlatformName("gpu");
+  CHECK_OK(name_or.status());
+  auto name = absl::AsciiStrToUpper(*name_or);
+  auto platform_or = se::PlatformManager::PlatformWithName(name);
+  CHECK_OK(platform_or.status());
+  auto executor_or = (*platform_or)->ExecutorForDevice(0);
+  CHECK_OK(executor_or.status());
+  return *executor_or;
 }
 
 // Returns true if the GPU supports CUDA graph tracing (requires CUDA 12.3+).
@@ -752,12 +767,12 @@ class CublasLtMatmulThunkCmdBufTest : public ::testing::Test {
                    /*c_scale=*/std::nullopt, /*d_scale=*/std::nullopt,
                    /*d_amax=*/std::nullopt, slice_workspace);
 
-    // Use raw new so the brace-init for BufferAllocations matches the original
-    // call site exactly, sidestepping template argument deduction issues with
-    // optional::emplace and initializer lists.
-    allocator_.reset(new se::StreamExecutorAddressAllocator(executor_));
-    allocations_.reset(new BufferAllocations(
-        {a_buf_, b_buf_, c_buf_, d_buf_, workspace_buf_}, 0, allocator_.get()));
+    allocator_ =
+        std::make_unique<se::StreamExecutorAddressAllocator>(executor_);
+    allocations_ = std::make_unique<BufferAllocations>(
+        std::vector<se::DeviceAddress<float>>{a_buf_, b_buf_, c_buf_, d_buf_,
+                                              workspace_buf_},
+        0, allocator_.get());
 
     Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
     ASSERT_OK(thunk_->Initialize(

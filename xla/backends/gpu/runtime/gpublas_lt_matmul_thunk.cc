@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/optional_buffer_use.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/traced_command.h"
@@ -169,30 +170,15 @@ Thunk::BufferUses CublasLtMatmulThunk::buffer_uses() const {
       BufferUse::Read(c_.slice, c_.shape),
       BufferUse::Write(d_.slice, d_.shape),
   };
-  if (bias_.has_value()) {
-    res.push_back(BufferUse::Read(bias_->slice, bias_->shape));
-  }
-  if (aux_.has_value()) {
-    res.push_back(BufferUse::Write(aux_->slice, aux_->shape));
-  }
-  if (a_scale_.has_value()) {
-    res.push_back(BufferUse::Read(a_scale_->slice, a_scale_->shape));
-  }
-  if (b_scale_.has_value()) {
-    res.push_back(BufferUse::Read(b_scale_->slice, b_scale_->shape));
-  }
-  if (c_scale_.has_value()) {
-    res.push_back(BufferUse::Read(c_scale_->slice, c_scale_->shape));
-  }
-  if (d_scale_.has_value()) {
-    res.push_back(BufferUse::Read(d_scale_->slice, d_scale_->shape));
-  }
-  if (d_amax_.has_value()) {
-    res.push_back(BufferUse::Write(d_amax_->slice, d_amax_->shape));
-  }
-  if (workspace_.has_value()) {
-    res.push_back(BufferUse::Scratch(workspace_->slice, workspace_->shape));
-  }
+  AppendOptionalBufferUse(res, &BufferUse::Read, group_sizes_);
+  AppendOptionalBufferUse(res, &BufferUse::Read, bias_);
+  AppendOptionalBufferUse(res, &BufferUse::Write, aux_);
+  AppendOptionalBufferUse(res, &BufferUse::Read, a_scale_);
+  AppendOptionalBufferUse(res, &BufferUse::Read, b_scale_);
+  AppendOptionalBufferUse(res, &BufferUse::Read, c_scale_);
+  AppendOptionalBufferUse(res, &BufferUse::Read, d_scale_);
+  AppendOptionalBufferUse(res, &BufferUse::Write, d_amax_);
+  AppendOptionalBufferUse(res, &BufferUse::Scratch, workspace_);
   return res;
 }
 
