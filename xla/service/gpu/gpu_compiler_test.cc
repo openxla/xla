@@ -46,7 +46,6 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
-#include "tsl/platform/platform.h"
 #include "tsl/platform/regexp.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/autotune_results.pb.h"
@@ -95,15 +94,11 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/gtl/value_or_die.h"
-#include "xla/tsl/lib/monitoring/collected_metrics.h"
-#include "xla/tsl/lib/monitoring/collection_registry.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
@@ -119,10 +114,7 @@ namespace {
 namespace m = ::xla::match;
 
 using ::testing::AssertionResult;
-using ::testing::AtLeast;
-using ::testing::EndsWith;
 using ::testing::HasSubstr;
-using ::testing::IsEmpty;
 using ::testing::IsSupersetOf;
 using ::testing::Matches;
 using ::testing::Not;
@@ -3634,11 +3626,13 @@ TEST_F(GpuCompilerTest, EarlyExitAfterConfigAssignment) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(hlo_text));
   ASSERT_OK_AND_ASSIGN(
-      std::vector<std::unique_ptr<CompiledModule>> aot_results,
+      std::vector<std::unique_ptr<CompiledModuleBase>> aot_results,
       compiler()->CompileAheadOfTime(std::move(module), aot_options));
 
   ASSERT_EQ(aot_results.size(), 1);
-  const HloModule* optimized_module = aot_results[0]->optimized_module();
+  const HloModule* optimized_module =
+      absl::down_cast<CompiledModule*>(aot_results[0].get())
+          ->optimized_module();
   ASSERT_NE(optimized_module, nullptr);
 
   // Make sure both the pre-autotune and autotuner passes are run.
