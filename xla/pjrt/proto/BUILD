@@ -85,6 +85,15 @@ tf_proto_library(
 )
 
 tf_proto_library(
+    name = "pjrt_relocatable_proto",
+    srcs = ["pjrt_relocatable.proto"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:xla_data_proto",
+    ],
+)
+
+tf_proto_library(
     name = "topology_description_proto",
     srcs = ["topology_description.proto"],
     compatible_with = (get_compatible_with_libtpu_portable() + get_compatible_with_portable()),
