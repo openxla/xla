@@ -18,7 +18,6 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -48,15 +47,9 @@ TEST_F(FusionConstantSinkingTest, SinkConstant) {
       ROOT out = s8[1,4096,4096]{2,1,0:T(8,128)(4,1)} fusion(s8[56,4096,4096]{2,1,0:T(8,128)(4,1)} p0, s32[]{:T(128)} c), kind=kLoop, calls=%fused_computation.slice
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking()));
   EXPECT_THAT(
       module->GetComputationWithName("fused_computation.slice")
           ->root_instruction(),
@@ -78,15 +71,10 @@ TEST_F(FusionConstantSinkingTest, SingleOperandFusionNoSink) {
       ROOT out = s8[1,4096,4096]{2,1,0:T(8,128)(4,1)} fusion(s8[]{:T(128)} c), kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_FALSE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking(),
+                            /*expect_change=*/false));
 }
 
 // Fusions with single operands are not considered because the nested
@@ -117,15 +105,10 @@ TEST_F(FusionConstantSinkingTest, SingleOperandUserNoSink) {
       fusion(s32[4096,4096]{1,0:T(8,128)(4,1)} p0, s32[]{:T(128)} c), kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_FALSE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking(),
+                            /*expect_change=*/false));
 }
 
 TEST_F(FusionConstantSinkingTest, NonScalarNoSink) {
@@ -145,15 +128,10 @@ TEST_F(FusionConstantSinkingTest, NonScalarNoSink) {
       ROOT out = s8[2,4096,4096]{2,1,0:T(8,128)(4,1)} fusion(s8[2]{0:T(128)} c, p), kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_FALSE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking(),
+                            /*expect_change=*/false));
 }
 
 TEST_F(FusionConstantSinkingTest, SinkConstantNested) {
@@ -190,15 +168,9 @@ TEST_F(FusionConstantSinkingTest, SinkConstantNested) {
       kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking()));
   EXPECT_THAT(
       module->GetComputationWithName("fused_computation")->num_parameters(), 1);
   EXPECT_THAT(module->GetComputationWithName("fused_computation.inner")
@@ -251,15 +223,9 @@ ENTRY fusion.2653 {
   ROOT copy = bf16[32,8,2,128]{3,1,2,0:T(8,128)(2,1)} copy(fusion.2653)
 }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking()));
   EXPECT_THAT(module->GetComputationWithName("fused_computation.4564")
                   ->num_parameters(),
               2);
@@ -296,15 +262,9 @@ ENTRY %main.3 (x.1: bf16[1024,1024], w.1: bf16[1024,3072], out.1: bf16[1024,4096
   ROOT %custom-call_dynamic-update-slice_fusion = bf16[1024,4096]{1,0:T(8,128)(2,1)} fusion(%out.1, %constant.1, %w.1, %x.1, %constant.0), kind=kCustom, calls=%fused_computation.1, frontend_attributes={MUST_FUSE="1"}
 }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  FusionConstantSinking constant_sinking;
-
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_sinking, module.get()));
-
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(hlo_string, FusionConstantSinking()));
   EXPECT_THAT(
       module->GetComputationWithName("fused_computation.1")->num_parameters(),
       3);
