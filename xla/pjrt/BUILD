@@ -265,7 +265,6 @@ xla_cc_test(
     srcs = ["common_pjrt_client_test.cc"],
     deps = [
         ":common_pjrt_client",
-        "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/runtime:device_id",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",

@@ -448,6 +448,18 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       absl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
+// Clique key for one cross-host buffer transfer. Devices stay in source, then
+// destination order. An empty incarnation span matches the historical key.
+gpu::GpuCliqueKey CrossHostTransferCliqueKey(
+    GlobalDeviceId src, GlobalDeviceId dst,
+    absl::Span<const IncarnationId> incarnations) {
+  return gpu::GpuCliqueKey(
+      /*devices=*/{src, dst},
+      /*num_local_participants=*/1,
+      /*communication_id=*/gpu::CommunicationId(0),
+      std::vector<IncarnationId>(incarnations.begin(), incarnations.end()));
+}
+
 // Create a `PreparedTransfer` object bundling together state needed to perform
 // a transfer.
 absl::StatusOr<PreparedTransfer> PrepareTransfer(
@@ -466,7 +478,7 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
   });
 
   const gpu::GpuCliqueKey clique_key =
-      gpu::CrossHostTransferCliqueKey(src_device, dst_device, incarnations);
+      CrossHostTransferCliqueKey(src_device, dst_device, incarnations);
 
   // Get the clique and communicator for the transfer.
   ABSL_ASSIGN_OR_RETURN(

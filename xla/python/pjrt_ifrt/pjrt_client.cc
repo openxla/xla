@@ -1403,11 +1403,14 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
   // Same snapshot execute uses. A missing cache keeps the historical key
   // instead of failing the copy. Both hosts must pass this map; one side
   // alone would make the clique keys diverge.
-  absl::flat_hash_map<int, IncarnationId> incarnations;
+  absl::flat_hash_map<TaskId, IncarnationId> incarnations;
   absl::StatusOr<absl::flat_hash_map<int, IncarnationId>> incarnations_or =
       Incarnations();
   if (incarnations_or.ok()) {
-    incarnations = *std::move(incarnations_or);
+    incarnations.reserve(incarnations_or->size());
+    for (const auto& [task_id, incarnation_id] : *incarnations_or) {
+      incarnations.emplace(TaskId(task_id), incarnation_id);
+    }
   } else {
     VLOG(3) << "Unable to get incarnations: " << incarnations_or.status();
   }

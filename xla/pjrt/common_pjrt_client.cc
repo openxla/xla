@@ -2124,13 +2124,13 @@ CommonPjRtClient::MakeCrossHostReceiveBuffers(
 
 absl::StatusOr<std::vector<IncarnationId>> SortedTransferIncarnations(
     int src_process_index, int dst_process_index,
-    const absl::flat_hash_map<int, IncarnationId>& incarnations) {
+    const absl::flat_hash_map<TaskId, IncarnationId>& incarnations) {
   if (incarnations.empty()) {
     return std::vector<IncarnationId>{};
   }
   absl::flat_hash_set<IncarnationId> unique_incarnations;
   for (int process_index : {src_process_index, dst_process_index}) {
-    const auto it = incarnations.find(process_index);
+    const auto it = incarnations.find(TaskId(process_index));
     if (it == incarnations.end()) {
       return FailedPrecondition("Incarnation for task %d not found.",
                                 process_index);
@@ -2149,7 +2149,7 @@ absl::StatusOr<std::vector<Future<>>> CommonPjRtClient::CrossHostSendBuffers(
     absl::Span<PjRtBuffer* const> buffers,
     absl::Span<const GlobalDeviceId> dst_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys,
-    absl::flat_hash_map<int, IncarnationId> incarnations) {
+    absl::flat_hash_map<TaskId, IncarnationId> incarnations) {
   // Validate arguments.
   if (dst_global_device_ids.size() != buffers.size() ||
       transfer_keys.size() != buffers.size()) {
@@ -2290,7 +2290,7 @@ CommonPjRtClient::CrossHostReceiveBuffers(
     xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
     absl::Span<const GlobalDeviceId> src_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys,
-    absl::flat_hash_map<int, IncarnationId> incarnations) {
+    absl::flat_hash_map<TaskId, IncarnationId> incarnations) {
   // Validate arguments.
   if (shapes.empty()) {
     return InvalidArgument("shapes parameter empty in CrossHostReceiveBuffers");

@@ -145,9 +145,10 @@ xla::PjRtCrossHostRecvNotifier CCrossHostRecvNotifierToCpp(
   };
 }
 
-absl::StatusOr<absl::flat_hash_map<int, xla::IncarnationId>> IncarnationsFromC(
-    size_t num_tasks, const int* task_ids, const int64_t* incarnation_ids) {
-  absl::flat_hash_map<int, xla::IncarnationId> incarnations;
+absl::StatusOr<absl::flat_hash_map<xla::TaskId, xla::IncarnationId>>
+IncarnationsFromC(size_t num_tasks, const int* task_ids,
+                  const int64_t* incarnation_ids) {
+  absl::flat_hash_map<xla::TaskId, xla::IncarnationId> incarnations;
   if (num_tasks == 0) {
     return incarnations;
   }
@@ -158,7 +159,8 @@ absl::StatusOr<absl::flat_hash_map<int, xla::IncarnationId>> IncarnationsFromC(
   incarnations.reserve(num_tasks);
   for (size_t i = 0; i < num_tasks; ++i) {
     // Duplicate task ids keep the first incarnation, matching execute.
-    incarnations.insert({task_ids[i], xla::IncarnationId(incarnation_ids[i])});
+    incarnations.insert(
+        {xla::TaskId(task_ids[i]), xla::IncarnationId(incarnation_ids[i])});
   }
   return incarnations;
 }
@@ -172,7 +174,7 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(
       PJRT_STRUCT_SIZE(PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args,
                        buffers),
       args->struct_size));
-  absl::flat_hash_map<int, xla::IncarnationId> incarnations;
+  absl::flat_hash_map<xla::TaskId, xla::IncarnationId> incarnations;
   if (args->struct_size >=
       PJRT_STRUCT_SIZE(PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args,
                        incarnation_ids)) {
@@ -232,7 +234,7 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(
     transfer_keys.push_back(args->transfer_keys[i]);
   }
 
-  absl::flat_hash_map<int, xla::IncarnationId> incarnations;
+  absl::flat_hash_map<xla::TaskId, xla::IncarnationId> incarnations;
   if (args->struct_size >=
       PJRT_STRUCT_SIZE(PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args,
                        incarnation_ids)) {

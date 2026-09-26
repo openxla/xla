@@ -118,12 +118,6 @@ class GpuCliqueKey : public CliqueKey {
   std::vector<IncarnationId> incarnations_;
 };
 
-// Clique key for one cross-host buffer transfer. Devices stay in source, then
-// destination order. An empty incarnation span matches the historical key.
-GpuCliqueKey CrossHostTransferCliqueKey(
-    GlobalDeviceId src, GlobalDeviceId dst,
-    absl::Span<const IncarnationId> incarnations);
-
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUE_KEY_H_

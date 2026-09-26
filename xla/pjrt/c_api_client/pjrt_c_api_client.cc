@@ -1437,7 +1437,7 @@ absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
     absl::Span<PjRtBuffer* const> buffers,
     absl::Span<const GlobalDeviceId> dst_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys,
-    absl::flat_hash_map<int, IncarnationId> incarnations) {
+    absl::flat_hash_map<TaskId, IncarnationId> incarnations) {
   // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
@@ -1475,7 +1475,7 @@ absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
   task_ids.reserve(incarnations.size());
   incarnation_ids.reserve(incarnations.size());
   for (const auto& [task_id, incarnation_id] : incarnations) {
-    task_ids.push_back(task_id);
+    task_ids.push_back(task_id.value());
     incarnation_ids.push_back(incarnation_id.value());
   }
   args.num_tasks = task_ids.size();
@@ -1500,7 +1500,7 @@ PjRtCApiClient::CrossHostReceiveBuffers(
     xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
     absl::Span<const GlobalDeviceId> src_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys,
-    absl::flat_hash_map<int, IncarnationId> incarnations) {
+    absl::flat_hash_map<TaskId, IncarnationId> incarnations) {
   // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
@@ -1546,7 +1546,7 @@ PjRtCApiClient::CrossHostReceiveBuffers(
   task_ids.reserve(incarnations.size());
   incarnation_ids.reserve(incarnations.size());
   for (const auto& [task_id, incarnation_id] : incarnations) {
-    task_ids.push_back(task_id);
+    task_ids.push_back(task_id.value());
     incarnation_ids.push_back(incarnation_id.value());
   }
   args.num_tasks = task_ids.size();

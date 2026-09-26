@@ -64,7 +64,6 @@ struct PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args {
   const xla::GlobalDeviceId* dst_global_device_ids;  // Has size num_buffers.
   const xla::CrossHostTransferKey* transfer_keys;    // Has size num_buffers.
   PJRT_Event** send_events;  // Output; has size num_buffers.
-  // Added in version 8. Absent when struct_size stops at send_events.
   size_t num_tasks;
   const int* task_ids;             // Has size num_tasks.
   const int64_t* incarnation_ids;  // Has size num_tasks.
@@ -89,7 +88,6 @@ struct PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args {
   const xla::GlobalDeviceId* src_global_device_ids;  // Has size num_shapes.
   const xla::CrossHostTransferKey* transfer_keys;    // Has size num_shapes.
   PJRT_Buffer** buffers;  // Output; has size num_shapes.
-  // Added in version 8. Absent when struct_size stops at buffers.
   size_t num_tasks;
   const int* task_ids;             // Has size num_tasks.
   const int64_t* incarnation_ids;  // Has size num_tasks.
