@@ -39,11 +39,15 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/layout.h"
 #include "xla/map_util.h"
+#include "xla/service/call_graph.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
@@ -828,12 +832,7 @@ void CopyRemover::AddViewUses(const HloValue* value, ValueNode* node) {
   }
   // A view colored bitcast, or a view colored copy (an address copy until
   // copy insertion elides it), forwards the address to its own users. Any
-  // other view colored user is recorded as a reader at its own position, on
-  // purpose: nothing here orders it against the other readers of the viewed
-  // value, so the pass that creates views must never let a reader write
-  // through one. An in place writer through a view is sound only when its
-  // write is also a dataflow use of the viewed buffer (for example the
-  // dynamic-update-slice it feeds), which orders it.
+  // other view colored user is recorded as a reader at its own position.
   auto forwards_view = [&](const HloInstruction* instruction) {
     return is_view(instruction) &&
            (instruction->opcode() == HloOpcode::kBitcast ||
@@ -867,6 +866,18 @@ void CopyRemover::AddViewUses(const HloValue* value, ValueNode* node) {
         const HloUse& use = view_uses_.emplace_back(user, i, ShapeIndex{});
         view_uses_by_pointer_.insert(&use);
         node->uses.push_back(&use);
+      }
+      for (const auto& [operand_index, output_index] :
+           alias_info_->GetInPlaceInputOutputPairs(user)) {
+        if (user->operand(operand_index.operand_number) == view) {
+          node->view_writes.push_back({user, output_index});
+          for (const HloInstruction* window :
+               InstructionsHoldingOutput(user, output_index)) {
+            if (is_view(window) && visited.insert(window).second) {
+              worklist.push_back(window);
+            }
+          }
+        }
       }
     }
   }
@@ -1006,6 +1017,11 @@ bool CopyRemover::TryElideCopy(
   *region_analysis_limit = 0;
   VLOG(3) << "Source buffer values: " << ValueListToString(copy_node.src);
   VLOG(3) << "Dest buffer values: " << ValueListToString(copy_node.dest);
+  // Checked first, so a merge refused here keeps no control edges that the
+  // region analysis would add.
+  if (!ViewWritesOrdered(*copy_node.src, *copy_node.dest, /*pin=*/false)) {
+    return false;
+  }
   // Checks whether the live range at src is before that defined by dest.
   auto CheckLiveRangeBefore = [&](ValueNode* src, ValueNode* dest) {
     for (ValueNode* next_dest = dest; next_dest != nullptr;
@@ -1327,6 +1343,9 @@ bool CopyRemover::TryElideCopy(
     }
     VLOG(2) << "TryElideCopy - copy (" << copy->name()
             << ") connects two values in the same buffer; transferring uses.";
+    if (insert_post_scheduling_control_dependencies) {
+      ViewWritesOrdered(*copy_node.src, *copy_node.dest, /*pin=*/true);
+    }
     RemoveCopyValue(copy_node.dest, copy_node.src);
     XLA_VLOG_LINES(4, ToString());
     DCHECK_OK(Verify());
@@ -1334,6 +1353,9 @@ bool CopyRemover::TryElideCopy(
     return true;
   }
 
+  if (insert_post_scheduling_control_dependencies) {
+    ViewWritesOrdered(*copy_node.src, *copy_node.dest, /*pin=*/true);
+  }
   RemoveCopyValue(copy_node.dest);
 
   XLA_VLOG_LINES(4, ToString());
@@ -1386,6 +1408,9 @@ void CopyRemover::RemoveCopyValue(ValueNode* copy_value_node,
       copy_map_.at(copy_use->instruction).src = operand_node;
     }
   }
+  operand_node->view_writes.insert(operand_node->view_writes.end(),
+                                   copy_value_node->view_writes.begin(),
+                                   copy_value_node->view_writes.end());
 
   // Delete the copy info and the value node.
   copy_map_.erase(copy_value_node->value->defining_instruction());
@@ -1417,6 +1442,82 @@ bool CopyRemover::LiveRangeBefore(const ValueNode& a, const ValueNode& b) {
   return ordering_->UsesBeforeValueDefinition(
       a.uses, *b.value, dataflow_, alias_info_,
       /* use_is_always_before_def_in_same_instr=*/false);
+}
+
+bool CopyRemover::ViewWritesOrdered(const ValueNode& src, const ValueNode& dest,
+                                    bool pin) {
+  // Before scheduling only data edges count; control edges may be dropped.
+  absl::flat_hash_map<const HloInstruction*,
+                      absl::flat_hash_set<const HloInstruction*>>
+      ancestors;
+  auto read_before = [&](const HloInstruction* read,
+                         const HloInstruction* writer) {
+    if (ordering_->SequentialOrder(*writer->parent()) != nullptr) {
+      return ordering_->ExecutesBefore(read, writer);
+    }
+    absl::flat_hash_set<const HloInstruction*>& writer_ancestors =
+        ancestors[writer];
+    if (writer_ancestors.empty()) {
+      ConstFunctionVisitor visitor([&](const HloInstruction* hlo) {
+        writer_ancestors.insert(hlo);
+        return absl::OkStatus();
+      });
+      CHECK_OK(writer->Accept(&visitor, /*call_finish_visit=*/true,
+                              /*ignore_control_predecessors=*/true));
+    }
+    return writer_ancestors.contains(read);
+  };
+  auto reads_before = [&](const ValueNode& read, const HloPosition& write) {
+    // A use and the write are compared at their nearest ancestors in one
+    // computation. A use that shares the writer's ancestor (at the callsite
+    // or in an exclusive branch) follows the value order instead. A use at
+    // the writer itself may read what the writer wrote.
+    std::vector<const HloUse*> other_uses;
+    for (const HloUse* use : read.uses) {
+      auto [reader, writer] =
+          ordering_->call_graph().NearestAncestorsInSameComputation(
+              use->instruction, write.instruction);
+      if (reader == writer && use->instruction != write.instruction) {
+        other_uses.push_back(use);
+      } else if (reader == writer || !read_before(reader, writer)) {
+        return false;
+      } else if (pin) {
+        CHECK_OK(reader->AddControlDependencyTo(writer));
+      }
+    }
+    return ordering_->UsesBeforeValueDefinition(
+        other_uses, dataflow_.GetUniqueValueAt(write.instruction, write.index),
+        dataflow_, alias_info_);
+  };
+  // The loop state at a while condition's parameter reaches the body and the
+  // loop's result through phis of their own, which no use of it orders.
+  auto is_condition_parameter = [](const HloValue& value) {
+    const HloInstruction* def = value.defining_instruction();
+    return def->opcode() == HloOpcode::kParameter &&
+           absl::c_any_of(def->parent()->caller_instructions(HloOpcode::kWhile),
+                          [&](const HloInstruction* loop) {
+                            return loop->while_condition() == def->parent();
+                          });
+  };
+  // No write may land in the root of a computation that holds the writer,
+  // which has no use to order it against, in a condition's parameter, or in a
+  // read only input, which special case copies do not protect from it.
+  auto ordered = [&](const ValueNode& read, const ValueNode& written) {
+    for (const HloPosition& write : written.view_writes) {
+      auto root_holds_writer = [&](const HloPosition& position) {
+        return position.instruction->IsRoot() &&
+               ordering_->call_graph().InstructionIsNestedIn(
+                   write.instruction, position.instruction->parent());
+      };
+      if (ValueIsReadOnly(*read.value) || is_condition_parameter(*read.value) ||
+          !reads_before(read, write) ||
+          absl::c_any_of(read.value->positions(), root_holds_writer)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  return ordered(src, dest) && ordered(dest, src);
 }
 
 // Splices the entire linked list with 'head' as its head right after the

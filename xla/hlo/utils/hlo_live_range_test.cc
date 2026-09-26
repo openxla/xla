@@ -1480,5 +1480,30 @@ TEST_F(HloLiveRangeTest, NestedAsyncViaCall) {
   EXPECT_LE(z_range.start, z_range.end);
 }
 
+// A tuple shaped writer through the view holds the written window in a GTE,
+// so `base` stays live until `out` reads the window.
+TEST_F(HloLiveRangeTest, ViewBaseLiveRangeExtendsThroughATupleWriter) {
+  const char* hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[64]{0} parameter(0)
+  base = f32[64]{0} negate(p0)
+  view = f32[64]{0:S(7)} custom-call(base), custom_call_target="view"
+  writer = (f32[64]{0:S(7)}, f32[64]{0}) custom-call(view), custom_call_target="write", output_to_operand_aliasing={{0}: (0, {})}
+  window = f32[64]{0:S(7)} get-tuple-element(writer), index=0
+  ROOT out = f32[64]{0} negate(window)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  Analyze(module_->schedule());
+  ExtendViewBaseLiveRanges(hlo_live_range_.get(),
+                           alias_analysis_->dataflow_analysis(),
+                           /*view_color=*/7);
+  EXPECT_EQ(LiveRangeAt(FindInstruction(module_.get(), "base")).end,
+            hlo_live_range_->instruction_schedule().at(
+                FindInstruction(module_.get(), "out")));
+}
+
 }  // namespace
 }  // namespace xla
