@@ -367,7 +367,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
   auto computations = custom_call->called_computations();
   const HloComputation* score_mod_fwd_comp = nullptr;
   const HloComputation* score_mod_bwd_comp = nullptr;
-  stream_executor::gpu::ScoreModFunc* score_mod = nullptr;
+  std::optional<stream_executor::gpu::ScoreModFunc> score_mod;
   TF_RET_CHECK(computations.size() <= 1);
   if (computations.size() == 1) {
     score_mod_bwd_comp = computations[0];
@@ -378,11 +378,11 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
       return absl::InternalError("Can't find fmha fwd custom call.");
     }
     score_mod_fwd_comp = fwd_custom_call->called_computations()[0];
-    auto smf = stream_executor::gpu::ScoreModFunc(score_mod_fwd_comp,
-                                                  score_mod_bwd_comp);
-    score_mod = &smf;
+    score_mod.emplace(stream_executor::gpu::ScoreModFunc(score_mod_fwd_comp,
+                                                         score_mod_bwd_comp));
     input_index += score_mod_fwd_comp->num_parameters() - 1;
   }
+  auto score_mod_ptr = score_mod.has_value() ? &score_mod.value() : nullptr;
   TF_RET_CHECK(input_index == custom_call->operand_count());
 
   ABSL_ASSIGN_OR_RETURN(
@@ -392,7 +392,7 @@ absl::StatusOr<se::gpu::CudnnGraph> BuildGraphForCustomCallToBackwardFMHA(
           dbias, dropout_rate, config.seed(), config.fmha_scale(),
           dropout_rate > 0.0, bias.has_value(), dnn_mask_type,
           force_deterministic, sliding_window_length, max_seg_per_batch,
-          score_mod));
+          score_mod_ptr));
   return graph;
 }
 
