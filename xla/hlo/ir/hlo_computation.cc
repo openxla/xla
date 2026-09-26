@@ -745,10 +745,10 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
   }
   // Sort into decreasing order by parameter number, otherwise the renumbering
   // of parameters when one parameter is deleted will cause issues.
-  std::sort(parameters_to_be_removed.begin(), parameters_to_be_removed.end(),
-            [](HloInstruction* a, HloInstruction* b) {
-              return a->parameter_number() > b->parameter_number();
-            });
+  absl::c_sort(parameters_to_be_removed,
+               [](HloInstruction* a, HloInstruction* b) {
+                 return a->parameter_number() > b->parameter_number();
+               });
   std::vector<HloInstruction*> callers;
   if (!parameters_to_be_removed.empty()) {
     if (parent != nullptr && computation_callers.has_value()) {

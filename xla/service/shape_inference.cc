@@ -1392,7 +1392,7 @@ ShapeInference::InferElementwiseBinaryOpShape(
 
   if (lhs.dimensions().size() == rhs.dimensions().size()) {
     std::vector<int64_t> identity_dims(lhs.dimensions().size());
-    std::iota(identity_dims.begin(), identity_dims.end(), 0);
+    absl::c_iota(identity_dims, 0);
     if (!broadcast_dimensions.empty() &&
         broadcast_dimensions != identity_dims) {
       return InvalidArgument(
@@ -2473,7 +2473,7 @@ absl::StatusOr<Shape> InferWgradConvolveShape(
   absl::c_sort(output_dnums);
 
   std::vector<int64_t> expected_dnums(num_dims);
-  std::iota(expected_dnums.begin(), expected_dnums.end(), 0);
+  absl::c_iota(expected_dnums, 0);
 
   const auto in_range = [num_dims](int64_t i) {
     return 0 <= i && i < num_dims;
@@ -4036,7 +4036,7 @@ ShapeInference::InferCollectivePermuteDoneShape(const Shape& operand_shape) {
   }
 
   std::vector<int64_t> indices(operand.dimensions().size());
-  std::iota(indices.begin(), indices.end(), 0);
+  absl::c_iota(indices, 0);
 
   // Propagate dynamic dimension.
   auto common_factors = CommonFactors(operand.dimensions(), dimensions);

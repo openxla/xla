@@ -231,11 +231,10 @@ absl::StatusOr<bool> IsNoOpScale(const HloInstruction* dot,
   }
   // It might be enough to check the types only but for now let's check the
   // shape as well.
-  return std::all_of(shape.dimensions().begin(), shape.dimensions().end(),
-                     [](int64_t dim) { return dim == 1; }) &&
-         std::any_of(operand->shape().dimensions().begin(),
-                     operand->shape().dimensions().end(),
-                     [](int64_t dim) { return dim != 1; });
+  return absl::c_all_of(shape.dimensions(),
+                        [](int64_t dim) { return dim == 1; }) &&
+         absl::c_any_of(operand->shape().dimensions(),
+                        [](int64_t dim) { return dim != 1; });
 }
 
 absl::Status ScalesShapeVerifier(
@@ -1890,7 +1889,7 @@ absl::Status ShapeVerifier::HandleMap(HloInstruction* map) {
   // TODO(b/65689298) Remove code below once Map is generalized to accept
   // arbitrary map dimensions.
   std::vector<int64_t> map_dims(max_operand_rank);
-  std::iota(map_dims.begin(), map_dims.end(), 0);
+  absl::c_iota(map_dims, 0);
 
   ABSL_RETURN_IF_ERROR(CheckShape(
       map,
@@ -3693,8 +3692,8 @@ std::string FormatShapeIndexValidationError(
       ov_only.push_back(idx);
     }
   }
-  std::sort(shape_only.begin(), shape_only.end());
-  std::sort(ov_only.begin(), ov_only.end());
+  absl::c_sort(shape_only);
+  absl::c_sort(ov_only);
   auto shape_index_formatter = [](std::string* out, const ShapeIndex& i) {
     absl::StrAppend(out, i.ToString());
   };
