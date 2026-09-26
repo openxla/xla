@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/optional_buffer_use.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/runtime/buffer_use.h"
@@ -160,26 +161,18 @@ Thunk::BufferUses NormThunk::buffer_uses() const {
       BufferUse::Write(y_or_dx_buffer_, descriptor_.y_or_dx_shape),
       BufferUse::Scratch(scratch_buffer_, descriptor_.scratch_shape),
   };
-  if (bias_buffer_.has_value()) {
-    res.push_back(BufferUse::Read(*bias_buffer_, *descriptor_.bias_shape));
-  }
-  if (expectation_buffer_.has_value()) {
-    res.push_back(
-        BufferUse::Write(*expectation_buffer_, *descriptor_.expectation_shape));
-  }
-  if (norm_factor_buffer_.has_value()) {
-    res.push_back(
-        BufferUse::Write(*norm_factor_buffer_, *descriptor_.norm_factor_shape));
-  }
-  if (dy_buffer_.has_value()) {
-    res.push_back(BufferUse::Read(*dy_buffer_, *descriptor_.dy_shape));
-  }
-  if (dscale_buffer_.has_value()) {
-    res.push_back(BufferUse::Write(*dscale_buffer_, *descriptor_.dscale_shape));
-  }
-  if (dbias_buffer_.has_value()) {
-    res.push_back(BufferUse::Write(*dbias_buffer_, *descriptor_.dbias_shape));
-  }
+  AppendOptionalBufferUse(res, &BufferUse::Read, bias_buffer_,
+                          descriptor_.bias_shape);
+  AppendOptionalBufferUse(res, &BufferUse::Write, expectation_buffer_,
+                          descriptor_.expectation_shape);
+  AppendOptionalBufferUse(res, &BufferUse::Write, norm_factor_buffer_,
+                          descriptor_.norm_factor_shape);
+  AppendOptionalBufferUse(res, &BufferUse::Read, dy_buffer_,
+                          descriptor_.dy_shape);
+  AppendOptionalBufferUse(res, &BufferUse::Write, dscale_buffer_,
+                          descriptor_.dscale_shape);
+  AppendOptionalBufferUse(res, &BufferUse::Write, dbias_buffer_,
+                          descriptor_.dbias_shape);
   return res;
 }
 

@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
@@ -82,6 +83,7 @@ namespace xla::gpu {
 
 namespace {
 using absl_testing::IsOkAndHolds;
+using ::testing::Contains;
 using tsl::proto_testing::EqualsProto;
 
 class GpuBlasLtMatmulThunkTest : public HloTestBaseLegacy {
@@ -650,6 +652,14 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerializationGroupedMatmul) {
   *reference_thunk_proto.mutable_cublas_lt_matmul_thunk() = proto;
   EXPECT_THAT(thunk->ToProto(),
               IsOkAndHolds(EqualsProto(reference_thunk_proto)));
+
+  // Grouped matmul reads `group_sizes` at run time, so it must be reported as
+  // a buffer use for command buffer dependency tracking and trace caching.
+  EXPECT_THAT(thunk->buffer_uses(),
+              Contains(BufferUse::Read(
+                  BufferAllocation::Slice(&allocations[6], /*offset=*/0,
+                                          /*size=*/8),
+                  Shape())));
 }
 
 //===----------------------------------------------------------------------===//
