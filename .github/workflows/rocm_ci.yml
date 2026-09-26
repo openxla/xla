@@ -139,7 +139,7 @@ jobs:
 
       - name: Fetch ROCm XLA Upstream Scripts from ROCm/xla
         env:
-          ROCM_XLA_BRANCH: ${{ inputs.rocm_xla_branch || 'rocm-dev-infra' }}
+          ROCM_XLA_BRANCH: ${{ inputs.rocm_xla_branch || 'hhs/update_exclusion_list' }}
         run: |
           wget -O build_tools/rocm/execute_ci_build_upstream.sh \
             "https://raw.githubusercontent.com/ROCm/xla/refs/heads/${ROCM_XLA_BRANCH}/build_tools/rocm/execute_ci_build_upstream.sh"
