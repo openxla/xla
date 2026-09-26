@@ -448,6 +448,18 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       absl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
+// Clique key for one cross-host buffer transfer. Devices stay in source, then
+// destination order. An empty incarnation span matches the historical key.
+gpu::GpuCliqueKey CrossHostTransferCliqueKey(
+    GlobalDeviceId src, GlobalDeviceId dst,
+    absl::Span<const IncarnationId> incarnations) {
+  return gpu::GpuCliqueKey(
+      /*devices=*/{src, dst},
+      /*num_local_participants=*/1,
+      /*communication_id=*/gpu::CommunicationId(0),
+      std::vector<IncarnationId>(incarnations.begin(), incarnations.end()));
+}
+
 // Create a `PreparedTransfer` object bundling together state needed to perform
 // a transfer.
 absl::StatusOr<PreparedTransfer> PrepareTransfer(
@@ -455,7 +467,8 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
     se::Stream* stream, GlobalDeviceId src_global_device_id,
     GlobalDeviceId dst_global_device_id, PjRtRawBufferRef raw_buffer,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
-    tsl::AsyncValueRef<BufferSequencingEvent> transfer_event, bool is_sender) {
+    tsl::AsyncValueRef<BufferSequencingEvent> transfer_event, bool is_sender,
+    absl::Span<const IncarnationId> incarnations) {
   GlobalDeviceId src_device(src_global_device_id.value());
   GlobalDeviceId dst_device(dst_global_device_id.value());
 
@@ -464,12 +477,8 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
                            dst_device);
   });
 
-  // Form the GPU clique key.
-  // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
-  // clique key.
-  const gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
-      /*devices=*/{src_device, dst_device},
-      /*num_local_participants=*/1);
+  const gpu::GpuCliqueKey clique_key =
+      CrossHostTransferCliqueKey(src_device, dst_device, incarnations);
 
   // Get the clique and communicator for the transfer.
   ABSL_ASSIGN_OR_RETURN(
@@ -688,7 +697,8 @@ void StreamExecutorGpuRawClient::ScheduleTransfersOnLocalDevice(
                           transfer_specs[i].src_global_device_id,
                           transfer_specs[i].dst_global_device_id,
                           std::move(transfer_specs[i].raw_buffer),
-                          acquired_cliques_map, transfer_event, is_sender));
+                          acquired_cliques_map, transfer_event, is_sender,
+                          transfer_specs[i].incarnations));
 
       prepared_transfers.push_back(std::move(prepared_transfer));
     }

@@ -341,6 +341,9 @@ class PjRtRawClient {
     GlobalDeviceId src_global_device_id;
     GlobalDeviceId dst_global_device_id;
     PjRtRawBufferRef raw_buffer;
+    // Sorted unique incarnations of the source and destination tasks. Empty
+    // when the caller has no GetAliveTasks snapshot.
+    std::vector<IncarnationId> incarnations;
   };
 
   virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostTransferBuffers(

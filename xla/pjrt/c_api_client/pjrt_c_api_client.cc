@@ -1437,7 +1437,8 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
 absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
     absl::Span<PjRtBuffer* const> buffers,
     absl::Span<const GlobalDeviceId> dst_global_device_ids,
-    std::vector<CrossHostTransferKey> transfer_keys) {
+    std::vector<CrossHostTransferKey> transfer_keys,
+    absl::flat_hash_map<TaskId, IncarnationId> incarnations) {
   // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
@@ -1470,6 +1471,18 @@ absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
   auto send_events = std::vector<PJRT_Event*>(args.num_buffers);
   args.send_events = send_events.data();
 
+  std::vector<int> task_ids;
+  std::vector<int64_t> incarnation_ids;
+  task_ids.reserve(incarnations.size());
+  incarnation_ids.reserve(incarnations.size());
+  for (const auto& [task_id, incarnation_id] : incarnations) {
+    task_ids.push_back(task_id.value());
+    incarnation_ids.push_back(incarnation_id.value());
+  }
+  args.num_tasks = task_ids.size();
+  args.task_ids = task_ids.data();
+  args.incarnation_ids = incarnation_ids.data();
+
   RETURN_STATUS_IF_PJRT_ERROR(
       extension->PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(&args), c_api);
 
@@ -1487,7 +1500,8 @@ absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiClient::CrossHostReceiveBuffers(
     xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
     absl::Span<const GlobalDeviceId> src_global_device_ids,
-    std::vector<CrossHostTransferKey> transfer_keys) {
+    std::vector<CrossHostTransferKey> transfer_keys,
+    absl::flat_hash_map<TaskId, IncarnationId> incarnations) {
   // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
@@ -1527,6 +1541,18 @@ PjRtCApiClient::CrossHostReceiveBuffers(
 
   std::vector<PJRT_Buffer*> temp_buffers(shapes.size());
   args.buffers = temp_buffers.data();
+
+  std::vector<int> task_ids;
+  std::vector<int64_t> incarnation_ids;
+  task_ids.reserve(incarnations.size());
+  incarnation_ids.reserve(incarnations.size());
+  for (const auto& [task_id, incarnation_id] : incarnations) {
+    task_ids.push_back(task_id.value());
+    incarnation_ids.push_back(incarnation_id.value());
+  }
+  args.num_tasks = task_ids.size();
+  args.task_ids = task_ids.data();
+  args.incarnation_ids = incarnation_ids.data();
 
   RETURN_STATUS_IF_PJRT_ERROR(
       extension->PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(&args),
