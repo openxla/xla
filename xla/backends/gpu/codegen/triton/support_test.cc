@@ -3731,6 +3731,7 @@ constexpr std::array kUnsupportedOps = {
     HloOpcode::kDynamicReshape,
     HloOpcode::kDynamicSlice,
     HloOpcode::kDynamicUpdateSlice,
+    HloOpcode::kErfc,
     HloOpcode::kGather,
     HloOpcode::kMulhi,
     HloOpcode::kRaggedDot,

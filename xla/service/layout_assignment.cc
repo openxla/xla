@@ -3804,6 +3804,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kErf:
+    case HloOpcode::kErfc:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
     case HloOpcode::kFft:
