@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/util.h"
+#include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -5467,6 +5468,13 @@ static UseKind OperandElementUse(const HloInstruction& instr,
     case HloOpcode::kReduce:
       // Reduce reuses the init values but not the operand array elements.
       return operand_num >= Cast<HloReduceInstruction>(&instr)->input_count()
+                 ? UseKind::kReuse
+                 : UseKind::kUse;
+    case HloOpcode::kReduceWindow:
+      // Inputs are only read once when windows don't overlap.
+      return operand_num >= instr.operand_count() / 2 ||
+                     window_util::HasOverlappingWindow(instr.window()) ||
+                     window_util::HasWindowDilation(instr.window())
                  ? UseKind::kReuse
                  : UseKind::kUse;
     case HloOpcode::kFusion:
