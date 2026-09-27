@@ -55,12 +55,14 @@ class FakeCmd : public Command {
  public:
   explicit FakeCmd(Command::BufferUses uses = {}, int* update_count = nullptr,
                    bool requires_update_on_initialize = false,
-                   bool requires_update_on_execute = false)
+                   bool requires_update_on_execute = false,
+                   bool requires_warmup = false)
       : Command(Thunk::Kind::kCommand),
         uses_(std::move(uses)),
         update_count_(update_count),
         requires_update_on_initialize_(requires_update_on_initialize),
-        requires_update_on_execute_(requires_update_on_execute) {}
+        requires_update_on_execute_(requires_update_on_execute),
+        requires_warmup_(requires_warmup) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction action,
@@ -82,11 +84,14 @@ class FakeCmd : public Command {
     return requires_update_on_execute_;
   }
 
+  bool requires_warmup() const override { return requires_warmup_; }
+
  private:
   BufferUses uses_;
   int* update_count_;
   bool requires_update_on_initialize_;
   bool requires_update_on_execute_;
+  bool requires_warmup_;
 };
 
 // Convenience aliases for synchronization modes.
@@ -108,6 +113,48 @@ TEST(CommandExecutorTest, DuplicateAllocsCollapsedToOne) {
   // Both commands reference the same allocation index — should appear once.
   EXPECT_EQ(executor.allocs_indices().size(), 1);
   EXPECT_EQ(executor.allocs_indices()[0], 0);
+}
+
+// A FakeCmd that reports `nested` as its only nested command.
+class NestingCmd : public FakeCmd {
+ public:
+  explicit NestingCmd(Command* nested) : nested_(nested) {}
+
+ protected:
+  absl::Status WalkNestedCommands(CommandWalker callback) override {
+    return callback(nested_);
+  }
+
+ private:
+  Command* nested_;
+};
+
+TEST(CommandExecutorTest, EmptySequenceDoesNotRequireWarmup) {
+  ASSERT_OK_AND_ASSIGN(auto executor, CommandExecutor::Create({}, kSerialize));
+  EXPECT_FALSE(executor.requires_warmup());
+}
+
+TEST(CommandExecutorTest, RequiresWarmup) {
+  for (bool requires_warmup : {false, true}) {
+    CommandSequence commands;
+    commands.Emplace<FakeCmd>();
+    commands.Emplace<FakeCmd>(Command::BufferUses{}, nullptr, false, false,
+                              requires_warmup);
+    ASSERT_OK_AND_ASSIGN(auto executor, CommandExecutor::Create(
+                                            std::move(commands), kSerialize));
+    EXPECT_EQ(executor.requires_warmup(), requires_warmup);
+  }
+}
+
+TEST(CommandExecutorTest, RequiresWarmupInNestedCommands) {
+  for (bool requires_warmup : {false, true}) {
+    FakeCmd nested({}, nullptr, false, false, requires_warmup);
+    CommandSequence commands;
+    commands.Emplace<NestingCmd>(&nested);
+    ASSERT_OK_AND_ASSIGN(auto executor, CommandExecutor::Create(
+                                            std::move(commands), kSerialize));
+    EXPECT_EQ(executor.requires_warmup(), requires_warmup);
+  }
 }
 
 class CommandExecutorUpdateTest : public ::testing::Test {
