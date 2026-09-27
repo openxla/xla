@@ -116,6 +116,7 @@ cc_library(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_layout",
+        "//xla/pjrt:transpose",
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/service:device_assignment",
         "//xla/tsl/concurrency:future",

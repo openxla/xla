@@ -228,6 +228,11 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
   // Expose the base class's `MakeArrayFromHostBuffer` overloads.
   using xla::ifrt::Client::MakeArrayFromHostBuffer;
 
+  absl::StatusOr<ArrayRef> MakeArrayFromHostChunkedArray(
+      const ChunkedArray& chunked_array, ShardingRef sharding, LayoutRef layout,
+      HostBufferSemantics semantics,
+      std::function<void()> on_done_with_host_buffer) override;
+
   absl::StatusOr<std::vector<ArrayRef>> MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
       HostBufferSemantics semantics) override;

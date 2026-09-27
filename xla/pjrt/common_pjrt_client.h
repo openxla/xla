@@ -222,7 +222,7 @@ class CommonPjRtClient : public PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       const xla::Shape& device_shape, absl::Span<const uint32_t> dynamic_sizes,
-      PjRtRawBufferRef raw_buffer);
+      PjRtRawBufferRef raw_buffer, bool input_dim0_is_chunked = false);
 
   // Defines a pjrt buffer from a shape, raw_buffer and definition events.
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
@@ -346,6 +346,12 @@ class CommonPjRtClient : public PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       PjRtBuffer* donated_dst, const Layout* device_layout) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostChunkedArray(
+      const ChunkedArray& chunked_array,
+      HostBufferSemantics host_buffer_semantics,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+      PjRtMemorySpace* memory_space, const Layout* device_layout) override;
 
   using PjRtClient::BufferFromHostLiteral;
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(

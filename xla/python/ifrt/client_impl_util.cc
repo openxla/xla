@@ -99,6 +99,33 @@ bool CanUseMakeArrayFromHostBuffer(
   return false;
 }
 
+absl::StatusOr<ArrayRef> MakeArrayFromHostBufferShard(
+    Client* client, const Client::HostBuffer& host_buffer, ShardingRef sharding,
+    LayoutRef layout, Client::HostBufferSemantics semantics,
+    std::function<void()> on_done_with_host_buffer) {
+  if (host_buffer.input_dim0_is_chunked) {
+    if (host_buffer.shape.dims().empty()) {
+      return absl::InvalidArgumentError(
+          "Chunked host buffer must have rank >= 1");
+    }
+    Client::ChunkedArray chunked_array{
+        absl::Span<const void* const>(
+            static_cast<const void* const*>(host_buffer.data),
+            host_buffer.shape.dims()[0]),
+        host_buffer.shape,
+        host_buffer.byte_strides,
+        host_buffer.dtype,
+    };
+    return client->MakeArrayFromHostChunkedArray(
+        chunked_array, std::move(sharding), std::move(layout), semantics,
+        std::move(on_done_with_host_buffer));
+  }
+  return client->MakeArrayFromHostBuffer(
+      host_buffer.data, host_buffer.dtype, host_buffer.shape,
+      host_buffer.byte_strides, std::move(sharding), std::move(layout),
+      semantics, std::move(on_done_with_host_buffer));
+}
+
 }  // namespace
 
 absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
@@ -139,9 +166,8 @@ absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
 
       ABSL_ASSIGN_OR_RETURN(
           ArrayRef array,
-          client->MakeArrayFromHostBuffer(
-              host_buffer.data, host_buffer.dtype, std::move(host_buffer.shape),
-              host_buffer.byte_strides, std::move(spec.array_spec.sharding),
+          MakeArrayFromHostBufferShard(
+              client, host_buffer, std::move(spec.array_spec.sharding),
               /*layout=*/nullptr, semantics, std::move(host_buffer.on_done)));
       arrays.push_back(std::move(array));
       continue;
@@ -191,11 +217,10 @@ absl::StatusOr<std::vector<ArrayRef>> ClientMakeArraysFromHostBufferShards(
           layout = PjRtLayout::Create(spec.array_spec.layout);  // NOLINT
         }
         ABSL_ASSIGN_OR_RETURN(
-            shard, client->MakeArrayFromHostBuffer(
-                       host_buffer.data, host_buffer.dtype, host_buffer.shape,
-                       host_buffer.byte_strides, std::move(sharding),
-                       std::move(layout), semantics,
-                       on_done_with_host_buffer_per_device));
+            shard,
+            MakeArrayFromHostBufferShard(
+                client, host_buffer, std::move(sharding), std::move(layout),
+                semantics, on_done_with_host_buffer_per_device));
       }
       num_processed_shards += addressable_shard_indices.size();
     }
