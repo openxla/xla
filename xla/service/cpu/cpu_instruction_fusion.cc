@@ -56,6 +56,22 @@ bool CanBeLoopFused(const HloInstruction& hlo) {
          hlo.opcode() == HloOpcode::kTranspose;
 }
 
+// True if every input element is read at most once.
+bool HasNonOverlappingNonDilatedWindows(const HloInstruction& reduce_window) {
+  return absl::c_all_of(
+      reduce_window.window().dimensions(), [](const WindowDimension& dim) {
+        return dim.stride() >= dim.size() && dim.base_dilation() == 1 &&
+               dim.window_dilation() == 1;
+      });
+}
+
+bool CanBeLoopFusedConsumer(const HloInstruction& hlo) {
+  if (hlo.opcode() == HloOpcode::kReduceWindow) {
+    return HasNonOverlappingNonDilatedWindows(hlo);
+  }
+  return CanBeLoopFused(hlo);
+}
+
 bool IsNonComplexNonBatchedMatrixVectorDot(const HloInstruction* hlo) {
   const Shape& hlo_shape = hlo->shape();
   return !ShapeUtil::ElementIsComplex(hlo_shape) &&
@@ -83,7 +99,8 @@ bool CanBeOutputFusedIntoSomeOperand(const HloInstruction* consumer) {
 }
 
 bool IsMaxReduction(const HloInstruction* reduce) {
-  if (reduce->opcode() != HloOpcode::kReduce) {
+  if (reduce->opcode() != HloOpcode::kReduce &&
+      reduce->opcode() != HloOpcode::kReduceWindow) {
     return false;
   }
   const HloInstruction* root = reduce->to_apply()->root_instruction();
@@ -120,7 +137,8 @@ bool IsExpShiftCoupledSubtract(const HloInstruction& subtract,
 const HloInstruction* FindMaxReduceForShiftValue(
     const HloInstruction& shift_value) {
   for (const HloInstruction* user : shift_value.users()) {
-    if (user->opcode() == HloOpcode::kReduce &&
+    if ((user->opcode() == HloOpcode::kReduce ||
+         user->opcode() == HloOpcode::kReduceWindow) &&
         user->operand(0) == &shift_value && IsMaxReduction(user)) {
       return user;
     }
@@ -562,7 +580,7 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
     return FusionDecision::Allow();
   }
 
-  if (CanBeLoopFused(*consumer)) {
+  if (CanBeLoopFusedConsumer(*consumer)) {
     VLOG(2) << "Fusing: consumer is elementwise or fusible.";
     return FusionDecision::Allow();
   }

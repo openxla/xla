@@ -949,6 +949,194 @@ ENTRY main {
   EXPECT_THAT(module->entry_computation()->root_instruction(), op::Fusion());
 }
 
+TEST_F(InstructionFusionTest, FuseIntoNonOverlappingReduceWindow) {
+  // The reduce-window / reduce pair that TreeReductionRewriter produces. The
+  // producer fuses into the reduce-window, but the reduce-window must stay a
+  // separate stage so that the tree reduction is not collapsed again.
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[50,64]{1,0} parameter(0)
+  b = f32[50,64]{1,0} parameter(1)
+  c = f32[50,64]{1,0} add(a, b)
+  init = f32[] constant(0)
+  w = f32[50,2]{1,0} reduce-window(c, init), window={size=1x32 stride=1x32},
+    to_apply=add
+  ROOT r = f32[50]{0} reduce(w, init), dimensions={1}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(fused_something);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Reduce(op::Fusion(op::Parameter(), op::Parameter()),
+                         op::Constant()));
+  EXPECT_EQ(module->entry_computation()
+                ->root_instruction()
+                ->operand(0)
+                ->fused_expression_root()
+                ->opcode(),
+            HloOpcode::kReduceWindow);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseReduceWindowAsProducer) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[50,64]{1,0} parameter(0)
+  init = f32[] constant(0)
+  w = f32[50,2]{1,0} reduce-window(a, init), window={size=1x32 stride=1x32},
+    to_apply=add
+  ROOT n = f32[50,2]{1,0} negate(w)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseExpensiveOpIntoOverlappingReduceWindow) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,1024]{1,0} parameter(0)
+  e = f32[64,1024]{1,0} exponential(a)
+  init = f32[] constant(0)
+  ROOT w = f32[64,961]{1,0} reduce-window(e, init),
+    window={size=1x64 stride=1x1}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseCheapOpIntoOverlappingReduceWindow) {
+  // A cumulative sum: window size == N, stride 1.
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,128]{1,0} parameter(0)
+  b = f32[64,128]{1,0} parameter(1)
+  c = f32[64,128]{1,0} add(a, b)
+  init = f32[] constant(0)
+  ROOT w = f32[64,128]{1,0} reduce-window(c, init),
+    window={size=1x128 stride=1x1 pad=0_0x127_0}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseCheapOpIntoDilatedReduceWindow) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,128]{1,0} parameter(0)
+  b = f32[64,128]{1,0} parameter(1)
+  c = f32[64,128]{1,0} add(a, b)
+  init = f32[] constant(0)
+  ROOT w = f32[64,31]{1,0} reduce-window(c, init),
+    window={size=1x4 stride=1x4 rhs_dilate=1x2 pad=0_0x0_0}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotDuplicateShiftValueIntoReduceWindowMax) {
+  // Softmax after TreeReductionRewriter: the max is a reduce-window followed by
+  // a reduce. The shift value must not be duplicated into both the
+  // reduce-window and the exp(shift - max) branch.
+  absl::string_view module_string = R"(
+HloModule module
+
+max {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT max = f32[] maximum(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[50,64]{1,0} parameter(0)
+  s = f32[50,64]{1,0} parameter(1)
+  shift_value = f32[50,64]{1,0} multiply(a, s)
+  ninf = f32[] constant(-inf)
+  w = f32[50,2]{1,0} reduce-window(shift_value, ninf),
+    window={size=1x32 stride=1x32}, to_apply=max
+  m = f32[50]{0} reduce(w, ninf), dimensions={1}, to_apply=max
+  mb = f32[50,64]{1,0} broadcast(m), dimensions={0}
+  sub = f32[50,64]{1,0} subtract(shift_value, mb)
+  ROOT e = f32[50,64]{1,0} exponential(sub)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK(CpuInstructionFusion(&alias_info_).Run(module.get()).status());
+  const HloInstruction* shift_value = nullptr;
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    if (instr->name() == "shift_value") {
+      shift_value = instr;
+    }
+  }
+  ASSERT_NE(shift_value, nullptr);
+  EXPECT_EQ(shift_value->parent(), module->entry_computation());
+}
+
 TEST_F(OpcodeFusionTest, BigConstantNotInFusion) {
   absl::string_view module_string = R"(
 HloModule module
