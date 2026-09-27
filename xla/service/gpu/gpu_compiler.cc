@@ -2417,7 +2417,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
 namespace {
 
 bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
-  if (use.instruction->opcode() != HloOpcode::kCustomCall) {
+  if (!use.instruction->has_frontend_attributes()) {
     return false;
   }
   auto attr =
@@ -2440,7 +2440,7 @@ bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
 
 bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
   const HloInstruction* def = value->defining_instruction();
-  if (def->opcode() != HloOpcode::kCustomCall) {
+  if (!def->has_frontend_attributes()) {
     return false;
   }
 
