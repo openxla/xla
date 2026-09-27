@@ -2622,18 +2622,24 @@ mlir::NamedAttribute HloFunctionImporter::ConvertComparisonDirection(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertComparisonOrder(
     ComparisonOrder order) {
-  mlir::stablehlo::ComparisonType type;
   switch (order) {
     case ComparisonOrder::kPartial:
-      type = mlir::stablehlo::ComparisonType::FLOAT;
-      break;
+      return builder_->getNamedAttr(
+          "compare_type",
+          mlir::stablehlo::ComparisonTypeAttr::get(
+              builder_->getContext(), mlir::stablehlo::ComparisonType::FLOAT));
     case ComparisonOrder::kTotal:
-      type = mlir::stablehlo::ComparisonType::TOTALORDER;
-      break;
+      return builder_->getNamedAttr(
+          "compare_type", mlir::stablehlo::ComparisonTypeAttr::get(
+                              builder_->getContext(),
+                              mlir::stablehlo::ComparisonType::TOTALORDER));
+    case ComparisonOrder::kWeak:
+      // TODO(b/565612124): Map to mlir::stablehlo::ComparisonType::WEAKORDER
+      // once added to StableHLO.
+      LOG(FATAL) << "Unsupported comparison order: "
+                 << ComparisonOrderToString(order);
   }
-  return builder_->getNamedAttr(
-      "compare_type",
-      mlir::stablehlo::ComparisonTypeAttr::get(builder_->getContext(), type));
+  LOG(FATAL) << "Unhandled comparison order: " << static_cast<int>(order);
 }
 
 mlir::DenseIntElementsAttr HloFunctionImporter::ConvertDimensions(
