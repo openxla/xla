@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/layout.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -30,8 +31,11 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_topology.pb.h"
+#include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
