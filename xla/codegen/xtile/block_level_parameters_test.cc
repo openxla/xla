@@ -19,7 +19,6 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include "xla/codegen/xtile/xtile_config.pb.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 
 namespace xla::xtile {
 namespace {
