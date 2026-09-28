@@ -34,7 +34,16 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-class GpuCopyTest : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
+class GpuCopyTest : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = HloInterpreterReferenceMixin<
+        GpuPjRtCodegenTest>::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_enable_dynamic_slice_table_offsets(
+        true);
+    return debug_options;
+  }
+};
 
 // The GPU backend should not emit a copy kernel for the kCopy instruction in
 // this test. Instead, it should generate a CopyThunk which invokes cuMemcpy at
@@ -386,10 +395,14 @@ TEST_F(GpuCopyTest, DynamicUpdateSliceOffsetTable) {
       ROOT result = s32[3,5] get-tuple-element(loop), index=1
     })";
 
-  // TODO(ezhulenev): Once table offsets are enabled in DynamicSliceAnnotator,
-  // verify that only the loop condition and increment need kernels: the copy
-  // uses a linear source offset and destination offsets {0, 24, 48, 52, 56,
-  // 56}.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  // Only the loop condition and increment need kernels. The copy uses a linear
+  // source offset and destination offsets {0, 24, 48, 52, 56, 56}.
+  ASSERT_OK(CompileAndVerifyIr(std::move(module), R"(
+      CHECK-COUNT-2: define {{.*}}@
+      CHECK-NOT: define {{.*}}@)",
+                               /*match_optimized_ir=*/false,
+                               /*run_optimization_passes=*/true));
   EXPECT_TRUE(RunAndCompare(hlo, ErrorSpec{0, 0}));
 }
 

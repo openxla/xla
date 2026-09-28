@@ -994,6 +994,13 @@ message DebugOptions {
   // offsets match actual XLA-computed DS/DUS offsets. For debugging only.
   optional bool xla_gpu_experimental_dynamic_slice_fusion_verify_offsets = 484;
 
+  // Enables DynamicSliceAnnotator to represent non-linear DS/DUS offsets as a
+  // table with one entry per loop iteration.
+  //
+  // TODO(ezhulenev): Remove this flag and always enable table offsets two weeks
+  // after the runtime support has landed (GPU compatibility window).
+  optional bool xla_gpu_experimental_enable_dynamic_slice_table_offsets = 551;
+
   // Enable windowed einsum(collective matmul) rewrite for all-to-all + gemm
   // This feature is still experimental and effective only
   // xla_gpu_multi_streamed_windowed_einsum is set to true.

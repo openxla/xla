@@ -95,10 +95,11 @@ struct DynamicSliceDescriptor {
 // false, or if the table would exceed DynamicSliceDescriptor::kMaxTableOffsets
 // entries.
 //
-// TODO(ezhulenev): Remove `enable_table_offsets` two weeks after the runtime
-// support for table offsets has landed (see the GPU compatibility window in
-// docs/contributing.md). Until then, the production pipeline must not emit
-// table offsets that an older runtime cannot understand.
+// TODO(ezhulenev): Remove `enable_table_offsets` together with the
+// `xla_gpu_experimental_enable_dynamic_slice_table_offsets` flag two weeks
+// after the runtime support for table offsets has landed (see the GPU
+// compatibility window in docs/contributing.md). Until then, the production
+// pipeline must not emit table offsets that an older runtime cannot understand.
 absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     const HloInstruction* instr, bool enable_table_offsets = false);
 

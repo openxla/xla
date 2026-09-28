@@ -28,10 +28,11 @@ namespace xla::gpu {
 // DynamicSliceConfig backend config. Stores loop-dependent offsets as a linear
 // progression or a table indexed by iteration; static offsets use zero stride.
 //
-// TODO(ezhulenev): Remove `enable_table_offsets` two weeks after the runtime
-// support for table offsets has landed (see the GPU compatibility window in
-// docs/contributing.md). Until then, the production pipeline must not emit
-// table offsets that an older runtime cannot understand.
+// TODO(ezhulenev): Remove `enable_table_offsets` together with the
+// `xla_gpu_experimental_enable_dynamic_slice_table_offsets` flag two weeks
+// after the runtime support for table offsets has landed (see the GPU
+// compatibility window in docs/contributing.md). Until then, the production
+// pipeline must not emit table offsets that an older runtime cannot understand.
 class DynamicSliceAnnotator : public HloModulePass {
  public:
   explicit DynamicSliceAnnotator(bool enable_table_offsets = false)
