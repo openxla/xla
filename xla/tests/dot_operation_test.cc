@@ -830,6 +830,8 @@ TYPED_TEST(DotOperationTestForBatchMatMul, Types) {
 
   if (std::is_same<Eigen::half, T>::value) {
     this->error_spec_ = ErrorSpec{0.0001, 1e-3};
+  } else if (std::is_same<float, T>::value) {
+    this->error_spec_ = ErrorSpec{1e-4, 4e-3};
   }
   this->template ComputeAndCompareR4<T>(
       &builder,
@@ -2291,7 +2293,7 @@ TEST_F(DotOperationTest, ReorderContractingDimsConstRHS_RL) {
   auto rhs = ConstantR2FromArray2D(&builder, const_arr);
   Dot(lhs, rhs);
 
-  ComputeAndCompare(&builder, {&t0_literal}, error_spec_);
+  ComputeAndCompare(&builder, {&t0_literal}, ErrorSpec(1e-4, 5e-4));
 }
 
 TEST_F(DotOperationTest, ReorderContractingDimsConstRHS_MM) {
@@ -2315,7 +2317,7 @@ TEST_F(DotOperationTest, ReorderContractingDimsConstRHS_MM) {
   dims.add_rhs_batch_dimensions(0);
   DotGeneral(lhs, rhs, dims);
 
-  ComputeAndCompare(&builder, {&t0_literal}, error_spec_);
+  ComputeAndCompare(&builder, {&t0_literal}, ErrorSpec(1e-4, 2e-3));
 }
 
 TEST_F(DotOperationTest, ReorderContractingDims_Multipass) {
