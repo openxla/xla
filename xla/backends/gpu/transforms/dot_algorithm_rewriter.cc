@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -38,6 +37,7 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -339,8 +339,7 @@ absl::StatusOr<bool> DotAlgorithmRewriter::RunImpl(
   }
 
   bool changed = false;
-  bool default_to_bf16 = tsl::tensor_float_32_execution_enabled() &&
-                         module->config()
+  bool default_to_bf16 = module->config()
                              .debug_options()
                              .xla_gpu_default_to_alg_dot_bf16_bf16_f32();
   for (HloComputation* computation : module->computations()) {
