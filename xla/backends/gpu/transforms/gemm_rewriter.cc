@@ -1547,6 +1547,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     std::vector<HloInstruction*> operands_list = {a.fp8_input, b.fp8_input,
                                                   scales_f32[0], scales_f32[1]};
+    // On ROCm, an FP8 output always has a D scale as the last operand, as
+    // F8ConvertD would append.
+    if (gpu_version_.IsRocm() && primitive_util::IsF8Type(d_type)) {
+      operands_list.push_back(one());
+    }
 
     gemm_backend_config.set_scale_mode(
         static_cast<int32_t>(se::gpu::ScaleMode::kTensorScaling));
@@ -1619,6 +1624,41 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
+  // Returns whether the BLAS library supports an FP8 output of type `d_type`
+  // for the input types of `gemm`. On ROCm, C has the type of D (see
+  // matmul_utils.cc), and hipBLASLt supports E4M3 x E4M3 -> E4M3 and mixed
+  // E4M3/E5M2 inputs -> E5M2, plus mixed inputs -> E4M3 for OCP types.
+  absl::StatusOr<bool> IsSupportedF8OutputType(const HloInstruction& gemm,
+                                               PrimitiveType d_type) {
+    if (gpu_version_.IsCuda()) {
+      return d_type == F8E4M3FN || d_type == F8E5M2;
+    }
+    if (!gpu_version_.IsRocm() ||
+        toolkit_version_ < stream_executor::SemanticVersion{6, 2, 0}) {
+      return false;
+    }
+    ABSL_ASSIGN_OR_RETURN(auto rocm_compute_capability,
+                          GetRocmComputeCapability(gpu_version_));
+    PrimitiveType a_type = gemm.operand(0)->shape().element_type();
+    PrimitiveType b_type = gemm.operand(1)->shape().element_type();
+    bool has_e5m2_input = a_type == F8E5M2 || b_type == F8E5M2 ||
+                          a_type == F8E5M2FNUZ || b_type == F8E5M2FNUZ;
+    switch (d_type) {
+      case F8E4M3FN:
+        return rocm_compute_capability.has_ocp_fp8_support();
+      case F8E5M2:
+        return rocm_compute_capability.has_ocp_fp8_support() && has_e5m2_input;
+      case F8E4M3FNUZ:
+        return rocm_compute_capability.has_nanoo_fp8_support() &&
+               !has_e5m2_input;
+      case F8E5M2FNUZ:
+        return rocm_compute_capability.has_nanoo_fp8_support() &&
+               has_e5m2_input;
+      default:
+        return false;
+    }
+  }
+
   absl::Status F8ConvertD(HloInstruction* instr, HloInstruction* existing_gemm,
                           HloInstruction* d_scale, HloInstruction* clamp_lower,
                           HloInstruction* clamp_upper,
@@ -1653,6 +1693,18 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
     } else {
+      return absl::OkStatus();
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        bool is_supported_output_type,
+        IsSupportedF8OutputType(*existing_gemm, instr->shape().element_type()));
+    if (!is_supported_output_type) {
+      VLOG(1) << "The conversion of the result of "
+              << existing_gemm->ToShortString() << " to "
+              << PrimitiveType_Name(instr->shape().element_type())
+              << " is not fused into the FP8 Custom Call because the output "
+                 "type is not supported for its input types.";
       return absl::OkStatus();
     }
 

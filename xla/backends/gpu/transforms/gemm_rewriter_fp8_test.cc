@@ -27,6 +27,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -51,6 +52,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -334,6 +336,12 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
   checks.append(
       R"(; CHECK-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
 )");
+  } else {
+    checks.append(
+        R"(; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]], [[C1]]),
+)");
+  }
   checks.append(
       R"(; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
@@ -386,7 +394,8 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[32,16]{1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]]), dimensions={1,0}
 ; CHECK-NEXT:    [[C1:[^ ]+]] = f32[] constant(1)
-; CHECK-NEXT:    [[DOT_TUPLE:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
+; CHECK-PTX-NEXT:    [[DOT_TUPLE:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
+; CHECK-GCN-NEXT:    [[DOT_TUPLE:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]], [[C1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -2560,11 +2569,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
   module->mutable_config().mutable_debug_options().set_xla_gpu_autotune_level(
       0);
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> args,
-                          MakeFakeArguments(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> args,
+                       MakeFakeArguments(module.get()));
   args[2] = LiteralUtil::CreateR0<bfloat16>(static_cast<bfloat16>(4.0f));
   args[3] = LiteralUtil::CreateR0<bfloat16>(static_cast<bfloat16>(8.0f));
   args[4] = LiteralUtil::CreateR0<bfloat16>(static_cast<bfloat16>(0.5f));
@@ -2572,8 +2581,102 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
   for (const Literal& arg : args) {
     arg_ptrs.push_back(&arg);
   }
+  // The relative tolerance allows one E4M3 ULP (2^-3).
   EXPECT_TRUE(
       RunAndCompare(std::move(module), arg_ptrs, ErrorSpec{1e-2, 1.3e-1}));
+
+  // The FP8-output rewrite must fire, otherwise the D scale is not involved.
+  // Checked after RunAndCompare so that its compilation cannot reuse
+  // autotuning results from this one.
+  MatchOptimizedHlo(hlo_text, R"(
+; CHECK: <<F8E4M3>>[2,128,128]{{.*}} custom-call({{.*}}custom_call_target="__cublas$lt$matmul$f8"
+  )");
+}
+
+// hipBLASLt does not support a matrix bias with an FP8 output, so the output
+// scaling and conversion stay unfused on ROCm.
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasF8) {
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = <<F8E4M3>>[16,32] parameter(0)
+      y = <<F8E4M3>>[32,16] parameter(1)
+      x_f16 = f16[16,32] convert(x)
+      y_f16 = f16[32,16] convert(y)
+      b = f16[16,16] parameter(2)
+      x_scale = f16[] parameter(3)
+      y_scale = f16[] parameter(4)
+      z_scale = f16[] parameter(5)
+      x_scale_bcast = f16[16,32] broadcast(x_scale), dimensions={}
+      y_scale_bcast = f16[32,16] broadcast(y_scale), dimensions={}
+      z_scale_bcast = f16[16,16] broadcast(z_scale), dimensions={}
+      x_unscaled = f16[16,32] multiply(x_f16, x_scale_bcast)
+      y_unscaled = f16[32,16] multiply(y_f16, y_scale_bcast)
+      dot_a = f16[16,16] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot_a_bias = f16[16,16] add(dot_a, b)
+      dot_a_scaled = f16[16,16] divide(dot_a_bias, z_scale_bcast)
+      c1 = f16[] constant(-<<F8E4M3_AMAX>>)
+      c1_bcast = f16[16,16] broadcast(c1), dimensions={}
+      c2 = f16[] constant(<<F8E4M3_AMAX>>)
+      c2_bcast = f16[16,16] broadcast(c2), dimensions={}
+      dot_a_clamped = f16[16,16] clamp(c1_bcast, dot_a_scaled, c2_bcast)
+      ROOT dot_a_f8 = <<F8E4M3>>[16,16] convert(dot_a_clamped)
+    }
+)";
+
+  CheckFp8IfSupported(hlo_text, ErrorSpec{0.1, 0.1});
+  RunAndFilecheckHloRewrite(
+      hlo_text,
+      GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
+      R"(
+; CHECK-PTX:     = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK-GCN:     = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
+      )");
+}
+
+// hipBLASLt has no E4M3 x E4M3 -> E5M2 kernels, so the conversion to E5M2
+// stays unfused on ROCm.
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDToE5M2F8) {
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = <<F8E4M3>>[16,32] parameter(0)
+      y = <<F8E4M3>>[32,16] parameter(1)
+      x_f32 = f32[16,32] convert(x)
+      y_f32 = f32[32,16] convert(y)
+      x_scale = f32[] parameter(2)
+      y_scale = f32[] parameter(3)
+      z_scale = f32[] parameter(4)
+      x_scale_bcast = f32[16,32] broadcast(x_scale), dimensions={}
+      y_scale_bcast = f32[32,16] broadcast(y_scale), dimensions={}
+      z_scale_bcast = f32[16,16] broadcast(z_scale), dimensions={}
+      x_unscaled = f32[16,32] multiply(x_f32, x_scale_bcast)
+      y_unscaled = f32[32,16] multiply(y_f32, y_scale_bcast)
+      dot_a = f32[16,16] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot_a_scaled = f32[16,16] divide(dot_a, z_scale_bcast)
+      c1 = f32[] constant(-57344.)
+      c1_bcast = f32[16,16] broadcast(c1), dimensions={}
+      c2 = f32[] constant(57344.)
+      c2_bcast = f32[16,16] broadcast(c2), dimensions={}
+      dot_a_clamped = f32[16,16] clamp(c1_bcast, dot_a_scaled, c2_bcast)
+      ROOT dot_a_f8 = <<F8E5M2>>[16,16] convert(dot_a_clamped)
+    }
+)";
+
+  CheckFp8IfSupported(hlo_text);
+  RunAndFilecheckHloRewrite(
+      hlo_text,
+      GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
+      R"(
+; CHECK-PTX:     = (<<F8E5M2>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK-GCN:     = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
+      )");
 }
 
 TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
