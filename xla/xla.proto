@@ -172,6 +172,9 @@ message DebugOptions {
   // If true, GTE (get-tuple-element) instructions will be compacted when
   // printing HLO.
   optional bool xla_dump_compact_gte = 495;
+  // If true, the full custom call body of CustomCall instructions will be
+  // printed when dumping HLOs; otherwise "..." is printed.
+  optional bool xla_dump_custom_call_body = 550;
   // Use HloShardingV3 which is a mesh and axis based sharding representation.
   optional bool xla_enable_hlo_sharding_v3 = 452;
   // Setting xla_enable_scoped_logging_timers to false will disable some of the
