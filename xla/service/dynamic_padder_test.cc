@@ -1190,6 +1190,10 @@ TEST_F(ExecutionTest, OutOfBoundsDynamicDimensionSizeClamped) {
   // Regression test for https://github.com/openxla/xla/issues/44940: a
   // runtime size beyond the dimension bound used to become an unchecked
   // copy bound in SliceToDynamic, corrupting memory.
+  // The interpreter cannot execute the SliceToDynamic custom call.
+  if (test::DeviceIs(test::kInterpreter)) {
+    GTEST_SKIP();
+  }
   const std::string hlo_text = R"(
 HloModule OversizeDynamicSize
 
