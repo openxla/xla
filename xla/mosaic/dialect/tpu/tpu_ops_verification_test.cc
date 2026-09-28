@@ -1286,14 +1286,14 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskRank) {
   Value src = ConstantI32Vector(/*shape=*/{1, 8}, /*values=*/{1});
   Type dst = VectorType::get(/*shape=*/{1, 8}, /*type=*/builder().getI32Type());
-  Value mask = ConstantI1Vector(/*shape=*/{1, 8}, /*values=*/{true});
+  Value mask = ConstantI1Vector(/*shape=*/{1, 1, 8}, /*values=*/{true});
 
   ASSERT_THAT(
       VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 0)),
       StatusIs(
-          _,
-          HasSubstr(
-              "must be vector of 1-bit signless integer values of ranks 1")));
+          _, HasSubstr(
+                 "Mask and input mismatch. Expected mask rank to be 1 or match "
+                 "input rank (2), but got 3.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
@@ -1303,8 +1303,9 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
 
   ASSERT_THAT(
       VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 1)),
-      StatusIs(_, HasSubstr("Mask and input mismatch. Expected mask of "
-                            "length: 8, but got 16.")));
+      StatusIs(_, HasSubstr("Mask and input mismatch. Expected mask shape to "
+                            "match input shape (1, 8) or be 1D of length 8, "
+                            "but got 16.")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidDimension) {
