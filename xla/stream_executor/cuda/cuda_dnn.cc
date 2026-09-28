@@ -30,7 +30,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/optimization.h"
@@ -52,7 +51,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
-#include "tsl/platform/tensor_float_32_utils.h"
+#include "Eigen/Core"
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -66,6 +65,7 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/event_based_timer.h"
+#include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"
@@ -76,6 +76,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 // clang-format off
 #include "third_party/gpus/cuda/include/library_types.h"
@@ -6892,12 +6893,34 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
       graph_.select_behavior_notes(
           {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
     }
+    if (engine_options.force_tensor_ir) {
+      // CUTLASS FALLBACK engines (eng0..eng2) report
+      // NUMERICAL_NOTE_TENSOR_CORE;
+      // CUDNN_GENERIC_MEMBOUND_FUSION_TENSOR_IR_ENGINE (eng3) does not.
+      graph_.deselect_numeric_notes(
+          {cudnn_frontend::NumericalNote_t::TENSOR_CORE});
+    }
     return absl::OkStatus();
   };
+
+  force_tensor_ir_ = engine_options.force_tensor_ir;
 
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
+    // cuDNN's TensorIR engine eagerly loads CUDA modules during "compile"
+    // when some context is current; explicitly clearing any CUDA context
+    // left active by unrelated prior work on this thread makes it defer
+    // that work to execute time instead, where XLA's real Execute() path
+    // (via CudnnHandle's RAII) always activates the correct context on its
+    // own. See the deviceless branch below for a different, unrelated reason
+    // ScopedDeactivateContext is used there.
+    std::unique_ptr<ActivateContext> context =
+        force_tensor_ir_
+            ? std::unique_ptr<ActivateContext>(
+                  std::make_unique<
+                      stream_executor::gpu::ScopedDeactivateContext>())
+            : cudnn_support.GetParent()->Activate();
     ABSL_ASSIGN_OR_RETURN(auto cudnn_handle,
                           cudnn_support.cudnn_->GetCompilationHandle());
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
@@ -6907,6 +6930,11 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
   } else {
     // Deviceless mode. No cuDNN version guard needed: DeviceProperties
     // deserialization inside BuildDeviceProperties rejects runtimes < 9.8.
+    // Explicitly clear any CUDA context left active by unrelated prior work
+    // on this thread, so cuDNN's internal "is a context current?" checks
+    // reliably see this compile as truly deviceless rather than incidentally
+    // picking up a leftover context.
+    stream_executor::gpu::ScopedDeactivateContext deactivate;
     ABSL_ASSIGN_OR_RETURN(auto device_props,
                           xla::gpu::BuildDeviceProperties(gpu_device_info));
     graph_.set_device_properties(device_props);
@@ -6924,6 +6952,15 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
   if (dnn_support) {
     const CudnnSupport& cudnn_support =
         static_cast<CudnnSupport&>(*dnn_support);
+    // See the comment in Prepare()'s device branch: only the TensorIR path
+    // needs the context cleared, everything else needs it activated as
+    // usual or cuDNN's precompiled engines segfault.
+    std::unique_ptr<ActivateContext> context =
+        force_tensor_ir_
+            ? std::unique_ptr<ActivateContext>(
+                  std::make_unique<
+                      stream_executor::gpu::ScopedDeactivateContext>())
+            : cudnn_support.GetParent()->Activate();
     ABSL_ASSIGN_OR_RETURN(auto cudnn_handle,
                           cudnn_support.cudnn_->GetCompilationHandle());
     if (plan_id.has_value()) {
@@ -6933,6 +6970,9 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
     RETURN_CUDNN_FRONTEND_STATUS(graph_.build_plans(cudnn_handle));
   } else {
     // no need to set_device_properties, it is done in Prepare()
+    // See the comment in Prepare()'s deviceless branch for why this is
+    // cleared explicitly rather than relying on no context being ambient.
+    stream_executor::gpu::ScopedDeactivateContext deactivate;
     if (plan_id.has_value()) {
       RETURN_CUDNN_FRONTEND_STATUS(graph_.build_plan_at_index(*plan_id));
     }
