@@ -73,6 +73,33 @@ se::Stream* ToStream(const Communicator::Executor& executor) {
   return absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
 }
 
+// Releases a communicator that Create has not published yet. A non-blocking
+// ncclCommAbort returns ncclInProgress and is finished only once
+// ncclCommGetAsyncError leaves that state. `poll_status` stays the caller's
+// poll error.
+void AbortUnownedCommunicator(ncclComm_t comm,
+                              const absl::Status& poll_status) {
+  ncclResult_t abort = ncclCommAbort(comm);
+  if (abort == ncclInProgress) {
+    ncclResult_t state = ncclInProgress;
+    while (state == ncclInProgress) {
+      ncclResult_t query = ncclCommGetAsyncError(comm, &state);
+      if (query != ncclSuccess && query != ncclInProgress) {
+        LOG(ERROR) << "Failed to poll RCCL communicator " << comm
+                   << " abort: " << ncclGetErrorString(query)
+                   << "; poll status: " << poll_status;
+        return;
+      }
+    }
+    return;
+  }
+  if (abort != ncclSuccess) {
+    LOG(ERROR) << "Failed to abort RCCL communicator " << comm
+               << " after initialization poll failed: "
+               << ncclGetErrorString(abort) << "; poll status: " << poll_status;
+  }
+}
+
 }  // namespace
 
 //==-----------------------------------------------------------------------===//
@@ -84,11 +111,17 @@ absl::StatusOr<std::unique_ptr<RcclCommunicator>> RcclCommunicator::Create(
     std::shared_ptr<CancellationToken> cancel, bool is_async, tsl::Env& env) {
   auto f = [cancel, &make_comm]() -> absl::StatusOr<ncclComm_t> {
     ABSL_ASSIGN_OR_RETURN(ncclComm_t comm, make_comm());
-    if (cancel) {
-      ABSL_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, *cancel));
-    } else {
-      CancellationToken never_cancelled;
-      ABSL_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, never_cancelled));
+    // No RcclCommunicator owns this comm yet, so a failed poll must abort it
+    // here. ncclCommDestroy can hang while the comm is still ncclInProgress.
+    const CancellationToken* token = cancel.get();
+    CancellationToken never_cancelled;
+    if (token == nullptr) {
+      token = &never_cancelled;
+    }
+    absl::Status ready = ::xla::gpu::PollUntilDone(comm, *token);
+    if (!ready.ok()) {
+      AbortUnownedCommunicator(comm, ready);
+      return ready;
     }
     return comm;
   };

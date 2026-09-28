@@ -702,11 +702,6 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       cancel = it->second;
     }
 
-    {  // At this point clique is no longer pending, it has a definitive state.
-      absl::MutexLock lock(state.mu);
-      state.pending_cliques.erase(CliqueCacheKey(collectives, clique_key));
-    }
-
     // Don't hold cliques.mu while creating the communicators, because creating
     // communicators can block.
     VLOG(5) << absl::StrFormat("[%s] [ranks=%s] Splitting communicators for %v",
@@ -714,6 +709,11 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
                                DeviceRanksToString(ranks), clique_key);
     auto split_comms = collectives->SplitCommunicatorsWithCancel(
         parent_comms, color, keys, config, ranks, cancel);
+
+    {  // At this point clique is no longer pending, it has a definitive state.
+      absl::MutexLock lock(state.mu);
+      state.pending_cliques.erase(CliqueCacheKey(collectives, clique_key));
+    }
 
     if (!split_comms.ok()) {
       return split_comms.status();
@@ -1016,10 +1016,17 @@ bool CliqueKeyContainsIncarnation(
 // incarnations is [1, 2], then all cliques with a clique key that includes
 // incarnations 1 or 2 will be aborted.
 //
+// Calls still inside CreateCommunicatorsWithCancel or
+// SplitCommunicatorsWithCancel are not in `cliques` yet. Their tokens are
+// cancelled here so PollUntilDone can return. Those tokens stay in
+// `pending_cliques` until the call itself removes them.
+//
 // REQUIRES: GetProcessGpuCliques().mu held
 static absl::Status AbortCliquesWithIncarnations(
     absl::flat_hash_map<CliqueCacheKey, std::shared_ptr<LockableGpuClique>>&
         cliques,
+    absl::flat_hash_map<CliqueCacheKey, std::shared_ptr<CancellationToken>>&
+        pending_cliques,
     absl::Span<const IncarnationId> incarnations) {
   VLOG(1) << "Aborting GPU cliques for incarnations: ["
           << absl::StrJoin(incarnations, ", ") << "]";
@@ -1027,6 +1034,17 @@ static absl::Status AbortCliquesWithIncarnations(
 
   absl::flat_hash_set<IncarnationId> incarnation_set(incarnations.begin(),
                                                      incarnations.end());
+
+  // The in-progress init or split has no LockableGpuClique yet, and no
+  // communicators to Abort() here. Cancel() is an atomic store and does not
+  // require dropping `mu`.
+  for (auto& [cache_key, cancel] : pending_cliques) {
+    if (cancel != nullptr &&
+        CliqueKeyContainsIncarnation(cache_key.second, incarnation_set)) {
+      VLOG(1) << "Canceling pending GPU clique init " << cache_key.second;
+      cancel->Cancel();
+    }
+  }
 
   // Send cancellation signal to communicators in the cliques that are about
   // to be aborted, so that they can cancel pending collective operations.
@@ -1094,6 +1112,8 @@ static absl::Status AbortCliquesWithIncarnations(
 static absl::Status AbortOnFailure(
     absl::flat_hash_map<CliqueCacheKey, std::shared_ptr<LockableGpuClique>>&
         cliques,
+    absl::flat_hash_map<CliqueCacheKey, std::shared_ptr<CancellationToken>>&
+        pending_cliques,
     absl::Span<const coordination::TaskInfo> previous_state,
     absl::Span<const coordination::TaskInfo> current_state) {
   GetProcessGpuCliques().mu.AssertHeld();
@@ -1135,7 +1155,8 @@ static absl::Status AbortOnFailure(
   }
 
   if (!failed_incarnations.empty()) {
-    return AbortCliquesWithIncarnations(cliques, failed_incarnations);
+    return AbortCliquesWithIncarnations(cliques, pending_cliques,
+                                        failed_incarnations);
   }
   return absl::OkStatus();
 }
@@ -1143,7 +1164,8 @@ static absl::Status AbortOnFailure(
 absl::Status UpdateGlobalProcessInfo(absl::Span<coordination::TaskInfo> infos) {
   ProcessGpuCliques& state = GetProcessGpuCliques();
   absl::MutexLock lock(state.mu);
-  absl::Status s = AbortOnFailure(state.cliques, state.task_state_infos, infos);
+  absl::Status s = AbortOnFailure(state.cliques, state.pending_cliques,
+                                  state.task_state_infos, infos);
   if (!s.ok()) {
     LOG(WARNING) << s;
   }
@@ -1174,8 +1196,8 @@ absl::Status AbortCollectivesOnTaskFailure(int failed_task_id,
   it->mutable_error_payload()->set_source_task_id(failed_task_id);
   it->mutable_error_payload()->set_is_reported_error(true);
 
-  absl::Status s =
-      AbortOnFailure(state.cliques, state.task_state_infos, updated);
+  absl::Status s = AbortOnFailure(state.cliques, state.pending_cliques,
+                                  state.task_state_infos, updated);
   state.task_state_infos = std::move(updated);
   return s;
 }
