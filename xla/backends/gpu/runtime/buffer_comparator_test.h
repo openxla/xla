@@ -16,15 +16,15 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_BUFFER_COMPARATOR_TEST_H_
 #define XLA_BACKENDS_GPU_RUNTIME_BUFFER_COMPARATOR_TEST_H_
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <complex>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"

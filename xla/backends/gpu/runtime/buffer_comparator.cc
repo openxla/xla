@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -365,15 +366,18 @@ static absl::StatusOr<bool> HostCompare(const ComparisonParams& params) {
     static tsl::thread::ThreadPool* pool = new tsl::thread::ThreadPool(
         tsl::Env::Default(), "buffer_comparator_host", num_threads);
     absl::Mutex mu;
-    pool->ParallelFor(n, /*cost_per_unit=*/8,
-                      [&](int64_t start, int64_t limit) {
-                        BufferMismatchStats local;
-                        for (int64_t i = start; i < limit; ++i) {
-                          process_element(i, local);
-                        }
-                        absl::MutexLock lock(&mu);
-                        merge_stats(stats, local);
-                      });
+    pool->ParallelFor(
+        n,
+        tsl::thread::ThreadPool::SchedulingParams::Fixed(
+            /*block_size=*/std::max<int64_t>(1, n / (num_threads * 4))),
+        [&](int64_t start, int64_t limit) {
+          BufferMismatchStats local;
+          for (int64_t i = start; i < limit; ++i) {
+            process_element(i, local);
+          }
+          absl::MutexLock lock(mu);
+          merge_stats(stats, local);
+        });
     // Keep the lowest-index samples for a deterministic report.
     std::sort(stats.sample_mismatches.begin(), stats.sample_mismatches.end(),
               [](const MismatchSample& a, const MismatchSample& b) {
