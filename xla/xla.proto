@@ -175,6 +175,9 @@ message DebugOptions {
   // If true, GTE (get-tuple-element) instructions will be compacted when
   // printing HLO.
   optional bool xla_dump_compact_gte = 495;
+  // If true, the full custom call body of CustomCall instructions will be
+  // printed when dumping HLOs; otherwise "..." is printed.
+  optional bool xla_dump_custom_call_body = 556;
   // Use HloShardingV3 which is a mesh and axis based sharding representation.
   optional bool xla_enable_hlo_sharding_v3 = 452;
   // Setting xla_enable_scoped_logging_timers to false will disable some of the
@@ -1931,7 +1934,7 @@ message DebugOptions {
   // Enables Raft for stable TopK.
   optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
 
-  // Next id: 556
+  // Next id: 557
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

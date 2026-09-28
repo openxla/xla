@@ -4065,6 +4065,69 @@ std::string PrintCycle(const HloInstruction* child, DFSStack* dfs_stack,
   return result;
 }
 
+std::string ElideCustomCallBody(absl::string_view input) {
+  std::string result;
+  size_t append_pos = 0;
+  size_t search_pos = 0;
+  while (search_pos < input.size()) {
+    size_t body_pos = input.find("body", search_pos);
+    if (body_pos == absl::string_view::npos) {
+      break;
+    }
+    size_t key_end = body_pos + 4;
+    bool valid_key = false;
+    if (body_pos > 0 && input[body_pos - 1] == '"' && key_end < input.size() &&
+        input[key_end] == '"') {
+      valid_key = true;
+      ++key_end;
+    } else if (body_pos > 0 &&
+               (input[body_pos - 1] == '{' || input[body_pos - 1] == ',' ||
+                absl::ascii_isspace(input[body_pos - 1]))) {
+      valid_key = true;
+    }
+    if (!valid_key) {
+      search_pos = body_pos + 4;
+      continue;
+    }
+    size_t colon_pos = key_end;
+    while (colon_pos < input.size() && absl::ascii_isspace(input[colon_pos])) {
+      ++colon_pos;
+    }
+    if (colon_pos >= input.size() || input[colon_pos] != ':') {
+      search_pos = key_end;
+      continue;
+    }
+    size_t val_start = colon_pos + 1;
+    while (val_start < input.size() && absl::ascii_isspace(input[val_start])) {
+      ++val_start;
+    }
+    if (val_start >= input.size() || input[val_start] != '"') {
+      search_pos = val_start;
+      continue;
+    }
+    size_t val_end = val_start + 1;
+    while (val_end < input.size() && input[val_end] != '"') {
+      if (input[val_end] == '\\' && val_end + 1 < input.size()) {
+        val_end += 2;
+      } else {
+        ++val_end;
+      }
+    }
+    if (val_end >= input.size()) {
+      break;
+    }
+    absl::StrAppend(
+        &result, input.substr(append_pos, val_start + 1 - append_pos), "...");
+    append_pos = val_end;
+    search_pos = val_end + 1;
+  }
+  if (result.empty()) {
+    return "";
+  }
+  absl::StrAppend(&result, input.substr(append_pos));
+  return result;
+}
+
 }  // namespace
 
 void HloInstruction::Print(Printer* printer,
@@ -4318,6 +4381,15 @@ void HloInstruction::PrintWithCanonicalNameMap(
   }
   if (options.print_backend_config() && !backend_config_->empty()) {
     absl::string_view config = backend_config_->GetRawString();
+    std::string elided_config;
+    if (!printer->is_hasher() && !options.print_custom_call_body() &&
+        (opcode() == HloOpcode::kCustomCall ||
+         opcode() == HloOpcode::kFusion)) {
+      elided_config = ElideCustomCallBody(config);
+      if (!elided_config.empty()) {
+        config = elided_config;
+      }
+    }
     std::string sorted_config;
     if (options.sort_backend_config()) {
       // Use `value_or` below, because the backend config string isn't
