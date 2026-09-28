@@ -202,10 +202,10 @@ class GpuBlasLtThunkBuilder {
 
 void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
     se::StreamExecutor* executor, absl::string_view hlo_string) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          this->ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       this->ParseAndReturnVerifiedModule(hlo_string));
   GemmRewriterOptions options;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RunHloPass(GemmRewriter(gpu_comp(executor),
                               /*toolkit_version=*/se::SemanticVersion{12, 4, 0},
@@ -217,7 +217,7 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
   std::vector<std::unique_ptr<CublasLtMatmulThunk>> gemm_thunks;
   for (auto* instr : module->entry_computation()->instructions()) {
     if (IsCublasLtMatmul(*instr)) {
-      TF_ASSERT_OK_AND_ASSIGN(auto thunk, builder.CreateThunk(instr));
+      ASSERT_OK_AND_ASSIGN(auto thunk, builder.CreateThunk(instr));
       gemm_thunks.push_back(std::move(thunk));
     }
   }
@@ -250,7 +250,7 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
                                  num_streams);
     // use two different loops to make sure all threads start at the same time
     for (auto& [s, _] : threads) {
-      TF_ASSERT_OK_AND_ASSIGN(s, executor->CreateStream());
+      ASSERT_OK_AND_ASSIGN(s, executor->CreateStream());
     }
     // some compilers complain about lambda capture of structured bindings
     for (auto& info : threads) {
@@ -353,9 +353,8 @@ ENTRY AddDotsFunc {
   debug_opts.set_xla_gpu_autotune_level(1);
   debug_opts.set_xla_gpu_enable_triton_gemm(false);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> module,
-      ParseAndReturnVerifiedModule(simple_gemm_hlo, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(simple_gemm_hlo, config));
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-3, 1e-3}));
   EXPECT_EQ(blas_lt->GetMatmulPlanCacheSize(), 1);
 }
@@ -390,9 +389,8 @@ ENTRY AddRaggedDotsFunc {
 
   debug_opts.set_xla_gpu_enable_triton_gemm(false);
   debug_opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> grouped_module,
-      ParseAndReturnVerifiedModule(grouped_gemm_hlo, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> grouped_module,
+                       ParseAndReturnVerifiedModule(grouped_gemm_hlo, config));
   EXPECT_TRUE(RunAndCompare(std::move(grouped_module), ErrorSpec{1e-4, 1e-5}));
   EXPECT_EQ(blas_lt->GetMatmulPlanCacheSize(), 1);
 }
@@ -514,14 +512,14 @@ TEST_F(GpuBlasLtMatmulThunkTest, StraddlingAlgorithmCountsDoNotRefetchPerCall) {
   se::gpu::BlasLt::MatmulPlan* plan = nullptr;
 
   for (int i = 0; i < 10; ++i) {
-    TF_ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
-                                      key, create_func, /*algorithm_idx=*/0,
-                                      /*num_algorithms=*/1,
-                                      /*max_workspace_size=*/0));
-    TF_ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
-                                      key, create_func, /*algorithm_idx=*/20,
-                                      /*num_algorithms=*/kNumAlgorithms,
-                                      /*max_workspace_size=*/0));
+    ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                   key, create_func, /*algorithm_idx=*/0,
+                                   /*num_algorithms=*/1,
+                                   /*max_workspace_size=*/0));
+    ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                   key, create_func, /*algorithm_idx=*/20,
+                                   /*num_algorithms=*/kNumAlgorithms,
+                                   /*max_workspace_size=*/0));
   }
 
   // The entry stays shared -- keying on the algorithm index instead would give
@@ -642,7 +640,7 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerialization) {
       BufferAllocation(/*index=*/5, /*size=*/161600, /*color=*/0),
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Thunk> thunk,
       CublasLtMatmulThunk::FromProto(thunk_info, proto, allocations));
 
@@ -721,7 +719,7 @@ TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerializationGroupedMatmul) {
       BufferAllocation(/*index=*/6, /*size=*/8, /*color=*/0),
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Thunk> thunk,
       CublasLtMatmulThunk::FromProto(thunk_info, proto, allocations));
 
@@ -777,8 +775,8 @@ class CublasLtMatmulThunkCmdBufTest : public ::testing::Test {
       GTEST_SKIP() << "GPU graph tracing is not supported";
     }
 
-    TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
-    TF_ASSERT_OK_AND_ASSIGN(trace_stream_, executor_->CreateStream());
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
+    ASSERT_OK_AND_ASSIGN(trace_stream_, executor_->CreateStream());
 
     // Allocate and initialize device buffers.
     a_buf_ = executor_->AllocateArray<float>(2 * 4);
@@ -810,7 +808,7 @@ class CublasLtMatmulThunkCmdBufTest : public ::testing::Test {
         BufferAllocation::Slice(&alloc_workspace_, 0, kWorkspaceLength),
         ShapeUtil::MakeShape(U8, {1024, 1024})};
 
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         GemmConfig config,
         GemmConfig::For(
             ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), {}, {1},
@@ -877,10 +875,10 @@ TEST_F(CublasLtMatmulThunkCmdBufTest, RecordCommandBuffer) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* cmd,
       thunk_->Record(*params_, record_params,
                      Command::RecordCreate{/*dependencies=*/{}},
@@ -900,10 +898,10 @@ TEST_F(CublasLtMatmulThunkCmdBufTest, RecordCommandBufferUpdate) {
   Command::RecordParams record_params = {state};
 
   // First recording: RecordCreate.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* cmd,
       thunk_->Record(*params_, record_params,
                      Command::RecordCreate{/*dependencies=*/{}},
@@ -922,7 +920,7 @@ TEST_F(CublasLtMatmulThunkCmdBufTest, RecordCommandBufferUpdate) {
   ASSERT_OK(stream_->MemZero(&d_buf_, kDLength));
 
   // Second recording: RecordUpdate with same buffers → cache hit, same cmd.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk_->Record(*params_, record_params, Command::RecordUpdate{cmd},
                      command_buffer.get()));
