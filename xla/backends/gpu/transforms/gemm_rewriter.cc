@@ -1623,10 +1623,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                           HloInstruction* d_scale, HloInstruction* clamp_lower,
                           HloInstruction* clamp_upper,
                           bool mult_scale = false) {
-    // TODO: add ROCm support to this fusion pattern
-    if (gpu_version_.IsRocm()) {
-      return absl::OkStatus();
-    }
     // Verify the data types and the operands of clamp.
     if (instr->shape().element_type() == F8E4M3FN) {
       if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
@@ -1640,6 +1636,20 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               std::numeric_limits<tsl::float8_e5m2>::lowest())) ||
           !clamp_upper->literal().IsAllFloat(static_cast<float>(
               std::numeric_limits<tsl::float8_e5m2>::max()))) {
+        return absl::OkStatus();
+      }
+    } else if (instr->shape().element_type() == F8E4M3FNUZ) {
+      if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e4m3fnuz>::lowest())) ||
+          !clamp_upper->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e4m3fnuz>::max()))) {
+        return absl::OkStatus();
+      }
+    } else if (instr->shape().element_type() == F8E5M2FNUZ) {
+      if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e5m2fnuz>::lowest())) ||
+          !clamp_upper->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e5m2fnuz>::max()))) {
         return absl::OkStatus();
       }
     } else {
@@ -1697,6 +1707,16 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       if (!reduce_damax) {
         return absl::OkStatus();
       }
+      // hipBLASLt ships no tuned AMAX_D kernels on current ROCm releases (none
+      // for gfx950; slow ones for gfx942), so keep the amax reduction and the
+      // FP8 conversion unfused.
+      if (gpu_version_.IsRocm()) {
+        VLOG(1) << "The scaling and conversion of the result of "
+                << existing_gemm->ToShortString()
+                << " is not fused into the FP8 Custom Call because hipBLASLt "
+                   "does not support the amax epilogue on this platform.";
+        return absl::OkStatus();
+      }
     } else if (gemm_users.size() > 2) {
       return absl::OkStatus();
     }
@@ -1714,6 +1734,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                 << " is not fused into the FP8 Custom Call because it "
                    "conflicts with the existing fusion of the addition of a "
                    "matrix bias with element type other than BF16 or F16.";
+        return absl::OkStatus();
+      }
+      if (gpu_version_.IsRocm()) {
+        VLOG(1) << "The scaling and conversion of the result of "
+                << existing_gemm->ToShortString()
+                << " is not fused into the FP8 Custom Call because "
+                   "hipBLASLt does not support matrix bias with FP8 output.";
         return absl::OkStatus();
       }
       // Turn off the output to operand aliasing, since the fp8 output and

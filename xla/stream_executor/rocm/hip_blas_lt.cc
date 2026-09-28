@@ -91,6 +91,11 @@ void GroupGemmUpdateArgs(
     int8_t bias_type, bool has_matrix_bias);
 namespace {
 
+bool IsFp8Type(hipDataType type) {
+  return type == HIP_R_8F_E4M3 || type == HIP_R_8F_E5M2 ||
+         type == HIP_R_8F_E4M3_FNUZ || type == HIP_R_8F_E5M2_FNUZ;
+}
+
 // Upper bound for the heuristic query only, never allocated. Generous on
 // purpose: a low ceiling would hide complex kernels that need scratch and
 // divert the matmul to rocBLAS.
@@ -294,6 +299,16 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
       }
     }
 
+    // hipBLASLt only returns algorithms that honor D_SCALE_POINTER if it is
+    // set before the heuristic query. Otherwise it may return algorithms that
+    // silently ignore the D scale at execution time.
+    if (IsFp8Type(d_desc_.type())) {
+      static int64_t dummy_pointer = 0xACEBALL;
+      ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                   HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
+                                   &dummy_pointer));
+    }
+
     int found_algorithm_count = 0;
     auto error = hipblasLtMatmulAlgoGetHeuristic(
         blas_lt_.handle_.get(), op_desc_.get(), a_desc_.get(), b_desc_.get(),
@@ -457,6 +472,31 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetHipBlasLtMatmulPlan(
                  HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E5M2_FNUZ)
     TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ,
                  HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E5M2_FNUZ)
+
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16BF,
+                 HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16F,
+                 HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E5M2_FNUZ, HIP_R_16BF,
+                 HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E5M2_FNUZ, HIP_R_16BF,
+                 HIP_R_8F_E5M2_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E5M2_FNUZ, HIP_R_16F,
+                 HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E5M2_FNUZ, HIP_R_16F,
+                 HIP_R_8F_E5M2_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E5M2_FNUZ,
+                 HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16BF,
+                 HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16BF,
+                 HIP_R_8F_E5M2_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16F,
+                 HIP_R_8F_E4M3_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ, HIP_R_16F,
+                 HIP_R_8F_E5M2_FNUZ)
+    TYPED_MATMUL(float, HIP_R_8F_E5M2_FNUZ, HIP_R_8F_E4M3_FNUZ,
+                 HIP_R_8F_E4M3_FNUZ, HIP_R_8F_E4M3_FNUZ)
 
     TYPED_MATMUL(float, HIP_R_8F_E4M3, HIP_R_8F_E4M3, HIP_R_16BF, HIP_R_16BF)
     TYPED_MATMUL(float, HIP_R_8F_E4M3, HIP_R_8F_E4M3, HIP_R_16BF, HIP_R_8F_E4M3)
@@ -722,6 +762,11 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_C_SCALE_POINTER,
                                    args.c_scale.opaque()));
+    }
+    // GetAlgorithms set a placeholder D_SCALE_POINTER for FP8 outputs; it must
+    // be replaced before running.
+    if (args.d_scale == nullptr && IsFp8Type(d_desc_.type())) {
+      return absl::InternalError("hipBLASLt FP8 output requires a D scale.");
     }
     if (args.d_scale != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
