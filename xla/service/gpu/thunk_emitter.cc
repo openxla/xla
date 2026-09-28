@@ -1267,6 +1267,7 @@ class NativeCustomCallEmitterContextImpl
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNativeCustomCallThunks(
     const HloCustomCallInstruction* instr, NativeCustomCallHandlerRef handler) {
+  auto released_lock_keeper = llvm_options_lock_->TemporarilyReleaseLock();
   NativeCustomCallEmitterContextImpl ctx(this, instr);
   return handler(*instr, ctx);
 }
