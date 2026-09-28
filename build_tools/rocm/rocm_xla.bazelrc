@@ -21,7 +21,6 @@ build:rocm_rbe --grpc_keepalive_time=30s
 build:rocm_rbe --remote_cache_compression
 build:rocm_rbe --execution_log_compact_file=execution_log.binpb.zst
 build:rocm_rbe --cache_test_results=yes
-build:rocm_rbe --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_do_gfx950
 
 test:rocm_rbe --jobs=50
 test:rocm_rbe --remote_executor=grpcs://wardite.cluster.engflow.com
