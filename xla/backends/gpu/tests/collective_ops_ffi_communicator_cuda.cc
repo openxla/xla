@@ -20,8 +20,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
-#include "third_party/nccl/nccl.h"
-#include "third_party/nccl/nccl_device.h"
+#include "third_party/nccl/nccl.h"         // IWYU pragma: keep
+#include "third_party/nccl/nccl_device.h"  // IWYU pragma: keep
 #include "xla/ffi/api/collectives_c_api.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
@@ -50,8 +50,10 @@ absl::StatusOr<void*> GetWindowPeerDevicePointer(XLA_FFI_Window* window,
 #if (NCCL_VERSION_CODE >= 22902) || defined(USE_NCCL_HOST_API)
   ncclWindow_t nccl_win = reinterpret_cast<ncclWindow_t>(window);
   void* ptr = nullptr;
+  // NOLINTBEGIN(misc-include-cleaner): comes from <nccl_device.h>.
   ncclResult_t r =
       ncclGetPeerDevicePointer(nccl_win, window_offset, peer, &ptr);
+  // NOLINTEND(misc-include-cleaner)
   TF_RET_CHECK(r == ncclSuccess) << "ncclGetPeerDevicePointer(peer=" << peer
                                  << ") failed: " << ncclGetErrorString(r);
   return ptr;
