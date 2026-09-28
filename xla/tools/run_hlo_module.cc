@@ -243,6 +243,7 @@ absl::Status RunAndCompareInternal(
   }
 
   FakeArgumentsOptions fake_arguments_options;
+  fake_arguments_options.pseudo_random = options.random_init_input_literals;
   fake_arguments_options.engine = engine;
   fake_arguments_options.use_large_range = options.use_large_float_range;
   fake_arguments_options.treat_gte_as_data_formatting =
