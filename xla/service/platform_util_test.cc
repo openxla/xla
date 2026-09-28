@@ -18,10 +18,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <string>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/host/host_platform_id.h"
+#include "xla/stream_executor/mock_platform.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 
@@ -30,6 +33,10 @@ namespace {
 
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
+using ::testing::HasSubstr;
+using ::testing::NiceMock;
+using ::testing::Return;
+using ::testing::ReturnRefOfCopy;
 
 TEST(PlatformUtilTest, GetPlatformIdFromCanonicalName) {
   EXPECT_THAT(PlatformUtil::GetPlatformIdFromCanonicalName("host"),
@@ -54,6 +61,24 @@ TEST(PlatformUtilTest, GetPlatformIdFromCanonicalName) {
 
   EXPECT_THAT(PlatformUtil::GetPlatformIdFromCanonicalName("unknown"),
               StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(PlatformUtilTest, GetStreamExecutorsReportsAllDeviceErrors) {
+  NiceMock<stream_executor::MockPlatform> platform;
+  ON_CALL(platform, id())
+      .WillByDefault(Return(stream_executor::cuda::kCudaPlatformId));
+  ON_CALL(platform, Name()).WillByDefault(ReturnRefOfCopy(std::string("CUDA")));
+  ON_CALL(platform, VisibleDeviceCount()).WillByDefault(Return(2));
+  ON_CALL(platform, ExecutorForDevice(0))
+      .WillByDefault(Return(absl::InternalError("out of memory")));
+  ON_CALL(platform, ExecutorForDevice(1))
+      .WillByDefault(Return(absl::UnavailableError("device busy")));
+
+  EXPECT_THAT(
+      PlatformUtil::GetStreamExecutors(&platform),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("no supported devices found for platform CUDA: "
+                         "Device 0: out of memory, Device 1: device busy")));
 }
 
 }  // namespace
