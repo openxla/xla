@@ -140,6 +140,24 @@ xla_test(
 )
 
 xla_test(
+    name = "constant_fill_sinking_test",
+    srcs = ["constant_fill_sinking_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        "//xla:error_spec",
+        "//xla/backends/gpu/transforms:constant_fill_sinking",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_runner_interface",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
     name = "pred_arithmetic_test",
     srcs = ["pred_arithmetic_test.cc"],
     backends = ["gpu"],

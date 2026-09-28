@@ -104,6 +104,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/collectives/legalize_collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/backends/gpu/transforms/composite_rewriter.h"
+#include "xla/backends/gpu/transforms/constant_fill_sinking.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/cudnn_custom_call_converter.h"
@@ -3417,6 +3418,11 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
         main_pipeline.AddPass<HloPassPipeline>("sanitize-constant-names");
     pipeline.AddPass<SanitizeConstantNames>();
   }
+
+  // Independent fills created before scheduling can be pulled across a while
+  // by LHS. Shorten these lifetimes after the schedule-changing passes and
+  // before buffer assignment and launch annotations.
+  main_pipeline.AddPass<ConstantFillSinking>();
 
   if (IsPdlLaunchInsertionEnabled(module->config().debug_options(),
                                   gpu_device_info.gpu_compute_capability())) {

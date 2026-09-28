@@ -798,6 +798,50 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "constant_fill_sinking",
+    srcs = ["constant_fill_sinking.cc"],
+    hdrs = ["constant_fill_sinking.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:decision",
+        "//xla/service/gpu:backend_configs_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "constant_fill_sinking_test",
+    srcs = ["constant_fill_sinking_test.cc"],
+    deps = [
+        ":constant_fill_sinking",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_alias_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:buffer_value",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service/gpu:alias_info",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/heap_simulator",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "copy_fusion",
     srcs = ["copy_fusion.cc"],
     hdrs = ["copy_fusion.h"],
