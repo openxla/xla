@@ -167,9 +167,9 @@ std::string shapeToString(const T& shape) {
 
 // Computes the dimensions that were squeezed from the source shape to match the
 // target shape. Returns the dimensions in increasing order.
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation* op, ArrayRef<int64_t> source_shape,
-    ArrayRef<int64_t> target_shape);
+FailureOr<SmallVector<int64_t>> computeSqueezedDims(
+    ArrayRef<int64_t> source_shape, ArrayRef<int64_t> target_shape,
+    function_ref<InFlightDiagnostic()> emit_error);
 
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space,
