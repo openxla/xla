@@ -309,7 +309,8 @@ absl::Status MaskRaggedDotPaddingTail(HloRaggedDotInstruction* ragged_dot) {
   }
 
   int64_t lhs_token_dim = dnums.lhs_ragged_dimensions(0);
-  int64_t rhs_token_dim = dnums.dot_dimension_numbers().rhs_contracting_dimensions(0);
+  int64_t rhs_token_dim =
+      dnums.dot_dimension_numbers().rhs_contracting_dimensions(0);
   int64_t token_dims[2] = {lhs_token_dim, rhs_token_dim};
 
   for (int operand_idx = 0; operand_idx < 2; ++operand_idx) {
@@ -329,9 +330,8 @@ absl::Status MaskRaggedDotPaddingTail(HloRaggedDotInstruction* ragged_dot) {
             pred_1d_shape, iota, total_valid_b, Comparison::Direction::kLt));
 
     Shape mask_shape = ShapeUtil::ChangeElementType(op_shape, PRED);
-    HloInstruction* mask =
-        computation->AddInstruction(HloInstruction::CreateBroadcast(
-            mask_shape, mask_1d, {token_dim}));
+    HloInstruction* mask = computation->AddInstruction(
+        HloInstruction::CreateBroadcast(mask_shape, mask_1d, {token_dim}));
 
     HloInstruction* zero_elem =
         computation->AddInstruction(Zero(op_shape.element_type()));
