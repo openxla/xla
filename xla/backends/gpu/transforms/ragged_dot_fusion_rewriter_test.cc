@@ -141,6 +141,60 @@ TEST_F(RaggedDotFusionRewriterUnitTest, TestSupportedRaggedDotWgrad) {
                   .WithShape(BF16, {16, 512, 256}));
 }
 
+// cuDNN's `FirstTokenOffset` only encodes each group's *start* offset (see
+// MaxGroupedMatmul docs: "the total token count [is] implicit from the token
+// tensor dimension"), so the *last* group's true end can never be recovered
+// from the offset array alone -- cuDNN always implicitly extends it to the
+// token tensor's full static row count instead. For the wgrad flavor (which
+// actually reduces over the ragged/token dimension into a real, consumed
+// output) that means whatever happens to occupy the unused tail rows of the
+// ragged buffer gets summed into the last group's weight gradient unless XLA
+// explicitly masks it first. Verify the rewriter inserts that masking
+// (select/iota/compare, see MaskRaggedDotPaddingTail) ahead of the fusion for
+// both ragged-dot operands, rather than feeding them into the fusion
+// unmasked.
+TEST_F(RaggedDotFusionRewriterUnitTest,
+       TestRaggedDotWgradMasksPaddingTailBeforeLastGroupIsAmbiguous) {
+  RunAndMatch(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = bf16[128,512]{1,0} parameter(0)
+      doutput = bf16[128,256]{1,0} parameter(1)
+      group_sizes = s32[16]{0} parameter(2)
+      ROOT rd = bf16[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+              m::Fusion(m::Select(), m::Select(), m::Subtract())
+                  .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                  .WithShape(BF16, {16, 512, 256}));
+}
+
+// The non-wgrad (dInput/forward) flavor doesn't need the padding-tail mask:
+// its ragged dimension only selects which *output* rows are valid, so
+// garbage in the unused tail just lands in output rows that are never
+// consumed downstream. Verify the rewriter does NOT insert masking there --
+// the fusion's operands should be the raw input/weight/offset values
+// unchanged, matching TestSupportedRaggedDot's shape/kind-only check but
+// additionally pinning down the operand chain so a regression that started
+// masking this (harmless but wasteful) case would be caught.
+TEST_F(RaggedDotFusionRewriterUnitTest,
+       TestSupportedRaggedDotDoesNotMaskPaddingTail) {
+  RunAndMatch(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = bf16[128,512]{1,0} parameter(0)
+      weight = bf16[16,512,256]{2,1,0} parameter(1)
+      group_sizes = s32[16]{0} parameter(2)
+      ROOT rd = bf16[128,256]{1,0} ragged-dot(input, weight, group_sizes),
+             lhs_contracting_dims={1}, rhs_contracting_dims={1}, lhs_ragged_dims={0}, rhs_group_dims={0}
+    })",
+              m::Fusion(m::Parameter(), m::Parameter(), m::Subtract())
+                  .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                  .WithShape(BF16, {128, 256}));
+}
+
 // This class performs end-to-end integration testing of the RaggedDotRewriter.
 // It verifies that the rewriter works correctly within the full GPU
 // optimization pipeline and produces numerically correct results on hardware.
@@ -244,6 +298,49 @@ TEST_P(RaggedDotFusionRewriterIntegrationTest, TestRaggedDotWgrad) {
       input = TYPE[128,512]{1,0} parameter(0)
       doutput = TYPE[128,256]{1,0} parameter(1)
       group_sizes = GROUP_TYPE[16]{0} constant({7,9,6,10,8,8,8,8,8,8,8,8,8,8,8,8})
+      ROOT rd = TYPE[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
+             lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
+    })",
+                          {{"TYPE", data_type}, {"GROUP_TYPE", group_type}});
+  std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
+  EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_with_new_type));
+  DebugOptions debug_opts = module->config().debug_options();
+  debug_opts.set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  module->mutable_config().set_debug_options(debug_opts);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.01, 0.01}))
+      << optimized_hlo_string;
+}
+
+// Wgrad where `group_sizes` doesn't sum to the full ragged (M) dimension,
+// leaving the last group empty and rows [120, 128) of `input`/`doutput` as
+// pure padding. cuDNN's `FirstTokenOffset` only encodes each group's *start*
+// offset (group 15 starts at row 120), so its true end (also row 120, since
+// its size is 0) can't be recovered from the offset array alone -- cuDNN
+// implicitly extends the last group all the way to the token tensor's full
+// static row count (128) instead. If XLA didn't explicitly zero that unused
+// tail before handing operands to cuDNN (see MaskRaggedDotPaddingTail), the
+// last group's weight gradient would incorporate whatever data happens to
+// occupy those padding rows -- here, ordinary (non-zero) random test data --
+// producing a non-zero dweight[15,:,:] instead of the correct all-zero
+// result, and this test would fail against the interpreter reference.
+TEST_P(RaggedDotFusionRewriterIntegrationTest,
+       TestRaggedDotWgradLastGroupSizeNotDerivableFromOffset) {
+  if (!SupportsCudnnRaggedDotWgrad()) {
+    GTEST_SKIP() << "CuDNN ragged dot wgrad requires cuDNN 9.24+.";
+  }
+
+  const auto& [data_type, group_type] = GetParam();
+  const std::string hlo_with_new_type =
+      absl::StrReplaceAll(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = TYPE[128,512]{1,0} parameter(0)
+      doutput = TYPE[128,256]{1,0} parameter(1)
+      group_sizes = GROUP_TYPE[16]{0} constant({7,9,6,10,8,8,8,8,8,8,8,8,8,8,8,0})
       ROOT rd = TYPE[16,512,256]{2,1,0} ragged-dot(input, doutput, group_sizes),
              lhs_contracting_dims={0}, rhs_contracting_dims={0}, lhs_ragged_dims={0}
     })",

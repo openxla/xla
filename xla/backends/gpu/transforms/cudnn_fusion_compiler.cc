@@ -241,15 +241,8 @@ class RaggedDotDimensionAdapter {
 
   // Returns true if this is a weight gradient (wgrad) ragged dot, i.e. the
   // ragged dimension is also the contracting dimension (kRaggedContracting
-  // mode). Dots reaching this adapter are canonicalized to a single
-  // contracting dimension, matching the assumption made by the rest of this
-  // file, so only lhs_contracting_dimensions()[0] needs to be checked.
-  bool IsWgrad() const {
-    const int lhs_ragged_dim = dnums_.lhs_ragged_dimensions()[0];
-    const int lhs_contracting_dim =
-        dnums_.dot_dimension_numbers().lhs_contracting_dimensions()[0];
-    return lhs_ragged_dim == lhs_contracting_dim;
-  }
+  // mode).
+  bool IsWgrad() const { return IsRaggedDotWgrad(dnums_); }
 
   std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
     // placeholder FP32 data type here, it is not used
@@ -280,9 +273,9 @@ class RaggedDotDimensionAdapter {
       } else if (operand_idx == 0 || operand_idx == 1) {
         // input [M, K] or doutput [M, N] → [1, M, K_or_N]. M isn't
         // guaranteed to be dim 0: PadWgradForCuDNNAlignment (in
-        // ragged_dot_rewriter.cc) may transpose an operand so that M ends
-        // up at dim 1 instead, so locate it via dnums rather than assuming
-        // a fixed position.
+        // ragged_dot_fusion_rewriter.cc) may transpose an operand so that M
+        // ends up at dim 1 instead, so locate it via dnums rather than
+        // assuming a fixed position.
         int m_dim = operand_idx == 0 ? dnums_.lhs_ragged_dimensions()[0]
                                      : dnums_.dot_dimension_numbers()
                                            .rhs_contracting_dimensions()[0];
