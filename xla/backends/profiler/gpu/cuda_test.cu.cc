@@ -147,10 +147,10 @@ __global__ void VecSub(const int* a, const int* b, int* c, int n) {
 // Adds a graph node through the polymorphic cudaGraphAddNode API instead of
 // the type-specific cudaGraphAdd*Node entry points. CUDA 13 folded the
 // dependencyData argument of cudaGraphAddNode_v2 into cudaGraphAddNode.
-cudaError_t AddGraphNode(cudaGraphNode_t* node, cudaGraph_t graph,
-                         const cudaGraphNode_t* dependencies,
-                         size_t num_dependencies,
-                         cudaGraphNodeParams* node_params) {
+static cudaError_t AddGraphNode(cudaGraphNode_t* node, cudaGraph_t graph,
+                                const cudaGraphNode_t* dependencies,
+                                size_t num_dependencies,
+                                cudaGraphNodeParams* node_params) {
 #if CUDART_VERSION >= 13000
   return cudaGraphAddNode(node, graph, dependencies,
                           /*dependencyData=*/nullptr, num_dependencies,

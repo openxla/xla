@@ -21,7 +21,7 @@ namespace xla {
 namespace profiler {
 namespace cuda_versions {
 
-const CbidCategoryMap& GetExtraCallbackIdCategories12080() {
+const CbidCategoryMap& GetExtraCallbackIdCategories12030(int /*cuda_version*/) {
   return EmptyCallbackIdCategories();
 }
 

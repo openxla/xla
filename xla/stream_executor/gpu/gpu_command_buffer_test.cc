@@ -57,7 +57,7 @@ static Platform* GpuPlatform() {
 static constexpr auto nested = CommandBuffer::Mode::kNested;    // NOLINT
 static constexpr auto primary = CommandBuffer::Mode::kPrimary;  // NOLINT
 
-// Some of the tests rely on CUDA 12.3+ features.
+// CUDA command buffers require CUDA 12.3+.
 static bool IsAtLeastCuda12300(
     const stream_executor::StreamExecutor* executor) {
   if (executor->GetPlatform()->id() != cuda::kCudaPlatformId) {
@@ -83,9 +83,9 @@ class GpuCommandBufferTest : public ::testing::Test {
   void SetUp() override {
     StreamExecutor* executor = GpuPlatform()->ExecutorForDevice(0).value();
     if (executor->GetPlatform()->id() == cuda::kCudaPlatformId &&
-        executor->GetDeviceDescription().driver_version() <
-            SemanticVersion{12, 3, 0}) {
-      GTEST_SKIP() << "CUDA command buffers require CUDA driver >= 12.3";
+        !IsAtLeastCuda12300(executor)) {
+      GTEST_SKIP()
+          << "CUDA command buffers require CUDA runtime and driver >= 12.3";
     }
   }
 };
@@ -147,7 +147,7 @@ TEST_F(GpuCommandBufferTest, TraceSingleKernel) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
-  if (!IsAtLeastCuda12300(executor)) {
+  if (executor->GetPlatform()->id() != cuda::kCudaPlatformId) {
     GTEST_SKIP() << "Command buffer tracing is not supported";
   }
 
@@ -192,11 +192,6 @@ TEST_F(GpuCommandBufferTest, TraceSingleKernel) {
 TEST_F(GpuCommandBufferTest, TraceEmptyChildCommand) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-
-  if (executor->GetPlatform()->id() == cuda::kCudaPlatformId &&
-      !IsAtLeastCuda12300(executor)) {
-    GTEST_SKIP() << "Command buffer tracing is supported after CUDA 12.3";
-  }
 
   ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
@@ -368,7 +363,7 @@ TEST_F(GpuCommandBufferTest, ConditionalCaseEmptyGraph) {
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
   // See b/362769658.
-  if (!IsAtLeastCuda12300(executor)) {
+  if (executor->GetPlatform()->id() != cuda::kCudaPlatformId) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
@@ -543,7 +538,7 @@ TEST_F(GpuCommandBufferTest, ConditionalCase) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
-  if (!IsAtLeastCuda12300(executor)) {
+  if (executor->GetPlatform()->id() != cuda::kCudaPlatformId) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
@@ -630,7 +625,7 @@ TEST_F(GpuCommandBufferTest, ConditionalWhile) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
-  if (!IsAtLeastCuda12300(executor)) {
+  if (executor->GetPlatform()->id() != cuda::kCudaPlatformId) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 
@@ -692,7 +687,7 @@ TEST_F(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
-  if (!IsAtLeastCuda12300(executor)) {
+  if (executor->GetPlatform()->id() != cuda::kCudaPlatformId) {
     GTEST_SKIP() << "CUDA graph conditionals are not supported";
   }
 

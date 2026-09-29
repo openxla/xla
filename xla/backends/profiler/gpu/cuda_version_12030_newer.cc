@@ -23,9 +23,9 @@ namespace xla {
 namespace profiler {
 namespace cuda_versions {
 
-// Previous impacted version is 12.0, CBid supported here are [701, 782)
-const CbidCategoryMap& GetExtraCallbackIdCategories12080() {
-  if (GetSafeCudaVersion() < 12080) {
+// Polymorphic graph node callbacks are available with CUDA 12.3.
+const CbidCategoryMap& GetExtraCallbackIdCategories12030(int cuda_version) {
+  if (cuda_version < 12030) {
     return EmptyCallbackIdCategories();
   }
   static const absl::NoDestructor<CbidCategoryMap> kCbidCategoryMap({

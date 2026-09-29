@@ -424,28 +424,42 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
 }
 
-TEST(CommandBufferConversionPassTest, DoesNotConvertBeforeCuda12_3) {
-  ThunkSequence thunks;
-
-  BufferAllocation alloc0(0, 1024, 0);
-  thunks.push_back(CreateCopyThunk(alloc0));
-
+TEST(CommandBufferConversionPassTest, ChecksKnownCudaVersions) {
+  const struct {
+    se::SemanticVersion runtime_version;
+    se::SemanticVersion driver_version;
+    bool should_convert;
+  } test_cases[] = {
+      {{0, 0, 0}, {0, 0, 0}, true},    {{0, 0, 0}, {12, 2, 0}, false},
+      {{0, 0, 0}, {12, 3, 0}, true},   {{12, 2, 0}, {0, 0, 0}, false},
+      {{12, 2, 0}, {12, 2, 0}, false}, {{12, 2, 0}, {12, 3, 0}, false},
+      {{12, 3, 0}, {0, 0, 0}, true},   {{12, 3, 0}, {12, 2, 0}, false},
+      {{12, 3, 0}, {12, 3, 0}, true},
+  };
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  // Command buffers rely on CUDA graph APIs that were introduced in CUDA 12.3.
-  se::DeviceDescription device_info =
-      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 2, 0});
-  FakeErrorAllocator allocator;
+  for (const auto& test_case : test_cases) {
+    SCOPED_TRACE(testing::Message() << "runtime=" << test_case.runtime_version
+                                    << ", driver=" << test_case.driver_version);
+    BufferAllocation alloc0(0, 1024, 0);
+    ThunkSequence thunks;
+    thunks.push_back(CreateCopyThunk(alloc0));
+    se::DeviceDescription device_info =
+        CudaDeviceInfoWithVersion(test_case.runtime_version);
+    device_info.set_driver_version(test_case.driver_version);
+    FakeErrorAllocator allocator;
+    CommandBufferConversionPass pass{"test"};
 
-  CommandBufferConversionPass pass{"test"};
-
-  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
-                       device_info, allocator),
-              IsOkAndHolds(false));
-  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
+    ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                         device_info, allocator),
+                IsOkAndHolds(test_case.should_convert));
+    EXPECT_THAT(thunks,
+                ThunkKindsAre(test_case.should_convert ? Thunk::kCommandBuffer
+                                                       : Thunk::kCopy));
+  }
 }
 
 TEST(CommandBufferConversionPassTest,

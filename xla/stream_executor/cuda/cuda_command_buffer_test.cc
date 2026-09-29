@@ -261,11 +261,6 @@ TEST_F(CudaCommandBufferTest, TraceDisallowsForbiddenOpsOnCaptureStream) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
-  if (executor->GetDeviceDescription().driver_version() <
-      SemanticVersion{12, 3, 0}) {
-    GTEST_SKIP() << "Command buffer tracing is not supported";
-  }
-
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
                        executor->CreateStream());
 

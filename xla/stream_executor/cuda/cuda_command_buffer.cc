@@ -235,7 +235,9 @@ CUgraphNodeParams MemcpyH2DNodeParams(DeviceAddressBase destination,
   return MemcpyNodeParams(copy_params, context);
 }
 
-// The child graph is cloned into the node, which is the default ownership.
+// Zero initialization selects the default cloning ownership on creation
+// (CU_GRAPH_CHILD_GRAPH_OWNERSHIP_CLONE in CUDA 12.9+). Ownership is ignored by
+// cuGraphExecNodeSetParams on update. Leave it implicit for older CUDA headers.
 CUgraphNodeParams ChildGraphNodeParams(CUgraph child_graph) {
   CUgraphNodeParams node_params{};
   node_params.type = CU_GRAPH_NODE_TYPE_GRAPH;

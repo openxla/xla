@@ -168,8 +168,14 @@ CommandBufferConfig GetCommandBufferConfig(
     // polymorphic node creation and update (cuGraphAddNode_v2,
     // cuGraphExecNodeSetParams), cuStreamBeginCaptureToGraph and conditional
     // nodes. Older toolkits and drivers fall back to regular thunk execution.
-    if (std::min(device_info.runtime_version(), device_info.driver_version()) <
-        se::SemanticVersion{12, 3, 0}) {
+    // Target configs can leave either version unset (0.0.0), so check each
+    // known version independently.
+    const se::SemanticVersion runtime_version = device_info.runtime_version();
+    const se::SemanticVersion driver_version = device_info.driver_version();
+    if ((runtime_version > se::SemanticVersion{0, 0, 0} &&
+         runtime_version < se::SemanticVersion{12, 3, 0}) ||
+        (driver_version > se::SemanticVersion{0, 0, 0} &&
+         driver_version < se::SemanticVersion{12, 3, 0})) {
       std::vector<DebugOptions::CommandBufferCmdType> all_commands(
           config.enabled_commands.begin(), config.enabled_commands.end());
       erase(all_commands);
