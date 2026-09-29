@@ -134,6 +134,10 @@ cc_library(
         "12_3",
         ["cuda_version_12030_newer.cc"],
         ["cuda_version_12030_older.cc"],
+    ) + if_cuda_newer_than(
+        "12_8",
+        ["cuda_version_12080_newer.cc"],
+        ["cuda_version_12080_older.cc"],
     ),
     hdrs = ["cuda_version_variants.h"],
     tags = [

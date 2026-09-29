@@ -13,26 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "absl/base/no_destructor.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
+#include "absl/strings/string_view.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "xla/backends/profiler/gpu/cuda_version_variants.h"
 
 namespace xla {
 namespace profiler {
 namespace cuda_versions {
 
-// Polymorphic graph node callbacks are available with CUDA 12.3.
-const CbidCategoryMap& GetExtraCallbackIdCategories12030(int cuda_version) {
-  if (cuda_version < 12030) {
-    return EmptyCallbackIdCategories();
-  }
-  static const absl::NoDestructor<CbidCategoryMap> kCbidCategoryMap({
-      {CUPTI_DRIVER_TRACE_CBID_cuGraphAddNode /* 712 */,
-       CbidCategory::kGraphNode},
-      {CUPTI_DRIVER_TRACE_CBID_cuGraphAddNode_v2 /* 723 */,
-       CbidCategory::kGraphNode},
-  });
-  return *kCbidCategoryMap;
+absl::string_view GetExtraActivityOverheadKindString12080(
+    CUpti_ActivityOverheadKind kind) {
+  return "";
 }
 
 }  // namespace cuda_versions
