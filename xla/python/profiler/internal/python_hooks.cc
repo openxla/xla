@@ -14,12 +14,16 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/python/profiler/internal/python_hooks.h"
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
@@ -94,6 +98,12 @@ std::string GetEventName(absl::string_view method_name, PyObject* module) {
     return absl::StrCat("$", filename, " ", method_name);
   }
   return "$<unknown>";
+}
+
+const std::string& UnknownEventName() {
+  static const std::string* const kUnknownEventName =
+      new std::string("$<unknown>");
+  return *kUnknownEventName;
 }
 
 void AddEventToXLine(const PythonTraceEntry& event,
@@ -173,29 +183,72 @@ void ForEachThread(PyThreadState* curr_thread, ForEachThreadFunc&& callback) {
   Py_RETURN_NONE;
 }
 
-std::string PythonTraceEntry::Name() const {
-  if (co_filename) {
-    return GetEventName(co_filename, co_name, co_firstlineno);
+/*static*/ const std::string* PythonHookContext::InternName(
+    EntryShard& shard, PyCodeObject* py_code_object) {
+  if (py_code_object == nullptr) {
+    return &UnknownEventName();
   }
-  return GetEventName(method_name, m_module);
+  auto [it, inserted] = shard.code_names.try_emplace(py_code_object, nullptr);
+  if (inserted) {
+    Py_INCREF(py_code_object);
+    it->second = &shard.names.emplace_back(
+        GetEventName(py_code_object->co_filename, py_code_object->co_name,
+                     py_code_object->co_firstlineno));
+  }
+  return it->second;
+}
+
+/*static*/ const std::string* PythonHookContext::InternName(
+    EntryShard& shard, PyCFunctionObject* py_c_function) {
+  if (py_c_function == nullptr) {
+    return &UnknownEventName();
+  }
+  // Key on the method definition rather than the function object: bound
+  // builtin methods are created per call, and holding a reference to them
+  // would keep their `self` (e.g. device buffers) alive.
+  PyMethodDef* method_def = py_c_function->m_ml;
+  PyObject* module = py_c_function->m_module;
+  auto [it, inserted] = shard.c_function_names.try_emplace(
+      std::make_pair(method_def, module), nullptr);
+  if (inserted) {
+    Py_XINCREF(module);
+    it->second = &shard.names.emplace_back(
+        GetEventName((method_def != nullptr && method_def->ml_name != nullptr)
+                         ? absl::string_view(method_def->ml_name)
+                         : absl::string_view(),
+                     module));
+  }
+  return it->second;
+}
+
+void PythonHookContext::ReleaseInternedObjects() {
+  for (EntryShard& shard : entry_shards_) {
+    absl::flat_hash_map<PyCodeObject*, const std::string*> code_names;
+    absl::flat_hash_map<std::pair<PyMethodDef*, PyObject*>, const std::string*>
+        c_function_names;
+    {
+#ifdef Py_GIL_DISABLED
+      absl::MutexLock lock(shard.mu);
+#endif  // Py_GIL_DISABLED
+      code_names.swap(shard.code_names);
+      c_function_names.swap(shard.c_function_names);
+    }
+    // Decrement outside of shard.mu: deallocation may run arbitrary code. The
+    // order of the decrements doesn't matter.
+    // NOLINTNEXTLINE
+    for (const auto& [py_code_object, name] : code_names) {
+      Py_DECREF(py_code_object);
+    }
+    // NOLINTNEXTLINE
+    for (const auto& [key, name] : c_function_names) {
+      Py_XDECREF(key.second);
+    }
+  }
 }
 
 PythonHooks* PythonHooks::GetSingleton() {
   static PythonHooks* const singleton = new PythonHooks;
   return singleton;
-}
-
-PythonHookContext::~PythonHookContext() {
-  if (Py_IsInitialized()) {
-    PyGILState_STATE gil_state = PyGILState_Ensure();
-    for (auto& shard : entry_shards_) {
-#ifdef Py_GIL_DISABLED
-      absl::MutexLock lock(&shard.mu);
-#endif  // Py_GIL_DISABLED
-      shard.entries.clear();
-    }
-    PyGILState_Release(gil_state);
-  }
 }
 
 void PythonHookContext::Start(const PythonHooksOptions& options) {
@@ -227,81 +280,110 @@ void PythonHookContext::Start(const PythonHooksOptions& options) {
 }
 
 void PythonHookContext::Stop() {
-  stopped_ = true;
-  if (!Py_IsInitialized()) {
-    return;
-  }
-  if (options_.enable_python_traceme || options_.enable_trace_python_function) {
+  if (Py_IsInitialized() && (options_.enable_python_traceme ||
+                             options_.enable_trace_python_function)) {
     PyGILState_STATE gil_state = PyGILState_Ensure();
     if (options_.enable_trace_python_function) {
       if (!ClearProfilerInAllThreads()) {
         LOG(ERROR) << "Can't clear profiler in all threads.";
         PyErr_Print();
       }
+      ReleaseInternedObjects();
     }
     if (options_.enable_python_traceme) {
       traceme_enabled = false;
     }
     PyGILState_Release(gil_state);
   }
+  stopped_.store(true, std::memory_order_release);
 }
 
 std::vector<PerThreadConsumeData> PythonHookContext::Consume() {
-  std::vector<PerThreadConsumeData> consumed_data;
+  const bool stopped = stopped_.load(std::memory_order_acquire);
+  if (!stopped && !Py_IsInitialized()) {
+    return {};
+  }
+
+  const bool drain_incomplete = stopped && options_.include_incomplete_events;
+  std::vector<std::pair<int64_t, PerThreadEvents>> entries;
+  entries.reserve(16);
 
   {
-    PyGILState_STATE gil_state;
-    bool has_gil = false;
+#ifndef Py_GIL_DISABLED
+    std::optional<PyGILState_STATE> gil_state;
     if (Py_IsInitialized()) {
       gil_state = PyGILState_Ensure();
-      has_gil = true;
     }
+#endif  // !Py_GIL_DISABLED
 
     for (EntryShard& shard : entry_shards_) {
 #ifdef Py_GIL_DISABLED
       absl::MutexLock lock(shard.mu);
 #else
-      DCHECK(PyGILState_Check());
+      if (gil_state.has_value()) {
+        DCHECK(PyGILState_Check());
+      }
 #endif  // Py_GIL_DISABLED
       // NOLINTNEXTLINE
-      for (auto& it : shard.entries) {
-        int64_t thread_id = it.first;
-        PerThreadEvents& thread_events = it.second;
-        VLOG(1) << "Consuming " << thread_events.completed.size() << ":"
-                << thread_events.active.size() << " events on thread "
-                << thread_id;
-
-        PerThreadConsumeData thread_data;
-        thread_data.thread_id = thread_id;
-        thread_data.events.reserve(thread_events.completed.size());
-        for (const PythonTraceEntry& event : thread_events.completed) {
-          thread_data.events.push_back(
-              {event.Name(), event.start_time_ns, event.end_time_ns});
+      for (auto& [thread_id, thread_events] : shard.entries) {
+        if (thread_events.completed.empty() &&
+            (!drain_incomplete || (thread_events.active.empty() &&
+                                   thread_events.active_c.empty()))) {
+          continue;
         }
-        thread_events.completed.clear();
-
-        if (stopped_ && options_.include_incomplete_events) {
-          uint64_t now = tsl::profiler::GetCurrentTimeNanos();
-          while (!thread_events.active.empty()) {
-            PythonTraceEntry& event = thread_events.active.top();
-            thread_data.events.push_back(
-                {event.Name(), event.start_time_ns, now});
-            thread_events.active.pop();
-          }
-          while (!thread_events.active_c.empty()) {
-            PythonTraceEntry& event = thread_events.active_c.top();
-            thread_data.events.push_back(
-                {event.Name(), event.start_time_ns, now});
-            thread_events.active_c.pop();
-          }
+        auto& [harvested_thread_id, harvested_events] = entries.emplace_back();
+        harvested_thread_id = thread_id;
+        std::swap(harvested_events.completed, thread_events.completed);
+        if (drain_incomplete) {
+          std::swap(harvested_events.active, thread_events.active);
+          std::swap(harvested_events.active_c, thread_events.active_c);
         }
-        consumed_data.push_back(std::move(thread_data));
+      }
+      if (stopped) {
+        shard.entries.clear();
       }
     }
 
-    if (has_gil) {
-      PyGILState_Release(gil_state);
+#ifndef Py_GIL_DISABLED
+    if (gil_state.has_value()) {
+      PyGILState_Release(*gil_state);
     }
+#endif  // !Py_GIL_DISABLED
+  }
+
+  const uint64_t now = tsl::profiler::GetCurrentTimeNanos();
+  std::vector<PerThreadConsumeData> consumed_data;
+  consumed_data.reserve(entries.size());
+  for (auto& [thread_id, thread_events] : entries) {
+    const size_t active_count =
+        drain_incomplete
+            ? (thread_events.active.size() + thread_events.active_c.size())
+            : 0;
+
+    PerThreadConsumeData thread_data;
+    thread_data.thread_id = thread_id;
+    thread_data.events.reserve(thread_events.completed.size() + active_count);
+    for (const PythonTraceEntry& event : thread_events.completed) {
+      thread_data.events.push_back(
+          {std::string(event.Name()), event.start_time_ns, event.end_time_ns});
+    }
+    thread_events.completed.clear();
+
+    if (drain_incomplete) {
+      while (!thread_events.active.empty()) {
+        const PythonTraceEntry& event = thread_events.active.top();
+        thread_data.events.push_back(
+            {std::string(event.Name()), event.start_time_ns, now});
+        thread_events.active.pop();
+      }
+      while (!thread_events.active_c.empty()) {
+        const PythonTraceEntry& event = thread_events.active_c.top();
+        thread_data.events.push_back(
+            {std::string(event.Name()), event.start_time_ns, now});
+        thread_events.active_c.pop();
+      }
+    }
+    consumed_data.push_back(std::move(thread_data));
   }
 
   return consumed_data;
@@ -313,30 +395,46 @@ void PythonHookContext::CollectData(tensorflow::profiler::XPlane* raw_plane) {
     raw_plane = &*end_to_end_xplane_;
   }
   tsl::profiler::XPlaneBuilder plane(raw_plane);
-  for (auto& shard : entry_shards_) {
+  const uint64_t now = tsl::profiler::GetCurrentTimeNanos();
+  for (EntryShard& shard : entry_shards_) {
 #ifdef Py_GIL_DISABLED
     absl::MutexLock lock(shard.mu);
-#else
-    DCHECK(PyGILState_Check());
 #endif  // Py_GIL_DISABLED
-    for (auto& it : shard.entries) {
-      int64_t thread_id = it.first;
-      auto& thread_events = it.second;
+    // NOLINTNEXTLINE
+    for (auto& [thread_id, thread_events] : shard.entries) {
+      if (thread_events.completed.empty() &&
+          (!options_.include_incomplete_events ||
+           (thread_events.active.empty() && thread_events.active_c.empty()))) {
+        continue;
+      }
+      const size_t active_count =
+          options_.include_incomplete_events
+              ? (thread_events.active.size() + thread_events.active_c.size())
+              : 0;
       VLOG(1) << "Collecting " << thread_events.completed.size() << ":"
-              << thread_events.active.size() << " events on thread "
-              << thread_id;
-      auto line = plane.GetOrCreateLine(thread_id);
-      line.SetTimestampNs(start_timestamp_ns_);
-      for (const auto& event : thread_events.completed) {
+              << active_count << " events on thread " << thread_id;
+      tsl::profiler::XLineBuilder line = plane.GetOrCreateLine(thread_id);
+      if (line.NumEvents() == 0 && line.TimestampNs() == 0) {
+        line.SetTimestampNs(start_timestamp_ns_);
+      } else if (start_timestamp_ns_ <
+                 static_cast<uint64_t>(line.TimestampNs())) {
+        line.SetTimestampNsAndAdjustEventOffsets(start_timestamp_ns_);
+      }
+      for (const PythonTraceEntry& event : thread_events.completed) {
         AddEventToXLine(event, &line, &plane);
       }
       if (options_.include_incomplete_events) {
-        uint64_t now = tsl::profiler::GetCurrentTimeNanos();
         while (!thread_events.active.empty()) {
-          auto& event = thread_events.active.top();
+          PythonTraceEntry& event = thread_events.active.top();
           event.end_time_ns = now;
           AddEventToXLine(event, &line, &plane);
           thread_events.active.pop();
+        }
+        while (!thread_events.active_c.empty()) {
+          PythonTraceEntry& event = thread_events.active_c.top();
+          event.end_time_ns = now;
+          AddEventToXLine(event, &line, &plane);
+          thread_events.active_c.pop();
         }
       }
     }
@@ -356,9 +454,7 @@ void PythonHookContext::Finalize(tensorflow::profiler::XSpace* space) {
         end_to_end_xplane_.reset();
       }
     } else {
-      PyGILState_STATE gil_state = PyGILState_Ensure();
       CollectData(plane);
-      PyGILState_Release(gil_state);
     }
   }
 }
@@ -415,10 +511,10 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
     case PyTrace_CALL: {
 #if PY_VERSION_HEX < 0x030b0000
       PyCodeObject* f_code = frame->f_code;
-      thread_traces.active.emplace(now, 0, f_code);
+      thread_traces.active.emplace(now, 0, InternName(shard, f_code));
 #else   // PY_VERSION_HEX < 0x030b0000
       PyCodeObject* f_code = PyFrame_GetCode(frame);
-      thread_traces.active.emplace(now, 0, f_code);
+      thread_traces.active.emplace(now, 0, InternName(shard, f_code));
       Py_XDECREF(f_code);
 #endif  // PY_VERSION_HEX < 0x030b0000
       break;
@@ -426,17 +522,19 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
     case PyTrace_RETURN:
     case PyTrace_EXCEPTION: {
       if (!thread_traces.active.empty()) {
-        auto& entry = thread_traces.active.top();
+        PythonTraceEntry& entry = thread_traces.active.top();
         entry.end_time_ns = now;
-        thread_traces.completed.emplace_back(std::move(entry));
+        thread_traces.completed.push_back(entry);
         thread_traces.active.pop();
       } else if (options_.include_incomplete_events) {
 #if PY_VERSION_HEX < 0x030b0000
         PyCodeObject* f_code = frame->f_code;
-        thread_traces.completed.emplace_back(start_timestamp_ns_, now, f_code);
+        thread_traces.completed.emplace_back(start_timestamp_ns_, now,
+                                             InternName(shard, f_code));
 #else   // PY_VERSION_HEX < 0x030b0000
         PyCodeObject* f_code = PyFrame_GetCode(frame);
-        thread_traces.completed.emplace_back(start_timestamp_ns_, now, f_code);
+        thread_traces.completed.emplace_back(start_timestamp_ns_, now,
+                                             InternName(shard, f_code));
         Py_XDECREF(f_code);
 #endif  // PY_VERSION_HEX < 0x030b0000
       }
@@ -446,7 +544,7 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
       if (PyCFunction_Check(arg)) {
         // Python stack does not have a filename/line_no for native calls.
         auto* func = reinterpret_cast<PyCFunctionObject*>(arg);
-        thread_traces.active_c.emplace(now, 0, func);
+        thread_traces.active_c.emplace(now, 0, InternName(shard, func));
       }
       break;
     }
@@ -454,15 +552,16 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
     case PyTrace_C_EXCEPTION: {
       if (PyCFunction_Check(arg)) {
         if (!thread_traces.active_c.empty()) {
-          auto& entry = thread_traces.active_c.top();
+          PythonTraceEntry& entry = thread_traces.active_c.top();
           entry.end_time_ns = now;
-          thread_traces.completed.emplace_back(std::move(entry));
+          thread_traces.completed.push_back(entry);
           thread_traces.active_c.pop();
         } else if (options_.include_incomplete_events) {
           // Only the end of the events is recorded, use profiler start as
           // start timestamp of the new event.
           auto* func = reinterpret_cast<PyCFunctionObject*>(arg);
-          thread_traces.completed.emplace_back(start_timestamp_ns_, now, func);
+          thread_traces.completed.emplace_back(start_timestamp_ns_, now,
+                                               InternName(shard, func));
         }
       }
       break;
