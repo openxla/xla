@@ -399,7 +399,8 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
-  se::DeviceDescription device_info;
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 3, 0});
   FakeErrorAllocator allocator;
 
   CommandBufferConversionPass pass{"test"};
@@ -421,6 +422,30 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCopy));
+}
+
+TEST(CommandBufferConversionPassTest, DoesNotConvertBeforeCuda12_3) {
+  ThunkSequence thunks;
+
+  BufferAllocation alloc0(0, 1024, 0);
+  thunks.push_back(CreateCopyThunk(alloc0));
+
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+
+  // Command buffers rely on CUDA graph APIs that were introduced in CUDA 12.3.
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 2, 0});
+  FakeErrorAllocator allocator;
+
+  CommandBufferConversionPass pass{"test"};
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(false));
+  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kCopy));
 }
 
 TEST(CommandBufferConversionPassTest,
@@ -611,7 +636,8 @@ TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-  se::DeviceDescription device_info;
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 3, 0});
   FakeErrorAllocator allocator;
 
   ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
@@ -1045,7 +1071,8 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options.set_xla_gpu_graph_min_graph_size(2);
 
-  se::DeviceDescription device_info;
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 3, 0});
   FakeErrorAllocator allocator;
 
   ASSERT_EQ(thunks.size(), 1);

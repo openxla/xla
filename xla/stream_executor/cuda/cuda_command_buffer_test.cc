@@ -69,7 +69,19 @@ static Platform* CudaPlatform() {
 
 static constexpr auto primary = CommandBuffer::Mode::kPrimary;  // NOLINT
 
-TEST(CudaCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
+// CUDA command buffers are built with graph APIs that require CUDA 12.3.
+class CudaCommandBufferTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    StreamExecutor* executor = CudaPlatform()->ExecutorForDevice(0).value();
+    if (executor->GetDeviceDescription().driver_version() <
+        SemanticVersion{12, 3, 0}) {
+      GTEST_SKIP() << "CUDA command buffers require CUDA driver >= 12.3";
+    }
+  }
+};
+
+TEST_F(CudaCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   Platform* platform = CudaPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
@@ -182,7 +194,7 @@ TEST(CudaCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   EXPECT_THAT(host_buffer, Each(0));
 }
 
-TEST(CudaCommandBufferTest, PdlKernelEdgeUsesProgrammaticDependency) {
+TEST_F(CudaCommandBufferTest, PdlKernelEdgeUsesProgrammaticDependency) {
   Platform* platform = CudaPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
   if (!executor->GetDeviceDescription()
@@ -245,7 +257,7 @@ TEST(CudaCommandBufferTest, PdlKernelEdgeUsesProgrammaticDependency) {
   EXPECT_EQ(edge_data.type, CU_GRAPH_DEPENDENCY_TYPE_PROGRAMMATIC);
 }
 
-TEST(CudaCommandBufferTest, TraceDisallowsForbiddenOpsOnCaptureStream) {
+TEST_F(CudaCommandBufferTest, TraceDisallowsForbiddenOpsOnCaptureStream) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
@@ -274,7 +286,7 @@ TEST(CudaCommandBufferTest, TraceDisallowsForbiddenOpsOnCaptureStream) {
           CommandBuffer::Mode::kPrimary));
 }
 
-TEST(CudaCommandBufferTest, LaunchClusterKernelWithClusterDimsSucceeds) {
+TEST_F(CudaCommandBufferTest, LaunchClusterKernelWithClusterDimsSucceeds) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
@@ -305,7 +317,7 @@ TEST(CudaCommandBufferTest, LaunchClusterKernelWithClusterDimsSucceeds) {
   ASSERT_OK(stream->BlockHostUntilDone());
 }
 
-TEST(CudaCommandBufferTest, LaunchHostCallback) {
+TEST_F(CudaCommandBufferTest, LaunchHostCallback) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));
@@ -334,7 +346,7 @@ TEST(CudaCommandBufferTest, LaunchHostCallback) {
   EXPECT_EQ(counter, 2);
 }
 
-TEST(CudaCommandBufferTest, MemcpyH2D2H) {
+TEST_F(CudaCommandBufferTest, MemcpyH2D2H) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
                        platform->ExecutorForDevice(0));

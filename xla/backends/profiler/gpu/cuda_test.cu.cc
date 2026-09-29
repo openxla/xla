@@ -144,6 +144,24 @@ __global__ void VecSub(const int* a, const int* b, int* c, int n) {
   if (i < n) c[i] = a[i] - b[i];
 }
 
+// Adds a graph node through the polymorphic cudaGraphAddNode API instead of
+// the type-specific cudaGraphAdd*Node entry points. CUDA 13 folded the
+// dependencyData argument of cudaGraphAddNode_v2 into cudaGraphAddNode.
+cudaError_t AddGraphNode(cudaGraphNode_t* node, cudaGraph_t graph,
+                         const cudaGraphNode_t* dependencies,
+                         size_t num_dependencies,
+                         cudaGraphNodeParams* node_params) {
+#if CUDART_VERSION >= 13000
+  return cudaGraphAddNode(node, graph, dependencies,
+                          /*dependencyData=*/nullptr, num_dependencies,
+                          node_params);
+#else
+  return cudaGraphAddNode_v2(node, graph, dependencies,
+                             /*dependencyData=*/nullptr, num_dependencies,
+                             node_params);
+#endif
+}
+
 void CudaGraphCreateAndExecute() {
   constexpr size_t kNumElements = 2048;
   constexpr size_t kNumBytes = kNumElements * sizeof(int);
@@ -151,8 +169,11 @@ void CudaGraphCreateAndExecute() {
   int blocks_per_grid = 0;
 
   cudaStream_t stream = nullptr;
-  cudaKernelNodeParams kernel_params;
-  cudaMemcpy3DParms memcpy_params = {nullptr};
+  cudaGraphNodeParams kernel_params{};
+  kernel_params.type = cudaGraphNodeTypeKernel;
+  cudaGraphNodeParams memcpy_node_params{};
+  memcpy_node_params.type = cudaGraphNodeTypeMemcpy;
+  cudaMemcpy3DParms& memcpy_params = memcpy_node_params.memcpy.copyParams;
   cudaGraph_t graph;
   cudaGraph_t cloned_graph;
   cudaGraphExec_t graph_exec;
@@ -181,7 +202,7 @@ void CudaGraphCreateAndExecute() {
   {
     ScopedAnnotation memcpy_1_annotation(
         "Thunk:#name=my_module/prep,hlo_op=memcpy.1#");
-    cudaGraphAddMemcpyNode(&nodes[0], graph, nullptr, 0, &memcpy_params);
+    AddGraphNode(&nodes[0], graph, nullptr, 0, &memcpy_node_params);
   }
 
   memcpy_params.srcPtr.ptr = vec_b.data();
@@ -189,30 +210,30 @@ void CudaGraphCreateAndExecute() {
   {
     ScopedAnnotation memcpy_2_annotation(
         "Thunk:#name=my_module/prep,hlo_op=memcpy.2#");
-    cudaGraphAddMemcpyNode(&nodes[1], graph, nullptr, 0, &memcpy_params);
+    AddGraphNode(&nodes[1], graph, nullptr, 0, &memcpy_node_params);
   }
 
   // Init kernel params.
   int num = kNumElements;
   void* kernelArgs[] = {(void*)&d_a, (void*)&d_b, (void*)&d_c, (void*)&num};
   blocks_per_grid = (kNumElements + kThreadsPerBlock - 1) / kThreadsPerBlock;
-  kernel_params.func = (void*)VecAdd;
-  kernel_params.gridDim = dim3(blocks_per_grid, 1, 1);
-  kernel_params.blockDim = dim3(kThreadsPerBlock, 1, 1);
-  kernel_params.sharedMemBytes = 0;
-  kernel_params.kernelParams = (void**)kernelArgs;
-  kernel_params.extra = nullptr;
+  kernel_params.kernel.func = (void*)VecAdd;
+  kernel_params.kernel.gridDim = dim3(blocks_per_grid, 1, 1);
+  kernel_params.kernel.blockDim = dim3(kThreadsPerBlock, 1, 1);
+  kernel_params.kernel.sharedMemBytes = 0;
+  kernel_params.kernel.kernelParams = (void**)kernelArgs;
+  kernel_params.kernel.extra = nullptr;
   {
     ScopedAnnotation add_1_annotation(
         "Thunk:#name=my_module/body,hlo_op=add.1#");
-    cudaGraphAddKernelNode(&nodes[2], graph, &nodes[0], 2, &kernel_params);
+    AddGraphNode(&nodes[2], graph, &nodes[0], 2, &kernel_params);
   }
 
-  kernel_params.func = (void*)VecSub;
+  kernel_params.kernel.func = (void*)VecSub;
   {
     ScopedAnnotation sub_1_annotation(
         "Thunk:#name=my_module/body,hlo_op=sub.1#");
-    cudaGraphAddKernelNode(&nodes[3], graph, &nodes[2], 1, &kernel_params);
+    AddGraphNode(&nodes[3], graph, &nodes[2], 1, &kernel_params);
   }
   memcpy_params.kind = cudaMemcpyDeviceToHost;
   memcpy_params.srcPtr.ptr = d_c;
@@ -223,7 +244,7 @@ void CudaGraphCreateAndExecute() {
   {
     ScopedAnnotation memcpy_3_annotation(
         "Thunk:#name=my_module/post,hlo_op=memcpy.3#");
-    cudaGraphAddMemcpyNode(&nodes[4], graph, &nodes[3], 1, &memcpy_params);
+    AddGraphNode(&nodes[4], graph, &nodes[3], 1, &memcpy_node_params);
   }
   cudaGraphClone(&cloned_graph, graph);
 
