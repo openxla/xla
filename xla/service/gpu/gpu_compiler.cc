@@ -3419,9 +3419,9 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<SanitizeConstantNames>();
   }
 
-  // Independent fills created before scheduling can be pulled across a while
-  // by LHS. Shorten these lifetimes after the schedule-changing passes and
-  // before buffer assignment and launch annotations.
+  // Independent fills have no operands, so LHS often schedules them far ahead
+  // of their first use. Shorten these lifetimes after the schedule-changing
+  // passes and before buffer assignment and launch annotations.
   main_pipeline.AddPass<ConstantFillSinking>();
 
   if (IsPdlLaunchInsertionEnabled(module->config().debug_options(),

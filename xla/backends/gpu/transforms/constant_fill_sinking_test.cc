@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -200,6 +201,187 @@ TEST_F(ConstantFillSinkingTest, CanCrossMultipleWhiles) {
       ElementsAre("initial", "loop", "second_loop", "after", "fill", "result"));
 }
 
+TEST_F(ConstantFillSinkingTest, SinksWithoutWhile) {
+  std::string hlo = absl::StrReplaceAll(
+      kHlo,
+      {{"while(initial), condition=condition, body=body", "negate(initial)"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, ConstantFillSinking().Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(ScheduleNames(*module),
+              ElementsAre("initial", "loop", "after", "fill", "result"));
+  ASSERT_OK(module->schedule().Verify());
+}
+
+TEST_F(ConstantFillSinkingTest, DoesNotReorderAdjacentFills) {
+  // Two fills already sit directly before their shared first user. Neither
+  // should move, otherwise repeated runs would swap them back and forth.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule adjacent, is_scheduled=true
+
+fill_body {
+  value = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+}
+other_fill_body {
+  value = f32[] constant(1)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+}
+ENTRY main {
+  p = f32[512,512]{1,0} parameter(0)
+  negated = f32[512,512]{1,0} negate(p)
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  other = f32[512,512]{1,0} fusion(), kind=kLoop, calls=other_fill_body
+  sum = f32[512,512]{1,0} add(fill, other)
+  ROOT result = f32[512,512]{1,0} add(sum, negated)
+}
+)"));
+  std::string before = module->ToString();
+  ASSERT_OK_AND_ASSIGN(bool changed, ConstantFillSinking().Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), before);
+}
+
+// Entry template for async-window tests. $0 is the entry body after `input`.
+// In the bodies below, $0 opens an async window on `input` as `start` and $1
+// closes it as `done`.
+constexpr absl::string_view kAsyncHlo = R"(
+HloModule async, is_scheduled=true
+
+fill_body {
+  value = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+}
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT sum = f32[] add(a, b)
+}
+async_body {
+  p = f32[512,512]{1,0} parameter(0)
+  ROOT negated = f32[512,512]{1,0} negate(p)
+}
+ENTRY main {
+  input = f32[512,512]{1,0} parameter(0)
+$0
+}
+)";
+
+struct AsyncPair {
+  const char* name;
+  absl::string_view start;
+  absl::string_view done;
+};
+
+std::string AsyncHlo(const AsyncPair& pair, absl::string_view body) {
+  return absl::Substitute(kAsyncHlo,
+                          absl::Substitute(body, pair.start, pair.done));
+}
+
+class AsyncWindowConstantFillSinkingTest
+    : public ConstantFillSinkingTest,
+      public ::testing::WithParamInterface<AsyncPair> {};
+
+TEST_P(AsyncWindowConstantFillSinkingTest, LeavesFillWhoseUserFollowsTheDone) {
+  // The fill hides under the async operation. Its user runs after the done,
+  // so sinking would put the fill back on the critical path.
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(AsyncHlo(GetParam(), R"(  $0
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  other = f32[512,512]{1,0} negate(input)
+  $1
+  ROOT result = f32[512,512]{1,0} add(done, fill))")));
+  std::string before = module->ToString();
+  ASSERT_OK_AND_ASSIGN(bool changed, ConstantFillSinking().Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), before);
+}
+
+TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillWhoseUserSharesTheWindow) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(AsyncHlo(GetParam(), R"(  $0
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  other = f32[512,512]{1,0} negate(input)
+  use = f32[512,512]{1,0} add(other, fill)
+  $1
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(done, use))")));
+  ASSERT_OK_AND_ASSIGN(bool changed, ConstantFillSinking().Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(
+      ScheduleNames(*module),
+      ElementsAre("input", "start", "other", "fill", "use", "done", "result"));
+  ASSERT_OK(module->schedule().Verify());
+}
+
+TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillScheduledBeforeTheWindow) {
+  // The fill is outside the window, so crossing the window is free.
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(AsyncHlo(
+          GetParam(),
+          R"(  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  $0
+  other = f32[512,512]{1,0} negate(input)
+  $1
+  ROOT result = f32[512,512]{1,0} add(done, fill))")));
+  ASSERT_OK_AND_ASSIGN(bool changed, ConstantFillSinking().Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(ScheduleNames(*module),
+              ElementsAre("input", "start", "other", "done", "fill", "result"));
+  ASSERT_OK(module->schedule().Verify());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AsyncPairs, AsyncWindowConstantFillSinkingTest,
+    ::testing::Values(
+        AsyncPair{
+            "AllReduce",
+            "start = f32[512,512]{1,0} all-reduce-start(input), to_apply=add",
+            "done = f32[512,512]{1,0} all-reduce-done(start)"},
+        AsyncPair{"AsyncCompute",
+                  "start = ((f32[512,512]{1,0}), f32[512,512]{1,0}, u32[]) "
+                  "async-start(input), calls=async_body",
+                  "done = f32[512,512]{1,0} async-done(start)"},
+        AsyncPair{"Copy",
+                  "start = (f32[512,512]{1,0}, f32[512,512]{1,0}, u32[]) "
+                  "copy-start(input)",
+                  "done = f32[512,512]{1,0} copy-done(start)"}),
+    [](const ::testing::TestParamInfo<AsyncPair>& info) {
+      return info.param.name;
+    });
+
+TEST_F(ConstantFillSinkingTest, LeavesFillWhenAnyEnclosingWindowClosesFirst) {
+  // The fill sits in two nested windows. Its user is still inside the outer
+  // one, but the inner window closes first, so the fill stays.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule nested, is_scheduled=true
+
+fill_body {
+  value = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(value), dimensions={}
+}
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT sum = f32[] add(a, b)
+}
+ENTRY main {
+  p = f32[512,512]{1,0} parameter(0)
+  outer_start = f32[512,512]{1,0} all-reduce-start(p), to_apply=add
+  inner_start = f32[512,512]{1,0} all-reduce-start(p), to_apply=add
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  inner_done = f32[512,512]{1,0} all-reduce-done(inner_start)
+  use = f32[512,512]{1,0} add(inner_done, fill)
+  outer_done = f32[512,512]{1,0} all-reduce-done(outer_start)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(outer_done, use)
+}
+)"));
+  std::string before = module->ToString();
+  ASSERT_OK_AND_ASSIGN(bool changed, ConstantFillSinking().Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), before);
+}
+
 TEST_F(ConstantFillSinkingTest, RequiresSchedule) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
   module->clear_schedule();
@@ -288,9 +470,6 @@ INSTANTIATE_TEST_SUITE_P(
     Safeguards, RejectedConstantFillSinkingTest,
     ::testing::Values(
         RejectedFill{"SmallFill", {{"512", "256"}}},
-        RejectedFill{"NoWhile",
-                     {{"while(initial), condition=condition, body=body",
-                       "negate(initial)"}}},
         RejectedFill{"Operand",
                      {{"f32[] constant(0)", "s32[] parameter(0)"},
                       {"broadcast(value)", "broadcast(converted)"},

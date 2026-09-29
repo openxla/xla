@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <set>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -69,6 +70,35 @@ absl::StatusOr<Decision> CanSinkFill(const HloInstruction& instruction) {
   return Decision::Allow();
 }
 
+// Async windows are the schedule ranges between an async start and its done.
+// Work the scheduler placed inside a window runs while the async operation is
+// in flight, so it must not be pulled out of the window.
+bool IsWindowStart(const HloInstruction& instruction) {
+  switch (instruction.opcode()) {
+    case HloOpcode::kCopyStart:
+    case HloOpcode::kSend:
+    case HloOpcode::kRecv: {
+      return true;
+    }
+    default: {
+      return instruction.IsAsyncStart();
+    }
+  }
+}
+
+bool IsWindowDone(const HloInstruction& instruction) {
+  switch (instruction.opcode()) {
+    case HloOpcode::kCopyDone:
+    case HloOpcode::kSendDone:
+    case HloOpcode::kRecvDone: {
+      return true;
+    }
+    default: {
+      return instruction.IsAsyncDone();
+    }
+  }
+}
+
 }  // namespace
 
 absl::StatusOr<bool> ConstantFillSinking::RunImpl(
@@ -86,34 +116,59 @@ absl::StatusOr<bool> ConstantFillSinking::RunImpl(
   }
   const std::vector<HloInstruction*>& sequence =
       module->schedule().sequence(entry).instructions();
+  const int64_t size = sequence.size();
   absl::flat_hash_map<const HloInstruction*, int64_t> positions;
-  positions.reserve(sequence.size());
-  // Number of while instructions strictly before each schedule position.
-  std::vector<int64_t> whiles_before(sequence.size());
-  int64_t while_count = 0;
-  for (int64_t i = 0; i < sequence.size(); ++i) {
+  positions.reserve(size);
+  for (int64_t i = 0; i < size; ++i) {
     positions[sequence[i]] = i;
-    whiles_before[i] = while_count;
-    while_count += sequence[i]->opcode() == HloOpcode::kWhile;
   }
-  if (while_count == 0) {
-    return false;
+
+  // window_done[s] is the position of the done that closes the async window
+  // opened at position s, or -1 when no window opens there.
+  std::vector<int64_t> window_done(size, -1);
+  for (int64_t i = 0; i < size; ++i) {
+    if (!IsWindowDone(*sequence[i]) ||
+        !IsWindowStart(*sequence[i]->operand(0))) {
+      continue;
+    }
+    auto start = positions.find(sequence[i]->operand(0));
+    if (start != positions.end()) {
+      window_done[start->second] = i;
+    }
+  }
+  // first_close[i] is the position of the earliest done that closes a window
+  // open at position i (start < i < done), or `size` when no window is open.
+  std::vector<int64_t> first_close(size, size);
+  std::multiset<int64_t> open_dones;
+  for (int64_t i = 0; i < size; ++i) {
+    while (!open_dones.empty() && *open_dones.begin() <= i) {
+      open_dones.erase(open_dones.begin());
+    }
+    if (!open_dones.empty()) {
+      first_close[i] = *open_dones.begin();
+    }
+    if (window_done[i] >= 0) {
+      open_dones.insert(window_done[i]);
+    }
   }
 
   absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>
       fills_before;
   absl::flat_hash_set<HloInstruction*> moved_fills;
-  for (int64_t i = 0; i < sequence.size(); ++i) {
+  for (int64_t i = 0; i < size; ++i) {
     HloInstruction* fill = sequence[i];
     ABSL_ASSIGN_OR_RETURN(Decision decision, CanSinkFill(*fill));
     if (decision.IsForbidden()) {
       continue;
     }
-    int64_t first_user = sequence.size();
+    int64_t first_user = size;
     for (HloInstruction* user : fill->users()) {
       first_user = std::min(first_user, positions.at(user));
     }
-    if (whiles_before[first_user] == whiles_before[i]) {
+    // Every window open at the fill must still be open at its first user.
+    // Otherwise the fill hides latency that its first user does not, and
+    // moving it would put the fill's kernel back on the critical path.
+    if (first_close[i] <= first_user) {
       continue;
     }
     // A direct async-start user must see the initialized buffer. Do not look
@@ -125,8 +180,10 @@ absl::StatusOr<bool> ConstantFillSinking::RunImpl(
     return false;
   }
 
+  // Fills that already sit directly before their first user are re-inserted
+  // in place, so the rebuilt sequence only differs when a fill actually moves.
   std::vector<HloInstruction*> result;
-  result.reserve(sequence.size());
+  result.reserve(size);
   for (HloInstruction* instruction : sequence) {
     auto it = fills_before.find(instruction);
     if (it != fills_before.end()) {
@@ -135,6 +192,9 @@ absl::StatusOr<bool> ConstantFillSinking::RunImpl(
     if (!moved_fills.contains(instruction)) {
       result.push_back(instruction);
     }
+  }
+  if (result == sequence) {
+    return false;
   }
   module->schedule().set_sequence(entry, result);
   ABSL_RETURN_IF_ERROR(module->schedule().Verify());

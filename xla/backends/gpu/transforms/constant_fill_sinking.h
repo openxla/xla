@@ -25,13 +25,15 @@ limitations under the License.
 namespace xla::gpu {
 
 // Shortens the lifetimes of independent, large scalar-constant fills in the
-// entry schedule. When a fill precedes a while but all its users follow that
-// while, moves the fill immediately before its first user. The graph and the
-// relative ordering of every other instruction are unchanged.
+// entry schedule by moving each fill immediately before its first scheduled
+// user. The graph and the relative ordering of every other instruction are
+// unchanged.
 //
 // Run after latency-hiding scheduling and before buffer assignment. Fills with
-// explicit ordering or stream annotations are left alone. Only cross-while
-// moves are considered, to avoid changing useful overlap within a loop phase.
+// explicit ordering or stream annotations are left alone. A fill that sits
+// inside an async window (between an async start and its done) is only moved
+// when its first user lies inside that same window, so the move never takes
+// work out from under an in-flight async operation.
 class ConstantFillSinking : public HloModulePass {
  public:
   absl::string_view name() const override { return "constant-fill-sinking"; }
