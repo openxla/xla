@@ -107,6 +107,23 @@ absl::string_view kTritonGemmFusionHlo = R"hlo(
       backend_config={"fusion_backend_config": {kind: "__triton_gemm"}}
   })hlo";
 
+// A dot below xla_gpu_gemm_rewrite_size_threshold stays for elemental emitter
+// , FusionWrapper wraps it in a loop fusion.
+absl::string_view kLoopDotFusionHlo = R"hlo(
+  wrapped_dot_computation {
+    p0 = f32[4,4] parameter(0)
+    p1 = f32[4,4] parameter(1)
+    ROOT d = f32[4,4] dot(p0, p1),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  }
+
+  e {
+    p0 = f32[4,4] parameter(0)
+    p1 = f32[4,4] parameter(1)
+    ROOT wrapped_dot = f32[4,4] fusion(p0, p1), kind=kLoop,
+      calls=wrapped_dot_computation
+  })hlo";
+
 absl::string_view kF64GemmFusionHlo = R"hlo(
   fusion1 {
     p0 = f64[3,28,32] parameter(0)
@@ -237,6 +254,15 @@ TEST_F(CudnnBackendTest, GetSupportedConfigsFromTritonGemmFusion) {
 TEST_F(CudnnBackendTest, GetSupportedConfigsFromF64GemmFusionReturnsEmpty) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                        ParseAndReturnVerifiedModule(kF64GemmFusionHlo));
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_->GetSupportedConfigs(
+          (*hlo_module->entry_computation()->root_instruction()));
+  EXPECT_THAT(configs, IsOkAndHolds(IsEmpty()));
+}
+
+TEST_F(CudnnBackendTest, GetSupportedConfigsFromLoopFusionReturnsEmpty) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kLoopDotFusionHlo));
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_->GetSupportedConfigs(
           (*hlo_module->entry_computation()->root_instruction()));

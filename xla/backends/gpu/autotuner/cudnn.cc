@@ -117,6 +117,11 @@ absl::Status ApplyConfigAndUpdateWorkspaceInOutputTuple(
 bool IsSupportedCudnnFusion(const HloInstruction& instr,
                             const GpuTargetConfig& target_config,
                             const DebugOptions& debug_options) {
+  // Loop and input fusions are XLA's own, cuDNN is not a candidate
+  if (!instr.IsCustomFusion()) {
+    VLOG(1) << "Not a custom fusion.";
+    return false;
+  }
   const HloComputation* computation = instr.fused_instructions_computation();
   const HloInstruction* hero = hlo_query::GetFirstInstructionWithOpcode(
       *computation, {HloOpcode::kDot, HloOpcode::kConvolution,
