@@ -1016,7 +1016,8 @@ PjRtCpuRawClient::CompileInternal(
 }
 
 absl::StatusOr<PjRtDeviceEventRef> PjRtCpuRawClient::CreateDeviceEvent(
-    PjRtMemorySpace* memory_space, Future<void> dependency) {
+    LocalDeviceId local_device_id, int memory_kind_id,
+    Future<void> dependency) {
   return ToCpuEvent(std::move(dependency));
 }
 
@@ -1043,7 +1044,8 @@ absl::StatusOr<CompiledMemoryStats> PjRtCpuExecutable::GetCompiledMemoryStats()
 }
 
 absl::StatusOr<std::pair<PjRtDeviceEventPromiseRef, PjRtDeviceEventRef>>
-PjRtCpuRawClient::CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
+PjRtCpuRawClient::CreateLinkedEventPromise(LocalDeviceId local_device_id,
+                                           int memory_kind_id,
                                            absl::string_view debug_info) {
   auto definition_event_promise = tsl::MakeIndirectAsyncValue();
   auto definition_event = PjRtDeviceEventRef(
@@ -1359,7 +1361,7 @@ CreateBufferTable(const BufferAssignment& assignment,
 }
 
 tsl::RCReference<PjRtExecutableLoadState> PjRtCpuRawClient::MakeLoadState() {
-  return tsl::MakeRef<CpuExecutableLoadState>();
+  return tsl::MakeRef<CpuExecutableLoadState>(this);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
@@ -1369,10 +1371,7 @@ CpuExecutableLoadState::LoadRawExecutable(
     DeviceAndAssignment device_and_assign, int attempt) {
   auto result = std::make_unique<CpuPjRtRawLoadedExecutable>(run_id);
   result->executable_ = absl::down_cast<PjRtCpuExecutable*>(&executable.get());
-  auto* client =
-      absl::down_cast<CommonPjRtClient*>(device_and_assign.device->client());
-  result->raw_client_ =
-      absl::down_cast<PjRtCpuRawClient*>(client->raw_client());
+  result->raw_client_ = raw_client_;
   int num_addressable_devices = 0;
   if (device_and_assign.device_assignment != nullptr) {
     for (int r = 0; r < device_and_assign.device_assignment->replica_count();
@@ -1380,7 +1379,8 @@ CpuExecutableLoadState::LoadRawExecutable(
       for (int p = 0;
            p < device_and_assign.device_assignment->computation_count(); ++p) {
         GlobalDeviceId device_id((*device_and_assign.device_assignment)(r, p));
-        if (UnpackCpuProcessIndex(device_id) == client->process_index()) {
+        if (UnpackCpuProcessIndex(device_id) ==
+            device_and_assign.process_index) {
           ++num_addressable_devices;
         }
       }
@@ -1388,8 +1388,8 @@ CpuExecutableLoadState::LoadRawExecutable(
   }
   result->num_addressable_devices_ = num_addressable_devices;
   result->device_assignment_ = std::move(device_and_assign.device_assignment);
-  result->local_device_id_ = device_and_assign.device->local_device_id();
-  result->global_device_id_ = device_and_assign.device->global_device_id();
+  result->local_device_id_ = device_and_assign.local_device_id;
+  result->global_device_id_ = device_and_assign.global_device_id;
   return result;
 }
 
