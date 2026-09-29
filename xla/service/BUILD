@@ -5284,6 +5284,7 @@ cc_library(
     deps = [
         ":hlo_creation_utils",
         ":pattern_matcher",
+        "//xla:comparison_util",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:util",
