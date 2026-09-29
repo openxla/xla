@@ -104,7 +104,7 @@ esac
 
 echo "Executing build with build.py for build type: $BUILD_TYPE"
 # Run build.py with the determined build type
-python3 build_tools/ci/build.py --build="$BUILD_TYPE" || {
+PYTHONPATH=. python3 build_tools/ci/build.py --build="$BUILD_TYPE" || {
   echo "::error::build.py failed for $BUILD_TYPE!"
   exit 1
 }
