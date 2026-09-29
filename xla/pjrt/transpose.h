@@ -135,6 +135,11 @@ class TransposePlan {
 
     ChunkContiguity chunk_contiguity = ChunkContiguity::kNone;
 
+    // If true, input dimension 0 is chunked (a `ChunkedArray`): `a` passed to
+    // `Execute` / `ExecuteChunked` is a `const void* const*` pointing to
+    // `dims[0]` chunk pointers, each pointing to a slice of shape `dims[1..]`.
+    bool input_dim0_is_chunked = false;
+
     // DEPRECATED: Use input_tiling or input_striding instead.
     // This field is only present for backward compatibility.
     // TODO(phawkins): remove me.
@@ -152,8 +157,16 @@ class TransposePlan {
   // Currently there are no alignment requirements on either `a` or `b`. However
   // performance may be better if either or both are aligned.
   void Execute(const void* a, void* b,
-               std::optional<absl::FunctionRef<void(std::function<void(void)>)>>
+               std::optional<absl::FunctionRef<void(std::function<void()>)>>
                    schedule_work = std::nullopt) const;
+
+  // Executes the transposition for a plan created with
+  // `input_dim0_is_chunked = true`, where `chunks` contains `dims[0]` pointers
+  // to the slices along dimension 0.
+  void ExecuteChunked(
+      absl::Span<const void* const> chunks, void* b,
+      std::optional<absl::FunctionRef<void(std::function<void()>)>>
+          schedule_work = std::nullopt) const;
 
   // Executes a single chunk of the transposition. To perform a complete
   // transposition, call ExecuteChunk for each chunk ID from 0 to Parallelism()
@@ -201,6 +214,7 @@ class TransposePlan {
   int Parallelism() const { return nodes_.size(); }
 
   bool inner_kernel_is_memcpy() const { return inner_kernel_is_memcpy_; }
+  bool input_dim0_is_chunked() const { return input_dim0_is_chunked_; }
 
   struct Node;
 
@@ -254,6 +268,10 @@ class TransposePlan {
     // Is this loop over a tiled dimension where the iteration space touches
     // the partial tile at the end?
     bool has_partial_tile = false;
+
+    // If true, `a + i * lda` points to a `const void*` chunk pointer that must
+    // be dereferenced to obtain the chunk's base address.
+    bool deref_a = false;
 
     // Is this loop which should remain contiguous to ensure the requested
     // chunk contiguity?
@@ -412,6 +430,7 @@ class TransposePlan {
   bool use_fallback_pack_ = false;
 
   ChunkContiguity chunk_contiguity_ = ChunkContiguity::kNone;
+  bool input_dim0_is_chunked_ = false;
 
   // Size of the per-thread scratch buffer. 0 means "no scratch buffer required"
   int64_t scratch_size_ = 0;
@@ -429,6 +448,7 @@ struct TransposePlanCacheKey {
   std::optional<absl::InlinedVector<int64_t, 4>> output_tiling;
   TransposePlan::Transformation transformation;
   std::optional<int> dest_bits_per_element;
+  bool input_dim0_is_chunked = false;
   int num_threads;
 
   bool operator==(const TransposePlanCacheKey& other) const;

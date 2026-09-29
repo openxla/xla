@@ -984,6 +984,27 @@ class PjRtClient {
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       PjRtBuffer* donated_dst, const Layout* device_layout);
 
+  // Represents a host array whose outermost dimension (dimension 0) is split
+  // across `chunks.size()` separate memory buffers ("chunks"). Each pointer in
+  // `chunks` points to a slice of shape `dims.subspan(1)` with inner strides
+  // `byte_strides->subspan(1)` (or dense major-to-minor if `byte_strides` is
+  // omitted). If `byte_strides` is provided, `byte_strides->size()` must equal
+  // `dims.size()`, and `(*byte_strides)[0]` is ignored (treated as
+  // `sizeof(void*)`).
+  struct ChunkedArray {
+    absl::Span<const void* const> chunks;
+    absl::Span<int64_t const> dims;
+    std::optional<absl::Span<int64_t const>> byte_strides = std::nullopt;
+    PrimitiveType type;
+  };
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+  BufferFromHostChunkedArray(
+      const ChunkedArray& chunked_array,
+      HostBufferSemantics host_buffer_semantics,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+      PjRtMemorySpace* memory_space, const Layout* device_layout);
+
   // Note that literal must remain in scope until the transfer has completed, so
   // the caller should, for example, wait for GetReadyFuture().Await()
   // completes on the return value before letting literal go out of scope.

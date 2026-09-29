@@ -22,8 +22,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -38,7 +40,9 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
+#include "xla/primitive_util.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -145,6 +149,54 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtClient::BufferFromHostBuffer(
                               host_buffer_semantics,
                               std::move(on_done_with_host_buffer),
                               donated_dst->memory_space(), device_layout);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+PjRtClient::BufferFromHostChunkedArray(
+    const ChunkedArray& chunked_array,
+    HostBufferSemantics host_buffer_semantics,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+    PjRtMemorySpace* memory_space, const Layout* device_layout) {
+  if (chunked_array.dims.empty()) {
+    return InvalidArgument(
+        "ChunkedArray passed to BufferFromHostChunkedArray must have rank >= "
+        "1");
+  }
+  if (static_cast<int64_t>(chunked_array.chunks.size()) !=
+      chunked_array.dims[0]) {
+    return InvalidArgument(
+        "ChunkedArray chunks size (%d) must match dims[0] (%d)",
+        chunked_array.chunks.size(), chunked_array.dims[0]);
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      Shape shape,
+      ShapeUtil::MakeValidatedShape(chunked_array.type, chunked_array.dims));
+  int64_t byte_size = ShapeUtil::ByteSizeOf(shape);
+  auto staging = std::make_shared<std::vector<uint8_t>>(byte_size);
+  if (byte_size > 0) {
+    TransposePlan::Options options;
+    options.elem_size_in_bytes = primitive_util::ByteWidth(chunked_array.type);
+    options.dims = chunked_array.dims;
+    absl::InlinedVector<int64_t, 4> permutation(chunked_array.dims.size());
+    absl::c_iota(permutation, 0);
+    options.permutation = permutation;
+    if (chunked_array.byte_strides.has_value()) {
+      options.input_striding =
+          TransposePlan::Striding{*chunked_array.byte_strides};
+    }
+    options.input_dim0_is_chunked = true;
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TransposePlan> plan,
+                          TransposePlan::Create(options));
+    plan->ExecuteChunked(chunked_array.chunks, staging->data());
+  }
+  if (on_done_with_host_buffer) {
+    std::move(on_done_with_host_buffer)();
+  }
+  const void* staging_ptr = staging->data();
+  return BufferFromHostBuffer(
+      staging_ptr, chunked_array.type, chunked_array.dims,
+      /*byte_strides=*/std::nullopt, HostBufferSemantics::kImmutableZeroCopy,
+      [staging = std::move(staging)]() {}, memory_space, device_layout);
 }
 
 Future<> PjRtBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,

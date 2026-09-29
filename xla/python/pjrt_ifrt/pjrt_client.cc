@@ -1036,21 +1036,15 @@ PjRtClient::CreatePjRtArray(Shape shape, PjRtBuffers pjrt_buffers,
   return tsl::RCReference<PjRtCompatibleArray>(std::move(array));
 }
 
-absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
-    const void* data, DType dtype, Shape shape,
-    std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
-    LayoutRef layout, Client::HostBufferSemantics semantics,
+namespace {
+
+absl::StatusOr<ArrayRef> MakeArrayFromHostBufferImpl(
+    PjRtClient* client, const void* data,
+    std::optional<absl::Span<const void* const>> chunks, DType dtype,
+    Shape shape, std::optional<absl::Span<const int64_t>> byte_strides,
+    ShardingRef sharding, LayoutRef layout,
+    Client::HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer) {
-  DCHECK(this);
-  if (dtype.kind() == DType::kString) {
-    if (layout != nullptr) {
-      return InvalidArgument(
-          "String arrays do not support custom layouts: layout=%v", *layout);
-    }
-    return MakeStringArrayFromHostBuffer(this, data, dtype, shape, byte_strides,
-                                         sharding, semantics,
-                                         on_done_with_host_buffer);
-  }
   if (!isa<const SingleDeviceSharding>(sharding.get()) &&
       !sharding->IsFullyReplicated()) {
     return InvalidArgument(
@@ -1067,13 +1061,11 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
                            sharding->devices());
   }
   std::shared_ptr<const xla::PjRtLayout> pjrt_layout;
-  const xla::Layout* xla_layout;
-  if (layout == nullptr) {
-    xla_layout = nullptr;
-  } else {
+  const xla::Layout* xla_layout = nullptr;
+  if (layout != nullptr) {
     ABSL_ASSIGN_OR_RETURN(Shape shard_shape, sharding->GetShardShape(shape));
     ABSL_ASSIGN_OR_RETURN(pjrt_layout,
-                          ToPjRtLayout(dtype, shard_shape, layout));
+                          ToPjRtLayout(dtype, shard_shape, std::move(layout)));
     xla_layout = &pjrt_layout->xla_layout();
   }
   std::function<void()> on_done_with_host_buffer_per_device;
@@ -1092,14 +1084,8 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
   PjRtArray::PjRtBuffers buffers;
   buffers.reserve(ifrt_addressable_devices.size());
   for (xla::ifrt::Device* const device : ifrt_addressable_devices) {
-    std::unique_ptr<PjRtBuffer> buffer;
-    // If the sharding has memory_kind specified, use a version of
-    // `PjRtClient::BufferFromHostBuffer` that accepts `PjRtMemorySpace`.
-    // Otherwise, use a non-`PjRtMemorySpace` version that is compatible with
-    // PjRt implementations without memories support.
+    xla::PjRtMemorySpace* memory_space = nullptr;
     if (!sharding->memory_kind().is_default()) {
-      // Find `PjRtMemorySpace` that is associated with the sharding's device
-      // and matches the sharding's memory_kind.
       Memory* memory = nullptr;
       for (Memory* ms : device->Memories()) {
         if (ms->Kind() == sharding->memory_kind()) {
@@ -1116,27 +1102,66 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
                             absl::StrAppend(out, ms->Kind().value());
                           }));
       }
-      ABSL_ASSIGN_OR_RETURN(
-          buffer,
-          pjrt_client_->BufferFromHostBuffer(
-              data, primitive_type, shape.dims(), byte_strides, semantics,
-              on_done_with_host_buffer_per_device,
-              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory(), xla_layout));
+      memory_space = absl::down_cast<PjRtMemory*>(memory)->pjrt_memory();
     } else {
-      ABSL_ASSIGN_OR_RETURN(xla::PjRtMemorySpace * memory_space,
-                            absl::down_cast<PjRtDevice*>(device)
-                                ->pjrt_device()
-                                ->default_memory_space());
+      ABSL_ASSIGN_OR_RETURN(memory_space, absl::down_cast<PjRtDevice*>(device)
+                                              ->pjrt_device()
+                                              ->default_memory_space());
+    }
+    std::unique_ptr<PjRtBuffer> buffer;
+    if (chunks.has_value()) {
+      xla::PjRtClient::ChunkedArray pjrt_chunked_array{
+          *chunks, shape.dims(), byte_strides, primitive_type};
       ABSL_ASSIGN_OR_RETURN(
           buffer,
-          pjrt_client_->BufferFromHostBuffer(
+          client->pjrt_client()->BufferFromHostChunkedArray(
+              pjrt_chunked_array, semantics,
+              on_done_with_host_buffer_per_device, memory_space, xla_layout));
+    } else {
+      ABSL_ASSIGN_OR_RETURN(
+          buffer,
+          client->pjrt_client()->BufferFromHostBuffer(
               data, primitive_type, shape.dims(), byte_strides, semantics,
               on_done_with_host_buffer_per_device, memory_space, xla_layout));
     }
     buffers.push_back(std::move(buffer));
   }
-  return PjRtArray::Create(this, dtype, std::move(shape), std::move(sharding),
+  return PjRtArray::Create(client, dtype, std::move(shape), std::move(sharding),
                            std::move(buffers), std::move(pjrt_layout));
+}
+
+}  // namespace
+
+absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
+    const void* data, DType dtype, Shape shape,
+    std::optional<absl::Span<const int64_t>> byte_strides, ShardingRef sharding,
+    LayoutRef layout, Client::HostBufferSemantics semantics,
+    std::function<void()> on_done_with_host_buffer) {
+  DCHECK(this);
+  if (dtype.kind() == DType::kString) {
+    if (layout != nullptr) {
+      return InvalidArgument(
+          "String arrays do not support custom layouts: layout=%v", *layout);
+    }
+    return MakeStringArrayFromHostBuffer(this, data, dtype, shape, byte_strides,
+                                         sharding, semantics,
+                                         on_done_with_host_buffer);
+  }
+  return MakeArrayFromHostBufferImpl(
+      this, data, /*chunks=*/std::nullopt, dtype, std::move(shape),
+      byte_strides, std::move(sharding), std::move(layout), semantics,
+      std::move(on_done_with_host_buffer));
+}
+
+absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostChunkedArray(
+    const ChunkedArray& chunked_array, ShardingRef sharding, LayoutRef layout,
+    HostBufferSemantics semantics,
+    std::function<void()> on_done_with_host_buffer) {
+  DCHECK(this);
+  return MakeArrayFromHostBufferImpl(
+      this, /*data=*/nullptr, chunked_array.chunks, chunked_array.dtype,
+      chunked_array.shape, chunked_array.byte_strides, std::move(sharding),
+      std::move(layout), semantics, std::move(on_done_with_host_buffer));
 }
 
 absl::StatusOr<std::vector<ArrayRef>>

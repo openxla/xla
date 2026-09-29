@@ -247,12 +247,17 @@ CommonPjRtClient::AllocateLinearizeDest(bool sync,
   return PjRtStagingBuffer::Create(span, [vec = std::move(vec)]() {});
 }
 
-absl::Status CommonPjRtClient::Linearize(
-    absl::Span<uint8_t> dest, const void* data,
-    absl::Span<const int64_t> byte_strides, const Shape& device_shape,
-    absl::Span<const uint32_t> dynamic_sizes, PjRtMemorySpace* memory_space) {
+namespace {
+
+absl::Status LinearizeImpl(CommonPjRtClient* client, absl::Span<uint8_t> dest,
+                           const void* data,
+                           absl::Span<const int64_t> byte_strides,
+                           const Shape& device_shape,
+                           absl::Span<const uint32_t> dynamic_sizes,
+                           PjRtMemorySpace* memory_space,
+                           bool input_dim0_is_chunked) {
   PjRtDynamicShapeKind layout_kind =
-      GetDynamicShapeKind(memory_space->kind_id());
+      client->GetDynamicShapeKind(memory_space->kind_id());
   auto requirements =
       PjRtShapeAndMetadataTransferRequirements::Get(device_shape, layout_kind);
 
@@ -303,6 +308,7 @@ absl::Status CommonPjRtClient::Linearize(
   if (!byte_strides.empty()) {
     options.input_striding = TransposePlan::Striding{byte_strides};
   }
+  options.input_dim0_is_chunked = input_dim0_is_chunked;
 
   bool should_pack = device_shape.layout().element_size_in_bits() != 0 &&
                      device_shape.layout().element_size_in_bits() <
@@ -311,10 +317,21 @@ absl::Status CommonPjRtClient::Linearize(
     options.dest_bits_per_element = primitive_util::BitWidth(type);
   }
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<TransposePlan> transpose,
-                        GetTransposePlan(options));
+                        client->GetTransposePlan(options));
 
   transpose->Execute(data, array_dest.data());
   return absl::OkStatus();
+}
+
+}  // namespace
+
+absl::Status CommonPjRtClient::Linearize(
+    absl::Span<uint8_t> dest, const void* data,
+    absl::Span<const int64_t> byte_strides, const Shape& device_shape,
+    absl::Span<const uint32_t> dynamic_sizes, PjRtMemorySpace* memory_space) {
+  return LinearizeImpl(this, dest, data, byte_strides, device_shape,
+                       dynamic_sizes, memory_space,
+                       /*input_dim0_is_chunked=*/false);
 }
 
 absl::StatusOr<DeviceAssignment> CommonPjRtClient::GetDefaultDeviceAssignment(
@@ -626,13 +643,13 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
     const xla::Shape& device_shape, absl::Span<const uint32_t> dynamic_sizes,
-    PjRtRawBufferRef raw_buffer) {
+    PjRtRawBufferRef raw_buffer, bool input_dim0_is_chunked) {
   auto* memory_space = raw_buffer->memory_space();
   tsl::profiler::TraceMeProducer producer("CommonPjRtClient::LinearizeIntoImpl",
                                           tsl::profiler::ContextType::kPjRt);
 
   tsl::AsyncValueRef<PjRtStagingBuffer> linearized;
-  if (raw_buffer->GetHostPointer() == nullptr &&
+  if (!input_dim0_is_chunked && raw_buffer->GetHostPointer() == nullptr &&
       host_buffer_semantics != HostBufferSemantics::kImmutableOnlyDuringCall &&
       dynamic_sizes.empty() &&
       ShouldPerformZeroCopyLinearize(data, device_shape, type, dims,
@@ -659,10 +676,17 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
       if (auto* error = linearized.GetAsyncValue()->GetErrorIfPresent()) {
         return *error;
       }
-      ABSL_RETURN_IF_ERROR(
-          Linearize(linearized->data(), data,
-                    byte_strides.value_or(absl::Span<const int64_t>()),
-                    device_shape, dynamic_sizes, memory_space));
+      if (input_dim0_is_chunked) {
+        ABSL_RETURN_IF_ERROR(LinearizeImpl(
+            this, linearized->data(), data,
+            byte_strides.value_or(absl::Span<const int64_t>()), device_shape,
+            dynamic_sizes, memory_space, /*input_dim0_is_chunked=*/true));
+      } else {
+        ABSL_RETURN_IF_ERROR(
+            Linearize(linearized->data(), data,
+                      byte_strides.value_or(absl::Span<const int64_t>()),
+                      device_shape, dynamic_sizes, memory_space));
+      }
       if (on_done_with_host_buffer) {
         std::move(on_done_with_host_buffer)();
         on_done_with_host_buffer = nullptr;
@@ -683,7 +707,7 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
       async_work_runner()->ExecuteWhenReady(
           {std::move(linearized_dep)},
           [this, linearized = std::move(linearized), copy_event_promise,
-           raw_buffer = std::move(raw_buffer), data,
+           raw_buffer = std::move(raw_buffer), data, input_dim0_is_chunked,
            byte_strides = byte_strides.has_value()
                               ? absl::InlinedVector<int64_t, 4>(
                                     byte_strides->begin(), byte_strides->end())
@@ -700,6 +724,11 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
               if (auto* error =
                       linearized.GetAsyncValue()->GetErrorIfPresent()) {
                 return *error;
+              }
+              if (input_dim0_is_chunked) {
+                return LinearizeImpl(this, staging_data, data, byte_strides,
+                                     device_shape, dynamic_sizes, memory_space,
+                                     /*input_dim0_is_chunked=*/true);
               }
               return Linearize(staging_data, data, byte_strides, device_shape,
                                dynamic_sizes, memory_space);
@@ -1207,6 +1236,70 @@ CommonPjRtClient::BufferFromHostBuffer(
       DefineBuffer(shared_device_shape, memory_space, raw_buffer,
                    {std::move(definition_event)}));
   return output_buffer;
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+CommonPjRtClient::BufferFromHostChunkedArray(
+    const ChunkedArray& chunked_array,
+    HostBufferSemantics host_buffer_semantics,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+    PjRtMemorySpace* memory_space, const Layout* device_layout) {
+  if (!IsCpuId(platform_id()) && !IsGpuId(platform_id()) &&
+      memory_space->kind_id() != UnpinnedHostMemorySpace::kKindId) {
+    return PjRtClient::BufferFromHostChunkedArray(
+        chunked_array, host_buffer_semantics,
+        std::move(on_done_with_host_buffer), memory_space, device_layout);
+  }
+  if (chunked_array.dims.empty() ||
+      static_cast<int64_t>(chunked_array.chunks.size()) !=
+          chunked_array.dims[0]) {
+    return InvalidArgument(
+        "ChunkedArray must have rank >= 1 and chunks.size() (%d) == dims[0]",
+        chunked_array.chunks.size());
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      Shape shape,
+      ShapeUtil::MakeValidatedShape(chunked_array.type, chunked_array.dims));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape device_shape,
+      MakeDefaultShapeForMemorySpace(memory_space, shape, device_layout));
+  auto shared_device_shape =
+      std::make_shared<const Shape>(std::move(device_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      int64_t on_device_bytes_count,
+      GetOnDeviceBytesCount(memory_space, *shared_device_shape));
+  ABSL_ASSIGN_OR_RETURN(auto raw_buffer,
+                        AllocateRawBuffer(memory_space, on_device_bytes_count,
+                                          /*retry_on_oom=*/true,
+                                          /*allocate_after=*/{}));
+  absl::InlinedVector<uint32_t, 4> dynamic_sizes;
+  if (RequiresRuntimeShapeMetadata(*shared_device_shape, memory_space)) {
+    dynamic_sizes = {chunked_array.dims.begin(), chunked_array.dims.end()};
+  }
+  const void* data = chunked_array.chunks.data();
+  if (host_buffer_semantics != HostBufferSemantics::kImmutableOnlyDuringCall &&
+      !IsCpuId(platform_id()) &&
+      memory_space->kind_id() != UnpinnedHostMemorySpace::kKindId) {
+    auto chunks_copy = std::make_unique<std::vector<const void*>>(
+        chunked_array.chunks.begin(), chunked_array.chunks.end());
+    data = chunks_copy->data();
+    on_done_with_host_buffer =
+        [chunks_copy = std::move(chunks_copy),
+         on_done = std::move(on_done_with_host_buffer)]() mutable {
+          if (on_done) {
+            std::move(on_done)();
+          }
+        };
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      auto definition_event,
+      LinearizeIntoImpl(data, chunked_array.type, chunked_array.dims,
+                        chunked_array.byte_strides, host_buffer_semantics,
+                        std::move(on_done_with_host_buffer),
+                        *shared_device_shape, dynamic_sizes, raw_buffer,
+                        /*input_dim0_is_chunked=*/true));
+  return DefineBuffer(shared_device_shape, memory_space, raw_buffer,
+                      {std::move(definition_event)});
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>

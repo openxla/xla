@@ -125,6 +125,23 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
       ShardingRef sharding, LayoutRef layout, HostBufferSemantics semantics,
       std::function<void()> on_done_with_host_buffer) = 0;
 
+  // Represents a host array whose outermost dimension (dimension 0) is split
+  // across `chunks.size()` separate memory buffers ("chunks"). Each pointer in
+  // `chunks` points to a slice of shape `shape.dims().subspan(1)` with inner
+  // strides `byte_strides->subspan(1)` (or dense major-to-minor if
+  // `byte_strides` is omitted).
+  struct ChunkedArray {
+    absl::Span<const void* const> chunks;
+    Shape shape;
+    std::optional<absl::Span<const int64_t>> byte_strides = std::nullopt;
+    DType dtype;
+  };
+
+  virtual absl::StatusOr<ArrayRef> MakeArrayFromHostChunkedArray(
+      const ChunkedArray& chunked_array, ShardingRef sharding, LayoutRef layout,
+      HostBufferSemantics semantics,
+      std::function<void()> on_done_with_host_buffer);
+
   // Represents a host buffer.
   //
   // TODO(hyeontaek): Consider evolving this structure to `Literal` once it is
@@ -133,6 +150,8 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
     // `data` points to the backing array of the host buffer. Caution:
     // `byte_strides` are allowed to be negative, in which case `data` may need
     // to point to the interior of the buffer, not necessarily its start.
+    // When `input_dim0_is_chunked` is true, `data` points to an array of
+    // `shape.dims()[0]` `const void*` chunk pointers (`const void* const*`).
     const void* data;
 
     DType dtype;
@@ -160,6 +179,11 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
     // may be read by the runtime throughout the life of the array created with
     // the host buffer, and it may be even mutated.
     std::function<void()> on_done;
+
+    // If true, dimension 0 of the host buffer is chunked: `data` is a pointer
+    // to `shape.dims()[0]` `const void*` pointers, each pointing to a slice of
+    // shape `shape.dims().subspan(1)`.
+    bool input_dim0_is_chunked = false;
   };
 
   // Represents the specification of creating an array following an array spec
