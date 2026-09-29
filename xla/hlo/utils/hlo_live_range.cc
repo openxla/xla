@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_stack_trace.h"
+#include "xla/layout_util.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
@@ -351,7 +352,73 @@ HloLiveRange::LogicalTime HloLiveRange::GetLastUsageTime(
   return end_time;
 }
 
+HloLiveRange::LogicalTime HloLiveRange::ExtendLiveRange(
+    const HloValue* value, LogicalTime definition_end_time,
+    const absl::flat_hash_map<int64_t, absl::flat_hash_set<absl::string_view>>&
+        memory_space_to_execution_threads) {
+  const HloComputation* computation = value->instruction()->parent();
+  auto async_context_it = computations_in_async_context_.find(computation);
+  if (async_context_it == computations_in_async_context_.end()) {
+    return definition_end_time;
+  }
+
+  const HloComputation* async_context = async_context_it->second;
+  int64_t memory_space = LayoutUtil::MemorySpace(value->shape());
+  const absl::flat_hash_set<absl::string_view>&
+      execution_threads_that_use_memory_space =
+          memory_space_to_execution_threads.at(memory_space);
+
+  for (const HloInstruction* caller : async_context->caller_instructions()) {
+    absl::string_view caller_execution_thread =
+        caller->parent()->execution_thread();
+    if (!execution_threads_that_use_memory_space.contains(
+            caller_execution_thread)) {
+      continue;
+    }
+    if (caller->IsAsynchronous()) {
+      const HloInstruction* async_done = nullptr;
+      if (caller->opcode() == HloOpcode::kAsyncStart ||
+          caller->opcode() == HloOpcode::kAsyncUpdate) {
+        async_done = caller->async_chain_done();
+      } else if (caller->opcode() == HloOpcode::kAsyncDone) {
+        async_done = caller;
+      }
+      if (async_done != nullptr) {
+        auto async_done_it = instruction_schedule_.find(async_done);
+        if (async_done_it != instruction_schedule_.end()) {
+          definition_end_time =
+              std::max(definition_end_time, async_done_it->second);
+        } else {
+          definition_end_time = std::max(
+              definition_end_time, computation_span_times_[computation].end);
+        }
+      } else {
+        definition_end_time = std::max(
+            definition_end_time, computation_span_times_[computation].end);
+      }
+    }
+  }
+  // NOLINTNEXTLINE(clang-diagnostic-pre-c++20-compat)
+  VLOG(2) << "Setting the definition end time for op in async context: "
+          << definition_end_time;
+
+  return definition_end_time;
+}
+
 void HloLiveRange::CalculateBufferStartEndMap() {
+  absl::flat_hash_map<int64_t, absl::flat_hash_set<absl::string_view>>
+      memory_space_to_execution_threads;
+  for (const HloInstruction* instruction :
+       flattened_instruction_sequence_.instructions()) {
+    absl::string_view execution_thread =
+        instruction->parent()->execution_thread();
+    for (const HloValue* value :
+         GetValuesDefined(instruction, alias_analysis_.dataflow_analysis())) {
+      int64_t memory_space = LayoutUtil::MemorySpace(value->shape());
+      memory_space_to_execution_threads[memory_space].insert(execution_thread);
+    }
+  }
+
   for (const auto& entry : instruction_schedule_) {
     const HloInstruction& instruction = *entry.first;
     const HloComputation* computation = instruction.parent();
@@ -369,45 +436,12 @@ void HloLiveRange::CalculateBufferStartEndMap() {
         instruction.IsRoot() ? computation_span_times_[computation].end
                              : entry.second;
 
-    // If the instruction is in an asynchronous context, extend the live range
-    // until the end of the async-done instruction.
-    auto async_context_it = computations_in_async_context_.find(computation);
-    if (async_context_it != computations_in_async_context_.end()) {
-      const HloComputation* async_context = async_context_it->second;
-      for (const HloInstruction* caller :
-           async_context->caller_instructions()) {
-        if (caller->IsAsynchronous()) {
-          const HloInstruction* async_done = nullptr;
-          if (caller->opcode() == HloOpcode::kAsyncStart ||
-              caller->opcode() == HloOpcode::kAsyncUpdate) {
-            async_done = caller->async_chain_done();
-          } else if (caller->opcode() == HloOpcode::kAsyncDone) {
-            async_done = caller;
-          }
-          if (async_done != nullptr) {
-            auto async_done_it = instruction_schedule_.find(async_done);
-            if (async_done_it != instruction_schedule_.end()) {
-              definition_end_time =
-                  std::max(definition_end_time, async_done_it->second);
-            } else {
-              definition_end_time =
-                  std::max(definition_end_time,
-                           computation_span_times_[computation].end);
-            }
-          } else {
-            definition_end_time = std::max(
-                definition_end_time, computation_span_times_[computation].end);
-          }
-        }
-      }
-      VLOG(2) << "Setting the definition end time for op in async context: "
-              << definition_end_time;
-    }
-
     for (const HloValue* value :
          GetValuesDefined(&instruction, alias_analysis_.dataflow_analysis())) {
+      LogicalTime extended_end_time = ExtendLiveRange(
+          value, definition_end_time, memory_space_to_execution_threads);
       auto [end_time, end_position] =
-          ComputeValueLiveRangeEnd(*value, definition_end_time);
+          ComputeValueLiveRangeEnd(*value, extended_end_time);
       LiveRangeBounds live_range{start_time, end_time, end_position};
 
       // Readonly entry parameters (parameters that don't alias) live across

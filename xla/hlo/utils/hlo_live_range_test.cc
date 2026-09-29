@@ -1203,5 +1203,42 @@ ENTRY entry {
   EXPECT_FALSE(root_buffers.empty());
   EXPECT_TRUE(HloLiveRange::BufferLivesOut(*root_buffers[0], *aa, entry));
 }
+TEST_F(HloLiveRangeTest, ThreadLocalMemorySpaceInAsyncComputation) {
+  const std::string hlo_string = R"hlo(
+  HloModule module, is_scheduled=true
+
+  %async_comp (param: f32[8]) -> f32[8] {
+    %param = f32[8] parameter(0)
+    %neg = f32[8]{0:S(1)} negate(%param)
+    ROOT %res = f32[8] negate(%neg)
+  }, execution_thread="async_thread"
+
+  ENTRY %main (entry_param: f32[8]) -> f32[8] {
+    %entry_param = f32[8] parameter(0)
+    %async_start = ((f32[8]), f32[8], u32[]) call-start(%entry_param),
+      to_apply=%async_comp, async_execution_thread="async_thread"
+    ROOT %async_done = f32[8] call-done(%async_start)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                       HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(hlo_live_range_,
+                       HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+  CheckSchedule();
+
+  const HloInstruction* neg = FindInstruction(module_.get(), "neg");
+  const HloInstruction* res = FindInstruction(module_.get(), "res");
+  ASSERT_NE(neg, nullptr);
+  ASSERT_NE(res, nullptr);
+
+  const auto& schedule_map = hlo_live_range_->instruction_schedule();
+  auto neg_range = LiveRangeAt(neg);
+
+  EXPECT_EQ(neg_range.start, schedule_map.at(neg));
+  EXPECT_EQ(neg_range.end, schedule_map.at(res));
+}
 }  // namespace
 }  // namespace xla

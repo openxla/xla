@@ -178,6 +178,14 @@ class HloLiveRange {
   // Returns the time of the last use of a value.
   LogicalTime GetLastUsageTime(const HloValue& value) const;
 
+  // If the HloValue is in an asynchronous context, extend the live range
+  // until the end of the async-done instruction.
+  LogicalTime ExtendLiveRange(
+      const HloValue* value, LogicalTime definition_end_time,
+      const absl::flat_hash_map<int64_t,
+                                absl::flat_hash_set<absl::string_view>>&
+          memory_space_to_execution_threads);
+
   // Based on the flattened schedule, calculate the start and end of each
   // buffer.
   void CalculateBufferStartEndMap();
