@@ -109,16 +109,14 @@ void AbortUnownedCommunicator(ncclComm_t comm,
 absl::StatusOr<std::unique_ptr<RcclCommunicator>> RcclCommunicator::Create(
     absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm,
     std::shared_ptr<CancellationToken> cancel, bool is_async, tsl::Env& env) {
+  if (cancel == nullptr) {
+    cancel = std::make_shared<CancellationToken>();
+  }
   auto f = [cancel, &make_comm]() -> absl::StatusOr<ncclComm_t> {
     ABSL_ASSIGN_OR_RETURN(ncclComm_t comm, make_comm());
     // No RcclCommunicator owns this comm yet, so a failed poll must abort it
     // here. ncclCommDestroy can hang while the comm is still ncclInProgress.
-    const CancellationToken* token = cancel.get();
-    CancellationToken never_cancelled;
-    if (token == nullptr) {
-      token = &never_cancelled;
-    }
-    absl::Status ready = ::xla::gpu::PollUntilDone(comm, *token);
+    absl::Status ready = ::xla::gpu::PollUntilDone(comm, *cancel);
     if (!ready.ok()) {
       AbortUnownedCommunicator(comm, ready);
       return ready;
