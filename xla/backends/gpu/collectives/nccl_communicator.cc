@@ -313,12 +313,7 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
     ABSL_ASSIGN_OR_RETURN(ncclComm_t comm, make_comm());
     // No NcclCommunicator owns this comm yet, so a failed poll must abort it
     // here. ncclCommDestroy can hang while the comm is still ncclInProgress.
-    const CancellationToken* token = cancel.get();
-    CancellationToken never_cancelled;
-    if (token == nullptr) {
-      token = &never_cancelled;
-    }
-    absl::Status ready = ::xla::gpu::PollUntilDone(comm, *token);
+    absl::Status ready = ::xla::gpu::PollUntilDone(comm, *cancel);
     if (!ready.ok()) {
       AbortUnownedCommunicator(comm, ready);
       return ready;
