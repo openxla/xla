@@ -1401,6 +1401,176 @@ ENTRY main {
   }
 }
 
+TEST_P(GpuIndexingPerformanceModelTest,
+       EstimateRunTimeForTiledFusion_MultiOutputRegisterSpill_ReturnsInfinite) {
+  if (!use_experimental_tiling()) {
+    GTEST_SKIP();
+  }
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_enable_tiling_propagation(true);
+  debug_options.set_xla_gpu_experimental_enable_same_shape_multi_output_fusion(
+      true);
+  HloModuleConfig config;
+  config.set_debug_options(debug_options);
+
+  ASSERT_OK_AND_ASSIGN(auto module_3_outputs,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  p0 = f32[16,8192] parameter(0)
+  p1 = f32[16,8192] parameter(1)
+  out0 = f32[16,8192] add(p0, p1)
+  out1 = f32[16,8192] subtract(p0, p1)
+  out2 = f32[16,8192] multiply(p0, p1)
+  ROOT tuple = (f32[16,8192], f32[16,8192], f32[16,8192])
+      tuple(out0, out1, out2)
+}
+
+ENTRY entry_computation {
+  p0 = f32[16,8192] parameter(0)
+  p1 = f32[16,8192] parameter(1)
+  ROOT fusion = (f32[16,8192], f32[16,8192], f32[16,8192])
+      fusion(p0, p1), kind=kLoop, calls=fused_computation
+}
+)",
+                                                    config));
+
+  ASSERT_OK_AND_ASSIGN(auto module_4_outputs,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  p0 = f32[16,8192] parameter(0)
+  p1 = f32[16,8192] parameter(1)
+  out0 = f32[16,8192] add(p0, p1)
+  out1 = f32[16,8192] subtract(p0, p1)
+  out2 = f32[16,8192] multiply(p0, p1)
+  out3 = f32[16,8192] maximum(p0, p1)
+  ROOT tuple = (f32[16,8192], f32[16,8192], f32[16,8192], f32[16,8192])
+      tuple(out0, out1, out2, out3)
+}
+
+ENTRY entry_computation {
+  p0 = f32[16,8192] parameter(0)
+  p1 = f32[16,8192] parameter(1)
+  ROOT fusion = (f32[16,8192], f32[16,8192], f32[16,8192], f32[16,8192])
+      fusion(p0, p1), kind=kLoop, calls=fused_computation
+}
+)",
+                                                    config));
+
+  GpuPerformanceModelWithIndexingAnalysis model(
+      &device_info_, &fusion_analysis_cache_, HloCostAnalysis::DefaultShapeSize,
+      &mlir_context_, /*use_experimental_tiling=*/true,
+      /*enable_same_shape_multi_output_fusion=*/true);
+
+  auto adaptor_3 = HloFusionAdaptor::ForInstruction(
+      module_3_outputs->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(
+      EstimateRunTimeData res_3,
+      model.EstimateRunTimeForTiledFusion(
+          *adaptor_3, BlockLevelParameters{/*output_tile_sizes=*/{
+                                               {1, 8192},
+                                               {1, 8192},
+                                               {1, 8192},
+                                           },
+                                           /*num_warps=*/8}));
+  EXPECT_FALSE(res_3.IsInfinite());
+
+  auto adaptor_4 = HloFusionAdaptor::ForInstruction(
+      module_4_outputs->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(
+      EstimateRunTimeData res_4,
+      model.EstimateRunTimeForTiledFusion(
+          *adaptor_4, BlockLevelParameters{/*output_tile_sizes=*/{
+                                               {1, 8192},
+                                               {1, 8192},
+                                               {1, 8192},
+                                               {1, 8192},
+                                           },
+                                           /*num_warps=*/8}));
+  EXPECT_TRUE(res_4.IsInfinite());
+}
+
+TEST_P(GpuIndexingPerformanceModelTest,
+       EstimateRunTimeForTiledFusion_PerThreadRegisterLimitWithEmulatedOp) {
+  if (!use_experimental_tiling()) {
+    GTEST_SKIP();
+  }
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_enable_tiling_propagation(true);
+  debug_options.set_xla_gpu_experimental_enable_same_shape_multi_output_fusion(
+      true);
+  HloModuleConfig config;
+  config.set_debug_options(debug_options);
+
+  ASSERT_OK_AND_ASSIGN(auto module_without_emulated,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  p0 = f64[16,1024] parameter(0)
+  p1 = f64[16,1024] parameter(1)
+  o0 = f64[16,1024] add(p0, p1)
+  o1 = f64[16,1024] subtract(p0, p1)
+  ROOT tuple = (f64[16,1024], f64[16,1024]) tuple(o0, o1)
+}
+
+ENTRY entry_computation {
+  p0 = f64[16,1024] parameter(0)
+  p1 = f64[16,1024] parameter(1)
+  ROOT fusion = (f64[16,1024], f64[16,1024])
+      fusion(p0, p1), kind=kLoop, calls=fused_computation
+}
+)",
+                                                    config));
+
+  ASSERT_OK_AND_ASSIGN(auto module_with_emulated,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  p0 = f64[16,1024] parameter(0)
+  p1 = f64[16,1024] parameter(1)
+  o0 = f64[16,1024] exponential(p0)
+  o1 = f64[16,1024] subtract(p0, p1)
+  ROOT tuple = (f64[16,1024], f64[16,1024]) tuple(o0, o1)
+}
+
+ENTRY entry_computation {
+  p0 = f64[16,1024] parameter(0)
+  p1 = f64[16,1024] parameter(1)
+  ROOT fusion = (f64[16,1024], f64[16,1024])
+      fusion(p0, p1), kind=kLoop, calls=fused_computation
+}
+)",
+                                                    config));
+
+  GpuPerformanceModelWithIndexingAnalysis model(
+      &device_info_, &fusion_analysis_cache_, HloCostAnalysis::DefaultShapeSize,
+      &mlir_context_, /*use_experimental_tiling=*/true,
+      /*enable_same_shape_multi_output_fusion=*/true);
+
+  BlockLevelParameters params;
+  params.num_warps = 2;
+  params.output_tile_sizes.assign(2, {1, 1024});
+
+  auto adaptor_without_emulated = HloFusionAdaptor::ForInstruction(
+      module_without_emulated->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(
+      EstimateRunTimeData res_without_emulated,
+      model.EstimateRunTimeForTiledFusion(*adaptor_without_emulated, params));
+  EXPECT_FALSE(res_without_emulated.IsInfinite());
+
+  auto adaptor_with_emulated = HloFusionAdaptor::ForInstruction(
+      module_with_emulated->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(
+      EstimateRunTimeData res_with_emulated,
+      model.EstimateRunTimeForTiledFusion(*adaptor_with_emulated, params));
+  EXPECT_TRUE(res_with_emulated.IsInfinite());
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
