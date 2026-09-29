@@ -2645,6 +2645,7 @@ bool HloInstruction::HasSideEffectNoRecurse() const {
   }
 }
 
+// LINT.IfChange(has_side_effect)
 bool HloInstruction::HasSideEffect() const {
   if (HasSideEffectNoRecurse()) {
     return true;
@@ -2657,6 +2658,7 @@ bool HloInstruction::HasSideEffect() const {
   }
   return false;
 }
+// LINT.ThenChange(../../service/while_loop_simplifier.cc:cached_has_side_effect)
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCall(
     const Shape& shape, HloInstruction* called_computation_root) {
