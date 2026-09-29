@@ -58,26 +58,6 @@ namespace xla::gpu {
 
 namespace {
 
-// Collect stream identities without exposing dynamic-slice private allocations
-// to the generic traversal used for buffer dependencies.
-void CollectNestedStreams(const Thunk& thunk,
-                          absl::flat_hash_set<ExecutionStreamId>& streams) {
-  thunk.Walk([&](const Thunk* nested) {
-    if (nested->kind() == Thunk::kAsyncStart) {
-      streams.insert(
-          static_cast<const AsyncStartThunk*>(nested)->execution_stream_id());
-    } else if (nested->kind() == Thunk::kDynamicSliceFusion) {
-      // DynamicSliceFusionV2Thunk intentionally hides its embedded thunks from
-      // Thunk::Walk because their buffer allocation namespace is private.
-      const auto& fusion =
-          static_cast<const DynamicSliceFusionV2Thunk&>(*nested);
-      for (const std::unique_ptr<Thunk>& embedded : fusion.thunks()) {
-        CollectNestedStreams(*embedded, streams);
-      }
-    }
-  });
-}
-
 // A context for tracking thunks to commands conversion details.
 struct ConversionContext {
   std::vector<Command::ResourceUses> extra_resources;
@@ -95,22 +75,33 @@ struct ConversionContext {
   absl::flat_hash_map<const AsyncExecution*, Command::ResourceUses>
       async_completions;
 
+  // Streams forked by async starts in this executor, including forks inside
+  // its nested executors. A nested executor becomes a single command in the
+  // enclosing executor, which must order that command against these streams.
+  absl::flat_hash_set<ExecutionStreamId> forked_streams;
+
   bool IsAsyncExecutionOpen(const AsyncExecution* execution) const {
     return async_completions.contains(execution) ||
            (parent != nullptr && parent->IsAsyncExecutionOpen(execution));
   }
 
-  void Append(CommandSequence& commands, Command* command,
-              const ConvertToCommandsOptions& options) {
+  // `nested_streams` are the streams forked inside `command` when it is a
+  // nested executor (loop, branches, dynamic slice), as reported by the
+  // conversion of its thunks.
+  void Append(
+      CommandSequence& commands, Command* command,
+      const ConvertToCommandsOptions& options,
+      const absl::flat_hash_set<ExecutionStreamId>& nested_streams = {}) {
     if (options.synchronization_mode ==
         CommandExecutor::SynchronizationMode::kLHS) {
-      // Nested executors (loops, branches, dynamic slices) are recorded as one
-      // command here. Order them against outstanding work on every additional
-      // stream they use, and publish their completion on those streams too.
-      absl::flat_hash_set<ExecutionStreamId> nested_streams;
-      CollectNestedStreams(*command, nested_streams);
+      // Order the command against outstanding work on its own stream and on
+      // every stream it forks internally, then publish its completion on all
+      // of them.
       Command::ResourceUses dependencies = stream_frontiers[current_stream];
       for (ExecutionStreamId stream : nested_streams) {
+        if (current_stream == stream) {
+          continue;  // Already covered by the command's own stream.
+        }
         const Command::ResourceUses& frontier = stream_frontiers[stream];
         dependencies.insert(dependencies.end(), frontier.begin(),
                             frontier.end());
@@ -120,6 +111,7 @@ struct ConversionContext {
       for (ExecutionStreamId stream : nested_streams) {
         stream_frontiers[stream] = {ResourceUse::Read(command->token())};
       }
+      forked_streams.insert(nested_streams.begin(), nested_streams.end());
     }
     commands.Append(command);
   }
@@ -181,9 +173,12 @@ static absl::Status AppendCommands(ConversionContext& ctx,
 
 // The implicit stream of a nested executor is the stream of its enclosing
 // command. Keep that identity when an inner async region reuses the stream.
+// Streams forked anywhere inside `sequence` are added to `forked_streams` so
+// the enclosing command can be ordered against them.
 static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options,
-    const ConversionContext* parent);
+    const ConversionContext* parent,
+    absl::flat_hash_set<ExecutionStreamId>& forked_streams);
 
 //===----------------------------------------------------------------------===//
 // Conversions from Thunk to Command
@@ -191,15 +186,16 @@ static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
 
 static absl::Status SetOrUpdateCommandBufferExecutors(
     WhileThunk& thunk, const ConvertToCommandsOptions& options,
-    const ConversionContext* parent) {
+    const ConversionContext* parent,
+    absl::flat_hash_set<ExecutionStreamId>& forked_streams) {
   VLOG(1) << "WhileThunk: " << thunk.profile_annotation();
   ABSL_ASSIGN_OR_RETURN(
       CommandExecutor cond_cmds,
       ConvertToCommandsImpl(thunk.condition_executor().thunks(), options,
-                            parent));
-  ABSL_ASSIGN_OR_RETURN(
-      CommandExecutor body_cmds,
-      ConvertToCommandsImpl(thunk.body_executor().thunks(), options, parent));
+                            parent, forked_streams));
+  ABSL_ASSIGN_OR_RETURN(CommandExecutor body_cmds,
+                        ConvertToCommandsImpl(thunk.body_executor().thunks(),
+                                              options, parent, forked_streams));
 
   return thunk.SetOrUpdateCommandBufferExecutors(
       std::move(cond_cmds), std::move(body_cmds), options.enable_loop_unroll);
@@ -207,7 +203,8 @@ static absl::Status SetOrUpdateCommandBufferExecutors(
 
 static absl::Status SetOrUpdateCommandBufferBranchExecutors(
     ConditionalThunk& thunk, const ConvertToCommandsOptions& options,
-    const ConversionContext* parent) {
+    const ConversionContext* parent,
+    absl::flat_hash_set<ExecutionStreamId>& forked_streams) {
   std::vector<CommandExecutor> branch_cmds;
   branch_cmds.reserve(thunk.branch_executors().size());
   if (thunk.branch_index_is_bool()) {
@@ -217,16 +214,17 @@ static absl::Status SetOrUpdateCommandBufferBranchExecutors(
     ABSL_ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommandsImpl(thunk.branch_executors()[1].thunks(), options,
-                              parent));
+                              parent, forked_streams));
     ABSL_ASSIGN_OR_RETURN(
         branch_cmds.emplace_back(),
         ConvertToCommandsImpl(thunk.branch_executors()[0].thunks(), options,
-                              parent));
+                              parent, forked_streams));
   } else {
     for (const ThunkExecutor& branch_thunk : thunk.branch_executors()) {
       ABSL_ASSIGN_OR_RETURN(
           CommandExecutor cmds,
-          ConvertToCommandsImpl(branch_thunk.thunks(), options, parent));
+          ConvertToCommandsImpl(branch_thunk.thunks(), options, parent,
+                                forked_streams));
       branch_cmds.emplace_back(std::move(cmds));
     }
   }
@@ -239,9 +237,10 @@ static absl::Status AppendCommands(ConversionContext& ctx,
   switch (thunk.kind()) {
     case Thunk::Kind::kConditional: {
       auto& conditional_thunk = static_cast<ConditionalThunk&>(thunk);
+      absl::flat_hash_set<ExecutionStreamId> forked_streams;
       ABSL_RETURN_IF_ERROR(SetOrUpdateCommandBufferBranchExecutors(
-          conditional_thunk, options, &ctx));
-      ctx.Append(cmd_sequence, &conditional_thunk, options);
+          conditional_thunk, options, &ctx, forked_streams));
+      ctx.Append(cmd_sequence, &conditional_thunk, options, forked_streams);
       return absl::OkStatus();
     }
     case Thunk::Kind::kAsyncDone: {
@@ -266,22 +265,25 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     }
     case Thunk::Kind::kWhile: {
       auto& while_thunk = static_cast<WhileThunk&>(thunk);
-      ABSL_RETURN_IF_ERROR(
-          SetOrUpdateCommandBufferExecutors(while_thunk, options, &ctx));
-      ctx.Append(cmd_sequence, &while_thunk, options);
+      absl::flat_hash_set<ExecutionStreamId> forked_streams;
+      ABSL_RETURN_IF_ERROR(SetOrUpdateCommandBufferExecutors(
+          while_thunk, options, &ctx, forked_streams));
+      ctx.Append(cmd_sequence, &while_thunk, options, forked_streams);
       return absl::OkStatus();
     }
     case Thunk::Kind::kDynamicSliceFusion: {
       auto& dynamic_slice_fusion_thunk =
           static_cast<DynamicSliceFusionV2Thunk&>(thunk);
+      absl::flat_hash_set<ExecutionStreamId> forked_streams;
       ABSL_ASSIGN_OR_RETURN(
           CommandExecutor cmds,
           ConvertToCommandsImpl(dynamic_slice_fusion_thunk.thunks(), options,
-                                &ctx));
+                                &ctx, forked_streams));
       ABSL_RETURN_IF_ERROR(
           dynamic_slice_fusion_thunk.SetOrUpdateCommandBufferExecutor(
               std::move(cmds)));
-      ctx.Append(cmd_sequence, &dynamic_slice_fusion_thunk, options);
+      ctx.Append(cmd_sequence, &dynamic_slice_fusion_thunk, options,
+                 forked_streams);
       return absl::OkStatus();
     }
     // Sequential thunk does not have any special semantics and we simply inline
@@ -309,6 +311,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       Command::ResourceUses parent_frontier =
           ctx.stream_frontiers[parent_stream];
       ctx.current_stream = start.execution_stream_id();
+      ctx.forked_streams.insert(start.execution_stream_id());
       Command::ResourceUses& frontier =
           ctx.stream_frontiers[ctx.current_stream];
       frontier.insert(frontier.end(), parent_frontier.begin(),
@@ -691,7 +694,8 @@ static absl::Status AppendCommands(ConversionContext& ctx,
 
 static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options,
-    const ConversionContext* parent) {
+    const ConversionContext* parent,
+    absl::flat_hash_set<ExecutionStreamId>& forked_streams) {
   VLOG(3) << absl::StreamFormat(
       "Convert thunk sequence to command executor: synchronization_mode=%v",
       options.synchronization_mode);
@@ -703,6 +707,7 @@ static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
   ABSL_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
   TF_RET_CHECK(ctx.async_completions.empty())
       << "Async start has no matching done in command buffer";
+  forked_streams.insert(ctx.forked_streams.begin(), ctx.forked_streams.end());
   // In LHS mode stream ordering and joins are explicit token dependencies in
   // `extra_resources`; the executor combines them with buffer hazards when it
   // builds the execution graph.
@@ -713,7 +718,10 @@ static absl::StatusOr<CommandExecutor> ConvertToCommandsImpl(
 
 absl::StatusOr<CommandExecutor> ConvertToCommands(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options) {
-  return ConvertToCommandsImpl(sequence, options, nullptr);
+  // The top-level executor is not a command of an enclosing executor, so the
+  // streams it forks are not needed by anyone.
+  absl::flat_hash_set<ExecutionStreamId> forked_streams;
+  return ConvertToCommandsImpl(sequence, options, nullptr, forked_streams);
 }
 
 }  // namespace xla::gpu
