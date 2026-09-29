@@ -2817,9 +2817,9 @@ cc_library(
         ":hlo_creation_utils",
         ":pattern_matcher",
         ":while_util",
+        "//xla:bit_set",
         "//xla:comparison_util",
         "//xla:frontend_attributes",
-        "//xla:inlined_bit_set",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -2864,6 +2864,7 @@ xla_cc_test(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
 )
