@@ -1330,7 +1330,7 @@ TEST_P(PriorityFusionTest, DoNotFuseInsideReducer) {
 }
 
 TEST_P(PriorityFusionTest, SkipsTilingsWithInfiniteRuntime) {
-  // This test verifies the fix in TryFindBestTilingForFusion that skips
+  // This test verifies the fix in TryFindBestTilingForFusionAsync that skips
   // tilings with infinite runtime estimates.
   //
   // The fix: After estimating runtime for each tiling candidate, check if
