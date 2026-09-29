@@ -3493,11 +3493,10 @@ xla_cc_test(
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/tsl/cuda:nccl",
-        "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@local_config_cuda//cuda:cuda_headers",
-    ],
+    ] + if_google(["//xla/tsl/framework:allocator"]),
 )
