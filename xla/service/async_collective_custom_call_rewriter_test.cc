@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -416,7 +417,7 @@ TEST_F(AsyncCollectiveCustomCallRewriterTest,
         ParseAndReturnUnverifiedModule(unsupported_instruction_hlo));
     AsyncCollectiveCustomCallRewriter rewriter(use_legacy_collectives);
     EXPECT_THAT(rewriter.Run(module.get()),
-                ::testing::status::StatusIs(
+                ::absl_testing::StatusIs(
                     absl::StatusCode::kUnimplemented,
                     ::testing::HasSubstr("contains a negate instruction")));
   }
@@ -431,8 +432,8 @@ TEST_F(AsyncCollectiveCustomCallRewriterTest,
     AsyncCollectiveCustomCallRewriter rewriter(use_legacy_collectives);
     EXPECT_THAT(
         rewriter.Run(module.get()),
-        ::testing::status::StatusIs(absl::StatusCode::kUnimplemented,
-                                    ::testing::HasSubstr("has 2 operands")));
+        ::absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                 ::testing::HasSubstr("has 2 operands")));
   }
 
   // Both modes require the compute-on computation to contain exactly one
@@ -444,7 +445,7 @@ TEST_F(AsyncCollectiveCustomCallRewriterTest,
                          ParseAndReturnUnverifiedModule(two_all_gathers_hlo));
     AsyncCollectiveCustomCallRewriter rewriter(use_legacy_collectives);
     EXPECT_THAT(rewriter.Run(module.get()),
-                ::testing::status::StatusIs(
+                ::absl_testing::StatusIs(
                     absl::StatusCode::kUnimplemented,
                     ::testing::HasSubstr("contains at least two")));
   }
