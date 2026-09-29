@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/constant_fill_sinking.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -807,11 +808,19 @@ absl::Status RunLatencyHidingSchedulerPasses(
         };
   }
 
+  // Independent fills have no operands, so nothing anchors them near their
+  // users and the ranking heuristics tend to float them to the top of the
+  // schedule, where their buffers stay live across everything that follows.
+  // Move them next to their first user once the sequence is final, unless
+  // they hide under an in-flight async operation.
+  auto sink_constant_fills = [](DefaultSchedulerCore::SchedulingState& state) {
+    SinkConstantFills(state.new_sequence_reversed);
+  };
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       scheduling_context, config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
-      /*post_processing_fn=*/nullptr,
+      /*post_processing_fn=*/sink_constant_fills,
       /*scheduling_instruction_crosses_overlap_limit=*/
       std::move(overlap_limit_rule));
 

@@ -2853,12 +2853,51 @@ cc_library(
 )
 
 cc_library(
+    name = "constant_fill_sinking",
+    srcs = ["constant_fill_sinking.cc"],
+    hdrs = ["constant_fill_sinking.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:decision",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "constant_fill_sinking_test",
+    srcs = ["constant_fill_sinking_test.cc"],
+    deps = [
+        ":alias_info",
+        ":constant_fill_sinking",
+        ":gpu_device_info_for_tests",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_alias_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:buffer_value",
+        "//xla/service/heap_simulator",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "gpu_hlo_schedule",
     srcs = ["gpu_hlo_schedule.cc"],
     hdrs = ["gpu_hlo_schedule.h"],
     deps = [
         ":alias_info",
         ":backend_configs_cc",
+        ":constant_fill_sinking",
         ":flag_utils",
         ":gpu_latency_hiding_scheduler",
         ":hlo_fusion_analysis",
