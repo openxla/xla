@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/status_matchers.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -52,6 +51,7 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla::gpu {
 namespace {
@@ -1232,18 +1232,21 @@ TEST_F(AsyncCommandBufferCmdEmitterTest,
 
     // Also discover the hidden stream when the fusion is inside control flow.
     if (wrapper == Thunk::kWhile) {
-      ThunkSequence body = std::move(nested);
-      nested.Emplace<WhileThunk>(
+      ThunkSequence loop;
+      loop.Emplace<WhileThunk>(
           NextThunkInfo("while"), BufferAllocation::Slice(&predicate, 0, 1),
-          ThunkSequence{}, std::move(body), /*trip_count=*/1);
+          ThunkSequence{}, std::move(nested), /*trip_count=*/1);
+      nested = std::move(loop);
     } else if (wrapper == Thunk::kConditional) {
       std::vector<ThunkSequence> branches;
       branches.push_back(std::move(nested));
-      nested.Emplace<ConditionalThunk>(
+      ThunkSequence conditional;
+      conditional.Emplace<ConditionalThunk>(
           NextThunkInfo("conditional"),
           ShapedSlice{BufferAllocation::Slice(&predicate, 0, sizeof(int32_t)),
                       ShapeUtil::MakeShape(S32, {})},
           std::move(branches));
+      nested = std::move(conditional);
     }
 
     // Running the outer executor on a different async stream ensures that
@@ -1286,8 +1289,13 @@ TEST_F(AsyncCommandBufferCmdEmitterTest, RejectsOverlappingSharedExecution) {
     Done(inner, canonical.get(), "second_done");
 
     BufferAllocation predicate(1, sizeof(int32_t), 0);
+    // `inner` is nested in the body of "first", or follows it as a sibling.
     ThunkSequence body;
-    if (wrapper == Thunk::kAsyncStart) {
+    std::unique_ptr<Thunk> sibling;
+    if (wrapper == Thunk::kSequential) {
+      sibling = std::make_unique<SequentialThunk>(NextThunkInfo("sequential"),
+                                                  std::move(inner));
+    } else if (wrapper == Thunk::kAsyncStart) {
       body = std::move(inner);
     } else if (wrapper == Thunk::kWhile) {
       body.Emplace<WhileThunk>(
@@ -1315,9 +1323,8 @@ TEST_F(AsyncCommandBufferCmdEmitterTest, RejectsOverlappingSharedExecution) {
     thunks.Emplace<AsyncStartThunk>(NextThunkInfo("first"),
                                     ComputationStreamId(1), std::move(body),
                                     canonical->async_execution());
-    if (wrapper == Thunk::kSequential) {
-      thunks.Emplace<SequentialThunk>(NextThunkInfo("sequential"),
-                                      std::move(inner));
+    if (sibling != nullptr) {
+      thunks.push_back(std::move(sibling));
     }
     Done(thunks, canonical.get(), "first_done");
 

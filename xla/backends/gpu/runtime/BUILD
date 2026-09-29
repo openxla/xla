@@ -675,13 +675,11 @@ xla_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "cuda_command_buffer_async_test",
     srcs = ["cuda_command_buffer_async_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
-    ],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
     deps = [
         ":async_thunk",
         ":command_buffer_cmd_emitter",
@@ -706,12 +704,9 @@ xla_cc_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/cuda:cuda_platform",
-        "//xla/stream_executor/cuda:gpu_test_kernels_cuda",
         "//xla/stream_executor/gpu:gpu_test_kernels_fatbin",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
