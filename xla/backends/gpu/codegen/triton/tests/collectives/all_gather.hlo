@@ -52,8 +52,8 @@ ENTRY entry {
 // CHECK:        %[[COUNTER_PTR:.*]] = tt.addptr %[[SIGNAL_BUFFER]], %[[COUNTER_IDX]]
 // CHECK:        %[[COUNTER:.*]] = tt.load %[[COUNTER_PTR]] {isVolatile = true}
 // CHECK:        %[[SIGNAL_VALUE:.*]] = arith.addi %[[COUNTER]], %[[C1]]
-// CHECK:        triton_xla.block_barrier %[[SIGNAL_BUFFERS]], %[[RANK]], %[[SIGNAL_VALUE]],
-// CHECK-SAME:     {world_size = 2 : i32}
+// CHECK:        triton_xla.block_barrier %[[SIGNAL_BUFFERS]], %[[RANK]], %[[SIGNAL_VALUE]]
+// CHECK-SAME:     <world_size = 2>
 // CHECK:        %[[BUF:.*]] = xtile.select_buffer %[[ARG0]][%[[IDX2]]] : memref<2xi64> -> memref<128x128xf32>
 // CHECK:        %[[EXT:.*]] = xtile.extract %[[BUF]][%[[IDX0]], %[[IDX1]]] [16, 16] [1, 1] : memref<128x128xf32> -> tensor<16x16xf32>
 // CHECK:        %[[IDX3:.*]] = xla.apply_indexing #[[MAP3]](%[[PID]])
