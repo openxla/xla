@@ -1633,8 +1633,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (gpu_version_.IsCuda()) {
       return d_type == F8E4M3FN || d_type == F8E5M2;
     }
-    if (!gpu_version_.IsRocm() ||
-        toolkit_version_ < stream_executor::SemanticVersion{6, 2, 0}) {
+    if (!gpu_version_.IsRocm()) {
       return false;
     }
     ABSL_ASSIGN_OR_RETURN(auto rocm_compute_capability,
