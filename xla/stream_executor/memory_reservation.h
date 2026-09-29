@@ -46,6 +46,10 @@ class MemoryReservation {
   // accessible until physical memory is mapped via MapTo.
   virtual DeviceAddressBase address() const = 0;
 
+  // Alignment required for mapping offsets and sizes. Backends may report a
+  // recommended granularity larger than their hardware minimum.
+  virtual size_t granularity() const { return 1; }
+
   // Describes a mapping from a memory reservation range
   // [reservation_offset, reservation_offset + size) to a physical allocation
   // range [allocation_offset, allocation_offset + size).

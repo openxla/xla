@@ -42,6 +42,7 @@ class CudaMemoryReservation : public MemoryReservation {
 
   // Returns the base address and padded size of the reserved virtual range.
   DeviceAddressBase address() const override;
+  size_t granularity() const override { return granularity_; }
 
   ~CudaMemoryReservation() override;
   CudaMemoryReservation(CudaMemoryReservation&&) = delete;
@@ -49,7 +50,7 @@ class CudaMemoryReservation : public MemoryReservation {
 
  private:
   explicit CudaMemoryReservation(StreamExecutor* executor, CUdeviceptr ptr,
-                                 uint64_t size);
+                                 uint64_t size, size_t granularity);
 
   // Maps [reservation_offset, reservation_offset+size) in the reservation to
   // [allocation_offset, allocation_offset+size) in allocation via cuMemMap.
@@ -67,6 +68,7 @@ class CudaMemoryReservation : public MemoryReservation {
   StreamExecutor* executor_;
   CUdeviceptr ptr_;  // 0 means moved-from / released
   uint64_t size_;
+  size_t granularity_;
 };
 
 }  // namespace stream_executor::gpu
