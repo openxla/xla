@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numa.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/pjrt/device_event.h"
@@ -238,6 +239,10 @@ class PjRtRawClient {
   // Returns the host memory allocator for the client or null if not supported.
   virtual HostMemoryAllocator* GetHostMemoryAllocator() const {
     return nullptr;
+  }
+
+  virtual int GetNumaNode(LocalDeviceId local_device_id) const {
+    return tsl::port::kNUMANoAffinity;
   }
 
   // Returns the required byte alignment for host memory when performing DMA.

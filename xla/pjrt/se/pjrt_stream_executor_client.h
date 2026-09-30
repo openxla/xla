@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/reader.h"
 #include "tsl/platform/casts.h"
+#include "tsl/platform/numa.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
@@ -177,6 +178,13 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   HostMemoryAllocator* GetHostMemoryAllocator() const {
     return host_memory_allocator_.get();
+  }
+
+  int GetNumaNode(LocalDeviceId local_device_id) const override {
+    if (LocalDeviceState* state = device_state(local_device_id)) {
+      return state->executor()->numa_node();
+    }
+    return tsl::port::kNUMANoAffinity;
   }
 
   bool should_stage_host_to_device_transfers() const {
