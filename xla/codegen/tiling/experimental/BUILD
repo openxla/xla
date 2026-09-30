@@ -147,6 +147,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
     ],
