@@ -959,7 +959,7 @@ message DebugOptions {
   // Because the host can run ahead of the device, this includes time waiting
   // behind previously queued work. It is not a limit on the executable's actual
   // time running on the device.
-  optional string xla_gpu_device_execution_terminate_timeout = 552;
+  optional string xla_gpu_device_execution_terminate_timeout = 553;
 
   optional bool xla_gpu_exhaustive_tiling_search = 219;
 
@@ -1915,7 +1915,7 @@ message DebugOptions {
   // Enables Raft for stable TopK.
   optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
 
-  // Next id: 553
+  // Next id: 554
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
