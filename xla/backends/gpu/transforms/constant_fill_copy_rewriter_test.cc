@@ -22,8 +22,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "third_party/gloop/util/task/status_matchers.h"
 #include "xla/backends/gpu/transforms/copy_fusion.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
