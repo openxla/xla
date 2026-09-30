@@ -235,6 +235,7 @@ absl::Status BlasLt::Init() {
 auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                               size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
+  static int64_t dummy_pointer = 0xACEBALL;
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
   {
@@ -260,7 +261,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     // no algorithms can be found for "bias epilogues". This is to be removed
     // later when this limitation is gone.
     if (op_desc_.has_bias_epilogue()) {
-      static int64_t dummy_pointer = 0xACEBALL;
       ABSL_RETURN_IF_ERROR(SetAttr(
           op_desc_.get(), HIPBLASLT_MATMUL_DESC_BIAS_POINTER, &dummy_pointer));
     }
@@ -272,7 +272,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
       case gpu::ScaleMode::kNone:
         break;
       case gpu::ScaleMode::kTensorScaling: {
-        static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                      HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
                                      &dummy_pointer));
@@ -282,7 +281,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
         break;
       }
       case gpu::ScaleMode::kBlockScaling: {
-        static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                      HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
                                      &dummy_pointer));
@@ -303,7 +301,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     // set before the heuristic query. Otherwise it may return algorithms that
     // silently ignore the D scale at execution time.
     if (IsFp8Type(d_desc_.type())) {
-      static int64_t dummy_pointer = 0xACEBALL;
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
                                    &dummy_pointer));

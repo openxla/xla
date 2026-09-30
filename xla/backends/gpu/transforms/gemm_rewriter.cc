@@ -1800,6 +1800,21 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           ->set_output_to_operand_aliasing({});
     }
 
+    // hipBLASLt reads the vector bias of a GEMM with FP8 output as F16.
+    if (gpu_version_.IsRocm()) {
+      ABSL_ASSIGN_OR_RETURN(
+          bool has_vector_bias,
+          gpublas_lt::EpilogueAddsVectorBias(gemm_backend_config.epilogue()));
+      if (has_vector_bias &&
+          existing_gemm->operands().back()->shape().element_type() != F16) {
+        VLOG(1) << "The scaling and conversion of the result of "
+                << existing_gemm->ToShortString()
+                << " is not fused into the FP8 Custom Call because hipBLASLt "
+                   "only supports an F16 vector bias with FP8 output.";
+        return absl::OkStatus();
+      }
+    }
+
     // If necessary, invert the scaling factor of D and convert to F32. When no
     // scaling factor was captured, set the factor to one.
     if (d_scale) {
@@ -2062,6 +2077,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
     // Verify that the data type is supported by Epilogue Fusion.
     if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
+      return false;
+    }
+    // On ROCm, the last operand of a GEMM with FP8 output is the D scale, and
+    // hipBLASLt reads its vector bias as F16.
+    if (gpu_version_.IsRocm() &&
+        primitive_util::IsF8Type(gemm->shape().element_type())) {
       return false;
     }
 

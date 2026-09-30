@@ -2639,6 +2639,82 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasF8) {
 
 // hipBLASLt has no E4M3 x E4M3 -> E5M2 kernels, so the conversion to E5M2
 // stays unfused on ROCm.
+// hipBLASLt reads the vector bias of an FP8 output as F16, so with a BF16 bias
+// the output scaling and conversion stay unfused on ROCm.
+TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDBF16VectorBiasF8) {
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = <<F8E4M3>>[16,32] parameter(0)
+      y = <<F8E4M3>>[32,16] parameter(1)
+      x_bf16 = bf16[16,32] convert(x)
+      y_bf16 = bf16[32,16] convert(y)
+      b = bf16[16] parameter(2)
+      b_bcast = bf16[16,16] broadcast(b), dimensions={1}
+      x_scale = bf16[] parameter(3)
+      y_scale = bf16[] parameter(4)
+      z_scale = bf16[] parameter(5)
+      x_scale_bcast = bf16[16,32] broadcast(x_scale), dimensions={}
+      y_scale_bcast = bf16[32,16] broadcast(y_scale), dimensions={}
+      z_scale_bcast = bf16[16,16] broadcast(z_scale), dimensions={}
+      x_unscaled = bf16[16,32] multiply(x_bf16, x_scale_bcast)
+      y_unscaled = bf16[32,16] multiply(y_bf16, y_scale_bcast)
+      dot_a = bf16[16,16] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot_a_bias = bf16[16,16] add(dot_a, b_bcast)
+      dot_a_scaled = bf16[16,16] divide(dot_a_bias, z_scale_bcast)
+      c1 = bf16[] constant(-<<F8E4M3_AMAX>>)
+      c1_bcast = bf16[16,16] broadcast(c1), dimensions={}
+      c2 = bf16[] constant(<<F8E4M3_AMAX>>)
+      c2_bcast = bf16[16,16] broadcast(c2), dimensions={}
+      dot_a_clamped = bf16[16,16] clamp(c1_bcast, dot_a_scaled, c2_bcast)
+      ROOT dot_a_f8 = <<F8E4M3>>[16,16] convert(dot_a_clamped)
+    }
+)";
+
+  CheckFp8IfSupported(hlo_text, ErrorSpec{0.1, 0.1});
+  RunAndFilecheckHloRewrite(
+      hlo_text,
+      GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
+      R"(
+; CHECK-GCN:     = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8"
+; CHECK-GCN-SAME:  "epilogue":"BIAS"
+      )");
+}
+
+// On ROCm, a GEMM with FP8 output ends with its D scale operand, and hipBLASLt
+// reads its vector bias as F16, so no vector bias is fused into it.
+TEST_F(ParameterizedFp8GemmRewriteTest,
+       UnscaledABUnscaledDVectorBiasF8OutputNotFused) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "ROCm-specific.";
+  }
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = <<F8E4M3>>[16,32] parameter(0)
+      y = <<F8E4M3>>[32,16] parameter(1)
+      b = <<F8E4M3>>[16] parameter(2)
+      b_bcast = <<F8E4M3>>[16,16] broadcast(b), dimensions={1}
+      dot_a = <<F8E4M3>>[16,16] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT out = <<F8E4M3>>[16,16] add(dot_a, b_bcast)
+    }
+)";
+
+  RunAndFilecheckHloRewrite(
+      hlo_text,
+      GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
+                   GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
+      R"(
+; CHECK:         custom-call({{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^,)]+}}), custom_call_target="__cublas$lt$matmul$f8"
+; CHECK-SAME:      "epilogue":"DEFAULT"
+; CHECK:         add(
+      )");
+}
+
 TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDToE5M2F8) {
   const char* hlo_text = R"(
     HloModule test
