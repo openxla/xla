@@ -1547,6 +1547,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     std::vector<HloInstruction*> operands_list = {a.fp8_input, b.fp8_input,
                                                   scales_f32[0], scales_f32[1]};
+    // On ROCm, an FP8 output always has a D scale as the last operand, as
+    // F8ConvertD would append.
+    if (gpu_version_.IsRocm() && primitive_util::IsF8Type(d_type)) {
+      operands_list.push_back(one());
+    }
 
     gemm_backend_config.set_scale_mode(
         static_cast<int32_t>(se::gpu::ScaleMode::kTensorScaling));
@@ -1619,14 +1624,44 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
+  // Returns whether the BLAS library supports an FP8 output of type `d_type`
+  // for the input types of `gemm`. On ROCm, C has the type of D (see
+  // matmul_utils.cc), and hipBLASLt supports E4M3 x E4M3 -> E4M3 and mixed
+  // E4M3/E5M2 inputs -> E5M2, plus mixed inputs -> E4M3 for OCP types.
+  absl::StatusOr<bool> IsSupportedF8OutputType(const HloInstruction& gemm,
+                                               PrimitiveType d_type) {
+    if (gpu_version_.IsCuda()) {
+      return d_type == F8E4M3FN || d_type == F8E5M2;
+    }
+    if (!gpu_version_.IsRocm()) {
+      return false;
+    }
+    ABSL_ASSIGN_OR_RETURN(auto rocm_compute_capability,
+                          GetRocmComputeCapability(gpu_version_));
+    PrimitiveType a_type = gemm.operand(0)->shape().element_type();
+    PrimitiveType b_type = gemm.operand(1)->shape().element_type();
+    bool has_e5m2_input = a_type == F8E5M2 || b_type == F8E5M2 ||
+                          a_type == F8E5M2FNUZ || b_type == F8E5M2FNUZ;
+    switch (d_type) {
+      case F8E4M3FN:
+        return rocm_compute_capability.has_ocp_fp8_support();
+      case F8E5M2:
+        return rocm_compute_capability.has_ocp_fp8_support() && has_e5m2_input;
+      case F8E4M3FNUZ:
+        return rocm_compute_capability.has_nanoo_fp8_support() &&
+               !has_e5m2_input;
+      case F8E5M2FNUZ:
+        return rocm_compute_capability.has_nanoo_fp8_support() &&
+               has_e5m2_input;
+      default:
+        return false;
+    }
+  }
+
   absl::Status F8ConvertD(HloInstruction* instr, HloInstruction* existing_gemm,
                           HloInstruction* d_scale, HloInstruction* clamp_lower,
                           HloInstruction* clamp_upper,
                           bool mult_scale = false) {
-    // TODO: add ROCm support to this fusion pattern
-    if (gpu_version_.IsRocm()) {
-      return absl::OkStatus();
-    }
     // Verify the data types and the operands of clamp.
     if (instr->shape().element_type() == F8E4M3FN) {
       if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
@@ -1642,7 +1677,33 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               std::numeric_limits<tsl::float8_e5m2>::max()))) {
         return absl::OkStatus();
       }
+    } else if (instr->shape().element_type() == F8E4M3FNUZ) {
+      if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e4m3fnuz>::lowest())) ||
+          !clamp_upper->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e4m3fnuz>::max()))) {
+        return absl::OkStatus();
+      }
+    } else if (instr->shape().element_type() == F8E5M2FNUZ) {
+      if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e5m2fnuz>::lowest())) ||
+          !clamp_upper->literal().IsAllFloat(static_cast<float>(
+              std::numeric_limits<tsl::float8_e5m2fnuz>::max()))) {
+        return absl::OkStatus();
+      }
     } else {
+      return absl::OkStatus();
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        bool is_supported_output_type,
+        IsSupportedF8OutputType(*existing_gemm, instr->shape().element_type()));
+    if (!is_supported_output_type) {
+      VLOG(1) << "The conversion of the result of "
+              << existing_gemm->ToShortString() << " to "
+              << PrimitiveType_Name(instr->shape().element_type())
+              << " is not fused into the FP8 Custom Call because the output "
+                 "type is not supported for its input types.";
       return absl::OkStatus();
     }
 
@@ -1697,6 +1758,16 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       if (!reduce_damax) {
         return absl::OkStatus();
       }
+      // hipBLASLt ships no tuned AMAX_D kernels on current ROCm releases (none
+      // for gfx950; slow ones for gfx942), so keep the amax reduction and the
+      // FP8 conversion unfused.
+      if (gpu_version_.IsRocm()) {
+        VLOG(1) << "The scaling and conversion of the result of "
+                << existing_gemm->ToShortString()
+                << " is not fused into the FP8 Custom Call because hipBLASLt "
+                   "does not support the amax epilogue on this platform.";
+        return absl::OkStatus();
+      }
     } else if (gemm_users.size() > 2) {
       return absl::OkStatus();
     }
@@ -1716,10 +1787,32 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                    "matrix bias with element type other than BF16 or F16.";
         return absl::OkStatus();
       }
+      if (gpu_version_.IsRocm()) {
+        VLOG(1) << "The scaling and conversion of the result of "
+                << existing_gemm->ToShortString()
+                << " is not fused into the FP8 Custom Call because "
+                   "hipBLASLt does not support matrix bias with FP8 output.";
+        return absl::OkStatus();
+      }
       // Turn off the output to operand aliasing, since the fp8 output and
       // bf16/fp16 bias have different sizes.
       xla::Cast<HloCustomCallInstruction>(existing_gemm)
           ->set_output_to_operand_aliasing({});
+    }
+
+    // hipBLASLt reads the vector bias of a GEMM with FP8 output as F16.
+    if (gpu_version_.IsRocm()) {
+      ABSL_ASSIGN_OR_RETURN(
+          bool has_vector_bias,
+          gpublas_lt::EpilogueAddsVectorBias(gemm_backend_config.epilogue()));
+      if (has_vector_bias &&
+          existing_gemm->operands().back()->shape().element_type() != F16) {
+        VLOG(1) << "The scaling and conversion of the result of "
+                << existing_gemm->ToShortString()
+                << " is not fused into the FP8 Custom Call because hipBLASLt "
+                   "only supports an F16 vector bias with FP8 output.";
+        return absl::OkStatus();
+      }
     }
 
     // If necessary, invert the scaling factor of D and convert to F32. When no
@@ -1984,6 +2077,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
     // Verify that the data type is supported by Epilogue Fusion.
     if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
+      return false;
+    }
+    // On ROCm, the last operand of a GEMM with FP8 output is the D scale, and
+    // hipBLASLt reads its vector bias as F16.
+    if (gpu_version_.IsRocm() &&
+        primitive_util::IsF8Type(gemm->shape().element_type())) {
       return false;
     }
 

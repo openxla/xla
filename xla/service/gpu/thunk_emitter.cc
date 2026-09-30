@@ -819,12 +819,16 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
       GetShapedSliceForHlo(instr->operand(a_scale_index + 1)));
 
   bool is_cuda = ir_emitter_context_->gpu_compute_capability().IsCuda();
+  bool is_rocm = ir_emitter_context_->gpu_compute_capability().IsRocm();
   bool is_fp8 = instr->shape().tuple_shapes(0).element_type() == F8E4M3FN ||
                 instr->shape().tuple_shapes(0).element_type() == F8E5M2;
+  bool is_fp8_fnuz =
+      instr->shape().tuple_shapes(0).element_type() == F8E4M3FNUZ ||
+      instr->shape().tuple_shapes(0).element_type() == F8E5M2FNUZ;
   // cublasLT requires c_scale/d_scale to be null when C/D is not
   // FP8. Currently, C cannot be FP8.
   std::optional<ShapedSlice> d_scale;
-  if (is_cuda && is_fp8) {
+  if ((is_cuda && is_fp8) || (is_rocm && (is_fp8 || is_fp8_fnuz))) {
     ABSL_ASSIGN_OR_RETURN(d_scale,
                           GetShapedSliceForHlo(instr->operands().back()));
   }
