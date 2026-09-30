@@ -47,7 +47,7 @@ inline constexpr int64_t kAllGatherMaxBlocksPerGrid = 64;
 
 // Optimal threshold for one-shot all-gather in bytes for the collective kernel.
 // Base on the experimental results.
-inline constexpr int64_t kMaxAllGatherSizeBytes = 512 * 1024;  // 512 KB
+inline constexpr int64_t kMaxAllGatherSizeBytes = 1024 * 1024;  // 1 MB
 
 // Encapsulates the information needed to perform an all-gather via the Triton
 // collective kernel backend.
