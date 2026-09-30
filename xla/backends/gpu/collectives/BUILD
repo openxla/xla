@@ -1280,8 +1280,7 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
-        "//xla/service:collective_opt_utils",
-        "@com_google_absl//absl/status",
+        "@roc_mori//:mori_application_headers",
         "@roc_mori//src/cco:mori_cco",
         "@roc_mori//src/application:mori_application",
     ],
@@ -1347,6 +1346,7 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:numbers",
     ] + if_rocm_is_configured([
         ":mori_kernels",
         "@local_config_rocm//rocm:rocm_headers",
