@@ -48,9 +48,9 @@ licenses(["notice"])  # MIT
 # libibverbs (rdma-core). Used by transport/rdma/ providers and shmem fabric.
 # This shim carries the vendored headers only; libibverbs is resolved at runtime 
 # via dlopen 
-cc_library(
+alias(
     name = "ibverbs",
-    deps = ["@rdma_core//:verbs_headers"],
+    actual = "@rdma_core//:verbs_headers",
 )
 
 # libdrm + libdrm_amdgpu. Pulled in transitively by libhsakmt.a (amdgpu_*,
@@ -72,22 +72,19 @@ cc_library(
 )
 
 # libnuma. Pulled in transitively by libhsakmt.a (numa_*, mbind).
-cc_library(
+alias(
     name = "libnuma",
-    deps = ["@local_config_rocm//rocm:numa"],
+    actual = "@local_config_rocm//rocm:numa",
 )
 
 # libpci (pciutils). Used by topology/pci.cpp (pci_alloc / pci_scan_bus /...).
 # Built hermetically from source: @pciutils//:pci is a static, hidden-visibility
 # libpci compiled from the vendored tarball (see //third_party/pciutils), so
-# there is no host -lpci dependency. :pci_headers provides the <pci/pci.h> the
+# there is no host -lpci dependency. It also exports the <pci/pci.h> headers the
 # MORI sources include.
-cc_library(
+alias(
     name = "libpci",
-    deps = [
-        "@pciutils//:pci_headers",
-        "@pciutils//:pci",
-    ],
+    actual = "@pciutils//:pci",
 )
 
 # Public shmem headers (everything under include/mori/shmem). Sources live

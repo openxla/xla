@@ -1,33 +1,33 @@
-"""Loads pciutils (libpci) public headers for ROCm/MORI hermetic builds.
+"""Loads pciutils (libpci) sources for ROCm/MORI hermetic builds.
 
-MORI's topology code includes <pci/pci.h> (src/application/topology/pci.cpp).
-Under the hermetic ROCm toolchain (--config=rocm_ci) the compiler uses a
-hermetic sysroot that does not contain the system pciutils headers, so we
-vendor just the public libpci headers here instead of probing the ROCm CI
-image's /usr/include (which the old @system_libpci repository rule did).
+MORI's topology code includes <pci/pci.h> and calls into libpci
+(src/application/topology/pci.cpp). A hermetic / "rocm-less" image has neither
+the pciutils headers nor libpci.so, so we fetch the pciutils source release and
+build a minimal static libpci from it (see pciutils.BUILD). This replaces the
+old @system_libpci repository rule, which probed the host's /usr/include.
 
-Only the headers are vendored. The shared library is still resolved at link
-time from the host (-lpci, set on @roc_mori//:libpci), which works because the
-hermetic toolchain links with CppLink=local -- the same arrangement used for
-libdrm, libnuma and libibverbs.
-
-lib/config.h is normally produced by pciutils' ./configure; we symlink in a
-small hand-written replacement (//third_party/pciutils:config.h) that defines
-the handful of macros the public headers reference.
+lib/config.h is not part of the pciutils sources: upstream generates it with
+lib/configure, which probes the build host (uname, zlib.h, resolv.h, libudev,
+libkmod). We symlink in a hand-written replacement
+(//third_party/pciutils:config.h) instead. On Linux configure's output is fixed
+apart from the architecture and those optional features; the header derives the
+architecture from compiler macros and disables the optional features, so the
+result does not depend on the build host and needs nothing beyond libc.
 
 To update to a new release: change _PCIUTILS_VERSION, clear _PCIUTILS_SHA256
 (set to ""), run any bazel build that touches @pciutils, and paste back the
-sha256 Bazel prints.
+sha256 Bazel prints. Also bump PCILIB_VERSION in config.h and check that the
+Linux section of lib/configure and the OBJS list in lib/Makefile still match
+config.h and pciutils.BUILD.
 """
 
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
-# Matches the pciutils (libpci) major version shipped with the ROCm image.
-_PCIUTILS_VERSION = "3.13.0"
-_PCIUTILS_SHA256 = "861fc26151a4596f5c3cb6f97d6c75c675051fa014959e26fb871c8c932ebc67"
+_PCIUTILS_VERSION = "3.15.0"
+_PCIUTILS_SHA256 = "06f467642057599acf396bc17340452fac3308f1e08be19e0c32587e42d7017b"
 
 def repo():
-    """Imports pciutils (libpci) public headers."""
+    """Imports pciutils (libpci) sources."""
     tf_http_archive(
         name = "pciutils",
         build_file = "//third_party/pciutils:pciutils.BUILD",

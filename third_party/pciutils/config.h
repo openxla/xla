@@ -59,6 +59,6 @@
 #define PCI_PATH_IDS_DIR "/usr/share"
 #define PCI_IDS "pci.ids"
 
-#define PCILIB_VERSION "3.13.0"
+#define PCILIB_VERSION "3.15.0"
 
 #endif  // XLA_THIRD_PARTY_PCIUTILS_CONFIG_H_

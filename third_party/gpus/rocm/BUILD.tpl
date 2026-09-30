@@ -103,7 +103,6 @@ cc_library(
     hdrs = glob([
         "%{rocm_root}/include/**",
     ]),
-    defines = {"__HIP_DISABLE_CPP_FUNCTIONS__": "1"},
     strip_include_prefix = "%{rocm_root}/include",
     deps = [
         "@xla//third_party/libdrm:drm_headers",

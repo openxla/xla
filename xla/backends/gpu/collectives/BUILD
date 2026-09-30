@@ -1266,7 +1266,6 @@ rocm_library(
         "mori_kernels.cu.cc",
     ],
     copts = [
-        "-U__HIP_DISABLE_CPP_FUNCTIONS__",   # <-- only if needed
         "-DBUILD_CCO_SDMA=1",
     ],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
