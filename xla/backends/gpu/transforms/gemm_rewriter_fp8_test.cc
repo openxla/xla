@@ -25,7 +25,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
-#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -49,7 +48,6 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/test_utils.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -594,6 +592,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDNormalizedBF16F8) {
     args[2] = LiteralUtil::CreateR0<bfloat16>(static_cast<bfloat16>(0.5f));
     args[3] = LiteralUtil::CreateR0<bfloat16>(static_cast<bfloat16>(4.0f));
     std::vector<const Literal*> arg_ptrs;
+    arg_ptrs.reserve(args.size());
     for (const Literal& arg : args) {
       arg_ptrs.push_back(&arg);
     }
