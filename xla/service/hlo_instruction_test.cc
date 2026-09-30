@@ -2793,15 +2793,11 @@ TEST_F(HloInstructionTest, PrintCycle) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
   HloInstruction* recv = FindInstruction(module.get(), "recv");
   HloInstruction* send_done = FindInstruction(module.get(), "send-done");
-  ASSERT_IS_OK(send_done->AddControlDependencyTo(recv));
-  HloInstruction* root = FindInstruction(module.get(), "recv-data");
-  NodeCollectorAndPostProcessor visitor;
-  auto status = root->Accept(&visitor);
+  auto status = send_done->AddControlDependencyTo(recv);
   EXPECT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
-              ::testing::HasSubstr("recv\n send\n send-done\n recv"));
-  // Remove the cycle to avoid error when destructing the verified module.
-  ASSERT_IS_OK(send_done->DropAllControlDeps());
+              ::testing::HasSubstr("A cycle is detected while adding "
+                                   "dependency from recv to send-done"));
 }
 
 TEST_F(HloInstructionTest, VerifyBodyComputationPointsToWhile) {

@@ -61,20 +61,20 @@ TEST_F(CollectiveSendRecvCombinerTest, TransformedWithSourceTargetPairs) {
     EXPECT_NE(instr->opcode(), HloOpcode::kRecvDone);
   }
   EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
-    CHECK: %[[WRAPPED_SEND_RECV:send_recv_group_[0-9]+]] (param0: f32[], param1: token[], param2: token[]) ->
+    CHECK: %[[WRAPPED_SEND_RECV:send_recv_group_[0-9]+]] (param0: token[], param1: f32[], param2: token[]) ->
     CHECK-SAME: ((f32[], u32[], token[]), (f32[], u32[], token[]))
-    CHECK-NEXT: %[[PARAM0:.*]] = f32[] parameter(0)
-    CHECK: %[[PARAM1:.*]] = token[] parameter(1)
-    CHECK: %[[SEND1:.*]] = ({{.*}}) send(%[[PARAM0]], %[[PARAM1]]), channel_id=1,
+    CHECK-NEXT: %[[PARAM0:.*]] = token[] parameter(0)
+    CHECK: %[[RECV1:.*]] = ({{.*}}) recv(%[[PARAM0]]), channel_id=1,
     CHECK-SAME: frontend_attributes{{.*}}_xla_send_recv_source_target_pairs{{.*}}0,1{{.*}}1,2{{.*}}2,3{{.*}}
-    CHECK-NEXT: %[[PARAM2:.*]] = {{.*}} parameter(2)
-    CHECK: %[[RECV1:.*]] = ({{.*}}) recv(%[[PARAM2]]), channel_id=1,
+    CHECK-NEXT: %[[PARAM1:.*]] = f32[] parameter(1)
+    CHECK: %[[PARAM2:.*]] = token[] parameter(2)
+    CHECK: %[[SEND1:.*]] = ({{.*}}) send(%[[PARAM1]], %[[PARAM2]]), channel_id=1,
     CHECK-SAME: frontend_attributes{{.*}}_xla_send_recv_source_target_pairs{{.*}}0,1{{.*}}1,2{{.*}}2,3{{.*}}
-    CHECK-NEXT: ROOT %[[OUT:.*]] = {{.*}} tuple(%[[SEND1]], %[[RECV1]])
+    CHECK-NEXT: ROOT %[[OUT:.*]] = {{.*}} tuple(%[[RECV1]], %[[SEND1]])
     CHECK: ENTRY %[[MAIN:.*]] () -> f32[]
-    CHECK: %[[DATA:.*]] = {{.*}} constant(5)
     CHECK: %[[RECV_START:.*]] = {{.*}} after-all()
-    CHECK: %[[TUPLE_START:send_recv_group_[0-9]+\.start]] = {{.*}} async-start(%[[DATA]], %[[RECV_START]], %[[RECV_START]]), calls=%[[WRAPPED_SEND_RECV]]
+    CHECK: %[[DATA:.*]] = {{.*}} constant(5)
+    CHECK: %[[TUPLE_START:send_recv_group_[0-9]+\.start]] = {{.*}} async-start(%[[RECV_START]], %[[DATA]], %[[RECV_START]]), calls=%[[WRAPPED_SEND_RECV]]
     CHECK-SAME: frontend_attributes={_collectives_group=""}
     CHECK-NEXT: %[[TUPLE_DONE:send_recv_group_[0-9]+\.done]] = {{.*}} async-done(%[[TUPLE_START]])
     CHECK %[[GTE2:.*]] = {{.*}} get-tuple-element(%[[TUPLE_DONE]]), index=1
@@ -162,19 +162,19 @@ TEST_F(CollectiveSendRecvCombinerTest, TransformedWithControlDependency) {
   ASSERT_OK_AND_ASSIGN(bool changed, combiner.Run(module.get()));
   EXPECT_TRUE(changed);
   EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
-    CHECK: %[[WRAPPED_SEND_RECV:send_recv_group_[0-9]+]] (param0: f32[], param1: token[], param2: token[]) -> ((f32[], u32[], token[]), (f32[], u32[], token[])) {
+    CHECK: %[[WRAPPED_SEND_RECV:send_recv_group_[0-9]+]] (param0: token[], param1: f32[], param2: token[]) -> ((f32[], u32[], token[]), (f32[], u32[], token[])) {
 
-    CHECK: %[[PARAM0:.*]] = f32[] parameter(0)
-    CHECK: %[[PARAM1:.*]] = token[] parameter(1)
-    CHECK: %[[SEND1:.*]] = (f32[], u32[], token[]) send(%[[PARAM0]], %[[PARAM1]]), channel_id=1
+    CHECK: %[[PARAM0:.*]] = token[] parameter(0)
+    CHECK: %[[RECV1:.*]] = (f32[], u32[], token[]) recv(%[[PARAM0]]), channel_id=1
+    CHECK: %[[PARAM1:.*]] = f32[] parameter(1)
     CHECK: %[[PARAM2:.*]] = token[] parameter(2)
-    CHECK: %[[RECV1:.*]] = (f32[], u32[], token[]) recv(%[[PARAM2]]), channel_id=1
-    CHECK: ROOT %[[OUT:.*]] = ((f32[], u32[], token[]), (f32[], u32[], token[])) tuple(%[[SEND1]], %[[RECV1]])
+    CHECK: %[[SEND1:.*]] = (f32[], u32[], token[]) send(%[[PARAM1]], %[[PARAM2]]), channel_id=1
+    CHECK: ROOT %[[OUT:.*]] = ((f32[], u32[], token[]), (f32[], u32[], token[])) tuple(%[[RECV1]], %[[SEND1]])
 
     CHECK: ENTRY %[[MAIN:.*]] () -> f32[] {
-    CHECK: %[[DATA:.*]] = f32[] constant(5)
     CHECK: %[[RECV_START:.*]] = token[] after-all()
-    CHECK: %[[TUPLE_START:send_recv_group_[0-9]+\.start]] = ((f32[], token[], token[]), ((f32[], u32[], token[]), (f32[], u32[], token[])), s32[]) async-start(%[[DATA]], %[[RECV_START]], %[[RECV_START]]), calls=%[[WRAPPED_SEND_RECV]]
+    CHECK: %[[DATA:.*]] = f32[] constant(5)
+    CHECK: %[[TUPLE_START:send_recv_group_[0-9]+\.start]] = ((token[], f32[], token[]), ((f32[], u32[], token[]), (f32[], u32[], token[])), s32[]) async-start(%[[RECV_START]], %[[DATA]], %[[RECV_START]]), calls=%[[WRAPPED_SEND_RECV]]
     CHECK: %[[TUPLE_DONE:send_recv_group_[0-9]+\.done]] = ((f32[], u32[], token[]), (f32[], u32[], token[])) async-done(%[[TUPLE_START]])
     CHECK %[[GTE2:.*]] = (f32[], u32[], token[]) get-tuple-element(%[[TUPLE_DONE]], index=1)
     CHECK %[[GTE3:.*]] = f32[] get-tuple-element(%[[GTE2]], index=0)
@@ -215,20 +215,20 @@ TEST_F(CollectiveSendRecvCombinerTest, TransformedWithMultipleSendRecv) {
   EXPECT_TRUE(changed);
   EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
     CHECK: %[[WRAPPED_SEND_RECV:send_recv_group_[0-9]+]] (param0: f32[], param1: token[],
-    CHECK-SAME: param2: f32[], param3: token[], param4: token[], param5: token[]) ->
+    CHECK-SAME: param2: token[], param3: f32[], param4: token[], param5: token[]) ->
     CHECK-SAME: ((f32[], u32[], token[]), (f32[], u32[], token[]), (f32[], u32[], token[]),
     CHECK-SAME: (f32[], u32[], token[]))
     CHECK-NEXT: %[[PARAM0:.*]] = {{.*}} parameter(0)
     CHECK: %[[PARAM1:.*]] = {{.*}} parameter(1)
     CHECK: %[[SEND1:.*]] = {{.*}} send(%[[PARAM0]], %[[PARAM1]]), channel_id=1
-    CHECK: %[[PARAM2:.*]] = f32[] parameter(2)
-    CHECK: %[[PARAM3:.*]] = {{.*}} parameter(3)
-    CHECK: %[[SEND2:.*]] = {{.*}} send(%[[PARAM2]], %[[PARAM3]]), channel_id=2
+    CHECK: %[[PARAM2:.*]] = {{.*}} parameter(2)
+    CHECK: %[[RECV1:.*]] = {{.*}} recv(%[[PARAM2]]), channel_id=1
+    CHECK: %[[PARAM3:.*]] = f32[] parameter(3)
     CHECK: %[[PARAM4:.*]] = {{.*}} parameter(4)
-    CHECK: %[[RECV1:.*]] = {{.*}} recv(%[[PARAM4]]), channel_id=1
+    CHECK: %[[SEND2:.*]] = {{.*}} send(%[[PARAM3]], %[[PARAM4]]), channel_id=2
     CHECK: %[[PARAM5:.*]] = {{.*}} parameter(5)
     CHECK: %[[RECV2:.*]] = {{.*}} recv(%[[PARAM5]]), channel_id=2
-    CHECK: ROOT %[[OUT:.*]] = {{.*}} tuple(%[[SEND1]], %[[SEND2]], %[[RECV1]], %[[RECV2]])
+    CHECK: ROOT %[[OUT:.*]] = {{.*}} tuple(%[[SEND1]], %[[RECV1]], %[[SEND2]], %[[RECV2]])
 
     CHECK: ENTRY %[[MAIN:.*]] () -> (f32[], f32[])
     CHECK: %[[DATA1:.*]] = {{.*}} constant(1)

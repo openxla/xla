@@ -7,14 +7,14 @@ HloModule main.17
 // CHECK:   <{fusion_kind = #mhlo<fusion_kind kLoop>}> ({
 // CHECK:   ^bb0(%[[ARG2:.*]]: tensor<f32>, %[[ARG3:.*]]: tensor<f32>):
 // CHECK:   }) {output_operand_aliasing = []} : (tensor<f32>, tensor<f32>) -> tensor<f32>
-// CHECK:   %[[F1:.+]]:2 = "mhlo.fusion"(%[[ARG0:.*]])
-// CHECK:   <{fusion_kind = #mhlo<fusion_kind kLoop>}> ({
-// CHECK:   ^bb0(%[[ARG2:.*]]: tensor<f32>):
-// CHECK:   }) {output_operand_aliasing = []} : (tensor<f32>) -> (tensor<f32>, tensor<f32>)
-// CHECK:   %[[F2:.+]]:2 = "mhlo.fusion"(%[[ARG0:.*]], %[[ARG1:.*]])
+// CHECK:   %[[F1:.+]]:2 = "mhlo.fusion"(%[[ARG0:.*]], %[[ARG1:.*]])
 // CHECK:   <{fusion_kind = #mhlo<fusion_kind kLoop>}> ({
 // CHECK:   ^bb0(%[[ARG2:.*]]: tensor<f32>, %[[ARG3:.*]]: tensor<f32>):
 // CHECK:   }) {output_operand_aliasing = []} : (tensor<f32>, tensor<f32>) -> (tensor<f32>, tensor<f32>)
+// CHECK:   %[[F2:.+]]:2 = "mhlo.fusion"(%[[ARG0:.*]])
+// CHECK:   <{fusion_kind = #mhlo<fusion_kind kLoop>}> ({
+// CHECK:   ^bb0(%[[ARG2:.*]]: tensor<f32>):
+// CHECK:   }) {output_operand_aliasing = []} : (tensor<f32>) -> (tensor<f32>, tensor<f32>)
 // CHECK:   %[[F3:.+]]:2 = "mhlo.fusion"(%[[ARG0:.*]], %[[ARG1:.*]])
 // CHECK:   <{fusion_kind = #mhlo<fusion_kind kLoop>}> ({
 // CHECK:   ^bb0(%[[ARG2:.*]]: tensor<f32>, %[[ARG3:.*]]: tensor<f32>):

@@ -148,6 +148,15 @@ void HloInstruction::Users::AddUser(HloInstruction* user) {
   }
 }
 
+absl::Status HloInstruction::AddUser(HloInstruction* user) {
+  bool was_contained = users_.Contains(user);
+  users_.AddUser(user);
+  if (!was_contained && parent() != nullptr && user->parent() == parent()) {
+    return parent()->AddDependency(user, this);
+  }
+  return absl::OkStatus();
+}
+
 int64_t HloInstruction::Users::UserId(HloInstruction* user) {
   if (user_map_ == nullptr) {
     auto it = absl::c_find(users_, user);
@@ -3239,6 +3248,9 @@ absl::Status HloInstruction::AddControlDependencyTo(
     HloInstruction* instruction) {
   TF_RET_CHECK(instruction->parent() == parent());
   if (!absl::c_linear_search(control_successors(), instruction)) {
+    if (parent() != nullptr) {
+      ABSL_RETURN_IF_ERROR(parent()->AddDependency(instruction, this));
+    }
     mutable_rare()->control_successors.push_back(instruction);
     TF_RET_CHECK(!absl::c_linear_search(
         instruction->rare()->control_predecessors, this));
@@ -3391,7 +3403,7 @@ void HloInstruction::AppendOperand(HloInstruction* operand) {
         << "Operand " << operand->name() << " is already marked dead";
   }
   operands_.push_back(operand);
-  operand->AddUser(this);
+  CHECK_OK(operand->AddUser(this));
 }
 
 void HloInstruction::AppendOperands(
@@ -3618,7 +3630,7 @@ absl::Status HloInstruction::ReplaceUseWithDifferentShape(
 
   TF_RET_CHECK(absl::c_count(user->operands_, this) >= 0);
   absl::c_replace(user->operands_, this, new_producer);
-  new_producer->AddUser(user);
+  ABSL_RETURN_IF_ERROR(new_producer->AddUser(user));
   // Custom fusions may not be able to handle deduplicated operands.
   if (user->opcode() == HloOpcode::kFusion) {
     ABSL_RETURN_IF_ERROR(
@@ -3651,7 +3663,7 @@ absl::Status HloInstruction::ReplaceUseWithDifferentShape(
       << "Expected operand " << operand_number << " of " << user->ToString()
       << " to be equal to " << ToString();
   user->operands_[operand_number] = new_producer;
-  new_producer->AddUser(user);
+  ABSL_RETURN_IF_ERROR(new_producer->AddUser(user));
   return absl::OkStatus();
 }
 
@@ -3682,7 +3694,7 @@ absl::Status HloInstruction::ReplaceOperandWithDifferentShape(
   if (!absl::c_linear_search(operands_, old_operand)) {
     old_operand->RemoveUser(this);
   }
-  new_operand->AddUser(this);
+  ABSL_RETURN_IF_ERROR(new_operand->AddUser(this));
   return absl::OkStatus();
 }
 
@@ -3834,7 +3846,7 @@ absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
       new_producer_is_user = true;
     } else {
       absl::c_replace(user->operands_, this, new_producer);
-      new_producer->AddUser(user);
+      ABSL_RETURN_IF_ERROR(new_producer->AddUser(user));
       if (user->opcode() == HloOpcode::kFusion) {
         ABSL_RETURN_IF_ERROR(
             Cast<HloFusionInstruction>(user)->DeduplicateFusionOperands());
@@ -3843,7 +3855,7 @@ absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
   }
   users_.Clear();
   if (new_producer_is_user) {
-    AddUser(new_producer);
+    ABSL_RETURN_IF_ERROR(AddUser(new_producer));
   }
   if (parent_ && parent_->root_instruction() == this) {
     parent_->set_root_instruction(new_producer,

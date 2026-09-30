@@ -431,7 +431,7 @@ absl::StatusOr<bool> CallOutliner::OutlineComputation(
   // computation. Post-order ensures that all internal dependencies are mapped
   // before their users are processed.
   std::vector<HloInstruction*> instructions =
-      computation->MakeInstructionPostOrder();
+      computation->MakeInstructionPostOrder(/*dfs_postorder=*/true);
 
   bool mutated = false;
   for (HloInstruction* instruction : instructions) {

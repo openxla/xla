@@ -2560,5 +2560,55 @@ TEST(HloModuleTest, BackendConfigProtoRoundTrip) {
             proto.computations(0).backend_config());
 }
 
+TEST(HloModuleTest, CloneAndReorderPreservesPostOrder) {
+  HloModule m("test_module", HloModuleConfig());
+  Shape shape = ShapeUtil::MakeShape(F32, {});
+
+  // Add entry first (index 0 in computations_), then sub1 (index 1 in
+  // computations_) so computations_ is not in post-order ([entry, sub1] vs
+  // post-order [sub1, entry]).
+  HloComputation::Builder b_entry("entry");
+  auto* p =
+      b_entry.AddInstruction(HloInstruction::CreateParameter(0, shape, "p"));
+  HloComputation* entry = m.AddEntryComputation(b_entry.Build());
+
+  HloComputation::Builder b1("sub1");
+  b1.AddInstruction(HloInstruction::CreateParameter(0, shape, "p"));
+  HloComputation* sub1 = m.AddEmbeddedComputation(b1.Build());
+
+  // Add call edge entry -> sub1 after both computations are added.
+  entry->AddInstruction(HloInstruction::CreateCall(shape, {p}, sub1));
+  EXPECT_THAT(m.MakeComputationPostOrder(), ElementsAre(sub1, entry));
+
+  // Clone m: Clone() adds computations in post-order ([sub1_clone,
+  // entry_clone]) and then sorts clone->computations_ back to [entry_clone,
+  // sub1_clone].
+  std::unique_ptr<HloModule> clone = m.Clone();
+  HloComputation* entry_clone = clone->entry_computation();
+  HloComputation* sub1_clone = clone->GetComputationWithName("sub1.clone");
+  ASSERT_NE(sub1_clone, nullptr);
+  EXPECT_THAT(clone->MakeComputationPostOrder(),
+              ElementsAre(sub1_clone, entry_clone));
+
+  // Add a new computation sub2_clone and call edge sub1_clone -> sub2_clone
+  // on the clone to verify topological_sort_ in clone remains valid.
+  HloComputation::Builder b2("sub2");
+  b2.AddInstruction(HloInstruction::CreateParameter(0, shape, "p"));
+  HloComputation* sub2_clone = clone->AddEmbeddedComputation(b2.Build());
+  sub1_clone->AddInstruction(HloInstruction::CreateCall(
+      shape, {sub1_clone->parameter_instruction(0)}, sub2_clone));
+  EXPECT_THAT(clone->MakeComputationPostOrder(),
+              ElementsAre(sub2_clone, sub1_clone, entry_clone));
+
+  // Also test ReorderComputationsToPostOrder on m followed by adding an edge.
+  TF_ASSERT_OK(m.ReorderComputationsToPostOrder());
+  HloComputation::Builder b3("sub3");
+  b3.AddInstruction(HloInstruction::CreateParameter(0, shape, "p"));
+  HloComputation* sub3 = m.AddEmbeddedComputation(b3.Build());
+  sub1->AddInstruction(HloInstruction::CreateCall(
+      shape, {sub1->parameter_instruction(0)}, sub3));
+  EXPECT_THAT(m.MakeComputationPostOrder(), ElementsAre(sub3, sub1, entry));
+}
+
 }  // namespace
 }  // namespace xla

@@ -1350,7 +1350,8 @@ ENTRY e {
                        GetOptimizedModule(kHloText));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
+      GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()),
+                           m::Bitcast(m::Parameter()))
                      .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 }
 

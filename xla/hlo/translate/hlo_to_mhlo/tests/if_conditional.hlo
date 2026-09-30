@@ -91,9 +91,9 @@ ENTRY %tfcompile.0 {
 //CHECK-NEXT:      %[[LOG1:.*]] = mhlo.log %[[A1]] : tensor<f32>
 //CHECK-NEXT:      mhlo.return %[[LOG0]], %[[LOG1]], %[[A0]] : tensor<f32>, tensor<f32>, tensor<f32>
 //CHECK-NEXT:    },  {
+//CHECK-NEXT:      %[[EXP2:.*]] = mhlo.exponential %[[A2]] : tensor<f32>
 //CHECK-NEXT:      %[[EXP0:.*]] = mhlo.exponential %[[A0]] : tensor<f32>
 //CHECK-NEXT:      %[[EXP1:.*]] = mhlo.exponential %[[A1]] : tensor<f32>
-//CHECK-NEXT:      %[[EXP2:.*]] = mhlo.exponential %[[A2]] : tensor<f32>
 //CHECK-NEXT:      mhlo.return %[[EXP0]], %[[EXP1]], %[[EXP2]] : tensor<f32>, tensor<f32>, tensor<f32>
 //CHECK-NEXT:    }) : (tensor<i1>) -> (tensor<f32>, tensor<f32>, tensor<f32>)
 //CHECK-NEXT:    %[[R0:.*]] = mhlo.tuple %[[IF]]#0, %[[IF]]#1

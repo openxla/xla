@@ -444,7 +444,7 @@ TEST_F(HloComputationTest, DeepCopyTokenTuple) {
 }
 
 TEST_F(HloComputationTest, CycleDetection) {
-  // Test whether the visitor can detect cycles in the graph.
+  // Test whether adding a cycle to the graph is detected and rejected.
   auto builder = HloComputation::Builder(TestName());
   auto constant = builder.AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(42.0f)));
@@ -455,17 +455,12 @@ TEST_F(HloComputationTest, CycleDetection) {
   auto module = CreateNewUnverifiedModule();
   auto computation = module->AddEntryComputation(builder.Build());
   // Add a control dependency to create a cycle.
-  ASSERT_IS_OK(add->AddControlDependencyTo(negate));
+  auto status = add->AddControlDependencyTo(negate);
+  ASSERT_FALSE(status.ok());
+  ASSERT_THAT(status.message(), ::testing::ContainsRegex("cycle is detecte"));
 
   auto instructions = computation->MakeInstructionPostOrder();
   EXPECT_EQ(3, instructions.size());
-
-  FunctionVisitor visitor(
-      [](HloInstruction* instruction) { return absl::OkStatus(); });
-  auto visit_status = computation->Accept(&visitor);
-  ASSERT_FALSE(visit_status.ok());
-  ASSERT_THAT(visit_status.message(),
-              ::testing::ContainsRegex("cycle is detecte"));
 }
 
 TEST_F(HloComputationTest, RemoveInstructionWithDuplicateOperand) {
@@ -843,9 +838,14 @@ ENTRY entry {
   ROOT t = (f32[128], f32[128]) tuple(add, crs1)
 })";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
-  EXPECT_THAT(module->entry_computation()->MakeInstructionPostOrder(),
+  EXPECT_THAT(module->entry_computation()->MakeInstructionPostOrder(
+                  /*dfs_postorder=*/true),
               ElementsAre(op::Parameter(), op::AllReduce(), op::Add(),
                           op::AllReduce(), op::Tuple()));
+  EXPECT_THAT(module->entry_computation()->MakeInstructionPostOrder(
+                  /*dfs_postorder=*/false),
+              ElementsAre(op::Parameter(), op::AllReduce(), op::AllReduce(),
+                          op::Add(), op::Tuple()));
 }
 
 TEST_F(HloComputationTest, ComparisonWithCustomComparator) {
