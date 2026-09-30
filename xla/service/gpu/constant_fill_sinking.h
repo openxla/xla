@@ -28,9 +28,8 @@ namespace xla::gpu {
 //
 // A fill is a zero-operand loop fusion whose root is a broadcast of a scalar
 // constant. Fills with explicit ordering or stream constraints are left alone.
-// A fill inside an async window (between an async start and its done) is only
-// moved when its first user lies inside that same window, so the move never
-// takes work out from under an in-flight async operation.
+// Fills may move past unrelated async completions to avoid keeping their
+// buffers live across intervening work.
 //
 // Intended as the latency-hiding scheduler's post-processing step, where the
 // shorter lifetimes are visible to the scheduler's memory accounting and to

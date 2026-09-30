@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
-#include <set>
 #include <utility>
 #include <vector>
 
@@ -25,6 +24,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
@@ -74,35 +74,6 @@ Decision CanSinkFill(const HloInstruction& instruction) {
   return Decision::Allow();
 }
 
-// Async windows are the schedule ranges between an async start and its done.
-// Work the scheduler placed inside a window runs while the async operation is
-// in flight, so it must not be pulled out of the window.
-bool IsWindowStart(const HloInstruction& instruction) {
-  switch (instruction.opcode()) {
-    case HloOpcode::kCopyStart:
-    case HloOpcode::kSend:
-    case HloOpcode::kRecv: {
-      return true;
-    }
-    default: {
-      return instruction.IsAsyncStart();
-    }
-  }
-}
-
-bool IsWindowDone(const HloInstruction& instruction) {
-  switch (instruction.opcode()) {
-    case HloOpcode::kCopyDone:
-    case HloOpcode::kSendDone:
-    case HloOpcode::kRecvDone: {
-      return true;
-    }
-    default: {
-      return instruction.IsAsyncDone();
-    }
-  }
-}
-
 }  // namespace
 
 bool SinkConstantFills(std::vector<HloInstruction*>& sequence) {
@@ -111,35 +82,6 @@ bool SinkConstantFills(std::vector<HloInstruction*>& sequence) {
   positions.reserve(size);
   for (int64_t i = 0; i < size; ++i) {
     positions[sequence[i]] = i;
-  }
-
-  // window_done[s] is the position of the done that closes the async window
-  // opened at position s, or -1 when no window opens there.
-  std::vector<int64_t> window_done(size, -1);
-  for (int64_t i = 0; i < size; ++i) {
-    if (!IsWindowDone(*sequence[i]) ||
-        !IsWindowStart(*sequence[i]->operand(0))) {
-      continue;
-    }
-    auto start = positions.find(sequence[i]->operand(0));
-    if (start != positions.end()) {
-      window_done[start->second] = i;
-    }
-  }
-  // first_close[i] is the position of the earliest done that closes a window
-  // open at position i (start < i < done), or `size` when no window is open.
-  std::vector<int64_t> first_close(size, size);
-  std::multiset<int64_t> open_dones;
-  for (int64_t i = 0; i < size; ++i) {
-    while (!open_dones.empty() && *open_dones.begin() <= i) {
-      open_dones.erase(open_dones.begin());
-    }
-    if (!open_dones.empty()) {
-      first_close[i] = *open_dones.begin();
-    }
-    if (window_done[i] >= 0) {
-      open_dones.insert(window_done[i]);
-    }
   }
 
   absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>
@@ -165,14 +107,6 @@ bool SinkConstantFills(std::vector<HloInstruction*>& sequence) {
     if (first_user < 0) {
       VLOG(4) << "Not sinking " << fill->name()
               << ": a user is not in the sequence";
-      continue;
-    }
-    // Every window open at the fill must still be open at its first user.
-    // Otherwise the fill hides latency that its first user does not, and
-    // moving it would put the fill's kernel back on the critical path.
-    if (first_close[i] <= first_user) {
-      VLOG(4) << "Not sinking " << fill->name()
-              << ": it hides under an async operation that finishes first";
       continue;
     }
     // A direct async-start user must see the initialized buffer. Do not look

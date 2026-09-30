@@ -811,8 +811,8 @@ absl::Status RunLatencyHidingSchedulerPasses(
   // Independent fills have no operands, so nothing anchors them near their
   // users and the ranking heuristics tend to float them to the top of the
   // schedule, where their buffers stay live across everything that follows.
-  // Move them next to their first user once the sequence is final, unless
-  // they hide under an in-flight async operation.
+  // Move them next to their first user once the sequence is final to shorten
+  // their buffer lifetimes, including across unrelated async completions.
   auto sink_constant_fills = [](DefaultSchedulerCore::SchedulingState& state) {
     SinkConstantFills(state.new_sequence_reversed);
   };

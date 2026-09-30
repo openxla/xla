@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -265,6 +266,14 @@ async_body {
   p = f32[512,512]{1,0} parameter(0)
   ROOT negated = f32[512,512]{1,0} negate(p)
 }
+loop_condition {
+  p = f32[512,512]{1,0} parameter(0)
+  ROOT stop = pred[] constant(false)
+}
+loop_body {
+  p = f32[512,512]{1,0} parameter(0)
+  ROOT negated = f32[512,512]{1,0} negate(p)
+}
 ENTRY main {
   input = f32[512,512]{1,0} parameter(0)
 $0
@@ -286,18 +295,19 @@ class AsyncWindowConstantFillSinkingTest
     : public ConstantFillSinkingTest,
       public ::testing::WithParamInterface<AsyncPair> {};
 
-TEST_P(AsyncWindowConstantFillSinkingTest, LeavesFillWhoseUserFollowsTheDone) {
-  // The fill hides under the async operation. Its user runs after the done,
-  // so sinking would put the fill back on the critical path.
+TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillWhoseUserFollowsTheDone) {
+  // Shorten the fill's lifetime even when it overlaps an unrelated async op.
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(AsyncHlo(GetParam(), R"(  $0
   fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
   other = f32[512,512]{1,0} negate(input)
   $1
   ROOT result = f32[512,512]{1,0} add(done, fill))")));
-  std::vector<std::string> before = EntryNames(*module);
+  EXPECT_TRUE(Sink(*module));
+  EXPECT_THAT(EntryNames(*module),
+              ElementsAre("input", "start", "other", "done", "fill", "result"));
+  ASSERT_OK(module->schedule().Verify());
   EXPECT_FALSE(Sink(*module));
-  EXPECT_EQ(EntryNames(*module), before);
 }
 
 TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillWhoseUserSharesTheWindow) {
@@ -316,7 +326,6 @@ TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillWhoseUserSharesTheWindow) {
 }
 
 TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillScheduledBeforeTheWindow) {
-  // The fill is outside the window, so crossing the window is free.
   ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(AsyncHlo(
@@ -330,6 +339,24 @@ TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillScheduledBeforeTheWindow) {
   EXPECT_THAT(EntryNames(*module),
               ElementsAre("input", "start", "other", "done", "fill", "result"));
   ASSERT_OK(module->schedule().Verify());
+}
+
+TEST_P(AsyncWindowConstantFillSinkingTest, SinksFillAcrossDoneAndWhile) {
+  // A fill needed after a loop must not stay live across the loop just because
+  // its original position overlaps an earlier async operation.
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(AsyncHlo(GetParam(), R"(  $0
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  other = f32[512,512]{1,0} negate(input)
+  $1
+  loop = f32[512,512]{1,0} while(done), condition=loop_condition, body=loop_body
+  ROOT result = f32[512,512]{1,0} add(loop, fill))")));
+  EXPECT_TRUE(Sink(*module));
+  EXPECT_THAT(
+      EntryNames(*module),
+      ElementsAre("input", "start", "other", "done", "loop", "fill", "result"));
+  ASSERT_OK(module->schedule().Verify());
+  EXPECT_FALSE(Sink(*module));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -351,9 +378,8 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.name;
     });
 
-TEST_F(ConstantFillSinkingTest, LeavesFillWhenAnyEnclosingWindowClosesFirst) {
-  // The fill sits in two nested windows. Its user is still inside the outer
-  // one, but the inner window closes first, so the fill stays.
+TEST_F(ConstantFillSinkingTest, SinksFillPastAnInnerAsyncWindow) {
+  // The fill moves past the inner done while staying inside the outer window.
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule nested, is_scheduled=true
 
@@ -377,9 +403,12 @@ ENTRY main {
   ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(outer_done, use)
 }
 )"));
-  std::vector<std::string> before = EntryNames(*module);
+  EXPECT_TRUE(Sink(*module));
+  EXPECT_THAT(EntryNames(*module),
+              ElementsAre("p", "outer_start", "inner_start", "inner_done",
+                          "fill", "use", "outer_done", "result"));
+  ASSERT_OK(module->schedule().Verify());
   EXPECT_FALSE(Sink(*module));
-  EXPECT_EQ(EntryNames(*module), before);
 }
 
 TEST_F(ConstantFillSinkingTest, ReducesPeakMemoryAcrossWhile) {
