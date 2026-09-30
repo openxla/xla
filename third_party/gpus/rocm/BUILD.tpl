@@ -38,7 +38,6 @@ config_setting(
     flag_values = {
         ":rocm_path_type": "hermetic",
     },
-    visibility = ["//visibility:public"],
 )
 
 config_setting(
@@ -130,7 +129,6 @@ cc_library(
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
         ],
         ":link_only": [
         ],
@@ -140,9 +138,7 @@ cc_library(
         ],
         "//conditions:default": [
             "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Wl,-rpath,/opt/rocm/lib",
-            "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
         ],
     }),
     visibility = ["//visibility:public"],
@@ -528,35 +524,50 @@ filegroup(
     ),
 )
 
+# rocm_sysdeps only exists in TheRock-based ROCm distributions. ROCm's own
+# libraries find it via their embedded RUNPATH; the rpath here is for binaries
+# that link a sysdeps library directly (see :drm, :drm_amdgpu, :numa). As with
+# /opt/rocm/lib in :rocm_rpath, the /opt/rocm entry lets binaries run outside
+# runfiles against a local TheRock install; it is skipped on classic ROCm.
 cc_library(
     name = "system_libs",
     data = [":system_libs_data"],
+    linkopts = select({
+        ":link_only": [],
+        ":build_hermetic": [
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
+        ],
+        "//conditions:default": [
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
+            "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
+        ],
+    }),
 )
 
-# System libraries bundled by the hermetic (therock) ROCm distribution under
-# rocm_dist/lib/rocm_sysdeps/lib. Exposed as real link targets (not just runtime
-# data) so consumers like MORI's libhsakmt.a can resolve drm/numa symbols
-# hermetically instead of relying on host /usr/lib. Only valid in hermetic
-# builds; reference them behind select(":build_hermetic").
+# System libraries bundled by TheRock ROCm under lib/rocm_sysdeps/lib, exposed
+# as real link targets (not just runtime data) so consumers like MORI's
+# libhsakmt.a resolve drm/numa symbols against the ROCm-shipped copies instead
+# of the host's /usr/lib. Requires a TheRock layout (hermetic distribution or a
+# TheRock-based local ROCm); classic ROCm installs do not ship rocm_sysdeps.
 rocm_lib_import(
     name = "drm",
     data = [":system_libs_data"],
     interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
-    deps = [],
+    deps = [":system_libs"],
 )
 
 rocm_lib_import(
     name = "drm_amdgpu",
     data = [":system_libs_data"],
     interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
-    deps = [],
+    deps = [":system_libs"],
 )
 
 rocm_lib_import(
     name = "numa",
     data = [":system_libs_data"],
     interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
-    deps = [],
+    deps = [":system_libs"],
 )
 
 filegroup(
