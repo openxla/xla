@@ -243,11 +243,8 @@ void AddGenericLoweringPasses(mlir::OpPassManager& pm, bool fast_min_max,
   pm.addNestedPass<mlir::func::FuncOp>(emitters::createSimplifyArithPass(
       GetSimplifyArithPassOptions(fast_min_max)));
   pm.addPass(emitters::createExpandIntegerPowerPass());
-  pm.addPass(emitters::createSimplifyAffinePass());
+  pm.addPass(emitters::createExpandApplyIndexingPass());
   pm.addPass(mlir::createCanonicalizerPass());
-
-  // simplify-affine lowers most affine.apply ops, but if it can't prove a
-  // division or modulo is unsigned, affine.apply ops will remain.
   pm.addPass(mlir::createLowerAffinePass());
 
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
