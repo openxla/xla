@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -45,7 +46,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -115,8 +115,8 @@ class ParameterizedFp8GemmRewriteTest
     // Most FP8 tests directly create a GemmRewriter and check the output.
     // Here, also run the entire HLO pass pipeline to ensure no other passes
     // interfere with GemmRewriter's pattern matching.
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                            GetOptimizedModule(replaced_hlo_text));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                         GetOptimizedModule(replaced_hlo_text));
     const HloInstruction* call =
         FindInstruction(optimized_module.get(), HloOpcode::kCustomCall);
     ASSERT_NE(call, nullptr);
@@ -587,11 +587,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDBitcastF8) {
 
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   EXPECT_THAT(
@@ -790,11 +790,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDDynamicSliceF8) {
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   CheckFp8IfSupported(hlo_text);
@@ -853,11 +853,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDSelectF8) {
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   CheckFp8IfSupported(hlo_text);
@@ -920,11 +920,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -2100,11 +2100,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   EXPECT_THAT(
@@ -2177,11 +2177,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   EXPECT_THAT(
@@ -2260,11 +2260,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   EXPECT_THAT(
@@ -2333,11 +2333,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   EXPECT_THAT(
@@ -2416,11 +2416,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
           }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter pass(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                     GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   RunAndFilecheckHloRewrite(
@@ -3017,13 +3017,12 @@ TEST_F(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
 ; CHECK:           }
       )");
   } else {
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
     GemmRewriter pass(
         CudaHopperOrRocmCapability(), GetToolkitVersion(),
         GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only});
-    TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                            this->RunHloPass(&pass, module.get()));
+    ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
     EXPECT_FALSE(changed);
     return;
   }
