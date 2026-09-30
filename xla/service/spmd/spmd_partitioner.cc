@@ -7482,7 +7482,8 @@ absl::StatusOr<bool> SpmdPartitioner::RunImpl(
             break;
           }
           case HloOpcode::kCall:
-          case HloOpcode::kConditional: {
+          case HloOpcode::kConditional:
+          case HloOpcode::kCustomCall: {
             ABSL_RETURN_IF_ERROR(
                 PartitionComputation(computation, caller->sharding(),
                                      &next_channel_id, &logger, *call_graph)
@@ -8018,7 +8019,8 @@ absl::StatusOr<std::vector<CallSiteInfo>> GetCallSiteInfos(
       call_site_infos.push_back(call_site_info);
       break;
     }
-    case HloOpcode::kCall: {
+    case HloOpcode::kCall:
+    case HloOpcode::kCustomCall: {
       CallSiteInfo call_site_info;
       call_site_info.opcode = caller->opcode();
       call_site_info.param_sharding.reserve(caller->operand_count());
@@ -8109,7 +8111,8 @@ absl::StatusOr<bool> SpmdPartitioner::PreprocessCallSites(
                             GetCallSiteInfos(caller, computation));
       switch (caller->opcode()) {
         case HloOpcode::kWhile:
-        case HloOpcode::kCall: {
+        case HloOpcode::kCall:
+        case HloOpcode::kCustomCall: {
           CHECK_EQ(call_site_infos.size(), 1)
               << "Unexpected number of call site infos for "
               << caller->ToString();
@@ -8182,6 +8185,12 @@ absl::StatusOr<bool> SpmdPartitioner::PreprocessCallSites(
                 hlo->operand(i + 1)->sharding());
           }
           break;
+        }
+        case HloOpcode::kCustomCall: {
+          if (GetInstructionCallContext(hlo) != CallContext::kControlFlow) {
+            break;
+          }
+          [[fallthrough]];
         }
         case HloOpcode::kCall: {
           for (int64_t i = 0; i < hlo->operand_count(); ++i) {
