@@ -2057,8 +2057,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (!SupportsEpilogueFusion(gemm->shape().element_type())) {
       return false;
     }
-    // On ROCm, the last operand of a GEMM with FP8 output is the D scale, and
-    // hipBLASLt reads its vector bias as F16.
+    // On ROCm, the last operand of a GEMM with FP8 output is the D scale.
+    // Appending a bias after it would break the operand layout that the thunk
+    // emitter expects (d_scale at operands().back()).
     if (gpu_version_.IsRocm() &&
         primitive_util::IsF8Type(gemm->shape().element_type())) {
       return false;
