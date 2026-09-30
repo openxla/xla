@@ -9464,8 +9464,9 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
                                    MakeBroadcastHlo(init_value, broadcast_dims,
                                                     operand->shape())));
 
-    // Negative window padding crops the operand: apply the positive amounts
-    // with a pad and the negative amounts with a slice.
+    // Negative window padding crops the operand: apply the negative amounts
+    // with a slice and the positive amounts with a pad. The slice goes first
+    // so that later passes can sink it into the elementwise op.
     PaddingConfig padding_config;
     bool has_positive_padding = false;
     bool has_negative_padding = false;
@@ -9481,10 +9482,6 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
       has_negative_padding |=
           window_dim.padding_low() < 0 || window_dim.padding_high() < 0;
     }
-    if (has_positive_padding) {
-      ABSL_ASSIGN_OR_RETURN(new_op,
-                            MakePadHlo(new_op, init_value, padding_config));
-    }
     if (has_negative_padding) {
       std::vector<int64_t> start_indices;
       std::vector<int64_t> limit_indices;
@@ -9499,6 +9496,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
       std::vector<int64_t> strides(start_indices.size(), 1);
       ABSL_ASSIGN_OR_RETURN(
           new_op, MakeSliceHlo(new_op, start_indices, limit_indices, strides));
+    }
+    if (has_positive_padding) {
+      ABSL_ASSIGN_OR_RETURN(new_op,
+                            MakePadHlo(new_op, init_value, padding_config));
     }
 
     return ReplaceInstruction(reduce_window, new_op);

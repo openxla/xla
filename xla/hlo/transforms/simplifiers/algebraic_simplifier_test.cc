@@ -4080,11 +4080,11 @@ ENTRY test {
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(
-          m::Slice(m::Pad(m::AddAnyOrder(
+          m::Pad(m::Slice(m::AddAnyOrder(
                               m::Parameter(),
-                              m::Broadcast(m::ConstantEffectiveScalar(0))),
-                          m::ConstantEffectiveScalar(0))
-                       .WithShape(F32, {17, 35}))
+                              m::Broadcast(m::ConstantEffectiveScalar(0))))
+                     .WithShape(F32, {14, 32}),
+                 m::ConstantEffectiveScalar(0))
               .WithShape(F32, {15, 35})));
 }
 
