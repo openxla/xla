@@ -28,10 +28,6 @@ cc_library(
     name = "mori_cco",
     srcs = ["cco_init.cpp"],
     copts = [
-        # @local_config_rocm's rocm_headers_includes target propagates
-        # -D__HIP_DISABLE_CPP_FUNCTIONS__=1 to every consumer, which hides the
-        # templated hipMalloc(T**, size_t) overload cco_init.cpp relies on.
-        "-U__HIP_DISABLE_CPP_FUNCTIONS__",
     ],
     # PUBLIC BUILD_CCO_SDMA=1 mirrors src/cco/CMakeLists.txt: it must match the
     # value every dependent that includes mori/cco/cco.hpp compiles with (the

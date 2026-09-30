@@ -80,6 +80,7 @@ cc_library(
     includes = ["lib"],
     linkstatic = True,
     visibility = ["//visibility:public"],
+    deps = [":pci_headers"],
 )
 
 # Public libpci headers, remapped so they resolve as <pci/pci.h>.
