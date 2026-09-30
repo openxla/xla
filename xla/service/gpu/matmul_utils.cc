@@ -392,6 +392,11 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                           output_shape.element_type()));
   }
 
+  std::optional<xla::PrimitiveType> bias_type;
+  if (bias_shape_ptr != nullptr) {
+    bias_type = bias_shape_ptr->element_type();
+  }
+
   return GemmConfig(se::gpu::GemmConfig{lhs_layout,
                                         rhs_layout,
                                         c_layout,
@@ -403,7 +408,9 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                                         algorithm,
                                         grad_x,
                                         grad_y,
-                                        scale_mode});
+                                        scale_mode,
+                                        /*compute_type=*/std::nullopt,
+                                        bias_type});
 }
 
 namespace {

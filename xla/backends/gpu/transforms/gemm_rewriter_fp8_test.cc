@@ -2624,16 +2624,11 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasF8) {
       GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                    GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
       R"(
-; CHECK-PTX:     = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK-GCN:     = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK:     = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
 ; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
       )");
 }
 
-// hipBLASLt has no E4M3 x E4M3 -> E5M2 kernels, so the conversion to E5M2
-// stays unfused on ROCm.
-// hipBLASLt reads the vector bias of an FP8 output as F16, so with a BF16 bias
-// the output scaling and conversion stay unfused on ROCm.
 TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDBF16VectorBiasF8) {
   const char* hlo_text = R"(
     HloModule test
@@ -2671,9 +2666,9 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDBF16VectorBiasF8) {
       GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                    GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
       R"(
-; CHECK-GCN:     = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8"
-; CHECK-GCN-SAME:  "epilogue":"BIAS"
+; CHECK:     = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
+; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
+; CHECK-SAME:  "epilogue":"BIAS"
       )");
 }
 

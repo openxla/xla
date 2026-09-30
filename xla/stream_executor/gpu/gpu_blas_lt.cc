@@ -379,6 +379,10 @@ absl::StatusOr<GemmConfig> GemmConfig::FromProto(
                         MatrixLayout::FromProto(proto.output_layout()));
   std::optional<blas::ComputationType> compute_type =
       blas::FromProto(proto.compute_type());
+  std::optional<xla::PrimitiveType> bias_type;
+  if (proto.has_bias_type()) {
+    bias_type = proto.bias_type();
+  }
   return GemmConfig{
       std::move(lhs_layout),
       std::move(rhs_layout),
@@ -392,7 +396,8 @@ absl::StatusOr<GemmConfig> GemmConfig::FromProto(
       proto.grad_x(),
       proto.grad_y(),
       static_cast<ScaleMode>(proto.scale_mode()),
-      compute_type};
+      compute_type,
+      bias_type};
 }
 
 xla::GemmConfigProto GemmConfig::ToProto() const {
@@ -414,6 +419,9 @@ xla::GemmConfigProto GemmConfig::ToProto() const {
   proto.set_scale_mode(static_cast<int32_t>(scale_mode));
   if (compute_type.has_value()) {
     proto.set_compute_type(blas::ToProto(*compute_type));
+  }
+  if (bias_type.has_value()) {
+    proto.set_bias_type(*bias_type);
   }
   return proto;
 }

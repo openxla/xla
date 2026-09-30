@@ -396,19 +396,19 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetHipBlasLtMatmulPlan(
   ABSL_ASSIGN_OR_RETURN(auto c_desc, MatrixLayout::Create(c_layout));
   ABSL_ASSIGN_OR_RETURN(auto d_desc, MatrixLayout::Create(output_layout));
 
-  // Currently, the default bias data type in hipblasLt is the same with output
-  // data type for fp8 matmul, which is different from cublasLt. This is a
-  // workaround to match cublasLt behavior.
-  if (epilogue == gpu::BlasLt::Epilogue::kBias) {
-    auto a_dtype = a_desc.type(), b_dtype = b_desc.type();
-    if ((a_dtype == HIP_R_8F_E4M3_FNUZ || a_dtype == HIP_R_8F_E5M2_FNUZ) &&
-        (b_dtype == HIP_R_8F_E4M3_FNUZ || b_dtype == HIP_R_8F_E5M2_FNUZ)) {
-      auto bias_dtype = d_desc.type();
-      if (bias_dtype == HIP_R_32F) {
-        ABSL_RETURN_IF_ERROR(SetAttr(
-            op_desc.get(), HIPBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, HIP_R_16BF));
-      }
-    }
+  // hipBLASLt defaults the bias data type to the output (D) type for FP8
+  // matmuls, unlike cuBLASLt which infers it from the bias tensor. When the
+  // caller supplied an explicit bias type, forward it to hipBLASLt so that
+  // e.g. a BF16 bias can fuse with an FP8-output GEMM.
+  bool has_bias = static_cast<int32_t>(epilogue) &
+                  static_cast<int32_t>(gpu::BlasLt::Epilogue::kBias);
+  if (has_bias && cfg.bias_type.has_value()) {
+    ABSL_ASSIGN_OR_RETURN(auto blas_bias_type,
+                          gpu::AsBlasDataType(*cfg.bias_type));
+    hipDataType hip_bias_type = AsHipblasDataType(blas_bias_type);
+    ABSL_RETURN_IF_ERROR(SetAttr(op_desc.get(),
+                                 HIPBLASLT_MATMUL_DESC_BIAS_DATA_TYPE,
+                                 hip_bias_type));
   }
 
   std::tuple operand_types{a_desc.type(), b_desc.type(), c_desc.type(),

@@ -1787,32 +1787,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                    "matrix bias with element type other than BF16 or F16.";
         return absl::OkStatus();
       }
-      if (gpu_version_.IsRocm()) {
-        VLOG(1) << "The scaling and conversion of the result of "
-                << existing_gemm->ToShortString()
-                << " is not fused into the FP8 Custom Call because "
-                   "hipBLASLt does not support matrix bias with FP8 output.";
-        return absl::OkStatus();
-      }
       // Turn off the output to operand aliasing, since the fp8 output and
       // bf16/fp16 bias have different sizes.
       xla::Cast<HloCustomCallInstruction>(existing_gemm)
           ->set_output_to_operand_aliasing({});
-    }
-
-    // hipBLASLt reads the vector bias of a GEMM with FP8 output as F16.
-    if (gpu_version_.IsRocm()) {
-      ABSL_ASSIGN_OR_RETURN(
-          bool has_vector_bias,
-          gpublas_lt::EpilogueAddsVectorBias(gemm_backend_config.epilogue()));
-      if (has_vector_bias &&
-          existing_gemm->operands().back()->shape().element_type() != F16) {
-        VLOG(1) << "The scaling and conversion of the result of "
-                << existing_gemm->ToShortString()
-                << " is not fused into the FP8 Custom Call because hipBLASLt "
-                   "only supports an F16 vector bias with FP8 output.";
-        return absl::OkStatus();
-      }
     }
 
     // If necessary, invert the scaling factor of D and convert to F32. When no

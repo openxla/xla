@@ -146,6 +146,7 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   bool grad_y;
   ScaleMode scale_mode = ScaleMode::kNone;
   std::optional<blas::ComputationType> compute_type;
+  std::optional<xla::PrimitiveType> bias_type;
 
   static absl::StatusOr<GemmConfig> FromProto(
       const xla::GemmConfigProto& proto);
