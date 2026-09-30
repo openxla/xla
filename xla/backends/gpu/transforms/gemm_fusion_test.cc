@@ -162,7 +162,7 @@ TEST_P(GemmFusionTestVersioned, TransposeSubdimensionGroup) {
   // This HLO is artificial because unnecessary reshapes get optimized
   // out during compilation. It tests the ability of GemmFusion
   // to handle transposes of groups of subdimensions.
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -174,9 +174,8 @@ ENTRY e {
   c1 = f32[32,7] convert(p1)
   ROOT d = f32[3,7] dot(r0, c1),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Fusion(m::Op(), m::Op())));
 }
@@ -583,7 +582,7 @@ TEST_P(GemmFusionTestVersioned, BitcastChain) {
   // This HLO is artificial because unnecessary reshapes get optimized
   // out during compilation. It tests the ability of GemmFusion
   // to handle various kinds of bitcasts.
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -597,16 +596,15 @@ ENTRY e {
   ROOT d = f16[3,5,10] dot(c0, r1),
     lhs_contracting_dims={1}, rhs_contracting_dims={2},
     lhs_batch_dims={0}, rhs_batch_dims={0}
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(ParamOrBitcastParam(), ParamOrBitcastParam())));
 }
 
 TEST_P(GemmFusionTestVersioned, SplitDimensionTwice) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 ENTRY e {
   p0 = s8[4,2,32,4,2] parameter(0)
   r1 = s8[8,32,8] reshape(p0)
@@ -617,9 +615,8 @@ ENTRY e {
   c0 = f16[32,32] convert(p1)
   ROOT d = f16[64,32] dot(c1, c0),
     lhs_contracting_dims={0}, rhs_contracting_dims={1}
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(ParamOrBitcastParam(), ParamOrBitcastParam())));
@@ -639,7 +636,7 @@ ENTRY e {
 }
 
 TEST_P(GemmFusionTestVersioned, FuseDotWithTrivialNoncontractingDim) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -650,9 +647,8 @@ ENTRY e {
   ROOT d = f16[3,5,1] dot(c0, p1),
     lhs_contracting_dims={1}, rhs_contracting_dims={2},
     lhs_batch_dims={0}, rhs_batch_dims={0}
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(ParamOrBitcastParam(), ParamOrBitcastParam())));
@@ -672,7 +668,7 @@ ENTRY e {
 })"));
 
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kAmpere, 0};
-  EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(true));
 }
 
 TEST_P(GemmFusionTest, FuseSliceWithOtherUsersWhenDotHasSmallK) {
@@ -692,7 +688,7 @@ ENTRY e {
 })"));
 
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kHopper, 0};
-  EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(true));
 
   // Check that the second dot is fused and the fusion contains sl1.
   // We make no assumptions about other fusions.
@@ -759,10 +755,10 @@ ENTRY e {
              lhs_contracting_dims={0}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
                                     m::Parameter(), m::Constant()))));
@@ -785,10 +781,10 @@ ENTRY e {
            lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   // TODO(b/339810582): Don't duplicate scalar parameters to dot fusions,
   // because they are never tiled differently.
   // TODO(b/339814210): Don't count scalar parameters towards dot fusion
@@ -817,7 +813,7 @@ ENTRY e {
 })"));
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kAmpere, 0};
   // FusionDecision "Unsupported dynamic slice on non-major-most dimension."
-  EXPECT_FALSE(GemmFusion(cc).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(false));
 }
 
 // TODO(b/417172838): support dynamic slice op.
@@ -835,10 +831,10 @@ ENTRY e {
   ROOT d = f32[4,5]{1,0} dot(dot_lhs, dynamic_slice),
            lhs_contracting_dims={0}, rhs_contracting_dims={0}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
                                     m::Constant(), m::Constant()))));
@@ -858,7 +854,7 @@ ENTRY e {
 )"));
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kAmpere, 0};
 
-  ASSERT_TRUE(GemmFusion(cc).Run(module.get()).value());
+  ASSERT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(true));
 
   // Slice is not fused.
   MatchHloModule(*module, R"(
@@ -885,7 +881,7 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kAmpere, 0};
-  EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
 }
@@ -904,7 +900,7 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kAmpere, 0};
-  EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())));
@@ -941,7 +937,7 @@ ENTRY e {
     lhs_contracting_dims={0}, rhs_contracting_dims={0}
 })"));
   const se::CudaComputeCapability cc{se::CudaComputeCapability::kAmpere, 0};
-  EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(cc).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())));
@@ -960,7 +956,7 @@ ENTRY e {
     lhs_contracting_dims={0}, rhs_contracting_dims={0}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Fusion(m::Parameter(), ParamOrBitcastParam())));
 }
@@ -982,7 +978,7 @@ ENTRY e {
     lhs_contracting_dims={0}, rhs_contracting_dims={0}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(m::Transpose(), m::Parameter(), m::Parameter())));
@@ -1097,7 +1093,7 @@ ENTRY e {
   ROOT tmp_102 = f32[49,32]{1,0} dot(tmp_37, tmp_101), lhs_contracting_dims={0}, rhs_contracting_dims={0}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
             HloOpcode::kFusion);
   EXPECT_EQ(module->entry_computation()->root_instruction()->fusion_kind(),
@@ -1127,7 +1123,7 @@ ENTRY e {
   ROOT tmp_102 = f32[49,32]{1,0} dot(add1, f), lhs_contracting_dims={0}, rhs_contracting_dims={0}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
             HloOpcode::kFusion);
   EXPECT_EQ(module->entry_computation()->root_instruction()->fusion_kind(),
@@ -1154,7 +1150,7 @@ ENTRY e {
   ROOT dot = f32[15,3]{1,0} dot(concat, convert), lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
             HloOpcode::kFusion);
   EXPECT_EQ(module->entry_computation()->root_instruction()->fusion_kind(),
@@ -1191,7 +1187,7 @@ ENTRY e {
            lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   // ~VerifiedHloModule() will verify the module.
 }
 
@@ -1206,7 +1202,7 @@ ENTRY e {
            lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 
   MatchHloModule(*module, R"(
 CHECK-DAG: %[[P0:.*]] = f32[2,4]{1,0} parameter(0)
@@ -1240,7 +1236,7 @@ ENTRY e {
            lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 
   MatchHloModule(*module, R"(
 CHECK-DAG: %[[P0:.*]] = f32[2,4]{1,0} parameter(0)
@@ -1272,7 +1268,7 @@ ENTRY e {
            lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 
   MatchHloModule(*module, R"(
 CHECK-DAG: %[[P0:.*]] = f32[4,4]{1,0} parameter(0)
@@ -1305,7 +1301,7 @@ ENTRY e {
            lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 
   MatchHloModule(*module, R"(
 CHECK-DAG: %[[P0:.*]] = f32[4,4]{1,0} parameter(0)
@@ -1352,7 +1348,7 @@ e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch((m::Fusion(ParamOrBitcastParam(), ParamOrBitcastParam(),
@@ -1411,10 +1407,10 @@ ENTRY e {
   ROOT dot = f32[2,2] dot(a, p1c),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter()))));
   ASSERT_OK_AND_ASSIGN(
@@ -1442,10 +1438,10 @@ ENTRY e {
   ROOT dot = f32[4,5] dot(a, p1c),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch((m::Fusion(m::Parameter(), m::Parameter(), m::Parameter()))));
@@ -1497,10 +1493,10 @@ ENTRY e {
   n = f16[512,512] negate(c0)
   ROOT a = f16[512,512] add(bcast, n)
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   // Check that even when a narrowing convert is used twice and both instances
   // cannot be fused, we still fuse even though it means duplicating the
   // convert.
@@ -1561,10 +1557,10 @@ e {
   ROOT d = bf16[16,1920] dot(p3, cvt),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
-  ASSERT_TRUE(GemmFusion(se::CudaComputeCapability{
+  ASSERT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   ASSERT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
                                     m::Parameter(), m::Parameter()))));
@@ -1626,10 +1622,10 @@ e {
   ROOT d = f16[2025,123] dot(cvt, p2),
     lhs_contracting_dims={0}, rhs_contracting_dims={1}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Concatenate(), m::Parameter()))));
 }
@@ -1646,10 +1642,10 @@ e {
   ROOT d = f16[124,123] dot(cvt, p2),
     lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Concatenate(), m::Parameter()))));
 }
@@ -1667,10 +1663,10 @@ e {
     lhs_batch_dims={1}, rhs_batch_dims={1},
     lhs_contracting_dims={2}, rhs_contracting_dims={2}
 })"));
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Concatenate(), m::Parameter()))));
 }
@@ -1695,10 +1691,10 @@ e {
     lhs_contracting_dims={0}, rhs_contracting_dims={1}
 })"));
 
-  EXPECT_TRUE(GemmFusion(se::CudaComputeCapability{
+  EXPECT_THAT(GemmFusion(se::CudaComputeCapability{
                              se::CudaComputeCapability::kAmpere, 0})
-                  .Run(module.get())
-                  .value());
+                  .Run(module.get()),
+              IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch((m::Fusion(m::Parameter(), m::Parameter(), m::Parameter(),
@@ -1706,7 +1702,7 @@ e {
 }
 
 TEST_P(GemmFusionTestVersioned, CopiesDotMetadataToFusionOp) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -1715,16 +1711,15 @@ ENTRY e {
   c = f16[256,2] convert(p1)
   ROOT d = f16[18,256] dot(p0, c),
     lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="foo"}
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_EQ(
       module->entry_computation()->root_instruction()->metadata().op_name(),
       "foo");
 }
 
 TEST_P(GemmFusionTestVersioned, ElementwiseAddIsFusedInEpilogue) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 ENTRY e {
   p0 = f16[2,18] parameter(0)
@@ -1734,9 +1729,8 @@ ENTRY e {
   p2 = f16[] parameter(2)
   b = f16[18,256] broadcast(f16[] p2)
   ROOT a = f16[18,256] add(d, b)
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch((m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
@@ -1744,7 +1738,7 @@ ENTRY e {
 }
 
 TEST_P(GemmFusionTestVersioned, FusesBroadcastOfScalarEpilogues) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 ENTRY e {
   p0 = f16[2,18] parameter(0)
@@ -1757,9 +1751,8 @@ ENTRY e {
   bc = f16[] bitcast(m0)
   b = f16[18,256] broadcast(f16[] bc)
   ROOT m = f16[18,256] multiply(d, b)
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
@@ -1768,7 +1761,7 @@ ENTRY e {
 
 TEST_P(GemmFusionTestVersioned,
        BroadcastsOfParametersAreFusedAsEpilogueInputs) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 e {
   p0 = f16[4,55] parameter(0)
   p1 = f16[123,55] parameter(1)
@@ -1778,9 +1771,8 @@ e {
   t = f16[123] bitcast(g)
   b = f16[4,123] broadcast(t), dimensions={1}
   m = f16[4,123] multiply(d, b)
-})")
-                    .value();
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+})"));
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
                                     m::AnyOf<HloInstruction>(
@@ -1789,7 +1781,7 @@ e {
 }
 
 TEST_P(GemmFusionTest, DoNotFuseNonProfitableDot) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -1799,8 +1791,7 @@ ENTRY e {
   b1 = bf16[64,16] bitcast(p1)
   ROOT d = bf16[16,16] dot(b0, b1),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})")
-                    .value();
+})"));
   EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(false));
 }
 
@@ -1822,7 +1813,7 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 TEST_P(SmallDotGemmFusionTest, SkipSmallMatrixMultiplicationRewrite) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -1831,8 +1822,7 @@ ENTRY e {
   c = f16[10,2] convert(p1)
   ROOT d = f16[10,10] dot(p0, c),
     lhs_contracting_dims={0}, rhs_contracting_dims={1}
-})")
-                    .value();
+})"));
 
   EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(false));
 
@@ -1846,7 +1836,7 @@ ENTRY e {
 }
 
 TEST_P(SmallDotGemmFusionTest, LargeMatrixMultiplicationIsRewritten) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
 ENTRY e {
@@ -1855,10 +1845,9 @@ ENTRY e {
   c = f16[50,2] convert(p1)
   ROOT d = f16[18,50] dot(p0, c),
     lhs_contracting_dims={0}, rhs_contracting_dims={1}
-})")
-                    .value();
+})"));
 
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 
   MatchHloModule(*module, R"(
 ; CHECK-LABEL: ENTRY %e ({{.*}}: f16[2,18], {{.*}}: s8[50,2]) -> f16[18,50] {
@@ -1883,7 +1872,7 @@ TEST_P(GemmFusionTestVersioned, Int4DotIsRewritten) {
   )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kInt4Dot));
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 }
 
 TEST_P(GemmFusionTestVersioned, Int4ConcatPlusConvertIsRewritten) {
@@ -1900,7 +1889,7 @@ TEST_P(GemmFusionTestVersioned, Int4ConcatPlusConvertIsRewritten) {
   )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kInt4Dot));
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
 
   // Check that the fusion is present and that the lhs is not converted.
   MatchHloModule(*module, R"(
@@ -1926,7 +1915,7 @@ TEST_P(GemmFusionTestVersioned, Int4ConvertPlusNegateIsRewritten) {
   )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kInt4Dot));
-  EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(GemmFusion(gpu_version_).Run(module.get()), IsOkAndHolds(true));
   // Check that the fusion is present and that convert and negation is fused in
   // it.
   EXPECT_THAT(module->entry_computation()->root_instruction(),

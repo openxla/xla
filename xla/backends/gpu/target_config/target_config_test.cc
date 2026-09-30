@@ -25,7 +25,6 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/semantic_version.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"
 
@@ -107,7 +106,7 @@ TEST(TargetConfigTest, GetTargetConfigFromFile) {
     platform_name: "platform"
     gpu_device_info { threads_per_block_limit: 5 }
   )pb";
-  TF_ASSERT_OK(
+  ASSERT_OK(
       tsl::WriteStringToFile(tsl::Env::Default(), filename, proto_content));
 
   ASSERT_OK_AND_ASSIGN(GpuTargetConfig config,

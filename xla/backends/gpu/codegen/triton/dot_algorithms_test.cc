@@ -71,7 +71,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -511,7 +510,7 @@ TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmWhenBothInputsAreF32) {
             "num_stages":1,"num_warps":1,"num_ctas":1}}}
     }
   )";
-  TF_ASSERT_OK(
+  ASSERT_OK(
       CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK:          %[[INFINITY:.*]] = arith.constant dense<0x7F800000> : tensor<32x32xf32>
 CHECK:          %[[C0:.*]] = arith.constant dense<0.000000e+00> : tensor<32x32xf32>
@@ -565,7 +564,7 @@ TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForLongContractingDimension) {
             "num_stages":1,"num_warps":4, "num_ctas":1}}}
     }
   )";
-  TF_ASSERT_OK(
+  ASSERT_OK(
       CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> * tensor<32x32xbf16> -> tensor<64x32xf32>
     )"));
@@ -588,8 +587,8 @@ TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmEndToEnd) {
         algorithm=dot_bf16_bf16_f32_x6
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
-                          ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
+                       ParseAndReturnVerifiedModule(kHloText));
   CompileAndOptionallyVerifyPtx(std::move(verified_module),
                                 R"(
 CHECK: mma.sync.aligned.{{.*}}.row.col.f32.bf16.bf16.f32
@@ -627,7 +626,7 @@ TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmWhenBothInputsAreF32) {
             "num_stages":1,"num_warps":1,"num_ctas":1}}}
     }
   )";
-  TF_ASSERT_OK(
+  ASSERT_OK(
       CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK:          %[[INFINITY:.*]] = arith.constant dense<0x7F800000> : tensor<32x32xf32>
 CHECK:          %[[C0:.*]] = arith.constant dense<0.000000e+00> : tensor<32x32xf32>
@@ -675,7 +674,7 @@ TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForLongContractingDimension) {
             "num_stages":1,"num_warps":4, "num_ctas":1}}}
     }
   )";
-  TF_ASSERT_OK(
+  ASSERT_OK(
       CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> * tensor<32x32xbf16> -> tensor<64x32xf32>
     )"));
@@ -698,8 +697,8 @@ TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmEndToEnd) {
         algorithm=dot_bf16_bf16_f32_x3
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
-                          ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
+                       ParseAndReturnVerifiedModule(kHloText));
   CompileAndOptionallyVerifyPtx(std::move(verified_module),
                                 R"(
 CHECK: mma.sync.aligned.{{.*}}.row.col.f32.bf16.bf16.f32
@@ -727,8 +726,8 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
   )";
   constexpr absl::string_view kPattern =
       R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
+  ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
 }
 
@@ -750,8 +749,8 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
   )";
   constexpr absl::string_view kPattern =
       R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
+  ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
 }
 
@@ -775,8 +774,8 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
     CHECK: algorithm=dot_tf32_tf32_f32
     CHECK: "kind":"__triton_nested_gemm_fusion"
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
+  ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
 }
 
@@ -798,8 +797,8 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
   )";
   constexpr absl::string_view kPattern =
       R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
+  ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
 }
 
@@ -824,8 +823,8 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
   )";
   constexpr absl::string_view kPattern =
       R"(CHECK: "kind":"__triton_nested_gemm_fusion")";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
+  ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   EXPECT_TRUE(ok);
 }
 
@@ -1150,11 +1149,11 @@ TEST_P(NumericTestsForBlas, Infinity) {
     GTEST_SKIP() << "hipBLASLt FAST_TF32 inf*1 returns NaN on MI350 ";
   }
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok,
-                          RunFileCheck(module_text, kCheckTritionNestedGemm));
+  ASSERT_OK_AND_ASSIGN(auto ok,
+                       RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1169,11 +1168,11 @@ TEST_P(NumericTestsForBlas, Infinity) {
 
 TEST_P(NumericTestsForBlas, NaN) {
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok,
-                          RunFileCheck(module_text, kCheckTritionNestedGemm));
+  ASSERT_OK_AND_ASSIGN(auto ok,
+                       RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1188,11 +1187,11 @@ TEST_P(NumericTestsForBlas, NaN) {
 
 TEST_P(NumericTestsForBlas, InputsWithLargeExponent) {
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok,
-                          RunFileCheck(module_text, kCheckTritionNestedGemm));
+  ASSERT_OK_AND_ASSIGN(auto ok,
+                       RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1209,11 +1208,11 @@ TEST_P(NumericTestsForBlas, InputsWithLargeExponent) {
 
 TEST_P(NumericTestsForBlas, PrecisionCheck) {
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok,
-                          RunFileCheck(module_text, kCheckTritionNestedGemm));
+  ASSERT_OK_AND_ASSIGN(auto ok,
+                       RunFileCheck(module_text, kCheckTritionNestedGemm));
   ASSERT_TRUE(ok);
 
   auto reference_module = GetReferenceModuleForCublas();
@@ -1232,10 +1231,10 @@ TEST_P(NumericTestsForTriton, Infinity) {
   // It is the tricky cases for X3 and X6 algorithms. They should mask the NaN
   // intermediate results.
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
   ASSERT_TRUE(ok);
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module),
                                        infinity_arguments_ptrs(),
@@ -1246,11 +1245,11 @@ TEST_P(NumericTestsForTriton, Infinity) {
 
 TEST_P(NumericTestsForTriton, NaN) {
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
 
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
   ASSERT_TRUE(ok);
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), nan_arguments_ptrs(),
                                        ErrorSpec{/*aabs=*/0, /*arel=*/0}))
@@ -1260,10 +1259,10 @@ TEST_P(NumericTestsForTriton, NaN) {
 
 TEST_P(NumericTestsForTriton, InputsWithLargeExponent) {
   std::string hlo_text = HloText();
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(hlo_text));
   auto module_text = module->ToString();
-  TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
+  ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module_text, kPattern));
   ASSERT_TRUE(ok);
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(
@@ -1963,10 +1962,9 @@ TEST_P(PrecisionTests, PrecisionCheck) {
   constexpr int kLhsOuterDim = 1024;
   constexpr int kRhsOuterDim = 1024;
   constexpr int kContractingDim = 8;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<HloModule> test_module,
-      GetSimpleDotModule(kLhsOuterDim, kRhsOuterDim, kContractingDim, algorithm,
-                         backend));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> test_module,
+                       GetSimpleDotModule(kLhsOuterDim, kRhsOuterDim,
+                                          kContractingDim, algorithm, backend));
   FakeArgumentsOptions options;
   options.max_bits_of_precision = 23;
   ASSERT_OK_AND_ASSIGN(std::vector<Literal> fake_arguments,
@@ -1977,16 +1975,16 @@ TEST_P(PrecisionTests, PrecisionCheck) {
   std::vector<double> ref_result =
       RunReferenceDot(GetLiteralPointers(fake_arguments), kLhsOuterDim,
                       kRhsOuterDim, kContractingDim);
-  TF_ASSERT_OK_AND_ASSIGN(auto executable, test_runner().CreateExecutable(
-                                               std::move(test_module), false));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(auto executable, test_runner().CreateExecutable(
+                                            std::move(test_module), false));
+  ASSERT_OK_AND_ASSIGN(
       Literal test_result,
       test_runner().ExecuteWithExecutable(executable.get(), fake_arguments));
   std::vector<uint64_t> profile_times;
   profile_times.reserve(100);
   for (int i = 0; i < 100; ++i) {
     auto start = absl::Now();
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         Literal iter_result,
         test_runner().ExecuteWithExecutable(executable.get(), fake_arguments));
     auto elapsed = absl::Now() - start;
@@ -2032,7 +2030,7 @@ TEST_P(PrecisionTests, CheckPrecisionDegradationAlongKDimension) {
   csv_writer.appendRow<std::string>(
       {"iterations_along_k", "max(abs(rel_errors))", "std_dev(rel_errors)"});
   for (int k = kMinKSize; k <= kMaxKSize; k *= 2) {
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<HloModule> test_module,
         GetSimpleDotModule(kMSize, kNSize, k, algorithm, backend));
     FakeArgumentsOptions options;
@@ -2046,10 +2044,9 @@ TEST_P(PrecisionTests, CheckPrecisionDegradationAlongKDimension) {
         GetLiteralPointers(fake_arguments);
     std::vector<double> ref_result =
         RunReferenceDot(fake_argument_ptrs, kMSize, kNSize, k);
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto executable,
-        test_runner().CreateExecutable(std::move(test_module), false));
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(auto executable, test_runner().CreateExecutable(
+                                              std::move(test_module), false));
+    ASSERT_OK_AND_ASSIGN(
         Literal test_result,
         test_runner().ExecuteWithExecutable(executable.get(), fake_arguments));
     std::vector<double> rel_errors =
