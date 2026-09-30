@@ -915,7 +915,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@riegeli//riegeli/bytes:string_writer",
         "@riegeli//riegeli/bytes:writer",
-        "@tsl//tsl/platform:random",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ],

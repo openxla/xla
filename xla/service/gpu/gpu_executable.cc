@@ -123,7 +123,6 @@ limitations under the License.
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 
