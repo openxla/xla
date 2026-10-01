@@ -42,8 +42,13 @@ std::unique_ptr<llvm::Module> ParseEmbeddedBitcode(
     llvm::LLVMContext& context, const std::string& bitcode,
     absl::string_view source_name = "embedded_module");
 
+// Returns true if `bitcode` (IR text or bitcode) defines at least one CppGen
+// library function, i.e. a function whose name starts with "xla.".
+bool ContainsCppGenFunctions(const std::string& bitcode);
+
 // Returns true if the Eigen C++ intrinsics were compiled and are available.
-// If the compiler does not support vector extensions, this will return false.
+// If the compiler does not support vector extensions, the embedded IR contains
+// no library functions and this will return false.
 bool AreEigenIntrinsicsAvailable();
 
 // Helper for Intrinsic<T> classes that use CppGen backend for some types.
