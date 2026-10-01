@@ -65,13 +65,10 @@ limitations under the License.
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/llvm_gpu_backend/load_ir_module.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
-#include "xla/service/gpu/llvm_gpu_backend/ptx_version_util.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "xla/stream_executor/cuda/subprocess_compilation.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
@@ -156,19 +153,10 @@ absl::StatusOr<std::unique_ptr<llvm::TargetMachine>> NVPTXGetTargetMachine(
   ABSL_ASSIGN_OR_RETURN(int llvm_max_ptx_version,
                         GetMaxPtxVersionSupportedByLlvm(target_triple));
 
-  absl::StatusOr<stream_executor::SemanticVersion> runtime_cuda_version =
-      stream_executor::GetAsmCompilerVersion(
-          debug_options.xla_gpu_cuda_data_dir());
-
   int highest_supported_ptx_version = llvm_max_ptx_version;
-  if (runtime_cuda_version.ok()) {
-    auto ptx_version =
-        nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
-            *runtime_cuda_version, compute_capability.major);
-    int runtime_max_ptx_version =
-        ptx_version.major_version() * 10 + ptx_version.minor_version();
+  if (max_ptx_isa_version.has_value()) {
     highest_supported_ptx_version =
-        std::min(runtime_max_ptx_version, llvm_max_ptx_version);
+        std::min(*max_ptx_isa_version, llvm_max_ptx_version);
   }
 
   VLOG(1) << "Targeting PTX version: " << highest_supported_ptx_version;

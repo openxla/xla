@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -162,7 +163,15 @@ INSTANTIATE_TEST_SUITE_P(VersionTest, PtxVersionFromCudaVersionTest,
                                cuda_version.minor_version());
                          });
 
-TEST(UtilsTest, CompileToPtxCapsAtMaxPtxIsaVersion) {
+struct CompileToPtxVersionTestCase {
+  std::optional<int> max_ptx_isa_version;
+  const char* expected_ptx_version;
+};
+
+using CompileToPtxVersionTest =
+    ::testing::TestWithParam<CompileToPtxVersionTestCase>;
+
+TEST_P(CompileToPtxVersionTest, UsesMinimumOfLlvmAndProviderVersions) {
   llvm::LLVMContext context;
   llvm::Module module("test", context);
   new llvm::GlobalVariable(
@@ -173,10 +182,35 @@ TEST(UtilsTest, CompileToPtxCapsAtMaxPtxIsaVersion) {
   absl::StatusOr<std::string> ptx = nvptx::CompileToPtx(
       &module, se::GpuComputeCapability(se::CudaComputeCapability::Ampere()),
       DebugOptions(), /*configure_target=*/nullptr,
-      /*max_ptx_isa_version=*/80);
+      /*max_ptx_isa_version=*/GetParam().max_ptx_isa_version);
   ASSERT_THAT(ptx, ::absl_testing::IsOk());
-  EXPECT_THAT(*ptx, ::testing::HasSubstr(".version 8.0"));
+  std::string expected_ptx_version;
+  if (GetParam().expected_ptx_version != nullptr) {
+    expected_ptx_version = GetParam().expected_ptx_version;
+  } else {
+    ASSERT_OK_AND_ASSIGN(int llvm_max_ptx_version,
+                         nvptx::GetMaxPtxVersionSupportedByLlvm(
+                             llvm::Triple("nvptx64-unknown-unknown")));
+    expected_ptx_version =
+        absl::StrCat(llvm_max_ptx_version / 10, ".", llvm_max_ptx_version % 10);
+  }
+  EXPECT_THAT(*ptx, ::testing::HasSubstr(
+                        absl::StrCat(".version ", expected_ptx_version, "\n")));
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    VersionTest, CompileToPtxVersionTest,
+    ::testing::ValuesIn<CompileToPtxVersionTestCase>({
+        {80, "8.0"},
+        {92, "9.2"},
+        {999, nullptr},           // LLVM's maximum.
+        {std::nullopt, nullptr},  // LLVM's maximum.
+    }),
+    [](::testing::TestParamInfo<CompileToPtxVersionTestCase> data) {
+      return data.param.max_ptx_isa_version.has_value()
+                 ? absl::StrCat("provider_", *data.param.max_ptx_isa_version)
+                 : "no_provider_limit";
+    });
 
 }  // namespace
 }  // namespace gpu
