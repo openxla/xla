@@ -27,9 +27,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/env.h"
@@ -41,6 +38,9 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace {

@@ -19,8 +19,6 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/test.h"
@@ -29,6 +27,8 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/file_system_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace {
