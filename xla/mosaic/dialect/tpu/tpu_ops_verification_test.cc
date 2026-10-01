@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -2137,6 +2138,43 @@ TEST_F(TpuOpsVerificationTest, ReduceOpVerificationWorks) {
   ASSERT_OK(VerifyOp(reduce));
 }
 
+TEST_F(TpuOpsVerificationTest, ReduceIndexOpVerificationWorks) {
+  Value input = ConstantF32Vector(/*shape=*/{100, 200}, /*values=*/{1.0f});
+  auto reduce_index = Create<ReduceIndexOp>(
+      /*output=*/VectorType::get({1, 200}, builder().getI32Type()),
+      /*input=*/input,
+      /*axis=*/builder().getI32IntegerAttr(0),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kArgMax));
+  ASSERT_OK(VerifyOp(reduce_index));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceIndexOpReducedDimNotOne) {
+  Value input = ConstantF32Vector(/*shape=*/{100, 200}, /*values=*/{1.0f});
+  auto reduce_index = Create<ReduceIndexOp>(
+      /*output=*/VectorType::get({10, 200}, builder().getI32Type()),
+      /*input=*/input,
+      /*axis=*/builder().getI32IntegerAttr(0),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kArgMax));
+  ASSERT_THAT(VerifyOp(reduce_index),
+              StatusIs(_, HasSubstr("Expected output dimension 0 to have size "
+                                    "1, but got 10")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceIndexOpNonReducedDimMismatch) {
+  Value input = ConstantF32Vector(/*shape=*/{100, 200}, /*values=*/{1.0f});
+  auto reduce_index = Create<ReduceIndexOp>(
+      /*output=*/VectorType::get({1, 300}, builder().getI32Type()),
+      /*input=*/input,
+      /*axis=*/builder().getI32IntegerAttr(0),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kArgMax));
+  ASSERT_THAT(VerifyOp(reduce_index),
+              StatusIs(_, HasSubstr("Expected output dimension 1 to have "
+                                    "size 200, but got 300")));
+}
+
 TEST_F(TpuOpsVerificationTest, ReduceOpInvalidDim) {
   Value input = ConstantF32Vector(/*shape=*/{100, 200}, /*values=*/{1.0f});
   auto reduce = Create<ReduceOp>(
@@ -2234,6 +2272,152 @@ TEST_F(TpuOpsVerificationTest, ReduceOpReductionKindElementType) {
                                                        ReductionKind::kMaxF))),
       StatusIs(_, HasSubstr("maxf and minf reductions require float element "
                             "type")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetVerificationWorks) {
+  Value src = ConstantI1Vector(/*shape=*/{4, 8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{4, 1}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(Create<ReduceIndexOp>(
+      dst, src, builder().getI32IntegerAttr(1),
+      ReductionKindAttr::get(builder().getContext(),
+                             ReductionKind::kFindFirstSet))));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetDimensionOverflowsIndices) {
+  // The not found result equals the dimension size, which must fit in the
+  // output bitwidth as an unsigned integer.
+  const int64_t max_size = std::numeric_limits<uint32_t>::max();
+  Value src_valid =
+      ConstantI1Vector(/*shape=*/{2, max_size}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{2, 1}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(Create<ReduceIndexOp>(
+      dst, src_valid, builder().getI32IntegerAttr(1),
+      ReductionKindAttr::get(builder().getContext(),
+                             ReductionKind::kFindFirstSet))));
+
+  Value src_overflow =
+      ConstantI1Vector(/*shape=*/{2, max_size + 1}, /*values=*/{true});
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceIndexOp>(
+          dst, src_overflow, builder().getI32IntegerAttr(1),
+          ReductionKindAttr::get(builder().getContext(),
+                                 ReductionKind::kFindFirstSet))),
+      StatusIs(_, HasSubstr("Reduction dimension size 4294967296 is too large "
+                            "for find_first_set: the largest result "
+                            "4294967296 does not fit in 32-bit unsigned "
+                            "indices")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceIndexOpArgMaxDimensionOverflowsIndices) {
+  // The largest result is the last index, which must fit in the output
+  // bitwidth as an unsigned integer.
+  const int64_t max_size = int64_t{1} << 16;
+  Value src_valid = ConstantBF16Vector(/*shape=*/{2, max_size}, /*value=*/1.0f);
+  Type dst = VectorType::get(/*shape=*/{2, 1}, /*type=*/builder().getI16Type());
+
+  ASSERT_OK(VerifyOp(Create<ReduceIndexOp>(
+      dst, src_valid, builder().getI32IntegerAttr(1),
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kArgMax))));
+
+  Value src_overflow =
+      ConstantBF16Vector(/*shape=*/{2, max_size + 1}, /*value=*/1.0f);
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceIndexOp>(
+          dst, src_overflow, builder().getI32IntegerAttr(1),
+          ReductionKindAttr::get(builder().getContext(),
+                                 ReductionKind::kArgMax))),
+      StatusIs(_, HasSubstr("Reduction dimension size 65537 is too large for "
+                            "arg_max: the largest result 65536 does not fit "
+                            "in 16-bit unsigned indices")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidInputType) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/i32());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceIndexOp>(
+                  dst, src, builder().getI32IntegerAttr(0),
+                  ReductionKindAttr::get(builder().getContext(),
+                                         ReductionKind::kFindFirstSet))),
+              StatusIs(_, HasSubstr("find_first_set requires i1 input and i32 "
+                                    "output element types")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidOutputType) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/builder().getI16Type());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceIndexOp>(
+                  dst, src, builder().getI32IntegerAttr(0),
+                  ReductionKindAttr::get(builder().getContext(),
+                                         ReductionKind::kFindFirstSet))),
+              StatusIs(_, HasSubstr("find_first_set requires i1 input and i32 "
+                                    "output element types")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceMaskSumVerificationWorks) {
+  Value src = ConstantI1Vector(/*shape=*/{4, 8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{1, 8}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(
+      Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0}, ReductionKind::kSum)));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceSumMismatchedElementTypesInvalid) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/builder().getF32Type());
+
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0},
+                                ReductionKind::kSum)),
+      StatusIs(_, HasSubstr("non-i1 sum requires matching input and output "
+                            "element types")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceMaskSumDimensionOverflowsIndices) {
+  const int64_t max_size = std::numeric_limits<int32_t>::max();
+  Value src_valid =
+      ConstantI1Vector(/*shape=*/{2, max_size}, /*values=*/{true});
+  Type dst_1d = VectorType::get(/*shape=*/{2, 1}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(dst_1d, src_valid, ArrayRef<int64_t>{1},
+                                      ReductionKind::kSum)));
+
+  Value src_overflow =
+      ConstantI1Vector(/*shape=*/{2, max_size + 1}, /*values=*/{true});
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(dst_1d, src_overflow, ArrayRef<int64_t>{1},
+                                ReductionKind::kSum)),
+      StatusIs(_, HasSubstr("Number of reduced elements exceeds the maximum "
+                            "mask sum result 2147483647 representable in "
+                            "i32")));
+
+  Type dst_2d = VectorType::get(/*shape=*/{1, 1}, /*type=*/i32());
+  Value src_2d_valid =
+      ConstantI1Vector(/*shape=*/{2, max_size / 2}, /*values=*/{true});
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(
+      dst_2d, src_2d_valid, ArrayRef<int64_t>{0, 1}, ReductionKind::kSum)));
+
+  Value src_2d_overflow =
+      ConstantI1Vector(/*shape=*/{2, max_size / 2 + 1}, /*values=*/{true});
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(dst_2d, src_2d_overflow,
+                                ArrayRef<int64_t>{0, 1}, ReductionKind::kSum)),
+      StatusIs(_, HasSubstr("Number of reduced elements exceeds the maximum "
+                            "mask sum result 2147483647 representable in "
+                            "i32")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceMaskSumInvalidOutputType) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/builder().getI1Type());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0},
+                                        ReductionKind::kSum)),
+              StatusIs(_, HasSubstr("sum of i1 mask requires i32 output "
+                                    "element type")));
 }
 
 TEST_F(TpuOpsVerificationTest, ConvOpVerificationWorks) {
