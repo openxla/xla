@@ -101,6 +101,21 @@ TEST(CudaExecutorTest, CreateDeviceDescription) {
               IsOkAndHolds(*result));
 }
 
+TEST(CudaExecutorTest, OversizedSharedMemoryPerBlockOnlyReportedOnSm107) {
+  CudaPlatform platform;
+  ASSERT_GT(platform.VisibleDeviceCount(), 0);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<DeviceDescription> result,
+                       CudaExecutor::CreateDeviceDescription(0));
+
+  // cuDNN only queries this attribute on SM 10.7 and rejects serialized plans
+  // whose non-zero value differs from its own, so it must be 0 elsewhere.
+  const CudaComputeCapability cc = result->cuda_compute_capability();
+  if (cc.major != 10 || cc.minor != 7) {
+    EXPECT_EQ(result->oversized_shared_memory_per_block(), 0);
+  }
+}
+
 TEST(CudaExecutorTest, GetCudaKernel) {
   ASSERT_OK_AND_ASSIGN(Platform * platform,
                        PlatformManager::PlatformWithName("CUDA"));
