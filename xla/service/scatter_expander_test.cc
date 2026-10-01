@@ -258,6 +258,52 @@ TEST_F(ScatterExpanderTest,
   EXPECT_FALSE(result);
 }
 
+TEST_F(ScatterExpanderTest, IndexValidityBoundIsClampedToIndexType) {
+  // The bound 299 does not fit into u8 and must be clamped to 255, not
+  // wrapped to 43; the check stays in u8.
+  const char* kModuleStr = R"(
+    HloModule scatter_expander
+
+    scatter_computation {
+      parameter0 = s32[] parameter(0)
+      parameter1 = s32[] parameter(1)
+      ROOT add = s32[] add(parameter0, parameter1)
+    }
+
+    ENTRY kernel_entry {
+      operand = s32[300] parameter(0)
+      indices = u8[1,1] parameter(1)
+      updates = s32[1] parameter(2)
+      ROOT scatter = s32[300] scatter(operand, indices, updates),
+        update_window_dims={}, inserted_window_dims={0},
+        scatter_dims_to_operand_dims={0}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  const char* expected = R"(
+  //CHECK-NOT: constant({43})
+  //CHECK: %[[BOUND:.*]] = u8[1] constant({255})
+  //CHECK: pred[1] compare(%[[BOUND]], %{{.*}}), direction=GE
+  //CHECK-NOT: constant({43})
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  ScatterExpander scatter_expander(ScatterExpander::kEliminateSimpleScatters);
+  ASSERT_OK_AND_ASSIGN(bool result,
+                       RunHloPass(&scatter_expander, module.get()));
+  EXPECT_TRUE(result);
+
+  std::vector<HloInstruction*> while_instructions =
+      FindInstructions(module.get(), HloOpcode::kWhile);
+  ASSERT_EQ(while_instructions.size(), 1);
+  HloComputation* while_body = while_instructions[0]->while_body();
+  EXPECT_TRUE(
+      *RunFileCheck(while_body->ToString(
+                        HloPrintOptions{}.set_include_layout_in_shapes(false)),
+                    expected));
+}
+
 TEST_F(ScatterExpanderTest, EliminateSimpleScattersRewritesTrivialScatter) {
   const char* kModuleStr = R"(
     HloModule scatter_expander
