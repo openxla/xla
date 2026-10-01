@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -776,11 +777,11 @@ TEST_P(ThunkExecutorStressTest, Execute) {
 // too long to run the tests. In optimized builds we can afford to run longer
 // thunk sequences to get more coverage.
 auto NumTestThunks() {
-#ifdef NDEBUG
-  return testing::ValuesIn({10, 50, 100});
-#else
-  return testing::ValuesIn({10, 100, 500});
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    return testing::ValuesIn({10, 100, 500});
+  } else {
+    return testing::ValuesIn({10, 50, 100});
+  }
 }
 
 // Create aliases for all possible combinations of shared resource use.

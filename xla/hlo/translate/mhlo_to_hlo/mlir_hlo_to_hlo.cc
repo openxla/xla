@@ -73,6 +73,7 @@ limitations under the License.
 #include "stablehlo/dialect/Base.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/lib/approx_topk.h"
@@ -6107,9 +6108,9 @@ absl::Status PrepareForExport(mlir::ModuleOp module) {
 
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
 
   mlir::mhlo::HloLegalizeToStablehloPassOptions options;
@@ -6155,9 +6156,9 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
 
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
 
   mhlo::HloLegalizeToStablehloPassOptions shlo_pass_opts;

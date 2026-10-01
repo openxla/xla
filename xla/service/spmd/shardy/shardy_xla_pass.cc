@@ -47,6 +47,7 @@ limitations under the License.
 #include "shardy/dialect/sdy/transforms/common/propagation_options.h"
 #include "shardy/dialect/sdy/transforms/propagation/passes.h"
 #include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -354,9 +355,9 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   // MLIR pipeline: (1) import, (2) Shardy, and (3) export.
 
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
 
   mlir::PassManager pm(mlirModule->getContext());
   pm.enableVerifier(enableVerifier);

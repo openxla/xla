@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -1822,10 +1823,10 @@ absl::Status LiteralBase::SerializeWithShapeProto(const ShapeProto& shape_proto,
             subshape.element_type());
         return absl::OkStatus();
       }));
-#ifndef NDEBUG
-  ABSL_ASSIGN_OR_RETURN(int64_t expected_size, SerializedSize(pack_pred));
-  DCHECK_EQ(state.num_written(), expected_size) << shape().ToString();
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    ABSL_ASSIGN_OR_RETURN(int64_t expected_size, SerializedSize(pack_pred));
+    DCHECK_EQ(state.num_written(), expected_size) << shape().ToString();
+  }
   return absl::OkStatus();
 }
 
@@ -1864,11 +1865,11 @@ absl::StatusOr<Literal> Literal::Deserialize(InputIterator begin,
             }
             return absl::OkStatus();
           }));
-#ifndef NDEBUG
-  ABSL_ASSIGN_OR_RETURN(int64_t expected_size,
-                        ShapeUtil::SerializedSize(shape, pack_pred));
-  DCHECK_EQ(state.num_read(), expected_size) << shape.ToString();
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    ABSL_ASSIGN_OR_RETURN(int64_t expected_size,
+                          ShapeUtil::SerializedSize(shape, pack_pred));
+    DCHECK_EQ(state.num_read(), expected_size) << shape.ToString();
+  }
   if (!state.at_end()) {
     return InvalidArgument("Did not consume all input data");
   }
