@@ -51,8 +51,7 @@ class XTileDialectTestParameterized
       public ::testing::WithParamInterface<bool> {
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options = XTileDialectTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
         GetParam());
     return debug_options;
@@ -358,7 +357,7 @@ ENTRY e {
   EXPECT_OK(CreateXTileIrAndFileCheck(
       *module->GetComputationWithName("dot_fusion"), block_level_parameters,
       R"(
-CHECK: %[[RES:.*]] = stablehlo.dot_general %[[ARG0:.*]], %[[ARG1:.*]], contracting_dims = [1] x [0], precision = [DEFAULT, DEFAULT] : (tensor<32x8xf32>, tensor<8x8xf32>) -> tensor<32x8xf32>
+CHECK: %[[RES:.*]] = stablehlo.dot_general %[[ARG0:.*]], %[[ARG1:.*]], contracting_dims = [1] x [0], precision = [DEFAULT, DEFAULT] : (tensor<32x8xbf16>, tensor<8x8xbf16>) -> tensor<32x8xf32>
 CHECK: %[[ADD_RES:.*]] = arith.addf %[[ARG2:.*]], %[[RES]] : tensor<32x8xf32>
 )"));
 }
@@ -585,7 +584,9 @@ TEST_F(XTileDialectTest, HloAllGatherDotLowering) {
     CHECK: %[[AG1:.*]] = "stablehlo.all_gather"(%[[LHS_TILE]])
     CHECK: %[[AG2:.*]] = "stablehlo.all_gather"(%[[AG1]])
     CHECK: %[[RHS_TILE:.*]] = xtile.extract %arg1
-    CHECK: stablehlo.dot_general %[[AG2]], %[[RHS_TILE]]
+    CHECK: %[[LHS_CONV:.*]] = stablehlo.convert %[[LHS_TILE]]
+    CHECK: %[[RHS_CONV:.*]] = stablehlo.convert %[[RHS_TILE]]
+    CHECK: stablehlo.dot_general %[[LHS_CONV]], %[[RHS_CONV]]
     )"));
 }
 
