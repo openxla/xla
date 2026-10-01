@@ -314,6 +314,19 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "serde_test",
+    srcs = ["serde_test.cc"],
+    deps = [
+        ":serde",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
 cc_library(
     name = "stringify_util",
     hdrs = ["dialect/tpu/stringify_util.h"],

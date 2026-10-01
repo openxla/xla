@@ -145,23 +145,20 @@ mlir::LogicalResult RunSerde(
             op->getRegions());
         op->getBlock()->getOperations().insertAfter(mlir::Block::iterator(op),
                                                     new_op);
-        // Downgrade the op to the target version, if needed.
-        bool downgrade_failed = false;
+        op->replaceAllUsesWith(new_op->getResults());
+        mlir::OperationName op_name = op->getName();
+        op->erase();
+        // Downgrade the op to the target version, if needed. `op` is already
+        // gone, so nothing is left to do if the rule erases `new_op`.
         if (serialize && version != serialize_version) {
-          if (const auto rule =
-                  downgrade_rules.find(op->getName().getStringRef());
+          if (const auto rule = downgrade_rules.find(op_name.getStringRef());
               rule != downgrade_rules.end()) {
-            downgrade_failed =
-                rule->second(new_op, serialize_version, was_erased).failed();
+            if (rule->second(new_op, serialize_version, was_erased).failed()) {
+              return mlir::WalkResult::interrupt();
+            }
           }
         }
-        if (was_erased) {
-          return mlir::WalkResult::advance();
-        }
-        op->replaceAllUsesWith(new_op->getResults());
-        op->erase();
-        return downgrade_failed ? mlir::WalkResult::interrupt()
-                                : mlir::WalkResult::advance();
+        return mlir::WalkResult::advance();
       });
   return result.wasInterrupted() ? mlir::failure() : mlir::success();
 }
