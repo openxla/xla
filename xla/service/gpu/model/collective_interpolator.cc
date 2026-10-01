@@ -150,14 +150,10 @@ absl::StatusOr<InterpolationSpecification> Spec(
   GpuHloCostAnalysis analysis(GpuHloCostAnalysis::Options(), device_info);
   ABSL_RETURN_IF_ERROR(collective->Accept(&analysis));
   int64_t bytes_transferred = analysis.BytesTransferred(*collective);
-  absl::StatusOr<GPUCommunicationType> comm =
+  ABSL_ASSIGN_OR_RETURN(
+      GPUCommunicationType comm,
       CommunicationType(num_devices_per_partition, *collective,
-                        device_info.gpu_compute_capability());
-  // A profile is classifiable iff its replica groups spread identically over
-  // partitions of this size, otherwise mark it UNDEFINED instead of failing.
-  if (!comm.ok() && !absl::IsFailedPrecondition(comm.status())) {
-    return comm.status();
-  }
+                        device_info.gpu_compute_capability()));
   ABSL_ASSIGN_OR_RETURN(int num_devices,
                         GetNumParticipatingDevices(*collective->device_list()));
 
@@ -170,8 +166,7 @@ absl::StatusOr<InterpolationSpecification> Spec(
       /*transfer_size=*/bytes_transferred,
       /*data_type=*/collective->shape().element_type(),
       /*collective_params=*/
-      CollectiveOpSpecInfo{list_of_devices,
-                           comm.value_or(GPUCommunicationType::UNDEFINED)}};
+      CollectiveOpSpecInfo{list_of_devices, comm}};
 }
 
 std::unique_ptr<HloModule> AllReduceModule(
@@ -589,9 +584,8 @@ ConstructFallbackInterpolators(int num_devices_per_partition,
                               }},
                spec.collective_params);
 
-    if (!collective_comm.has_value() ||
-        *collective_comm == GPUCommunicationType::UNDEFINED) {
-      // Permutes and unclassifiable profiles use exact interpolation only.
+    if (!collective_comm.has_value()) {
+      // Collective-permute uses exact interpolation only.
       continue;
     }
 
@@ -644,9 +638,8 @@ ConstructFallbackNNInterpolators(int num_devices_per_partition,
                               }},
                spec.collective_params);
 
-    if (!collective_comm.has_value() ||
-        *collective_comm == GPUCommunicationType::UNDEFINED) {
-      // Permutes and unclassifiable profiles use exact interpolation only.
+    if (!collective_comm.has_value()) {
+      // Collective-permute uses exact interpolation only.
       continue;
     }
 
@@ -680,14 +673,17 @@ CollectiveInterpolator::Create(int num_devices_per_partition,
                                const GpuHloCostAnalysis* analysis) {
   ABSL_ASSIGN_OR_RETURN(HloInstructionProfileList profiles,
                         ReadDefaultProfiles(device_info));
+  int table_partition_size = profiles.partition_size() > 0
+                                 ? profiles.partition_size()
+                                 : num_devices_per_partition;
 
-  ABSL_ASSIGN_OR_RETURN(auto exact_interpolators,
-                        ConstructExactInterpolators(num_devices_per_partition,
-                                                    profiles, device_info));
+  ABSL_ASSIGN_OR_RETURN(
+      auto exact_interpolators,
+      ConstructExactInterpolators(table_partition_size, profiles, device_info));
 
   ABSL_ASSIGN_OR_RETURN(auto fallback_interpolators,
-                        ConstructFallbackInterpolators(
-                            num_devices_per_partition, profiles, device_info));
+                        ConstructFallbackInterpolators(table_partition_size,
+                                                       profiles, device_info));
 
   return std::unique_ptr<CollectiveInterpolator>(new CollectiveInterpolator(
       std::move(exact_interpolators), std::move(fallback_interpolators),
@@ -699,13 +695,16 @@ CollectiveInterpolator::Create(int num_devices_per_partition,
                                const HloInstructionProfileList& profiles,
                                const se::DeviceDescription& device_info,
                                const GpuHloCostAnalysis* analysis) {
+  int table_partition_size = profiles.partition_size() > 0
+                                 ? profiles.partition_size()
+                                 : num_devices_per_partition;
   ABSL_ASSIGN_OR_RETURN(auto exact_interpolators,
-                        ConstructExactNNInterpolators(num_devices_per_partition,
+                        ConstructExactNNInterpolators(table_partition_size,
                                                       profiles, device_info));
 
   ABSL_ASSIGN_OR_RETURN(auto fallback_interpolators,
                         ConstructFallbackNNInterpolators(
-                            num_devices_per_partition, profiles, device_info));
+                            table_partition_size, profiles, device_info));
 
   return std::unique_ptr<CollectiveInterpolator>(new CollectiveInterpolator(
       std::move(exact_interpolators), std::move(fallback_interpolators),

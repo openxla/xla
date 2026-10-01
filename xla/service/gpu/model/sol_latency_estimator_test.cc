@@ -275,7 +275,7 @@ ENTRY main {
 })",
       /*opcode_to_find=*/HloOpcode::kAsyncStart,
       /*cost_type=*/CostType::kEdgeCost,
-      /*expected_latency=*/absl::Microseconds(5716),
+      /*expected_latency=*/absl::Microseconds(5587),
   };
 
   EstimatorTestCase matmul_bf16_1024_4096_512 = {
