@@ -36,8 +36,6 @@ licenses(["notice"])  # MIT
 #     rocm_dist/lib/rocm_sysdeps/lib, exposed as @local_config_rocm//rocm:{drm,
 #     drm_amdgpu,numa} and used unconditionally (both the hermetic dist and a
 #     local therock /opt/rocm ship rocm_sysdeps), so no host -l is needed.
-#   * libpci: built hermetically from source as a static, hidden-visibility lib
-#     (@pciutils//:pci) from a pinned tarball; no host -lpci dependency.
 #
 # They are hosted here (not under xla/third_party/ as separate repos) because
 # right now only @roc_mori references them. If a future ROCm release bundles
@@ -75,16 +73,6 @@ cc_library(
 alias(
     name = "libnuma",
     actual = "@local_config_rocm//rocm:numa",
-)
-
-# libpci (pciutils). Used by topology/pci.cpp (pci_alloc / pci_scan_bus /...).
-# Built hermetically from source: @pciutils//:pci is a static, hidden-visibility
-# libpci compiled from the vendored tarball (see //third_party/pciutils), so
-# there is no host -lpci dependency. It also exports the <pci/pci.h> headers the
-# MORI sources include.
-alias(
-    name = "libpci",
-    actual = "@pciutils//:pci",
 )
 
 # Public shmem headers (everything under include/mori/shmem). Sources live

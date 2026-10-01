@@ -148,7 +148,6 @@ use_repo(
     "onednn_async",
     "onedpl",
     "org_sqlite",
-    "pciutils",
     "pthreadpool",
     "raft",
     "rapids_logger",
