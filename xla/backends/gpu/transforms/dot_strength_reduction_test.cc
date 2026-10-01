@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dot_strength_reduction.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -45,11 +45,11 @@ ENTRY test {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Hopper())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -61,8 +61,8 @@ ENTRY test {
 // CHECK: f32[4096]{0} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -77,11 +77,11 @@ ENTRY test {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Hopper())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -93,8 +93,8 @@ ENTRY test {
 // CHECK: bf16[256]{0} convert
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
   CHECK_OK(module->Verify());
 }
@@ -110,11 +110,11 @@ ENTRY test {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Hopper())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -125,8 +125,8 @@ ENTRY test {
 // CHECK: bf16[256]{0} convert{{.*}}, metadata={op_name="test"}
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
   CHECK_OK(module->Verify());
 }
@@ -142,11 +142,11 @@ ENTRY test {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Hopper())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -158,8 +158,8 @@ ENTRY test {
 // CHECK: f8e4m3fn[8,32]{1,0} convert
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
   CHECK_OK(module->Verify());
 }
@@ -174,11 +174,10 @@ ENTRY entry {
   ROOT dot = f32[32] dot(p0, p1), lhs_batch_dims={0},
     lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -187,8 +186,8 @@ ENTRY entry {
 // CHECK: f32[32]{0} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -203,11 +202,10 @@ ENTRY entry {
     lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1},
     algorithm=dot_bf16_bf16_f32_x6
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -222,11 +220,10 @@ ENTRY entry {
   ROOT dot = c64[32,7000] dot(p0, p1), lhs_batch_dims={0},
     lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -235,8 +232,8 @@ ENTRY entry {
 // CHECK: c64[32,7000]{{[^ ]*}} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -251,11 +248,10 @@ ENTRY entry {
     lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1},
     algorithm=dot_bf16_bf16_f32_x6
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -269,8 +265,8 @@ ENTRY entry {
 // CHECK: f32[32,70]{{[^ ]*}} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -284,11 +280,10 @@ ENTRY entry {
   ROOT dot = f32[3000] dot(p0, p1), lhs_contracting_dims={0},
     rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_f32_x6
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -302,8 +297,8 @@ ENTRY entry {
 // CHECK: f32[3000]{0} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -320,10 +315,10 @@ TEST_F(DotStrengthReductionTest,
         algorithm=dot_f32_f32_f32
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(m->Verify());
 
@@ -332,8 +327,8 @@ TEST_F(DotStrengthReductionTest,
 // CHECK: f32[128]{0} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(m->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(m->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -348,10 +343,10 @@ TEST_F(DotStrengthReductionTest, DotStrengthReductionMixedOperandTypes) {
         rhs_contracting_dims={0}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, m.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(m->Verify());
 
@@ -361,8 +356,8 @@ TEST_F(DotStrengthReductionTest, DotStrengthReductionMixedOperandTypes) {
 // CHECK: s32[128]{0} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(m->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(m->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -375,11 +370,10 @@ ENTRY entry {
   p1 = s32[70, 50] parameter(1)
   ROOT dot = s32[32, 70] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
   CHECK_OK(module->Verify());
 
@@ -388,8 +382,8 @@ ENTRY entry {
 // CHECK: s32[32,70]{{[^ ]*}} reduce
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), filecheck_pattern));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), filecheck_pattern));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -402,11 +396,10 @@ ENTRY entry {
   p1 = f32[700, 500] parameter(1)
   ROOT dot = f32[32, 700] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   DotStrengthReduction pass{
       se::GpuComputeCapability(se::CudaComputeCapability::Ampere())};
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }
 

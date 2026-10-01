@@ -15,13 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/scalar_constant_sinker.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -83,8 +83,8 @@ TEST_F(ScalarConstantSinkerTest, DoesNotSinkTensors) {
           ROOT fusion = s32[1] fusion(c0, p0), kind=kLoop,
               calls=fused_computation
         })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
   EXPECT_FALSE(ScalarConstantSinker().Run(module.get()).value());
 }
 
@@ -102,8 +102,8 @@ TEST_F(ScalarConstantSinkerTest, DoesNotSinkIntoCustomFusions) {
           ROOT fusion = s32[] fusion(c0, c1), kind=kCustom,
               calls=fused_computation
         })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
   EXPECT_FALSE(ScalarConstantSinker().Run(module.get()).value());
 }
 
@@ -120,8 +120,8 @@ TEST_F(ScalarConstantSinkerTest, DoesNotSinkIntoNonFusions) {
           c1 = s32[] constant(1)
           ROOT fusion = s32[] call(c0, c1), to_apply=computation
         })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
   EXPECT_FALSE(ScalarConstantSinker().Run(module.get()).value());
 }
 

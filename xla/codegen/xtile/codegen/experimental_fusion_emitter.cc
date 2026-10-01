@@ -133,6 +133,52 @@ ArrayRef<T> MakeArrayRef(const absl::Span<const T> span) {
   return ArrayRef(span.data(), span.size());
 }
 
+absl::StatusOr<TensorValue> EmitAllGather(
+    EmitterContext& emitter_ctx, const HloAllGatherInstruction* all_gather,
+    const ge::TiledHloInstruction& tiled_all_gather, ValueRange operands) {
+  if (all_gather->device_list()->replica_groups().empty()) {
+    return Internal(
+        "Triton emitting AllGather without replica groups is not supported.");
+  }
+
+  llvm::SmallVector<int64_t> flattened_replica_group_ids;
+  for (const auto& replica_group : all_gather->replica_groups()) {
+    for (const auto& replica_id : replica_group.replica_ids()) {
+      flattened_replica_group_ids.push_back(replica_id);
+    }
+  }
+
+  std::optional<int64_t> channel_handle = all_gather->channel_id();
+  bool use_global_device_ids = all_gather->use_global_device_ids();
+
+  ImplicitLocOpBuilder& b = emitter_ctx.b();
+  ABSL_ASSIGN_OR_RETURN(
+      auto output_element_type,
+      xtile::PrimitiveTypeToMlirType(b, all_gather->shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(SmallVector<int64_t> tile_sizes,
+                        tiled_all_gather.tile().GetStaticTileSizes());
+  auto output_type =
+      mlir::RankedTensorType::get(tile_sizes, output_element_type);
+
+  auto replica_groups_type = mlir::RankedTensorType::get(
+      {static_cast<int64_t>(all_gather->replica_groups().size()),
+       static_cast<int64_t>(
+           all_gather->replica_groups()[0].replica_ids_size())},
+      b.getI64Type());
+  auto replica_groups_attr = mlir::DenseIntElementsAttr::get(
+      replica_groups_type, flattened_replica_group_ids);
+  auto channel_handle_attr =
+      channel_handle ? mlir::stablehlo::ChannelHandleAttr::get(b.getContext(),
+                                                               *channel_handle,
+                                                               /*type=*/0)
+                     : nullptr;
+  auto all_gather_op = mlir::stablehlo::AllGatherOp::create(
+      b, mlir::TypeRange{output_type}, operands,
+      all_gather->all_gather_dimension(), replica_groups_attr,
+      channel_handle_attr, use_global_device_ids);
+  return mlir::cast<TensorValue>(all_gather_op.getResult(0));
+}
+
 absl::StatusOr<TensorValue> EmitAllReduce(
     EmitterContext& emitter_ctx, const HloAllReduceInstruction* all_reduce,
     const ge::TiledHloInstruction& tiled_all_reduce, ValueRange operands) {
@@ -446,8 +492,10 @@ absl::StatusOr<TensorValue> EmitDot(EmitterContext& emitter_ctx,
     const ge::TilingSpace::DimensionInfo& dim_info =
         tiled_dot.tile().tiling_space().GetDimensionInfo(
             *tiled_dot.hlo(), sequential_dim_ids.front());
-    TF_RET_CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
-        dim_info.id, iv, Interval{0, loop_iteration_count.front() - 1}));
+    ABSL_ASSIGN_OR_RETURN(
+        ScopedSequentialDimBinding iv_binding,
+        emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+            dim_info.id, iv, Interval{0, loop_iteration_count.front() - 1}));
 
     // Emit the dot region.
     const ge::TiledHloInstruction* lhs_operand = tiled_dot.operand(0);
@@ -541,8 +589,10 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     const ge::TilingSpace::DimensionInfo& dim_info =
         tiled_scaled_dot.tile().tiling_space().GetDimensionInfo(
             *tiled_scaled_dot.hlo(), sequential_dim_ids.front());
-    TF_RET_CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
-        dim_info.id, iv, Interval{0, loop_iteration_counts.front() - 1}));
+    ABSL_ASSIGN_OR_RETURN(
+        ScopedSequentialDimBinding iv_binding,
+        emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+            dim_info.id, iv, Interval{0, loop_iteration_counts.front() - 1}));
 
     // Emit the dot region.
     const ge::TiledHloRegion& region = tiled_scaled_dot.hlo_regions().front();
@@ -757,8 +807,9 @@ absl::StatusOr<TensorValue> EmitRaggedDot(
 
       // Register G sequential dim so EvaluateTilingParameters can resolve
       // RTVar offsets that depend on the G loop IV.
-      CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(g_dim_info.id, g_iv,
-                                                        Interval{0, G - 1}));
+      ABSL_ASSIGN_OR_RETURN(ScopedSequentialDimBinding g_iv_binding,
+                            emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+                                g_dim_info.id, g_iv, Interval{0, G - 1}));
 
       // Emit group_sizes tile (G-scoped).
       // Uses emit_gs which handles any HLO form:  parameter, inlined constant,
@@ -814,8 +865,10 @@ absl::StatusOr<TensorValue> EmitRaggedDot(
               mlir::cast<TensorValue>(k_for_op.getRegionIterArgs()[0]);
 
           // Register K sequential dim IV.
-          CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
-              k_dim_info.id, k_iv, Interval{0, K_tiles - 1}));
+          ABSL_ASSIGN_OR_RETURN(
+              ScopedSequentialDimBinding k_iv_binding,
+              emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+                  k_dim_info.id, k_iv, Interval{0, K_tiles - 1}));
 
           // Emit LHS and RHS tiles (K-scoped).
           // emit_operand handles the full instruction chain (parameter,
@@ -1145,8 +1198,7 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
   for (auto [dim_index, sizes] : llvm::enumerate(
            llvm::zip(pad_input_shape, tile_sizes, tile_offsets,
                      tiled_pad.hlo()->padding_config().dimensions()))) {
-    auto [pad_input_dim_size, pad_output_dim_size, tile_offset, dim_config] =
-        sizes;
+    auto [pad_input_dim_size, tile_size, tile_offset, dim_config] = sizes;
     if (dim_config.edge_padding_low() != 0) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Low padding is not supported but got edge_padding_low: ",
@@ -1158,12 +1210,13 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
           dim_config.interior_padding()));
     }
 
-    if (pad_input_dim_size == pad_output_dim_size) {
+    if (dim_config.edge_padding_high() == 0) {
+      // Skip unpadded dimensions.
       continue;
     }
 
     // LHS for the compare is an iota broadcasted to the output shape.
-    TensorValue range = Iota(b, pad_output_dim_size);
+    TensorValue range = Iota(b, tile_size);
     TensorValue bcast = xtile::BroadcastInDims(
         b, range, tile_sizes, {static_cast<int64_t>(dim_index)});
 
@@ -1494,8 +1547,10 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
       Value max_tile = MakeIndex(b, loop_count - 1);
       tile_idx = arith::SubIOp::create(b, max_tile, iv);
     }
-    emitter_ctx.MapSymbolIdToSequentialDimValue(dim_info.id, tile_idx,
-                                                Interval{0, loop_count - 1});
+    ABSL_ASSIGN_OR_RETURN(
+        ScopedSequentialDimBinding iv_binding,
+        emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+            dim_info.id, tile_idx, Interval{0, loop_count - 1}));
 
     const auto& input_region = tiled_hlo_scan.hlo_regions().front();
     ABSL_ASSIGN_OR_RETURN(
@@ -1727,6 +1782,8 @@ absl::StatusOr<TensorValue> EmitReduceWithRegion(
         auto body = [&]() -> absl::StatusOr<mlir::scf::ValueVector> {
           mlir::ImplicitLocOpBuilder nested_b(loc, loop_builder);
 
+          std::vector<ScopedSequentialDimBinding> iv_bindings;
+          iv_bindings.reserve(sequential_dim_ids.size());
           for (int i = 0; i < sequential_dim_ids.size(); ++i) {
             // Fully tiled dimensions were already bound to 0 by
             // EmitFullyTiledSequentialDimensions. Their single-trip loop is
@@ -1737,10 +1794,12 @@ absl::StatusOr<TensorValue> EmitReduceWithRegion(
             const ge::TilingSpace::DimensionInfo& dim_info =
                 tiled_hlo.tile().tiling_space().GetDimensionInfo(
                     *tiled_hlo.hlo(), sequential_dim_ids[i]);
-            TF_RET_CHECK(emitter_ctx.MapSymbolIdToSequentialDimValue(
-                dim_info.id, ivs[i], Interval{0, loop_iteration_counts[i] - 1}))
-                << "MapSymbolIdToSequentialDimValue failed for symbolic "
-                   "dimension";
+            ABSL_ASSIGN_OR_RETURN(
+                ScopedSequentialDimBinding iv_binding,
+                emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+                    dim_info.id, ivs[i],
+                    Interval{0, loop_iteration_counts[i] - 1}));
+            iv_bindings.push_back(std::move(iv_binding));
           }
 
           ABSL_ASSIGN_OR_RETURN(
@@ -1889,8 +1948,8 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   // Please keep the cases in alphabetical order.
   switch (hlo->opcode()) {
     case HloOpcode::kAllGather: {
-      // AllGather is a no-op. Tile extraction handles the data movement.
-      return emitter_ctx.TiledHloToTensorValue(*tiled_hlo.operand(0));
+      return EmitAllGather(emitter_ctx, xla::Cast<HloAllGatherInstruction>(hlo),
+                           tiled_hlo, operands);
     }
     case HloOpcode::kAllReduce: {
       const HloComputation* computation =
@@ -1994,10 +2053,12 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
 // [p, c, reduce], where p has a symbol dimension that is created by reduce.
 // To emit p we have to have a value for the symbol dimension.
 // Thus we emit sequential dimensions at the start as we know they will be
-// trivially 0.
-void EmitFullyTiledSequentialDimensions(
+// trivially 0. The returned bindings must outlive the emission of the fusion.
+absl::StatusOr<std::vector<ScopedSequentialDimBinding>>
+EmitFullyTiledSequentialDimensions(
     ImplicitLocOpBuilder& b, EmitterContext& emitter_ctx,
     const ge::TiledHloComputation& tiled_computation) {
+  std::vector<ScopedSequentialDimBinding> bindings;
   const auto& tiling_space = tiled_computation.tiling_space();
   for (const auto& [dim_id, dim_info] :
        llvm::enumerate(tiling_space.dimensions())) {
@@ -2016,10 +2077,14 @@ void EmitFullyTiledSequentialDimensions(
               << dim_info.dimension_size << " with tile size "
               << *dim_info.tile_size << " for hlo " << dim_info.hlo->name()
               << " to a new value 0";
-      emitter_ctx.MapSymbolIdToSequentialDimValue(
-          ge::TiledDimId(dim_id), MakeIndex(b, 0), Interval{0, 0});
+      ABSL_ASSIGN_OR_RETURN(
+          ScopedSequentialDimBinding binding,
+          emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+              ge::TiledDimId(dim_id), MakeIndex(b, 0), Interval{0, 0}));
+      bindings.push_back(std::move(binding));
     }
   }
+  return bindings;
 }
 
 // Applies L2 tile reordering to the flat tile_id for kRaggedNonContracting and
@@ -2255,7 +2320,9 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
                              schedule, fn,      tiled_computation};
 
   VLOG(2) << "EmitTiledComputation: " << tiled_computation.ToString();
-  EmitFullyTiledSequentialDimensions(b, emitter_ctx, tiled_computation);
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<ScopedSequentialDimBinding> fully_tiled_dim_bindings,
+      EmitFullyTiledSequentialDimensions(b, emitter_ctx, tiled_computation));
   ABSL_ASSIGN_OR_RETURN(
       auto results,
       EmitTiledComputation(emitter_ctx, tiled_computation.tiled_root_region(),

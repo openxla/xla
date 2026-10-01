@@ -39,8 +39,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
@@ -75,7 +73,7 @@ TEST(DeviceToDeviceCopyThunkTest, ToProto) {
 
   DeviceToDeviceCopyThunk thunk(thunk_info, {src_slice, shape},
                                 {dst_slice, shape}, 256);
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
+  ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
   EXPECT_THAT(proto, EqualsProto(R"pb(
                 thunk_info { profile_annotation: "profile_annotation" }
                 device_to_device_copy_thunk {
@@ -151,7 +149,7 @@ TEST(DeviceToDeviceCopyThunkTest, FromProto) {
       BufferAllocation(/*index=*/0, /*size=*/1024, /*color=*/0),
       BufferAllocation(/*index=*/1, /*size=*/1024, /*color=*/0)};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DeviceToDeviceCopyThunk> thunk,
       DeviceToDeviceCopyThunk::FromProto(
           thunk_info, proto.device_to_device_copy_thunk(), buffer_allocations));
@@ -177,7 +175,7 @@ TEST(DeviceToDeviceCopyThunkTest, FromProto) {
 // is copied correctly after submission.
 TEST(DeviceToDeviceCopyThunkTest, RecordCommandBuffer) {
   se::StreamExecutor* executor = GpuExecutor();
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
@@ -186,8 +184,8 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBuffer) {
   se::DeviceAddress<int32_t> src = executor->AllocateArray<int32_t>(length, 0);
   se::DeviceAddress<int32_t> dst = executor->AllocateArray<int32_t>(length, 0);
 
-  TF_ASSERT_OK(stream->Memset32(&src, 42, byte_length));
-  TF_ASSERT_OK(stream->MemZero(&dst, byte_length));
+  ASSERT_OK(stream->Memset32(&src, 42, byte_length));
+  ASSERT_OK(stream->MemZero(&dst, byte_length));
 
   BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
@@ -211,20 +209,19 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBuffer) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
-      const se::CommandBuffer::Command* cmd,
-      thunk.Record(execute_params, record_params,
-                   Command::RecordCreate{/*dependencies=*/{}},
-                   command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk.Record(execute_params, record_params,
+                                    Command::RecordCreate{/*dependencies=*/{}},
+                                    command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   std::vector<int32_t> result(length, 0);
-  TF_ASSERT_OK(stream->Memcpy(result.data(), dst, byte_length));
+  ASSERT_OK(stream->Memcpy(result.data(), dst, byte_length));
   EXPECT_EQ(result, std::vector<int32_t>(length, 42));
 }
 
@@ -232,7 +229,7 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBuffer) {
 // copy to a different destination and verifies the update takes effect.
 TEST(DeviceToDeviceCopyThunkTest, RecordCommandBufferUpdate) {
   se::StreamExecutor* executor = GpuExecutor();
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
@@ -244,9 +241,9 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBufferUpdate) {
   se::DeviceAddress<int32_t> dst_second =
       executor->AllocateArray<int32_t>(length, 0);
 
-  TF_ASSERT_OK(stream->Memset32(&src, 42, byte_length));
-  TF_ASSERT_OK(stream->MemZero(&dst_first, byte_length));
-  TF_ASSERT_OK(stream->MemZero(&dst_second, byte_length));
+  ASSERT_OK(stream->Memset32(&src, 42, byte_length));
+  ASSERT_OK(stream->MemZero(&dst_first, byte_length));
+  ASSERT_OK(stream->MemZero(&dst_second, byte_length));
 
   BufferAllocation alloc_src(/*index=*/0, byte_length, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, byte_length, /*color=*/0);
@@ -271,20 +268,19 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBufferUpdate) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
-      const se::CommandBuffer::Command* cmd,
-      thunk.Record(params_first, record_params,
-                   Command::RecordCreate{/*dependencies=*/{}},
-                   command_buffer.get()));
+  ASSERT_OK_AND_ASSIGN(const se::CommandBuffer::Command* cmd,
+                       thunk.Record(params_first, record_params,
+                                    Command::RecordCreate{/*dependencies=*/{}},
+                                    command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   std::vector<int32_t> result_first(length, 0);
-  TF_ASSERT_OK(stream->Memcpy(result_first.data(), dst_first, byte_length));
+  ASSERT_OK(stream->Memcpy(result_first.data(), dst_first, byte_length));
   EXPECT_EQ(result_first, std::vector<int32_t>(length, 42));
 
   // Update recording: src -> dst_second using the same command node.
@@ -296,24 +292,23 @@ TEST(DeviceToDeviceCopyThunkTest, RecordCommandBufferUpdate) {
                                    /*collective_cliques=*/nullptr,
                                    /*collective_memory=*/nullptr);
 
-  TF_ASSERT_OK(command_buffer->Update());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk.Record(params_second, record_params, Command::RecordUpdate{cmd},
                    command_buffer.get()));
   EXPECT_EQ(updated_cmd, cmd);  // same command node is reused
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream.get()));
 
   std::vector<int32_t> result_second(length, 0);
-  TF_ASSERT_OK(stream->Memcpy(result_second.data(), dst_second, byte_length));
+  ASSERT_OK(stream->Memcpy(result_second.data(), dst_second, byte_length));
   EXPECT_EQ(result_second, std::vector<int32_t>(length, 42));
 
   // dst_first should still hold the value from the first Submit (not zeroed or
   // overwritten by the update), confirming the copy was redirected.
   std::vector<int32_t> result_first_after(length, 0);
-  TF_ASSERT_OK(
-      stream->Memcpy(result_first_after.data(), dst_first, byte_length));
+  ASSERT_OK(stream->Memcpy(result_first_after.data(), dst_first, byte_length));
   EXPECT_EQ(result_first_after, std::vector<int32_t>(length, 42));
 }
 

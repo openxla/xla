@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tools/hlo_module_loader.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
 
 namespace xla::gpu {
@@ -40,8 +40,8 @@ float rel_error_bound = 0.0;
 using CorrectnessTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 TEST_F(CorrectnessTest, RunAndCompare) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          LoadModuleFromFile(input_file));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       LoadModuleFromFile(input_file));
   EXPECT_TRUE(RunAndCompareNoHloPasses(
       std::move(module), ErrorSpec{abs_error_bound, rel_error_bound}));
 }

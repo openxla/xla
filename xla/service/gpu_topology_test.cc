@@ -162,7 +162,7 @@ TEST(GpuTopologyTest, GetGpuTopologyForPlatformOberonB200) {
   EXPECT_TRUE(topology.has_gpu_target_config());
   EXPECT_THAT(topology.host_target_machine_options(),
               Optional(Property(&cpu::TargetMachineOptions::triple,
-                                "aarch64-linux-gnu")));
+                                "aarch64-unknown-linux-gnu")));
 }
 
 TEST(GpuTopologyTest, GetGpuTopologyForPlatformOberonB300) {
@@ -176,7 +176,7 @@ TEST(GpuTopologyTest, GetGpuTopologyForPlatformOberonB300) {
   EXPECT_TRUE(topology.has_gpu_target_config());
   EXPECT_THAT(topology.host_target_machine_options(),
               Optional(Property(&cpu::TargetMachineOptions::triple,
-                                "aarch64-linux-gnu")));
+                                "aarch64-unknown-linux-gnu")));
 }
 
 TEST(GpuTopologyTest, GetGpuTopologyForPlatformInvalid) {
