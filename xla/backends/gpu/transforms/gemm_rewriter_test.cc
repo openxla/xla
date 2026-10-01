@@ -1687,12 +1687,8 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, MatrixBiasSwishActivation) {
-  auto runtime_version = GetToolkitVersion();
-  bool rocm_gelu_available =
-      IsRocm() &&
-      (runtime_version >= stream_executor::SemanticVersion(7, 0, 0));
-  if (!rocm_gelu_available) {
-    GTEST_SKIP() << "TODO: Unsupported blas-lt epilogue on ROCM";
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Swish/SILU epilogue fusion is ROCm-only";
   }
   const char* hlo_text = R"(
 HloModule test
@@ -1740,12 +1736,8 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, SwishActivationWithBitcastAndAuxiliaryOutput) {
-  auto runtime_version = GetToolkitVersion();
-  bool rocm_swish_available =
-      IsRocm() &&
-      (runtime_version >= stream_executor::SemanticVersion(7, 0, 0));
-  if (!rocm_swish_available) {
-    GTEST_SKIP() << "Swish/SILU activation fusion only available on ROCm 7.0+";
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Swish/SILU epilogue fusion is ROCm-only";
   }
 
   const char* hlo_text = R"(
@@ -1793,13 +1785,6 @@ ENTRY test (x: bf16[49152,11008], y: bf16[11008,11008]) -> (bf16[12,4096,11008],
 }
 
 TEST_F(CublasLtGemmRewriteTest, VectorBiasThenApproxGeluActivation) {
-  auto runtime_version = GetToolkitVersion();
-  bool rocm_gelu_available =
-      IsRocm() &&
-      (runtime_version >= stream_executor::SemanticVersion(6, 0, 0));
-  if (IsRocm() && !rocm_gelu_available) {
-    GTEST_SKIP() << "TODO: Unsupported blas-lt epilogue on ROCM";
-  }
   const char* hlo_text = R"(
 HloModule test
 
