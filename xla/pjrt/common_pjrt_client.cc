@@ -858,8 +858,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtClient::CreateErrorBuffer(
 
   ABSL_ASSIGN_OR_RETURN(
       Shape device_shape,
-      MakeDefaultShapeForMemorySpace(
-          memory, shape, shape.has_layout() ? &shape.layout() : nullptr));
+      MakeDefaultShapeForMemorySpace(memory, shape, /*layout=*/nullptr));
 
   ABSL_ASSIGN_OR_RETURN(
       auto definition_event,
