@@ -79,9 +79,8 @@ TEST(AbortCollectivesOnTaskFailureTest, EmptyTaskStateIsNoOp) {
   });
   ResetProcessTaskState();
 
-  // With no prior UpdateGlobalProcessInfo, AbortCollectivesOnTaskFailure must
-  // be a no-op (same as HangWatchdog firing before task state is published).
-  EXPECT_OK(AbortCollectivesOnTaskFailure(
+  // With no prior UpdateGlobalProcessInfo, AbortTaskCliques must be a no-op.
+  EXPECT_OK(AbortTaskCliques(
       /*failed_task_id=*/0, absl::DeadlineExceededError("timeout")));
 }
 
@@ -99,14 +98,14 @@ TEST(AbortCollectivesOnTaskFailureTest, UnknownTaskReturnsNotFound) {
   ASSERT_OK(UpdateGlobalProcessInfo(absl::MakeSpan(infos)));
 
   EXPECT_THAT(
-      AbortCollectivesOnTaskFailure(
+      AbortTaskCliques(
           /*failed_task_id=*/99, absl::DeadlineExceededError("timeout")),
       StatusIs(absl::StatusCode::kNotFound));
 }
 
-// After AbortCollectivesOnTaskFailure, cliques that include the failed task
-// incarnation must be treated as stale so future collective acquisition /
-// progress checks fail instead of hanging forever.
+// After AbortTaskCliques, cliques that include the failed task incarnation must
+// be treated as stale so future collective acquisition / progress checks fail
+// instead of hanging forever.
 TEST(AbortCollectivesOnTaskFailureTest, MarksFailedTaskAndMakesCliqueKeyStale) {
   auto cleanup = absl::MakeCleanup([] {
     internal::DestroyAcquiredCliques();
@@ -124,7 +123,7 @@ TEST(AbortCollectivesOnTaskFailureTest, MarksFailedTaskAndMakesCliqueKeyStale) {
                    /*incarnations=*/{IncarnationId(10), IncarnationId(11)});
   EXPECT_OK(CheckCliqueIsNotStale(key));
 
-  ASSERT_OK(AbortCollectivesOnTaskFailure(
+  ASSERT_OK(AbortTaskCliques(
       /*failed_task_id=*/0,
       absl::DeadlineExceededError("XLA GPU execution timed out")));
 
@@ -151,8 +150,8 @@ static absl::StatusOr<std::vector<se::StreamExecutor*>> CreateExecutors(
 }
 
 // End-to-end local unwind: acquire a live GPU clique, report a task failure
-// through AbortCollectivesOnTaskFailure (the HangWatchdog handler path), and
-// verify the clique is aborted/removed so collective progress cannot continue.
+// through AbortTaskCliques, and verify the clique is aborted/removed so
+// collective progress cannot continue.
 TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
   auto cleanup = absl::MakeCleanup([] {
     internal::DestroyAcquiredCliques();
@@ -193,9 +192,9 @@ TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
   std::vector<Future<std::shared_ptr<LockableGpuClique::Lock>>> futures(2);
   for (size_t i = 0; i < 2; ++i) {
     futures[i] = MakeFutureOn(exec, [=, &acquired_cliques] {
-      return AcquireGpuClique(collectives, executors.at(i), RunId(0), key,
-                              groups, DefaultCliqueId(), RankId(i),
-                              acquired_cliques.at(i));
+      return AcquireClique(collectives, executors.at(i), RunId(0), key, groups,
+                           DefaultCliqueId(), RankId(i),
+                           acquired_cliques.at(i));
     });
   }
 
@@ -212,7 +211,7 @@ TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
   futures.clear();
   acquired_cliques.clear();
 
-  ASSERT_OK(AbortCollectivesOnTaskFailure(
+  ASSERT_OK(AbortTaskCliques(
       /*failed_task_id=*/0,
       absl::DeadlineExceededError("simulated execution hang timeout")));
 
@@ -220,15 +219,14 @@ TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
               StatusIs(absl::StatusCode::kFailedPrecondition));
 
   // Re-acquiring the same failed-incarnation key must fail as stale. Both local
-  // ranks must join AcquireGpuClique (num_local_participants=2) or rendezvous
+  // ranks must join AcquireClique (num_local_participants=2) or rendezvous
   // hangs waiting for the missing rank.
   std::vector<AcquiredCliquesMap> reacquire_maps(2);
   std::vector<Future<std::shared_ptr<LockableGpuClique::Lock>>> reacquire(2);
   for (size_t i = 0; i < 2; ++i) {
     reacquire[i] = MakeFutureOn(exec, [=, &reacquire_maps] {
-      return AcquireGpuClique(collectives, executors.at(i), RunId(1), key,
-                              groups, DefaultCliqueId(), RankId(i),
-                              reacquire_maps.at(i));
+      return AcquireClique(collectives, executors.at(i), RunId(1), key, groups,
+                           DefaultCliqueId(), RankId(i), reacquire_maps.at(i));
     });
   }
   for (size_t i = 0; i < 2; ++i) {
