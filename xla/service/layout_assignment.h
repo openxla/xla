@@ -254,6 +254,7 @@ class ComputationLayoutConstraint : public LayoutConstraint {
                                        ComputationLayout* computation_layout,
                                        int64_t priority)
       : LayoutConstraint(/*mandatory=*/true, /*dfs=*/true, priority),
+        computation_(computation),
         layout_state_((computation_layout == nullptr)
                           ? kDefaultLayoutIsUsed
                           : kComputationLayoutIsSet),
@@ -269,6 +270,8 @@ class ComputationLayoutConstraint : public LayoutConstraint {
                       // should be automatically inferred.
                       /*ignore_layouts=*/!computation->IsEntryComputation())
                 : *computation_layout) {}
+
+  const HloComputation* computation() const { return computation_; }
 
   // Accessors for the underlying ComputationLayout.
   const ComputationLayout& computation_layout() const {
@@ -318,6 +321,8 @@ class ComputationLayoutConstraint : public LayoutConstraint {
   std::string ToString() const override;
 
  private:
+  const HloComputation* computation_;
+
   // Bitmask tracking whether the computation layout is using defaults, or
   // whether parameter/result layouts have been explicitly constrained.
   int64_t layout_state_;
@@ -383,7 +388,7 @@ class ChannelLayoutConstraints {
 
 // HLO pass which assigns layouts to all instructions in the HLO module while
 // satisfying all necessary invariants and minimizing cost.
-class LayoutAssignment : public HloModulePass {
+class LayoutAssignment : public HloModulePass, public HloDataflowPropagation {
  public:
   // entry_computation_layout is modified to populate a layout for the result in
   // the case that no particular layout is requested.
@@ -399,7 +404,8 @@ class LayoutAssignment : public HloModulePass {
       ComputationLayout* entry_computation_layout,
       ChannelLayoutConstraints* channel_constraints = nullptr,
       bool reverse_computation_order = false);
-  ~LayoutAssignment() override {}
+  ~LayoutAssignment() override = default;
+  using HloModulePass::Run;
   const HloDataflowAnalysis& dataflow_analysis() const {
     return *dataflow_analysis_;
   }
@@ -658,11 +664,8 @@ class LayoutAssignment : public HloModulePass {
     return absl::OkStatus();
   }
 
-  absl::Status PropagateUnconstraintedBuffers(LayoutConstraints* constraints);
   const BufferLayoutConstraint* GetBufferLayoutConstraint(
       const HloValue& buffer) const;
-  absl::StatusOr<const BufferLayoutConstraint*>
-  GetInstructionBufferLayoutConstraint(const HloInstruction* instruction) const;
   using BufferSet = absl::flat_hash_set<const HloValue*>;
   // Find a bufferset in the bufferset cache. This is useful since we can
   // currently create the flattened buffer set for the same instruction many
@@ -732,11 +735,6 @@ class LayoutAssignment : public HloModulePass {
     return shape;
   }
 
-  // The operands of a call must match the layouts of parameters in the
-  // ComputationLayout, and the call instruction itself must match the result
-  // layout in the ComputationLayout.
-  absl::Status CheckCallLayout(HloInstruction* call,
-                               const ComputationLayout& computation_layout);
   // For a custom-call user, propagates the operand constraint to the result
   // based on output-to-operand aliasing.
   absl::Status PropagateOperandConstraintToResultForCustomCall(
@@ -801,67 +799,12 @@ class LayoutAssignment : public HloModulePass {
       LayoutConstraints* constraints);
 
   absl::Status AddCallConstraints(HloInstruction* instruction);
-  absl::Status AddWhileConstraints(HloInstruction* instruction,
-                                   LayoutConstraints* constraints);
+  absl::Status AddWhileConstraints(HloInstruction* instruction);
   absl::Status AddConditionalConstraints(HloInstruction* instruction);
   absl::Status AddAsyncStartConstraints(HloInstruction* instruction);
   absl::Status AddAsyncDoneConstraints(HloInstruction* instruction,
                                        LayoutConstraints* constraints);
 
-  // Propagates while loop parameter and result layouts to subcomputations (such
-  // as conditionals) within the while body or condition.
-  void PropagateWhileLoopLayoutToSubcomputations(HloComputation* computation,
-                                                 const Shape& param_shape,
-                                                 const Shape* result_shape,
-                                                 int64_t priority);
-
-  // Propagates layout constraints from the caller instruction into the inner
-  // async sub-computation.
-  // This is the forward propagation step: it takes the layouts of the operands
-  // and result of the async start/update instruction (which are in the parent
-  // computation) and propagates them to the parameters and result of the
-  // async sub-computation.
-  // If any layout in the sub-computation is updated, it resets the
-  // sub-computation layout with an elevated priority to ensure it is respected
-  // during the sub-computation's layout assignment. Returns the reconciled
-  // layout of the sub-computation.
-  ComputationLayout PropagateLayoutsToAsyncSubComputation(
-      const HloInstruction* instruction, LayoutConstraints* async_constraint);
-
-  // Propagates the operand array layouts of `instruction` to the parameter
-  // layouts defined in `async_layout`.
-  // Updates `async_layout` in-place and returns true if any parameter layout
-  // was changed.
-  bool PropagateOperandLayoutsToAsyncParameters(
-      const HloInstruction* instruction, ComputationLayout* async_layout);
-
-  // Propagates array layouts for a single operand `param_idx` of `instruction`
-  // to the corresponding parameter layout in `async_layout`.
-  // `instruction` operand `param_idx` is mapped to the parameter `param_idx`
-  // of the async sub-computation.
-  // Updates `async_layout` in-place and returns true if the layout was updated.
-  bool PropagateOperandLayoutToAsyncParameter(const HloInstruction* instruction,
-                                              int64_t param_idx,
-                                              ComputationLayout* async_layout);
-
-  // Propagates array layouts from the result shape of `instruction` (tuple
-  // element 1) to `async_layout`'s result layout.
-  // We assume the result shape of the async operation is at index {1} of the
-  // `instruction` (async start/update) output tuple.
-  // Updates `async_layout` in-place and returns true if the result layout was
-  // updated.
-  bool PropagateResultLayoutToAsyncSubComputation(
-      const HloInstruction* instruction, ComputationLayout* async_layout);
-
-  // Propagates async sub-computation parameter and result layout constraints
-  // back onto the caller instruction and its operands in the parent
-  // computation. This is the backward propagation step: it takes the resolved
-  // layouts from the async sub-computation and applies them as mandatory
-  // constraints on the caller instruction's shape (at index {1} for result) and
-  // its operands.
-  absl::Status PropagateLayoutsFromAsyncSubComputation(
-      HloInstruction* instruction, const ComputationLayout& async_layout,
-      LayoutConstraints* async_constraint);
   // Sets the computation result layout based on constraints and
   // sub-computations.
   absl::Status AddComputationResultLayoutConstraints(
@@ -871,8 +814,40 @@ class LayoutAssignment : public HloModulePass {
   absl::Status AddCustomCallConstraints(LayoutConstraints* constraints);
 
   // Initializes unconstrained_buffer_ids_ with all array HloValues in the
-  // given computation.
-  void InitUnconstrainedBuffers(HloComputation* computation);
+  // given span of computations.
+  void InitUnconstrainedBuffers(absl::Span<HloComputation* const> computations);
+
+  // HloDataflowPropagation overrides for cross computation layout propagation.
+  bool IsComputationIncluded(const HloComputation* computation) const override;
+  bool HasValueAt(const HloInstruction* instruction,
+                  const ShapeIndex& index) const override;
+  absl::Status PropagateAcrossEdge(const HloInstruction* src_instruction,
+                                   const ShapeIndex& src_index,
+                                   const HloInstruction* dst_instruction,
+                                   const ShapeIndex& dst_index,
+                                   bool allow_override, bool* changed) override;
+  bool ShouldPropagateAcrossRootBoundary(
+      const HloCallBoundary& boundary) const override;
+  bool IsStaleWhileBodyValue(const HloInstruction* while_inst,
+                             const ShapeIndex& index,
+                             const HloInstruction* body_source,
+                             const HloInstruction* caller_source) override;
+  bool ShouldPropagateCallerToWhileBody(
+      const HloInstruction* while_inst, const ShapeIndex& index,
+      const HloInstruction* source_instruction) override;
+  void ResetPropagationState() override;
+  absl::Status FlushComputationPropagation() override;
+
+  // Constrains any unconstrained array HloValues at `(instruction, index)` to
+  // `constraint`. If `override_counts` is not nullptr, also overrides an
+  // existing conflicting non mandatory constraint up to `kMaxLayoutProp` times
+  // per buffer. Sets `*changed = true` (if not nullptr) when a constraint is
+  // added or updated.
+  absl::Status ConstrainOrOverrideBuffersAtIndex(
+      const HloInstruction* instruction, const ShapeIndex& index,
+      const BufferLayoutConstraint& constraint,
+      absl::flat_hash_map<HloValue::Id, int64_t>* override_counts = nullptr,
+      bool* changed = nullptr);
 
   // Records instructions that lack layout constraints before applying default
   // layouts.
@@ -890,9 +865,13 @@ class LayoutAssignment : public HloModulePass {
   std::vector<const LayoutConstraint*> ConsumeAddedConstraints() {
     std::vector<const LayoutConstraint*> ret_vec(std::move(added_constraints_));
     added_constraints_.clear();
+    added_constraints_set_.clear();
     return ret_vec;
   }
-  void ClearAddedConstraints() { added_constraints_.clear(); }
+  void ClearAddedConstraints() {
+    added_constraints_.clear();
+    added_constraints_set_.clear();
+  }
 
   // This method can be overridden to add backend-specific constraints to the
   // layout of the instructions of a computation. This method is called after
@@ -901,15 +880,6 @@ class LayoutAssignment : public HloModulePass {
   virtual absl::Status AddBackendConstraints(LayoutConstraints* constraints) {
     return absl::OkStatus();
   }
-
-  // Construct constraints and assign layouts to all instructions in the
-  // computation satisfying the given ComputationLayout, if not nullptr.
-  // Otherwise the ComputationLayout will be calculated by propagating the
-  // computation instruction constraints.
-  // Layouts constraints are added, then propagated until all LogicalBuffers in
-  // the computation are constrained.
-  absl::Status RunOnComputation(LayoutConstraints* constraints,
-                                ChannelLayoutConstraints* channel_constraints);
 
   // Assign layouts to the instructions of a computation which satisfy the given
   // layout constraints. Copies may be added to satisfy the constraints. The
@@ -936,9 +906,6 @@ class LayoutAssignment : public HloModulePass {
   // layouts assigned to parameters and root instruction. Also propagate
   // constraints to computation nested inside.
   absl::Status CalculateComputationLayout(LayoutConstraints* constraints);
-
-  // Clears all the layouts which can be cleared within a computation.
-  absl::Status ClearComputationLayouts(HloComputation* computation);
 
   // Clears the side effects of a previous pass, like added copy instructions.
   absl::Status ClearPreviousPassSideEffects(
@@ -1019,15 +986,16 @@ class LayoutAssignment : public HloModulePass {
     *entry_computation_layout_ = saved_entry_computation_layout_;
   }
 
-  // Adds constraints related to host Send/Recv instructions.
-  absl::Status BuildHostChannelConstraints(HloComputation* computation);
-
   // Replaces dataflow_analysis_ and drops the buffer sets memoized from the
   // previous analysis.
   void SetDataflowAnalysis(std::unique_ptr<HloDataflowAnalysis> analysis);
 
   // Module dataflow analysis that can be updated for cloned computations.
   std::unique_ptr<HloDataflowAnalysis> dataflow_analysis_;
+
+  // Computations in the module (excluding fusions) in propagation traversal
+  // order.
+  std::vector<HloComputation*> computations_to_work_;
 
   // The set of HLO instructions which lacked any layout constraint, thus
   // receiving propagated default layouts.
@@ -1042,6 +1010,15 @@ class LayoutAssignment : public HloModulePass {
   bool IsWhileLoopCopyDisabled(const HloInstruction& instruction) const;
 
  private:
+  // Returns true if `computation` has an entry in `computation_layouts_` whose
+  // ComputationLayout has been explicitly constrained or calculated.
+  bool HasConstrainedComputationLayout(const HloComputation* computation) const;
+
+  // Returns the BufferLayoutConstraint at `(instruction, index)` if all
+  // HloValues in its value set are constrained to the same minor to major
+  // layout, or nullptr otherwise.
+  const BufferLayoutConstraint* GetConstrainedLayoutAtIndex(
+      const HloInstruction* instruction, const ShapeIndex& index) const;
   // Map containing the layouts of all computations assigned so
   // far. Computations are handled in a topological sort where computations are
   // handled before their caller instructions so the layouts of caller
@@ -1050,7 +1027,8 @@ class LayoutAssignment : public HloModulePass {
       computation_layouts_;
 
   // Map from branch computations to the result layout they should apply.
-  absl::flat_hash_map<HloComputation*, ComputationLayout> conditional_mismatch_;
+  absl::flat_hash_map<const HloComputation*, ComputationLayout>
+      conditional_mismatch_;
 
   // Every copy added to the module by the layout assignment pass is registered
   // here.
@@ -1119,6 +1097,7 @@ class LayoutAssignment : public HloModulePass {
   // A vector which holds constraints as they are added. Can be cleared with
   // ClearAddedConstraints.
   std::vector<const LayoutConstraint*> added_constraints_;
+  absl::flat_hash_set<const LayoutConstraint*> added_constraints_set_;
   int64_t current_priority_ = LayoutConstraint::kBeginningPriority;
 
   // Stores the set of while computations that have copy disabled.
@@ -1127,6 +1106,14 @@ class LayoutAssignment : public HloModulePass {
   // Tracks whether while loop parameter/condition layouts changed in the
   // current propagation round and require another round to converge.
   bool while_layout_changed_ = false;
+
+  // When true, PropagateConstraints also propagates newly constrained buffers
+  // across computation boundaries (kCall, kWhile, kConditional, kAsyncStart)
+  // into unconstrained HloValues.
+  bool propagate_cross_computation_constraints_ = false;
+
+  // Per-buffer override counts used during HloDataflowPropagation::Run.
+  absl::flat_hash_map<HloValue::Id, int64_t> cross_comp_override_counts_;
 };
 
 }  // namespace xla
