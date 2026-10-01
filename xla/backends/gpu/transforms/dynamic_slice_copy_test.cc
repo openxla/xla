@@ -15,14 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_copy.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_annotator.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
@@ -32,7 +31,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -447,6 +449,26 @@ TEST_F(DynamicSliceCopyTest, DynamicVariableUsesPerVariableInitStep) {
                                     Offsets{{0, Offset::Parameter(1)},
                                             {1, Offset::Constant(0)},
                                             {2, Offset::Constant(0)}}}));
+}
+
+TEST(SupportsDynamicSliceCopyThunksTest, CudaAmpereAndNewer) {
+  EXPECT_TRUE(
+      SupportsDynamicSliceCopyThunks(TestGpuDeviceInfo::A100SXMDeviceInfo()));
+  EXPECT_TRUE(
+      SupportsDynamicSliceCopyThunks(TestGpuDeviceInfo::H100SXMDeviceInfo()));
+}
+
+TEST(SupportsDynamicSliceCopyThunksTest, CudaPreAmpere) {
+  EXPECT_FALSE(
+      SupportsDynamicSliceCopyThunks(TestGpuDeviceInfo::A100SXMDeviceInfo(
+          se::GpuComputeCapability{se::CudaComputeCapability(7, 0)})));
+}
+
+TEST(SupportsDynamicSliceCopyThunksTest, Rocm) {
+  EXPECT_FALSE(
+      SupportsDynamicSliceCopyThunks(TestGpuDeviceInfo::AMDMI210DeviceInfo()));
+  EXPECT_FALSE(
+      SupportsDynamicSliceCopyThunks(TestGpuDeviceInfo::AMDMI350DeviceInfo()));
 }
 
 }  // namespace
