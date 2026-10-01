@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/codegen/xtile/codegen/dot_algorithms.h"
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include <memory>
 

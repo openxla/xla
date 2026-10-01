@@ -76,6 +76,7 @@ limitations under the License.
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
+#include "xla/pjrt/linearize_throttler.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -182,29 +183,31 @@ CommonPjRtClient::AllocateForDelinearizationAsync(
       "AllocateForDelinearizationAsync is not supported"));
 }
 
-void CommonPjRtClient::DelinearizeAsync(
+static void DelinearizeWhenReady(
+    CommonPjRtClient* client,
     tsl::AsyncValueRef<PjRtStagingBuffer> staging_buffer,
     PjRtMemorySpace* memory_space, const Shape& shape,
     MutableLiteralBase* literal, tsl::Promise<void> promise) {
   tsl::Context context(tsl::ContextKind::kThread);
-  staging_buffer.AndThen([this, staging_buffer, shape, literal,
+  staging_buffer.AndThen([client, staging_buffer, memory_space, shape, literal,
                           context = std::move(context),
                           promise = std::move(promise)]() mutable {
     if (auto* error = staging_buffer.GetErrorIfPresent()) {
       promise.Set(*error);
       return;
     }
-    auto run_delinearize = [this, staging_buffer, shape, literal,
-                            context = std::move(context),
+    auto run_delinearize = [client, staging_buffer, memory_space, shape,
+                            literal, context = std::move(context),
                             promise = std::move(promise)]() mutable {
       tsl::WithContext wc(context);
       absl::Span<const uint8_t> input_data = staging_buffer->const_data();
-      absl::Status status = DelinearizeHostBuffer(input_data, shape, literal);
+      absl::Status status =
+          client->Delinearize(input_data, shape, literal, memory_space);
       staging_buffer.reset();
       promise.Set(status);
     };
-    if (async_work_runner() != nullptr) {
-      async_work_runner()->Execute(std::move(run_delinearize));
+    if (client->async_work_runner() != nullptr) {
+      client->async_work_runner()->Execute(std::move(run_delinearize));
     } else {
       run_delinearize();
     }
@@ -762,9 +765,10 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
   return event.value();
 }
 
-absl::Status CommonPjRtClient::DelinearizeHostBuffer(
-    absl::Span<const uint8_t> input_data, const Shape& shape,
-    MutableLiteralBase* literal) {
+absl::Status CommonPjRtClient::Delinearize(absl::Span<const uint8_t> input_data,
+                                           const Shape& shape,
+                                           MutableLiteralBase* literal,
+                                           PjRtMemorySpace* memory_space) {
   xla::Layout literal_layout;
   bool need_transpose = false;
   if (shape.IsArray()) {
@@ -1320,7 +1324,8 @@ CommonPjRtClient::CreateViewOfDeviceBuffer(
     }
     ABSL_ASSIGN_OR_RETURN(
         PjRtDeviceEventRef stream_event,
-        raw_client()->CreateDeviceEventForStream(memory_space, *stream));
+        raw_client()->CreateDeviceEventForStream(
+            memory_space->devices()[0]->local_device_id(), *stream));
     definition_events.emplace_back(std::move(stream_event));
   }
 
@@ -2470,6 +2475,9 @@ CommonPjRtLoadedExecutable::LookupDeviceAndAssignment(
   }
   CHECK_EQ(device->process_index(), client()->process_index());
   result.device = device;
+  result.local_device_id = device->local_device_id();
+  result.global_device_id = device->global_device_id();
+  result.process_index = device->process_index();
   result.replica = replica;
   result.partition = partition;
   return result;
@@ -2482,11 +2490,11 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
     size_t host_callback_idx, PjRtDevice* device, int attempt) const {
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::ExecutePrepare");
   ABSL_ASSIGN_OR_RETURN(
-      auto device_and_assign,
+      DeviceAndAssignment device_and_assign,
       LookupDeviceAndAssignment(options, replica, partition, device));
+  device = device_and_assign.device;
   // Fill in device to launch_args so it will be present even if ExecutePrepare
   // fails with OOM.
-  device = device_and_assign.device;
   launch_args.device = device;
 
   // Execute takes `extra_deps` and waits for those to be
@@ -3012,6 +3020,12 @@ CommonPjRtLoadedExecutable::Execute(
     int launching = num_addressable_devices;
     int failed = 0;
     absl::Status first_failure_status;
+    const bool profiling_requested = options.execution_profile != nullptr;
+    std::vector<ExecutionProfile> device_execution_profiles;
+    if (profiling_requested) {
+      device_execution_profiles.resize(num_addressable_devices,
+                                       *options.execution_profile);
+    }
 
     {
       // The gang_schedule mutex ensures that all calls to Schedule() happen
@@ -3024,68 +3038,73 @@ CommonPjRtLoadedExecutable::Execute(
         const int replica = addressable_device_logical_ids_[i].replica;
         const int partition = addressable_device_logical_ids_[i].partition;
         PjRtDevice* device = addressable_devices_[i];
-        client()->LaunchOnDevice(
-            device, [&, context_id, i, replica, partition, device] {
-              tsl::profiler::TraceMeConsumer consumer(
-                  [&] {
-                    return tsl::profiler::TraceMeEncode(
-                        absl::StrFormat(
-                            "[%d] CommonPjRtLoadedExecutable::Execute (%s)", i,
-                            name()),
-                        {{"name", name()},
-                         {"replica", replica},
-                         {"partition", partition},
-                         {"global_device_id", device->global_device_id()}});
-                  },
-                  tsl::profiler::ContextType::kPjRt, context_id);
+        client()->LaunchOnDevice(device, [&, context_id, i, replica, partition,
+                                          device] {
+          tsl::profiler::TraceMeConsumer consumer(
+              [&] {
+                return tsl::profiler::TraceMeEncode(
+                    absl::StrFormat(
+                        "[%d] CommonPjRtLoadedExecutable::Execute (%s)", i,
+                        name()),
+                    {{"name", name()},
+                     {"replica", replica},
+                     {"partition", partition},
+                     {"global_device_id", device->global_device_id()}});
+              },
+              tsl::profiler::ContextType::kPjRt, context_id);
 
-              // Two phase launch. Phase 1: Prepare on all cores. Abort
-              // launch on prepare failure.
-              std::optional<ExecuteLaunchArgs> launch_args;
-              absl::Status launch_status = ExecutePrepareWithOomRetries(
-                  launch_args, argument_handles[i], run_id, replica, partition,
-                  options,
-                  /*host_callback_idx=*/i);
-              // Wait for prepare to finish on all cores.
-              if (client()->supports_two_phase_launch()) {
-                absl::MutexLock lock(mu);
-                if (!launch_status.ok()) {
-                  if (failed == 0) {
-                    first_failure_status = launch_status;
-                  }
-                  failed++;
-                }
-                preparing--;
-                auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
-                  return preparing == 0;
-                };
-                mu.Await(absl::Condition(&done_preparing));
-                if (failed > 0) {
-                  // Poison results for all cores.
-                  results[i] = first_failure_status;
-                  // Abort phase 2 if Prepare fails for any core.
-                  --launching;
-                  return;
-                }
-              } else {
-                // Non-two-phase clients have no barrier to participate in, but
-                // the Prepare status must still be checked before Launch:
-                // launch_args.executable is only populated on Prepare success.
-                if (!launch_status.ok()) {
-                  results[i] = launch_status;
-                  absl::MutexLock lock(mu);
-                  --launching;
-                  return;
-                }
+          // Two phase launch. Phase 1: Prepare on all cores. Abort
+          // launch on prepare failure.
+          ExecuteOptions device_options = options;
+          if (profiling_requested) {
+            device_options.execution_profile = &device_execution_profiles[i];
+          }
+          std::optional<ExecuteLaunchArgs> launch_args;
+          absl::Status launch_status = ExecutePrepareWithOomRetries(
+              launch_args, argument_handles[i], run_id, replica, partition,
+              device_options,
+              /*host_callback_idx=*/i);
+          // Wait for prepare to finish on all cores.
+          if (client()->supports_two_phase_launch()) {
+            absl::MutexLock lock(mu);
+            if (!launch_status.ok()) {
+              if (failed == 0) {
+                first_failure_status = launch_status;
               }
-
-              // Phase 2: Launch. It cannot fail.
-              results[i] =
-                  ExecuteLaunch(*launch_args, returned_futures.has_value());
-
+              failed++;
+            }
+            preparing--;
+            auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
+              return preparing == 0;
+            };
+            mu.Await(absl::Condition(&done_preparing));
+            if (failed > 0) {
+              // Poison results for all cores.
+              results[i] = first_failure_status;
+              // Abort phase 2 if Prepare fails for any core.
+              --launching;
+              return;
+            }
+          } else {
+            // Non-two-phase clients have no barrier to participate in, but
+            // the Prepare status must still be checked before Launch:
+            // launch_args.executable is only populated on Prepare success.
+            if (!launch_status.ok()) {
+              results[i] = launch_status;
               absl::MutexLock lock(mu);
               --launching;
-            });
+              return;
+            }
+          }
+
+          // Phase 2: Launch. It cannot fail.
+          results[i] =
+              ExecuteLaunch(*launch_args, returned_futures.has_value() ||
+                                              profiling_requested);
+
+          absl::MutexLock lock(mu);
+          --launching;
+        });
       }
     }
 
@@ -3096,6 +3115,25 @@ CommonPjRtLoadedExecutable::Execute(
     };
     absl::MutexLock lock(mu);
     mu.Await(absl::Condition(&done));
+
+    if (profiling_requested) {
+      absl::Status execution_status = absl::OkStatus();
+      for (auto& result : results) {
+        if (result.ok()) {
+          CHECK(result->future.has_value());
+          absl::Status status = result->future->Await();
+          if (execution_status.ok() && !status.ok()) {
+            execution_status = std::move(status);
+          }
+        }
+      }
+      if (!execution_status.ok()) {
+        return execution_status;
+      }
+      // Return the profile from device 0 because current API supports only a
+      // single profile.
+      *options.execution_profile = std::move(device_execution_profiles.front());
+    }
   }
   VLOG(3) << "Replicated execution complete.";
 
@@ -3940,9 +3978,9 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
                     return common_client->AllocateForDelinearizationAsync(
                         size, memory_space);
                   });
-              common_client->DelinearizeAsync(std::move(staging_buffer),
-                                              memory_space, shape, literal,
-                                              std::move(promise));
+              DelinearizeWhenReady(common_client, std::move(staging_buffer),
+                                   memory_space, shape, literal,
+                                   std::move(promise));
             };
 
         if (literal != nullptr) {
@@ -4309,7 +4347,8 @@ CommonPjRtClientImpl::CommonPjRtClientImpl(
     std::shared_ptr<KeyValueStoreInterface> kv_store,
     std::optional<PjRtPluginAttributes> plugin_attributes,
     std::unique_ptr<PjRtHostMemoryForDeviceManager>
-        host_memory_for_device_manager)
+        host_memory_for_device_manager,
+    std::optional<LinearizeThrottler::Options> throttler_options)
     : CommonPjRtClient(std::move(host_memory_for_device_manager)),
       platform_id_(platform_id),
       platform_name_(std::move(platform_name)),
@@ -4318,7 +4357,12 @@ CommonPjRtClientImpl::CommonPjRtClientImpl(
       process_index_(process_index),
       plugin_attributes_(std::move(plugin_attributes)),
       kv_store_(std::move(kv_store)),
-      raw_client_(std::move(raw_client)) {
+      raw_client_(std::move(raw_client)),
+      linearize_throttler_(throttler_options.has_value()
+                               ? std::make_unique<LinearizeThrottler>(
+                                     GetHostMemoryAllocator(),
+                                     async_work_runner(), *throttler_options)
+                               : nullptr) {
   CHECK(topology_) << " topology is required.";
   auto set_bool_attr_from_plugin_attrs = [&](absl::string_view key, bool& out) {
     if (!plugin_attributes_) {
@@ -4479,8 +4523,23 @@ absl::StatusOr<PjRtMemorySpace*> CommonPjRtDevice::memory_space_by_kind_id(
   return it->second;
 }
 
+std::unique_ptr<ScopedAsyncTrackingEvent>
+CommonPjRtDevice::CreateAsyncTrackingEvent(
+    absl::string_view description) const {
+  if (!IsAddressable()) {
+    return nullptr;
+  }
+  CHECK(client_ != nullptr);
+  return client_->raw_client()->CreateAsyncTrackingEvent(local_device_id(),
+                                                         description);
+}
+
 absl::StatusOr<bool> CommonPjRtDevice::PoisonExecution(int32_t launch_id,
                                                        absl::Status error) {
+  if (!IsAddressable()) {
+    return FailedPrecondition(
+        "PoisonExecution() is allowed only for addressable devices");
+  }
   CHECK(client_ != nullptr);
   return client_->raw_client()->PoisonExecution(local_device_id(), launch_id,
                                                 std::move(error));
