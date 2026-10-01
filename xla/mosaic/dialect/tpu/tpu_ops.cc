@@ -3277,7 +3277,14 @@ LogicalResult ReduceOp::verify() {
       return emitOpError(
           "arg_max/arg_min not supported - use tpu.reduce_index instead");
     case ReductionKind::kFindFirstSet:
-      return emitOpError("find_first_set not supported");
+      // The result is the index of the first set element along the reduced
+      // dimension, or the size of that dimension if no element is set.
+      if (!input_type.getElementType().isSignlessInteger(1) ||
+          !output_type.getElementType().isSignlessInteger(32)) {
+        return emitOpError(
+            "find_first_set requires i1 input and i32 output element types");
+      }
+      break;
     case ReductionKind::kMax_DEPRECATED:
     case ReductionKind::kMin_DEPRECATED:
       return emitOpError(
