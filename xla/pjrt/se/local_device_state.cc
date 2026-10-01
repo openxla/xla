@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -418,7 +419,6 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
     size_t sync_point, AsyncWorkRunner* async_work_runner,
     bool nullptr_if_past) {
   mu_.lock();
-  size_t cur_sync_point = next_compute_stream_sync_point_.load();
   if (sync_point < base_compute_event_sequence_id_ + compute_events_.size()) {
     BufferSequencingEventRef event;
     if (sync_point < base_compute_event_sequence_id_) {
@@ -432,9 +432,26 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
     mu_.unlock();
     return event;
   }
-  next_compute_stream_sync_point_.store(cur_sync_point + 1);
-  auto event = BufferSequencingEvent::Create(async_work_runner);
-  auto status =
+  return RecordNextComputeStreamSyncPointAndUnlock(async_work_runner);
+}
+
+absl::Status LocalDeviceState::RecordRequestedComputeStreamSyncPoint(
+    AsyncWorkRunner* async_work_runner) {
+  mu_.lock();
+  if (!next_compute_stream_sync_point_requested_) {
+    mu_.unlock();
+    return absl::OkStatus();
+  }
+  return RecordNextComputeStreamSyncPointAndUnlock(async_work_runner).status();
+}
+
+absl::StatusOr<BufferSequencingEventRef>
+LocalDeviceState::RecordNextComputeStreamSyncPointAndUnlock(
+    AsyncWorkRunner* async_work_runner) {
+  size_t cur_sync_point = next_compute_stream_sync_point_;
+  BufferSequencingEventRef event =
+      BufferSequencingEvent::Create(async_work_runner);
+  absl::Status status =
       AllocateAndRecordEvent(async_work_runner, event, compute_stream(),
                              "GetEventForComputeStreamSyncPoint");
   if (!status.ok()) {
@@ -446,6 +463,8 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
     // Pad for any failed event allocations.
     compute_events_.push_back(event);
   }
+  next_compute_stream_sync_point_ = cur_sync_point + 1;
+  next_compute_stream_sync_point_requested_ = false;
   mu_.unlock();
   event.AndThen([this, cur_sync_point]() {
     absl::MutexLock l(mu_);
