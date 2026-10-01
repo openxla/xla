@@ -27,15 +27,8 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "mori_cco",
     srcs = ["cco_init.cpp"],
-    copts = [
-    ],
     # PUBLIC BUILD_CCO_SDMA=1 mirrors src/cco/CMakeLists.txt: it must match the
-    # value every dependent that includes mori/cco/cco.hpp compiles with (the
-    # header defaults it to 0), so the SDMA device section — the full
-    # ccoSdmaQueueDeviceHandle, CCO_SDMA_QUEUE_SIZE/CCO_SDMA_MAX_RETRIES and the
-    # HSAuint64 typedef — is visible and ABI-consistent. `defines` (not
-    # `local_defines`) is intentional: it propagates through CcInfo to
-    # dependents (mori_kernels, mori_collectives).
+    # value every dependent that includes mori/cco/cco.hpp compiles with. 
     defines = ["BUILD_CCO_SDMA=1"],
     linkopts = [
         "-ldl",
@@ -53,8 +46,6 @@ cc_library(
         "@local_config_rocm//rocm:hsakmt",
         # infiniband/verbs.h via transport/rdma providers.
         "@roc_mori//:ibverbs",
-        # libpci (pciutils) for topology/pci.cpp.
-        "@roc_mori//:libpci",
         # libdrm + libdrm_amdgpu, required transitively by libhsakmt.a.
         "@roc_mori//:libdrm",
         # libnuma, required transitively by libhsakmt.a.
