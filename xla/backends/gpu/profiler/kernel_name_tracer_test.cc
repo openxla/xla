@@ -166,10 +166,12 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
   CommandSequence commands;
   commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
                                                LaunchDimensions(1, kLength),
-                                               /*shmem_bytes=*/0));
+                                               /*shmem_bytes=*/0,
+                                               /*devices_in_process=*/1));
   commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
                                                LaunchDimensions(1, kLength),
-                                               /*shmem_bytes=*/0));
+                                               /*shmem_bytes=*/0,
+                                               /*devices_in_process=*/1));
   ASSERT_OK_AND_ASSIGN(CommandExecutor cmd_buffer_executor,
                        CommandExecutor::Create(
                            std::move(commands),
