@@ -73,6 +73,7 @@ cc_library(
         "//xla/tools/hlo_dump:hlo_dump_utils",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -180,6 +181,7 @@ xla_cc_test(
         "//xla/service:hlo_runner_interface",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tools/hlo_dump:hlo_dump_utils",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -187,6 +189,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:path",
     ],
 )
 
