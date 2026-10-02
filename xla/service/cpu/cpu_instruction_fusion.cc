@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_instruction_fusion.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
@@ -441,18 +443,26 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
       return false;
     }
 
-    // Minor dimension concatenations with sufficient contiguous bytes benefit
-    // from pure data movement (memcpy / SIMD loads and stores) when unfused.
-    // Fusing them leads to branches in the innermost loop. However, small
-    // concatenations (e.g. few rows or tiny total bytes) are dominated by
-    // kernel launch and thunk dispatch overhead, so we keep them fused.
+    // Unfusing only pays off if every operand contributes at least 64
+    // contiguous bytes per row, since the standalone concat does one memcpy
+    // per operand per row. Narrow operands (e.g. [..., 2] + [..., 81]) lead to
+    // tiny copies plus extra round trips through memory, and small
+    // concatenations are dominated by kernel launch and thunk dispatch
+    // overhead, so keep both fused.
     int64_t concat_dim = hlo->concatenate_dimension();
-    int64_t concat_dim_bytes =
-        hlo->shape().dimensions(concat_dim) *
+    if (concat_dim != LayoutUtil::Minor(hlo->shape().layout(), 0)) {
+      return false;
+    }
+    int64_t element_bytes =
         ShapeUtil::ByteSizeOfPrimitiveType(hlo->shape().element_type());
+    int64_t min_operand_concat_dim_bytes = std::numeric_limits<int64_t>::max();
+    for (const HloInstruction* operand : hlo->operands()) {
+      min_operand_concat_dim_bytes =
+          std::min(min_operand_concat_dim_bytes,
+                   operand->shape().dimensions(concat_dim) * element_bytes);
+    }
     int64_t total_bytes = ShapeUtil::ByteSizeOfElements(hlo->shape());
-    return concat_dim == LayoutUtil::Minor(hlo->shape().layout(), 0) &&
-           concat_dim_bytes >= 64 && total_bytes >= 2048;
+    return min_operand_concat_dim_bytes >= 64 && total_bytes >= 2048;
   };
 
   if ((producer->opcode() == HloOpcode::kConcatenate &&
