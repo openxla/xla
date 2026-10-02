@@ -54,6 +54,8 @@ absl::Status CubSortPairs(void* d_temp_storage, size_t& temp_bytes,
       size_t, ::sycl::queue*)
 
 // Floating point types.
+XLA_CUB_EXTERN_SORT_KEYS(::sycl::ext::oneapi::bfloat16);
+XLA_CUB_EXTERN_SORT_KEYS(::sycl::half);
 XLA_CUB_EXTERN_SORT_KEYS(float);
 XLA_CUB_EXTERN_SORT_KEYS(double);
 
@@ -70,6 +72,7 @@ XLA_CUB_EXTERN_SORT_KEYS(uint32_t);
 XLA_CUB_EXTERN_SORT_KEYS(uint64_t);
 
 // Pairs with 8-bit key.
+XLA_CUB_EXTERN_SORT_PAIRS(uint8_t, ::sycl::half);
 XLA_CUB_EXTERN_SORT_PAIRS(uint8_t, float);
 XLA_CUB_EXTERN_SORT_PAIRS(uint8_t, double);
 XLA_CUB_EXTERN_SORT_PAIRS(uint8_t, uint16_t);
@@ -77,6 +80,7 @@ XLA_CUB_EXTERN_SORT_PAIRS(uint8_t, uint32_t);
 XLA_CUB_EXTERN_SORT_PAIRS(uint8_t, uint64_t);
 
 // Pairs with 16-bit key.
+XLA_CUB_EXTERN_SORT_PAIRS(uint16_t, ::sycl::half);
 XLA_CUB_EXTERN_SORT_PAIRS(uint16_t, float);
 XLA_CUB_EXTERN_SORT_PAIRS(uint16_t, double);
 XLA_CUB_EXTERN_SORT_PAIRS(uint16_t, uint16_t);
@@ -84,6 +88,7 @@ XLA_CUB_EXTERN_SORT_PAIRS(uint16_t, uint32_t);
 XLA_CUB_EXTERN_SORT_PAIRS(uint16_t, uint64_t);
 
 // Pairs with signed 32-bit key.
+XLA_CUB_EXTERN_SORT_PAIRS(int32_t, ::sycl::half);
 XLA_CUB_EXTERN_SORT_PAIRS(int32_t, float);
 XLA_CUB_EXTERN_SORT_PAIRS(int32_t, double);
 XLA_CUB_EXTERN_SORT_PAIRS(int32_t, uint16_t);
@@ -91,6 +96,7 @@ XLA_CUB_EXTERN_SORT_PAIRS(int32_t, uint32_t);
 XLA_CUB_EXTERN_SORT_PAIRS(int32_t, uint64_t);
 
 // Pairs with unsigned 32-bit key.
+XLA_CUB_EXTERN_SORT_PAIRS(uint32_t, ::sycl::half);
 XLA_CUB_EXTERN_SORT_PAIRS(uint32_t, float);
 XLA_CUB_EXTERN_SORT_PAIRS(uint32_t, double);
 XLA_CUB_EXTERN_SORT_PAIRS(uint32_t, uint16_t);
@@ -98,6 +104,7 @@ XLA_CUB_EXTERN_SORT_PAIRS(uint32_t, uint32_t);
 XLA_CUB_EXTERN_SORT_PAIRS(uint32_t, uint64_t);
 
 // Pairs with 64-bit key.
+XLA_CUB_EXTERN_SORT_PAIRS(uint64_t, ::sycl::half);
 XLA_CUB_EXTERN_SORT_PAIRS(uint64_t, float);
 XLA_CUB_EXTERN_SORT_PAIRS(uint64_t, double);
 XLA_CUB_EXTERN_SORT_PAIRS(uint64_t, uint16_t);
@@ -105,6 +112,7 @@ XLA_CUB_EXTERN_SORT_PAIRS(uint64_t, uint32_t);
 XLA_CUB_EXTERN_SORT_PAIRS(uint64_t, uint64_t);
 
 // Pairs with f32 key.
+XLA_CUB_EXTERN_SORT_PAIRS(float, ::sycl::half);
 XLA_CUB_EXTERN_SORT_PAIRS(float, float);
 XLA_CUB_EXTERN_SORT_PAIRS(float, double);
 XLA_CUB_EXTERN_SORT_PAIRS(float, uint16_t);
