@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -26,8 +23,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -39,11 +40,11 @@ limitations under the License.
 #include "rocm/include/rocprofiler-sdk/context.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/marker.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env_time.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -86,7 +87,6 @@ std::unique_ptr<TestRocmTraceCollector> CreateTestCollector() {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 2 * 1024 * 1024;
   options.max_activity_api_events = 2 * 1024 * 1024;
-  options.max_annotation_strings = 1024 * 1024;
   options.num_gpus = 1;
 
   uint64_t walltime_ns = RocmTracer::GetTimestamp();
@@ -168,33 +168,49 @@ TEST(RocmTracerTest, EnableAndDisableLifecycle) {
       << "Tracer should be available after Disable()";
 }
 
-TEST(RocmTracerTest, AnnotationMapWorks) {
+// Enable() must apply the configured annotation capacity to the tracer's map
+// and drop the entries of the previous session.
+TEST(RocmTracerTest, EnableAppliesAnnotationCapacityAndClearsMap) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
+  ASSERT_TRUE(tracer.IsAvailable());
+
+  auto first_collector = CreateTestCollector();
+  RocmTracerOptions one_string{/*max_annotation_strings=*/1};
+  TF_ASSERT_OK(tracer.Enable(one_string, first_collector.get()));
   AnnotationMap* map = tracer.annotation_map();
-  ASSERT_NE(map, nullptr);
+  map->Add(1, "first");
+  map->Add(2, "second");
+  EXPECT_EQ(map->LookUp(1), "first");
+  EXPECT_TRUE(map->LookUp(2).empty()) << "a capacity of 1 was not applied";
+  tracer.Disable();
 
-  uint64_t id = 42;
-  std::string annotation = "matmul_fused_op";
-  map->Add(id, annotation);
-
-  absl::string_view result = map->LookUp(id);
-  EXPECT_EQ(result, annotation);
+  auto second_collector = CreateTestCollector();
+  RocmTracerOptions two_strings{/*max_annotation_strings=*/2};
+  TF_ASSERT_OK(tracer.Enable(two_strings, second_collector.get()));
+  EXPECT_TRUE(map->LookUp(1).empty())
+      << "an entry from the previous session survived Enable()";
+  map->Add(2, "second");
+  map->Add(3, "third");
+  EXPECT_EQ(map->LookUp(2), "second");
+  EXPECT_EQ(map->LookUp(3), "third");
+  tracer.Disable();
 }
 
-TEST(RocmTracerTest, AnnotationMapClear) {
+TEST(RocmTracerTest, EnableRejectsUnsetAnnotationCapacity) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
+  ASSERT_TRUE(tracer.IsAvailable());
+
+  auto collector = CreateTestCollector();
+  EXPECT_THAT(tracer.Enable(RocmTracerOptions{}, collector.get()),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+
+  // The rejected call left the tracer idle, and 0 is a valid capacity.
+  RocmTracerOptions no_strings{/*max_annotation_strings=*/0};
+  ASSERT_OK(tracer.Enable(no_strings, collector.get()));
   AnnotationMap* map = tracer.annotation_map();
-  ASSERT_NE(map, nullptr);
-
-  map->Add(100, "op_a");
-  map->Add(101, "op_b");
-  EXPECT_EQ(map->LookUp(100), "op_a");
-  EXPECT_EQ(map->LookUp(101), "op_b");
-
-  map->Clear();
-
-  EXPECT_TRUE(map->LookUp(100).empty());
-  EXPECT_TRUE(map->LookUp(101).empty());
+  map->Add(1, "first");
+  EXPECT_TRUE(map->LookUp(1).empty());
+  tracer.Disable();
 }
 
 // Simple collector that tracks received events for verification.
@@ -218,7 +234,6 @@ class EventCapturingCollector : public RocmTraceCollector {
     RocmTraceCollectorOptions options;
     options.max_callback_api_events = 2 * 1024 * 1024;
     options.max_activity_api_events = 2 * 1024 * 1024;
-    options.max_annotation_strings = 1024 * 1024;
     options.num_gpus = RocmTracer::GetRocmTracerSingleton().NumGpus();
     return options;
   }
@@ -375,7 +390,6 @@ class MarkerCapturingCollector : public RocmTraceCollector {
     RocmTraceCollectorOptions o;
     o.max_callback_api_events = 1024;
     o.max_activity_api_events = 1024;
-    o.max_annotation_strings = 1024;
     o.num_gpus = 1;
     return o;
   }
@@ -602,7 +616,6 @@ TEST(RocmTracerTest, MarkerEventAppearsInExportedXSpace) {
   RocmTraceCollectorOptions col_opts;
   col_opts.max_callback_api_events = 1024;
   col_opts.max_activity_api_events = 1024;
-  col_opts.max_annotation_strings = 1024;
   col_opts.num_gpus = tracer.NumGpus() > 0 ? tracer.NumGpus() : 1;
 
   uint64_t start_gpu = RocmTracer::GetTimestamp();
@@ -717,7 +730,6 @@ TEST(RocmTracerTest, RealRoctxCallsProduceNvtxRangeInXSpace) {
   RocmTraceCollectorOptions col_opts;
   col_opts.max_callback_api_events = 1024;
   col_opts.max_activity_api_events = 1024;
-  col_opts.max_annotation_strings = 1024;
   col_opts.num_gpus = tracer.NumGpus() > 0 ? tracer.NumGpus() : 1;
 
   uint64_t start_gpu = RocmTracer::GetTimestamp();
@@ -805,7 +817,7 @@ TEST(RocmTracerTest, RealRoctxCallsProduceNvtxRangeInXSpace) {
 }
 
 // ============================================================================
-// GetCurrentRoctxLabel and AnnotationMap roctx_range tests (Commit B)
+// GetCurrentRoctxLabel tests (Commit B)
 // ============================================================================
 
 TEST(RocmTracerTest, GetCurrentRoctxLabelReturnsTopOfStack) {
@@ -860,38 +872,6 @@ TEST(RocmTracerTest, GetCurrentRoctxLabelEmptyAfterPop) {
   EXPECT_EQ(tracer.GetCurrentRoctxLabel(), "");
 
   tracer.Disable();
-}
-
-TEST(RocmTracerTest, AnnotationMapStoresRoctxRange) {
-  AnnotationMap map(1024);
-  map.Add(99, "my_annotation", "my_roctx_label", {});
-  EXPECT_EQ(map.LookUp(99), "my_annotation");
-  EXPECT_EQ(map.LookUpRoctxRange(99), "my_roctx_label");
-
-  EXPECT_EQ(map.LookUpRoctxRange(100), "");
-
-  map.Clear();
-  EXPECT_EQ(map.LookUpRoctxRange(99), "");
-}
-
-TEST(RocmTracerTest, AnnotationMapRoctxRangeEmptyWhenNotProvided) {
-  AnnotationMap map(1024);
-  map.Add(42, "some_op", {}, {});
-  EXPECT_EQ(map.LookUp(42), "some_op");
-  EXPECT_EQ(map.LookUpRoctxRange(42), "");
-}
-
-// Verify that Add() stores the roctx_range even when annotation is empty,
-// so that standalone ROCTX annotations (no XLA AnnotationStack text) still
-// produce kNVTXRange on kernel events.
-TEST(RocmTracerTest, AnnotationMapStoresRoctxRangeWhenAnnotationEmpty) {
-  AnnotationMap map(1024);
-  // annotation is empty, roctx_range is not.
-  map.Add(77, /*annotation=*/"", "roctx_only_label", {});
-  EXPECT_EQ(map.LookUp(77), "")
-      << "correlation_map should not have an entry when annotation is empty";
-  EXPECT_EQ(map.LookUpRoctxRange(77), "roctx_only_label")
-      << "roctx_range_map must store the label even with no annotation";
 }
 
 // GetCurrentRoctxLabel returns a view aliasing the thread_local frame. It is
