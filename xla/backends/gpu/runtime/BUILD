@@ -1461,7 +1461,7 @@ cc_library(
     hdrs = ["kernel_thunk.h"],
     deps = [
         ":command",
-        ":lock_free_kernel_cache",
+        ":per_device_state",
         ":print_buffer_contents",
         ":thunk",
         ":thunk_proto_cc",
@@ -4750,6 +4750,7 @@ cc_library(
         "//xla/backends/cpu:target_machine_options",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
+        "//xla/service:gpu_topology",
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:kernel_spec",
@@ -4794,6 +4795,7 @@ xla_cc_test(
         "//xla/ffi",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
+        "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_h",
@@ -5485,39 +5487,6 @@ xla_test(
 )
 
 cc_library(
-    name = "lock_free_kernel_cache",
-    hdrs = ["lock_free_kernel_cache.h"],
-    deps = [
-        "//xla/stream_executor:kernel",
-        "//xla/stream_executor:stream_executor_h",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_macros",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
-    ],
-)
-
-xla_cc_test(
-    name = "lock_free_kernel_cache_test",
-    srcs = ["lock_free_kernel_cache_test.cc"],
-    deps = [
-        ":lock_free_kernel_cache",
-        "//xla/stream_executor:kernel",
-        "//xla/stream_executor:kernel_args",
-        "//xla/stream_executor:launch_dim",
-        "//xla/stream_executor:stream",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:env",
-        "//xla/tsl/platform:test",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
     name = "device_slot",
     hdrs = ["device_slot.h"],
     visibility = ["//visibility:private"],
@@ -5621,7 +5590,7 @@ cc_library(
     ]),
     deps = [
         ":command",
-        ":lock_free_kernel_cache",
+        ":per_device_state",
         ":print_buffer_contents",
         ":thunk",
         ":thunk_proto_cc",
@@ -5631,6 +5600,7 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/service:shaped_slice",
+        "//xla/service:shaped_slice_proto_cc",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:command_buffer",
@@ -5645,7 +5615,6 @@ cc_library(
         "//xla/stream_executor/gpu:tma_metadata",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
