@@ -91,6 +91,11 @@ void GroupGemmUpdateArgs(
     int8_t bias_type, bool has_matrix_bias);
 namespace {
 
+bool IsFp8Type(hipDataType type) {
+  return type == HIP_R_8F_E4M3 || type == HIP_R_8F_E5M2 ||
+         type == HIP_R_8F_E4M3_FNUZ || type == HIP_R_8F_E5M2_FNUZ;
+}
+
 // Upper bound for the heuristic query only, never allocated. Generous on
 // purpose: a low ceiling would hide complex kernels that need scratch and
 // divert the matmul to rocBLAS.
@@ -230,6 +235,7 @@ absl::Status BlasLt::Init() {
 auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                               size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
+  static int64_t dummy_pointer = 0xACEBALL;
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
   {
@@ -255,7 +261,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     // no algorithms can be found for "bias epilogues". This is to be removed
     // later when this limitation is gone.
     if (op_desc_.has_bias_epilogue()) {
-      static int64_t dummy_pointer = 0xACEBALL;
       ABSL_RETURN_IF_ERROR(SetAttr(
           op_desc_.get(), HIPBLASLT_MATMUL_DESC_BIAS_POINTER, &dummy_pointer));
     }
@@ -267,7 +272,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
       case gpu::ScaleMode::kNone:
         break;
       case gpu::ScaleMode::kTensorScaling: {
-        static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                      HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
                                      &dummy_pointer));
@@ -277,7 +281,6 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
         break;
       }
       case gpu::ScaleMode::kBlockScaling: {
-        static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                      HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
                                      &dummy_pointer));
@@ -292,6 +295,15 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
             op_desc_.get(), HIPBLASLT_MATMUL_DESC_B_SCALE_MODE, mx_scale));
         break;
       }
+    }
+
+    // hipBLASLt only returns algorithms that honor D_SCALE_POINTER if it is
+    // set before the heuristic query. Otherwise it may return algorithms that
+    // silently ignore the D scale at execution time.
+    if (IsFp8Type(d_desc_.type())) {
+      ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                   HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
+                                   &dummy_pointer));
     }
 
     int found_algorithm_count = 0;
@@ -722,6 +734,11 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                    HIPBLASLT_MATMUL_DESC_C_SCALE_POINTER,
                                    args.c_scale.opaque()));
+    }
+    // GetAlgorithms set a placeholder D_SCALE_POINTER for FP8 outputs; it must
+    // be replaced before running.
+    if (args.d_scale == nullptr && IsFp8Type(d_desc_.type())) {
+      return absl::InternalError("hipBLASLt FP8 output requires a D scale.");
     }
     if (args.d_scale != nullptr) {
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
