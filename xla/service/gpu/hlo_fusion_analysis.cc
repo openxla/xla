@@ -16,12 +16,14 @@ limitations under the License.
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -30,10 +32,12 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/codegen/hlo_fusion_spec.h"
+#include "xla/codegen/ir_emission_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/primitive_util.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/reduction_utils.h"
@@ -88,27 +92,133 @@ std::optional<TransposeDescription> FindConsistentTransposeHero(
   return tiled_transpose_hero;
 }
 
-bool UseConcatenateFusion(absl::Span<const HloInstructionAdaptor> roots,
-                          absl::Span<const HloInstructionAdaptor> heroes) {
-  if (heroes.size() != 1) {
-    return false;
+// Returns whether a non-elementwise op in the epilogue reads one of the heroes.
+// Heroes are injected into the shared epilogue as scalars at the current output
+// index, so such an op (e.g. reverse) would silently read the wrong element.
+bool EpilogueReadsHeroNonElementwise(
+    absl::Span<const HloInstructionAdaptor> roots,
+    absl::Span<const HloInstructionAdaptor> heroes) {
+  absl::flat_hash_set<const HloInstruction*> hero_set;
+  for (const HloInstructionAdaptor& hero : heroes) {
+    hero_set.insert(&hero.instruction());
   }
-  if (heroes.front().opcode() != HloOpcode::kConcatenate) {
-    return false;
+
+  // Step 1: Find all nodes that use the value of a hero.
+  absl::flat_hash_set<const HloInstruction*> depends_on_hero = hero_set;
+  std::vector<HloInstructionAdaptor> hero_worklist(heroes.begin(),
+                                                   heroes.end());
+  while (!hero_worklist.empty()) {
+    HloInstructionAdaptor node = hero_worklist.back();
+    hero_worklist.pop_back();
+    for (const HloInstructionAdaptor& user : node.GetUsers()) {
+      if (depends_on_hero.insert(&user.instruction()).second) {
+        hero_worklist.push_back(user);
+      }
+    }
   }
-  // The concat emitter does not support multiple outputs yet. TODO(csigg): fix.
-  if (roots.front().shape().IsTuple()) {
-    return false;
+
+  // Step 2: Walk the epilogue from the roots, stopping at heroes, so ops that
+  // compute a hero's operands (e.g. slices) are skipped. Each node uses its
+  // own adaptor, since sibling merges mix two fusions.
+  absl::flat_hash_set<const HloInstruction*> visited;
+  std::vector<HloInstructionAdaptor> root_worklist(roots.begin(), roots.end());
+  for (const HloInstructionAdaptor& root : roots) {
+    visited.insert(&root.instruction());
   }
-  // Limit the number of operands because the concat emitter produces code for
-  // each operand, hurting occupancy.
-  if (heroes.front().instruction().operand_count() > 4) {
-    return false;
+  while (!root_worklist.empty()) {
+    HloInstructionAdaptor node = root_worklist.back();
+    root_worklist.pop_back();
+    if (hero_set.contains(&node.instruction())) {
+      continue;
+    }
+    if (IsNonTrivialHeroUser(node)) {
+      if (depends_on_hero.contains(&node.instruction())) {
+        // The node reads a hero at an incorrect index.
+        return true;
+      }
+      // A side input that does not read a hero is safe.
+      continue;
+    }
+    for (const HloInstructionAdaptor& operand : node.GetOperands()) {
+      // GetOperands resolves fusion parameters to instructions outside the
+      // fusion; don't walk into the caller computation.
+      if (node.parent().ContainsInstruction(operand) &&
+          visited.insert(&operand.instruction()).second) {
+        root_worklist.push_back(operand);
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+Decision UseConcatenateFusion(absl::Span<const HloInstructionAdaptor> roots,
+                              absl::Span<const HloInstructionAdaptor> heroes) {
+  if (heroes.empty()) {
+    return Decision::Forbid("no heroes");
+  }
+  if (roots.size() != heroes.size()) {
+    return Decision::Forbid("mismatched roots and heroes");
+  }
+  const HloInstruction& first_hero = heroes.front().instruction();
+  if (first_hero.opcode() != HloOpcode::kConcatenate) {
+    return Decision::Forbid("hero is not a concatenate");
+  }
+  // Limit the number of operands because the concat emitter produces code
+  // for each operand, hurting occupancy. With several roots the code also
+  // grows with each root, so limit roots times operands instead.
+  constexpr int64_t kMaxOperands = 4;
+  constexpr int64_t kMaxRootsTimesOperands = 6;
+  if (roots.size() == 1) {
+    if (first_hero.operand_count() > kMaxOperands) {
+      return Decision::Forbid("too many operands");
+    }
+  } else if (static_cast<int64_t>(roots.size()) * first_hero.operand_count() >
+             kMaxRootsTimesOperands) {
+    return Decision::Forbid("too many roots times operands");
+  }
+  // Every root is written at the same output index from the same per-operand
+  // loop, so shapes are compared exactly: equal element counts do not imply
+  // equal indexing.
+  for (auto [root, hero] : llvm::zip(roots, heroes)) {
+    if (!ShapeUtil::EqualIgnoringElementType(root.shape(),
+                                             roots.front().shape())) {
+      return Decision::Forbid("different root shapes");
+    }
+    const HloInstruction& concat = hero.instruction();
+    if (&concat == &first_hero) {
+      continue;
+    }
+    if (concat.opcode() != HloOpcode::kConcatenate) {
+      return Decision::Forbid("hero is not a concatenate");
+    }
+    if (concat.concatenate_dimension() != first_hero.concatenate_dimension()) {
+      return Decision::Forbid("different concatenate dimensions");
+    }
+    if (concat.operand_count() != first_hero.operand_count()) {
+      return Decision::Forbid("different operand counts");
+    }
+    if (!ShapeUtil::EqualIgnoringElementType(concat.shape(),
+                                             first_hero.shape())) {
+      return Decision::Forbid("different hero shapes");
+    }
+    for (int64_t i = 0; i < concat.operand_count(); ++i) {
+      if (!ShapeUtil::EqualIgnoringElementType(
+              concat.operand(i)->shape(), first_hero.operand(i)->shape())) {
+        return Decision::Forbid("different splits");
+      }
+    }
+  }
+  if (EpilogueReadsHeroNonElementwise(roots, heroes)) {
+    return Decision::Forbid("hero reachable through a non-elementwise op");
   }
   // The loop emitter is faster when warp divergence and occupancy are both low.
   // TODO(csigg): exclude this case.
-  return true;
+  return Decision::Allow();
 }
+
+namespace {
 
 HloFusionAnalysis::EmitterFusionKind GetEmitterFusionKind(
     const FusionBackendConfig& fusion_backend_config,
@@ -171,6 +281,12 @@ HloFusionAnalysis::EmitterFusionKind GetEmitterFusionKind(
     return HloFusionAnalysis::EmitterFusionKind::kTranspose;
   }
 
+  // The concatenate emitter also supports some multi output fusions, so this
+  // check has to come before the early return for those.
+  if (UseConcatenateFusion(fusion_roots, fusion_heroes)) {
+    return HloFusionAnalysis::EmitterFusionKind::kConcatenate;
+  }
+
   if (fusion_roots.size() > 1) {
     return HloFusionAnalysis::EmitterFusionKind::kLoop;
   }
@@ -181,10 +297,6 @@ HloFusionAnalysis::EmitterFusionKind GetEmitterFusionKind(
 
   if (fusion_roots[0].opcode() == HloOpcode::kSort) {
     return HloFusionAnalysis::EmitterFusionKind::kSort;
-  }
-
-  if (UseConcatenateFusion(fusion_roots, fusion_heroes)) {
-    return HloFusionAnalysis::EmitterFusionKind::kConcatenate;
   }
 
   return HloFusionAnalysis::EmitterFusionKind::kLoop;
