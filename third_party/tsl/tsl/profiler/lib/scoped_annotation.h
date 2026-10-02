@@ -40,7 +40,10 @@ void PushAnnotation(const Generator& generator) {
   if (auto domain = DefaultProfilerDomain();
       TF_PREDICT_FALSE(domain != nullptr)) {
     RangePush(domain, generator());
-    return;
+    // We no longer return here to avoid breaking workflows such as using
+    // Nsight Systems (which causes non-null `domain`) and AutoPGLE (which
+    // needs the AnnotationStack below) at the same time. Such patterns are
+    // possible now that CUPTI supports multiple subscribers.
   }
 
 #if !defined(IS_MOBILE_PLATFORM)
@@ -57,7 +60,6 @@ void PushAnnotation(const AnnotationGenerator& annotation_generator,
   if (auto domain = DefaultProfilerDomain();
       TF_PREDICT_FALSE(domain != nullptr)) {
     RangePush(domain, range_generator());
-    return;
   }
 
 #if !defined(IS_MOBILE_PLATFORM)
@@ -83,7 +85,6 @@ inline void PopAnnotation() {
   if (auto domain = DefaultProfilerDomain();
       TF_PREDICT_FALSE(domain != nullptr)) {
     RangePop(domain);
-    return;
   }
 
 #if !defined(IS_MOBILE_PLATFORM)
