@@ -725,26 +725,26 @@ static void Sort2DSlices(const SortDims& sort_dims, int64_t start_slice,
   int64_t inner = start_slice % stride;
   int64_t offset = outer * slice_stride + inner;
 
-  auto run_slices = [&](Key* key_buf, Value* val_buf) {
-    for (int64_t i = start_slice; i < end_slice; ++i) {
-      sort_strided_slice(offset, key_buf, val_buf);
-      if (++inner == stride) {
-        inner = 0;
-        offset += slice_stride - stride + 1;
-      } else {
-        ++offset;
-      }
+  std::array<Key, 1024> static_key_buf;
+  std::array<Value, 1024> static_val_buf;
+  std::vector<Key> dyn_key_buf;
+  std::vector<Value> dyn_val_buf;
+  Key* key_buf = static_key_buf.data();
+  Value* val_buf = static_val_buf.data();
+  if (n > 1024) {
+    dyn_key_buf.resize(n);
+    dyn_val_buf.resize(n);
+    key_buf = dyn_key_buf.data();
+    val_buf = dyn_val_buf.data();
+  }
+  for (int64_t i = start_slice; i < end_slice; ++i) {
+    sort_strided_slice(offset, key_buf, val_buf);
+    if (++inner == stride) {
+      inner = 0;
+      offset += slice_stride - stride + 1;
+    } else {
+      ++offset;
     }
-  };
-
-  if (n <= 1024) {
-    std::array<Key, 1024> key_buf;
-    std::array<Value, 1024> val_buf;
-    run_slices(key_buf.data(), val_buf.data());
-  } else {
-    std::vector<Key> key_buf(n);
-    std::vector<Value> val_buf(n);
-    run_slices(key_buf.data(), val_buf.data());
   }
 }
 
@@ -1016,42 +1016,6 @@ void SortInplace(const SortDims& sort_dims, int64_t start_slice,
         break;
       case 4:
         sort(std::integral_constant<size_t, 4>{});
-        break;
-      case 5:
-        sort(std::integral_constant<size_t, 5>{});
-        break;
-      case 6:
-        sort(std::integral_constant<size_t, 6>{});
-        break;
-      case 7:
-        sort(std::integral_constant<size_t, 7>{});
-        break;
-      case 8:
-        sort(std::integral_constant<size_t, 8>{});
-        break;
-      case 9:
-        sort(std::integral_constant<size_t, 9>{});
-        break;
-      case 10:
-        sort(std::integral_constant<size_t, 10>{});
-        break;
-      case 11:
-        sort(std::integral_constant<size_t, 11>{});
-        break;
-      case 12:
-        sort(std::integral_constant<size_t, 12>{});
-        break;
-      case 13:
-        sort(std::integral_constant<size_t, 13>{});
-        break;
-      case 14:
-        sort(std::integral_constant<size_t, 14>{});
-        break;
-      case 15:
-        sort(std::integral_constant<size_t, 15>{});
-        break;
-      case 16:
-        sort(std::integral_constant<size_t, 16>{});
         break;
       default:
         DSort1DInplace(sort_dims, offset, data, primitive_sizes, is_stable,
