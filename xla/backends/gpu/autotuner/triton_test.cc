@@ -27,10 +27,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/btree_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
@@ -45,6 +47,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -65,6 +68,7 @@ using ::absl_testing::IsOk;
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
+using ::testing::ElementsAre;
 using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::Not;
@@ -153,6 +157,26 @@ class TritonBackendTest : public HloHardwareIndependentTestBase,
     return debug_options;
   }
 
+  // Returns the mfma_size values of the Triton configs for `hlo` on `device`
+  // instead of the local GPU, so the result is the same on every CI machine.
+  absl::StatusOr<absl::btree_set<int>> GetMfmaSizes(
+      absl::string_view hlo, const se::DeviceDescription& device) {
+    target_config_.device_description = device;
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<BackendConfig>> configs,
+        backend_.GetSupportedConfigs(
+            *module->entry_computation()->root_instruction()));
+    absl::btree_set<int> values;
+    for (const std::unique_ptr<BackendConfig>& config : configs) {
+      if (config->has_triton()) {
+        values.insert(config->triton().mfma_size());
+      }
+    }
+    return values;
+  }
+
   DebugOptions debug_options_;
   se::Platform* platform_;
   se::StreamExecutor* stream_executor_;
@@ -213,6 +237,30 @@ TEST_P(TritonBackendTest, GetSupportedConfigsForScaledDot) {
       backend_.GetSupportedConfigs(*fusion_instr);
   EXPECT_THAT(configs, absl_testing::IsOk());
   EXPECT_GT(configs.value().size(), 0);
+}
+
+TEST_P(TritonBackendTest, MfmaSizeDependsOnArchAndSearchMode) {
+  const se::DeviceDescription mi300 = TestGpuDeviceInfo::AMDMI300DeviceInfo();
+  const se::DeviceDescription mi350 = TestGpuDeviceInfo::AMDMI350DeviceInfo();
+  const se::DeviceDescription mi210 = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+  const se::DeviceDescription rx7900 = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
+
+  // Regular dots are gated by the hint tables and scaled dots by an explicit
+  // predicate, and both must agree.
+  for (absl::string_view hlo : {kHlo, kScaledDotHlo}) {
+    SCOPED_TRACE(hlo);
+    debug_options_.set_xla_gpu_exhaustive_tiling_search(false);
+    EXPECT_THAT(GetMfmaSizes(hlo, mi300), IsOkAndHolds(ElementsAre(0, 16)));
+    EXPECT_THAT(GetMfmaSizes(hlo, mi350), IsOkAndHolds(ElementsAre(0)));
+    EXPECT_THAT(GetMfmaSizes(hlo, mi210), IsOkAndHolds(ElementsAre(0)));
+    EXPECT_THAT(GetMfmaSizes(hlo, rx7900), IsOkAndHolds(ElementsAre(0)));
+
+    debug_options_.set_xla_gpu_exhaustive_tiling_search(true);
+    EXPECT_THAT(GetMfmaSizes(hlo, mi300), IsOkAndHolds(ElementsAre(0, 16)));
+    EXPECT_THAT(GetMfmaSizes(hlo, mi350), IsOkAndHolds(ElementsAre(0, 16)));
+    EXPECT_THAT(GetMfmaSizes(hlo, mi210), IsOkAndHolds(ElementsAre(0, 16)));
+    EXPECT_THAT(GetMfmaSizes(hlo, rx7900), IsOkAndHolds(ElementsAre(0)));
+  }
 }
 
 TEST_P(TritonBackendTest, GetSupportedConfigsWithEstimatesForScaledDot) {
