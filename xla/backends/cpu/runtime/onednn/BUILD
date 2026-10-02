@@ -104,6 +104,7 @@ cc_library(
         "//xla/backends/cpu/runtime:work_queue",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/mkl:onednn",
+        "//xla/tsl/platform:logging",
         "@eigen_archive//:eigen3",
     ],
 )
