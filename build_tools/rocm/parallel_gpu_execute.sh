@@ -23,6 +23,7 @@
 
 ROCMINFO=$(find -L "${TEST_SRCDIR:-.}" -name "rocminfo" -path "*/bin/rocminfo" | head -n 1)
 TF_GPU_COUNT=$($ROCMINFO | grep "Name: *gfx*" | wc -l)
+
 TF_TESTS_PER_GPU=${TF_TESTS_PER_GPU:-8}
 
 # There are certain tests in xla that do not require any gpu in order to be executed
