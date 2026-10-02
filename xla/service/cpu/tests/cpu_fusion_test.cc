@@ -17,6 +17,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "xla/comparison_util.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -138,7 +139,7 @@ TEST_F(CpuFusionTest, FuseElementwiseOpChain) {
 }
 
 TEST_F(CpuFusionTest, ElementwiseOpChainWithNonfusibleInstruction) {
-  // Test a chain of fusible ops with a non-fusible op (a reduce) thrown in the
+  // Test a chain of fusible ops with a non-fusible op (a sort) thrown in the
   // middle.
   auto module = CreateNewVerifiedModule();
   auto builder = HloComputation::Builder(TestName());
@@ -156,33 +157,23 @@ TEST_F(CpuFusionTest, ElementwiseOpChainWithNonfusibleInstruction) {
   auto concatenate = builder.AddInstruction(
       HloInstruction::CreateConcatenate(cshape, {ceil, ceil}, /*dimension=*/0));
 
-  // Build an x+y computation to use in a reduce.
+  // Build a comparator to use in a sort.
   Shape r0f32 = ShapeUtil::MakeShape(F32, {});
-  auto embedded_builder = HloComputation::Builder("f32+f32");
-  embedded_builder.AddInstruction(HloInstruction::CreateBinary(
-      r0f32, HloOpcode::kAdd,
+  auto embedded_builder = HloComputation::Builder("f32_less_than");
+  embedded_builder.AddInstruction(HloInstruction::CreateCompare(
+      ShapeUtil::MakeShape(PRED, {}),
       embedded_builder.AddInstruction(
           HloInstruction::CreateParameter(0, r0f32, "x")),
       embedded_builder.AddInstruction(
-          HloInstruction::CreateParameter(1, r0f32, "y"))));
-  auto add_f32 = module->AddEmbeddedComputation(embedded_builder.Build());
+          HloInstruction::CreateParameter(1, r0f32, "y")),
+      ComparisonDirection::kLt));
+  auto less_than = module->AddEmbeddedComputation(embedded_builder.Build());
 
-  Window window;
-  WindowDimension* window_dimension = window.add_dimensions();
-  window_dimension->set_size(1);
-  window_dimension->set_stride(1);
-  window_dimension->set_base_dilation(1);
-  window_dimension->set_window_dilation(1);
-  // This is a nop reduction.
-  auto reduce = builder.AddInstruction(HloInstruction::CreateReduceWindow(
-      cshape, concatenate,
-      /*init_value=*/
-      builder.AddInstruction(
-          HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(0))),
-      window, add_f32));
+  auto sort = builder.AddInstruction(HloInstruction::CreateSort(
+      cshape, /*dimension=*/0, {concatenate}, less_than, /*is_stable=*/false));
 
   auto exp = builder.AddInstruction(
-      HloInstruction::CreateUnary(cshape, HloOpcode::kExp, reduce));
+      HloInstruction::CreateUnary(cshape, HloOpcode::kExp, sort));
   auto floor = builder.AddInstruction(
       HloInstruction::CreateUnary(cshape, HloOpcode::kFloor, exp));
   auto two = builder.AddInstruction(HloInstruction::CreateBroadcast(
@@ -211,7 +202,7 @@ TEST_F(CpuFusionTest, ElementwiseOpChainWithNonfusibleInstruction) {
   EXPECT_EQ(6, fusion_instruction1->fused_instruction_count())
       << fusion_instruction1->fused_instructions_computation()->ToString();
 
-  auto fusion_instruction2 = reduce->operand(0);
+  auto fusion_instruction2 = sort->operand(0);
   EXPECT_EQ(HloOpcode::kFusion, fusion_instruction1->opcode());
   EXPECT_EQ(HloOpcode::kConcatenate,
             fusion_instruction2->fused_expression_root()->opcode());
@@ -224,7 +215,7 @@ TEST_F(CpuFusionTest, ElementwiseOpChainWithNonfusibleInstruction) {
   ASSERT_OK_AND_ASSIGN(const Literal result, Execute(std::move(module), {}));
 
   // Check the output correctness.
-  LiteralTestUtil::ExpectR1Near<float>({14.0, 40.0, 40.0, 14.0, 40.0, 40.0},
+  LiteralTestUtil::ExpectR1Near<float>({14.0, 14.0, 40.0, 40.0, 40.0, 40.0},
                                        result, error_spec_);
 }
 
