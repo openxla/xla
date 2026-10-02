@@ -410,7 +410,10 @@ AsyncThunkSequence MlirKernelFusion::Emit(
   bool kernel_cached = cached;
   return future_entry.Map(
       [&fusion, thunk_info = std::move(thunk_info), args = std::move(args),
-       kernel_cached](const KernelReuseCache::Entry& entry) mutable
+       kernel_cached,
+       devices_in_process =
+           ir_emitter_context.gpu_topology().num_devices_per_process()](
+          const KernelReuseCache::Entry& entry) mutable
           -> absl::StatusOr<ThunkSequence> {
         if (kernel_cached) {
           VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry.kernel_name;
@@ -424,7 +427,8 @@ AsyncThunkSequence MlirKernelFusion::Emit(
                 entry.shmem_bytes));
 
         return ThunkSequence::Of<CustomKernelThunk>(
-            thunk_info, std::move(custom_kernel), args, entry.use_pdl);
+            thunk_info, std::move(custom_kernel), args, devices_in_process,
+            entry.use_pdl);
       });
 }
 
