@@ -1845,6 +1845,11 @@ int64_t BufferAssigner::GetMemoryLimit(const BufferAssignment& assignment,
   return assignment.module().config().device_memory_size();
 }
 
+bool BufferAssigner::SupportsFastAssignment(LogicalBuffer::Color color) const {
+  return !opts_.supports_fast_assignment ||
+         opts_.supports_fast_assignment(color);
+}
+
 /* static */
 absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
     const HloModule* module, std::unique_ptr<HloOrdering> hlo_ordering,
@@ -2399,7 +2404,7 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
         buffer_assignment::
             AssignmentAlgorithmForComputationsWithoutOrderingProto::
                 FAST_MERGE) {
-      if (GetMemoryLimit(*assignment, color) > 0) {
+      if (SupportsFastAssignment(color)) {
         return &fast_manager;
       }
     }
@@ -2806,8 +2811,10 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     buffer_assignment::BufferAssignmentAlgorithmProto::Value algo_to_use =
         buffer_assignment_algorithm;
     if (algo_to_use ==
-        buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE) {
-      if (GetMemoryLimit(*assignment, color) == 0) {
+            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE ||
+        algo_to_use ==
+            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT) {
+      if (!SupportsFastAssignment(color)) {
         algo_to_use =
             buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
       }
