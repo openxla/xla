@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -35,37 +37,59 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
 using Offset = DynamicSliceFusion::Offset;
 
+// Single-element arrays (e.g. `s32[1]`) are treated as scalars in offset
+// expressions, because reshapes and bitcasts between them are no-ops.
 static bool IsScalarInteger(const Shape& shape) {
-  return ShapeUtil::IsScalar(shape) &&
+  return ShapeUtil::IsEffectiveScalar(shape) &&
          primitive_util::IsIntegralType(shape.element_type());
 }
 
 static bool IsScalarIntegerOrPred(const Shape& shape) {
   return IsScalarInteger(shape) ||
-         ShapeUtil::IsScalarWithElementType(shape, PRED);
+         (ShapeUtil::IsEffectiveScalar(shape) && shape.element_type() == PRED);
 }
 
 bool Offset::IsExpr(const HloInstruction* instr) {
   switch (instr->opcode()) {
     case HloOpcode::kParameter:
     case HloOpcode::kConstant:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kReshape:
       return IsScalarIntegerOrPred(instr->shape());
     case HloOpcode::kAdd:
     case HloOpcode::kSubtract:
     case HloOpcode::kMultiply:
       return IsScalarInteger(instr->shape());
+    case HloOpcode::kDivide:
+    case HloOpcode::kRemainder:
+    case HloOpcode::kMinimum:
+    case HloOpcode::kMaximum:
+    case HloOpcode::kClamp:
+      // TODO(ezhulenev): Remove the flag check once the runtime support is
+      // outside of the GPU forward compatibility window.
+      return IsScalarInteger(instr->shape()) && instr->GetModule() &&
+             instr->GetModule()
+                 ->config()
+                 .debug_options()
+                 .xla_gpu_experimental_enable_dynamic_slice_extended_offsets();
+    case HloOpcode::kConvert:
+      return IsScalarInteger(instr->shape()) &&
+             IsScalarIntegerOrPred(instr->operand(0)->shape());
     case HloOpcode::kCompare:
       return IsScalarInteger(instr->operand(0)->shape()) &&
              IsScalarInteger(instr->operand(1)->shape());
@@ -94,6 +118,22 @@ Offset::Expr Offset::Subtract(Offset::Expr lhs, Offset::Expr rhs) {
 
 Offset::Expr Offset::Multiply(Offset::Expr lhs, Offset::Expr rhs) {
   return {Offset::Expr::Multiply{{std::move(lhs), std::move(rhs)}}};
+}
+
+Offset::Expr Offset::Divide(Offset::Expr lhs, Offset::Expr rhs) {
+  return {Offset::Expr::Divide{{std::move(lhs), std::move(rhs)}}};
+}
+
+Offset::Expr Offset::Remainder(Offset::Expr lhs, Offset::Expr rhs) {
+  return {Offset::Expr::Remainder{{std::move(lhs), std::move(rhs)}}};
+}
+
+Offset::Expr Offset::Minimum(Offset::Expr lhs, Offset::Expr rhs) {
+  return {Offset::Expr::Minimum{{std::move(lhs), std::move(rhs)}}};
+}
+
+Offset::Expr Offset::Maximum(Offset::Expr lhs, Offset::Expr rhs) {
+  return {Offset::Expr::Maximum{{std::move(lhs), std::move(rhs)}}};
 }
 
 Offset::Expr Offset::Compare(ComparisonDirection direction, Offset::Expr lhs,
@@ -151,7 +191,7 @@ static const HloInstruction* WalkThroughBitcasts(const HloInstruction* instr) {
 
 static absl::StatusOr<int64_t> GetScalarIntegerLiteral(
     const HloConstantInstruction* constant) {
-  if (!ShapeUtil::IsScalar(constant->shape())) {
+  if (!ShapeUtil::IsEffectiveScalar(constant->shape())) {
     return Internal(
         "DynamicSliceFusion: expected scalar offset constant, got %s",
         constant->ToString());
@@ -208,6 +248,38 @@ static absl::StatusOr<Offset::Expr> BuildOffsetExpr(
       ABSL_ASSIGN_OR_RETURN(auto rhs, BuildOffsetExpr(instr->operand(1)));
       return Offset::Multiply(std::move(lhs), std::move(rhs));
     }
+    case HloOpcode::kDivide: {
+      ABSL_ASSIGN_OR_RETURN(auto lhs, BuildOffsetExpr(instr->operand(0)));
+      ABSL_ASSIGN_OR_RETURN(auto rhs, BuildOffsetExpr(instr->operand(1)));
+      return Offset::Divide(std::move(lhs), std::move(rhs));
+    }
+    case HloOpcode::kRemainder: {
+      ABSL_ASSIGN_OR_RETURN(auto lhs, BuildOffsetExpr(instr->operand(0)));
+      ABSL_ASSIGN_OR_RETURN(auto rhs, BuildOffsetExpr(instr->operand(1)));
+      return Offset::Remainder(std::move(lhs), std::move(rhs));
+    }
+    case HloOpcode::kMinimum: {
+      ABSL_ASSIGN_OR_RETURN(auto lhs, BuildOffsetExpr(instr->operand(0)));
+      ABSL_ASSIGN_OR_RETURN(auto rhs, BuildOffsetExpr(instr->operand(1)));
+      return Offset::Minimum(std::move(lhs), std::move(rhs));
+    }
+    case HloOpcode::kMaximum: {
+      ABSL_ASSIGN_OR_RETURN(auto lhs, BuildOffsetExpr(instr->operand(0)));
+      ABSL_ASSIGN_OR_RETURN(auto rhs, BuildOffsetExpr(instr->operand(1)));
+      return Offset::Maximum(std::move(lhs), std::move(rhs));
+    }
+    case HloOpcode::kClamp: {
+      // clamp(lo, x, hi) = min(max(x, lo), hi)
+      ABSL_ASSIGN_OR_RETURN(auto lo, BuildOffsetExpr(instr->operand(0)));
+      ABSL_ASSIGN_OR_RETURN(auto x, BuildOffsetExpr(instr->operand(1)));
+      ABSL_ASSIGN_OR_RETURN(auto hi, BuildOffsetExpr(instr->operand(2)));
+      return Offset::Minimum(Offset::Maximum(std::move(x), std::move(lo)),
+                             std::move(hi));
+    }
+    case HloOpcode::kConvert:
+      // Offset expressions are evaluated in int64_t, so integer converts are
+      // no-ops (assuming offsets do not overflow the narrower type).
+      return BuildOffsetExpr(instr->operand(0));
     case HloOpcode::kCompare: {
       auto* compare = Cast<HloCompareInstruction>(instr);
       ABSL_ASSIGN_OR_RETURN(auto lhs, BuildOffsetExpr(compare->operand(0)));
@@ -274,6 +346,29 @@ static absl::Span<const Offset::Expr> GetArgs(const Offset::Expr& expr) {
       expr.value);
 }
 
+// Evaluates HLO integer division and remainder. Division by zero and signed
+// overflow follow HLO semantics: `x / 0 = -1`, `x % 0 = x`,
+// `INT_MIN / -1 = INT_MIN` and `INT_MIN % -1 = 0`.
+static int64_t EvaluateDivide(int64_t lhs, int64_t rhs) {
+  if (rhs == 0) {
+    return -1;
+  }
+  if (lhs == std::numeric_limits<int64_t>::min() && rhs == -1) {
+    return lhs;
+  }
+  return lhs / rhs;
+}
+
+static int64_t EvaluateRemainder(int64_t lhs, int64_t rhs) {
+  if (rhs == 0) {
+    return lhs;
+  }
+  if (lhs == std::numeric_limits<int64_t>::min() && rhs == -1) {
+    return 0;
+  }
+  return lhs % rhs;
+}
+
 absl::StatusOr<int64_t> DynamicSliceFusion::Evaluate(
     const Offset::Expr& expr,
     absl::Span<const std::pair<int64_t, int64_t>> parameters) {
@@ -318,6 +413,26 @@ absl::StatusOr<int64_t> DynamicSliceFusion::Evaluate(
           ABSL_ASSIGN_OR_RETURN(int64_t lhs, Evaluate(e.args[0], parameters));
           ABSL_ASSIGN_OR_RETURN(int64_t rhs, Evaluate(e.args[1], parameters));
           return lhs * rhs;
+        } else if constexpr (std::is_same_v<T, Offset::Expr::Divide>) {
+          ABSL_RETURN_IF_ERROR(VerifyArgCount(expr, e.args, 2));
+          ABSL_ASSIGN_OR_RETURN(int64_t lhs, Evaluate(e.args[0], parameters));
+          ABSL_ASSIGN_OR_RETURN(int64_t rhs, Evaluate(e.args[1], parameters));
+          return EvaluateDivide(lhs, rhs);
+        } else if constexpr (std::is_same_v<T, Offset::Expr::Remainder>) {
+          ABSL_RETURN_IF_ERROR(VerifyArgCount(expr, e.args, 2));
+          ABSL_ASSIGN_OR_RETURN(int64_t lhs, Evaluate(e.args[0], parameters));
+          ABSL_ASSIGN_OR_RETURN(int64_t rhs, Evaluate(e.args[1], parameters));
+          return EvaluateRemainder(lhs, rhs);
+        } else if constexpr (std::is_same_v<T, Offset::Expr::Minimum>) {
+          ABSL_RETURN_IF_ERROR(VerifyArgCount(expr, e.args, 2));
+          ABSL_ASSIGN_OR_RETURN(int64_t lhs, Evaluate(e.args[0], parameters));
+          ABSL_ASSIGN_OR_RETURN(int64_t rhs, Evaluate(e.args[1], parameters));
+          return std::min(lhs, rhs);
+        } else if constexpr (std::is_same_v<T, Offset::Expr::Maximum>) {
+          ABSL_RETURN_IF_ERROR(VerifyArgCount(expr, e.args, 2));
+          ABSL_ASSIGN_OR_RETURN(int64_t lhs, Evaluate(e.args[0], parameters));
+          ABSL_ASSIGN_OR_RETURN(int64_t rhs, Evaluate(e.args[1], parameters));
+          return std::max(lhs, rhs);
         } else if constexpr (std::is_same_v<T, Offset::Expr::Compare>) {
           ABSL_RETURN_IF_ERROR(VerifyArgCount(expr, e.args, 2));
           ABSL_ASSIGN_OR_RETURN(int64_t lhs, Evaluate(e.args[0], parameters));
@@ -410,16 +525,14 @@ static std::optional<DynamicSliceConfig> ComputeStaticSliceConfig(
   return config;
 }
 
-// Resolves per-dimension offset info for a DS/DUS. Returns one expression per
-// dimension.
-static absl::StatusOr<std::vector<Offset>> ResolveOffsets(
-    const HloInstruction* instr, int32_t first_offset_index) {
+absl::StatusOr<std::vector<Offset>> DynamicSliceFusion::ResolveOffsets(
+    const HloDynamicIndexInstruction* instr) {
+  absl::Span<HloInstruction* const> index_operands = instr->index_operands();
   std::vector<Offset> offsets;
-  offsets.reserve(instr->operand_count() - first_offset_index);
-  for (int64_t i = first_offset_index; i < instr->operand_count(); ++i) {
-    int64_t dim = i - first_offset_index;
+  offsets.reserve(index_operands.size());
+  for (int64_t dim = 0; dim < index_operands.size(); ++dim) {
     ABSL_ASSIGN_OR_RETURN(Offset::Expr expr,
-                          BuildOffsetExpr(instr->operand(i)));
+                          BuildOffsetExpr(index_operands[dim]));
     offsets.push_back(Offset{dim, std::move(expr)});
   }
   return offsets;
@@ -453,7 +566,7 @@ ResolveOneResultChain(const HloInstruction* start, const Shape& hero_shape,
         target->ToString());
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto offsets, ResolveOffsets(dus, 2));
+  ABSL_ASSIGN_OR_RETURN(auto offsets, DynamicSliceFusion::ResolveOffsets(dus));
 
   return DynamicSliceFusion::Result{
       std::optional<int64_t>(target_param->parameter_number()),
@@ -500,7 +613,7 @@ DynamicSliceFusion::ResolveParameter(const HloInstruction* operand) {
 
   if (auto* ds = DynCast<HloDynamicSliceInstruction>(walk)) {
     config = ExtractDynamicSliceConfig(ds);
-    ABSL_ASSIGN_OR_RETURN(offsets, ResolveOffsets(ds, 1));
+    ABSL_ASSIGN_OR_RETURN(offsets, ResolveOffsets(ds));
     slice_shape = ds->shape();
     source = ds->operand(0);
   } else if (auto* slice = DynCast<HloSliceInstruction>(walk)) {

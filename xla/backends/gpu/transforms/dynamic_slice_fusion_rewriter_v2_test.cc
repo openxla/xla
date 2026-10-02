@@ -1469,13 +1469,14 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
 
   const char* expected = R"(
     ; CHECK:     %dynamic-slice-fusion{{.*}} {
+    ; CHECK:       {{.*}} = s32[] reshape(
     ; CHECK:       [[OFFSET:%[^ ]+]] = s32[] add(
     ; CHECK:       {{.*}} dynamic-slice({{.*}}, [[OFFSET]],
     ; CHECK:       ROOT {{.*}} custom-call(
     ; CHECK:              custom_call_target="fake_target"
     ; CHECK:     }
     ; CHECK:     ENTRY %main{{.*}} {
-    ; CHECK:       ROOT {{.*}} fusion(%input, %index_scalar),
+    ; CHECK:       ROOT {{.*}} fusion(%input, %index_slice),
     ; CHECK:              kind=kCustom
     ; CHECK:              "name":"dynamic_slice_fusion"
     ; CHECK:     }
@@ -1493,7 +1494,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
     const HloComputation* body = FindDsfBody(module);
     ASSERT_NE(body, nullptr);
     EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kDynamicSlice), 1);
-    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kReshape), 0);
+    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kReshape), 1);
     EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kAdd), 1);
 
     auto* hero = DynamicSliceFusion::FindHero(body);
@@ -1520,7 +1521,8 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
       input = f32[8,8,8] parameter(0)
       ivar = s32[] parameter(1)
       c0 = s32[] constant(0)
-      offset = s32[] maximum(ivar, c0)
+      c7 = s32[] constant(7)
+      offset = s32[] and(ivar, c7)
       ds = f32[1,8,8] dynamic-slice(input, offset, c0, c0),
           dynamic_slice_sizes={1,8,8},
           backend_config={"dynamic_slice_config":{
@@ -1554,7 +1556,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
   auto fusion_checks = [&](HloModule* module) {
     const HloComputation* body = FindDsfBody(module);
     ASSERT_NE(body, nullptr);
-    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kMaximum), 0);
+    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kAnd), 0);
 
     auto* hero = DynamicSliceFusion::FindHero(body);
 
