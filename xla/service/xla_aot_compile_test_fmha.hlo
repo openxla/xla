@@ -1,0 +1,10 @@
+HloModule xla_aot_compile_test_fmha
+
+ENTRY main {
+  Arg_0.1 = bf16[1,2,128,64]{3,2,1,0} parameter(0)
+  Arg_1.2 = bf16[1,2,64,128]{3,2,1,0} parameter(1)
+  transpose = bf16[1,2,128,64]{3,2,1,0} transpose(Arg_1.2), dimensions={0,1,3,2}
+  Arg_2.3 = bf16[1,2,128,64]{3,2,1,0} parameter(2)
+  fmha-bmm-softmax-bmm = (bf16[1,2,128,64]{3,2,1,0}, u8[0]{0}) custom-call(Arg_0.1, transpose, Arg_2.3), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[1,2,128,64]{3,2,1,0}, bf16[1,2,128,64]{3,2,1,0}, bf16[1,2,128,64]{3,2,1,0}}, backend_config={"cudnn_fmha_backend_config":{"algorithm":{"algo_id":"0","math_type":"TENSOR_OP_MATH","tuning_knobs":{"17":"1","24":"0"},"workspace_size":"0"},"fmha_scale":2.0,"dropout_rate":0.0,"bmm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"intermediate_tensor_shape":{"element_type":"BF16","dimensions":["1","2","128","128"],"tuple_shapes":[],"layout":{"dim_level_types":[],"dim_unique":[],"dim_ordered":[],"minor_to_major":["3","2","1","0"],"tiles":[],"tail_padding_alignment_in_elements":"1","element_size_in_bits":"0","memory_space":"0","index_primitive_type":"PRIMITIVE_TYPE_INVALID","pointer_primitive_type":"PRIMITIVE_TYPE_INVALID","dynamic_shape_metadata_prefix_bytes":"0","split_configs":[]},"is_dynamic_dimension":[false,false,false,false]},"seed":"42","is_flash_attention":false,"is_causal_mask":false,"mask_type":"CAUSAL"}}
+  ROOT get-tuple-element = bf16[1,2,128,64]{3,2,1,0} get-tuple-element(fmha-bmm-softmax-bmm), index=0
+}
