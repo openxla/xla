@@ -3,8 +3,8 @@
 build:rocm_dev --remote_upload_local_results=false
 build:rocm_dev --remote_cache="grpcs://wardite.cluster.engflow.com"
 
-common:rocm --test_verbose_timeout_warnings
-common:rocm --test_timeout=920,2400,7200,9600
+common:rocm_base --test_verbose_timeout_warnings
+common:rocm_base --test_timeout=920,2400,7200,9600
 
 build:rocm_rbe --remote_cache="grpcs://wardite.cluster.engflow.com"
 build:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
