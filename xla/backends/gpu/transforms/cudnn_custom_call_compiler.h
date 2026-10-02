@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {
@@ -31,10 +32,10 @@ namespace gpu {
 // Also adjust them in HLO to have correct workspace size.
 class CuDnnCustomCallCompiler : public HloModulePass {
  public:
-  explicit CuDnnCustomCallCompiler(se::dnn::DnnSupport* dnn_support,
+  explicit CuDnnCustomCallCompiler(se::StreamExecutor* stream_exec,
                                    const se::DeviceDescription& gpu_device_info,
                                    BinaryMap& compilation_results)
-      : dnn_support_(dnn_support),
+      : stream_exec_(stream_exec),
         gpu_device_info_(gpu_device_info),
         compilation_results_(compilation_results) {}
 
@@ -48,7 +49,7 @@ class CuDnnCustomCallCompiler : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  se::dnn::DnnSupport* dnn_support_;
+  se::StreamExecutor* stream_exec_;
   const se::DeviceDescription& gpu_device_info_;
   BinaryMap& compilation_results_;
 };
