@@ -75,15 +75,19 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/layout_util.h"
 #include "xla/mlir/utils/type_util.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -1306,19 +1310,49 @@ mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
   return AllReduceEmitter::Emit(maybe_context.value(), rewriter);
 }
 
+absl::StatusOr<SymmetricMemoryType> GetSymmetricMemoryType(
+    const GpuTopology& gpu_topology, const HloInstruction& instr,
+    const DeviceAssignment* device_assignment) {
+  const HloInstruction* collective = &instr;
+  if (instr.opcode() == HloOpcode::kFusion) {
+    collective = instr.fused_instructions_computation()->root_instruction();
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      const bool is_collective_single_host,
+      IsCollectiveSingleHost(gpu_topology, *collective, device_assignment));
+  ABSL_ASSIGN_OR_RETURN(const bool is_cross_host_possible,
+                        IsCrossHostCollectiveKernelPossible(
+                            gpu_topology, *collective, device_assignment));
+  const bool is_lsa_possible = IsLsaPossible(gpu_topology);
+
+  if (!is_collective_single_host) {
+    if (is_cross_host_possible && is_lsa_possible) {
+      return SymmetricMemoryType::kLoadStoreAccessible;
+    }
+    return absl::UnimplementedError(
+        "Cross-host symmetric memory collectives are not supported.");
+  }
+  return is_lsa_possible ? SymmetricMemoryType::kLoadStoreAccessible
+                         : SymmetricMemoryType::kXlaRendezvous;
+}
+
 absl::StatusOr<CollectiveKernelSpec> CreateCollectiveKernelSpec(
-    const HloInstruction* instr, const LaunchDimensions& launch_dimensions) {
+    const HloInstruction* instr, const LaunchDimensions& launch_dimensions,
+    SymmetricMemoryType scratch_memory_type) {
   const HloInstruction* collective = instr;
   if (instr->opcode() == HloOpcode::kFusion) {
     collective = instr->fused_instructions_computation()->root_instruction();
   }
   switch (collective->opcode()) {
     case HloOpcode::kAllReduce:
-      return CreateAllReduceKernelSpec(collective, launch_dimensions);
+      return CreateAllReduceKernelSpec(collective, launch_dimensions,
+                                       scratch_memory_type);
     case HloOpcode::kAllGather:
-      return CreateAllGatherKernelSpec(collective, launch_dimensions);
+      return CreateAllGatherKernelSpec(collective, launch_dimensions,
+                                       scratch_memory_type);
     case HloOpcode::kReduceScatter:
-      return CreateReduceScatterKernelSpec(collective, launch_dimensions);
+      return CreateReduceScatterKernelSpec(collective, launch_dimensions,
+                                           scratch_memory_type);
     default:
       return absl::UnimplementedError(
           absl::StrFormat("CollectiveKernelSpec creation not implemented for "
