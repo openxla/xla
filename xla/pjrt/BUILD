@@ -942,7 +942,6 @@ cc_library(
     name = "transpose_kernels",
     hdrs = ["transpose_kernels.h"],
     deps = [
-        "//xla:compiler_macros",
         "@highway//:hwy",
     ],
 )
