@@ -887,21 +887,29 @@ class TensorContractionSubMapper<
 
     // Check row bounds.
     const Index first_row = -m_base_mapper.m_rowPaddingTop;
-    if (first_row < 0 || first_row >= m_base_mapper.m_inputRows) return true;
+    if (first_row < 0 || first_row >= m_base_mapper.m_inputRows) {
+      return true;
+    }
 
     const Index last_row =
         (m_base_mapper.m_outputRows - 1) * m_base_mapper.m_row_strides -
         m_base_mapper.m_rowPaddingTop + (patchRows() - 1);
-    if (last_row < 0 || last_row >= m_base_mapper.m_inputRows) return true;
+    if (last_row < 0 || last_row >= m_base_mapper.m_inputRows) {
+      return true;
+    }
 
     // Check col bounds.
     const Index first_col = -m_base_mapper.m_colPaddingLeft;
-    if (first_col < 0 || first_col >= m_base_mapper.m_inputCols) return true;
+    if (first_col < 0 || first_col >= m_base_mapper.m_inputCols) {
+      return true;
+    }
 
     const Index last_col =
         (m_base_mapper.m_outputCols - 1) * m_base_mapper.m_col_strides -
         m_base_mapper.m_colPaddingLeft + (patchCols() - 1);
-    if (last_col < 0 || last_col >= m_base_mapper.m_inputCols) return true;
+    if (last_col < 0 || last_col >= m_base_mapper.m_inputCols) {
+      return true;
+    }
 
     return false;
   }
