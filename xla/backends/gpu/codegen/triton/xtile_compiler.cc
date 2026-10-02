@@ -82,6 +82,7 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/triton/collective_emitter.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
@@ -448,14 +449,6 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
           absl::MakeSpan(opaque_args_types), mlir_context,
           use_experimental_tiling, enable_same_shape_multi_output_fusion));
 
-  if (fusion_kind == kTritonCollectiveFusionKind &&
-      CreateCollectiveCodegenConfig(&fusion).emit_entry_barrier) {
-    const HloInstruction* root = hlo_computation->root_instruction();
-    int32_t world_size = root->replica_groups()[0].replica_ids_size();
-    ABSL_RETURN_IF_ERROR(
-        EmitCollectiveEntryBarrier(triton_module.get(), world_size));
-  }
-
   if (DumpingEnabledForHloModule(*hlo_computation->parent()) &&
       DumpingEnabledForEmitter("triton-fusion", debug_options)) {
     auto suffix = absl::StrCat(fusion.name(), ".before_validation.ttir.txt");
@@ -535,9 +528,9 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 
   bool should_verify =
       (hlo_config.debug_options().xla_gpu_llvm_verification_level() >= 1);
-#ifndef NDEBUG
-  should_verify = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    should_verify = true;
+  }
 
   mlir_context.printOpOnDiagnostic(should_verify || VLOG_IS_ON(5));
   std::optional<mlir::ScopedDiagnosticHandler> diag_handler;

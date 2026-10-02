@@ -94,7 +94,6 @@ xla_cc_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
@@ -143,7 +142,6 @@ xla_cc_test(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor/gpu:tma_metadata",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:ArithDialect",
@@ -341,6 +339,7 @@ cc_library(
         "@stablehlo//:stablehlo_ops",
         "@triton//:TritonDialects",
         "@triton//:TritonTransforms",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
     ],
 )
@@ -380,7 +379,6 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_interpreter_reference_mixin",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:test",
@@ -445,7 +443,6 @@ xla_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -609,8 +606,9 @@ cc_library(
 
 xla_cc_test(
     name = "support_test",
+    timeout = "long",  # TODO: b/514293537 - remove after disabling symbolic analysis.
     srcs = ["support_test.cc"],
-    shard_count = 50,  # TODO: b/514293537 - change to 25 after disabling symblic analysis.
+    shard_count = 50,  # TODO: b/514293537 - change to 25 after disabling symbolic analysis.
     deps = [
         ":support",
         ":support_test_base",
@@ -630,7 +628,6 @@ xla_cc_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -677,11 +674,10 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests:hlo_pjrt_test_base",
-        "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
@@ -765,6 +761,7 @@ cc_library(
         "//xla/backends/gpu/runtime:all_gather",
         "//xla/backends/gpu/runtime:all_reduce",
         "//xla/backends/gpu/runtime:collective_params",
+        "//xla/backends/gpu/runtime:reduce_scatter",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/xtile:xtile_config_proto_cc",
@@ -882,7 +879,6 @@ xla_cc_test(
         ":tma_utils",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/stream_executor/gpu:tma_metadata",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",

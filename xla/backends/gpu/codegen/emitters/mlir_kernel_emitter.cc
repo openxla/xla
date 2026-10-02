@@ -82,6 +82,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
@@ -671,9 +672,9 @@ absl::StatusOr<LlvmKernelSource> CompileMlirToLlvm(
   bool should_verify =
       (hlo_module.config().debug_options().xla_gpu_llvm_verification_level() >=
        1);
-#ifndef NDEBUG
-  should_verify = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    should_verify = true;
+  }
   pm.enableVerifier(should_verify);
 
   emitters::RegisterOptimizationPasses(pm);
