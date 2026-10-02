@@ -21,11 +21,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
-#include "tsl/platform/str_util.h"
 #include "xla/primitive_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/env_var.h"
+#include "tsl/platform/str_util.h"
 
 namespace stream_executor {
 namespace sycl {
@@ -101,6 +101,27 @@ absl::StatusOr<dnnl::memory::data_type> ToOneDnnDataType(
       return absl::InvalidArgumentError(absl::StrCat(
           "Unsupported element type: ",
           xla::primitive_util::LowercasePrimitiveTypeName(xla_type)));
+  }
+}
+
+absl::StatusOr<dnnl::memory::data_type> ToOneDnnDataType(
+    dnn::DataType dnn_type) {
+  switch (dnn_type) {
+    case dnn::DataType::kHalf:
+      return dnnl::memory::data_type::f16;
+    case dnn::DataType::kBF16:
+      return dnnl::memory::data_type::bf16;
+    case dnn::DataType::kFloat:
+      return dnnl::memory::data_type::f32;
+    case dnn::DataType::kDouble:
+      return dnnl::memory::data_type::f64;
+    case dnn::DataType::kInt8:
+      return dnnl::memory::data_type::s8;
+    case dnn::DataType::kInt32:
+      return dnnl::memory::data_type::s32;
+    default:
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Unsupported DNN datatype: ", static_cast<int>(dnn_type)));
   }
 }
 
