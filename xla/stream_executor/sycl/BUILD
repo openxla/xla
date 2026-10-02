@@ -101,7 +101,7 @@ cc_library(
     copts = tsl_copts(),
     visibility = ["//visibility:public"],
     deps = if_sycl_is_configured([
-        ":cub_sort_kernel_sycl_impl",
+        ":cub_sort_kernel_sycl",
         ":sycl_platform",
         ":sycl_blas_lt_plugin",
         ":sycl_dnn",
@@ -708,6 +708,11 @@ sycl_library(
     name = "cub_sort_kernel_sycl_impl",
     srcs = ["cub_sort_kernel_sycl_impl.dp.cpp"],
     hdrs = ["cub_sort_kernel_sycl.h"],
+    # oneDPL enables its bfloat16 radix sort support only when the compiler
+    # advertises SYCL_EXT_ONEAPI_BFLOAT16, which older DPC++ releases (e.g.
+    # 2025.1) do not do. TODO(intel-tf) Remove this once we upgrade to 2026.0."
+    # ::sycl::ext::oneapi::bfloat16.
+    copts = ["-DSYCL_EXT_ONEAPI_BFLOAT16=1"],
     tags = [
         "gpu",
         "oneapi-only",
@@ -716,7 +721,35 @@ sycl_library(
         "//xla:status_macros",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
-        "@onedpl",
+        "@com_google_absl//absl/strings",
+        "@onedpl//:onedpl",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "cub_sort_kernel_sycl",
+    srcs = ["cub_sort_kernel_sycl.cc"],
+    hdrs = ["cub_sort_kernel_sycl.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cub_sort_kernel_sycl_impl",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu:ffi",
+        "//xla/ffi",
+        "//xla/ffi:ffi_api",
+        "//xla/service/gpu:cublas_cudnn",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ] + if_sycl_is_configured([
+        "@local_config_sycl//sycl:sycl_headers",
+    ]),
+    alwayslink = True,
 )
