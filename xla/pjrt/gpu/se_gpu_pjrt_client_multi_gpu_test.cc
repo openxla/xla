@@ -406,7 +406,7 @@ TEST(StreamExecutorGpuClientTest,
                 absl::down_cast<CommonPjRtClient*>(client.get())->raw_client())
                 ->gpu_run_options();
         if (run_options == nullptr ||
-            run_options->execution_timeout_handlers().size() != 1) {
+            run_options->execution_timeout_handlers().size() != 2) {
           statuses[i] = absl::InternalError(
               "execution timeout handler not configured when "
               "abort_collectives_timeout is set");
@@ -441,11 +441,14 @@ TEST(StreamExecutorGpuClientTest, AbortCollectivesTimeout) {
 
   std::vector<gpu::ExecutionTimeoutHandler> handlers =
       run_options->execution_timeout_handlers();
-  ASSERT_EQ(handlers.size(), 1);
-  EXPECT_EQ(handlers[0].scope, gpu::ExecutionTimeoutHandler::Scope::kDevice);
-  EXPECT_EQ(handlers[0].timeout, absl::Seconds(30));
+  ASSERT_EQ(handlers.size(), 2);
+  EXPECT_EQ(handlers[0].scope, gpu::ExecutionTimeoutHandler::Scope::kHost);
+  EXPECT_EQ(handlers[1].scope, gpu::ExecutionTimeoutHandler::Scope::kDevice);
 
-  std::move(handlers[0].callback)("test execution timeout", absl::Seconds(30));
+  for (gpu::ExecutionTimeoutHandler& handler : handlers) {
+    EXPECT_EQ(handler.timeout, absl::Seconds(30));
+    std::move(handler.callback)("test execution timeout", absl::Seconds(30));
+  }
 }
 
 TEST(StreamExecutorGpuClientTest, GetAllocatorStatsTest) {

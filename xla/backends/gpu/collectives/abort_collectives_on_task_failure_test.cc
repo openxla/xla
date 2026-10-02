@@ -13,20 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -233,6 +234,48 @@ TEST(AbortCollectivesOnTaskFailureTest, AbortsAcquiredGpuCliqueOnTaskFailure) {
     EXPECT_THAT(reacquire[i].Await().status(),
                 StatusIs(absl::StatusCode::kFailedPrecondition));
   }
+}
+
+// A clique that is still being initialized is not in the process cliques
+// cache yet. AbortAllCliques must cancel its initialization through the pending
+// cancellation token.
+TEST(AbortCollectivesOnTaskFailureTest, AbortAllCliquesCancelsPendingClique) {
+  auto cleanup = absl::MakeCleanup([] { internal::DestroyAcquiredCliques(); });
+
+  ASSERT_OK_AND_ASSIGN(auto platform_name,
+                       xla::PlatformUtil::CanonicalPlatformName("gpu"));
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       se::PlatformManager::PlatformWithName(
+                           absl::AsciiStrToUpper(platform_name)));
+  if (platform->VisibleDeviceCount() < 2) {
+    GTEST_SKIP() << "Test requires at least 2 GPUs";
+  }
+
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "abort-collectives", 1);
+
+  // Only rank 0 joins a clique of two ranks, so its initialization never
+  // completes on its own.
+  GpuCliqueKey key({kD0, kD1}, /*num_local_participants=*/1);
+  std::vector<std::vector<GlobalDeviceId>> groups = {{kD0, kD1}};
+
+  ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
+                       CreateExecutors(platform, 1));
+  AcquiredCliquesMap acquired_cliques;
+
+  GpuCollectives* collectives = GpuCollectives::Default("GPU");
+  auto future = MakeFutureOn(*pool.AsExecutor(), [&] {
+    return AcquireClique(collectives, executors[0], RunId(0), key, groups,
+                         DefaultCliqueId(), RankId(0), acquired_cliques);
+  });
+
+  // We don't know when the initialization becomes pending, so keep aborting
+  // until it gets cancelled.
+  while (!future.IsReady()) {
+    ASSERT_OK(AbortAllCliques());
+    absl::SleepFor(absl::Milliseconds(100));
+  }
+
+  EXPECT_THAT(future.Await().status(), StatusIs(absl::StatusCode::kCancelled));
 }
 
 }  // namespace

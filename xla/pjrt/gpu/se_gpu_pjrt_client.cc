@@ -1926,10 +1926,10 @@ StreamExecutorGpuHbmMemorySpace::StreamExecutorGpuHbmMemorySpace(
     int id, PjRtDevice* device)
     : PjRtStreamExecutorMemorySpace(id, device, kKind, kKindId) {}
 
-// Returns an execution timeout handler that aborts local collectives if device
-// work does not complete within `abort_timeout`.
+// Returns an execution timeout handler that aborts local collectives if work in
+// the given `scope` does not complete within `abort_timeout`.
 static gpu::ExecutionTimeoutHandler AbortCollectivesOnTimeout(
-    absl::Duration abort_timeout) {
+    gpu::ExecutionTimeoutHandler::Scope scope, absl::Duration abort_timeout) {
   auto abort = [](absl::string_view action, absl::Duration timeout) {
     if (auto s = gpu::AbortAllCliques(); !s.ok()) {
       LOG(WARNING) << absl::StreamFormat(
@@ -1937,8 +1937,7 @@ static gpu::ExecutionTimeoutHandler AbortCollectivesOnTimeout(
           action, timeout, s);
     }
   };
-  return {gpu::ExecutionTimeoutHandler::Scope::kDevice, abort_timeout,
-          std::move(abort)};
+  return {scope, abort_timeout, std::move(abort)};
 }
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
@@ -2043,7 +2042,10 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     gpu_run_options->set_execution_timeout_handlers(
         [abort_timeout = options.abort_collectives_timeout] {
           std::vector<gpu::ExecutionTimeoutHandler> handlers;
-          handlers.push_back(AbortCollectivesOnTimeout(abort_timeout));
+          handlers.push_back(AbortCollectivesOnTimeout(
+              gpu::ExecutionTimeoutHandler::Scope::kHost, abort_timeout));
+          handlers.push_back(AbortCollectivesOnTimeout(
+              gpu::ExecutionTimeoutHandler::Scope::kDevice, abort_timeout));
           return handlers;
         });
   }

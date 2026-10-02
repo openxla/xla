@@ -103,8 +103,9 @@ absl::Status CheckCliqueIsNotStale(const GpuCliqueKey& clique_key);
 absl::Status UpdateGlobalProcessInfo(
     absl::Span<xla::coordination::TaskInfo> infos);
 
-// Aborts all GPU cliques acquired by the process. Concurrent calls don't wait
-// for the abort in progress and return immediately.
+// Aborts all GPU cliques acquired by the process and cancels pending clique
+// initializations. Concurrent calls don't wait for the abort in progress and
+// return immediately.
 absl::Status AbortAllCliques();
 
 // Marks `failed_task_id` as failed in the global task state and aborts all

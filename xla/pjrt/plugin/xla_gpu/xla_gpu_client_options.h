@@ -59,13 +59,15 @@ struct GpuClientOptions {
   // that a task failed or restarted with a new incarnation.
   bool abort_collectives_on_failure = false;
 
-  // If device work enqueued by an XLA:GPU execution does not complete within
-  // this timeout, the client aborts all local collectives. Task failure is
-  // detected and reported by the coordination service (e.g. missed heartbeats).
+  // If host execution or device work enqueued by an XLA:GPU execution does not
+  // complete within this timeout, the client aborts all local collectives. Task
+  // failure is detected and reported by the coordination service (e.g. missed
+  // heartbeats).
   //
-  // Can be used together with `xla_gpu_device_execution_terminate_timeout`.
-  // Timeouts must be far apart (e.g. abort at 5 minutes and terminate at 10
-  // minutes) to give NCCL time to abort collectives and the client to recover.
+  // Can be used together with `xla_gpu_execution_terminate_timeout` and
+  // `xla_gpu_device_execution_terminate_timeout`. Timeouts must be far apart
+  // (e.g. abort at 5 minutes and terminate at 10 minutes) to give NCCL time to
+  // abort collectives and the client to recover.
   absl::Duration abort_collectives_timeout = absl::InfiniteDuration();
 
   bool enable_mock_nccl = false;

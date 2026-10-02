@@ -1158,6 +1158,11 @@ absl::Status AbortAllCliques() {
     ProcessGpuCliques& state = GetProcessGpuCliques();
     absl::MutexLock lock(state.mu);
     VLOG(1) << "Aborting all GPU cliques";
+    for (auto& [cache_key, cancel] : state.pending_cliques) {
+      VLOG(1) << "Canceling pending GPU clique initialization "
+              << cache_key.second;
+      cancel->Cancel();
+    }
     s = AbortCliques(state, [](const GpuCliqueKey&) { return true; });
   }
   abort_mu.unlock();
