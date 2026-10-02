@@ -204,6 +204,7 @@ cc_library(
         "//xla:side_effect_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
@@ -232,6 +233,7 @@ xla_cc_test(
     srcs = ["collective_ops_utils_test.cc"],
     deps = [
         ":collective_ops_utils",
+        "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:device_assignment",
@@ -239,6 +241,7 @@ xla_cc_test(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
