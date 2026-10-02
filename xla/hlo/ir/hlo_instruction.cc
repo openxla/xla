@@ -1390,9 +1390,11 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       case HloOpcode::kCosh:
       case HloOpcode::kErf:
       case HloOpcode::kExp:
+      case HloOpcode::kExp2:
       case HloOpcode::kExpm1:
       case HloOpcode::kLog:
       case HloOpcode::kLog1p:
+      case HloOpcode::kLog2:
       case HloOpcode::kRsqrt:
       case HloOpcode::kLogistic:
       case HloOpcode::kSin:
@@ -1603,9 +1605,11 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kRsqrt:
     case HloOpcode::kLogistic:
     case HloOpcode::kSin:
@@ -2943,12 +2947,14 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kFloor:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kNot:
     case HloOpcode::kNegate:
     case HloOpcode::kPopulationCount:
@@ -3466,12 +3472,14 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kAnd:
     case HloOpcode::kNot:
     case HloOpcode::kOr:
@@ -4097,12 +4105,14 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kNot:
     case HloOpcode::kNegate:
     case HloOpcode::kPopulationCount:
@@ -5069,6 +5079,8 @@ absl::Status HloInstruction::Visit(
         return visitor->HandleNegate(this);
       case HloOpcode::kExp:
         return visitor->HandleExp(this);
+      case HloOpcode::kExp2:
+        return visitor->HandleExp2(this);
       case HloOpcode::kExpm1:
         return visitor->HandleExpm1(this);
       case HloOpcode::kFloor:
@@ -5081,6 +5093,8 @@ absl::Status HloInstruction::Visit(
         return visitor->HandleLog(this);
       case HloOpcode::kLog1p:
         return visitor->HandleLog1p(this);
+      case HloOpcode::kLog2:
+        return visitor->HandleLog2(this);
       case HloOpcode::kTan:
         return visitor->HandleTan(this);
       case HloOpcode::kTanh:
@@ -5685,9 +5699,11 @@ bool IsUnaryOpWithResultAccuracy(HloOpcode opcode) {
     opcode == HloOpcode::kCosh ||
     opcode == HloOpcode::kErf ||
     opcode == HloOpcode::kExp ||
+    opcode == HloOpcode::kExp2 ||
     opcode == HloOpcode::kExpm1 ||
     opcode == HloOpcode::kLog ||
     opcode == HloOpcode::kLog1p ||
+    opcode == HloOpcode::kLog2 ||
     opcode == HloOpcode::kLogistic ||
     opcode == HloOpcode::kRsqrt ||
     opcode == HloOpcode::kSin ||
