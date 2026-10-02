@@ -39,6 +39,20 @@ auto OptionalBroadcast(Pattern pattern) {
 // Type conversion from and to any of BF16 and FP32.
 // TODO(intel-tf): Support more types when enabled.
 template <typename Pattern>
+auto OptionalReshape(Pattern pattern) {
+  return m::AnyOf<HloInstruction>(m::Reshape(pattern), pattern);
+}
+
+template <typename Pattern>
+auto OptionalBroadcastReshapes(Pattern pattern) {
+  return m::AnyOf<HloInstruction>(
+      m::Broadcast(m::Reshape(m::Broadcast(m::Reshape(pattern).WithOneUser())
+                                  .WithOneUser())
+                       .WithOneUser()),
+      m::Broadcast(m::Reshape(pattern).WithOneUser()));
+}
+
+template <typename Pattern>
 inline auto SupportedConvert(Pattern pattern) {
   auto supported_convert = [](const HloInstruction* instr) -> bool {
     return IsSupportedType(instr->shape().element_type()) &&
