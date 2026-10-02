@@ -4730,6 +4730,7 @@ cc_library(
         ":host_send_recv_thunk",
         ":host_to_device_copy_thunk",
         ":infeed_thunk",
+        ":kernel_spec_table",
         ":kernel_thunk",
         ":legacy_custom_call_thunk",
         ":memset_thunk",
@@ -5621,6 +5622,7 @@ cc_library(
     ]),
     deps = [
         ":command",
+        ":kernel_spec_table",
         ":lock_free_kernel_cache",
         ":print_buffer_contents",
         ":thunk",
@@ -5643,6 +5645,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:tensor_map",
         "//xla/stream_executor/gpu:tma_metadata",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
