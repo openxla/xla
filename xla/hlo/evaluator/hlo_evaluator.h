@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -754,13 +755,11 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     EvaluationState* state_;
   };
 
-  template <typename ReturnT, typename NativeT, typename UnaryOp>
+  template <typename ReturnT, typename NativeT>
   static absl::StatusOr<Literal> ElementWiseUnaryOpImpl(
-      const HloInstruction* instruction, UnaryOp&& unary_op,
+      const HloInstruction* instruction,
+      absl::FunctionRef<ReturnT(NativeT)> unary_op,
       const Literal& operand_literal) {
-    static_assert(std::is_invocable_r_v<ReturnT, UnaryOp, NativeT>,
-                  "Invalid UnaryOp signature");
-
     const Shape& shape = instruction->shape();
     const auto* operand = instruction->operand(0);
     TF_RET_CHECK(ShapeUtil::SameDimensions(shape, operand->shape()));
