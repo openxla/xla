@@ -2086,6 +2086,59 @@ TEST_F(GpuHloScheduleTest,
   EXPECT_FALSE(IsLHSEnabled(*module, "", gpu_device_info));
 }
 
+TEST_F(GpuHloScheduleTest, LatencyHidingSchedulerSinksLargeConstantFill) {
+  // The fill has no operands, so nothing anchors it near its user and the
+  // scheduler's ranking tends to float it to the top of the schedule. The
+  // scheduler's post-processing moves it directly before its first user, so
+  // the 1 MiB buffer is not live across the loop.
+  const char* hlo_text = R"(
+  HloModule fill_after_loop
+  fill_body {
+    zero = f32[] constant(0)
+    ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+  }
+  condition {
+    p = (s32[], f32[512,512]{1,0}) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    limit = s32[] constant(4)
+    ROOT test = pred[] compare(i, limit), direction=LT
+  }
+  body {
+    p = (s32[], f32[512,512]{1,0}) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    x = f32[512,512]{1,0} get-tuple-element(p), index=1
+    one = s32[] constant(1)
+    next = s32[] add(i, one)
+    negated = f32[512,512]{1,0} negate(x)
+    ROOT body_result = (s32[], f32[512,512]{1,0}) tuple(next, negated)
+  }
+  ENTRY main {
+    input = f32[512,512]{1,0} parameter(0)
+    zero = s32[] constant(0)
+    initial = (s32[], f32[512,512]{1,0}) tuple(zero, input)
+    fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+    loop = (s32[], f32[512,512]{1,0}) while(initial), condition=condition, body=body
+    looped = f32[512,512]{1,0} get-tuple-element(loop), index=1
+    ROOT result = f32[512,512]{1,0} add(looped, fill)
+  })";
+
+  TestConfig test_config;
+  test_config.enable_latency_hiding_scheduler = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(hlo_text, GetModuleConfig(test_config)));
+  SequentialHloOrdering order = BuildHloOrdering(module.get());
+
+  const std::vector<HloInstruction*>& sequence =
+      order.SequentialOrder(*module->entry_computation())->instructions();
+  auto fill = absl::c_find_if(sequence, [](const HloInstruction* instruction) {
+    return instruction->name() == "fill";
+  });
+  ASSERT_NE(fill, sequence.end());
+  ASSERT_NE(fill + 1, sequence.end());
+  EXPECT_EQ((*(fill + 1))->name(), "result");
+}
+
 INSTANTIATE_TEST_SUITE_P(GpuHloScheduleParameterizedTest,
                          GpuHloScheduleParameterizedTest,
                          ::testing::Combine(::testing::Bool(),
