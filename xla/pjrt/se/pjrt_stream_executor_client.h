@@ -138,6 +138,11 @@ class PjRtStreamExecutorMemorySpace : public PjRtMemorySpace {
   PjRtMemorySpaceCApiDelegator capi_delegator_{this};
 };
 
+// Splits a `transfer_size`-byte transfer into consecutive (offset, size) chunks
+// of at most `chunk_size` bytes. Returns no chunks for an empty transfer.
+absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> PlanStagingChunks(
+    int64_t transfer_size, int64_t chunk_size);
+
 class PjRtStreamExecutorRawClient : public PjRtRawClient {
  public:
   explicit PjRtStreamExecutorRawClient(
@@ -218,11 +223,34 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
     if (confidential_computing_enabled_) {
       return true;
     }
-    // Allocating multi-gigabyte pinned buffers can be very slow. In that case,
-    // using a staging buffer is probably worse than not using one.
-    // TODO(phawkins): add chunking for transfers.
+    // Allocating a multi-gigabyte pinned staging buffer can be very slow, in
+    // which case staging is probably worse than not staging. This cap does not
+    // apply to chunked staging, which only uses staging_chunk_size() buffers.
+    // TODO(phawkins): add chunking for transfers when chunked staging is off.
     return should_stage_host_to_device_transfers_ &&
-           size < (int64_t{1} << 30) && !IsDmaMapped(data, size);
+           (size < (int64_t{1} << 30) || ShouldChunkStagedTransfer(size)) &&
+           !IsDmaMapped(data, size);
+  }
+
+  // Returns true if a staged transfer of `size` bytes should be split into
+  // `staging_chunk_size()` chunks that are pipelined through a bounded number
+  // of staging buffers. Only enabled in Confidential Computing mode (where
+  // every transfer is staged), or when forced for testing.
+  bool ShouldChunkStagedTransfer(int64_t size) const {
+    return (confidential_computing_enabled_ ||
+            force_staging_chunking_for_testing_) &&
+           size > staging_chunk_size_;
+  }
+
+  int64_t staging_chunk_size() const { return staging_chunk_size_; }
+
+  // Test-only: enables chunked staging (when `force` is true) even when
+  // Confidential Computing is disabled, using `chunk_size`-byte chunks. Must be
+  // called before any transfer is issued on this client.
+  void SetStagingChunkingForTesting(bool force, int64_t chunk_size) {
+    CHECK_GT(chunk_size, 0);
+    force_staging_chunking_for_testing_ = force;
+    staging_chunk_size_ = chunk_size;
   }
 
   tsl::AsyncValueRef<PjRtExecutable> ToAsyncExecutable(
@@ -374,6 +402,9 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   // transfer via pinned memory.
   bool should_stage_host_to_device_transfers_;
   bool confidential_computing_enabled_ = false;
+  // Chunk size for chunked staging; see ShouldChunkStagedTransfer().
+  int64_t staging_chunk_size_;
+  bool force_staging_chunking_for_testing_ = false;
 
   se::StreamExecutor* absl_nonnull executor_;
   std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options_;

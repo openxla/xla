@@ -747,5 +747,46 @@ TEST(PjRtStreamExecutorClientTest, CrossHostReceiveBuffersCleanupAfterFailure) {
       absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
+using StagingChunks = std::vector<std::pair<int64_t, int64_t>>;
+
+TEST(PlanStagingChunksTest, EmptyTransferHasNoChunks) {
+  EXPECT_THAT(PlanStagingChunks(/*transfer_size=*/0, /*chunk_size=*/16),
+              absl_testing::IsOkAndHolds(::testing::IsEmpty()));
+}
+
+TEST(PlanStagingChunksTest, TransferSmallerThanChunkIsSingleChunk) {
+  EXPECT_THAT(PlanStagingChunks(/*transfer_size=*/10, /*chunk_size=*/16),
+              absl_testing::IsOkAndHolds(StagingChunks{{0, 10}}));
+}
+
+TEST(PlanStagingChunksTest, TransferEqualToChunkIsSingleChunk) {
+  EXPECT_THAT(PlanStagingChunks(/*transfer_size=*/16, /*chunk_size=*/16),
+              absl_testing::IsOkAndHolds(StagingChunks{{0, 16}}));
+}
+
+TEST(PlanStagingChunksTest, DivisibleTransferHasEqualChunks) {
+  EXPECT_THAT(
+      PlanStagingChunks(/*transfer_size=*/48, /*chunk_size=*/16),
+      absl_testing::IsOkAndHolds(StagingChunks{{0, 16}, {16, 16}, {32, 16}}));
+}
+
+TEST(PlanStagingChunksTest, NonDivisibleTransferHasShortLastChunk) {
+  EXPECT_THAT(
+      PlanStagingChunks(/*transfer_size=*/37, /*chunk_size=*/16),
+      absl_testing::IsOkAndHolds(StagingChunks{{0, 16}, {16, 16}, {32, 5}}));
+}
+
+TEST(PlanStagingChunksTest, RejectsNonPositiveChunkSize) {
+  EXPECT_THAT(PlanStagingChunks(/*transfer_size=*/16, /*chunk_size=*/0),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(PlanStagingChunks(/*transfer_size=*/16, /*chunk_size=*/-1),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(PlanStagingChunksTest, RejectsNegativeTransferSize) {
+  EXPECT_THAT(PlanStagingChunks(/*transfer_size=*/-1, /*chunk_size=*/16),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 }  // namespace
 }  // namespace xla
