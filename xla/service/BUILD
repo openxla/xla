@@ -521,8 +521,10 @@ cc_library(
     hdrs = ["shape_inference.h"],
     deps = [
         ":hlo_proto_cc",
+        "//xla:literal",
         "//xla:permutation_util",
         "//xla:shape_util",
+        "//xla:shuffle",
         "//xla:status_macros",
         "//xla:util",
         "//xla:window_util",

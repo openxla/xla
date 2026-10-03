@@ -975,6 +975,13 @@ enum RandomAlgorithm {
 // The name of a case of the `mode` oneof is also the name of the mode in the
 // HLO text format, e.g. `mode=rotate`.
 message ShuffleMode {
+  // Permutes the elements along the shuffled dimensions
+  message Permute {
+    // The operand coordinates that each result element is taken from along the
+    // shuffled dimensions, as an integer array.
+    LiteralProto indices = 1;
+  }
+
   // Rotates the elements along each shuffled dimension to the left, wrapping
   // the elements that fall off the front around to the back, e.g. rotating
   // `[1, 2, 3, 4]` by a shift of 1 yields `[2, 3, 4, 1]`.
@@ -987,11 +994,27 @@ message ShuffleMode {
     repeated int64 shifts = 1;
   }
 
-  oneof mode {
-    Rotate rotate = 1;
+  // Rotates each slice along the single shuffled dimension on its own, as
+  // `Rotate` rotates the whole dimension. A slice along a dimension is the
+  // 1D array extracted by fixing the indices of all other dimensions and
+  // varying the rotated dimension.
+  message MultiRotate {
+    // The shift of each slice, as an integer array. The array has the rank of
+    // the operand, a size of 1 along the rotated dimension, and along every
+    // other dimension either the size of the operand or 1, which shares a shift
+    // across that dimension. A shift moves the elements of its slice as the
+    // shifts of `Rotate` do, including how shifts outside of `[0, d)` wrap
+    // around.
+    LiteralProto multi_shifts = 1;
   }
 
-  // Next: 2
+  oneof mode {
+    Permute permute = 1;
+    Rotate rotate = 2;
+    MultiRotate multi_rotate = 3;
+  }
+
+  // Next: 4
 }
 
 message TriangularSolveOptions {
