@@ -27,6 +27,7 @@ load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+    "if_cuda_newer_than",
 )
 
 package(
@@ -5900,7 +5901,11 @@ xla_aot_compile_gpu(
     gpu_targets = [
         "h100",
         "b200",
-    ],
+    ] + if_cuda_newer_than(
+        "13_4",
+        # SM107a requires PTX 9.4, available starting with CUDA 13.4.
+        ["vr_nvl72"],
+    ),
     module = "xla_aot_compile_test.mlir",
     xla_flags = "--xla_gpu_use_new_autotune_cache_format=false",
 )
