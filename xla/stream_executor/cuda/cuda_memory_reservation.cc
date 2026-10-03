@@ -59,12 +59,13 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
       cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
 
   return std::unique_ptr<CudaMemoryReservation>(
-      new CudaMemoryReservation(executor, ptr, padded_size));
+      new CudaMemoryReservation(executor, ptr, padded_size, granularity));
 }
 
 CudaMemoryReservation::CudaMemoryReservation(StreamExecutor* executor,
-                                             CUdeviceptr ptr, uint64_t size)
-    : executor_(executor), ptr_(ptr), size_(size) {}
+                                             CUdeviceptr ptr, uint64_t size,
+                                             size_t granularity)
+    : executor_(executor), ptr_(ptr), size_(size), granularity_(granularity) {}
 
 DeviceAddressBase CudaMemoryReservation::address() const {
   return DeviceAddressBase(reinterpret_cast<void*>(ptr_), size_);
