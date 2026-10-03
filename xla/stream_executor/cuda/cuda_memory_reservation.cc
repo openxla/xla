@@ -59,12 +59,13 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
       cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
 
   return std::unique_ptr<CudaMemoryReservation>(
-      new CudaMemoryReservation(executor, ptr, padded_size));
+      new CudaMemoryReservation(executor, ptr, padded_size, granularity));
 }
 
 CudaMemoryReservation::CudaMemoryReservation(StreamExecutor* executor,
-                                             CUdeviceptr ptr, uint64_t size)
-    : executor_(executor), ptr_(ptr), size_(size) {}
+                                             CUdeviceptr ptr, uint64_t size,
+                                             size_t granularity)
+    : executor_(executor), ptr_(ptr), size_(size), granularity_(granularity) {}
 
 DeviceAddressBase CudaMemoryReservation::address() const {
   return DeviceAddressBase(reinterpret_cast<void*>(ptr_), size_);
@@ -129,14 +130,9 @@ CudaMemoryReservation::~CudaMemoryReservation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  // Attempt to unmap the full range before freeing the virtual address space.
-  // Sub-ranges already unmapped by ScopedMapping destructors will cause this
-  // call to fail; the error is logged and the address range is freed anyway.
-  auto unmap_status =
-      cuda::ToStatus(cuMemUnmap(ptr_, size_), "Error unmapping CUDA memory");
-  if (!unmap_status.ok()) {
-    LOG(ERROR) << unmap_status.message();
-  }
+  // ScopedMapping owns each mapped slice and must be destroyed first. The
+  // reservation may have an unmapped tail, so unmapping the full range here
+  // would be invalid.
   auto free_status = cuda::ToStatus(cuMemAddressFree(ptr_, size_),
                                     "Error freeing CUDA address range");
   if (!free_status.ok()) {
