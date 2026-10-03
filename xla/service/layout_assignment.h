@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -187,12 +188,19 @@ class BufferLayoutConstraint : public LayoutConstraint {
 class OperandLayoutConstraint : public LayoutConstraint {
  public:
   // Constructs an OperandLayoutConstraint for the specified operand slot.
-  OperandLayoutConstraint(const ShapeLayout& shape_layout,
+  OperandLayoutConstraint(ShapeLayout shape_layout,
                           const HloInstruction* instruction, int64_t operand_no,
                           bool mandatory, bool dfs, int64_t priority);
 
   // Returns the expected ShapeLayout for the operand.
   const ShapeLayout& shape_layout() const { return shape_layout_[0]; }
+
+  // Returns true if UpdateLayout would find the constraint already satisfied
+  // by the constrained operand carrying layout: the same minor_to_major as
+  // the constrained layout. Tiles, element size, memory space, tail padding
+  // and split configs are ignored, as in MatchesLayoutInShape with
+  // minor_to_major_only.
+  bool IsSatisfiedBy(const Layout& layout) const;
 
   // Returns the consumer HloInstruction imposing this constraint.
   const HloInstruction* instruction() const { return instruction_; }
@@ -1022,8 +1030,8 @@ class LayoutAssignment : public HloModulePass {
   // Adds constraints related to host Send/Recv instructions.
   absl::Status BuildHostChannelConstraints(HloComputation* computation);
 
-  // Replaces dataflow_analysis_ and drops the buffer sets memoized from the
-  // previous analysis.
+  // Replaces dataflow_analysis_ and drops the buffer sets and operand indices
+  // memoized from the previous analysis.
   void SetDataflowAnalysis(std::unique_ptr<HloDataflowAnalysis> analysis);
 
   // Module dataflow analysis that can be updated for cloned computations.
@@ -1042,6 +1050,8 @@ class LayoutAssignment : public HloModulePass {
   bool IsWhileLoopCopyDisabled(const HloInstruction& instruction) const;
 
  private:
+  friend class LayoutAssignmentPeer;
+
   // Map containing the layouts of all computations assigned so
   // far. Computations are handled in a topological sort where computations are
   // handled before their caller instructions so the layouts of caller
@@ -1079,6 +1089,45 @@ class LayoutAssignment : public HloModulePass {
   mutable absl::flat_hash_map<const HloInstruction*, std::unique_ptr<BufferSet>>
       buffer_sets_cache_;
   const HloDataflowAnalysis* buffer_sets_cache_analysis_ = nullptr;
+
+  // AnyOperandBufferForwarded for operand, an operand of instruction,
+  // given directly: the same answer for every position it occupies.
+  bool AnyBufferForwarded(const HloInstruction* instruction,
+                          const HloInstruction* operand) const;
+
+  // Returns user->OperandIndices(operand) as a view. A buffer's users are
+  // scanned once per instruction that aliases the buffer, so a user with N
+  // distinct operands is scanned N times per propagation round; users with at
+  // least kMinOperandsForIndexMemo operands are memoized in
+  // operand_indices_cache_ instead. The view points into scratch for other
+  // users and into the memo for wide ones, where it stays valid until the
+  // next call for a wide user without a memo entry, or SetDataflowAnalysis.
+  absl::Span<const int64_t> OperandIndicesInUser(
+      const HloInstruction* user, const HloInstruction* operand,
+      absl::InlinedVector<int64_t, 4>* scratch) const;
+
+  // Two hash lookups cost about as much as scanning this many operand
+  // pointers. Building the memo of a user with N operands, D of them distinct,
+  // is D inserts and N appends, repaid by the D or more visits per round that
+  // each scanned N pointers.
+  static constexpr int64_t kMinOperandsForIndexMemo = 128;
+
+  // Operand indices of wide users by user, then operand. Propagation is the
+  // only reader, and it runs between SetDataflowAnalysis and the copy
+  // insertion of AssignLayouts, with no operand list changing in between, so
+  // SetDataflowAnalysis is the one place that clears the memo.
+  mutable absl::flat_hash_map<
+      const HloInstruction*,
+      absl::flat_hash_map<const HloInstruction*,
+                          absl::InlinedVector<int64_t, 4>>>
+      operand_indices_cache_;
+
+  // SetOperandLayout on the constraint slot of (instruction, operand_no),
+  // already looked up by the caller, which has excluded scalars.
+  absl::Status SetOperandLayout(
+      const Shape& shape_with_layout, const HloInstruction* instruction,
+      int64_t operand_no, bool mandatory, bool dfs, int64_t priority,
+      std::unique_ptr<OperandLayoutConstraint>& constraint_slot);
 
   // Buffer layout constraints stored densely by HloValue::Id, which the
   // dataflow analysis assigns sequentially. Clear() invalidates every entry
