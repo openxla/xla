@@ -1276,10 +1276,6 @@ rocm_library(
     ],
     hdrs = ["mori_kernels.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
-    copts = [
-        "-DBUILD_CCO_SDMA=1",
-    ],
-    linkstatic = True,
     tags = [
         "gpu",
         "no-oneapi",
@@ -1351,7 +1347,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:numbers",
     ] + if_rocm_is_configured([
         ":mori_kernels",
         "@local_config_rocm//rocm:rocm_headers",
