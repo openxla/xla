@@ -212,17 +212,9 @@ absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
 
 }  // anonymous namespace
 
-absl::StatusOr<bool> ConvertMover::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-  for (HloComputation* comp :
-       module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool changed_computation,
-                          MoveConvertPrecisionOps(comp));
-    changed |= changed_computation;
-  }
-  return changed;
+absl::StatusOr<bool> ConvertMover::RunOnComputation(
+    HloComputation* computation) {
+  return MoveConvertPrecisionOps(computation);
 }
 
 }  // namespace xla

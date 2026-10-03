@@ -30,19 +30,14 @@ namespace gpu {
 // An HLO pass that canonicalizes convolution instructions for GPU codegen. It
 // inserts Pad instructions before Convolution instructions with uncanonicalized
 // padding, so that they can be lowered to Cudnn/Miopen convolution.
-class ConvPaddingLegalization : public HloModulePass {
+class ConvPaddingLegalization : public HloComputationPass {
  public:
   absl::string_view name() const override {
     return "conv-padding-legalization";
   }
 
- protected:
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
-
  private:
-  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
   // Returns if any changes are made to the parent computation.
   bool CanonicalizeForwardConvolution(HloInstruction* conv);
   bool CanonicalizeBackwardFilterConvolution(HloInstruction* backward_conv);

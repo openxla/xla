@@ -31,7 +31,7 @@ namespace xla::gpu {
 
 // Updates the scratch size of CUB scan custom calls to match the actual
 // scratch size.
-class EstimateCubScanScratchSize : public HloModulePass {
+class EstimateCubScanScratchSize : public HloComputationPass {
  public:
   explicit EstimateCubScanScratchSize(std::string platform_name)
       : platform_name_(platform_name) {}
@@ -42,11 +42,7 @@ class EstimateCubScanScratchSize : public HloModulePass {
 
  protected:
   absl::Status RunOnScanInstruction(HloCustomCallInstruction* custom_call);
-  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
-
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 
  private:
   std::string platform_name_;
