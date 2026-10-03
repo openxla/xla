@@ -146,15 +146,6 @@ bool DoesTileFitInRegisters(int64_t tile_size,
   //  * If all values don't need to be live at the same time (for example to
   //    compute a reduction), it will be modeled by an explicit loop with
   //    smaller tiles inside during tiling propagation.
-  //
-  // TODO(b/363194951): Check how many registers we need for scratch memory
-  // for indexing computation and expensive instructions like exponential or
-  // cosine.
-  //
-  // TODO(b/363194951): Check how the number of registers used depends on the
-  // data type. `registers_per_block_limit()` returns the number of 32-bit
-  // registers. Check if 64-bit types need twice as many registers. Check if
-  // smaller types can fit into one register.
   return tile_size <= kFractionOfRegistersAvailableToStoreTile *
                           device_info.registers_per_block_limit();
 }
@@ -226,72 +217,6 @@ void ForEachInstructionInTiledHloComputation(
   }
 }
 
-// Checks if all tiles in the computation fit in registers.
-//
-// There is no way to know for sure if emitted computation will not spill
-// registers, so we use a heuristic based on tile sizes. The heuristic looks at
-// operand and root tiles, because those will likely be materialized fully and
-// can not be reordered with other tiles.
-template <typename TiledHloComputationType>
-bool DoesComputationFitInRegisters(
-    const HloFusionAdaptor& fusion_adaptor,
-    const TiledHloComputationType& tiled_hlo_computation,
-    const se::DeviceDescription& device_info) {
-  // Check that output tiles fit in registers.
-  for (const auto* root : tiled_hlo_computation.roots()) {
-    if (!DoesTileFitInRegisters(GetPaddedTileSize(root->tile_sizes()),
-                                device_info)) {
-      return false;
-    }
-  }
-
-  bool fits = true;
-  ForEachInstructionInTiledHloComputation(
-      tiled_hlo_computation,
-      /*num_blocks_at_root=*/1,
-      [&](const typename TiledHloComputationType::InstructionType* tiled_hlo,
-          int64_t unused_num_blocks_cur_hlo) {
-        if (!fits) {
-          return;
-        }
-        bool is_operand = !fusion_adaptor.ContainsInstruction(tiled_hlo->hlo());
-        // Iota is not an operand, but usually needs to be materialized in
-        // registers.
-        if ((is_operand || tiled_hlo->hlo()->opcode() == HloOpcode::kIota) &&
-            !DoesTileFitInRegisters(GetPaddedTileSize(tiled_hlo->tile_sizes()),
-                                    device_info)) {
-          fits = false;
-        }
-      });
-  return fits;
-}
-
-// Checks if the candidate root tile sizes fit in registers before
-// constructing the tiled computation.
-bool DoesTilingFitInRegisters(const HloFusionAdaptor& fusion_adaptor,
-                              const experimental::TilingSpace& tiling_space,
-                              absl::Span<const int64_t> padded_tile_sizes,
-                              const se::DeviceDescription& device_info) {
-  for (const HloInstructionAdaptor& root : fusion_adaptor.GetRoots()) {
-    int64_t root_tile_size = 1;
-    for (auto [index, dim] : llvm::enumerate(
-             experimental::GetFirstShape(&root.instruction()).dimensions())) {
-      int64_t dim_id =
-          tiling_space.GetDimensionInfo(root.instruction(), index).id.value();
-      int64_t tile_size = padded_tile_sizes[dim_id];
-      if (tile_size > 0 &&
-          root_tile_size > std::numeric_limits<int64_t>::max() / tile_size) {
-        return false;
-      }
-      root_tile_size *= tile_size;
-    }
-    if (!DoesTileFitInRegisters(root_tile_size, device_info)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // Returns the number of warps to use based on the largest tile size in the
 // computation.
 //
@@ -333,6 +258,228 @@ int64_t GetNumWarps(int64_t largest_live_tile_size) {
     return 4;
   }
   return 8;
+}
+
+// Returns true if the opcode corresponds to an operation that requires
+// significant emulation or polynomial approximations (e.g. transcendentals).
+//
+// The ops included are ones that required at least kRegistersPerEmulatedF32Op
+// (6) registers for BF16/F32 and kRegistersPerEmulatedF64Op (12) registers for
+// F64 in their SASS generated code on H100 and B200.
+bool IsHeavyOp(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kAcos:
+    case HloOpcode::kAcosh:
+    case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
+    case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
+    case HloOpcode::kCbrt:
+    case HloOpcode::kCos:
+    case HloOpcode::kCosh:
+    case HloOpcode::kErf:
+    case HloOpcode::kExpm1:
+    case HloOpcode::kLog:
+    case HloOpcode::kLog1p:
+    case HloOpcode::kPower:
+    case HloOpcode::kSin:
+    case HloOpcode::kSinh:
+    case HloOpcode::kTan:
+    case HloOpcode::kTanh:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Returns the estimated number of 32-bit registers needed to execute ops that
+// require polynomial emulation.
+int64_t EstimateRegistersNeededForHeavyEmulatedOps(
+    const HloFusionAdaptor& fusion_adaptor) {
+  // Estimated number of 32-bit working registers required per element for
+  // multi-instruction polynomial emulated operations (e.g. F64 transcendentals
+  // or F32/BF16 log1p/pow/erf).
+  //
+  // The numbers come from empirical testing of compiling fusions containing
+  // one of those ops and inspecting the generated SASS, on H100 and B200, for
+  // BF16/F32/F64.
+  //
+  // The exact number of registers varies between different ops and
+  // architectures. For now, we only account for ops that require 6+ registers
+  // for F32/BF16 and 12+ registers for F64.
+  //
+  // TODO(b/556575048): this can be improved further by tabulating the exact
+  // register usage per op and per architecture.
+  static constexpr int64_t kRegistersPerEmulatedF32Op = 6;
+  static constexpr int64_t kRegistersPerEmulatedF64Op =
+      kRegistersPerEmulatedF32Op * 2;
+
+  int64_t registers_needed = 0;
+  fusion_adaptor.ForEach([&](HloInstructionAdaptor node) {
+    if (!node.shape().IsArray()) {
+      return;
+    }
+
+    // Assume that however many registers are needed for emulated op, they will
+    // be reused for separate ops so there's no need to add them up.
+    if (IsHeavyOp(node.opcode())) {
+      switch (node.shape().element_type()) {
+        case F64:
+          registers_needed =
+              std::max(registers_needed, kRegistersPerEmulatedF64Op);
+          break;
+        case F32:
+        case BF16:
+          registers_needed =
+              std::max(registers_needed, kRegistersPerEmulatedF32Op);
+          break;
+        default:
+          // Assume no extra registers needed for other types.
+          break;
+      }
+    }
+  });
+
+  return registers_needed;
+}
+
+struct RegisterUsage {
+  // Estimated max number of registers needed to store output values.
+  int64_t output_registers = 0;
+  // Number of elements in the largest padded root tile.
+  int64_t largest_root_tile_size = 1;
+};
+
+template <typename TiledHloComputationType>
+RegisterUsage EstimateRegisterUsagePerTile(
+    const HloFusionAdaptor& fusion_adaptor,
+    const TiledHloComputationType& tiled_hlo_computation) {
+  static constexpr int64_t kRegisterSizeInBytes = 4;
+
+  int64_t total_output_registers = 0;
+  int64_t largest_root_tile_size = 0;
+  int64_t largest_root_size_registers = 0;
+
+  // Check that output tiles fit in registers.
+  for (const auto* root : tiled_hlo_computation.roots()) {
+    int64_t root_tile_size = GetPaddedTileSize(root->tile_sizes());
+    PrimitiveType element_type = root->hlo()->shape().IsArray()
+                                     ? root->hlo()->shape().element_type()
+                                     : PrimitiveType::PRIMITIVE_TYPE_INVALID;
+    largest_root_tile_size = std::max(largest_root_tile_size, root_tile_size);
+    const int64_t root_size_registers =
+        root_tile_size *
+        CeilOfRatio(ShapeUtil::ByteSizeOfPrimitiveType(element_type),
+                    kRegisterSizeInBytes);
+
+    if (fusion_adaptor.GetInstruction(root->hlo()).GetUsers().empty()) {
+      // Assume that only all "real" roots need to be stored in the registers at
+      // the same time, and intermediate ones are written to HBM early so their
+      // registers can be reused.
+      total_output_registers += root_size_registers;
+    }
+
+    // In case an intermediate root is larger than the output tiles, we need to
+    // account for its register usage.
+    largest_root_size_registers =
+        std::max(largest_root_size_registers, root_size_registers);
+  }
+
+  return RegisterUsage{
+      /*output_registers=*/std::max(total_output_registers,
+                                    largest_root_size_registers),
+      /*largest_root_tile_size=*/largest_root_tile_size,
+  };
+}
+
+int64_t EstimateRegistersUsedPerThread(const HloFusionAdaptor& fusion_adaptor,
+                                       const RegisterUsage& per_tile_usage) {
+  const int64_t num_warps = GetNumWarps(per_tile_usage.largest_root_tile_size);
+  const int64_t num_threads = num_warps * 32;
+  const int64_t elements_per_thread =
+      CeilOfRatio(per_tile_usage.largest_root_tile_size, num_threads);
+
+  const int64_t output_registers =
+      CeilOfRatio(per_tile_usage.output_registers, num_threads);
+  const int64_t emulation_registers =
+      elements_per_thread *
+      EstimateRegistersNeededForHeavyEmulatedOps(fusion_adaptor);
+
+  return output_registers + emulation_registers;
+}
+
+// Checks if all tiles in the computation fit in registers.
+//
+// There is no way to know for sure if emitted computation will not spill
+// registers, so we use a heuristic based on tile sizes. The heuristic looks at
+// operand and root tiles, because those will likely be materialized fully and
+// can not be reordered with other tiles.
+template <typename TiledHloComputationType>
+bool DoesComputationFitInRegisters(
+    const HloFusionAdaptor& fusion_adaptor,
+    const TiledHloComputationType& tiled_hlo_computation,
+    const se::DeviceDescription& device_info) {
+  const RegisterUsage tile_reg_usage =
+      EstimateRegisterUsagePerTile(fusion_adaptor, tiled_hlo_computation);
+  if (!DoesTileFitInRegisters(tile_reg_usage.output_registers, device_info)) {
+    return false;
+  }
+
+  // Max 32-bit registers per thread.
+  // Source:
+  // https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html#compute-capabilities-table-memory-information-per-compute-capability
+  static constexpr int64_t kMaxRegistersPerThread = 255;
+  if (EstimateRegistersUsedPerThread(fusion_adaptor, tile_reg_usage) >
+      kMaxRegistersPerThread) {
+    return false;
+  }
+
+  bool fits = true;
+  ForEachInstructionInTiledHloComputation(
+      tiled_hlo_computation,
+      /*num_blocks_at_root=*/1,
+      [&](const typename TiledHloComputationType::InstructionType* tiled_hlo,
+          int64_t unused_num_blocks_cur_hlo) {
+        if (!fits) {
+          return;
+        }
+        bool is_operand = !fusion_adaptor.ContainsInstruction(tiled_hlo->hlo());
+        // Iota is not an operand, but usually needs to be materialized in
+        // registers.
+        // Assumption: iota and outputs can reuse the same registers.
+        if ((is_operand || tiled_hlo->hlo()->opcode() == HloOpcode::kIota) &&
+            !DoesTileFitInRegisters(GetPaddedTileSize(tiled_hlo->tile_sizes()),
+                                    device_info)) {
+          fits = false;
+        }
+      });
+  return fits;
+}
+
+// Checks if the candidate root tile sizes fit in registers before
+// constructing the tiled computation.
+bool DoesTilingFitInRegisters(const HloFusionAdaptor& fusion_adaptor,
+                              const experimental::TilingSpace& tiling_space,
+                              absl::Span<const int64_t> padded_tile_sizes,
+                              const se::DeviceDescription& device_info) {
+  for (const HloInstructionAdaptor& root : fusion_adaptor.GetRoots()) {
+    int64_t root_tile_size = 1;
+    for (auto [index, dim] : llvm::enumerate(
+             experimental::GetFirstShape(&root.instruction()).dimensions())) {
+      int64_t dim_id =
+          tiling_space.GetDimensionInfo(root.instruction(), index).id.value();
+      int64_t tile_size = padded_tile_sizes[dim_id];
+      if (tile_size > 0 &&
+          root_tile_size > std::numeric_limits<int64_t>::max() / tile_size) {
+        return false;
+      }
+      root_tile_size *= tile_size;
+    }
+    if (!DoesTileFitInRegisters(root_tile_size, device_info)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template <typename TiledHloInstructionType>
