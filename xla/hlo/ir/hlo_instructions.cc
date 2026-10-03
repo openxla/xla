@@ -283,28 +283,40 @@ std::unique_ptr<HloInstruction> HloFftInstruction::CloneWithNewOperandsImpl(
 
 namespace {
 
-HloAsyncInstruction* FindAsyncChainDataflow(
+HloInstruction* FindAsyncChainDataflow(
     HloInstruction* instr,
     absl::FunctionRef<bool(const HloInstruction*)> is_target, ShapeIndex index,
-    absl::flat_hash_set<const HloInstruction*>& visited) {
+    absl::flat_hash_set<const HloInstruction*>& visited,
+    std::vector<std::pair<HloInstruction*, int64_t>>* backward_steps =
+        nullptr) {
   if (instr == nullptr || !visited.insert(instr).second) {
     return nullptr;
   }
 
   if (is_target(instr)) {
-    if (HloAsyncInstruction::ClassOf(instr)) {
-      return Cast<HloAsyncInstruction>(instr);
-    }
-    return nullptr;
+    return instr;
   }
 
-  auto revert_step = [&]() { visited.erase(instr); };
+  const size_t steps_size =
+      (backward_steps != nullptr) ? backward_steps->size() : 0;
+  auto record_step = [&](int64_t operand_idx) {
+    if (backward_steps != nullptr) {
+      backward_steps->push_back({instr, operand_idx});
+    }
+  };
+  auto revert_step = [&]() {
+    if (backward_steps != nullptr) {
+      backward_steps->resize(steps_size);
+    }
+    visited.erase(instr);
+  };
 
   switch (instr->opcode()) {
     case HloOpcode::kGetTupleElement: {
+      record_step(0);
       index.push_back(instr->tuple_index());
-      HloAsyncInstruction* res = FindAsyncChainDataflow(
-          instr->mutable_operand(0), is_target, index, visited);
+      HloInstruction* res = FindAsyncChainDataflow(
+          instr->mutable_operand(0), is_target, index, visited, backward_steps);
       if (res != nullptr) {
         return res;
       }
@@ -315,8 +327,10 @@ HloAsyncInstruction* FindAsyncChainDataflow(
     case HloOpcode::kOptimizationBarrier: {
       if (instr->opcode() == HloOpcode::kOptimizationBarrier &&
           instr->operand_count() == 1) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(0), is_target, index, visited);
+        record_step(0);
+        HloInstruction* res =
+            FindAsyncChainDataflow(instr->mutable_operand(0), is_target, index,
+                                   visited, backward_steps);
         if (res != nullptr) {
           return res;
         }
@@ -325,10 +339,15 @@ HloAsyncInstruction* FindAsyncChainDataflow(
       }
       if (index.empty()) {
         for (int64_t idx = 0; idx < instr->operand_count(); ++idx) {
-          HloAsyncInstruction* res = FindAsyncChainDataflow(
-              instr->mutable_operand(idx), is_target, index, visited);
+          record_step(idx);
+          HloInstruction* res =
+              FindAsyncChainDataflow(instr->mutable_operand(idx), is_target,
+                                     index, visited, backward_steps);
           if (res != nullptr) {
             return res;
+          }
+          if (backward_steps != nullptr) {
+            backward_steps->resize(steps_size);
           }
         }
         revert_step();
@@ -337,8 +356,10 @@ HloAsyncInstruction* FindAsyncChainDataflow(
       int64_t idx = index.back();
       index.pop_back();
       if (idx >= 0 && idx < instr->operand_count()) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(idx), is_target, index, visited);
+        record_step(idx);
+        HloInstruction* res =
+            FindAsyncChainDataflow(instr->mutable_operand(idx), is_target,
+                                   index, visited, backward_steps);
         if (res != nullptr) {
           return res;
         }
@@ -354,8 +375,10 @@ HloAsyncInstruction* FindAsyncChainDataflow(
         return nullptr;
       }
       if (instr->operand_count() > 0) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(0), is_target, index, visited);
+        record_step(0);
+        HloInstruction* res =
+            FindAsyncChainDataflow(instr->mutable_operand(0), is_target, index,
+                                   visited, backward_steps);
         if (res != nullptr) {
           return res;
         }
@@ -370,14 +393,20 @@ HloAsyncInstruction* FindAsyncChainDataflow(
         if (callers.size() == 1) {
           auto* while_op = callers.front();
           if (while_op->while_body() == comp) {
-            HloAsyncInstruction* res = FindAsyncChainDataflow(
-                while_op->mutable_operand(0), is_target, index, visited);
+            record_step(0);
+            HloInstruction* res =
+                FindAsyncChainDataflow(while_op->mutable_operand(0), is_target,
+                                       index, visited, backward_steps);
             if (res != nullptr) {
               return res;
             }
+            if (backward_steps != nullptr) {
+              backward_steps->resize(steps_size);
+            }
             if (comp->root_instruction() != nullptr) {
-              HloAsyncInstruction* root_res = FindAsyncChainDataflow(
-                  comp->root_instruction(), is_target, index, visited);
+              HloInstruction* root_res =
+                  FindAsyncChainDataflow(comp->root_instruction(), is_target,
+                                         index, visited, backward_steps);
               if (root_res != nullptr) {
                 return root_res;
               }
@@ -391,15 +420,21 @@ HloAsyncInstruction* FindAsyncChainDataflow(
     case HloOpcode::kWhile: {
       if (instr->while_body() != nullptr &&
           instr->while_body()->root_instruction() != nullptr) {
-        HloAsyncInstruction* root_res = FindAsyncChainDataflow(
-            instr->while_body()->root_instruction(), is_target, index, visited);
+        HloInstruction* root_res =
+            FindAsyncChainDataflow(instr->while_body()->root_instruction(),
+                                   is_target, index, visited, backward_steps);
         if (root_res != nullptr) {
           return root_res;
         }
+        if (backward_steps != nullptr) {
+          backward_steps->resize(steps_size);
+        }
       }
       if (instr->operand_count() > 0) {
-        HloAsyncInstruction* res = FindAsyncChainDataflow(
-            instr->mutable_operand(0), is_target, index, visited);
+        record_step(0);
+        HloInstruction* res =
+            FindAsyncChainDataflow(instr->mutable_operand(0), is_target, index,
+                                   visited, backward_steps);
         if (res != nullptr) {
           return res;
         }
@@ -414,52 +449,54 @@ HloAsyncInstruction* FindAsyncChainDataflow(
   }
 }
 
-HloAsyncInstruction* FindAsyncChainProducer(HloInstruction* instr) {
+HloInstruction* FindAsyncChainProducer(
+    HloInstruction* instr,
+    std::vector<std::pair<HloInstruction*, int64_t>>* backward_steps =
+        nullptr) {
   if (instr == nullptr) {
     return nullptr;
   }
-  if (instr->IsAsyncProducer() && HloAsyncInstruction::ClassOf(instr)) {
-    return Cast<HloAsyncInstruction>(instr);
+  if (instr->IsAsyncProducer()) {
+    return instr;
   }
   ShapeIndex index;
   absl::flat_hash_set<const HloInstruction*> visited;
   return FindAsyncChainDataflow(
       instr, [](const HloInstruction* node) { return node->IsAsyncProducer(); },
-      index, visited);
+      index, visited, backward_steps);
 }
 
-HloAsyncInstruction* FindAsyncChainStart(HloInstruction* instr) {
+HloInstruction* FindAsyncChainStart(HloInstruction* instr) {
   if (instr == nullptr) {
     return nullptr;
   }
-  if (instr->opcode() == HloOpcode::kAsyncStart &&
-      HloAsyncInstruction::ClassOf(instr)) {
-    return Cast<HloAsyncInstruction>(instr);
+  if (instr->IsAsyncStart()) {
+    return instr;
   }
-  if (instr->opcode() == HloOpcode::kAsyncDone) {
+  if (instr->IsAsyncDone()) {
     if (instr->operand_count() == 0 || instr->operand(0) == nullptr) {
       return nullptr;
     }
     instr = instr->mutable_operand(0);
   }
-  HloAsyncInstruction* producer = FindAsyncChainProducer(instr);
+  HloInstruction* producer = FindAsyncChainProducer(instr);
   while (producer != nullptr && producer->opcode() == HloOpcode::kAsyncUpdate) {
     if (producer->operand_count() == 0 || producer->operand(0) == nullptr) {
       return nullptr;
     }
     producer = FindAsyncChainProducer(producer->mutable_operand(0));
   }
-  return producer;
+  return (producer != nullptr && producer->IsAsyncStart()) ? producer : nullptr;
 }
 
-HloAsyncInstruction* FindAsyncChainNext(HloInstruction* instr) {
-  if (instr == nullptr || instr->opcode() == HloOpcode::kAsyncDone) {
+HloInstruction* FindAsyncChainNext(HloInstruction* instr) {
+  if (instr == nullptr || instr->IsAsyncDone()) {
     return nullptr;
   }
   for (HloInstruction* user : instr->users()) {
-    if (HloAsyncInstruction::ClassOf(user) && user->operand_count() > 0 &&
+    if (user->IsAsyncConsumer() && user->operand_count() > 0 &&
         user->operand(0) == instr) {
-      return Cast<HloAsyncInstruction>(user);
+      return user;
     }
   }
   HloInstruction* root_producer = FindAsyncChainProducer(instr);
@@ -477,10 +514,10 @@ HloAsyncInstruction* FindAsyncChainNext(HloInstruction* instr) {
     if (curr == nullptr || !visited.insert(curr).second) {
       continue;
     }
-    if (HloAsyncInstruction::ClassOf(curr)) {
+    if (curr->IsAsyncConsumer()) {
       if (curr->operand_count() > 0 &&
           FindAsyncChainProducer(curr->mutable_operand(0)) == root_producer) {
-        return Cast<HloAsyncInstruction>(curr);
+        return curr;
       }
       continue;
     }
@@ -499,18 +536,18 @@ HloAsyncInstruction* FindAsyncChainNext(HloInstruction* instr) {
   return nullptr;
 }
 
-HloAsyncInstruction* FindAsyncChainDone(HloInstruction* instr) {
+HloInstruction* FindAsyncChainDone(HloInstruction* instr) {
   if (instr == nullptr) {
     return nullptr;
   }
-  if (instr->opcode() == HloOpcode::kAsyncDone) {
-    return Cast<HloAsyncInstruction>(instr);
+  if (instr->IsAsyncDone()) {
+    return instr;
   }
-  HloAsyncInstruction* consumer = FindAsyncChainNext(instr);
+  HloInstruction* consumer = FindAsyncChainNext(instr);
   while (consumer != nullptr && consumer->opcode() == HloOpcode::kAsyncUpdate) {
     consumer = FindAsyncChainNext(consumer);
   }
-  return consumer;
+  return (consumer != nullptr && consumer->IsAsyncDone()) ? consumer : nullptr;
 }
 
 }  // namespace
@@ -533,7 +570,7 @@ HloAsyncInstruction::HloAsyncInstruction(
   HloAsyncInstruction* prev = nullptr;
   if (opcode == HloOpcode::kAsyncUpdate || opcode == HloOpcode::kAsyncDone) {
     if (!operands.empty() && operands[0] != nullptr) {
-      prev = FindAsyncChainProducer(operands[0]);
+      prev = DynCast<HloAsyncInstruction>(FindAsyncChainProducer(operands[0]));
       if (prev != nullptr) {
         prev->async_chain_next_ = this;
       }
@@ -570,8 +607,8 @@ HloComputation* HloAsyncInstruction::async_wrapped_computation() const {
   if (operands().empty() || operand(0) == nullptr) {
     return nullptr;
   }
-  HloAsyncInstruction* producer =
-      FindAsyncChainProducer(const_cast<HloInstruction*>(operand(0)));
+  HloAsyncInstruction* producer = DynCast<HloAsyncInstruction>(
+      FindAsyncChainProducer(const_cast<HloInstruction*>(operand(0))));
   while (producer != nullptr) {
     if (!producer->called_computations().empty()) {
       return producer->called_computations().front();
@@ -579,8 +616,8 @@ HloComputation* HloAsyncInstruction::async_wrapped_computation() const {
     if (producer->operands().empty() || producer->operand(0) == nullptr) {
       break;
     }
-    producer = FindAsyncChainProducer(
-        const_cast<HloInstruction*>(producer->operand(0)));
+    producer = DynCast<HloAsyncInstruction>(FindAsyncChainProducer(
+        const_cast<HloInstruction*>(producer->operand(0))));
   }
   return nullptr;
 }
@@ -623,14 +660,16 @@ HloAsyncInstruction* HloAsyncInstruction::async_chain_start() const {
   if (operands().empty() || operands()[0] == nullptr) {
     return nullptr;
   }
-  return FindAsyncChainStart(const_cast<HloAsyncInstruction*>(this));
+  return DynCast<HloAsyncInstruction>(
+      FindAsyncChainStart(const_cast<HloAsyncInstruction*>(this)));
 }
 
 HloAsyncInstruction* HloAsyncInstruction::async_chain_next() const {
   if (opcode() == HloOpcode::kAsyncDone) {
     return nullptr;
   }
-  return FindAsyncChainNext(const_cast<HloAsyncInstruction*>(this));
+  return DynCast<HloAsyncInstruction>(
+      FindAsyncChainNext(const_cast<HloAsyncInstruction*>(this)));
 }
 
 HloAsyncInstruction* HloAsyncInstruction::async_chain_done() const {
@@ -638,7 +677,8 @@ HloAsyncInstruction* HloAsyncInstruction::async_chain_done() const {
     return const_cast<HloAsyncInstruction*>(this);
   }
 
-  return FindAsyncChainDone(const_cast<HloAsyncInstruction*>(this));
+  return DynCast<HloAsyncInstruction>(
+      FindAsyncChainDone(const_cast<HloAsyncInstruction*>(this)));
 }
 
 std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
@@ -652,6 +692,104 @@ std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
     current = current->async_chain_next();
   }
   return chain;
+}
+
+HloInstruction* HloInstruction::async_chain_start() const {
+  if (IsAsyncProducer() || IsAsyncConsumer()) {
+    return FindAsyncChainStart(const_cast<HloInstruction*>(this));
+  }
+  return nullptr;
+}
+
+HloInstruction* HloInstruction::async_chain_next() const {
+  if (IsAsyncProducer() || IsAsyncConsumer()) {
+    return FindAsyncChainNext(const_cast<HloInstruction*>(this));
+  }
+  return nullptr;
+}
+
+HloInstruction* HloInstruction::async_chain_done() const {
+  if (IsAsyncProducer() || IsAsyncConsumer()) {
+    return FindAsyncChainDone(const_cast<HloInstruction*>(this));
+  }
+  return nullptr;
+}
+
+absl::StatusOr<HloInstruction*>
+HloInstruction::PropagateAsyncChainIntermediaries(
+    HloInstruction* new_producer) {
+  HloInstruction* done = async_chain_done();
+  if (done == nullptr || done == this) {
+    return new_producer;
+  }
+  std::vector<HloInstruction*> chain;
+  for (HloInstruction* curr = this; curr != nullptr;
+       curr = curr->async_chain_next()) {
+    chain.push_back(curr);
+    if (curr == done) {
+      break;
+    }
+  }
+  HloInstruction* current = new_producer;
+  for (size_t i = 1; i < chain.size(); ++i) {
+    HloInstruction* link = chain[i];
+    if (link->operand_count() == 0 || link->operand(0) == nullptr ||
+        link->operand(0)->IsAsyncProducer()) {
+      continue;
+    }
+    std::vector<std::pair<HloInstruction*, int64_t>> backward_steps;
+    HloInstruction* prev_async =
+        FindAsyncChainProducer(link->mutable_operand(0), &backward_steps);
+    if (prev_async == nullptr || backward_steps.empty()) {
+      continue;
+    }
+    for (auto it = backward_steps.rbegin(); it != backward_steps.rend(); ++it) {
+      HloInstruction* node = it->first;
+      int64_t operand_index = it->second;
+      switch (node->opcode()) {
+        case HloOpcode::kTuple: {
+          ABSL_RETURN_IF_ERROR(
+              node->ReplaceOperandWithDifferentShape(operand_index, current));
+          *node->mutable_shape()->mutable_tuple_shapes(operand_index) =
+              current->shape();
+          break;
+        }
+        case HloOpcode::kGetTupleElement: {
+          ABSL_RETURN_IF_ERROR(
+              node->ReplaceOperandWithDifferentShape(0, current));
+          *node->mutable_shape() =
+              current->shape().tuple_shapes(node->tuple_index());
+          break;
+        }
+        case HloOpcode::kOptimizationBarrier: {
+          if (node->operand_count() > 1) {
+            ABSL_RETURN_IF_ERROR(
+                node->ReplaceOperandWithDifferentShape(operand_index, current));
+            *node->mutable_shape()->mutable_tuple_shapes(operand_index) =
+                current->shape();
+          } else {
+            ABSL_RETURN_IF_ERROR(
+                node->ReplaceOperandWithDifferentShape(0, current));
+            *node->mutable_shape() = current->shape();
+          }
+          break;
+        }
+        case HloOpcode::kCopy:
+        case HloOpcode::kCustomCall: {
+          ABSL_RETURN_IF_ERROR(
+              node->ReplaceOperandWithDifferentShape(0, current));
+          *node->mutable_shape() = current->shape();
+          break;
+        }
+        default: {
+          return Internal("Unsupported forward step: %s", node->ToString());
+        }
+      }
+      current = node;
+    }
+    ABSL_RETURN_IF_ERROR(link->ReplaceOperandWithDifferentShape(0, prev_async));
+  }
+  return current;
 }
 
 void HloAsyncInstruction::UpdateChainShapes() {
