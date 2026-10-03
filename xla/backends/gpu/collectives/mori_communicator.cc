@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/mori_collectives.h"
@@ -47,6 +46,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -127,27 +127,23 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
     return absl::InvalidArgumentError(absl::StrFormat(
         "MoriCommunicator: unsupported number of ranks %d", num_ranks));
   }
-  if (num_ranks <= 0) {
-    return absl::InvalidArgumentError(absl::StrFormat(
-        "MoriCommunicator: unsupported number of ranks %d", num_ranks));
-  }
   comm->rank_ = rank;
   comm->num_ranks_ = num_ranks;
   // Communicator obtains a reference to the CollectivesFacade singleton for
   // the current device.
   comm->facade_ = CollectivesFacade::Get();
   if (comm->facade_ == nullptr) {
-    return absl::InternalError("CollectivesFacade::Create failed");
+    return absl::InternalError(
+        "CollectivesFacade::Get returned null: MORI is not initialized for the "
+        "current device");
   }
   VLOG(1) << "Created " << *comm << " with participants: " << num_ranks;
   return comm;
 }
 
-MoriCommunicator::~MoriCommunicator() {
-  // facade_ (unique_ptr) releases this communicator's staging + counters via
-  // the CollectivesFacade dtor here, before MoriCollectives::Finalize() ->
-  // ShmemFinalize.
-}
+// `facade_` is non-owning: the per-device facades are released by
+// MoriCollectives::Finalize() via CollectivesFacade::TearDown().
+MoriCommunicator::~MoriCommunicator() = default;
 
 #define CHECK_CANCELLED()                                               \
   if (cancel_->IsCancelled()) {                                         \

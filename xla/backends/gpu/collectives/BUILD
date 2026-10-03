@@ -1,5 +1,8 @@
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured",
-     "rocm_library")
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+    "rocm_library",
+)
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
@@ -1265,13 +1268,10 @@ cc_library(
 
 rocm_library(
     name = "mori_kernels",
-    hdrs = ["mori_kernels.h"],
     srcs = [
         "mori_kernels.cu.cc",
     ],
-    copts = [
-        "-DBUILD_CCO_SDMA=1",
-    ],
+    hdrs = ["mori_kernels.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
@@ -1345,7 +1345,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:numbers",
     ] + if_rocm_is_configured([
         ":mori_kernels",
         "@local_config_rocm//rocm:rocm_headers",
