@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_SE_LOCAL_DEVICE_STATE_H_
 #define XLA_PJRT_SE_LOCAL_DEVICE_STATE_H_
 
+#include <cstddef>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -227,8 +228,26 @@ class LocalDeviceState {
       absl::AnyInvocable<void() &&> cleanup = {});
 
   size_t GetNextComputeStreamSyncPoint() {
-    return next_compute_stream_sync_point_.load();
+    absl::MutexLock lock(mu_);
+    return next_compute_stream_sync_point_;
   }
+
+  // Returns the next compute stream sync point and marks it as requested, so
+  // that `RecordRequestedComputeStreamSyncPoint()` records an event for it
+  // before the next execution enqueues work on the compute stream.
+  size_t RequestNextComputeStreamSyncPoint() {
+    absl::MutexLock lock(mu_);
+    next_compute_stream_sync_point_requested_ = true;
+    return next_compute_stream_sync_point_;
+  }
+
+  // Records an event for the next compute stream sync point if it has been
+  // requested via `RequestNextComputeStreamSyncPoint()` and no event has been
+  // recorded for it yet. Must be called before enqueuing an execution on the
+  // compute stream so that buffers allocated before the execution do not wait
+  // for the execution to complete.
+  absl::Status RecordRequestedComputeStreamSyncPoint(
+      AsyncWorkRunner* async_work_runner);
 
   // Allows handing out very cheap event ids (GetNextComputeStreamSyncPoint())
   // which only incur the expense of constructing a cuda event if they're really
@@ -238,6 +257,13 @@ class LocalDeviceState {
       bool nullptr_if_past = false);
 
  private:
+  // Records an event on the compute stream for the next compute stream sync
+  // point, advances the next sync point, and clears its request. Must be called
+  // with `mu_` held, and releases `mu_`.
+  absl::StatusOr<BufferSequencingEventRef>
+  RecordNextComputeStreamSyncPointAndUnlock(AsyncWorkRunner* async_work_runner)
+      ABSL_UNLOCK_FUNCTION(mu_);
+
   absl::Status SynchronizeAllActivity();
 
   AllocationModel allocation_model_;
@@ -300,7 +326,10 @@ class LocalDeviceState {
 
   bool allow_delete_before_fulfill_ = true;
 
-  std::atomic<size_t> next_compute_stream_sync_point_{0};
+  size_t next_compute_stream_sync_point_ ABSL_GUARDED_BY(mu_) = 0;
+  // Whether `next_compute_stream_sync_point_` has been handed out via
+  // `RequestNextComputeStreamSyncPoint()` without an event recorded for it.
+  bool next_compute_stream_sync_point_requested_ ABSL_GUARDED_BY(mu_) = false;
   size_t base_compute_event_sequence_id_ ABSL_GUARDED_BY(mu_) = 0;
   std::deque<BufferSequencingEventRef> compute_events_ ABSL_GUARDED_BY(mu_);
 };

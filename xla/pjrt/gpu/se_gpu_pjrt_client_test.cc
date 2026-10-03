@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -89,9 +90,11 @@ limitations under the License.
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/se/buffer_sequencing_event.h"
 #include "xla/pjrt/se/local_device_state.h"
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/pjrt/se/stream_executor_executable.h"
+#include "xla/pjrt/se/tracked_device_buffer.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
@@ -2715,6 +2718,75 @@ TEST(StreamExecutorGpuClientTest, EventCaching) {
                           local_device_state->GetEventForComputeStreamSyncPoint(
                               sync_point0, async_work_runner));
   EXPECT_EQ(&*event3, &*event2);
+}
+
+TEST(StreamExecutorGpuClientTest,
+     RequestedComputeStreamSyncPointIsRecordedBeforeExecution) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtClient> client,
+      GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  PjRtStreamExecutorRawClient* raw_client =
+      absl::down_cast<PjRtStreamExecutorRawClient*>(
+          absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  AsyncWorkRunner* async_work_runner = raw_client->async_work_runner();
+  PjRtDevice* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(
+      LocalDeviceState * local_device_state,
+      raw_client->GetLocalDeviceState(device->local_device_id()));
+  ASSERT_EQ(local_device_state->allocation_model(),
+            LocalDeviceState::kComputeSynchronized);
+
+  // Record a sync point so that no sync point is requested at this point.
+  TF_ASSERT_OK_AND_ASSIGN(
+      BufferSequencingEventRef initial_event,
+      local_device_state->GetEventForComputeStreamSyncPoint(
+          local_device_state->GetNextComputeStreamSyncPoint(),
+          async_work_runner));
+
+  // Without any requested sync point, nothing is recorded.
+  size_t sync_point = local_device_state->GetNextComputeStreamSyncPoint();
+  TF_ASSERT_OK(local_device_state->RecordRequestedComputeStreamSyncPoint(
+      async_work_runner));
+  EXPECT_EQ(local_device_state->GetNextComputeStreamSyncPoint(), sync_point);
+
+  // A buffer allocation requests the next sync point, which is recorded before
+  // a subsequent execution enqueues its work on the compute stream.
+  tsl::AsyncValueRef<RawSEDeviceMemory> buf =
+      RawSEDeviceMemory::Create(se::DeviceAddressBase(), local_device_state,
+                                /*allocator=*/nullptr);
+  TF_ASSERT_OK(local_device_state->RecordRequestedComputeStreamSyncPoint(
+      async_work_runner));
+  EXPECT_EQ(local_device_state->GetNextComputeStreamSyncPoint(),
+            sync_point + 1);
+  TF_ASSERT_OK_AND_ASSIGN(BufferSequencingEventRef pre_execution_event,
+                          local_device_state->GetEventForComputeStreamSyncPoint(
+                              sync_point, async_work_runner));
+
+  // The buffer binds to the event recorded before the execution. Check this
+  // before recording a later sync point, whose completion prunes earlier
+  // events.
+  TF_ASSERT_OK_AND_ASSIGN(
+      BufferSequencingEventRef allocation_event,
+      buf->GetDefinitionEvent(async_work_runner, /*nullptr_if_past=*/false));
+  ASSERT_TRUE(allocation_event);
+  EXPECT_EQ(&*allocation_event, &*pre_execution_event);
+
+  // The request is cleared once recorded.
+  TF_ASSERT_OK(local_device_state->RecordRequestedComputeStreamSyncPoint(
+      async_work_runner));
+  EXPECT_EQ(local_device_state->GetNextComputeStreamSyncPoint(),
+            sync_point + 1);
+
+  // A post-execution sync point recorded by `Execute` gets a new event.
+  TF_ASSERT_OK_AND_ASSIGN(
+      BufferSequencingEventRef post_execution_event,
+      local_device_state->GetEventForComputeStreamSyncPoint(
+          local_device_state->GetNextComputeStreamSyncPoint(),
+          async_work_runner));
+  EXPECT_NE(&*allocation_event, &*post_execution_event);
+
+  tsl::BlockUntilReady(initial_event);
+  tsl::BlockUntilReady(post_execution_event);
 }
 
 TEST(StreamExecutorGpuClientTest, LinkedEventPromise) {

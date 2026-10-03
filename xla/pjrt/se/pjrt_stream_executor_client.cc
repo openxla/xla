@@ -1392,6 +1392,15 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     run_options.set_custom_options(custom_options);
 
     absl::Status predetermined_error;
+    // Buffers allocated before this execution may have requested the next
+    // compute stream sync point. Record it before enqueuing any work (including
+    // waits) on the compute stream so that their allocation events are not
+    // ordered after this execution.
+    if (device_state->allocation_model() ==
+        LocalDeviceState::kComputeSynchronized) {
+      predetermined_error = device_state->RecordRequestedComputeStreamSyncPoint(
+          raw_client->async_work_runner());
+    }
     for (size_t i = 0; i < extra_deps.size(); ++i) {
       const auto& event = extra_deps[i];
       if (auto ev = event.down_cast<BufferSequencingEvent>()) {
