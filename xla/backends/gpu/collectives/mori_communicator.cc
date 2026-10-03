@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/mori_collectives.h"
@@ -47,6 +46,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -133,17 +133,39 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
   // the current device.
   comm->facade_ = CollectivesFacade::Get();
   if (comm->facade_ == nullptr) {
-    return absl::InternalError("CollectivesFacade::Create failed");
+    return absl::InternalError(
+        "CollectivesFacade::Get returned null: MORI is not initialized for the "
+        "current device");
   }
+
+  const int facade_num_pes = comm->facade_->NumPes(),
+            facade_my_pe = comm->facade_->MyPe();
+  if (num_ranks != facade_num_pes || rank != facade_my_pe) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Clique size (%d) disagrees with the MORI world size (%d) or "
+        "rank (%d) disagrees with the MORI PE id (%d). The MORI backend only "
+        "supports collectives over the full global clique with an identity "
+        "rank->PE mapping.",
+        num_ranks, facade_num_pes, rank, facade_my_pe));
+  }
+  for (int i = 0; i < num_ranks; ++i) {
+    if (rank_to_pe[i] != i) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Rank_to_pe[%d]=%d is not the identity mapping. The MORI backend "
+          "only "
+          "supports collectives over the full global clique with an identity "
+          "rank->PE mapping.",
+          i, rank_to_pe[i]));
+    }
+  }
+
   VLOG(1) << "Created " << *comm << " with participants: " << num_ranks;
   return comm;
 }
 
-MoriCommunicator::~MoriCommunicator() {
-  // facade_ (unique_ptr) releases this communicator's staging + counters via
-  // the CollectivesFacade dtor here, before MoriCollectives::Finalize() ->
-  // ShmemFinalize.
-}
+// `facade_` is non-owning: the per-device facades are released by
+// MoriCollectives::Finalize() via CollectivesFacade::TearDown().
+MoriCommunicator::~MoriCommunicator() = default;
 
 #define CHECK_CANCELLED()                                               \
   if (cancel_->IsCancelled()) {                                         \
