@@ -26,11 +26,9 @@ bool OneDnnFloatSupport::IsSupported(const HloInstruction& hlo) const {
   switch (hlo.opcode()) {
     // oneDNN rewritable ops
     case HloOpcode::kDot:
-      return LowPrecisionType() == BF16 &&
-             OneDnnContractionRewriter::ShouldRewriteDot(&hlo, true);
+      return LowPrecisionType() == BF16 && ShouldRewriteDot(&hlo, true);
     case HloOpcode::kConvolution:
-      return LowPrecisionType() == BF16 &&
-             OneDnnContractionRewriter::ShouldRewriteConv(&hlo);
+      return LowPrecisionType() == BF16 && ShouldRewriteConv(&hlo);
     // Collective ops.
     case HloOpcode::kAllGather:
     case HloOpcode::kAllReduce:
