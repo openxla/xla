@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace pjrt {
 namespace {
@@ -72,8 +73,9 @@ absl::StatusOr<std::string> GetDumpSubdirPath(absl::string_view dump_to_path,
   // Use xla::FilenameFor to generate a dump subdirectory name like
   // "module_0001.main.cl_891958412" Note: prefix and suffix are left empty to
   // capture only the identity.
-  std::string dump_subdir_name =
-      xla::FilenameFor(module_id, module_name, /*prefix=*/"", /*suffix=*/"");
+  std::string dump_subdir_name = xla::FilenameFor(
+      module_id, xla::SanitizeFileName(std::string(module_name)),
+      /*prefix=*/"", /*suffix=*/"");
 
   // xla::FilenameFor appends a trailing dot if the suffix is empty; remove it.
   if (!dump_subdir_name.empty() && dump_subdir_name.back() == '.') {
