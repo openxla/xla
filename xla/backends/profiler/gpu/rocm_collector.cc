@@ -568,14 +568,13 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
   // Disable(), so without this guard a long capture retains every marker for
   // the whole session and can exhaust memory in the process being profiled.
   // Counting them in num_callback_events_ also keeps the VLOG(3) summary and
-  // the documented XLA_FLAGS=--xla_gpu_rocm_max_trace_events knob honest;
-  // both silently ignored this path before.
+  // the gpu_max_callback_api_events limit honest.
   if (event.type == RocmTracerEventType::Generic) {
     if (num_callback_events_ >= options_.max_callback_api_events) {
       OnEventsDropped(
           "ROCTX marker event dropped: max_callback_api_events "
-          "reached. To collect more, set "
-          "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=X",
+          "reached. To collect more, raise the gpu_max_callback_api_events "
+          "key of ProfileOptions.advanced_configuration.",
           event.correlation_id);
       return;
     }
@@ -587,12 +586,13 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
   if (event.source == RocmTracerEventSource::ApiCallback) {
     if (!is_auxiliary) {
       if (num_callback_events_ >= options_.max_callback_api_events) {
-        LOG(WARNING)
-            << "!!! Number of callback events = " << num_callback_events_
-            << " is greater than/equal to the max callback api events = "
+        LOG_FIRST_N(WARNING, 1)
+            << "Number of callback events (" << num_callback_events_
+            << ") has reached the configured limit ("
             << options_.max_callback_api_events
-            << ". To collect more GPU events, please set "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=X ";
+            << "). To collect more GPU events, raise the "
+               "gpu_max_callback_api_events key of "
+               "ProfileOptions.advanced_configuration.";
         return;
       }
       num_callback_events_++;
@@ -611,11 +611,11 @@ void RocmTraceCollectorImpl::AddEvent(RocmTracerEvent&& event,
       if (num_activity_events_ >= options_.max_activity_api_events) {
         LOG_FIRST_N(WARNING, 1)
             << "Number of activity events (" << num_activity_events_
-            << ") has reached the configured limit "
-               "(xla_gpu_rocm_max_trace_events="
+            << ") has reached the configured limit ("
             << options_.max_activity_api_events
-            << "). To collect more GPU events, increase "
-               "XLA_FLAGS=--xla_gpu_rocm_max_trace_events=<value>.";
+            << "). To collect more GPU events, raise the "
+               "gpu_max_activity_api_events key of "
+               "ProfileOptions.advanced_configuration.";
         return;
       }
 

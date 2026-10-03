@@ -56,7 +56,6 @@ TEST(RocmCollectorTest, TestAddKernelEventAndExport) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   constexpr uint64_t kStartWallTimeNs = 1000;
@@ -134,7 +133,6 @@ TEST(RocmCollectorTest, MultipleActivitiesPerCorrelationIdAllExported) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   constexpr uint64_t kStartWallTimeNs = 1000;
@@ -270,7 +268,6 @@ TEST(RocmCollectorTest, MarkerEventsRespectMaxCallbackApiEvents) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 8;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   DropCountingCollector collector(options, /*start_walltime_ns=*/1000,
@@ -311,7 +308,6 @@ TEST(RocmCollectorTest, MarkerEventsDroppedWhenNoGpusReported) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 0;
 
   RocmTraceCollectorImpl collector(options, /*start_walltime_ns=*/1000,
@@ -339,7 +335,6 @@ TEST(RocmCollectorTest, MarkerAndApiEventsOnSameThreadGetSeparateLines) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   RocmTraceCollectorImpl collector(options, /*start_walltime_ns=*/1000,
@@ -402,6 +397,75 @@ TEST(RocmCollectorTest, MarkerAndApiEventsOnSameThreadGetSeparateLines) {
   EXPECT_TRUE(found_marker_line) << "marker must get its own /ROCTX line";
   EXPECT_TRUE(found_plain_host_line)
       << "the API event must stay on the plain host-thread line";
+}
+
+// MarkerEventsRespectMaxCallbackApiEvents covers ROCTX markers; this covers
+// HIP API callbacks, which reach the limit through a different branch.
+TEST(RocmCollectorTest, CallbackCapDropsEventsBeyondLimit) {
+  constexpr uint64_t kMaxCallbackEvents = 3;
+  constexpr int kEventsOffered = 5;
+
+  RocmTraceCollectorOptions options;
+  options.max_callback_api_events = kMaxCallbackEvents;
+  options.max_activity_api_events = 100;
+  options.num_gpus = 1;
+
+  constexpr uint64_t kStartWallTimeNs = 1000;
+  constexpr uint64_t kStartGpuTimeNs = 2000;
+  RocmTraceCollectorImpl collector(options, kStartWallTimeNs, kStartGpuTimeNs);
+
+  constexpr uint32_t kDeviceId = 100;
+  constexpr uint64_t kStreamId = 123;
+
+  // API/activity pairs as in TestAddKernelEventAndExport. The limit applies
+  // only to non-auxiliary ApiCallback events.
+  for (int i = 0; i < kEventsOffered; ++i) {
+    const uint32_t correlation_id = 500 + i;
+
+    RocmTracerEvent api_event;
+    api_event.type = RocmTracerEventType::Kernel;
+    api_event.source = RocmTracerEventSource::ApiCallback;
+    api_event.domain = RocmTracerEventDomain::HIP_API;
+    api_event.name = "capped_kernel";
+    api_event.correlation_id = correlation_id;
+    api_event.thread_id = 999;
+    api_event.kernel_info = KernelDetails{};
+    api_event.kernel_info.func_ptr = reinterpret_cast<void*>(0xdeadbeef);
+    collector.AddEvent(std::move(api_event), /*is_auxiliary=*/false);
+
+    RocmTracerEvent activity;
+    activity.type = RocmTracerEventType::Kernel;
+    activity.source = RocmTracerEventSource::Activity;
+    activity.domain = RocmTracerEventDomain::HIP_OPS;
+    activity.name = "capped_kernel";
+    activity.correlation_id = correlation_id;
+    activity.start_time_ns = 3000 + i * 100;
+    activity.end_time_ns = 3050 + i * 100;
+    activity.device_id = kDeviceId;
+    activity.stream_id = kStreamId;
+    collector.AddEvent(std::move(activity), /*is_auxiliary=*/false);
+  }
+
+  collector.Flush();
+  tensorflow::profiler::XSpace space;
+  collector.Export(&space);
+
+  const auto* gpu_plane =
+      FindOrAddMutablePlaneWithName(&space, "/device:GPU:0");
+  ASSERT_NE(gpu_plane, nullptr);
+
+  // Export() renumbers streams, so select stream lines by name.
+  size_t exported = 0;
+  for (const auto& line : gpu_plane->lines()) {
+    if (!absl::StartsWith(line.name(), "Stream #")) {
+      continue;
+    }
+    exported += line.events_size();
+  }
+
+  // Activity records whose API callback was refused are dropped as well.
+  EXPECT_EQ(exported, kMaxCallbackEvents)
+      << "offered " << kEventsOffered << " events";
 }
 
 }  // namespace test
