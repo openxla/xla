@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -474,6 +475,41 @@ class PjRtExecutableUtil {
   RunHloCostAnalysis(
       const std::vector<std::shared_ptr<xla::HloModule>>& hlo_modules,
       HloCostAnalysis* hlo_cost_analysis);
+};
+
+class PjRtRelocatable {
+ public:
+  virtual ~PjRtRelocatable() = default;
+
+  // Unique name for this op.
+  virtual absl::string_view name() const = 0;
+
+  // Returns the build ID of this op, derived from the inputs that produced this
+  // compiled op.
+  virtual absl::string_view build_id() const = 0;
+
+  // Returns the opaque backend config to apply to any call sites for this
+  // compiled op. Part of the call interface.
+  virtual absl::string_view backend_call_config() const = 0;
+
+  // Returns whether the compiled op has side effects.
+  virtual bool has_side_effects() const = 0;
+
+  // Serializes this executable into a string. The compatibility of the
+  // serialized compiled op is implementation-specific.
+  virtual absl::StatusOr<std::string> Serialize() const = 0;
+
+  // Returns the shapes of the inputs and outputs of the compiled op.
+  // Part of the call interface.
+  virtual absl::StatusOr<xla::ProgramShape> GetShape() const = 0;
+
+  // Returns which pairs of inputs and outputs may alias.
+  virtual std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>
+  GetOutputOperandAliasing() const = 0;
+
+  // Returns the underlying partial programs. Their interpretation is
+  // backend-specific.
+  virtual std::vector<absl::string_view> GetPartialPrograms() const = 0;
 };
 
 }  // namespace xla
