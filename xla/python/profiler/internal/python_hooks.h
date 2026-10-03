@@ -21,6 +21,7 @@ limitations under the License.
 #endif
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -67,68 +68,24 @@ struct PerThreadConsumeData {
 };
 
 struct PythonTraceEntry {
-  // Capture the source/line information for a PyCodeObject object.
-  // In eager mode, keeping a reference to PyCodeObject leaks device memory.
-  PythonTraceEntry(uint64_t start, uint64_t end, PyCodeObject* py_code_object)
-      : start_time_ns(start),
-        end_time_ns(end),
-        co_filename(py_code_object->co_filename),
-        co_name(py_code_object->co_name),
-        co_firstlineno(py_code_object->co_firstlineno) {
-    Py_XINCREF(co_filename);
-    Py_XINCREF(co_name);
-  }
-  // Capture the source/line information for a PyCFunctionObject object.
-  // In eager mode, keeping a reference to PyCFunctionObject leaks device
-  // memory.
-  PythonTraceEntry(uint64_t start, uint64_t end,
-                   PyCFunctionObject* py_c_function)
-      : start_time_ns(start),
-        end_time_ns(end),
-        m_module(py_c_function->m_module) {
-    Py_XINCREF(m_module);
-    if (auto* method_def = py_c_function->m_ml;
-        method_def != nullptr && method_def->ml_name != nullptr) {
-      method_name = method_def->ml_name;
-    }
-  }
+  PythonTraceEntry(uint64_t start, uint64_t end, const std::string* name)
+      : start_time_ns(start), end_time_ns(end), event_name(name) {}
 
-  ~PythonTraceEntry() {
-    Py_XDECREF(co_filename);
-    Py_XDECREF(co_name);
-    Py_XDECREF(m_module);
-  }
-
-  PythonTraceEntry(PythonTraceEntry&& other) noexcept {
-    start_time_ns = other.start_time_ns;
-    end_time_ns = other.end_time_ns;
-    co_firstlineno = other.co_firstlineno;
-    co_filename = other.co_filename;
-    co_name = other.co_name;
-    method_name = std::move(other.method_name);
-    m_module = other.m_module;
-    other.co_filename = nullptr;
-    other.co_name = nullptr;
-    other.method_name = "";
-    other.m_module = nullptr;
-  }
-
-  std::string Name() const;
+  absl::string_view Name() const { return *event_name; }
 
   uint64_t start_time_ns;
   uint64_t end_time_ns;
-  PyObject* co_filename = nullptr;
-  PyObject* co_name = nullptr;
-  int co_firstlineno = 0;
-  std::string method_name;
-  PyObject* m_module = nullptr;
-
-  PythonTraceEntry(const PythonTraceEntry& other) = delete;
-  void operator=(const PythonTraceEntry&) = delete;
-  void operator=(PythonTraceEntry&&) = delete;
+  // Interned name owned by the PythonHookContext that recorded this entry.
+  const std::string* event_name;
 };
 
 struct PerThreadEvents {
+  PerThreadEvents() = default;
+  PerThreadEvents(PerThreadEvents&&) = default;
+  PerThreadEvents& operator=(PerThreadEvents&&) = default;
+  PerThreadEvents(const PerThreadEvents&) = delete;
+  PerThreadEvents& operator=(const PerThreadEvents&) = delete;
+
   std::deque<PythonTraceEntry> completed;
   std::stack<PythonTraceEntry> active;
   // Track C Functions call in its own stack.
@@ -139,7 +96,7 @@ class PythonHooks;
 
 class PythonHookContext {
  public:
-  ~PythonHookContext();
+  ~PythonHookContext() = default;
   void Finalize(tensorflow::profiler::XSpace* space);
   std::vector<PerThreadConsumeData> Consume();
 
@@ -170,7 +127,30 @@ class PythonHookContext {
     absl::Mutex mu;
 #endif  // Py_GIL_DISABLED
     absl::flat_hash_map<int64_t, PerThreadEvents> entries;
+
+    // Event names are formatted once per distinct function and interned here,
+    // so the profile callback only does a lookup. The tables keep their code
+    // objects and C function modules alive until Stop(), so that a freed
+    // object's address cannot be reused by a different function while it is
+    // a key. Unlike function objects, these don't reference runtime values
+    // such as device buffers. The strings live until the context is
+    // destroyed; std::deque keeps pointers to them stable.
+    absl::flat_hash_map<PyCodeObject*, const std::string*> code_names;
+    absl::flat_hash_map<std::pair<PyMethodDef*, PyObject*>, const std::string*>
+        c_function_names;
+    std::deque<std::string> names;
   };
+
+  // Returns the interned event name for the function, formatting it the first
+  // time the function is seen. Must be called with the shard's lock (the GIL,
+  // or `shard.mu` in free-threaded builds). The returned pointer stays valid
+  // until the context is destroyed.
+  static const std::string* InternName(EntryShard& shard,
+                                       PyCodeObject* py_code_object);
+  static const std::string* InternName(EntryShard& shard,
+                                       PyCFunctionObject* py_c_function);
+  // Drops the references held by the interning tables. Requires the GIL.
+  void ReleaseInternedObjects();
 
 #ifdef Py_GIL_DISABLED
   static constexpr size_t kNumEntryShards = 16;
@@ -180,7 +160,7 @@ class PythonHookContext {
   std::array<EntryShard, kNumEntryShards> entry_shards_;
   uint64_t start_timestamp_ns_;
   PythonHooksOptions options_;
-  bool stopped_ = false;
+  std::atomic<bool> stopped_ = false;
   // In end to end mode, Python get uninitialized before Stop()/Finalize(), we
   // need to buffer the result.
   std::optional<tensorflow::profiler::XPlane> end_to_end_xplane_;
@@ -219,10 +199,7 @@ class PythonHooks {
     if (!active_context_) {
       return {};
     }
-    if (Py_IsInitialized()) {
-      return active_context_->Consume();
-    }
-    return {};
+    return active_context_->Consume();
   }
 
   friend class ::xla::profiler::PythonHookContext;
