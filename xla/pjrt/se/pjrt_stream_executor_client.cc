@@ -71,6 +71,7 @@ limitations under the License.
 #include <cstring>
 #include <functional>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -179,12 +180,55 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+namespace {
+
+constexpr int64_t kDefaultStagingChunkSizeMb = 16;
+
+// Returns the chunk size, in bytes, used for chunked staging of host<->device
+// transfers. Overridable via the XLA_PJRT_GPU_CC_STAGING_CHUNK_MB environment
+// variable.
+int64_t GetStagingChunkSizeFromEnv() {
+  constexpr absl::string_view kEnvVar = "XLA_PJRT_GPU_CC_STAGING_CHUNK_MB";
+  int64_t chunk_size_mb;
+  absl::Status status = tsl::ReadInt64FromEnvVar(
+      kEnvVar, kDefaultStagingChunkSizeMb, &chunk_size_mb);
+  if (!status.ok() || chunk_size_mb <= 0 ||
+      chunk_size_mb > (std::numeric_limits<int64_t>::max() >> 20)) {
+    LOG(WARNING) << "Ignoring invalid " << kEnvVar
+                 << " (must be a positive integer number of MiB); using the "
+                 << "default of " << kDefaultStagingChunkSizeMb << " MiB.";
+    chunk_size_mb = kDefaultStagingChunkSizeMb;
+  }
+  return chunk_size_mb << 20;
+}
+
+}  // namespace
+
+absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> PlanStagingChunks(
+    int64_t transfer_size, int64_t chunk_size) {
+  if (chunk_size <= 0) {
+    return InvalidArgument("Staging chunk size must be positive, got %d",
+                           chunk_size);
+  }
+  if (transfer_size < 0) {
+    return InvalidArgument("Transfer size must be non-negative, got %d",
+                           transfer_size);
+  }
+  std::vector<std::pair<int64_t, int64_t>> chunks;
+  chunks.reserve(CeilOfRatio(transfer_size, chunk_size));
+  for (int64_t offset = 0; offset < transfer_size; offset += chunk_size) {
+    chunks.emplace_back(offset, std::min(chunk_size, transfer_size - offset));
+  }
+  return chunks;
+}
 
 template <typename MemorySpaceKind>
 static bool IsMemorySpaceKind(const PjRtMemorySpace* memory_space) {
@@ -297,6 +341,7 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
       should_stage_host_to_device_transfers_(
           should_stage_host_to_device_transfers),
       confidential_computing_enabled_(confidential_computing_enabled),
+      staging_chunk_size_(GetStagingChunkSizeFromEnv()),
       executor_(executor),
       gpu_run_options_(std::move(gpu_run_options)),
       compile_thread_pool_(
