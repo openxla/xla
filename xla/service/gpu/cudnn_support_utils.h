@@ -24,6 +24,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -78,6 +82,20 @@ inline constexpr absl::string_view kWorkspaceAllocationCustomCallTarget =
 // Detects `ROOT tuple(..., custom-call())` used to allocate workspace buffers.
 bool IsWorkspaceAllocationRoot(const HloInstruction& root);
 bool IsAmaxRoot(const HloInstruction& root);
+
+// Resolves the DnnSupport pointer to use for cuDNN graph compilation based on
+// `debug_options.xla_gpu_cudnn_deviceless_compilation_mode()` and
+// `stream_exec`:
+// - Returns `nullptr` when deviceless cuDNN compilation is active (`ALWAYS`, or
+//   `AUTO` when `stream_exec == nullptr`).
+// - Returns `stream_exec->AsDnn()` when compiling with a GPU device.
+// - Returns an error if `stream_exec == nullptr` and deviceless cuDNN
+//   compilation is disabled, if `dnn_version < 9.8.0` when deviceless, or if
+//   `stream_exec->AsDnn()` is null.
+absl::StatusOr<se::dnn::DnnSupport*> ResolveCudnnSupport(
+    const DebugOptions& debug_options, se::StreamExecutor* stream_exec,
+    se::SemanticVersion dnn_version);
+
 }  // namespace gpu
 }  // namespace xla
 
