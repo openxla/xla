@@ -196,7 +196,8 @@ def TPU_ReduceOp : TPU_Op<"reduce", [Pure, SameOperandsAndResultRank]> {
 //  output : Result vector. Must have the same shape as source.
 //  input  : Vector to scan.
 //  kind   : Reduction operator. Must be one of "kSum", "kMax", or "kMin".
-//           Must be "kSum" if input is an I1 vector.
+//           Must be "kSum" if input is an I1 vector. "kMax" and "kMin"
+//           compare integers as unsigned.
 //  mask   : Elementwise vector mask. The scan operation starts from the
 //           lowest-indexed non-masked vector element (all previous elements
 //           have undefined values). Not taken for I1 input vectors.
