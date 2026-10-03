@@ -1964,6 +1964,34 @@ TEST(HloModuleTest, ModuleLevelCacheAPIs) {
   EXPECT_EQ(module.GetCacheEntry<TestCacheEntry>(key1)->value(), 100);
 }
 
+TEST(HloModuleTest, AddCacheEntriesFromSharesMissingEntriesAndKeepsOwn) {
+  HloModule source("source", HloModuleConfig());
+  HloModule target("target", HloModuleConfig());
+  tsl::Fprint128 key1{1, 2};
+  tsl::Fprint128 key2{3, 4};
+  auto source_entry1 = std::make_shared<TestCacheEntry>(key1, 10);
+  auto source_entry2 = std::make_shared<TestCacheEntry>(key2, 20);
+  auto target_entry1 = std::make_shared<TestCacheEntry>(key1, 100);
+  ASSERT_TRUE(source.SetCacheEntry(source_entry1));
+  ASSERT_TRUE(source.SetCacheEntry(source_entry2));
+  ASSERT_TRUE(target.SetCacheEntry(target_entry1));
+
+  target.AddCacheEntriesFrom(source);
+
+  // The target keeps its own entry for key1 and shares the source's object,
+  // not a copy, for key2.
+  EXPECT_EQ(target.GetCacheEntry<TestCacheEntry>(key1), target_entry1);
+  EXPECT_EQ(target.GetCacheEntry<TestCacheEntry>(key2), source_entry2);
+  // The source is unchanged.
+  EXPECT_EQ(source.GetCacheEntry<TestCacheEntry>(key1), source_entry1);
+  EXPECT_EQ(source.GetCacheEntry<TestCacheEntry>(key2), source_entry2);
+
+  // Sharing with itself changes nothing.
+  source.AddCacheEntriesFrom(source);
+  EXPECT_EQ(source.GetCacheEntry<TestCacheEntry>(key1), source_entry1);
+  EXPECT_EQ(source.GetCacheEntry<TestCacheEntry>(key2), source_entry2);
+}
+
 TEST(HloModuleTest, BackendConfigDeduplicationAndRoundtrip) {
   const char* hlo_text = R"(
     HloModule test_module
