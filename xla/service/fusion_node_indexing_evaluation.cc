@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/fusion_node_indexing_evaluation.h"
 
+#include <utility>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "tsl/platform/logging.h"
@@ -26,8 +28,10 @@ limitations under the License.
 namespace xla {
 
 FusionNodeIndexingEvaluation::FusionNodeIndexingEvaluation(
-    const HloInstruction* fusion, int64_t root_usage_count)
-    : fusion_(fusion) {
+    const HloInstruction* fusion, int64_t root_usage_count,
+    RematerializationPolicy rematerialization_policy)
+    : fusion_(fusion),
+      rematerialization_policy_(std::move(rematerialization_policy)) {
   HloInstruction* root = fusion->fused_expression_root();
   indexing_users_[root].insert(fusion);
   index_usage_count_[fusion] = root_usage_count;
@@ -71,9 +75,24 @@ bool FusionNodeIndexingEvaluation::CodeDuplicationTooHigh(
     return false;
   }
   int64_t emitted_instructions = EvaluateEmittedInstructions(producer);
-  return emitted_instructions > kAllowedCodeDuplication ||
-         (ElementalIrEmitter::OpInvalidatesCache(producer) &&
-          (emitted_instructions > 1 || UserCount(producer) > 1));
+  if (emitted_instructions > kAllowedCodeDuplication) {
+    return true;
+  }
+  if (!ElementalIrEmitter::OpInvalidatesCache(producer)) {
+    return false;
+  }
+  if (emitted_instructions <= 1 && UserCount(producer) <= 1) {
+    return false;
+  }
+  // `producer` opens a new BasicBlock, so its value cannot be reused across
+  // blocks and would simply be emitted again. That is legal -- the cost is IR
+  // size, not correctness -- and refusing it does not avoid the work: it
+  // forces `producer`'s whole output into memory instead. Backends that can
+  // compare those two costs get to make the call.
+  if (rematerialization_policy_ == nullptr) {
+    return true;
+  }
+  return !rematerialization_policy_(producer, emitted_instructions);
 }
 
 bool FusionNodeIndexingEvaluation::MaxCodeDuplicationTooHigh() const {
