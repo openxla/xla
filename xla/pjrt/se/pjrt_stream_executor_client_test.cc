@@ -172,7 +172,7 @@ std::unique_ptr<CommonPjRtDevice> MakePjRtStreamExecutorDevice(
       is_addressable);
 }
 
-absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>>
+absl::StatusOr<std::unique_ptr<CommonPjRtClientImpl>>
 MakeTestPjRtStreamExecutorClient(
     std::string platform_name, LocalClient* client,
     std::vector<std::unique_ptr<CommonPjRtDevice>> devices,
@@ -209,7 +209,7 @@ MakeTestPjRtStreamExecutorClient(
   attrs.attributes["dump_on_deserialize"] = true;
   attrs.attributes["should_stage_host_to_device_transfers"] =
       should_stage_host_to_device_transfers;
-  auto result = std::make_unique<PjRtStreamExecutorClient>(
+  auto result = std::make_unique<CommonPjRtClientImpl>(
       platform_id, std::move(platform_name), "<unknown>", process_index,
       std::move(topology), std::move(raw_client), std::move(kv_store),
       std::move(attrs));
@@ -223,7 +223,7 @@ MakeTestPjRtStreamExecutorClient(
   return result;
 }
 
-absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClient() {
+absl::StatusOr<std::unique_ptr<CommonPjRtClientImpl>> GetClient() {
   LocalClient* local_client = xla::ClientLibrary::LocalClientOrDie();
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
                         PlatformUtil::GetPlatform("Host"));
@@ -262,7 +262,7 @@ absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClient() {
 // device ordinals PlatformUtil enumerated for the LocalClient's Backend —
 // on Host that is `xla_force_host_platform_device_count` (set via XLA_FLAGS
 // on this test target), not VisibleDeviceCount().
-absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClientWithDevices(
+absl::StatusOr<std::unique_ptr<CommonPjRtClientImpl>> GetClientWithDevices(
     int num_addressable_devices, int num_non_addressable_devices = 0) {
   LocalClient* local_client = xla::ClientLibrary::LocalClientOrDie();
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
@@ -315,7 +315,7 @@ absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClientWithDevices(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> ToyExecutable(
-    PjRtStreamExecutorClient& client, Shape shape,
+    CommonPjRtClientImpl& client, Shape shape,
     absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases,
     CompileOptions compile_options = {}) {
   XlaBuilder builder("Add");
@@ -414,7 +414,7 @@ TEST(PjRtStreamExecutorClientTest, DonateWithControlDependency) {
 }
 
 TEST(PjRtStreamExecutorClientTest, ExecuteWithInputError) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtStreamExecutorClient> client,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommonPjRtClientImpl> client,
                           GetClient());
   Shape shape = xla::ShapeUtil::MakeScalarShape(F32);
   TF_ASSERT_OK_AND_ASSIGN(
@@ -447,7 +447,7 @@ TEST(PjRtStreamExecutorClientTest, DeserializeAndDump) {
   tsl::Env* env = tsl::Env::Default();
   EXPECT_TRUE(env);
   Shape shape = xla::ShapeUtil::MakeScalarShape(F32);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtStreamExecutorClient> client,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommonPjRtClientImpl> client,
                           GetClient());
   std::string compile_dump_dir;
   EXPECT_TRUE(env->LocalTempFilename(&compile_dump_dir));
@@ -497,7 +497,7 @@ TEST(PjRtStreamExecutorClientTest, DeserializeAndDump) {
 }
 
 TEST(PjRtStreamExecutorClientTest, ExecutePortableRemoteDevice) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtStreamExecutorClient> client,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommonPjRtClientImpl> client,
                           GetClient());
   Shape shape = xla::ShapeUtil::MakeScalarShape(F32);
   ASSERT_FALSE(client->addressable_devices().empty());
