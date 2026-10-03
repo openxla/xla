@@ -64,7 +64,7 @@ class EventPool {
 
     EventPool* pool_ = nullptr;
     std::unique_ptr<se::Event> event_;
-    uint64_t sequence_number_;
+    uint64_t sequence_number_ = 0;
   };
 
   // Initializes a new EventPool. If `allow_reuse` is true, then events will be
