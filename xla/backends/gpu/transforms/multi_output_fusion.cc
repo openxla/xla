@@ -463,10 +463,10 @@ absl::StatusOr<bool> MultiOutputFusion::DoMultiOutputFusion() {
       VLOG(3) << producer->name() << " is a constant.";
       continue;
     }
-    if (producer->IsCustomFusion()) {
-      continue;
-    }
     // First, fuse the consumer ops of the current op, which are siblings.
+    // Sibling fusion does not modify the producer, so it also applies to
+    // custom fusions (e.g. Triton GEMM fusions), whose consumers would
+    // otherwise each read the producer's output separately.
     if (FuseSiblings(/*parent=*/producer,
                      [&fusion_info_cache, &gpu_performance_model_cache,
                       &fusion_analysis_cache](const HloInstruction* instr) {
@@ -476,6 +476,10 @@ absl::StatusOr<bool> MultiOutputFusion::DoMultiOutputFusion() {
                      },
                      &fusion_info_cache, &cost_analysis)) {
       changed = true;
+    }
+    // Custom fusions cannot absorb consumers as additional outputs.
+    if (producer->IsCustomFusion()) {
+      continue;
     }
     // Second, perform producer-consumer multi-output fusion. This order will
     // ensure that all get-tuple-element ops inserted as a by-product of
