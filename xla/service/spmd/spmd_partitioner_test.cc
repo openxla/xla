@@ -3092,6 +3092,37 @@ ENTRY entry {
                           op::Shape("f32[27,11]")));
 }
 
+TEST_P(SpmdPartitioningTest,
+       PadsWithDifferentFillValuesDoNotShareWindowReshardCache) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[8] parameter(0), sharding={devices=[4]<=[4]}
+  %zero = f32[] constant(0)
+  %five = f32[] constant(5)
+  %pad0 = f32[12] pad(%param0, %zero), padding=2_2, sharding={devices=[4]<=[4]}
+  %pad5 = f32[12] pad(%param0, %five), padding=2_2, sharding={devices=[4]<=[4]}
+  ROOT %tuple = (f32[12], f32[12]) tuple(%pad0, %pad5),
+    sharding={{devices=[4]<=[4]}, {devices=[4]<=[4]}}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  const auto* root = module->entry_computation()->root_instruction();
+  auto zero = op::Constant(LiteralUtil::CreateR0<float>(0));
+  auto five = op::Constant(LiteralUtil::CreateR0<float>(5));
+
+  EXPECT_THAT(
+      root,
+      op::Tuple(
+          op::DynamicSlice(op::Pad(op::Concatenate(), zero), _),
+          op::Select(_, op::DynamicSlice(op::Pad(op::Concatenate(), five), _),
+                     op::Broadcast(five))));
+}
+
 TEST_P(SpmdPartitioningTest, SliceAlongNonPartitionedDimension) {
   absl::string_view hlo_string = R"(
 HloModule module
