@@ -35,7 +35,6 @@ limitations under the License.
 
 #include "Eigen/Core"
 #include "absl/algorithm/container.h"
-#include "absl/base/log_severity.h"
 #include "absl/base/macros.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
@@ -43,7 +42,6 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/numeric/bits.h"
 #include "absl/numeric/int128.h"
-#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -53,8 +51,8 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/error_functions.h"  // IWYU pragma: export
 #include "xla/packing.h"
-#include "xla/status_macros.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/logging.h"
@@ -74,13 +72,6 @@ namespace xla {
 // modulo the product of the entries of bounds.
 template <typename Container = std::vector<int64_t>>
 Container ToMixedRadix(int64_t n, absl::Span<const int64_t> bounds);
-
-// Logs the provided status message with a backtrace.
-//
-// For use by absl::Status-factories, logs a backtrace at the point where the
-// status is created, such that we can use --vmodule=util=1 to see all status
-// creation backtraces.
-absl::Status WithLogBacktrace(const absl::Status& status);
 
 // Ranks greater than 6 are very rare, so use InlinedVector<int64_t, 6> to store
 // the bounds and indices. And for the rare cases of ranks greater than 6,
@@ -225,172 +216,6 @@ void StridedCopy(D* dest, int64_t dest_stride, const S* src, int64_t src_stride,
     *dest = static_cast<D>(*src);
   }
 }
-
-// Adds some context information to the error message in a
-// absl::Status.  This is useful as absl::Statuses are
-// propagated upwards.
-absl::Status AddStatus(absl::Status prior, absl::string_view context);
-absl::Status AppendStatus(absl::Status prior, absl::string_view context);
-
-// The following three macros define a common set of code for creating
-// absl::Status errors with the given error_type, with the addition of adding
-// absl::SourceLocation if it's available (PLATFORM_GOOGLE).  They're a
-// complicated by the need to use #ifdefs within the code.  This would be the
-// equivalent code for ResourceExhausted if a #define macro could have embedded
-// #ifdef directives:
-//
-// template <typename... Args>
-// struct ResourceExhausted {
-//   absl::Status status;
-// #if defined(PLATFORM_GOOGLE)
-//   // NOLINTNEXTLINE(google-explicit-constructor)
-//   ResourceExhausted(const absl::FormatSpec<Args...>& format, Args&&... args,
-//                     absl::SourceLocation loc =
-//                     absl::SourceLocation::current())
-//       : status(WithLogBacktrace(
-//             absl::ResourceExhaustedError(absl::StrFormat(format, args...))
-//                 .WithSourceLocation(loc))) {}
-// #else
-//   ResourceExhaustedStrCat(Args&&... concat)
-//       : status(WithLogBacktrace(
-//             absl::ResourceExhaustedError(absl::StrFormat(format, args...)))
-//             {}
-// #endif
-//
-//   // NOLINTNEXTLINE(google-explicit-constructor)
-//   operator absl::Status() const { return status; }
-// };
-//
-#define XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE_PREFIX(error_type) \
-  template <typename... Args>                                     \
-  struct error_type {                                             \
-    absl::Status status;
-#define XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE_SUFFIX(error_type)        \
-  /* NOLINTNEXTLINE(google-explicit-constructor) */                      \
-  operator absl::Status() const { return status; }                       \
-  }                                                                      \
-  ;                                                                      \
-  /*Deduction guide to make variadic arguments play nice with default */ \
-  /* absl::SourceLocation argument. */                                   \
-  template <typename... Args>                                            \
-  error_type(const absl::FormatSpec<Args...>& format, Args&&...)         \
-      -> error_type<Args...>;
-
-#if defined(PLATFORM_GOOGLE)
-#define XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(error_type)               \
-  XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE_PREFIX(error_type)              \
-  /* NOLINTNEXTLINE(google-explicit-constructor) */                      \
-  error_type(const absl::FormatSpec<Args...>& format, Args&&... args,    \
-             absl::SourceLocation loc = absl::SourceLocation::current()) \
-      : status(WithLogBacktrace(                                         \
-            absl::error_type##Error(absl::StrFormat(format, args...))    \
-                .WithSourceLocation(loc))) {}                            \
-  XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE_SUFFIX(error_type)
-#else
-#define XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(error_type)          \
-  template <typename... Args>                                       \
-  absl::Status error_type(const absl::FormatSpec<Args...>& format,  \
-                          const Args&... args) {                    \
-    return WithLogBacktrace(                                        \
-        absl::error_type##Error(absl::StrFormat(format, args...))); \
-  }
-#endif
-
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Aborted);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Cancelled);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(DeadlineExceeded);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(FailedPrecondition);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Internal);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(InvalidArgument);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(NotFound);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(ResourceExhausted);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Unavailable);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Unimplemented);
-XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Unknown);
-
-#undef XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE
-#undef XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE_PREFIX
-#undef XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE_SUFFIX
-
-// The following three macros define a common set of code for creating
-// absl::Status errors with the given error_type, with the addition of adding
-// absl::SourceLocation if it's available (PLATFORM_GOOGLE).  They're a
-// complicated by the need to use #ifdefs within the code.  This would be the
-// equivalent code for ResourceExhausted if a #define macro could have embedded
-// #ifdef directives:
-//
-// template <typename... Args>
-// struct ResourceExhaustedStrCat {
-//   absl::Status status;
-// #if defined(PLATFORM_GOOGLE)
-//   // NOLINTNEXTLINE(google-explicit-constructor)
-//   ResourceExhaustedStrCat(Args&&... concat, absl::SourceLocation loc =
-//                                             absl::SourceLocation::current())
-//       : status(WithLogBacktrace(
-//             absl::ResourceExhaustedError(absl::StrCat(
-//                                          std::forward<Args>(concat)...))
-//                 .WithSourceLocation(loc))) {}
-// #else
-//   ResourceExhaustedStrCat(Args&&... concat)
-//       : status(WithLogBacktrace(
-//             absl::ResourceExhaustedError(absl::StrCat(
-//                                          std::forward<Args>(concat)...))))
-//             {}
-// #endif
-//
-//   // NOLINTNEXTLINE(google-explicit-constructor)
-//   operator absl::Status() const { return status; }
-// };
-//
-#define XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_PREFIX(error_type) \
-  template <typename... Args>                                  \
-  struct error_type##StrCat {                                  \
-    absl::Status status;
-#define XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_SUFFIX(error_type)           \
-  /* NOLINTNEXTLINE(google-explicit-constructor) */                      \
-  operator absl::Status() const { return status; }                       \
-  }                                                                      \
-  ;                                                                      \
-  /*Deduction guide to make variadic arguments play nice with default */ \
-  /* absl::SourceLocation argument. */                                   \
-  template <typename... Args>                                            \
-  error_type##StrCat(Args&&...)->error_type##StrCat<Args...>;
-
-#if defined(PLATFORM_GOOGLE)
-#define XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(error_type)                       \
-  XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_PREFIX(error_type)                      \
-  explicit error_type##StrCat(                                                \
-      Args&&... concat,                                                       \
-      absl::SourceLocation loc = absl::SourceLocation::current())             \
-      : status(                                                               \
-            WithLogBacktrace(absl::error_type##Error(                         \
-                                 absl::StrCat(std::forward<Args>(concat)...)) \
-                                 .WithSourceLocation(loc))) {}                \
-  XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_SUFFIX(error_type)
-#else
-#define XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(error_type)       \
-  XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_PREFIX(error_type)      \
-  explicit error_type##StrCat(Args&&... concat)               \
-      : status(WithLogBacktrace(absl::error_type##Error(      \
-            absl::StrCat(std::forward<Args>(concat)...)))) {} \
-  XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_SUFFIX(error_type)
-#endif
-
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(Aborted);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(Cancelled);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(DeadlineExceeded);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(FailedPrecondition);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(Internal);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(InvalidArgument);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(NotFound);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(ResourceExhausted);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(Unavailable);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(Unimplemented);
-XLA_ERROR_WITH_STRCAT_AND_BACKTRACE(Unknown);
-
-#undef XLA_ERROR_WITH_STRCAT_AND_BACKTRACE
-#undef XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_PREFIX
-#undef XLA_ERROR_WITH_STRCAT_AND_BACKTRACE_SUFFIX
 
 // Splits the lines of the original, replaces leading whitespace with the prefix
 // given by "indentation", and returns the string joined by newlines again. As a

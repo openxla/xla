@@ -324,12 +324,40 @@ cc_library(
 )
 
 cc_library(
+    name = "error_functions",
+    srcs = ["error_functions.cc"],
+    hdrs = ["error_functions.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:source_location",
+    ],
+)
+
+xla_cc_test(
+    name = "error_functions_test",
+    srcs = ["error_functions_test.cc"],
+    deps = [
+        ":error_functions",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "util",
     srcs = [
         "error_util.cc",
         "util.cc",
     ],
     hdrs = [
+        "error_functions.h",
         "error_util.h",
         "iterator_util.h",
         "map_util.h",
@@ -338,8 +366,8 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":error_functions",
         ":packing",
-        ":status_macros",
         ":types",
         ":xla_data_proto_cc",
         "//xla/tsl/lib/gtl:iterator_range",
@@ -351,7 +379,6 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -366,6 +393,7 @@ cc_library(
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:source_location",
         "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:protobuf",
         "@eigen_archive//:eigen3",
@@ -374,7 +402,6 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:stacktrace",
     ],
 )
 
