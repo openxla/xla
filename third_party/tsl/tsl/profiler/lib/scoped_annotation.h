@@ -23,9 +23,9 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
-#include "tsl/platform/platform.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/nvtx_utils.h"
 #include "xla/tsl/platform/macros.h"
+#include "tsl/platform/platform.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/range_annotations.h"
 
 #if !defined(IS_MOBILE_PLATFORM)
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
