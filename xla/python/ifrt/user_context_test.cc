@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/python/ifrt/user_context.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "xla/python/ifrt/user_context_test_util.h"

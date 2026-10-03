@@ -37,6 +37,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/numbers.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
@@ -58,8 +60,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/numbers.h"
 
 namespace shmem = ::mori::shmem;
 
@@ -185,8 +185,9 @@ MoriCollectives::CreateCommunicatorsWithCancel(
     // bypass InitializeTopology) we lazily initialize this PE here.
     auto activate_context = device->stream_executor()->Activate();
     if (!initialized_) {
-      ABSL_RETURN_IF_ERROR(InitPe(ranks[i].rank.value(), clique_key.num_devices(),
-                             clique_ids->at(0), device->stream_executor()));
+      ABSL_RETURN_IF_ERROR(InitPe(ranks[i].rank.value(),
+                                  clique_key.num_devices(), clique_ids->at(0),
+                                  device->stream_executor()));
     }
 
     // Map each collective rank to its global MORI PE. In the single-process
@@ -231,7 +232,7 @@ absl::Status MoriCollectives::EagerInitLocalPes(ProcessId process_id,
     return absl::OkStatus();
   }
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName("ROCM"));
+                        se::PlatformManager::PlatformWithName("ROCM"));
 
   // XLA:GPU assumes IOTA device assignment, so the global PE id of a local
   // device is `process_id * ndevs_per_process + dev_ord`.
@@ -281,7 +282,7 @@ MoriCollectives::InitializeTopology(const Topology& topology) {
     }
     ABSL_ASSIGN_OR_RETURN(CliqueId clique_id, CreateUniqueCliqueId());
     ABSL_RETURN_IF_ERROR(EagerInitLocalPes(topology.process_id, nranks_local,
-                                      nranks_local, clique_id));
+                                           nranks_local, clique_id));
     VLOG(1) << "Eagerly initialized MORI for " << nranks_local
             << " local devices";
     return nullptr;
@@ -310,15 +311,17 @@ MoriCollectives::InitializeTopology(const Topology& topology) {
   CliqueId clique_id;
   if (topology.process_id == root_process) {
     ABSL_ASSIGN_OR_RETURN(clique_id, CreateUniqueCliqueId());
-    ABSL_RETURN_IF_ERROR(topology.kv_store->Set(kMoriUidKey, clique_id.ToString()));
+    ABSL_RETURN_IF_ERROR(
+        topology.kv_store->Set(kMoriUidKey, clique_id.ToString()));
   } else {
-    ABSL_ASSIGN_OR_RETURN(std::string id_str,
-                     topology.kv_store->Get(kMoriUidKey, absl::Minutes(10)));
+    ABSL_ASSIGN_OR_RETURN(
+        std::string id_str,
+        topology.kv_store->Get(kMoriUidKey, absl::Minutes(10)));
     clique_id = CliqueId(id_str);
   }
 
   ABSL_RETURN_IF_ERROR(EagerInitLocalPes(topology.process_id, nranks_local,
-                                    nranks_total, clique_id));
+                                         nranks_total, clique_id));
   VLOG(1) << "Eagerly initialized MORI: " << nranks_local << " local PEs of "
           << nranks_total << " global";
   return [clique_id](const CliqueKey&) -> absl::StatusOr<CliqueIds> {

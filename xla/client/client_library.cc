@@ -123,7 +123,7 @@ ClientLibrary::~ClientLibrary() = default;
   service_options.set_allowed_devices(options.allowed_devices());
   auto instance = std::make_unique<LocalInstance>();
   ABSL_ASSIGN_OR_RETURN(instance->service,
-                   LocalService::NewService(service_options));
+                        LocalService::NewService(service_options));
   instance->client = std::make_unique<LocalClient>(instance->service.get());
   LocalClient* cl = instance->client.get();
 
@@ -162,7 +162,8 @@ ClientLibrary::GetOrCreateCompileOnlyClient(se::Platform* platform) {
   }
 
   auto instance = std::make_unique<CompileOnlyInstance>();
-  ABSL_ASSIGN_OR_RETURN(instance->service, CompileOnlyService::NewService(platform));
+  ABSL_ASSIGN_OR_RETURN(instance->service,
+                        CompileOnlyService::NewService(platform));
   instance->client =
       std::make_unique<CompileOnlyClient>(instance->service.get());
   CompileOnlyClient* cl = instance->client.get();
@@ -178,6 +179,15 @@ ClientLibrary::GetOrCreateCompileOnlyClient(se::Platform* platform) {
 
   client_library.local_instances_.clear();
   client_library.compile_only_instances_.clear();
+}
+
+/* static */ void ClientLibrary::DestroyLocalInstance(se::Platform* platform) {
+  if (platform == nullptr) {
+    return;
+  }
+  ClientLibrary& client_library = Singleton();
+  absl::MutexLock lock(client_library.service_mutex_);
+  client_library.local_instances_.erase(platform->id());
 }
 
 }  // namespace xla

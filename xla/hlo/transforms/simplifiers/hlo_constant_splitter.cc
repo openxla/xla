@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 
 namespace xla {
 
@@ -208,8 +208,9 @@ absl::StatusOr<bool> HloConstantSplitter::RunImpl(
         }
       }
       for (auto* u : users) {
-        ABSL_ASSIGN_OR_RETURN(bool duplicated, DuplicateConstantExpressionPerUser(
-                                              computation, instruction, u));
+        ABSL_ASSIGN_OR_RETURN(
+            bool duplicated,
+            DuplicateConstantExpressionPerUser(computation, instruction, u));
         changed |= duplicated;
       }
     }

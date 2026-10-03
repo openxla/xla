@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/service/generic_transfer_manager.h"
 
+#include <gmock/gmock.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/test.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/shaped_buffer.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/types.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

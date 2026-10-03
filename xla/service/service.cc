@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -71,7 +72,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla {
 namespace {
@@ -98,8 +98,9 @@ absl::Status RecordResult(const ShapedBuffer& result, se::Stream* stream,
                           TransferManager* transfer_manager,
                           HloSnapshot* module) {
   module->clear_result();
-  ABSL_ASSIGN_OR_RETURN(Literal literal,
-                   transfer_manager->TransferLiteralFromDevice(stream, result));
+  ABSL_ASSIGN_OR_RETURN(
+      Literal literal,
+      transfer_manager->TransferLiteralFromDevice(stream, result));
   *module->mutable_result() = literal.ToProto();
   return absl::OkStatus();
 }
@@ -193,7 +194,7 @@ absl::Status Service::Unregister(const GlobalDataHandle& data) {
 absl::StatusOr<std::vector<std::unique_ptr<GlobalData>>>
 Service::DeconstructTuple(const GlobalData& data) {
   ABSL_ASSIGN_OR_RETURN(std::vector<GlobalDataHandle> elements,
-                   allocation_tracker_.DeconstructTuple(data.handle()));
+                        allocation_tracker_.DeconstructTuple(data.handle()));
   std::vector<std::unique_ptr<GlobalData>> out;
   out.reserve(elements.size());
   for (GlobalDataHandle& element : elements) {
@@ -204,7 +205,8 @@ Service::DeconstructTuple(const GlobalData& data) {
 
 absl::Status Service::ValidateResultShape(const Shape& client_shape,
                                           const Shape& result_shape) {
-  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(client_shape));
+  ABSL_RETURN_IF_ERROR(
+      ShapeUtil::ValidateShapeWithOptionalLayout(client_shape));
   if (!ShapeUtil::Compatible(client_shape, result_shape)) {
     return InvalidArgument(
         "Shape used to set computation result layout %s is not compatible "
@@ -224,7 +226,7 @@ Service::ResolveAndValidateArguments(
   replicated_arguments.resize(options_.number_of_replicas());
   for (size_t i = 0; i < arguments.size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(std::vector<const ShapedBuffer*> replicated_buffers,
-                     allocation_tracker_.Resolve(arguments[i]->handle()));
+                          allocation_tracker_.Resolve(arguments[i]->handle()));
     CHECK_EQ(options_.number_of_replicas(), replicated_buffers.size());
     for (int replica = 0; replica < options_.number_of_replicas(); ++replica) {
       const ShapedBuffer* shaped_buffer = replicated_buffers[replica];
@@ -286,13 +288,13 @@ Service::BuildExecutables(const HloModuleProto* module_proto,
 
   std::vector<std::unique_ptr<Executable>> executables;
   if (!run_backend_only) {
-    ABSL_ASSIGN_OR_RETURN(executables,
-                     backend->compiler()->Compile(
+    ABSL_ASSIGN_OR_RETURN(
+        executables, backend->compiler()->Compile(
                          std::move(module), std::move(executors), options));
   } else {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                     backend->compiler()->RunBackend(std::move(module),
-                                                     executors[0], options));
+                          backend->compiler()->RunBackend(
+                              std::move(module), executors[0], options));
     executables.push_back(std::move(executable));
   }
 
@@ -336,7 +338,8 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
   ABSL_ASSIGN_OR_RETURN(auto replicas, Replicas(*backend, device_handle));
   TF_RET_CHECK(!replicas.empty());
   for (se::StreamExecutor* executor : replicas) {
-    ABSL_ASSIGN_OR_RETURN(StreamPool::Ptr stream, backend->BorrowStream(executor));
+    ABSL_ASSIGN_OR_RETURN(StreamPool::Ptr stream,
+                          backend->BorrowStream(executor));
     streams.push_back(std::move(stream));
   }
 
@@ -368,7 +371,7 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
 
   if (options_.number_of_replicas() == 1) {
     ABSL_ASSIGN_OR_RETURN(auto result, executable->ExecuteOnStreamWrapper(
-                                      run_options.data(), arguments[0]));
+                                           run_options.data(), arguments[0]));
     return allocation_tracker_.Register(std::move(result), result_tag);
   }
 
@@ -380,7 +383,7 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto results, executable->ExecuteOnStreams(
-                                     run_options, replicated_arguments));
+                                          run_options, replicated_arguments));
   TF_RET_CHECK(!results.empty());
   return allocation_tracker_.RegisterReplicatedBuffers(std::move(results),
                                                        result_tag);
@@ -402,7 +405,8 @@ absl::StatusOr<std::vector<se::StreamExecutor*>> Service::GetExecutors(
   }
   std::vector<se::StreamExecutor*> executors;
   for (const auto& device_handle : execution_options.device_handles()) {
-    ABSL_ASSIGN_OR_RETURN(auto replicas, Replicas(*execute_backend_, device_handle));
+    ABSL_ASSIGN_OR_RETURN(auto replicas,
+                          Replicas(*execute_backend_, device_handle));
     se::StreamExecutor* executor = replicas[0];
     CHECK(executor != nullptr);
     executors.push_back(executor);
@@ -448,8 +452,8 @@ absl::StatusOr<std::vector<std::unique_ptr<GlobalData>>> Service::ExecuteGraph(
 
   // Get the executors.
   ABSL_ASSIGN_OR_RETURN(std::vector<se::StreamExecutor*> executors,
-                   GetExecutors(execution_options, /*requests_size=*/1,
-                                /*request_index=*/0));
+                        GetExecutors(execution_options, /*requests_size=*/1,
+                                     /*request_index=*/0));
 
   // Get the replicated arguments.
   ABSL_ASSIGN_OR_RETURN(
@@ -476,9 +480,10 @@ absl::StatusOr<std::vector<std::unique_ptr<GlobalData>>> Service::ExecuteGraph(
   // the program and the argument allocations. Here, we care only about the
   // shapes of the arguments, so, it is sufficient to use the arguments of
   // replica 0.
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
-                   ProgramShape::FromProto(
-                       computation.computation.proto().host_program_shape()));
+  ABSL_ASSIGN_OR_RETURN(
+      ProgramShape program_shape,
+      ProgramShape::FromProto(
+          computation.computation.proto().host_program_shape()));
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModuleConfig> module_config,
       CreateModuleConfig(program_shape, replicated_arguments.front(),
@@ -512,10 +517,10 @@ absl::StatusOr<std::vector<std::unique_ptr<GlobalData>>> Service::ExecuteGraph(
   if (executable_ptr->dumping_snapshot()) {
     *snapshot.mutable_hlo() = *executable_ptr->hlo_proto();
     ABSL_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(
-                                      executors[0]->device_ordinal()));
-    ABSL_RETURN_IF_ERROR(RecordArguments(replicated_arguments.front(), stream.get(),
-                                    execute_backend_->transfer_manager(),
-                                    &snapshot));
+                                           executors[0]->device_ordinal()));
+    ABSL_RETURN_IF_ERROR(
+        RecordArguments(replicated_arguments.front(), stream.get(),
+                        execute_backend_->transfer_manager(), &snapshot));
   }
 
   ExecutionProfile profile;
@@ -553,11 +558,12 @@ absl::StatusOr<std::vector<std::unique_ptr<GlobalData>>> Service::ExecuteGraph(
 
   if (executable_ptr->dumping_snapshot()) {
     ABSL_ASSIGN_OR_RETURN(const ShapedBuffer* result_buffer,
-                     allocation_tracker_.ResolveForReplica(outputs[0], 0));
-    ABSL_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(executors[0]));
+                          allocation_tracker_.ResolveForReplica(outputs[0], 0));
+    ABSL_ASSIGN_OR_RETURN(auto stream,
+                          execute_backend_->BorrowStream(executors[0]));
     ABSL_RETURN_IF_ERROR(RecordResult(*result_buffer, stream.get(),
-                                 execute_backend_->transfer_manager(),
-                                 &snapshot));
+                                      execute_backend_->transfer_manager(),
+                                      &snapshot));
     DumpHloSnapshotIfEnabled(executable_ptr->module(), snapshot);
   }
 
@@ -621,7 +627,7 @@ absl::StatusOr<std::unique_ptr<Executable>> Service::BuildExecutable(
       hlo_proto_before_opt = std::make_unique<HloProto>(MakeHloProto(*module));
     }
     ABSL_ASSIGN_OR_RETURN(module, backend->compiler()->RunHloPasses(
-                                 std::move(module), executor, options));
+                                      std::move(module), executor, options));
   }
 
   ABSL_ASSIGN_OR_RETURN(
@@ -669,8 +675,8 @@ absl::StatusOr<ExecutionHandle> Service::Compile(
       ProgramShape program_shape,
       ProgramShape::FromProto(computation.proto().host_program_shape()));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModuleConfig> module_config,
-                   CreateModuleConfig(program_shape, argument_shape_ptrs,
-                                      &execution_options));
+                        CreateModuleConfig(program_shape, argument_shape_ptrs,
+                                           &execution_options));
   VLOG(3) << "Compile created HloModuleConfig computation layout: "
           << module_config->entry_computation_layout().ToString();
 
@@ -691,7 +697,7 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::Execute(
   VLOG(1) << "running execute request";
 
   ABSL_ASSIGN_OR_RETURN(std::shared_ptr<Executable> executable,
-                   compilation_cache_.LookUp(handle));
+                        compilation_cache_.LookUp(handle));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<se::StreamExecutor*> replicas,
@@ -723,15 +729,15 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::Execute(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto stream,
-                   execute_backend_->BorrowStream(
-                       execute_backend_->default_stream_executor()));
+                        execute_backend_->BorrowStream(
+                            execute_backend_->default_stream_executor()));
   HloSnapshot snapshot;
   if (executable->dumping_snapshot()) {
     *snapshot.mutable_hlo() = *executable->hlo_proto();
     snapshot.set_execution_platform(execute_backend_->platform()->Name());
-    ABSL_RETURN_IF_ERROR(RecordArguments(replicated_arguments.front(), stream.get(),
-                                    execute_backend_->transfer_manager(),
-                                    &snapshot));
+    ABSL_RETURN_IF_ERROR(
+        RecordArguments(replicated_arguments.front(), stream.get(),
+                        execute_backend_->transfer_manager(), &snapshot));
   }
 
   ABSL_ASSIGN_OR_RETURN(
@@ -743,10 +749,10 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::Execute(
 
   if (executable->dumping_snapshot()) {
     ABSL_ASSIGN_OR_RETURN(const ShapedBuffer* result_buffer,
-                     allocation_tracker_.ResolveForReplica(output, 0));
+                          allocation_tracker_.ResolveForReplica(output, 0));
     ABSL_RETURN_IF_ERROR(RecordResult(*result_buffer, stream.get(),
-                                 execute_backend_->transfer_manager(),
-                                 &snapshot));
+                                      execute_backend_->transfer_manager(),
+                                      &snapshot));
     DumpHloSnapshotIfEnabled(executable->module(), snapshot);
   }
 
@@ -755,8 +761,9 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::Execute(
 
 absl::StatusOr<Literal> Service::TransferToClient(
     const GlobalData& data, const Shape* shape_with_layout) {
-  ABSL_ASSIGN_OR_RETURN(const ShapedBuffer* shaped_buffer,
-                   allocation_tracker_.ResolveForReplica(data.handle(), 0));
+  ABSL_ASSIGN_OR_RETURN(
+      const ShapedBuffer* shaped_buffer,
+      allocation_tracker_.ResolveForReplica(data.handle(), 0));
 
   Shape return_shape;
   if (shape_with_layout) {
@@ -779,8 +786,9 @@ absl::StatusOr<Literal> Service::TransferToClient(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(
-                                    shaped_buffer->physical_device_ordinal()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto stream,
+      execute_backend_->BorrowStream(shaped_buffer->physical_device_ordinal()));
 
   ABSL_ASSIGN_OR_RETURN(
       Literal result_literal,
@@ -798,7 +806,8 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::TransferToServer(
   const Shape& shape = literal_slice.shape();
   std::vector<se::StreamExecutor*> replicas;
   if (device_handle) {
-    ABSL_ASSIGN_OR_RETURN(replicas, Replicas(*execute_backend_, *device_handle));
+    ABSL_ASSIGN_OR_RETURN(replicas,
+                          Replicas(*execute_backend_, *device_handle));
   } else {
     ABSL_ASSIGN_OR_RETURN(
         replicas, Replicas(*execute_backend_, SingleComputationDeviceHandle()));
@@ -817,7 +826,8 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::TransferToServer(
         execute_backend_->transfer_manager()->AllocateScopedShapedBuffer(
             shape, execute_backend_->memory_allocator(),
             executor->device_ordinal(), device_shape_representation_fn));
-    ABSL_ASSIGN_OR_RETURN(auto stream, execute_backend_->BorrowStream(executor));
+    ABSL_ASSIGN_OR_RETURN(auto stream,
+                          execute_backend_->BorrowStream(executor));
     ABSL_RETURN_IF_ERROR(
         execute_backend_->transfer_manager()->TransferLiteralToDevice(
             stream.get(), literal_slice, shaped_buffer));
@@ -825,10 +835,10 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::TransferToServer(
   }
 
   ABSL_ASSIGN_OR_RETURN(GlobalDataHandle out,
-                   allocation_tracker_.RegisterReplicatedBuffers(
-                       std::move(replicated_buffers),
-                       StrCat("TransferToServer literal of shape ",
-                              ShapeUtil::HumanString(shape))));
+                        allocation_tracker_.RegisterReplicatedBuffers(
+                            std::move(replicated_buffers),
+                            StrCat("TransferToServer literal of shape ",
+                                   ShapeUtil::HumanString(shape))));
 
   return std::make_unique<GlobalData>(this, out);
 }
@@ -848,11 +858,12 @@ absl::Status Service::TransferToInfeed(const LiteralSlice& literal,
   se::StreamExecutor* executor;
   if (device_handle) {
     ABSL_ASSIGN_OR_RETURN(auto replicas,
-                     Replicas(*execute_backend_, *device_handle));
+                          Replicas(*execute_backend_, *device_handle));
     executor = replicas[replica_id];
   } else {
-    ABSL_ASSIGN_OR_RETURN(auto replicas, Replicas(*execute_backend_,
-                                             SingleComputationDeviceHandle()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto replicas,
+        Replicas(*execute_backend_, SingleComputationDeviceHandle()));
     executor = replicas[replica_id];
   }
 
@@ -873,11 +884,12 @@ absl::StatusOr<Literal> Service::TransferFromOutfeed(
   se::StreamExecutor* executor;
   if (device_handle) {
     ABSL_ASSIGN_OR_RETURN(auto replicas,
-                     Replicas(*execute_backend_, *device_handle));
+                          Replicas(*execute_backend_, *device_handle));
     executor = replicas[replica_id];
   } else {
-    ABSL_ASSIGN_OR_RETURN(auto replicas, Replicas(*execute_backend_,
-                                             SingleComputationDeviceHandle()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto replicas,
+        Replicas(*execute_backend_, SingleComputationDeviceHandle()));
     executor = replicas[replica_id];
   }
 
@@ -907,19 +919,19 @@ absl::StatusOr<Literal> Service::ComputeConstantGraph(
   DCHECK_OK(ShapeUtil::ValidateShape(program_shape.result()));
 
   if (output_layout) {
-    ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(*output_layout,
-                                                       program_shape.result()));
+    ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(
+        *output_layout, program_shape.result()));
   }
 
   HloModuleConfig config(program_shape);
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   CreateModuleFromProto(computation.proto(), config));
+                        CreateModuleFromProto(computation.proto(), config));
   DynamicPadder dynamic_padder;
   ABSL_RETURN_IF_ERROR(dynamic_padder.Run(module.get()).status());
 
   ABSL_ASSIGN_OR_RETURN(DynamicDimensionInference dynamic_dimension_inference,
-                   DynamicDimensionInference::Run(module.get()));
+                        DynamicDimensionInference::Run(module.get()));
 
   HloEvaluator evaluator;
   evaluator.set_dynamic_dimension_inference(&dynamic_dimension_inference);
@@ -950,8 +962,9 @@ absl::StatusOr<Literal> Service::ComputeConstantGraph(
 }
 
 absl::StatusOr<Shape> Service::GetShape(const GlobalData& data) {
-  ABSL_ASSIGN_OR_RETURN(const ShapedBuffer* buffer,
-                   allocation_tracker_.ResolveForReplica(data.handle(), 0));
+  ABSL_ASSIGN_OR_RETURN(
+      const ShapedBuffer* buffer,
+      allocation_tracker_.ResolveForReplica(data.handle(), 0));
   return buffer->on_device_shape();
 }
 
@@ -973,7 +986,8 @@ absl::StatusOr<std::vector<se::StreamExecutor*>> Service::Replicas(
     // From the computation placer, find out the device ids of the replicas for
     // the given device handle.
     int64_t device_ordinal = da.DeviceId(replica, device_handle.handle());
-    ABSL_ASSIGN_OR_RETURN(auto executor, backend.stream_executor(device_ordinal));
+    ABSL_ASSIGN_OR_RETURN(auto executor,
+                          backend.stream_executor(device_ordinal));
     replicas.push_back(executor);
   }
   return replicas;

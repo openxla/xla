@@ -33,6 +33,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/numbers.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
@@ -40,8 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_dnn.h"
 #include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/numbers.h"
 
 namespace stream_executor::sycl {
 
@@ -157,7 +157,7 @@ SemanticVersion CompileTimeToolkitVersion() { return SemanticVersion{0, 0, 0}; }
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
 CreateOneApiDeviceDescription(int device_ordinal) {
   ABSL_ASSIGN_OR_RETURN(::sycl::device sycl_device,
-                   SyclDevicePool::GetDevice(device_ordinal));
+                        SyclDevicePool::GetDevice(device_ordinal));
   ze_device_handle_t lz_device =
       ::sycl::get_native<::sycl::backend::ext_oneapi_level_zero>(sycl_device);
   ze_driver_handle_t lz_driver =

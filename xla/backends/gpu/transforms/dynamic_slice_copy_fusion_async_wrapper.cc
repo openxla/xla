@@ -59,10 +59,11 @@ absl::StatusOr<bool> DynamicSliceCopyFusionAsyncWrapper::RunImpl(
 
       // Use the same async-start context shape as the existing generic async
       // wrapper. LHS classifies this pair as async memcpy, not async compute.
-      ABSL_RETURN_IF_ERROR(computation
-                          ->CreateAsyncInstructions(
-                              instruction, {ShapeUtil::MakeScalarShape(U32)})
-                          .status());
+      ABSL_RETURN_IF_ERROR(
+          computation
+              ->CreateAsyncInstructions(instruction,
+                                        {ShapeUtil::MakeScalarShape(U32)})
+              .status());
       changed = true;
     }
   }

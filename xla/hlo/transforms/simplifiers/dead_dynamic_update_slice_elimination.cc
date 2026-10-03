@@ -164,8 +164,8 @@ absl::StatusOr<bool> DeadDynamicUpdateSliceElimination::RunImpl(
         continue;
       }
       VLOG(2) << "Processing DUS: " << instruction->ToString();
-      ABSL_ASSIGN_OR_RETURN(bool dus_changed,
-                       ProcessDynamicUpdateSlice(instruction, computation));
+      ABSL_ASSIGN_OR_RETURN(bool dus_changed, ProcessDynamicUpdateSlice(
+                                                  instruction, computation));
       if (dus_changed) {
         changed = true;
       }

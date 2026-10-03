@@ -36,10 +36,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "re2/re2.h"
+#include "tsl/platform/path.h"
 #include "xla/tools/compare_literals/compare_literals.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/path.h"
 
 namespace xla::compare_literals {
 

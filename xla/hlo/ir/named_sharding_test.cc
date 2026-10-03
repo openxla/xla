@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/ir/named_sharding.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/tsl/lib/core/status_test_util.h"

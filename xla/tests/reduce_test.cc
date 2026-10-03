@@ -25,6 +25,7 @@ limitations under the License.
 //    <possible layouts for chosen rank> x
 //    <possible subsets of dimensions in chosen rank>
 
+#include <gtest/gtest.h>
 #include <stdlib.h>
 
 #include <algorithm>
@@ -40,7 +41,6 @@ limitations under the License.
 #include <type_traits>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"

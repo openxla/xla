@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/intrinsic_compiler_lib.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"

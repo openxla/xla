@@ -24,8 +24,8 @@ limitations under the License.
 
 #include <vector>
 
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/strcat.h"
+#include "xla/tsl/platform/logging.h"
 
 #define PIPE_BUF_SIZE 4096
 

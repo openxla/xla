@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/ifrt/sharding.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/status/status_matchers.h"
 #include "absl/types/span.h"

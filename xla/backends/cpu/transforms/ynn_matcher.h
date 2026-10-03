@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/backends/cpu/transforms/library_matcher.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::cpu {
 
@@ -50,7 +50,7 @@ class YnnMatcher : public LibraryMatcher {
               HloOpcode::kConvolution,  HloOpcode::kReshape,
               HloOpcode::kBitcast,      HloOpcode::kBroadcast,
               HloOpcode::kTranspose,    HloOpcode::kPad,
-              HloOpcode::kIota};
+              HloOpcode::kCopy,         HloOpcode::kIota};
           for (const auto& [op, _] : GetYnnUnaryOpMap()) {
             supported_ops.insert(op);
           }
@@ -84,6 +84,9 @@ class YnnMatcher : public LibraryMatcher {
     }
     if (instr->opcode() == HloOpcode::kPad) {
       return IsPadOpSupportedByYnn(instr);
+    }
+    if (instr->opcode() == HloOpcode::kCopy) {
+      return IsCopyOpSupportedByYnn(instr);
     }
     if (!IsInstructionPreferredByYnn(instr)) {
       // TODO: It might make sense sometimes that even though an instruction is

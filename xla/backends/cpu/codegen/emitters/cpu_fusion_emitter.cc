@@ -185,12 +185,14 @@ absl::StatusOr<mlir::func::FuncOp> EmitEntryFunctionApi(
   absl::string_view module_name(fusion_module.getName().value());
   mlir::OpBuilder builder(context);
   auto loc = mlir::NameLoc::get(builder.getStringAttr(module_name));
-  ABSL_ASSIGN_OR_RETURN(std::vector<KernelApiIrBuilder::KernelParameter> arguments,
-                   KernelApiIrBuilder::GetKernelArgumentsParameters(
-                       &fusion, &buffer_assignment));
-  ABSL_ASSIGN_OR_RETURN(std::vector<KernelApiIrBuilder::KernelParameter> results,
-                   KernelApiIrBuilder::GetKernelResultsParameters(
-                       &fusion, &buffer_assignment));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<KernelApiIrBuilder::KernelParameter> arguments,
+      KernelApiIrBuilder::GetKernelArgumentsParameters(&fusion,
+                                                       &buffer_assignment));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<KernelApiIrBuilder::KernelParameter> results,
+      KernelApiIrBuilder::GetKernelResultsParameters(&fusion,
+                                                     &buffer_assignment));
 
   // TBD: Annotate tensors with the buffer indices. This way, the buffer
   // propagation pass can clean them up later.
@@ -215,15 +217,17 @@ absl::StatusOr<mlir::func::FuncOp> EmitEntryFunctionApi(
 
   for (const auto& [index, arg] : llvm::enumerate(arguments)) {
     param_types.push_back(emitters::TensorShapeToMlirType(arg.shape, builder));
-    ABSL_ASSIGN_OR_RETURN(arg_attrs.emplace_back(),
-                     get_arg_attrs(index - 1, arg.slice, /*is_result=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        arg_attrs.emplace_back(),
+        get_arg_attrs(index - 1, arg.slice, /*is_result=*/false));
   }
 
   auto result_types = emitters::ShapeToMlirTypes(fusion.shape(), builder);
   param_types.append(result_types.begin(), result_types.end());
   for (const auto& [index, result] : llvm::enumerate(results)) {
-    ABSL_ASSIGN_OR_RETURN(arg_attrs.emplace_back(),
-                     get_arg_attrs(index, result.slice, /*is_result=*/true));
+    ABSL_ASSIGN_OR_RETURN(
+        arg_attrs.emplace_back(),
+        get_arg_attrs(index, result.slice, /*is_result=*/true));
   }
 
   builder.setInsertionPointToStart(fusion_module.getBody());
@@ -307,8 +311,8 @@ absl::StatusOr<std::string> GetFusionName(const HloFusionInstruction& fusion) {
           .debug_options()
           .xla_cpu_generate_unique_c_style_kernel_entry_points()) {
     ABSL_ASSIGN_OR_RETURN(fusion_name, ConvertToCName(absl::StrCat(
-                                      fusion.parent()->parent()->name(), "_",
-                                      fusion.name())));
+                                           fusion.parent()->parent()->name(),
+                                           "_", fusion.name())));
   }
   return fusion_name;
 }

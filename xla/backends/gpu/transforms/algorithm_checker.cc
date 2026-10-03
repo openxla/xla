@@ -102,7 +102,7 @@ absl::StatusOr<bool> AlgorithmChecker::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_RETURN_IF_ERROR(AlgorithmCheckerVisitor(gpu_compute_capability_)
-                      .RunOnModule(module, execution_threads));
+                           .RunOnModule(module, execution_threads));
   // No change was made.
   return false;
 }

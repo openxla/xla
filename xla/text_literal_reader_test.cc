@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/text_literal_reader.h"
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"

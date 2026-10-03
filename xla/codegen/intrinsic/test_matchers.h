@@ -16,11 +16,12 @@ limitations under the License.
 #ifndef XLA_CODEGEN_INTRINSIC_TEST_MATCHERS_H_
 #define XLA_CODEGEN_INTRINSIC_TEST_MATCHERS_H_
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <ostream>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/fp_util.h"
 
 namespace xla::codegen::intrinsic {

@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -57,7 +58,7 @@ class CubSortTestBase
 
   absl::StatusOr<bool> IsRewrittenToUseCubSort(absl::string_view hlo_text) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                     GetOptimizedModule(hlo_text));
+                          GetOptimizedModule(hlo_text));
 
     for (const auto& pass_metadata :
          optimized_module->metadata()->proto().pass_metadata()) {

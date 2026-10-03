@@ -16,11 +16,12 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_CODEGEN_TRITON_SUPPORT_TEST_BASE_H_
 #define XLA_BACKENDS_GPU_CODEGEN_TRITON_SUPPORT_TEST_BASE_H_
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <tuple>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/LLVMContext.h"

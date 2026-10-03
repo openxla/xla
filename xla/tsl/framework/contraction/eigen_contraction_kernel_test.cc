@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/tsl/framework/contraction/eigen_contraction_kernel.h"  // IWYU pragma: keep
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 

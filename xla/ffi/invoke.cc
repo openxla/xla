@@ -136,7 +136,7 @@ static absl::Status BlockUntilReady(XLA_FFI_Future* future) {
 absl::Status Invoke(const XLA_FFI_Api* api, Ffi& handler, CallFrame& call_frame,
                     const InvokeContext& context, ExecutionStage stage) {
   ABSL_ASSIGN_OR_RETURN(XLA_FFI_Future * future,
-                   Invoke<Ffi>(api, handler, call_frame, context, stage));
+                        Invoke<Ffi>(api, handler, call_frame, context, stage));
   return BlockUntilReady(future);
 }
 
@@ -155,7 +155,7 @@ tsl::AsyncValueRef<tsl::Chain> InvokeAsync(const XLA_FFI_Api* api, Ffi& handler,
                                            const InvokeContext& context,
                                            ExecutionStage stage) {
   ABSL_ASSIGN_OR_RETURN(XLA_FFI_Future * future,
-                   Invoke<Ffi>(api, handler, call_frame, context, stage));
+                        Invoke<Ffi>(api, handler, call_frame, context, stage));
   return TakeFuture(future);
 }
 

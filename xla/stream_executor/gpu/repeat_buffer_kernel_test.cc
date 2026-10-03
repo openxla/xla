@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/repeat_buffer_kernel.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"

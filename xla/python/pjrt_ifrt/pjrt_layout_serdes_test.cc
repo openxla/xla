@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_layout.h"

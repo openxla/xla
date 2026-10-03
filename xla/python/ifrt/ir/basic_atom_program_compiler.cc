@@ -89,7 +89,7 @@ tsl::Future<LoadedExecutableRef> BasicAtomProgramCompiler::CompileXla(
   options.executable_build_options.set_device_assignment(device_assignment);
 
   ABSL_ASSIGN_OR_RETURN(DeviceListRef devices,
-                   GetDeviceListFromXlaCompileOptions(client_, options));
+                        GetDeviceListFromXlaCompileOptions(client_, options));
 
   TF_RET_CHECK(!devices->devices().empty())
       << "CompileXla was called with empty device assignment.";
@@ -109,7 +109,7 @@ tsl::Future<LoadedExecutableRef> BasicAtomProgramCompiler::CompileXla(
         first_device->Attributes().Get<int64_t>("device_memory_bytes_limit"));
 
     ABSL_RETURN_IF_ERROR(SetStrictMemoryReservation(hlo_program->name(),
-                                               device_memory, options));
+                                                    device_memory, options));
   }
 
   return client_->GetDefaultCompiler()->CompileAndLoad(

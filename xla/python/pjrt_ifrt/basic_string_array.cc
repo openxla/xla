@@ -185,8 +185,8 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto shapes_and_shadings,
-                   array_spec_.sharding->Disassemble(
-                       array_spec_.shape, single_device_shard_semantics));
+                        array_spec_.sharding->Disassemble(
+                            array_spec_.shape, single_device_shard_semantics));
   const int num_shards = shapes_and_shadings.size();
 
   // For each single device array we are going to pre-make:
@@ -259,11 +259,11 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
   arrays.reserve(num_shards);
   for (int i = 0; i < num_shards; ++i) {
     ABSL_ASSIGN_OR_RETURN(auto array,
-                     BasicStringArray::Create(
-                         client_, std::move(shapes_and_shadings[i].first),
-                         std::move(shapes_and_shadings[i].second),
-                         std::move(buffer_futures[i]),
-                         std::move(on_done_with_buffer_callbacks[i])));
+                          BasicStringArray::Create(
+                              client_, std::move(shapes_and_shadings[i].first),
+                              std::move(shapes_and_shadings[i].second),
+                              std::move(buffer_futures[i]),
+                              std::move(on_done_with_buffer_callbacks[i])));
     arrays.push_back(array);
   }
   return arrays;
@@ -315,8 +315,9 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
     return absl::FailedPreconditionError("Array has already been deleted");
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto new_sharding, sharding().WithDeviceAssignment(
-                                          std::move(devices), memory_kind));
+  ABSL_ASSIGN_OR_RETURN(
+      auto new_sharding,
+      sharding().WithDeviceAssignment(std::move(devices), memory_kind));
   if (new_sharding->devices()->size() !=
       array_spec_.sharding->devices()->size()) {
     return absl::InvalidArgumentError(absl::StrCat(

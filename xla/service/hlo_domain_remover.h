@@ -16,11 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_DOMAIN_REMOVER_H_
 #define XLA_SERVICE_HLO_DOMAIN_REMOVER_H_
 
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 

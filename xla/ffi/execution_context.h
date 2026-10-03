@@ -104,7 +104,7 @@ class ExecutionContext {
 template <typename T>
 absl::StatusOr<T*> ExecutionContext::Lookup() const {
   ABSL_ASSIGN_OR_RETURN(auto user_data,
-                   LookupUserData(TypeRegistry::GetTypeId<T>()));
+                        LookupUserData(TypeRegistry::GetTypeId<T>()));
   return static_cast<T*>(user_data->get());
 }
 

@@ -25,12 +25,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/pjrt/device_event_utils.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/mem.h"
 
 namespace xla {
 
@@ -139,6 +139,23 @@ void StripMetadataForLogicalShape(xla::Shape& shape) {
   if (shape.has_layout()) {
     shape.mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(0);
   }
+}
+
+absl::StatusOr<PjRtRawBufferRef> RemoveDynamicShapeMetadataPrefixIfPresent(
+    PjRtRawBufferRef raw_buffer, const xla::Shape& device_shape) {
+  auto device_requirements = PjRtShapeAndMetadataTransferRequirements::Get(
+      device_shape, PjRtDynamicShapeKind::kPrefix);
+  if (device_requirements.metadata_size == 0) {
+    return raw_buffer;
+  }
+  size_t total_size = raw_buffer->GetOnDeviceSizeInBytes();
+  if (total_size < device_requirements.metadata_size) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Buffer size (%d) is smaller than metadata size (%d)",
+                        total_size, device_requirements.metadata_size));
+  }
+  return raw_buffer->Slice(device_requirements.array_offset,
+                           total_size - device_requirements.metadata_size);
 }
 
 absl::StatusOr<PjRtRawBufferRef> RemoveDynamicShapeMetadataIfPresent(

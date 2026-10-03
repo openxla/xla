@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/core/host_offloading/host_offloading_buffer.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -172,14 +172,14 @@ HostOffloadingNanoRtExecutable::LoadFromProto(
 
   if (proto.has_aot_compilation_result()) {
     ABSL_ASSIGN_OR_RETURN(executable,
-                     xla::cpu::NanoRtExecutable::Create(
-                         proto.aot_compilation_result(), program_shape));
+                          xla::cpu::NanoRtExecutable::Create(
+                              proto.aot_compilation_result(), program_shape));
   } else {
     XlaComputation computation;
     computation = XlaComputation(proto.hlo_module());
 
     ABSL_ASSIGN_OR_RETURN(xla::cpu::NanoRtClient * client,
-                     GetHostOffloadingNanoRtClient());
+                          GetHostOffloadingNanoRtClient());
 
     ABSL_ASSIGN_OR_RETURN(executable, client->Compile(computation));
   }
@@ -199,9 +199,10 @@ HostOffloadingNanoRtExecutable::LoadFromProto(
       },
       &num_replicas, &num_partitions, &device_assignment));
 
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   HloModule::CreateFromProto(proto.hlo_module(),
-                                              HloModuleConfig(program_shape)));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> hlo_module,
+      HloModule::CreateFromProto(proto.hlo_module(),
+                                 HloModuleConfig(program_shape)));
 
   ABSL_ASSIGN_OR_RETURN(
       bool needs_layout_conversion,

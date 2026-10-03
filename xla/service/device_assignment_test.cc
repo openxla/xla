@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/device_assignment.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/runtime/device_id.h"

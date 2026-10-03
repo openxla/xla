@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/literal_test_util.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -329,7 +329,7 @@ TEST_F(GpuIrEmitterUnnestedTest, RunTritonCustomCallWithDeviceSideTMA) {
   // Run on GPU.
   absl::StatusOr<Literal> result_status =
       Execute(std::move(module), {&input_literal});
-  TF_ASSERT_OK(result_status.status());
+  ASSERT_OK(result_status.status());
   std::vector<Literal> results = result_status->DecomposeTuple();
 
   EXPECT_TRUE(LiteralTestUtil::Equal(input_literal, results.at(0)));

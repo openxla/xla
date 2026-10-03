@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/fd_writer.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/tools/comparison/comparison_result.pb.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/hlo/tools/comparison/tensor_summary_util.h"
 #include "xla/hlo/tools/hlo_diff/utils/bidirectional_map.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 namespace {

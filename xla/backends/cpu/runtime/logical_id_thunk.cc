@@ -93,9 +93,10 @@ LogicalIdThunk<logical_id_kind>::Execute(const ExecuteParams& params) {
   TF_RET_CHECK(params.collective_params)
       << ToString<logical_id_kind>() << " id requires collective params";
 
-  ABSL_ASSIGN_OR_RETURN(int32_t logical_id,
-                   GetIdForDevice(params.collective_params->device_assignment,
-                                  params.collective_params->global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      int32_t logical_id,
+      GetIdForDevice(params.collective_params->device_assignment,
+                     params.collective_params->global_device_id));
 
   VLOG(3) << absl::StreamFormat("%s id: %d", ToString<logical_id_kind>(),
                                 logical_id);

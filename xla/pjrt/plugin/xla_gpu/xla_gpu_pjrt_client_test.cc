@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
 namespace xla {

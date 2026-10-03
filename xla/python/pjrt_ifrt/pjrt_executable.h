@@ -313,7 +313,7 @@ class PjRtLoadedExecutable final
 
   absl::StatusOr<std::string> GetHumanReadableProgramText() const override {
     ABSL_ASSIGN_OR_RETURN(auto hlo_modules,
-                     pjrt_loaded_executable_->GetHloModules());
+                          pjrt_loaded_executable_->GetHloModules());
     return absl::StrJoin(
         hlo_modules, "\n\n", [](std::string* out, const auto& hlo_module) {
           HloPrintOptions print_options = HloPrintOptions::Default();
@@ -322,11 +322,6 @@ class PjRtLoadedExecutable final
         });
   }
 
-  int num_devices() const override {
-    DCHECK(this);
-    return pjrt_loaded_executable_->num_replicas() *
-           pjrt_loaded_executable_->num_partitions();
-  }
   int64_t SizeOfGeneratedCodeInBytes() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->SizeOfGeneratedCodeInBytes();
@@ -367,13 +362,9 @@ class PjRtLoadedExecutable final
     return devices_;
   }
 
-  absl::Span<Device* const> addressable_devices() const override {
-    DCHECK(this);
-    return addressable_devices_;
-  }
-
   absl::StatusOr<xla::ifrt::AttributeMap> GetCostAnalysis() const override {
-    ABSL_ASSIGN_OR_RETURN(auto result, pjrt_loaded_executable_->GetCostAnalysis());
+    ABSL_ASSIGN_OR_RETURN(auto result,
+                          pjrt_loaded_executable_->GetCostAnalysis());
     return xla::ifrt::FromPjRtAttributeMap(std::move(result));
   }
 

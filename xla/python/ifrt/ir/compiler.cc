@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -78,8 +78,9 @@ IfrtIrProgramCompiler::Compile(std::unique_ptr<Program> program,
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<IfrtIRCompileOptions> ifrt_ir_compile_options,
       GetIfrtIRCompileOptions(std::move(options)));
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<AtomProgramCompiler> atom_program_compiler,
-                   atom_program_compiler_factory_(*ifrt_ir_compile_options));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<AtomProgramCompiler> atom_program_compiler,
+      atom_program_compiler_factory_(*ifrt_ir_compile_options));
 
   auto [promise, future] =
       tsl::MakePromise<std::shared_ptr<CompiledIfrtIrProgram>>();
@@ -169,9 +170,10 @@ IfrtIrProgramCompiler::DeserializeLoadedExecutable(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(DeserializedIfrtIRProgram deserialized_ifrt_executable,
-                   DeserializeIfrtIrExecutable(client_, serialized,
-                                               std::move(deserialize_options)));
+  ABSL_ASSIGN_OR_RETURN(
+      DeserializedIfrtIRProgram deserialized_ifrt_executable,
+      DeserializeIfrtIrExecutable(client_, serialized,
+                                  std::move(deserialize_options)));
 
   return CompileAndLoad(
       std::unique_ptr<IfrtIRProgram>(

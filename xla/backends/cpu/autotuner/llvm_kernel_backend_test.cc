@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/llvm_kernel_backend.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/cpu/autotuner/cpu_codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {

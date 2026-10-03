@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
@@ -160,7 +161,7 @@ module @multiple_calls_of_same_module {
     return %2 : !array
   }
 
-  module @add_one attributes {sym_visibility = "private"} {
+  module @add_one <sym_visibility = "private"> {
     func.func @main(%arg0: tensor<2x2xi32>) -> tensor<2x2xi32> {
       %0 = stablehlo.constant dense<1> : tensor<2x2xi32>
       %1 = stablehlo.add %arg0, %0 : tensor<2x2xi32>
@@ -208,7 +209,7 @@ module @multiple_calls_of_same_module {
     return %0 : !array
   }
 
-  module @add_one attributes {sym_visibility = "private"} {
+  module @add_one <sym_visibility = "private"> {
     func.func @main(%arg0: tensor<2xi32>) -> tensor<2xi32> {
       %0 = stablehlo.constant dense<1> : tensor<2xi32>
       %1 = stablehlo.add %arg0, %0 : tensor<2xi32>

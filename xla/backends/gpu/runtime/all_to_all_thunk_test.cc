@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/btree_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
@@ -307,14 +308,16 @@ static absl::Status FillDeviceBuffer(se::Stream& stream,
                                      se::DeviceAddressBase buffer,
                                      int64_t length, float value) {
   std::vector<float> data(length, value);
-  ABSL_RETURN_IF_ERROR(stream.Memcpy(&buffer, data.data(), sizeof(float) * length));
+  ABSL_RETURN_IF_ERROR(
+      stream.Memcpy(&buffer, data.data(), sizeof(float) * length));
   return stream.BlockHostUntilDone();
 }
 
 static absl::StatusOr<std::vector<float>> ReadDeviceBuffer(
     se::Stream& stream, se::DeviceAddressBase buffer, int64_t length) {
   std::vector<float> data(length);
-  ABSL_RETURN_IF_ERROR(stream.Memcpy(data.data(), buffer, sizeof(float) * length));
+  ABSL_RETURN_IF_ERROR(
+      stream.Memcpy(data.data(), buffer, sizeof(float) * length));
   ABSL_RETURN_IF_ERROR(stream.BlockHostUntilDone());
   return data;
 }

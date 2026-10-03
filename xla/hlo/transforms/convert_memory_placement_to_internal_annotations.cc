@@ -22,13 +22,13 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/side_effect_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -48,8 +48,8 @@ absl::StatusOr<absl::string_view> GetCustomCallTarget(
   if (external_annotation == memory_annotations::kMemoryTargetPinnedDevice) {
     return memory_annotations::kPinToDeviceCustomCallTarget;
   }
-  return absl::InvalidArgumentError(
-      absl::StrCat("Invalid external annotation: ", external_annotation));
+  return InvalidArgumentStrCat("Invalid external annotation: ",
+                               external_annotation);
 }
 
 absl::StatusOr<bool>
@@ -91,7 +91,8 @@ ConvertCustomCallWithExternalAnnotationToInternalAnnotation(
     if (instruction->has_sharding()) {
       move_to_host_custom_call->set_sharding(instruction->sharding());
     }
-    ABSL_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(move_to_host_custom_call));
+    ABSL_RETURN_IF_ERROR(
+        instruction->ReplaceAllUsesWith(move_to_host_custom_call));
     ABSL_RETURN_IF_ERROR(c->RemoveInstructionAndUnusedOperands(instruction));
     return true;
   } else if (is_to_device_case) {

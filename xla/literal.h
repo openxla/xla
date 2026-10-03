@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -104,16 +105,21 @@ class LiteralBase {
   // ShapeIndex is not array. See primitive_util.h for the mapping from XLA type
   // to native type.
   template <typename NativeT>
-  absl::Span<const NativeT> data(const ShapeIndex& shape_index = {}) const;
+  absl::Span<const NativeT> data() const;
+  template <typename NativeT>
+  absl::Span<const NativeT> data(const ShapeIndex& shape_index) const;
 
   // Returns a const pointer to (or size of) the underlying buffer holding the
   // array at the given shape index. CHECKs if the subshape of the literal at
   // the given ShapeIndex is not array.
-  const void* untyped_data(const ShapeIndex& shape_index = {}) const;
-  int64_t size_bytes(const ShapeIndex& shape_index = {}) const;
+  const void* untyped_data() const;
+  const void* untyped_data(const ShapeIndex& shape_index) const;
+  int64_t size_bytes() const;
+  int64_t size_bytes(const ShapeIndex& shape_index) const;
   // total size in bytes of the literal (including pre-allocated dynamic
   // metadata)
-  int64_t total_size_bytes(const ShapeIndex& shape_index = {}) const;
+  int64_t total_size_bytes() const;
+  int64_t total_size_bytes(const ShapeIndex& shape_index) const;
 
   // Computes the size in bytes of the output of the Serialize method.
   // If `pack_pred` is true, PRED elements are bit-packed (8 elements per byte);
@@ -380,13 +386,8 @@ class LiteralBase {
 
   // Returns the count of the elements in the array at the given shape index in
   // this literal.
-  int64_t element_count(const ShapeIndex& index = {}) const {
-    if (index.empty()) {
-      // Common case, avoid GetSubshape().
-      return ShapeUtil::ElementsIn(shape());
-    }
-    return ShapeUtil::ElementsIn(ShapeUtil::GetSubshape(shape(), index));
-  }
+  int64_t element_count() const;
+  int64_t element_count(const ShapeIndex& index) const;
 
   // This definition is here to ensure that nobody accidentally implements this
   // function which would lead to inconsistencies. Use Hash instead.
@@ -634,10 +635,13 @@ class LiteralBase {
           primitive_util::NativeToPrimitiveType<NativeT>();
       constexpr int bits_per_element = primitive_util::BitWidth(primitive_type);
       if constexpr (bits_per_element < 8) {
+        static_assert(sizeof(NativeT) == 1);
+        const uint8_t* raw_bytes =
+            reinterpret_cast<const uint8_t*>(elements.data());
         if constexpr (primitive_type == PRED) {
           if (!pack_pred_) {
-            for (NativeT element : elements) {
-              WriteElement(element);
+            for (size_t i = 0; i < elements.size(); ++i) {
+              WriteElement(raw_bytes[i]);
             }
             return;
           }
@@ -650,8 +654,7 @@ class LiteralBase {
         for (int64_t i = 0; i < bytes; ++i) {
           uint8_t byte = 0;
           for (int b = 0; b < elements_per_byte; ++b) {
-            uint8_t src = Eigen::numext::bit_cast<uint8_t>(
-                              elements[i * elements_per_byte + b]) &
+            uint8_t src = raw_bytes[i * elements_per_byte + b] &
                           LsbMask<uint8_t>(bits_per_element);
             byte |= src << (b * bits_per_element);
           }
@@ -661,8 +664,7 @@ class LiteralBase {
         if (rest != 0) {
           uint8_t byte = 0;
           for (int64_t b = 0; b < rest; ++b) {
-            uint8_t src = Eigen::numext::bit_cast<uint8_t>(
-                              elements[bytes * elements_per_byte + b]) &
+            uint8_t src = raw_bytes[bytes * elements_per_byte + b] &
                           LsbMask<uint8_t>(bits_per_element);
             byte |= src << (b * bits_per_element);
           }
@@ -757,8 +759,9 @@ class LiteralBase {
       if constexpr (bits_per_element < 8) {
         if constexpr (primitive_type == PRED) {
           if (!pack_pred_) {
-            for (NativeT& element : elements) {
-              if (!ReadElement(element)) {
+            uint8_t* raw_bytes = reinterpret_cast<uint8_t*>(elements.data());
+            for (size_t i = 0; i < elements.size(); ++i) {
+              if (!ReadElement(raw_bytes[i])) {
                 return false;
               }
             }
@@ -1222,7 +1225,8 @@ class LiteralBase {
       if (auto* tuple_rep = piece.storage_.GetTupleRep()) {
         for (int64_t i = 0; i < tuple_rep->children.size(); ++i) {
           index->push_back(i);
-          ABSL_RETURN_IF_ERROR(ForEachHelper(func, tuple_rep->children[i], index));
+          ABSL_RETURN_IF_ERROR(
+              ForEachHelper(func, tuple_rep->children[i], index));
           index->pop_back();
         }
       }
@@ -1307,7 +1311,9 @@ class MutableLiteralBase : public LiteralBase {
   // given ShapeIndex is not array. See primitive_util.h for the mapping from
   // XLA type to native type.
   template <typename NativeT>
-  absl::Span<NativeT> data(const ShapeIndex& shape_index = {});
+  absl::Span<NativeT> data();
+  template <typename NativeT>
+  absl::Span<NativeT> data(const ShapeIndex& shape_index);
   // Unhide const method from parent class.
   using LiteralBase::data;
 
@@ -1323,7 +1329,8 @@ class MutableLiteralBase : public LiteralBase {
   // Returns a pointer to the underlying buffer holding the array at the given
   // shape index. CHECKs if the subshape of the literal at the given ShapeIndex
   // is not array.
-  void* untyped_data(const ShapeIndex& shape_index = {});
+  void* untyped_data();
+  void* untyped_data(const ShapeIndex& shape_index);
   // Unhide const method from parent class.
   using LiteralBase::untyped_data;
 
@@ -1816,10 +1823,10 @@ absl::Status LiteralBase::SerializeWithShapeProto(const ShapeProto& shape_proto,
             subshape.element_type());
         return absl::OkStatus();
       }));
-#ifndef NDEBUG
-  ABSL_ASSIGN_OR_RETURN(int64_t expected_size, SerializedSize(pack_pred));
-  DCHECK_EQ(state.num_written(), expected_size) << shape().ToString();
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    ABSL_ASSIGN_OR_RETURN(int64_t expected_size, SerializedSize(pack_pred));
+    DCHECK_EQ(state.num_written(), expected_size) << shape().ToString();
+  }
   return absl::OkStatus();
 }
 
@@ -1858,11 +1865,11 @@ absl::StatusOr<Literal> Literal::Deserialize(InputIterator begin,
             }
             return absl::OkStatus();
           }));
-#ifndef NDEBUG
-  ABSL_ASSIGN_OR_RETURN(int64_t expected_size,
-                   ShapeUtil::SerializedSize(shape, pack_pred));
-  DCHECK_EQ(state.num_read(), expected_size) << shape.ToString();
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    ABSL_ASSIGN_OR_RETURN(int64_t expected_size,
+                          ShapeUtil::SerializedSize(shape, pack_pred));
+    DCHECK_EQ(state.num_read(), expected_size) << shape.ToString();
+  }
   if (!state.at_end()) {
     return InvalidArgument("Did not consume all input data");
   }
@@ -1931,7 +1938,7 @@ NativeT LiteralBase::Piece::GetLinear(int64_t linear_index) const {
   if (subshape().element_type() == PRED) {
     return static_cast<NativeT>(buffer()[linear_index] ? true : false);
   }
-  return data<NativeT>().data()[linear_index];
+  return data<NativeT>()[linear_index];
 }
 
 template <typename NativeT>
@@ -1939,13 +1946,23 @@ void LiteralBase::Piece::SetLinear(int64_t linear_index, NativeT value) {
   DCHECK(subshape().IsArray())
       << __func__ << " is only supported for dense arrays: " << subshape();
   DCHECK_LT(linear_index, element_count()) << "linear_index out of bounds";
-  data<NativeT>().data()[linear_index] = value;
+  data<NativeT>()[linear_index] = value;
+}
+
+template <typename NativeT>
+absl::Span<const NativeT> LiteralBase::data() const {
+  return root_piece().data<NativeT>();
 }
 
 template <typename NativeT>
 absl::Span<const NativeT> LiteralBase::data(
     const ShapeIndex& shape_index) const {
   return piece(shape_index).data<NativeT>();
+}
+
+template <typename NativeT>
+absl::Span<NativeT> MutableLiteralBase::data() {
+  return mutable_root_piece().data<NativeT>();
 }
 
 template <typename NativeT>
@@ -2206,7 +2223,7 @@ absl::Status MutableLiteralBase::PopulateParallel(Generator&& generator) {
   TF_RET_CHECK(shape().IsArray())
       << __func__ << " is only supported for dense arrays: " << shape();
   return PopulateInternal<NativeT>(generator,
-                                   /*parallel=*/data<NativeT>().size() > 32);
+                                   /*parallel=*/element_count() > 32);
 }
 
 template <typename NativeT, typename Generator>
@@ -2245,9 +2262,8 @@ template <typename NativeT, typename Generator,
 absl::Status MutableLiteralBase::PopulateLinearParallel(Generator&& generator) {
   TF_RET_CHECK(shape().IsArray())
       << __func__ << " is only supported for dense arrays: " << shape();
-  return PopulateLinearInternal<NativeT>(
-      std::forward<Generator>(generator),
-      /*parallel=*/data<NativeT>().size() > 32);
+  return PopulateLinearInternal<NativeT>(std::forward<Generator>(generator),
+                                         /*parallel=*/element_count() > 32);
 }
 
 template <typename Populator, MutableLiteralBase::IsPopulator<Populator>*>

@@ -15,14 +15,16 @@ limitations under the License.
 
 #include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/hlo.pb.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -60,7 +61,8 @@ absl::StatusOr<HloUnoptimizedSnapshot> SerializeAndDeserialize(
     const HloUnoptimizedSnapshot& snapshot) {
   std::string serialized_snapshot;
   tsl::protobuf::io::StringOutputStream output_stream(&serialized_snapshot);
-  ABSL_RETURN_IF_ERROR(SerializeHloUnoptimizedSnapshot(snapshot, &output_stream));
+  ABSL_RETURN_IF_ERROR(
+      SerializeHloUnoptimizedSnapshot(snapshot, &output_stream));
 
   tsl::protobuf::io::ArrayInputStream input_stream(serialized_snapshot.data(),
                                                    serialized_snapshot.size());

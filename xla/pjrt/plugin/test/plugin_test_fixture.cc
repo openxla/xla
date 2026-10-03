@@ -27,7 +27,7 @@ namespace xla {
 
 absl::StatusOr<std::string> GetRegisteredPluginName() {
   ABSL_ASSIGN_OR_RETURN(std::vector<std::string> pjrt_apis,
-                   pjrt::GetRegisteredPjrtApis());
+                        pjrt::GetRegisteredPjrtApis());
   if (pjrt_apis.size() != 1) {
     return absl::InvalidArgumentError(
         "Expected exactly one plugin to be registered.");

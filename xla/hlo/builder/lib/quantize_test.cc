@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/quantize.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <type_traits>
 #include <vector>
 
-#include <gtest/gtest.h>
+#include "tsl/platform/bfloat16.h"
 #include "xla/array2d.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/bfloat16.h"
 
 namespace xla {
 namespace {
@@ -60,7 +61,7 @@ Array2D<NativeT> GenerateLargeSizeInput(int num_columns, int num_rows) {
 }
 
 template <typename NativeT>
-Array2D<uint32_t> PackLargeInput(Array2D<NativeT> &input) {
+Array2D<uint32_t> PackLargeInput(Array2D<NativeT>& input) {
   const int64_t size_per_pack = sizeof(uint32_t) / sizeof(NativeT);
   int64_t width = input.width();
 
@@ -87,7 +88,7 @@ Array2D<uint32_t> PackLargeInput(Array2D<NativeT> &input) {
 
 template <typename NativeT>
 Array2D<bfloat16> GenerateLargeSizeMinCombinedOutput(
-    Array2D<NativeT> &input, const QuantizedRange &range,
+    Array2D<NativeT>& input, const QuantizedRange& range,
     bool transpose_output = false) {
   const int64_t size_per_pack = sizeof(uint32_t) / sizeof(NativeT);
   int64_t width = input.width();
@@ -138,7 +139,7 @@ Array2D<bfloat16> GenerateLargeSizeMinCombinedOutput(
 }
 
 template <typename NativeT>
-std::vector<bfloat16> GenerateMinCombinedOutput(const QuantizedRange &range) {
+std::vector<bfloat16> GenerateMinCombinedOutput(const QuantizedRange& range) {
   float half_range =
       !std::is_signed<NativeT>::value
           ? 0.0f

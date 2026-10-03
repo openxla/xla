@@ -18,10 +18,10 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
-#include "xla/tsl/platform/types.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
+#include "xla/tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {

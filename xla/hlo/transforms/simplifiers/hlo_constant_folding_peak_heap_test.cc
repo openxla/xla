@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 
-#include <gtest/gtest.h>
-#include "testing/base/public/malloc_counter.h"
 #include "absl/strings/str_format.h"
+#include "testing/base/public/malloc_counter.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/tsl/platform/statusor.h"

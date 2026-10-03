@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/pass/hlo_pass_fix.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
@@ -60,9 +61,11 @@ class DecrementPositiveConstants : public HloModulePass {
             instruction->shape().element_type() == S32) {
           int32_t value = instruction->literal().GetFirstElement<int32_t>();
           if (value > 0) {
-            ABSL_RETURN_IF_ERROR(instruction->parent()->ReplaceWithNewInstruction(
-                instruction, HloInstruction::CreateConstant(
-                                 LiteralUtil::CreateR0<int32_t>(value - 1))));
+            ABSL_RETURN_IF_ERROR(
+                instruction->parent()->ReplaceWithNewInstruction(
+                    instruction,
+                    HloInstruction::CreateConstant(
+                        LiteralUtil::CreateR0<int32_t>(value - 1))));
             changed = true;
           }
         }

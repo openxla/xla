@@ -41,21 +41,18 @@ namespace xla {
 
 class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
  public:
-  ReductionRewriterVisitor(
-      int64_t reduce_window_size,
-      HloPredicate filter)
-      : reduce_window_size_(reduce_window_size),
-        filter_(std::move(filter)) {}
+  ReductionRewriterVisitor(int64_t reduce_window_size, HloPredicate filter)
+      : reduce_window_size_(reduce_window_size), filter_(std::move(filter)) {}
 
-  absl::Status HandleReduce(HloInstruction *hlo) override {
+  absl::Status HandleReduce(HloInstruction* hlo) override {
     if (filter_ && !filter_(hlo)) {
       return absl::OkStatus();
     }
 
-    HloInstruction *reduced_op = hlo->mutable_operand(0);
-    HloInstruction *initial_value = hlo->mutable_operand(1);
-    const Shape &input_shape = reduced_op->shape();
-    const Shape &reduce_shape = hlo->shape();
+    HloInstruction* reduced_op = hlo->mutable_operand(0);
+    HloInstruction* initial_value = hlo->mutable_operand(1);
+    const Shape& input_shape = reduced_op->shape();
+    const Shape& reduce_shape = hlo->shape();
 
     if (!reduce_shape.IsArray()) {
       // TODO(b/210786051): Implement tree reduction rewrite for variadic
@@ -97,15 +94,15 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
         MakePadding(input_shape.dimensions(), window_dimensions, window_strides,
                     Padding::kSame);
 
-    ABSL_ASSIGN_OR_RETURN(Window window,
-                     ShapeInference::InferWindowFromDimensions(
-                         window_dimensions, window_strides, padding, {}, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        Window window, ShapeInference::InferWindowFromDimensions(
+                           window_dimensions, window_strides, padding, {}, {}));
 
     ABSL_ASSIGN_OR_RETURN(Shape intermediate_shape,
-                     ShapeInference::InferReduceWindowShape(
-                         input_shape, initial_value->shape(), window));
+                          ShapeInference::InferReduceWindowShape(
+                              input_shape, initial_value->shape(), window));
 
-    HloInstruction *reduce_window =
+    HloInstruction* reduce_window =
         hlo->parent()->AddInstruction(HloInstruction::CreateReduceWindow(
             intermediate_shape, reduced_op, initial_value, window,
             hlo->to_apply()));
@@ -127,7 +124,7 @@ absl::StatusOr<bool> TreeReductionRewriter::RunImpl(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ReductionRewriterVisitor visitor(reduce_window_size_, filter_);
   bool changed = false;
-  for (const auto &computation :
+  for (const auto& computation :
        module->MakeNonfusionComputations(execution_threads)) {
     ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
     changed |= visitor.changed();

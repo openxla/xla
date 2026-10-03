@@ -121,27 +121,29 @@ KernelRegistry& GetKernelRegistry() {
 
 absl::StatusOr<CudaRuntimeKernel> FindCudaRuntimeKernel(const void* host_fun) {
   ABSL_ASSIGN_OR_RETURN(FatbinAndName fatbin_and_name,
-                   GetKernelRegistry().FindFatbinAndName(host_fun));
+                        GetKernelRegistry().FindFatbinAndName(host_fun));
   return CudaRuntimeKernel{fatbin_and_name.fatbin, fatbin_and_name.name};
 }
 
 absl::StatusOr<CudaRuntimeKernel> FindCudaRuntimeKernel(
     const void* host_fun, const CudaComputeCapability& compute_capability) {
   ABSL_ASSIGN_OR_RETURN(FatbinAndName fatbin_and_name,
-                   GetKernelRegistry().FindFatbinAndName(host_fun));
-  ABSL_ASSIGN_OR_RETURN(absl::Span<const uint8_t> cubin,
-                   FindCubinForArch(fatbin_and_name.fatbin, compute_capability),
-                   _ << " for kernel '" << fatbin_and_name.name << "'");
+                        GetKernelRegistry().FindFatbinAndName(host_fun));
+  ABSL_ASSIGN_OR_RETURN(
+      absl::Span<const uint8_t> cubin,
+      FindCubinForArch(fatbin_and_name.fatbin, compute_capability),
+      _ << " for kernel '" << fatbin_and_name.name << "'");
   return CudaRuntimeKernel{cubin, fatbin_and_name.name};
 }
 
 absl::StatusOr<CudaKernelFuncAttributes> FindCudaRuntimeKernelFuncAttributes(
     const void* host_fun, const CudaComputeCapability& compute_capability) {
   ABSL_ASSIGN_OR_RETURN(FatbinAndName fatbin_and_name,
-                   GetKernelRegistry().FindFatbinAndName(host_fun));
-  ABSL_ASSIGN_OR_RETURN(absl::Span<const uint8_t> cubin,
-                   FindCubinForArch(fatbin_and_name.fatbin, compute_capability),
-                   _ << " for kernel '" << fatbin_and_name.name << "'");
+                        GetKernelRegistry().FindFatbinAndName(host_fun));
+  ABSL_ASSIGN_OR_RETURN(
+      absl::Span<const uint8_t> cubin,
+      FindCubinForArch(fatbin_and_name.fatbin, compute_capability),
+      _ << " for kernel '" << fatbin_and_name.name << "'");
   return ParseFuncAttributesFromCubin(cubin, fatbin_and_name.name,
                                       compute_capability);
 }

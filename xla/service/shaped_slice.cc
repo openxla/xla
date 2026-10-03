@@ -33,8 +33,9 @@ absl::StatusOr<ShapedSlice> ShapedSlice::FromProto(
     const ShapedSliceProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ShapedSlice shaped_slice;
-  ABSL_ASSIGN_OR_RETURN(shaped_slice.slice, BufferAllocation::Slice::FromProto(
-                                           proto.slice(), buffer_allocations));
+  ABSL_ASSIGN_OR_RETURN(
+      shaped_slice.slice,
+      BufferAllocation::Slice::FromProto(proto.slice(), buffer_allocations));
   if (!proto.has_shape()) {
     return absl::InvalidArgumentError("ShapedSlice proto has no shape");
   }

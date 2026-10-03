@@ -369,11 +369,13 @@ H AbslHashValue(H h, const TensorTransformation& rt) {
 
 std::string ToString(const TensorTransformation* transformation);
 
-void ToProto(const TensorTransformation* transformation,
-             google::protobuf::RepeatedPtrField<TensorTransformationProto>* proto_field);
+void ToProto(
+    const TensorTransformation* transformation,
+    google::protobuf::RepeatedPtrField<TensorTransformationProto>* proto_field);
 
 ::absl::StatusOr<std::shared_ptr<const TensorTransformation>> FromProto(
-    const google::protobuf::RepeatedPtrField<TensorTransformationProto>& proto_field);
+    const google::protobuf::RepeatedPtrField<TensorTransformationProto>&
+        proto_field);
 
 }  // namespace tensor_transformation
 

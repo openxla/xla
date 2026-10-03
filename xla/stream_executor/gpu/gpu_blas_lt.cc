@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/shape.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace stream_executor {
 
@@ -188,7 +188,7 @@ absl::StatusOr<MatrixLayout> MatrixLayout::FromProto(
   }
 
   ABSL_ASSIGN_OR_RETURN(blas::Transpose transpose,
-                   blas::FromProto(proto.transpose()));
+                        blas::FromProto(proto.transpose()));
   return MatrixLayout(proto.dtype(), proto.num_rows(), proto.num_cols(), order,
                       proto.batch_size(), proto.leading_dim_stride(),
                       proto.batch_stride(), transpose);
@@ -309,14 +309,19 @@ absl::Status BlasLt::MatmulPlan::SetCachedAlgorithm(size_t algorithm_idx,
                                                     size_t max_algorithm_count,
                                                     size_t max_workspace_size) {
   bool cache_dirty = false;
-  // We drop the cache even if max_algorithm_count < cached_algorithm_count_
+  // We drop the cache if max_algorithm_count > cached_algorithm_count_
   // or max_workspace_size < cached_workspace_size_ since the list of the
   // algorithms may be different in these cases.
   if (cached_algorithms_.empty() ||
-      cached_algorithm_count_ != max_algorithm_count ||
+      max_algorithm_count > cached_algorithm_count_ ||
       cached_workspace_size_ != max_workspace_size) {
-    ABSL_ASSIGN_OR_RETURN(cached_algorithms_,
-                     GetAlgorithms(max_algorithm_count, max_workspace_size));
+    ABSL_ASSIGN_OR_RETURN(
+        cached_algorithms_,
+        GetAlgorithms(max_algorithm_count, max_workspace_size));
+    // Store the *requested* count, not cached_algorithms_.size(): the backend
+    // commonly returns fewer algorithms than asked for, and storing the short
+    // size would make every subsequent request for the original count look like
+    // a growth and refetch forever.
     cached_algorithm_count_ = max_algorithm_count;
     cached_workspace_size_ = max_workspace_size;
     cache_dirty = true;
@@ -326,7 +331,7 @@ absl::Status BlasLt::MatmulPlan::SetCachedAlgorithm(size_t algorithm_idx,
     if (algorithm_idx >= cached_algorithms_.size()) {
       return absl::InternalError(
           absl::StrFormat("Algorithm index is out of range: %zu >= %zu",
-                          algorithm_idx, cached_algorithm_count_));
+                          algorithm_idx, cached_algorithms_.size()));
     }
     cached_algorithm_idx_ = algorithm_idx;
     return SetAlgorithm(cached_algorithms_[algorithm_idx]);
@@ -348,7 +353,7 @@ absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlanWithAlgorithm(
   }
   auto plan = res.first->second.get();
   ABSL_RETURN_IF_ERROR(plan->SetCachedAlgorithm(algorithm_idx, num_algorithms,
-                                           max_workspace_size));
+                                                max_workspace_size));
   return plan;
 }
 
@@ -365,13 +370,13 @@ size_t BlasLt::GetMatmulPlanCacheSize() const {
 absl::StatusOr<GemmConfig> GemmConfig::FromProto(
     const xla::GemmConfigProto& proto) {
   ABSL_ASSIGN_OR_RETURN(MatrixLayout lhs_layout,
-                   MatrixLayout::FromProto(proto.lhs_layout()));
+                        MatrixLayout::FromProto(proto.lhs_layout()));
   ABSL_ASSIGN_OR_RETURN(MatrixLayout rhs_layout,
-                   MatrixLayout::FromProto(proto.rhs_layout()));
+                        MatrixLayout::FromProto(proto.rhs_layout()));
   ABSL_ASSIGN_OR_RETURN(MatrixLayout c_layout,
-                   MatrixLayout::FromProto(proto.c_layout()));
+                        MatrixLayout::FromProto(proto.c_layout()));
   ABSL_ASSIGN_OR_RETURN(MatrixLayout output_layout,
-                   MatrixLayout::FromProto(proto.output_layout()));
+                        MatrixLayout::FromProto(proto.output_layout()));
   std::optional<blas::ComputationType> compute_type =
       blas::FromProto(proto.compute_type());
   return GemmConfig{
@@ -422,9 +427,11 @@ absl::StatusOr<GroupedGemmConfig> GroupedGemmConfig::FromProto(
   ABSL_ASSIGN_OR_RETURN(blas::DataType typeC, AsBlasDataType(proto.type_c()));
   ABSL_ASSIGN_OR_RETURN(blas::DataType typeD, AsBlasDataType(proto.type_d()));
   ABSL_ASSIGN_OR_RETURN(RaggedDotMode ragged_mode,
-                   RaggedDotModeFromProto(proto.ragged_mode()));
-  ABSL_ASSIGN_OR_RETURN(blas::Transpose trans_a, blas::FromProto(proto.trans_a()));
-  ABSL_ASSIGN_OR_RETURN(blas::Transpose trans_b, blas::FromProto(proto.trans_b()));
+                        RaggedDotModeFromProto(proto.ragged_mode()));
+  ABSL_ASSIGN_OR_RETURN(blas::Transpose trans_a,
+                        blas::FromProto(proto.trans_a()));
+  ABSL_ASSIGN_OR_RETURN(blas::Transpose trans_b,
+                        blas::FromProto(proto.trans_b()));
   return GroupedGemmConfig{proto.m(),
                            proto.n(),
                            proto.k(),

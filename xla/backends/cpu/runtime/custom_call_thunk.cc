@@ -25,6 +25,7 @@ limitations under the License.
 #include <variant>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/config.h"  // IWYU pragma: keep
 #include "absl/base/dynamic_annotations.h"
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
@@ -106,8 +107,8 @@ static absl::Status InstantiateHandlerState(
     ffi::InvokeContext invoke_context;
     invoke_context.state_context = {execution_state};
     ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), handler.bundle.instantiate,
-                           instantiate_call_frame, invoke_context,
-                           XLA_FFI_ExecutionStage_INSTANTIATE));
+                                instantiate_call_frame, invoke_context,
+                                XLA_FFI_ExecutionStage_INSTANTIATE));
   }
 
   return absl::OkStatus();
@@ -249,14 +250,16 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
   if (api_version == CustomCallApiVersion::API_VERSION_TYPED_FFI) {
     ABSL_ASSIGN_OR_RETURN(target, ffi::FindHandler(target_name, "Host"));
 
-    ABSL_ASSIGN_OR_RETURN(AttributesMap attributes, ParseAttributes(backend_config));
+    ABSL_ASSIGN_OR_RETURN(AttributesMap attributes,
+                          ParseAttributes(backend_config));
 
-    ABSL_RETURN_IF_ERROR(InstantiateHandlerState(std::get<1>(target),
-                                            execution_state.get(), attributes));
+    ABSL_RETURN_IF_ERROR(InstantiateHandlerState(
+        std::get<1>(target), execution_state.get(), attributes));
 
-    ABSL_ASSIGN_OR_RETURN(call_frame, BuildCallFrameForTypedFFI(
-                                     api_version, op_buffers, backend_config,
-                                     std::move(attributes)));
+    ABSL_ASSIGN_OR_RETURN(
+        call_frame,
+        BuildCallFrameForTypedFFI(api_version, op_buffers, backend_config,
+                                  std::move(attributes)));
   } else {
     auto* registry = CustomCallTargetRegistry::Global();
     ABSL_ASSIGN_OR_RETURN(
@@ -311,7 +314,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
     BufferAllocation::Slice& slice = op_buffers_.arguments_buffers[i];
     if constexpr (ShouldCheckBufferSlices()) {
       ABSL_ASSIGN_OR_RETURN(arguments.emplace_back(),
-                       params.buffer_allocations->GetDeviceAddress(slice));
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       arguments.push_back(
           params.buffer_allocations->GetDeviceAddressUnchecked(slice));
@@ -331,12 +334,11 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
     BufferAllocation::Slice& slice = op_buffers_.results_buffers[i];
     if constexpr (ShouldCheckBufferSlices()) {
       ABSL_ASSIGN_OR_RETURN(results.emplace_back(),
-                       params.buffer_allocations->GetDeviceAddress(slice));
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       results.push_back(
           params.buffer_allocations->GetDeviceAddressUnchecked(slice));
     }
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(results[i].opaque(), results[i].size());
     VLOG(3) << absl::StreamFormat("  res: %s in slice %s (%p)",
                                   op_buffers_.results_shapes[i].ToString(true),
                                   slice.ToString(), results[i].opaque());
@@ -358,8 +360,22 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
       custom_call_params->ffi_execution_context};
 
   ffi::HandlerRegistration& handler = std::get<1>(target_);
-  return ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
-                          *call_frame, invoke_context);
+  auto future = ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
+                                 *call_frame, invoke_context);
+#ifdef ABSL_HAVE_MEMORY_SANITIZER
+  // Use `FlatMap` instead of `AndThen` (which runs waiters in LIFO order) so
+  // dependent thunks only run after the result buffers are unpoisoned.
+  return future.FlatMap([results = std::move(results)](ExecuteEvent) {
+    // Custom calls may dispatch to external code that is not MSan-instrumented,
+    // e.g. hand-written assembly or libraries built without msan.
+    for (const auto& res : results) {
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(res.opaque(), res.size());
+    }
+    return OkExecuteEvent();
+  });
+#else
+  return future;
+#endif  // ABSL_HAVE_MEMORY_SANITIZER
 }
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
@@ -371,7 +387,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
     auto& slice = op_buffers_.arguments_buffers[i];
     se::DeviceAddressBase arg;
     if constexpr (ShouldCheckBufferSlices()) {
-      ABSL_ASSIGN_OR_RETURN(arg, params.buffer_allocations->GetDeviceAddress(slice));
+      ABSL_ASSIGN_OR_RETURN(arg,
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       arg = params.buffer_allocations->GetDeviceAddressUnchecked(slice);
     }
@@ -390,7 +407,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
     auto& slice = op_buffers_.results_buffers[i];
     se::DeviceAddressBase res;
     if constexpr (ShouldCheckBufferSlices()) {
-      ABSL_ASSIGN_OR_RETURN(res, params.buffer_allocations->GetDeviceAddress(slice));
+      ABSL_ASSIGN_OR_RETURN(res,
+                            params.buffer_allocations->GetDeviceAddress(slice));
     } else {
       res = params.buffer_allocations->GetDeviceAddressUnchecked(slice);
     }
@@ -412,6 +430,12 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
   auto status_message = xla::CustomCallStatusGetMessage(&status);
   if (status_message.has_value()) {
     return Internal("%s", status_message.value());
+  }
+  // Custom calls may dispatch to external code that is not MSan-instrumented,
+  // e.g. hand-written assembly or libraries built without msan.
+  for (size_t i = 0; i < results.size(); ++i) {
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(results[i],
+                                        op_buffers_.results_buffers[i].size());
   }
   return OkExecuteEvent();
 }

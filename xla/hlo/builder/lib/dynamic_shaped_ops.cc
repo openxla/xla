@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/value_inference.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -33,8 +35,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -92,9 +92,9 @@ absl::StatusOr<XlaOp> ReconsileBranchDifference(const Shape& left_branch_shape,
     for (int i = 0; i < left_branch_shape.tuple_shapes().size(); ++i) {
       XlaOp sub_tuple = GetTupleElement(left_root, i);
       ABSL_ASSIGN_OR_RETURN(XlaOp elem,
-                       ReconsileBranchDifference(
-                           left_branch_shape.tuple_shapes(i),
-                           right_branch_shape.tuple_shapes(i), sub_tuple));
+                            ReconsileBranchDifference(
+                                left_branch_shape.tuple_shapes(i),
+                                right_branch_shape.tuple_shapes(i), sub_tuple));
       results.push_back(elem);
     }
     return Tuple(left_root.builder(), results);
@@ -185,7 +185,7 @@ XlaOp DynamicConditional(
     root_shapes.reserve(branch_computations.size());
     for (int64_t i = 0; i < branch_computations.size(); ++i) {
       ABSL_ASSIGN_OR_RETURN(auto program_shape,
-                       branch_computations[i]->GetProgramShape());
+                            branch_computations[i]->GetProgramShape());
       root_shapes.push_back(program_shape.result());
     }
     TF_RET_CHECK(!root_shapes.empty());
@@ -225,11 +225,11 @@ XlaOp DynamicConditional(
 
     for (int64_t i = 0; i < branch_computations.size(); ++i) {
       ABSL_ASSIGN_OR_RETURN(Shape branch_operand_shape,
-                       builder->GetShape(branch_operands[i]));
+                            builder->GetShape(branch_operands[i]));
 
-      ABSL_ASSIGN_OR_RETURN(auto rewritten,
-                       reconsile_branch(root_shapes[i], branch_operand_shape,
-                                        max_shape, *branch_computations[i]));
+      ABSL_ASSIGN_OR_RETURN(
+          auto rewritten, reconsile_branch(root_shapes[i], branch_operand_shape,
+                                           max_shape, *branch_computations[i]));
       rewritten_computations.push_back(std::move(rewritten));
     }
     std::vector<const XlaComputation*> rewritten_computation_ptrs;
@@ -253,7 +253,8 @@ absl::StatusOr<XlaOp> SetDimensionSizeWithRebound(
   ABSL_RETURN_IF_ERROR(dynamism_status_or.status());
   if (inferred_bound_status_or->AllValid()) {
     int64_t inferred_bound = inferred_bound_status_or->Get<int32_t>({}).value();
-    ABSL_ASSIGN_OR_RETURN(auto* shape_ptr, operand.builder()->GetShapePtr(operand));
+    ABSL_ASSIGN_OR_RETURN(auto* shape_ptr,
+                          operand.builder()->GetShapePtr(operand));
     // Found a tighter bound, do a slice.
     if (shape_ptr->dimensions(dimension) > inferred_bound) {
       operand = xla::SliceInDim(operand, 0, inferred_bound, 1, dimension);
@@ -279,7 +280,7 @@ absl::StatusOr<XlaOp> SetAllDimensionSizes(ValueInference* value_inference,
     dim_size = xla::Reshape(dim_size, {});
     dim_size = xla::ConvertElementType(dim_size, xla::S32);
     ABSL_ASSIGN_OR_RETURN(auto dynamism,
-                     value_inference->AnalyzeIsDynamic(dim_size));
+                          value_inference->AnalyzeIsDynamic(dim_size));
     if (dynamism.Get<bool>({})) {
       operand = xla::SetDimensionSize(operand, dim_size, i);
     }

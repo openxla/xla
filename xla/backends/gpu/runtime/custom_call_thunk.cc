@@ -91,7 +91,9 @@ std::string GetSymbolName(const void* ptr) {
 }
 
 struct CustomCallRecordState : public CommandState {
-  std::vector<const XLA_FFI_Command*> commands;
+  absl::flat_hash_map<const se::CommandBuffer::Command*,
+                      absl::InlinedVector<const XLA_FFI_Command*, 1>>
+      commands;
 };
 
 // A per-execution state that holds state for prepare and initialize stages.
@@ -190,7 +192,7 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options,
     bool use_pdl) {
   ABSL_ASSIGN_OR_RETURN(ffi::HandlerRegistration registration,
-                   ffi::FindHandler(target_name, platform_name));
+                        ffi::FindHandler(target_name, platform_name));
 
   return Create(thunk_info, std::move(target_name),
                 std::move(registration.bundle), std::move(operands),
@@ -219,8 +221,9 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     if (bundle.instantiate) {
       // Build a call frame with placeholder buffers so the instantiate handler
       // can read operand/result types and shapes. Data pointers are nullptr.
-      ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                       BuildCallFramePrototype(operands, results, attributes));
+      ABSL_ASSIGN_OR_RETURN(
+          CallFrame call_frame,
+          BuildCallFramePrototype(operands, results, attributes));
 
       if (!cpu_target_machine_options.has_value()) {
         cpu_target_machine_options = xla::cpu::TargetMachineOptions();
@@ -229,13 +232,13 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
           execution_state.get(), &gpu_compute_capability,
           &*cpu_target_machine_options);
       ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), bundle.instantiate,
-                             call_frame, call_options,
-                             XLA_FFI_ExecutionStage_INSTANTIATE));
+                                  call_frame, call_options,
+                                  XLA_FFI_ExecutionStage_INSTANTIATE));
     }
   }
 
   ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                   BuildCallFramePrototype(operands, results, attributes));
+                        BuildCallFramePrototype(operands, results, attributes));
   return absl::WrapUnique(new CustomCallThunk(
       thunk_info, std::move(target_name), std::move(bundle),
       std::move(operands), std::move(results), std::move(call_frame),
@@ -261,8 +264,9 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
   if (bundle.instantiate) {
     // Build a call frame with placeholder buffers so the instantiate handler
     // can read operand/result types and shapes. Data pointers are nullptr.
-    ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                     BuildCallFramePrototype(operands, results, attributes));
+    ABSL_ASSIGN_OR_RETURN(
+        CallFrame call_frame,
+        BuildCallFramePrototype(operands, results, attributes));
 
     if (!cpu_target_machine_options.has_value()) {
       cpu_target_machine_options = xla::cpu::TargetMachineOptions();
@@ -270,12 +274,13 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     InvokeContext context = BuildInstantiateInvokeContext(
         execution_state.get(), &gpu_compute_capability,
         &*cpu_target_machine_options);
-    ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), *bundle.instantiate, call_frame,
-                           context, xla::ffi::ExecutionStage::kInstantiate));
+    ABSL_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), *bundle.instantiate,
+                                call_frame, context,
+                                xla::ffi::ExecutionStage::kInstantiate));
   }
 
   ABSL_ASSIGN_OR_RETURN(CallFrame call_frame,
-                   BuildCallFramePrototype(operands, results, attributes));
+                        BuildCallFramePrototype(operands, results, attributes));
   return absl::WrapUnique(new CustomCallThunk(
       thunk_info, std::move(target_name), std::move(bundle),
       std::move(operands), std::move(results), std::move(call_frame),
@@ -594,7 +599,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomCallThunk::Record(
     se::CommandBuffer* command_buffer) {
   se::StreamExecutor* executor = execute_params.stream->parent();
   ABSL_ASSIGN_OR_RETURN(auto call_frame,
-                   BuildCallFrame(execute_params.buffer_allocations));
+                        BuildCallFrame(execute_params.buffer_allocations));
 
   // Retrieve or create the state for recording.
   auto* state = record_params.state.GetOrCreate<CustomCallRecordState>(
@@ -606,13 +611,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomCallThunk::Record(
 
   const bool is_record_create =
       std::holds_alternative<RecordCreate>(record_action);
-  const bool is_record_update =
-      std::holds_alternative<RecordUpdate>(record_action);
-  if (is_record_update) {  // Copy over commands from state to inline storage.
-    TF_RET_CHECK(state->commands.size() <= kMaxCommands)
-        << "Too many commands to fit in inline storage";
-    std::copy(state->commands.begin(), state->commands.end(), commands_storage);
-    num_commands = state->commands.size();
+  if (const auto* record_update = std::get_if<RecordUpdate>(&record_action)) {
+    if (auto it = state->commands.find(record_update->command);
+        it != state->commands.end()) {
+      TF_RET_CHECK(it->second.size() <= kMaxCommands)
+          << "Too many commands to fit in inline storage";
+      std::copy(it->second.begin(), it->second.end(), commands_storage);
+      num_commands = it->second.size();
+    }
   }
 
   XLA_FFI_RecordAction action_to_pass = is_record_create
@@ -679,19 +685,19 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomCallThunk::Record(
                                  command_buffer);
   }
 
-  // Save newly recorded commands to state if this is the Create action
-  // Must be done after returning from the FFI handler.
-  if (is_record_create) {
-    state->commands.assign(commands_storage, commands_storage + num_commands);
-  }
-
   // Return the last command in the chain for dependency tracking.
   // If more than one command was recorded, and they are independent, a dummy
   // node must be added to the command graph by the FFI client so that XLA
   // can track a single dependency for the entire chain.
   if (num_commands > 0 && commands_storage[num_commands - 1] != nullptr) {
-    return reinterpret_cast<const se::CommandBuffer::Command*>(
-        commands_storage[num_commands - 1]);
+    const auto* sink_command =
+        reinterpret_cast<const se::CommandBuffer::Command*>(
+            commands_storage[num_commands - 1]);
+    if (is_record_create) {
+      state->commands[sink_command].assign(commands_storage,
+                                           commands_storage + num_commands);
+    }
+    return sink_command;
   }
   // No commands were recorded.
   return nullptr;
@@ -710,12 +716,12 @@ absl::StatusOr<ThunkProto> CustomCallThunk::ToProto() const {
 
   for (const NullableShapedSlice& operand : operands_) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_custom_call_thunk()->add_operands(),
-                     operand.ToProto());
+                          operand.ToProto());
   }
 
   for (const NullableShapedSlice& result : results_) {
     ABSL_ASSIGN_OR_RETURN(*proto.mutable_custom_call_thunk()->add_results(),
-                     result.ToProto());
+                          result.ToProto());
   }
 
   if (attributes_.has_value()) {
@@ -759,7 +765,7 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::FromProto(
   }
 
   ABSL_ASSIGN_OR_RETURN(ffi::AttributesMap attributes,
-                   ffi::AttributesMap::FromProto(proto.attributes()));
+                        ffi::AttributesMap::FromProto(proto.attributes()));
 
   HloComputation* called_computation = nullptr;
   if (proto.has_called_computation()) {

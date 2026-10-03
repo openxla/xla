@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <utility>
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Func/IR/FuncOps.h"     // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Tensor/IR/Tensor.h"    // IWYU pragma: keep
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"  // IWYU pragma: keep

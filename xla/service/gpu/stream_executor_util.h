@@ -46,7 +46,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-
 // Returns (input, filter, output) XLA Layout protos given the StreamExecutor
 // layouts.
 absl::StatusOr<std::tuple<Layout, Layout, Layout>>

@@ -97,9 +97,7 @@ class KernelCompiler {
   void SetPreOptimizationHook(ModuleHook hook) {
     pre_optimization_hook_ = std::move(hook);
   }
-  ModuleHook& pre_optimization_hook() {
-    return pre_optimization_hook_;
-  }
+  ModuleHook& pre_optimization_hook() { return pre_optimization_hook_; }
 
  private:
   ModuleHook pre_optimization_hook_;

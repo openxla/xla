@@ -143,9 +143,10 @@ absl::Status AllReduceThunk::RunCollective(const ExecuteParams& params,
                                            const GpuCliqueKey& clique_key,
                                            se::Stream& stream,
                                            Communicator& comm) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
 
   return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm,
                       config_.config.use_symmetric_buffer);
@@ -167,7 +168,7 @@ absl::StatusOr<std::unique_ptr<AllReduceThunk>> AllReduceThunk::FromProto(
       CollectiveConfig::FromProto(thunk_proto.collective_config());
 
   ABSL_ASSIGN_OR_RETURN(ReductionKind reduction_kind,
-                   FromReductionKindProto(thunk_proto.reduction_kind()));
+                        FromReductionKindProto(thunk_proto.reduction_kind()));
 
   return std::make_unique<AllReduceThunk>(
       std::move(thunk_info), AllReduceConfig{config, reduction_kind},
@@ -234,7 +235,7 @@ ReduceScatterThunk::FromProto(
       CollectiveConfig::FromProto(thunk_proto.collective_config());
 
   ABSL_ASSIGN_OR_RETURN(ReductionKind reduction_kind,
-                   FromReductionKindProto(thunk_proto.reduction_kind()));
+                        FromReductionKindProto(thunk_proto.reduction_kind()));
 
   return std::make_unique<ReduceScatterThunk>(
       std::move(thunk_info), AllReduceConfig{config, reduction_kind},
@@ -261,9 +262,10 @@ absl::Status ReduceScatterThunk::RunCollective(const ExecuteParams& params,
                                                const GpuCliqueKey& clique_key,
                                                se::Stream& stream,
                                                Communicator& comm) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
-                                          config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
+                             config_.config.operand_element_type));
   return RunReduceScatter(config_.reduction_kind, device_buffers, stream, comm,
                           config_.config.use_symmetric_buffer);
 }

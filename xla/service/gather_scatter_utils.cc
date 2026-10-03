@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -101,12 +101,12 @@ absl::StatusOr<HloInstruction*> TransformStartIndices(
     // Add a size 1 dimension to the indices if the index_vector_dim is
     // implicit.
     ABSL_ASSIGN_OR_RETURN(indices,
-                     InsertDegenerateDims(indices, {index_vector_dim}));
+                          InsertDegenerateDims(indices, {index_vector_dim}));
     ++rank;
   } else if (index_vector_dim < rank - 1) {
     // Ensure index_vector_dim is the last dimension in scatter_indices.
     ABSL_ASSIGN_OR_RETURN(indices,
-                     MoveDimensionToEnd(indices, index_vector_dim, rank));
+                          MoveDimensionToEnd(indices, index_vector_dim, rank));
   }
 
   // Flatten indices, making it two-dimensional.
@@ -160,7 +160,7 @@ absl::StatusOr<std::vector<HloInstruction*>> MaybeTranspose(
   result.reserve(operands.size());
   for (auto* operand : operands) {
     ABSL_ASSIGN_OR_RETURN(result.emplace_back(),
-                     MaybeTranspose(operand, operand_permutation));
+                          MaybeTranspose(operand, operand_permutation));
   }
   return result;
 }

@@ -100,8 +100,8 @@ class GraphCycles {
 
   // Return or set the node data for a node.  This data is unused
   // by the implementation.
-  void *GetNodeData(int32_t node) const;
-  void SetNodeData(int32_t node, void *data);
+  void* GetNodeData(int32_t node) const;
+  void SetNodeData(int32_t node, void* data);
 
   // Find a path from "source" to "dest".  If such a path exists, place the
   // node IDs of the nodes on the path in the array path[], and return the
@@ -146,9 +146,9 @@ class GraphCycles {
   struct Rep;
 
  private:
-  Rep *rep_;  // opaque representation
-  GraphCycles(const GraphCycles &) = delete;
-  GraphCycles &operator=(const GraphCycles &) = delete;
+  Rep* rep_;  // opaque representation
+  GraphCycles(const GraphCycles&) = delete;
+  GraphCycles& operator=(const GraphCycles&) = delete;
 };
 
 }  // namespace xla

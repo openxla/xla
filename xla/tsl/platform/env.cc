@@ -37,12 +37,12 @@ limitations under the License.
 #include "google/protobuf/message.h"
 #include "google/protobuf/message_lite.h"
 #include "google/protobuf/text_format.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/file_statistics.h"
-#include "xla/tsl/platform/file_system.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/thread_annotations.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/file_statistics.h"
+#include "xla/tsl/platform/file_system.h"
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -202,7 +202,8 @@ absl::Status Env::FlushFileSystemCaches() {
   ABSL_RETURN_IF_ERROR(GetRegisteredFileSystemSchemes(&schemes));
   for (const std::string& scheme : schemes) {
     FileSystem* fs = nullptr;
-    ABSL_RETURN_IF_ERROR(GetFileSystemForFile(io::CreateURI(scheme, "", ""), &fs));
+    ABSL_RETURN_IF_ERROR(
+        GetFileSystemForFile(io::CreateURI(scheme, "", ""), &fs));
     fs->FlushCaches();
   }
   return absl::OkStatus();

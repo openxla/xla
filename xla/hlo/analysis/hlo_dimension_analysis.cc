@@ -185,8 +185,8 @@ absl::Status HloDimensionAnalysis::RunOnComputation(
       continue;
     }
     ClearDotDependent(dimension_info_iter->second);
-    ABSL_RETURN_IF_ERROR(SetDimensionInfo(computation.parameter_instructions()[i],
-                                     dimension_info_iter->second));
+    ABSL_RETURN_IF_ERROR(SetDimensionInfo(
+        computation.parameter_instructions()[i], dimension_info_iter->second));
   }
   return RunOnComputation(computation);
 }
@@ -254,8 +254,8 @@ absl::Status HloDimensionInfoPropagation::HandleGetTupleElement(
                                             DimensionInfo::kUnknown);
     dimension_info.CopySubtreeFrom(*analysis_->GetDimensionInfo(operand),
                                    {get_tuple_element->tuple_index()}, {});
-    ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(get_tuple_element,
-                                                std::move(dimension_info)));
+    ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(
+        get_tuple_element, std::move(dimension_info)));
   }
   return absl::OkStatus();
 }
@@ -267,12 +267,14 @@ absl::Status HloDimensionInfoPropagation::HandleCall(HloInstruction* call) {
     return absl::UnimplementedError(
         "Call with multiple callers is not supported.");
   }
-  ABSL_RETURN_IF_ERROR(analysis_->RunOnComputation(*computation, call->operands()));
+  ABSL_RETURN_IF_ERROR(
+      analysis_->RunOnComputation(*computation, call->operands()));
   if (analysis_->IsWeight(computation->root_instruction())) {
     ShapeTree<DimensionInfo> dimension_info_tree =
         *analysis_->GetDimensionInfo(computation->root_instruction());
     ClearDotDependent(dimension_info_tree);
-    ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(call, dimension_info_tree));
+    ABSL_RETURN_IF_ERROR(
+        analysis_->SetDimensionInfo(call, dimension_info_tree));
   }
   return absl::OkStatus();
 }
@@ -280,8 +282,8 @@ absl::Status HloDimensionInfoPropagation::HandleCall(HloInstruction* call) {
 absl::Status HloDimensionInfoPropagation::HandleWhile(
     HloInstruction* xla_while) {
   RETURN_IF_ALREADY_PROPAGATED(xla_while);
-  ABSL_RETURN_IF_ERROR(analysis_->RunOnComputation(*xla_while->while_condition(),
-                                              xla_while->operands()));
+  ABSL_RETURN_IF_ERROR(analysis_->RunOnComputation(
+      *xla_while->while_condition(), xla_while->operands()));
   HloComputation* computation = xla_while->while_body();
   ABSL_RETURN_IF_ERROR(
       analysis_->RunOnComputation(*computation, xla_while->operands()));
@@ -301,7 +303,8 @@ absl::Status HloDimensionInfoPropagation::HandleSimpleOp(HloInstruction* op) {
   RETURN_IF_ALREADY_PROPAGATED(op);
   const HloInstruction* operand = op->operand(0);
   if (analysis_->IsWeight(operand)) {
-    ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(op, DimensionInfo::kWeight));
+    ABSL_RETURN_IF_ERROR(
+        analysis_->SetDimensionInfo(op, DimensionInfo::kWeight));
   } else if (analysis_->IsDotOrHasDotDependent(operand)) {
     ABSL_RETURN_IF_ERROR(
         analysis_->SetDimensionInfo(op, DimensionInfo::kDotDependent));
@@ -323,11 +326,11 @@ absl::Status HloDimensionInfoPropagation::HandleDynamicUpdateSlice(
   const HloInstruction* update = dynamic_update_slice->operand(1);
   if (analysis_->IsWeight(operand) || analysis_->IsWeight(update)) {
     ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(dynamic_update_slice,
-                                                DimensionInfo::kWeight));
+                                                     DimensionInfo::kWeight));
   } else if (analysis_->IsDotDependent(operand) ||
              analysis_->IsDotDependent(update)) {
-    ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(dynamic_update_slice,
-                                                DimensionInfo::kDotDependent));
+    ABSL_RETURN_IF_ERROR(analysis_->SetDimensionInfo(
+        dynamic_update_slice, DimensionInfo::kDotDependent));
   }
   return absl::OkStatus();
 }

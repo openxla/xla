@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_rematerialization.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <iterator>
@@ -46,6 +47,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numbers.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/tuple_points_to_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -72,7 +74,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/numbers.h"
 
 namespace xla {
 
@@ -136,6 +137,77 @@ bool CanBeRematerialized(
 bool IsSupportedIndirectUser(const HloInstruction* instruction) {
   return instruction->opcode() == HloOpcode::kBitcast ||
          instruction->opcode() == HloOpcode::kGetTupleElement;
+}
+
+// Returns true if an instruction has no active users, looking through
+// supported indirect users (e.g. Bitcast, GetTupleElement).
+bool UsesEmpty(const HloInstruction* instruction) {
+  if (instruction->IsRoot()) {
+    return false;
+  }
+  absl::InlinedVector<const HloInstruction*, 8> stack;
+  absl::flat_hash_set<const HloInstruction*> visited;
+  stack.push_back(instruction);
+  visited.insert(instruction);
+
+  while (!stack.empty()) {
+    const HloInstruction* current = stack.back();
+    stack.pop_back();
+
+    for (const HloInstruction* user : current->users()) {
+      if (user->IsRoot() || !IsSupportedIndirectUser(user)) {
+        return false;
+      }
+      if (visited.insert(user).second) {
+        stack.push_back(user);
+      }
+    }
+  }
+  return true;
+}
+
+// Removes all leftover uses of "best" in post-order (leaves first). These uses
+// are inactive as the instructions have been rendered dead by
+// rematerialization.
+absl::Status RemoveDeadUserTree(HloInstruction* best,
+                                HloComputation* computation) {
+  absl::InlinedVector<HloInstruction*, 8> post_order;
+  absl::InlinedVector<std::pair<HloInstruction*, size_t>, 8> stack;
+  absl::flat_hash_set<HloInstruction*> visited;
+
+  stack.push_back({best, 0});
+  visited.insert(best);
+
+  while (!stack.empty()) {
+    HloInstruction* current = stack.back().first;
+    size_t user_index = stack.back().second;
+
+    if (user_index < current->users().size()) {
+      stack.back().second++;
+      HloInstruction* user = current->users()[user_index];
+      if (visited.insert(user).second) {
+        stack.push_back({user, 0});
+      }
+    } else {
+      post_order.push_back(current);
+      stack.pop_back();
+    }
+  }
+
+  for (HloInstruction* instr : post_order) {
+    const bool is_source = (instr == best);
+    TF_RET_CHECK(instr->IsDead())
+        << (is_source ? "Instruction " : "User ") << instr->name()
+        << (is_source ? "" : absl::StrCat(" of instruction ", best->name()))
+        << " killed by rematerialization is not dead";
+    VLOG(3) << "Deleting " << (is_source ? "instruction " : "user ")
+            << instr->name()
+            << (is_source ? "" : absl::StrCat(" of instruction ", best->name()))
+            << " because the instruction was killed by rematerialization.";
+    ABSL_RETURN_IF_ERROR(instr->DropAllControlDeps());
+    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instr));
+  }
+  return absl::OkStatus();
 }
 
 // Type holding a unique identifier for each Buffer object.
@@ -1292,7 +1364,7 @@ absl::StatusOr<const Shape*> MemoryUsageTracker::GetCompactShape(
   }
   const Shape& original_shape = hlo->shape();
   ABSL_ASSIGN_OR_RETURN(Shape min_shape,
-                   options_.compact_shape_function(original_shape));
+                        options_.compact_shape_function(original_shape));
   return &compact_shape_.emplace(hlo, min_shape).first->second;
 }
 
@@ -1786,13 +1858,14 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     HloRematerialization* rematerialization,
     absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map) {
   int64_t net_instructions_added = 0;
-  std::vector<std::string> instruction_names(best_items->size());
   // Rematerialize the block of instructions in the reverse order to account for
   // dependencies between instructions in best_items.
   for (int i = best_items->size() - 1; i >= 0; --i) {
     HloRematItem* best_item = (*best_items)[i];
     HloInstruction* best = best_item->instruction;
-    instruction_names[i] = best->name();
+    if (best->parent() == nullptr) {
+      continue;
+    }
     HloComputation* computation = best->parent();
 
     // If the item to remat has no unplaced users, then skip the
@@ -1959,22 +2032,12 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     for (auto* bitcast : indirect_users) {
       instruction_list->InsertBeforeInstructions(bitcast, place_before);
     }
-    // Helper function that looks through indirect users when determining if
-    // there is an active user for an HloInstruction.
-    std::function<bool(HloInstruction*)> uses_empty = [&](HloInstruction* i) {
-      for (auto* u : i->users()) {
-        if (!IsSupportedIndirectUser(u) || !uses_empty(u)) {
-          return false;
-        }
-      }
-      return true;
-    };
-    // If the rematerialized instruction is dead then rematerialization is
-    // essentially a move. Don't delete the instruction now because we don't
-    // want duplicate HloInstruction* values during the course of the
-    // transformation because we keep maps with HloInstruction* values as
-    // keys.
-    if (uses_empty(best)) {
+    // For kAlwaysRemat, if the rematerialized instruction is dead then
+    // rematerialization is essentially a move. We do not delete the instruction
+    // immediately to avoid duplicate HloInstruction* values in pointer maps.
+    // (See kPeakPriority below for the exception where immediate deletion is
+    // required).
+    if (UsesEmpty(best)) {
       VLOG(2) << best->name() << " is now dead";
       if (ContainsKey(*remat_move_instructions, best)) {
         // Previously, 'best' was a rematerialization which killed the
@@ -1990,23 +2053,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       // TODO(b/486858124): Generalize this to all strategies.
       if (rematerialization->remat_algorithm() ==
           RematAlgorithm::kPeakPriority) {
-        ABSL_RETURN_IF_ERROR(best->DropAllControlDeps());
-        // Removes all leftover uses of best. These uses are inactive as the
-        // instruction has been rendered effectively dead by rematerialization.
-        while (!best->users().empty()) {
-          HloInstruction* user = best->users().front();
-          TF_RET_CHECK(user->IsDead())
-              << "User of instruction " << best->name()
-              << " killed by rematerialization is not dead or corrected: "
-              << user->name();
-          VLOG(3)
-              << "Deleting user " << user->name() << " of instruction "
-              << best->name()
-              << " because the instruction was killed by rematerialization.";
-          ABSL_RETURN_IF_ERROR(user->DropAllControlDeps());
-          ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(user));
-        }
-        ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(best));
+        ABSL_RETURN_IF_ERROR(RemoveDeadUserTree(best, computation));
       }
       remat_move_instructions->insert(remat);
       net_instructions_added += indirect_users.size();
@@ -2016,8 +2063,9 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     for (auto* indirect_user : indirect_users) {
       instruction_list->Denylist(indirect_user->instruction);
     }
-    if (HloDataflowAnalysis::IsAsynchronousOperationStart(best->opcode()) ||
-        HloDataflowAnalysis::IsAsynchronousOperationDone(best->opcode())) {
+    if (best->parent() != nullptr &&
+        (HloDataflowAnalysis::IsAsynchronousOperationStart(best->opcode()) ||
+         HloDataflowAnalysis::IsAsynchronousOperationDone(best->opcode()))) {
       VLOG(2) << "The old instruction " << best->name()
               << " is an async op. Removing to maintain one start to one done "
                  "invariant to keep the HLO valid.";
@@ -2431,11 +2479,12 @@ absl::StatusOr<InstructionsAdded> RematerializeBestBlock(
                                absl::StrAppend(out, item->instruction->name());
                              })
             << '}';
-    ABSL_ASSIGN_OR_RETURN(num_instructions_added.net_instructions_added,
-                     RematerializeInstructions(
-                         memory_tracker, &best_items, remat_move_instructions,
-                         instruction_list, schedule, rematerialization,
-                         rematerializable_map));
+    ABSL_ASSIGN_OR_RETURN(
+        num_instructions_added.net_instructions_added,
+        RematerializeInstructions(memory_tracker, &best_items,
+                                  remat_move_instructions, instruction_list,
+                                  schedule, rematerialization,
+                                  rematerializable_map));
   }
 
   rematerialization->on_block_rematerialized(
@@ -2469,8 +2518,9 @@ HloRematerialization::ComputePeakMemoryAndInstruction(
        item = instruction_list.next(item)) {
     const HloInstruction* instruction = item->instruction;
     ABSL_RETURN_IF_ERROR(tracker.BeginInstruction(item));
-    ABSL_ASSIGN_OR_RETURN(int64_t callee_usage, CalledComputationsMemoryUsage(
-                                               instruction, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(
+        int64_t callee_usage,
+        CalledComputationsMemoryUsage(instruction, execution_threads));
     int64_t memory_at_instruction = tracker.memory_usage() + callee_usage;
     if (memory_at_instruction > peak_memory) {
       peak_memory = memory_at_instruction;
@@ -2529,7 +2579,8 @@ HloRematerialization::UpdateScheduleFromSequence(
 
 absl::Status HloRematerialization::UpdatePointsToAnalysis(HloModule* module) {
   if (points_to_analysis_ == nullptr) {
-    ABSL_ASSIGN_OR_RETURN(points_to_analysis_, TuplePointsToAnalysis::Run(module));
+    ABSL_ASSIGN_OR_RETURN(points_to_analysis_,
+                          TuplePointsToAnalysis::Run(module));
   }
   return absl::OkStatus();
 }
@@ -2677,8 +2728,9 @@ HloRematerialization::PeakPrioritySubPass(
       VLOG(3) << "Instruction is dead: " << instruction->name();
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(int64_t callee_usage, CalledComputationsMemoryUsage(
-                                               instruction, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(
+        int64_t callee_usage,
+        CalledComputationsMemoryUsage(instruction, execution_threads));
     ABSL_RETURN_IF_ERROR(memory_tracker.BeginInstruction(item));
 
     VLOG(2) << "Program point at " << instruction->name()
@@ -2729,7 +2781,7 @@ HloRematerialization::PeakPrioritySubPass(
       // Recompute callee usage to account for any rematerialization performed
       // in the callee computations.
       ABSL_ASSIGN_OR_RETURN(callee_usage, CalledComputationsMemoryUsage(
-                                         instruction, execution_threads));
+                                              instruction, execution_threads));
     }
 
     peak_memory = std::max<int64_t>(
@@ -2981,8 +3033,9 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
   for (auto* item = instruction_list.first(); item != nullptr;
        item = instruction_list.next(item)) {
     const HloInstruction* instruction = item->instruction;
-    ABSL_ASSIGN_OR_RETURN(int64_t callee_usage, CalledComputationsMemoryUsage(
-                                               instruction, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(
+        int64_t callee_usage,
+        CalledComputationsMemoryUsage(instruction, execution_threads));
     ABSL_RETURN_IF_ERROR(memory_tracker.BeginInstruction(item));
 
     VLOG(2) << "Program point at " << instruction->name()
@@ -3085,7 +3138,7 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
       }
 
       ABSL_ASSIGN_OR_RETURN(callee_usage, CalledComputationsMemoryUsage(
-                                         instruction, execution_threads));
+                                              instruction, execution_threads));
     }
 
     peak_memory = std::max<int64_t>(
@@ -3237,10 +3290,10 @@ absl::StatusOr<bool> HloRematerialization::RunImpl(
           if (node.context() == CallContext::kControlFlow &&
               HloInstruction::IsThreadIncluded(callee_thread, async_threads)) {
             ABSL_ASSIGN_OR_RETURN(computation_peak_memory_[node.computation()],
-                             ComputePeakMemory(node.computation(),
-                                               module->schedule().sequence(
-                                                   node.computation()),
-                                               {callee_thread}));
+                                  ComputePeakMemory(node.computation(),
+                                                    module->schedule().sequence(
+                                                        node.computation()),
+                                                    {callee_thread}));
           }
           return absl::OkStatus();
         },
@@ -3311,7 +3364,7 @@ absl::StatusOr<bool> HloRematerialization::RunImpl(
   }
 
   ABSL_ASSIGN_OR_RETURN(RematAlgorithmFunction remat_algorithm_func,
-                   GetRematAlgorithmFunction(options_.remat_algorithm));
+                        GetRematAlgorithmFunction(options_.remat_algorithm));
 
   // Subcomputations called by the entry computation will also be
   // rematerialized.
@@ -3327,7 +3380,8 @@ absl::StatusOr<bool> HloRematerialization::RunImpl(
   // while the module is in flux.
   HloSchedule saved_schedule = module->schedule();
   module->clear_schedule();
-  ABSL_ASSIGN_OR_RETURN(bool dead_code_removed, HloPassFix<HloDCE>().Run(module));
+  ABSL_ASSIGN_OR_RETURN(bool dead_code_removed,
+                        HloPassFix<HloDCE>().Run(module));
   changed |= dead_code_removed;
 
   // After DCE, the module sequence may include instructions which no longer

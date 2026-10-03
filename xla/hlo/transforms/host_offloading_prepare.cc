@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -31,8 +33,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/memory_annotations.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -56,7 +56,8 @@ absl::StatusOr<bool> RemoveSurroundingMoveCustomCalls(
       CHECK_EQ(operand->operands().size(), 1);
       VLOG(1) << "Replacing " << operand->ToString() << " with "
               << operand->operands().at(0)->ToString();
-      ABSL_RETURN_IF_ERROR(operand->ReplaceAllUsesWith(operand->mutable_operand(0)));
+      ABSL_RETURN_IF_ERROR(
+          operand->ReplaceAllUsesWith(operand->mutable_operand(0)));
       ABSL_RETURN_IF_ERROR(async_start->parent()->RemoveInstruction(operand));
       removed = true;
     }
@@ -91,7 +92,7 @@ absl::StatusOr<bool> ElideMoveCustomCalls(HloModule* module) {
                 << instruction->ToString() << " done must be "
                 << instruction->users().at(0)->ToString();
         ABSL_ASSIGN_OR_RETURN(bool removed,
-                         RemoveSurroundingMoveCustomCalls(instruction));
+                              RemoveSurroundingMoveCustomCalls(instruction));
         changed = changed || removed;
       }
     }

@@ -19,9 +19,9 @@
 
 #include <cstdint>
 
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla::hlo_diff {
 

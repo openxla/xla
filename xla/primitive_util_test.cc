@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/primitive_util.h"
 
+#include <gtest/gtest.h>
+
 #include <initializer_list>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/test.h"

@@ -215,7 +215,6 @@ class LocalDeviceState {
 
   std::optional<Semaphore>& compute_semaphore() { return compute_semaphore_; }
 
-
   // Whether to allow deleting a buffer before the operation fulfilling the
   // buffer is scheduled by the host.
   bool allow_delete_before_fulfill() const {
@@ -270,7 +269,6 @@ class LocalDeviceState {
   int next_device_to_device_stream_ ABSL_GUARDED_BY(mu_) = 0;
   int next_fixed_size_pool_usage_stream_ ABSL_GUARDED_BY(mu_) = 0;
   int next_external_ready_event_stream_ ABSL_GUARDED_BY(mu_) = 0;
-
 
   absl::Mutex stream_pool_mu_;
   std::stack<std::unique_ptr<se::Stream>> usage_stream_pool_

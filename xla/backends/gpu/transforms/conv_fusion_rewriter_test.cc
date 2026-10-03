@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <initializer_list>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
@@ -48,8 +49,6 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -787,7 +786,7 @@ class ConvFusionRewriterIntegrationTest
     absl::StatusOr<std::unique_ptr<HloModule>> module_or_status =
         GetOptimizedModule(hlo_string, config);
     if (!module_or_status.ok()) {
-      TF_EXPECT_OK(module_or_status.status());
+      EXPECT_OK(module_or_status.status());
       return "";
     }
     std::unique_ptr<HloModule> module = std::move(module_or_status.value());

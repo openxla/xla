@@ -23,6 +23,7 @@ limitations under the License.
 #include "grpcpp/channel.h"
 #include "grpcpp/completion_queue.h"
 #include "grpcpp/generic/generic_stub.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/pjrt/distributed/coordination/coordination_client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/rpc/grpc_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

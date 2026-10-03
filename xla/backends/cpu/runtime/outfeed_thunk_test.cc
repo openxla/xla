@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/resource_use.h"

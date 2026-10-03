@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
+#include "google/protobuf/repeated_ptr_field.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
@@ -38,16 +39,15 @@ limitations under the License.
 #include "mlir/Support/WalkResult.h"
 #include "shardy/dialect/sdy/ir/compatibility.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
-#include "google/protobuf/repeated_ptr_field.h"
 #include "stablehlo/dialect/Register.h"
 #include "stablehlo/dialect/Serialization.h"
 #include "stablehlo/dialect/Version.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.pb.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
-#include "tsl/platform/protobuf.h"
 
 namespace vhlo = ::mlir::vhlo;
 

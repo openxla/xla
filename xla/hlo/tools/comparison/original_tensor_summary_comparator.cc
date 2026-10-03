@@ -116,8 +116,9 @@ OriginalTensorSummaryComparator::Create(
     OriginalTensorSummaryComparisonCallback
         on_original_tensor_summary_comparison_ready) {
   BidirectionalMap<std::string, std::string, std::monostate> hlo_diff_bimap;
-  ABSL_ASSIGN_OR_RETURN(hlo_diff::HloGumgraphDiffResults diff_results,
-                   hlo_diff::ComputeDiff(*baseline_module, *target_module));
+  ABSL_ASSIGN_OR_RETURN(
+      hlo_diff::HloGumgraphDiffResults diff_results,
+      hlo_diff::ComputeDiff(*baseline_module, *target_module));
   CreationMetrics creation_metrics;
   creation_metrics.baseline_tensor_count = 0;
   for (const HloComputation* comp : baseline_module->computations()) {
@@ -201,9 +202,10 @@ OriginalTensorSummaryComparator::ProcessOriginalTensorSummaryInternal(
         transformed_target_summary.has_value() ? &*transformed_target_summary
                                                : nullptr);
   }
-  ABSL_ASSIGN_OR_RETURN((auto [aligned_baseline_summary, aligned_target_summary]),
-                   AlignTensorSummaries(*transformed_baseline_summary,
-                                        *transformed_target_summary));
+  ABSL_ASSIGN_OR_RETURN(
+      (auto [aligned_baseline_summary, aligned_target_summary]),
+      AlignTensorSummaries(*transformed_baseline_summary,
+                           *transformed_target_summary));
   return on_original_tensor_summary_comparison_ready_(
       common_continuation, baseline_tensor_key, &aligned_baseline_summary,
       target_tensor_key, &aligned_target_summary);

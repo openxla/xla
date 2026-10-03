@@ -41,7 +41,7 @@ CudaRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
       cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
 
   ABSL_ASSIGN_OR_RETURN(CudaDeviceAllocator::Options options,
-                   QueryDeviceAllocatorOptions(device));
+                        QueryDeviceAllocatorOptions(device));
   CUmemAllocationProp props = BuildVmmAllocationProp(device, options);
 
   size_t granularity = 0;

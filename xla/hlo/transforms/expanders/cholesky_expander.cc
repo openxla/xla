@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/lib/loops.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -201,7 +201,8 @@ XlaOp CholeskyExpander::BuildCholesky(XlaOp a, int64_t block_size,
           factorized_error = IsNan(factorized);
         }
       } else {
-        ABSL_ASSIGN_OR_RETURN(auto tile_output, CholeskyUnblocked(x, precision));
+        ABSL_ASSIGN_OR_RETURN(auto tile_output,
+                              CholeskyUnblocked(x, precision));
         std::tie(factorized, factorized_error) = tile_output;
       }
       seen_error = Or(seen_error, factorized_error);
@@ -259,8 +260,8 @@ absl::StatusOr<HloInstruction*> CholeskyExpander::ExpandInstruction(
     MaybeTransposeInMinorDims(l, !options.lower());
 
     ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
-    ABSL_ASSIGN_OR_RETURN(computation,
-                     XlaComputationToHloComputation(xla_computation, module));
+    ABSL_ASSIGN_OR_RETURN(
+        computation, XlaComputationToHloComputation(xla_computation, module));
   }
 
   return instruction->parent()->AddInstruction(HloInstruction::CreateCall(

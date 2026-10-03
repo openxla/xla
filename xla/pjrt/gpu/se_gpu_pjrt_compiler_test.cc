@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -108,7 +109,7 @@ constexpr absl::string_view kMlirProgramWithAutoLayout = R"mlir(
 absl::StatusOr<xla::XlaComputation> GetXlaComputation(
     absl::string_view program) {
   ABSL_ASSIGN_OR_RETURN(auto hlo_module,
-                   xla::ParseAndReturnUnverifiedModule(program, {}));
+                        xla::ParseAndReturnUnverifiedModule(program, {}));
 
   return XlaComputation(hlo_module->ToProto());
 }
@@ -426,9 +427,9 @@ TEST(StreamExecutorGpuCompilerTest, CrossCompilation) {
 
 absl::StatusOr<std::shared_ptr<GpuTopology>> GetSampleH100basedGpuTopology() {
   ABSL_ASSIGN_OR_RETURN(auto gpu_target_config_proto,
-                   gpu::GetGpuTargetConfig(gpu::GpuModel::H100_SXM));
-  ABSL_ASSIGN_OR_RETURN(auto gpu_target_config,
-                   gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
+                        gpu::GetGpuTargetConfig(gpu::GpuModel::H100_SXM));
+  ABSL_ASSIGN_OR_RETURN(auto gpu_target_config, gpu::GpuTargetConfig::FromProto(
+                                                    gpu_target_config_proto));
   cpu::TargetMachineOptions host_target_machine_options(
       "some_triple", "some_cpu", "+some_feature,-some_other_feature");
   return std::make_shared<GpuTopology>(GetSingleDeviceGpuTopology(
@@ -655,6 +656,72 @@ TEST(StreamExecutorGpuCompilerTest,
           absl::StatusCode::kInvalidArgument,
           ::testing::HasSubstr(
               "The platform_specific_topology is not a GpuTopologyProto")));
+}
+
+TEST(StreamExecutorGpuCompilerTest,
+     EarlyExitAfterConfigAssignmentIsPropagated) {
+  auto mock_compiler = std::make_unique<MockCompiler>();
+  MockCompiler& mock_compiler_ref = *mock_compiler;
+
+  StreamExecutorGpuCompiler pjrt_compiler(CudaId(), std::move(mock_compiler));
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<GpuTopology> gpu_topology,
+                       GetSampleH100basedGpuTopology());
+
+  StreamExecutorGpuTopologyDescription topology_description(
+      CudaId(), CudaName(), std::move(gpu_topology));
+
+  EXPECT_CALL(mock_compiler_ref, PlatformId)
+      .WillRepeatedly(Return(stream_executor::cuda::kCudaPlatformId));
+  EXPECT_CALL(mock_compiler_ref, Compile).Times(0);
+
+  std::shared_ptr<HloModule> hlo_module;
+  AotCompilationOptions::EarlyExitPoint early_exit_point =
+      AotCompilationOptions::EarlyExitPoint::kNone;
+  EXPECT_CALL(mock_compiler_ref, CompileAheadOfTime)
+      .WillOnce([&](std::unique_ptr<HloModule> module,
+                    const AotCompilationOptions& options) {
+        hlo_module = std::move(module);
+        early_exit_point = options.early_exit_point();
+        return MakeMockCompiledModule(hlo_module);
+      });
+
+  CompileOptions options{};
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_early_exit(
+          DebugOptions::EARLY_EXIT_POINT_AFTER_CONFIG_ASSIGNMENT);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      pjrt_compiler.Compile(options, GetMlirModuleWithAutoLayout(),
+                            topology_description, nullptr));
+  ASSERT_NE(hlo_module, nullptr);
+  EXPECT_EQ(early_exit_point,
+            AotCompilationOptions::EarlyExitPoint::kAfterConfigAssignment);
+}
+
+TEST(StreamExecutorGpuCompilerTest, MutuallyExclusiveEarlyExitFlagsError) {
+  auto mock_compiler = std::make_unique<MockCompiler>();
+  StreamExecutorGpuCompiler pjrt_compiler(CudaId(), std::move(mock_compiler));
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<GpuTopology> gpu_topology,
+                       GetSampleH100basedGpuTopology());
+
+  StreamExecutorGpuTopologyDescription topology_description(
+      CudaId(), CudaName(), std::move(gpu_topology));
+
+  CompileOptions options{};
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_early_exit_with_layouts(true);
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_early_exit(
+          DebugOptions::EARLY_EXIT_POINT_AFTER_CONFIG_ASSIGNMENT);
+
+  EXPECT_THAT(
+      pjrt_compiler.Compile(options, GetMlirModuleWithAutoLayout(),
+                            topology_description, nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("mutually exclusive")));
 }
 
 }  // namespace

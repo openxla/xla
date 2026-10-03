@@ -28,9 +28,9 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/IR/MLIRContext.h"  // IWYU pragma: keep
+#include "mlir/IR/MLIRContext.h"            // IWYU pragma: keep
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/IR/PatternMatch.h"  // IWYU pragma: keep
+#include "mlir/IR/PatternMatch.h"   // IWYU pragma: keep
 #include "mlir/IR/TypeUtilities.h"  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -320,6 +320,26 @@ LogicalResult PtrToMemrefOp::verify() {
     return failure();
   }
 
+  return success();
+}
+
+LogicalResult BlockBarrierOp::verify() {
+  if (getBarrierMode() == BarrierMode::kSymmetric) {
+    if (getSignalSlot() || getSignalStride() != 0) {
+      return emitOpError(
+          "symmetric barrier_mode requires signal_slot to be omitted and "
+          "signal_stride to be 0");
+    }
+    return success();
+  }
+  if (getSignalStride() <= 0) {
+    return emitOpError(
+        "asymmetric barrier_mode requires a positive signal_stride");
+  }
+  if (!getSignalSlot()) {
+    return emitOpError(
+        "asymmetric barrier_mode requires signal_slot to be specified");
+  }
   return success();
 }
 

@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/mem.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/util.h"
-#include "tsl/platform/mem.h"
 
 namespace xla {
 namespace {
@@ -184,7 +184,7 @@ tsl::AsyncValueRef<CpuDeviceMemory> CpuDeviceMemory::CreateSlicedMemory(
 absl::StatusOr<tsl::AsyncValueRef<CpuDeviceMemory>> CpuDeviceMemory::Allocate(
     size_t size_bytes, const Allocator& allocator) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<RawMemory> mem,
-                   allocator.Allocate(size_bytes, cpu::MinAlign()));
+                        allocator.Allocate(size_bytes, cpu::MinAlign()));
   return tsl::MakeAvailableAsyncValueRef<CpuDeviceMemoryOwned>(std::move(mem));
 }
 
@@ -197,7 +197,7 @@ absl::Status CpuDeviceMemory::AllocateInto(
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<RawMemory> mem,
-                   allocator.Allocate(size_bytes, cpu::MinAlign()));
+                        allocator.Allocate(size_bytes, cpu::MinAlign()));
   owned_memory.emplace(std::move(mem));
   return absl::OkStatus();
 }

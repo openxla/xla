@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "llvm/ADT/DenseMap.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -290,6 +291,40 @@ TEST(StablehloImportTest, UnreducedMinSharding) {
       /*openDims=*/true);
   EXPECT_EQ(attributeToString(sharding),
             "#sdy.sharding<@mesh, [{}, {}], unreduced=min{\"x\"}>");
+}
+
+TEST(StablehloImportTest, NamedShardingEmptyDimShardings) {
+  MLIRContext context;
+  loadAllRequiredDialects(&context);
+  SmallVector<sdy::MeshAxisAttr> axes;
+  axes.emplace_back(mlir::sdy::MeshAxisAttr::get(&context, "x", 2));
+  axes.emplace_back(mlir::sdy::MeshAxisAttr::get(&context, "y", 2));
+  auto mesh = sdy::MeshAttr::get(&context, axes);
+  llvm::SmallDenseMap<int64_t, mlir::StringRef> emptyMaximalMap;
+
+  xla::HloSharding replicated =
+      xla::ParseSharding("{mesh[], replicated}").value();
+  EXPECT_EQ(
+      attributeToString(xla::sdy::convertToSdySharding(
+          replicated, mesh, emptyMaximalMap, /*rank=*/2, /*openDims=*/false)),
+      "#sdy.sharding<@mesh, [{}, {}]>");
+  EXPECT_EQ(
+      attributeToString(xla::sdy::convertToSdySharding(
+          replicated, mesh, emptyMaximalMap, /*rank=*/2, /*openDims=*/true)),
+      "#sdy.sharding<@mesh, [{?}, {?}]>");
+
+  xla::HloSharding manual =
+      xla::ParseSharding("{mesh['x'=2, 'y'=2], manual}").value();
+  EXPECT_EQ(attributeToString(xla::sdy::convertToSdySharding(
+                manual, mesh, emptyMaximalMap, /*rank=*/2, /*openDims=*/false)),
+            "#sdy.sharding<@mesh, [{}, {}]>");
+
+  xla::HloSharding unreduced =
+      xla::ParseSharding("{mesh['x'=2, 'y'=2], unreduced}").value();
+  EXPECT_EQ(
+      attributeToString(xla::sdy::convertToSdySharding(
+          unreduced, mesh, emptyMaximalMap, /*rank=*/2, /*openDims=*/false)),
+      "#sdy.sharding<@mesh, [{}, {}], unreduced={\"x\", \"y\"}>");
 }
 
 }  // namespace

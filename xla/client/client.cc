@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/execution_options_util.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -134,7 +134,8 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Client::Execute(
     }
     execution_options = &*options_storage;
 
-    ABSL_ASSIGN_OR_RETURN(auto device_handles, GetDeviceHandles(/*device_count=*/1));
+    ABSL_ASSIGN_OR_RETURN(auto device_handles,
+                          GetDeviceHandles(/*device_count=*/1));
     TF_RET_CHECK(!device_handles.empty());
     *options_storage->add_device_handles() = std::move(device_handles[0]);
   }
@@ -148,7 +149,8 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Client::Execute(
   // caches the executable forever, which isn't what we want.
   VLOG(1) << "Making ExecuteParallel request: "
           << execution_options->DebugString();
-  ABSL_ASSIGN_OR_RETURN(auto results, stub_->ExecuteGraph(computation_instance));
+  ABSL_ASSIGN_OR_RETURN(auto results,
+                        stub_->ExecuteGraph(computation_instance));
   VLOG(1) << "ExecuteParallel request done.";
 
   // The result selection is a bit hacky, but better than assuming it is

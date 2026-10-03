@@ -141,12 +141,12 @@ absl::StatusOr<InterpolationSpecification> Spec(
   }
 
   ABSL_ASSIGN_OR_RETURN(Shape lhs_shape,
-                   Shape::FromProto(profile.operands(0).shape()));
+                        Shape::FromProto(profile.operands(0).shape()));
   ABSL_ASSIGN_OR_RETURN(Shape rhs_shape,
-                   Shape::FromProto(profile.operands(1).shape()));
+                        Shape::FromProto(profile.operands(1).shape()));
   DotDimensionNumbers dot_dims = profile.instruction().dot_dimension_numbers();
   ABSL_ASSIGN_OR_RETURN(Shape out_shape,
-                   Shape::FromProto(profile.instruction().shape()));
+                        Shape::FromProto(profile.instruction().shape()));
   return ExtractDotSpec(dot_dims, lhs_shape, rhs_shape, out_shape);
 }
 
@@ -243,7 +243,7 @@ MatmulInterpolator::Create(const HloInstructionProfileList& profiles,
   auto interpolator = std::make_unique<EuclideanNNInterpolator<int64_t, 4>>();
   for (auto& profile : profiles.entries()) {
     ABSL_ASSIGN_OR_RETURN(InterpolationSpecification spec,
-                     Spec(profile, device_info));
+                          Spec(profile, device_info));
     std::array<int64_t, 4> point = {
         spec.b,
         spec.m,
@@ -262,7 +262,7 @@ MatmulInterpolator::Create(const HloInstructionProfileList& profiles,
 /*static*/ absl::StatusOr<std::unique_ptr<MatmulInterpolator>>
 MatmulInterpolator::Create(const se::DeviceDescription& device_info) {
   ABSL_ASSIGN_OR_RETURN(GemmPerfTableEntryValues table,
-                   ReadDefaultProfile(device_info));
+                        ReadDefaultProfile(device_info));
   absl::flat_hash_map<MatmulDTypeKey,
                       std::vector<InterpolationSpecificationFlops>>
       spec_map;

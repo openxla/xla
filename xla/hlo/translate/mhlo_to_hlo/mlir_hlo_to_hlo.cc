@@ -25,9 +25,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "mhlo/transforms/passes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -46,6 +46,7 @@ limitations under the License.
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mhlo/transforms/passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -72,6 +73,7 @@ limitations under the License.
 #include "stablehlo/dialect/Base.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/lib/approx_topk.h"
@@ -104,7 +106,6 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/mlir_hlo/stablehlo_ext/transforms/passes.h"
 #include "xla/mlir_hlo/utils/unregistered_attributes.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/source_target_pairs.h"
@@ -1222,7 +1223,7 @@ class ConvertToHloModule {
     // function and so the main proto shouldn't be consumed in that case.
     TF_RET_CHECK(main) << "requires module to have main function";
     ABSL_ASSIGN_OR_RETURN(xla::XlaComputation computation,
-                     module_builder_.Build(lowered_computation_[main]));
+                          module_builder_.Build(lowered_computation_[main]));
     return std::move(*computation.mutable_proto());
   }
 
@@ -2566,10 +2567,21 @@ mlir::LogicalResult ExportXlaOp(mlir::stablehlo::CompareOp op,
   xla::XlaOp xla_result;
   if (type_attr &&
       type_attr.getValue() != mlir::stablehlo::ComparisonType::NOTYPE) {
-    auto type = xla::StringToComparisonType(
-                    stringifyComparisonType(type_attr.getValue()).str())
-                    .value();
-    xla_result = xla::Compare(lhs, rhs, /*broadcast_dimensions=*/{}, dir, type);
+    xla::ComparisonOrder order;
+    switch (type_attr.getValue()) {
+      case mlir::stablehlo::ComparisonType::FLOAT:
+        order = xla::ComparisonOrder::kPartial;
+        break;
+      case mlir::stablehlo::ComparisonType::TOTALORDER:
+      case mlir::stablehlo::ComparisonType::SIGNED:
+      case mlir::stablehlo::ComparisonType::UNSIGNED:
+        order = xla::ComparisonOrder::kTotal;
+        break;
+      case mlir::stablehlo::ComparisonType::NOTYPE:
+        LOG(FATAL) << "Unreachable";
+    }
+    xla_result =
+        xla::Compare(lhs, rhs, /*broadcast_dimensions=*/{}, dir, order);
   } else {
     xla_result = xla::Compare(lhs, rhs, dir);
   }
@@ -4803,29 +4815,6 @@ LogicalResult ExportXlaOp(BitcastOp op, OpLoweringContext ctx) {
   xla::XlaOp bitcast = xla::internal::XlaBuilderFriend::BuildBitcast(
       ctx.builder, operand, xla::TypeToShape(op.getType()));
   value_map[op] = bitcast;
-  if (ctx.converter->GetOptions().propagate_bitcast_layouts_to_backend_config) {
-    // Encode the source and result layout of the bitcast into the XLA HLO
-    // backend config as a protobuf. Note that this is a temporary solution
-    // which will go away once XLA:GPU stops falling back to XLA HLO Elemental
-    // IR emitters.
-    xla::HloInstructionProto* bitcast_proto =
-        xla::internal::XlaBuilderFriend::GetInstruction(bitcast);
-    xla::HloInstructionProto* operand_proto =
-        xla::internal::XlaBuilderFriend::GetInstruction(operand);
-    xla::LayoutProto result_layout =
-        ExtractLayout(op, bitcast_proto->shape().dimensions_size(),
-                      xla::kBitcastResultLayout)
-            .ToProto();
-    xla::LayoutProto source_layout =
-        ExtractLayout(op, operand_proto->shape().dimensions_size(),
-                      xla::kBitcastSourceLayout)
-            .ToProto();
-    xla::gpu::BitcastBackendConfig bitcast_config;
-    *bitcast_config.mutable_source_layout() = source_layout;
-    *bitcast_config.mutable_result_layout() = result_layout;
-    *bitcast_proto->mutable_backend_config() =
-        bitcast_config.SerializeAsString();
-  }
   return success();
 }
 
@@ -6119,9 +6108,9 @@ absl::Status PrepareForExport(mlir::ModuleOp module) {
 
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
 
   mlir::mhlo::HloLegalizeToStablehloPassOptions options;
@@ -6167,9 +6156,9 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
 
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
 
   mhlo::HloLegalizeToStablehloPassOptions shlo_pass_opts;
@@ -6188,7 +6177,7 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
     return diag_handler.ConsumeStatus();
   }
   ABSL_ASSIGN_OR_RETURN(xla::HloModuleProto hlo_module,
-                   converter.ConsumeMainProto());
+                        converter.ConsumeMainProto());
   StringRef module_name = module.getName() ? *module.getName() : kMain;
   hlo_module.set_name(module_name.str());
   if (auto cross_program_prefetches = module->getAttrOfType<mlir::ArrayAttr>(
@@ -6226,9 +6215,26 @@ absl::Status ConvertMlirHloToHlo(mlir::ModuleOp module,
   }
   if (auto spmd_parameters_sharding = module->getAttrOfType<mlir::ArrayAttr>(
           xla::kMhloSpmdParametersShardings)) {
-    for (const auto& sharding : spmd_parameters_sharding.getValue()) {
-      *hlo_module.add_spmd_parameters_shardings() = *xla::ConvertSharding(
-          mlir::cast<mlir::StringAttr>(sharding).getValue());
+    if (options.use_tuple_args && !spmd_parameters_sharding.empty()) {
+      xla::OpSharding* tuple_sharding =
+          hlo_module.add_spmd_parameters_shardings();
+      tuple_sharding->set_type(xla::OpSharding::TUPLE);
+      for (const auto& sharding : spmd_parameters_sharding.getValue()) {
+        xla::OpSharding param_sharding = *xla::ConvertSharding(
+            mlir::cast<mlir::StringAttr>(sharding).getValue());
+        if (param_sharding.type() == xla::OpSharding::TUPLE) {
+          for (const auto& element : param_sharding.tuple_shardings()) {
+            *tuple_sharding->add_tuple_shardings() = element;
+          }
+        } else {
+          *tuple_sharding->add_tuple_shardings() = std::move(param_sharding);
+        }
+      }
+    } else {
+      for (const auto& sharding : spmd_parameters_sharding.getValue()) {
+        *hlo_module.add_spmd_parameters_shardings() = *xla::ConvertSharding(
+            mlir::cast<mlir::StringAttr>(sharding).getValue());
+      }
     }
   }
   if (auto xla_entry_computation_parameter_layout =
@@ -6283,8 +6289,8 @@ absl::StatusOr<std::unique_ptr<xla::HloModule>> ConvertMlirHloToHloModule(
   // Create default config.
   const xla::HloModuleProto& module_proto = hlo_proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(xla::HloModuleConfig config,
-                   xla::HloModule::CreateModuleConfigFromProto(
-                       module_proto, xla::GetDebugOptionsFromFlags()));
+                        xla::HloModule::CreateModuleConfigFromProto(
+                            module_proto, xla::GetDebugOptionsFromFlags()));
 
   // Modify config with values stored in MLIR module attributes
   mhlo::ExportHloModuleConfig(config, module);

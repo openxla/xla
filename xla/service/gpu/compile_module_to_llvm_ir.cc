@@ -47,6 +47,9 @@ limitations under the License.
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
@@ -80,9 +83,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -97,12 +97,15 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
           hlo_module,
           ExecutionStreamAssignment::Options{
               kDefaultNumComputeStreams,
-              /*number_of_collective_execution_streams=*/
+              /*number_of_communication_execution_streams=*/
               hlo_module->config()
                       .debug_options()
                       .xla_gpu_experimental_enable_collective_multi_streaming()
                   ? kDefaultNumCommunicationStreams
                   : 1,
+              // Keep disabled by default until the 14-day AOT
+              // forward-compatibility window has elapsed (9th of October 2026).
+              /*enable_dedicated_memcpy_streams=*/false,
           });
   return results;
 }
@@ -226,11 +229,12 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
 
   CompileModuleResults results = InitializeResults(hlo_module);
 
-  ABSL_ASSIGN_OR_RETURN(results.buffer_assignment,
-                   RunBufferAssignment(hlo_module, alias_info,
-                                       std::move(buffer_size_bytes_function)));
+  ABSL_ASSIGN_OR_RETURN(
+      results.buffer_assignment,
+      RunBufferAssignment(hlo_module, alias_info,
+                          std::move(buffer_size_bytes_function)));
   ABSL_ASSIGN_OR_RETURN(results.output_info,
-                   GetOutputInfo(*hlo_module, *results.buffer_assignment));
+                        GetOutputInfo(*hlo_module, *results.buffer_assignment));
 
   // capture the output shape after buffer assignment because it may change
   // during buffer assignment (nevertheless the const hlo_module)
@@ -242,7 +246,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
           << ": " << hlo_module->GetFingerprint128();
 
   ABSL_ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
-                   mlir_context_pool->GetOrCreate());
+                        mlir_context_pool->GetOrCreate());
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(),
       results.execution_stream_assignment.get(), platform_id->ToName(),

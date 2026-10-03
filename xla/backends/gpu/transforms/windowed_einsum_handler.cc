@@ -236,7 +236,7 @@ absl::StatusOr<HloInstruction*> ShiftDequantizationF8(
   HloInstruction* body_param = while_body->parameter_instruction(0);
   for (int k = 0; k < 2; ++k) {
     ABSL_ASSIGN_OR_RETURN(HloInstruction * operand_f8,
-                     MakeGetTupleElementHlo(body_param, k));
+                          MakeGetTupleElementHlo(body_param, k));
 
     if (while_root->operand(k) == gtes[k]) {
       ABSL_RETURN_IF_ERROR(
@@ -273,7 +273,8 @@ absl::StatusOr<HloInstruction*> ShiftDequantizationF8(
         ABSL_RETURN_IF_ERROR(dots[l]->ReplaceOperandWith(k, operand_scaled));
       }
       if (dyn_slices[l] && dyn_slices[l]->operand(0) == gtes[k]) {
-        ABSL_RETURN_IF_ERROR(dyn_slices[l]->ReplaceOperandWith(0, operand_scaled));
+        ABSL_RETURN_IF_ERROR(
+            dyn_slices[l]->ReplaceOperandWith(0, operand_scaled));
       }
     }
 
@@ -295,8 +296,8 @@ absl::StatusOr<HloInstruction*> ShiftDequantizationF8(
       HloInstruction* coll_perm0_f32 =
           MakeConvertToHlo(coll_perms_f8[0], gtes[k]->shape().element_type());
       ABSL_ASSIGN_OR_RETURN(HloInstruction * x_scaled,
-                       MakeBinaryHlo(binaries[k]->opcode(), coll_perm0_f32,
-                                     broadcast_scale));
+                            MakeBinaryHlo(binaries[k]->opcode(), coll_perm0_f32,
+                                          broadcast_scale));
       ABSL_RETURN_IF_ERROR(dots[1]->ReplaceOperandWith(0, x_scaled));
 
       // Update the output tuple.
@@ -673,7 +674,8 @@ absl::Status MoveAccumulationOutsideLoop(
   });
   if (it != loop->users().end()) {
     original_output_gte = *it;
-    ABSL_RETURN_IF_ERROR(original_output_gte->ReplaceAllUsesWith(reduced_result));
+    ABSL_RETURN_IF_ERROR(
+        original_output_gte->ReplaceAllUsesWith(reduced_result));
   }
   return absl::OkStatus();
 }
@@ -937,7 +939,8 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
                    "windowed einsum loop : "
                 << loop->ToString();
 
-        ABSL_RETURN_IF_ERROR(ProcessWindowedEinsumLoopForActivationCaching(ag_loop));
+        ABSL_RETURN_IF_ERROR(
+            ProcessWindowedEinsumLoopForActivationCaching(ag_loop));
         ag_loop.consumed = true;
       }
 
@@ -978,8 +981,8 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     HloInstruction* lhs;
     HloInstruction* rhs;
     std::vector<xla::ReplicaGroup> replica_groups;
-    ABSL_ASSIGN_OR_RETURN(bool matched,
-                     MatchA2aGemmWithIntermediateReshapes(dot, &lhs, &rhs));
+    ABSL_ASSIGN_OR_RETURN(
+        bool matched, MatchA2aGemmWithIntermediateReshapes(dot, &lhs, &rhs));
     if (matched) {
       replica_groups = lhs->replica_groups();
       // We split the a2a+gemm along the contracting dimension into multiple
@@ -1102,7 +1105,8 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
             HloInstruction::CreateBinary(partial_dot->shape(), HloOpcode::kAdd,
                                          partial_dot, partial_result));
         a2a->SetupDerivedInstruction(partial_result);
-        ABSL_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(partial_dot, stream_id++));
+        ABSL_RETURN_IF_ERROR(
+            UpdateDotAndConsumerConfig(partial_dot, stream_id++));
       }
       ABSL_RETURN_IF_ERROR(ReplaceInstruction(dot, partial_result));
     }
@@ -1185,7 +1189,8 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
         0, result.a2a_replacement));
     inst->SetupDerivedInstruction(result.a2a_replacement);
 
-    ABSL_RETURN_IF_ERROR(ReplaceInstruction(inst, allowed_intermediate_ops.front()));
+    ABSL_RETURN_IF_ERROR(
+        ReplaceInstruction(inst, allowed_intermediate_ops.front()));
     result.lhs = matched_dot->mutable_operand(0);
     result.rhs = matched_dot->mutable_operand(1);
     result.producer_gemm = matched_dot;
@@ -1209,7 +1214,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     // to minimize communication overhead.
     std::vector<xla::ReplicaGroup> replica_groups;
     ABSL_ASSIGN_OR_RETURN(MatchedGemmA2aResult matched_result,
-                     MatchGemmA2aWithIntermediateReshapes(inst));
+                          MatchGemmA2aWithIntermediateReshapes(inst));
     if (matched_result.matched) {
       HloInstruction* a2a = inst;
       if (matched_result.a2a_replacement) {
@@ -1302,10 +1307,11 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       HloInstruction* partial_result = output_buffer;
       Shape partial_all_to_all_shape = all_to_all->shape();
 
-      ABSL_ASSIGN_OR_RETURN(Shape partial_dot_shape,
-                       ShapeInference::InferDotOpShape(
-                           lhs_slice_shape, rhs_slice_shape, original_dot_dnums,
-                           /*preferred_element_type=*/std::nullopt));
+      ABSL_ASSIGN_OR_RETURN(
+          Shape partial_dot_shape,
+          ShapeInference::InferDotOpShape(
+              lhs_slice_shape, rhs_slice_shape, original_dot_dnums,
+              /*preferred_element_type=*/std::nullopt));
       int64_t stream_id = hlo_query::NextChannelId(*all_to_all->GetModule());
       for (int64_t i = 0; i < group_size; ++i) {
         lhs_slice = comp->AddInstruction(HloInstruction::CreateSlice(
@@ -1340,7 +1346,8 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
             partial_all_to_all_shape, HloOpcode::kAdd, partial_all_to_all,
             partial_result));
         all_to_all->SetupDerivedInstruction(partial_result);
-        ABSL_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(partial_dot, stream_id++));
+        ABSL_RETURN_IF_ERROR(
+            UpdateDotAndConsumerConfig(partial_dot, stream_id++));
       }
       ABSL_RETURN_IF_ERROR(ReplaceInstruction(all_to_all, partial_result));
     }
@@ -1411,11 +1418,12 @@ absl::StatusOr<bool> WindowedEinsumHandler::RunImpl(
     // expects until the passes are applied.
     AlgebraicSimplifierOptions options;
     options.set_run_to_fixed_point(false);
-    ABSL_ASSIGN_OR_RETURN(bool applied_algsimp, AlgebraicSimplifier(options).Run(
-                                               module, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(
+        bool applied_algsimp,
+        AlgebraicSimplifier(options).Run(module, execution_threads));
     changed |= applied_algsimp;
     ABSL_ASSIGN_OR_RETURN(bool applied_cf,
-                     HloConstantFolding().Run(module, execution_threads));
+                          HloConstantFolding().Run(module, execution_threads));
     changed |= applied_cf;
   }
   for (HloInstruction* loop : all_windowed_einsum_loops) {
@@ -1455,7 +1463,8 @@ absl::StatusOr<bool> WindowedEinsumHandler::RunImpl(
       // we add this attribute to it.
       result.new_while_op->set_frontend_attribute(
           "skip-simplify-while-loops_trip-count-one", "true");
-      ABSL_RETURN_IF_ERROR(PostProcessUnrolledLoop(result.new_while_op, stream_id));
+      ABSL_RETURN_IF_ERROR(
+          PostProcessUnrolledLoop(result.new_while_op, stream_id));
     }
     changed |= result.unrolled;
   }

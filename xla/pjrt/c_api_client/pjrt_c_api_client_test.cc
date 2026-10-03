@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -384,6 +385,21 @@ TEST(PjRtCApiClientTest, TopologyPlatformIdAndName) {
   ASSERT_NE(topology, nullptr);
   EXPECT_EQ(topology->platform_name(), xla::CpuName());
   EXPECT_EQ(topology->platform_id(), xla::CpuId());
+}
+
+// Regression test: the client and its topology must report the same
+// platform_version. A mismatch causes cross-compilation to skip the real
+// backend, which can lead to timeouts and hangs.
+TEST(PjRtCApiClientTest, ClientAndTopologyPlatformVersionMatch) {
+  SetUpCpuPjRtApi();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetCApiClient("cpu"));
+
+  ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                       client->GetTopologyDescription());
+  ASSERT_NE(topology, nullptr);
+
+  EXPECT_EQ(client->platform_version(), topology->platform_version());
 }
 
 TEST(PjRtCApiClientTest, TopologyGetDefaultLayout) {

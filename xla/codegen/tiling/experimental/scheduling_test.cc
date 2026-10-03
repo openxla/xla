@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/codegen/tiling/experimental/scheduling.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -68,7 +69,7 @@ class SchedulingTest : public HloHardwareIndependentTestBase {
     HloInstruction* root = ParseAndGetRoot(hlo_string);
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
     ABSL_ASSIGN_OR_RETURN(auto tiling_space,
-                     TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+                          TilingSpace::Create(*fusion_adaptor, &mlir_context_));
     if (!tile_sizes.empty()) {
       ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(tile_sizes));
     }

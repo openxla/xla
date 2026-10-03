@@ -13,13 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test_benchmark.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
 #include "xla/hlo/builder/sharding_builder.h"
@@ -39,9 +41,8 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/local_client_test_base.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {

@@ -107,19 +107,15 @@ class OriginalValue {
 
   // Returns a const iterator over the pairs of ShapeIndex and
   // std::optional<OriginalArray>.
-  auto original_arrays() const {
-    return tree().leaves();
-  }
+  auto original_arrays() const { return tree().leaves(); }
   // Returns a non-const iterator over the pairs of ShapeIndex and
   // std::optional<OriginalArray>.
-  auto mutable_original_arrays() {
-    return mutable_tree()->leaves();
-  }
+  auto mutable_original_arrays() { return mutable_tree()->leaves(); }
 
   bool IsEmpty() const {
-    return std::all_of(
-        tree().leaves().begin(), tree().leaves().end(),
-        [](const auto& pair) { return !pair.second.has_value(); });
+    return absl::c_all_of(tree().leaves(), [](const auto& pair) {
+      return !pair.second.has_value();
+    });
   }
 
   bool IsCompatibleWith(const Shape& shape) const;

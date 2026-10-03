@@ -27,11 +27,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "oneapi/ccl.h"
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
+#include "oneapi/ccl.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/oneccl_errors.h"
 #include "xla/backends/gpu/collectives/single_threaded_executor.h"
@@ -249,7 +249,7 @@ absl::Status OnecclCommunicator::LaunchAllReduce(
   void* stream_handle = stream->platform_specific_handle().stream;
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/true));
+                        ToCclDataType(dtype, /*is_reduction_op=*/true));
   ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(onecclAllReduce(
       send_buffer.opaque(), recv_buffer.opaque(), ToOnecclCount(dtype, count),
       ccl_dtype, ToCclReduction(reduction_kind), comm_, sycl_queue)));
@@ -264,7 +264,7 @@ absl::Status OnecclCommunicator::LaunchBroadcast(
   void* stream_handle = stream->platform_specific_handle().stream;
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/false));
+                        ToCclDataType(dtype, /*is_reduction_op=*/false));
   ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(onecclBroadcast(
       send_buffer.opaque(), recv_buffer.opaque(), ToOnecclCount(dtype, count),
       ccl_dtype, root.value(), comm_, sycl_queue)));
@@ -279,7 +279,7 @@ absl::Status OnecclCommunicator::LaunchReduceScatter(
   void* stream_handle = stream->platform_specific_handle().stream;
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/true));
+                        ToCclDataType(dtype, /*is_reduction_op=*/true));
   ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(onecclReduceScatter(
       send_buffer.opaque(), recv_buffer.opaque(), ToOnecclCount(dtype, count),
       ccl_dtype, ToCclReduction(reduction_kind), comm_, sycl_queue)));
@@ -293,7 +293,7 @@ absl::Status OnecclCommunicator::LaunchAllGather(
   void* stream_handle = stream->platform_specific_handle().stream;
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/false));
+                        ToCclDataType(dtype, /*is_reduction_op=*/false));
   ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(onecclAllGather(
       send_buffer.opaque(), recv_buffer.opaque(), ToOnecclCount(dtype, count),
       ccl_dtype, comm_, sycl_queue)));
@@ -309,7 +309,7 @@ absl::Status OnecclCommunicator::LaunchCollectivePermute(
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
 
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/false));
+                        ToCclDataType(dtype, /*is_reduction_op=*/false));
   if (!source_rank && target_ranks.empty()) {
     return absl::OkStatus();
   }
@@ -337,7 +337,7 @@ absl::Status OnecclCommunicator::LaunchSend(
   void* stream_handle = stream->platform_specific_handle().stream;
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/false));
+                        ToCclDataType(dtype, /*is_reduction_op=*/false));
   ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(
       onecclSend(send_buffer.opaque(), ToOnecclCount(dtype, count), ccl_dtype,
                  peer.value(), comm_, sycl_queue)));
@@ -351,7 +351,7 @@ absl::Status OnecclCommunicator::LaunchRecv(
   void* stream_handle = stream->platform_specific_handle().stream;
   ::sycl::queue* sycl_queue = reinterpret_cast<::sycl::queue*>(stream_handle);
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/false));
+                        ToCclDataType(dtype, /*is_reduction_op=*/false));
   ABSL_RETURN_IF_ERROR(XLA_ONECCL_STATUS(
       onecclRecv(recv_buffer.opaque(), ToOnecclCount(dtype, count), ccl_dtype,
                  peer.value(), comm_, sycl_queue)));
@@ -381,7 +381,7 @@ absl::Status OnecclCommunicator::LaunchAllToAll(
   }
 
   ABSL_ASSIGN_OR_RETURN(onecclDataType_t ccl_dtype,
-                   ToCclDataType(dtype, /*is_reduction_op=*/false));
+                        ToCclDataType(dtype, /*is_reduction_op=*/false));
 
   ABSL_RETURN_IF_ERROR(GroupStart());
   for (size_t i = 0; i < send_buffers.size(); ++i) {

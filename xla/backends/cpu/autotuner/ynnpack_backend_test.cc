@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/ynnpack_backend.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/autotuner/codegen_backend.h"

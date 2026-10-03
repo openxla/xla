@@ -21,8 +21,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "xla/types.h"
 #include "tsl/platform/logging.h"
+#include "xla/types.h"
 
 namespace xla {
 

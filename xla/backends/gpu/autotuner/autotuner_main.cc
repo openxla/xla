@@ -37,6 +37,8 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/autotuner/autotuner.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/backends.pb.h"
@@ -54,7 +56,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/autotuning/config_assigner_pass.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/status_macros.h"
@@ -71,8 +72,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/init_main.h"
 
 namespace {
 
@@ -168,7 +167,7 @@ CreateMultiDeviceAllocator(se::Platform* platform,
 
   for (int i = 0; i < device_count; ++i) {
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor,
-                     platform->ExecutorForDevice(i));
+                          platform->ExecutorForDevice(i));
     TF_RET_CHECK(stream_executor->GetDeviceDescription().name() ==
                  stream_executor_0->GetDeviceDescription().name())
         << "Devices are not the same: device 0 is "
@@ -189,7 +188,7 @@ CreateMultiDeviceAllocator(se::Platform* platform,
         absl::StrCat("gpu_profiler_", i, "_bfc"), opts);
 
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
-                     stream_executor->CreateStream());
+                          stream_executor->CreateStream());
     se::Stream* stream_ptr = stream.get();
     streams.push_back(std::move(stream));
 
@@ -206,21 +205,21 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
   CodegenOrchestrator::Options orchestrator_options =
       GetCodegenOrchestratorOptions(debug_options);
   ABSL_ASSIGN_OR_RETURN(std::string platform_name,
-                   PlatformUtil::CanonicalPlatformName("gpu"));
+                        PlatformUtil::CanonicalPlatformName("gpu"));
 
   ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(
-                       absl::AsciiStrToUpper(platform_name)));
+                        se::PlatformManager::PlatformWithName(
+                            absl::AsciiStrToUpper(platform_name)));
   if (platform->VisibleDeviceCount() == 0) {
     return absl::InternalError("No devices found");
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler_base,
-                   xla::Compiler::GetForPlatform(platform->id()));
+                        xla::Compiler::GetForPlatform(platform->id()));
   auto compiler = std::unique_ptr<GpuCompiler>(
       absl::down_cast<GpuCompiler*>(compiler_base.release()));
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor_0,
-                   platform->ExecutorForDevice(0));
+                        platform->ExecutorForDevice(0));
   auto alias_info =
       compiler->GetAliasInfo(stream_executor_0->GetDeviceDescription());
   auto target_config =
@@ -245,7 +244,7 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
 
   for (int i = 0; i < device_count; ++i) {
     ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * stream_executor,
-                     platform->ExecutorForDevice(i));
+                          platform->ExecutorForDevice(i));
     std::unique_ptr<Profiler> profiler = GpuProfiler::Create(
         stream_executor, GetProfileOptions(debug_options), allocator.get());
     TF_RET_CHECK(profiler != nullptr)
@@ -259,21 +258,23 @@ absl::StatusOr<AutotunerEnvironment> CreateAutotunerEnvironment(
       ConfigAssignerPass::GetEnabledBackends(
           stream_executor_0, allocator.get(), target_config.get(),
           alias_info.get(), debug_options, mlir_context.get(),
-          compiler->ShapeSizeBytesFunction(), compiler.get(), platform->id()));
+          compiler->ShapeSizeBytesFunction(), compiler.get(), platform->id(),
+          thread_pool.get()));
 
   AutotuneCacheContext ctx = AutotuneCacheContext::Create(
       target_config->device_description, autotuner_backends);
 
-  ABSL_ASSIGN_OR_RETURN(auto autotuner_orchestrator,
-                   CodegenOrchestrator::Create(std::move(autotuner_backends),
-                                               orchestrator_options));
+  ABSL_ASSIGN_OR_RETURN(
+      auto autotuner_orchestrator,
+      CodegenOrchestrator::Create(std::move(autotuner_backends),
+                                  orchestrator_options));
 
   Autotuner::Options autotuner_options = GetAutotunerOptions(debug_options);
   autotuner_options.cache_context = ctx;
-  ABSL_ASSIGN_OR_RETURN(auto autotuner,
-                   Autotuner::Create(std::move(autotuner_orchestrator),
-                                     std::move(autotuner_profilers),
-                                     autotuner_options, thread_pool.get()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto autotuner, Autotuner::Create(std::move(autotuner_orchestrator),
+                                        std::move(autotuner_profilers),
+                                        autotuner_options, thread_pool.get()));
 
   return AutotunerEnvironment{
       std::move(compiler),      std::move(mlir_context), std::move(alias_info),
@@ -323,7 +324,7 @@ absl::Status RunAutotuning(const std::vector<std::string>& hlo_files,
                            const DebugOptions& debug_options,
                            absl::string_view cache_dir) {
   ABSL_ASSIGN_OR_RETURN(AutotunerEnvironment env,
-                   CreateAutotunerEnvironment(debug_options));
+                        CreateAutotunerEnvironment(debug_options));
 
   std::unique_ptr<AutotunerCacheInterface> autotuner_cache;
   if (!cache_dir.empty()) {
@@ -355,7 +356,7 @@ absl::Status RunAutotuning(const std::vector<std::string>& hlo_files,
     LOG(INFO) << "Autotuning " << hlo_file;
     absl::Time start_time = absl::Now();
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     LoadModuleFromFile(hlo_file));
+                          LoadModuleFromFile(hlo_file));
     absl::Duration module_load_time = absl::Now() - start_time;
     absl::Time autotune_start_time = absl::Now();
     absl::StatusOr<std::vector<Autotuner::TuningResult>> results =

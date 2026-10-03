@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "Eigen/Core"
 #include "xla/array3d.h"
 #include "xla/error_spec.h"
@@ -32,6 +31,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 

@@ -15,21 +15,22 @@ limitations under the License.
 
 #include "xla/tools/compare_literals/compare_model_literals.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "tsl/platform/path.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::compare_literals {
 namespace {

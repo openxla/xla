@@ -25,6 +25,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/service.h"
@@ -36,8 +38,6 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/status_macros.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -61,7 +61,7 @@ absl::Status InitDistributedRuntimeInEnv(absl::string_view address, int node_id,
     xla::CoordinationServiceImpl::Options options;
     options.num_nodes = num_nodes;
     ABSL_ASSIGN_OR_RETURN(env.service, xla::GetDistributedRuntimeService(
-                                      coordinator_bind_address, options));
+                                           coordinator_bind_address, options));
   }
   xla::DistributedRuntimeClient::Options options;
   options.node_id = node_id;

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/cpu/transforms/library_rewriter.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -920,6 +921,30 @@ INSTANTIATE_TEST_SUITE_P(CpuLibraryFusionLimitTestSuite,
                          CpuLibraryFusionLimitTest,
                          ::testing::ValuesIn(GetFusionLimitTestSpecs()),
                          CpuLibraryFusionLimitTest::Name);
+
+TEST_F(CpuLibraryTest, PeelBroadcastRoot) {
+  constexpr absl::string_view kHloString = R"(
+    HloModule test_peel_broadcast
+
+    %add (x: f32[], y: f32[]) -> f32[] {
+      %x = f32[] parameter(0)
+      %y = f32[] parameter(1)
+      ROOT %add = f32[] add(%x, %y)
+    }
+
+    ENTRY main {
+      %p0 = f32[128,128,4]{2,1,0} parameter(0)
+      %c0 = f32[] constant(0)
+      %reduce = f32[128,128]{1,0} reduce(%p0, %c0), dimensions={2}, to_apply=%add
+      %sqrt = f32[128,128]{1,0} sqrt(%reduce)
+      ROOT %broadcast = f32[128,128,16]{2,1,0} broadcast(%sqrt), dimensions={0,1}
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "reduce";
+  RunTestInternal(spec, kHloString,
+                  FusionProperties{HloOpcode::kSqrt, 1, 4, true});
+}
 
 }  // namespace
 }  // namespace xla::cpu

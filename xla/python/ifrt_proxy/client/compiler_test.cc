@@ -14,12 +14,13 @@
 
 #include "xla/python/ifrt_proxy/client/compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -28,6 +29,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
@@ -46,7 +48,6 @@
 #include "xla/python/ifrt_proxy/common/versions.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -175,6 +176,7 @@ TEST_F(CompilerTest, Compile) {
              loaded_executable_handle: 1234
              name: "foo-executable"
              num_devices: 2
+             device_ids: [ 0, 1 ]
              addressable_device_ids: [ 0, 1 ]
              fingerprint_value: "fingerprint"
            })pb",
@@ -203,9 +205,7 @@ TEST_F(CompilerTest, Compile) {
             "xla::ifrt::proxy::TestProgram");
 
   EXPECT_EQ(executable->name(), "foo-executable");
-  EXPECT_EQ(executable->num_devices(), 2);
-  EXPECT_THAT(executable->addressable_devices(),
-              ElementsAre(&devices[0], &devices[1]));
+  EXPECT_THAT(executable->devices(), Optional(device_list));
   EXPECT_THAT(executable->Fingerprint(),
               absl_testing::IsOkAndHolds(Optional(std::string("fingerprint"))));
 }

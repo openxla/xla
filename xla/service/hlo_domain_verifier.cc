@@ -85,7 +85,7 @@ absl::Status HloDomainVerifier::RunContext::Run(
       // First create the domain instruction sets. A domain instruction set is
       // the set of instructions whose edges never cross a kDomain instruction.
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDomainMap> domain_map,
-                       HloDomainMap::Create(computation, kind));
+                            HloDomainMap::Create(computation, kind));
       // Verify every domain populated within the map.
       for (auto& domain : domain_map->GetDomains()) {
         ABSL_RETURN_IF_ERROR(VerifyDomain(*domain).status());

@@ -24,12 +24,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/resource_loader.h"
 #include "xla/tsl/platform/subprocess.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
 
 namespace xla {
 

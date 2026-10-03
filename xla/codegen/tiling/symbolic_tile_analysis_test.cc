@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -1654,14 +1655,14 @@ ENTRY entry_computation {
   )"));
   EXPECT_THAT(convert->runtime_variables(), SizeIs(2));
   const TiledHloInstruction* convert_rt0 = convert->runtime_variables()[0];
-  EXPECT_EQ(convert_rt0->hlo()->name(), "off2");
+  EXPECT_EQ(convert_rt0->hlo()->name(), "off");
   EXPECT_THAT(*convert_rt0, MatchTiledHloInstruction(
                                 /*tile_sizes=*/{},
                                 /*tile_strides=*/{},
                                 /*tile_offsets_indexing=*/R"(
     (pid_0) -> (), domain: pid_0 in [0, 9]
   )"));
-  EXPECT_EQ(convert->runtime_variables()[1]->hlo()->name(), "off");
+  EXPECT_EQ(convert->runtime_variables()[1]->hlo()->name(), "off2");
 
   EXPECT_THAT(*off, MatchTiledHloInstruction(
                         /*tile_sizes=*/{},

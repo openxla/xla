@@ -40,17 +40,17 @@ namespace gpu {
 
 class ReductionDegenerateDimRemoverVisitor : public DfsHloRewriteVisitor {
  public:
-  absl::Status HandleReduce(HloInstruction *hlo) override {
+  absl::Status HandleReduce(HloInstruction* hlo) override {
     auto instr = Cast<HloReduceInstruction>(hlo);
-    absl::InlinedVector<HloInstruction *, 2> input_reshapes;
+    absl::InlinedVector<HloInstruction*, 2> input_reshapes;
     absl::InlinedVector<Shape, 2> canonical_reduce_shapes;
 
     int idx = -1;
     std::vector<int64_t> updated_reduced_dimensions;
-    for (HloInstruction *reduced_op : instr->inputs()) {
+    for (HloInstruction* reduced_op : instr->inputs()) {
       idx++;
-      const Shape &input_shape = reduced_op->shape();
-      const Shape &reduce_shape = instr->shape().IsTuple()
+      const Shape& input_shape = reduced_op->shape();
+      const Shape& reduce_shape = instr->shape().IsTuple()
                                       ? instr->shape().tuple_shapes(idx)
                                       : instr->shape();
 
@@ -91,22 +91,22 @@ class ReductionDegenerateDimRemoverVisitor : public DfsHloRewriteVisitor {
     ABSL_ASSIGN_OR_RETURN(
         auto canonical_reduce_shape,
         ShapeUtil::MakeValidatedMaybeTupleShape(canonical_reduce_shapes));
-    const Shape &orig_reduce_shape = instr->shape();
+    const Shape& orig_reduce_shape = instr->shape();
     std::unique_ptr<HloInstruction> new_reduce = HloInstruction::CreateReduce(
         canonical_reduce_shape, input_reshapes, instr->init_values(),
         updated_reduced_dimensions, instr->to_apply());
     instr->SetupDerivedInstruction(new_reduce.get());
 
     if (canonical_reduce_shape != instr->shape()) {
-      HloInstruction *wrapped_reduce =
+      HloInstruction* wrapped_reduce =
           instr->parent()->AddInstruction(std::move(new_reduce));
-      absl::InlinedVector<HloInstruction *, 2> out;
+      absl::InlinedVector<HloInstruction*, 2> out;
       if (!canonical_reduce_shape.IsTuple()) {
         new_reduce =
             HloInstruction::CreateBitcast(orig_reduce_shape, wrapped_reduce);
       } else {
         for (int oidx = 0; oidx < instr->input_count(); oidx++) {
-          HloInstruction *gte = instr->parent()->AddInstruction(
+          HloInstruction* gte = instr->parent()->AddInstruction(
               HloInstruction::CreateGetTupleElement(wrapped_reduce, oidx));
           out.push_back(
               instr->parent()->AddInstruction(HloInstruction::CreateBitcast(
@@ -124,8 +124,8 @@ absl::StatusOr<bool> ReductionDegenerateDimRemover::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   ReductionDegenerateDimRemoverVisitor().RunOnModule(
-                       module, execution_threads));
+                        ReductionDegenerateDimRemoverVisitor().RunOnModule(
+                            module, execution_threads));
   return changed;
 }
 

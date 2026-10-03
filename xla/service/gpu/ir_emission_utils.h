@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -83,6 +83,13 @@ bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr);
 bool IsTritonSupportedRaggedDot(
     const se::GpuComputeCapability& gpu_compute_capability,
     const HloInstruction& instr);
+
+// Returns true if `dnums` describes the weight-gradient (wgrad) flavor of
+// ragged-dot, i.e. the LHS ragged dimension is also one of the contracting
+// dimensions (kRaggedContracting mode), as opposed to a batch or
+// non-contracting dimension. Wgrad ragged-dots lower to cuDNN's
+// moe_grouped_matmul_bwd rather than the forward moe_grouped_matmul path.
+bool IsRaggedDotWgrad(const RaggedDotDimensionNumbers& dnums);
 
 constexpr int64_t WarpSize(const se::DeviceDescription& gpu_device_info) {
   return gpu_device_info.threads_per_warp();
@@ -154,15 +161,8 @@ bool IsCustomCallToTopK(const HloInstruction& hlo);
 bool IsCustomCallToPtxKernel(const HloInstruction& hlo);
 
 // Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
-// with parameter uses symmetric memory.
-bool IsMosaicWithSymmetricParameter(const HloInstruction& hlo);
-
-// Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
 // with collective metadata.
 bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo);
-
-// Returns true if instruction is a Mosaic GPU collective instruction.
-bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo);
 
 // Returns true if `instr` is a slice (or dynamic slice) instruction and
 // operates on a contiguous slice of the input buffer.
@@ -316,7 +316,8 @@ template <typename ConfigType>
 absl::StatusOr<std::string> FingerprintWithBackendConfig(
     const HloInstruction& hlo) {
   ABSL_ASSIGN_OR_RETURN(const auto config, hlo.backend_config<ConfigType>());
-  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint, GetProtoFingerprint(config));
+  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint,
+                        GetProtoFingerprint(config));
   return absl::StrCat(hlo.ToString(HloPrintOptions::Fingerprint()),
                       ", backend_config_fingerprint=", fingerprint);
 }

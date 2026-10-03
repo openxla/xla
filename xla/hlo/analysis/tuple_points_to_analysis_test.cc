@@ -897,7 +897,6 @@ class PointsToAnalysisTestBase : public HloHardwareIndependentTestBase {
   std::unique_ptr<TuplePointsToAnalysis> points_to_analysis_;
 };
 
-
 TEST_F(TuplePointsToAnalysisTest, AsyncUpdateChangesContext) {
   absl::string_view hlo_string = R"hlo(
 HloModule module

@@ -17,12 +17,12 @@ limitations under the License.
 
 #include <memory>
 
-#include "mhlo/transforms/passes.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/Support/LogicalResult.h"
+#include "mhlo/transforms/passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/transforms/Passes.h"
 #include "stablehlo/transforms/optimization/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_module_importer.h"
 #include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
@@ -61,9 +62,9 @@ absl::Status StablehloToMhlo(mlir::ModuleOp module, bool run_canonicalizer) {
 
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
 
   // CHLO -> MHLO for high level ops (TopK, Erf, RaggedDot, etc.)
@@ -143,11 +144,12 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
     mlir::MLIRContext& ctx, const xla::HloModule* hlo_module) {
   mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
       llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  ABSL_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(),
-                                    /*import_all_computation=*/true,
-                                    /*flatten_computation_args_result=*/true,
-                                    /*emit_stablehlo=*/true)
-                      .Import(*hlo_module));
+  ABSL_RETURN_IF_ERROR(
+      HloModuleImporter(mlir_module.get(),
+                        /*import_all_computation=*/true,
+                        /*flatten_computation_args_result=*/true,
+                        /*emit_stablehlo=*/true)
+          .Import(*hlo_module));
   return mlir_module;
 }
 
@@ -155,11 +157,12 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
     mlir::MLIRContext& ctx, const xla::HloModuleProto* hlo_module_proto) {
   mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
       llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  ABSL_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(),
-                                    /*import_all_computation=*/true,
-                                    /*flatten_computation_args_result=*/true,
-                                    /*emit_stablehlo=*/true)
-                      .Import(*hlo_module_proto));
+  ABSL_RETURN_IF_ERROR(
+      HloModuleImporter(mlir_module.get(),
+                        /*import_all_computation=*/true,
+                        /*flatten_computation_args_result=*/true,
+                        /*emit_stablehlo=*/true)
+          .Import(*hlo_module_proto));
   return mlir_module;
 }
 
@@ -169,10 +172,11 @@ ConvertHloToStablehloWithOptions(mlir::MLIRContext& ctx,
                                  bool import_all_computations) {
   mlir::OwningOpRef<mlir::ModuleOp> mlir_module =
       llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&ctx));
-  ABSL_RETURN_IF_ERROR(HloModuleImporter(mlir_module.get(), import_all_computations,
-                                    /*flatten_computation_args_result=*/true,
-                                    /*emit_stablehlo=*/true)
-                      .Import(*hlo_module_proto));
+  ABSL_RETURN_IF_ERROR(
+      HloModuleImporter(mlir_module.get(), import_all_computations,
+                        /*flatten_computation_args_result=*/true,
+                        /*emit_stablehlo=*/true)
+          .Import(*hlo_module_proto));
   return mlir_module;
 }
 

@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/blocking_counter.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/hlo_module_splitter.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/executor.h"
-#include "tsl/platform/blocking_counter.h"
 
 namespace xla {
 

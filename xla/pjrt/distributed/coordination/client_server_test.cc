@@ -655,8 +655,10 @@ TEST_F(ClientServerTest, WaitAtBarrier_Succeed) {
     auto client = GetClient(node_id);
     ABSL_RETURN_IF_ERROR(client->Connect());
 
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());
     return absl::OkStatus();
@@ -718,7 +720,8 @@ TEST_F(ClientServerTest, WaitAtBarrier_TimeoutWithDifferentBarrierId) {
     } else if (node_id == 1) {
       barrier_id = "barrier_1";
     }
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier(barrier_id, kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier(barrier_id, kBarrierTimeout, {}));
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());
     return absl::OkStatus();
@@ -741,10 +744,14 @@ TEST_F(ClientServerTest, WaitAtBarrier_ReuseSameId_Succeeds) {
     auto client = GetClient(node_id);
     ABSL_RETURN_IF_ERROR(client->Connect());
 
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_2", kBarrierTimeout, {}));
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());
     return absl::OkStatus();
@@ -772,7 +779,8 @@ TEST_F(ClientServerTest, WaitAtBarrier_RestartAndBarrierAgain_Fails) {
 
     // Complete barrier 3 times (simulate job progress).
     for (int i = 0; i < 3; ++i) {
-      ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+      ABSL_RETURN_IF_ERROR(
+          client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
     }
     if (node_id == 1) {
       client = nullptr;  // Simulate client restart.
@@ -842,8 +850,10 @@ TEST_F(ClientServerTest,
   auto thread_fn = [&](int node_id) -> absl::Status {
     auto client = GetClient(node_id);
     ABSL_RETURN_IF_ERROR(client->Connect());
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier("barrier_1", kBarrierTimeout, {}));
     if (node_id == 0) {
       // Let each barrier time out.
       status_0 = client->WaitAtBarrier("barrier_1", kBarrierTimeout, {});
@@ -1294,9 +1304,12 @@ TEST_F(ClientServerTest, RecoverableClient_RestartsAndStartsBarrier) {
     // This increments the internal barrier counter, and checks if the
     // recoverable node can start a new barrier later (despite having a reset
     // counter on the client-side)
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier(kBarrierId, absl::Seconds(10), {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier(kBarrierId, absl::Seconds(10), {}));
-    ABSL_RETURN_IF_ERROR(client->WaitAtBarrier(kBarrierId, absl::Seconds(10), {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier(kBarrierId, absl::Seconds(10), {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier(kBarrierId, absl::Seconds(10), {}));
+    ABSL_RETURN_IF_ERROR(
+        client->WaitAtBarrier(kBarrierId, absl::Seconds(10), {}));
     // Timeline:
     // 1. Node 0 restarts.
     // 2. Node 0 starts a new barrier.

@@ -47,6 +47,8 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/Host.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/codegen/object_loader.h"
@@ -54,8 +56,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 
@@ -109,7 +109,7 @@ absl::StatusOr<JitCompiler> JitCompiler::Create(
     Options options, std::unique_ptr<IrCompiler> ir_compiler,
     TaskRunner task_runner) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::TargetMachine> target_machine,
-                   ir_compiler->build_target_machine());
+                        ir_compiler->build_target_machine());
 
   // Dispatch compilation tasks using the provided task runner.
   auto task_dispatcher =
@@ -181,7 +181,7 @@ absl::Status JitCompiler::AddModule(llvm::orc::ThreadSafeModule module,
 
   // Add module to the selected dynamic library.
   ABSL_ASSIGN_OR_RETURN(llvm::orc::JITDylib * dylib,
-                   execution_engine_->dylib(dylib_index));
+                        execution_engine_->dylib(dylib_index));
   if (auto err = compile_layer_->add(*dylib, std::move(module))) {
     return Internal("Failed to add module to dylib %d: %s", dylib_index,
                     llvm::toString(std::move(err)));

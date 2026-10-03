@@ -22,10 +22,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
 #include "xla/tools/compare_literals/compare_literals.h"
 #include "xla/tools/compare_literals/compare_model_literals.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/init_main.h"
 
 ABSL_FLAG(double, abs_error_bound, 1e-3, "Absolute error tolerance bound.");
 ABSL_FLAG(double, rel_error_bound, 1e-3, "Relative error tolerance bound.");

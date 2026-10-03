@@ -65,7 +65,7 @@ absl::StatusOr<bool> SchedulingInstructionAnnotator::RunImpl(
   for (HloComputation* computation :
        module->MakeComputationPostOrder(execution_threads)) {
     ABSL_ASSIGN_OR_RETURN(bool result,
-                     AnnotateSchedulingInstructionNames(*computation));
+                          AnnotateSchedulingInstructionNames(*computation));
     changed |= result;
   }
 

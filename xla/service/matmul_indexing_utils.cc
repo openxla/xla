@@ -106,7 +106,7 @@ absl::StatusOr<int64_t> ContractingDimensionIndex(const HloInstruction& dot,
 absl::StatusOr<int64_t> NonContractingDimensionIndex(const HloInstruction& dot,
                                                      const int operand_number) {
   ABSL_ASSIGN_OR_RETURN(int64_t contracting_dim,
-                   ContractingDimensionIndex(dot, operand_number));
+                        ContractingDimensionIndex(dot, operand_number));
   ABSL_ASSIGN_OR_RETURN(
       std::vector<int64_t> non_contracting_dims,
       GetNonContractingDims(dot.operand(operand_number)->shape(),
@@ -159,8 +159,9 @@ absl::StatusOr<DotOperandDims> DotOperandDims::FromDotOperand(
   const auto& batch_dims = BatchDimensionsForOperand(*dot, operand_number);
   const auto& contracting_dims =
       ContractingDimensionsForOperand(*dot, operand_number);
-  ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> non_contracting_dims,
-                   GetNonContractingDims(shape, batch_dims, contracting_dims));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<int64_t> non_contracting_dims,
+      GetNonContractingDims(shape, batch_dims, contracting_dims));
   return DotOperandDims(shape, batch_dims, non_contracting_dims,
                         contracting_dims);
 }

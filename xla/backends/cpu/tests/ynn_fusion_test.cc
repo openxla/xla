@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -21,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
@@ -107,6 +108,43 @@ TEST_P(YnnFusionTest, Pad) {
       %p0 = $dtype[8, 10] parameter(0)
       %p1 = $dtype[] parameter(1)
       ROOT %fusion = $dtype[10, 14] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, Copy) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule copy
+
+    ynn_fusion {
+      %input = $dtype[8, 10] parameter(0)
+      ROOT %copy = $dtype[8, 10] copy(%input)
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10] parameter(0)
+      ROOT %fusion = $dtype[8, 10] fusion(%p0), kind=kCustom, calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
+TEST_P(YnnFusionTest, CopyDegenerateLayout) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule copy_degenerate_layout
+
+    ynn_fusion {
+      %input = $dtype[8, 10, 1]{1,0,2} parameter(0)
+      ROOT %copy = $dtype[8, 10, 1]{2,1,0} copy(%input)
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[8, 10, 1]{1,0,2} parameter(0)
+      ROOT %fusion = $dtype[8, 10, 1]{2,1,0} fusion(%p0), kind=kCustom,
+        calls=ynn_fusion,
         backend_config={"fusion_config": {kind: "__ynn_fusion"}}
     })";
 

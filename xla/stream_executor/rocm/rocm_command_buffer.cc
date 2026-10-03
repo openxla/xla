@@ -34,11 +34,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "rocm/include/hip/driver_types.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "tsl/platform/casts.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_kernel.h"
@@ -47,7 +49,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -55,7 +56,7 @@ absl::StatusOr<hipGraph_t> CreateGraph() {
   VLOG(2) << "Create new HIP graph";
   hipGraph_t graph;
   ABSL_RETURN_IF_ERROR(ToStatus(hipGraphCreate(&graph, /*flags=*/0),
-                           "Failed to create HIP graph"));
+                                "Failed to create HIP graph"));
   VLOG(2) << "Created HIP graph " << graph;
   return graph;
 }
@@ -327,6 +328,25 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
     const ThreadDim& threads, const BlockDim& blocks,
     const std::optional<ClusterDim>& cluster_dims, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
+  std::unique_ptr<KernelArgsPackedArrayBase> repacked;
+  const KernelArgsPackedArrayBase* packed_args = &args;
+  if (kernel.args_packing()) {
+    ABSL_ASSIGN_OR_RETURN(repacked, kernel.args_packing()(kernel, args));
+    packed_args = repacked.get();
+  }
+
+  return CreateKernelNode(
+      dependencies, priority, threads, blocks, cluster_dims,
+      NativeKernel{static_cast<const RocmKernel&>(kernel).gpu_function(),
+                   std::string(kernel.name()), kernel.use_pdl()},
+      *packed_args);
+}
+
+absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
+    absl::Span<const GraphNodeHandle> dependencies, StreamPriority priority,
+    const ThreadDim& threads, const BlockDim& blocks,
+    const std::optional<ClusterDim>& cluster_dims, const NativeKernel& kernel,
+    const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
   VLOG(2) << "Add kernel node to a graph " << graph_
@@ -336,18 +356,8 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
           << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes
           << "; deps: " << dependencies.size();
 
-  std::unique_ptr<KernelArgsPackedArrayBase> repacked;
-  const KernelArgsPackedArrayBase* packed_args;
-  if (kernel.args_packing()) {
-    ABSL_ASSIGN_OR_RETURN(repacked, kernel.args_packing()(kernel, args));
-    packed_args = repacked.get();
-  } else {
-    packed_args = &args;
-  }
-
   hipKernelNodeParams params{};
-  hipFunction_t function =
-      static_cast<const RocmKernel&>(kernel).gpu_function();
+  hipFunction_t function = static_cast<hipFunction_t>(kernel.device_fn);
   params.func = function;
   params.gridDim.x = blocks.x;
   params.gridDim.y = blocks.y;
@@ -356,8 +366,10 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
   params.blockDim.y = threads.y;
   params.blockDim.z = threads.z;
   params.sharedMemBytes = shared_mem_bytes;
-  params.kernelParams =
-      const_cast<void**>(packed_args->argument_addresses().data());
+  // HIP driver API requires void** for kernelParams even though it does not
+  // mutate the argument pointers.
+  // NOLINTNEXTLINE
+  params.kernelParams = const_cast<void**>(args.argument_addresses().data());
   params.extra = nullptr;
 
   if (shared_mem_bytes != 0) {
@@ -383,6 +395,24 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
     GraphNodeHandle node_handle, const ThreadDim& threads,
     const BlockDim& blocks, const std::optional<ClusterDim>& cluster_dims,
     const Kernel& kernel, const KernelArgsPackedArrayBase& args) {
+  std::unique_ptr<KernelArgsPackedArrayBase> repacked;
+  const KernelArgsPackedArrayBase* packed_args = &args;
+  if (kernel.args_packing()) {
+    ABSL_ASSIGN_OR_RETURN(repacked, kernel.args_packing()(kernel, args));
+    packed_args = repacked.get();
+  }
+
+  return UpdateKernelNode(
+      node_handle, threads, blocks, cluster_dims,
+      NativeKernel{static_cast<const RocmKernel&>(kernel).gpu_function(),
+                   std::string(kernel.name()), kernel.use_pdl()},
+      *packed_args);
+}
+
+absl::Status RocmCommandBuffer::UpdateKernelNode(
+    GraphNodeHandle node_handle, const ThreadDim& threads,
+    const BlockDim& blocks, const std::optional<ClusterDim>& cluster_dims,
+    const NativeKernel& kernel, const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
   VLOG(2) << "Set kernel node params " << node_handle << " in graph executable "
@@ -391,18 +421,8 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
           << " bdx: " << threads.x << " bdy: " << threads.y
           << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes;
 
-  std::unique_ptr<KernelArgsPackedArrayBase> repacked;
-  const KernelArgsPackedArrayBase* packed_args;
-  if (kernel.args_packing()) {
-    ABSL_ASSIGN_OR_RETURN(repacked, kernel.args_packing()(kernel, args));
-    packed_args = repacked.get();
-  } else {
-    packed_args = &args;
-  }
-
   hipKernelNodeParams params{};
-  hipFunction_t function =
-      static_cast<const RocmKernel&>(kernel).gpu_function();
+  hipFunction_t function = static_cast<hipFunction_t>(kernel.device_fn);
   params.func = function;
   params.gridDim.x = blocks.x;
   params.gridDim.y = blocks.y;
@@ -411,8 +431,10 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
   params.blockDim.y = threads.y;
   params.blockDim.z = threads.z;
   params.sharedMemBytes = shared_mem_bytes;
-  params.kernelParams =
-      const_cast<void**>(packed_args->argument_addresses().data());
+  // HIP driver API requires void** for kernelParams even though it does not
+  // mutate the argument pointers.
+  // NOLINTNEXTLINE
+  params.kernelParams = const_cast<void**>(args.argument_addresses().data());
   params.extra = nullptr;
 
   if (shared_mem_bytes != 0) {
@@ -467,8 +489,9 @@ absl::Status RocmCommandBuffer::Trace(
   // Always stop capturing the stream before checking `traced` result.
   VLOG(5) << "End stream " << stream << " capture";
   hipGraph_t captured_graph;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipStreamEndCapture(stream_handle, &captured_graph),
-                           "Failed to end stream capture"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipStreamEndCapture(stream_handle, &captured_graph),
+               "Failed to end stream capture"));
   ABSL_RETURN_IF_ERROR(
       ToStatus(hipGraphDestroy(std::exchange(graph_, captured_graph)),
                "Failed to destroy HIP graph"));
@@ -488,7 +511,8 @@ absl::Status RocmCommandBuffer::Trace(
 
   if (num_root_nodes == 0) {
     VLOG(5) << "Traced HIP graph is empty; adding an empty node";
-    ABSL_ASSIGN_OR_RETURN(auto* empty, CreateEmptyCmd({}, StreamPriority::Default));
+    ABSL_ASSIGN_OR_RETURN(auto* empty,
+                          CreateEmptyCmd({}, StreamPriority::Default));
     (void)empty;
   }
 
@@ -522,10 +546,11 @@ absl::Status RocmCommandBuffer::PrepareFinalization() {
   // graphs. Insert an empty node so the graph is non-empty, analogous to
   // CUDA's NoOp kernel insertion for the same case.
   hipGraphNode_t node_handle = nullptr;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipGraphAddEmptyNode(&node_handle, graph_,
-                                                /*pDependencies=*/nullptr,
-                                                /*numDependencies=*/0),
-                           "Failed to add empty node in PrepareFinalization"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipGraphAddEmptyNode(&node_handle, graph_,
+                                    /*pDependencies=*/nullptr,
+                                    /*numDependencies=*/0),
+               "Failed to add empty node in PrepareFinalization"));
   return absl::OkStatus();
 }
 

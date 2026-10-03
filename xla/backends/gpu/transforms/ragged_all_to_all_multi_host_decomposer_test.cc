@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -39,14 +40,16 @@ class RaggedAllToAllDecomposerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<bool> DecomposeAndFileCheck(
       absl::string_view hlo_string, int64_t fast_interconnect_slice_size,
       absl::string_view pattern) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
     RaggedAllToAllMultiHostDecomposer decomposer(fast_interconnect_slice_size);
     ABSL_ASSIGN_OR_RETURN(bool changed, decomposer.Run(module.get(), {}));
     if (!changed) {
       return false;
     }
-    ABSL_RETURN_IF_ERROR(VerifyHloModule(module.get(), /*layout_sensitive=*/true,
-                                    /*allow_mixed_precision=*/true));
+    ABSL_RETURN_IF_ERROR(VerifyHloModule(module.get(),
+                                         /*layout_sensitive=*/true,
+                                         /*allow_mixed_precision=*/true));
     ABSL_RETURN_IF_ERROR(HloDCE().Run(module.get()).status());
     ABSL_RETURN_IF_ERROR(
         HloCSE(/*is_layout_sensitive=*/true).Run(module.get()).status());
@@ -55,7 +58,8 @@ class RaggedAllToAllDecomposerTest : public HloHardwareIndependentTestBase {
 
   absl::StatusOr<bool> Decompose(absl::string_view hlo_string,
                                  int64_t fast_interconnect_slice_size) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
     RaggedAllToAllMultiHostDecomposer decomposer(fast_interconnect_slice_size);
     return decomposer.Run(module.get(), {});
   }

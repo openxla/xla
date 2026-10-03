@@ -31,8 +31,6 @@ namespace mlir::triton::xla {
 #define GEN_PASS_DECL
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h.inc"
 
-
-
 // Returns true if the `op` contains an operation in it's regions that satisfies
 // the `fn`.
 bool ContainsOp(mlir::Operation* op,

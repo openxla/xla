@@ -134,7 +134,7 @@ absl::StatusOr<EmbeddedConstantBuffers> CreateEmbeddedConstantBuffers(
     absl::string_view target_triple,
     absl::Span<ConstantToEmbed> constants_to_embed) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::TargetMachine> target_machine,
-                   GetTargetMachineFromTriple(target_triple));
+                        GetTargetMachineFromTriple(target_triple));
 
   llvm::LLVMContext llvm_context;
   auto module_with_serialized_proto = std::make_unique<llvm::Module>(
@@ -173,8 +173,8 @@ absl::StatusOr<EmbeddedConstantBuffers> CreateEmbeddedConstantBuffers(
   }
 
   ABSL_ASSIGN_OR_RETURN(result.object_file_data,
-                   CodegenModule(target_machine.get(),
-                                 std::move(module_with_serialized_proto)));
+                        CodegenModule(target_machine.get(),
+                                      std::move(module_with_serialized_proto)));
   return result;
 }
 

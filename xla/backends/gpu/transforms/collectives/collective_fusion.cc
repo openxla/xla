@@ -115,13 +115,14 @@ bool ShouldFlatten(const HloInstruction* instr) {
           instr)) {
     return false;
   }
+  const int64_t num_devices = instr->device_list()->num_devices_per_group();
   const int64_t size_bytes =
       ShapeUtil::ElementsIn(instr->shape()) *
       primitive_util::ByteWidth(instr->shape().element_type());
   const bool has_rank_higher_than_1 =
       instr->shape().IsArray() && instr->shape().dimensions().size() > 1;
   return has_rank_higher_than_1 &&
-         GetAllReduceStrategy(size_bytes, kMultimemDisabled) ==
+         GetAllReduceStrategy(size_bytes, num_devices, kMultimemDisabled) ==
              se::gpu::AllReduceStrategy::kTwoShot;
 }
 
@@ -160,7 +161,8 @@ absl::StatusOr<HloInstruction*> NormalizeAsyncCandidate(
   HloInstruction* new_start = new_done->mutable_operand(0);
 
   // new_start has a tuple.
-  ABSL_RETURN_IF_ERROR(start_instr->ReplaceAllUsesWithDifferentShape(new_start));
+  ABSL_RETURN_IF_ERROR(
+      start_instr->ReplaceAllUsesWithDifferentShape(new_start));
   ABSL_RETURN_IF_ERROR(done_instr->ReplaceAllUsesWith(new_done));
   ABSL_RETURN_IF_ERROR(start_instr->CopyAllControlDepsTo(new_start, new_start));
   ABSL_RETURN_IF_ERROR(done_instr->CopyAllControlDepsTo(new_done, new_done));
@@ -180,8 +182,9 @@ absl::Status FuseCandidate(HloInstruction* candidate,
                            const GpuTopology& gpu_topology,
                            const DeviceAssignment* device_assignment) {
   if (candidate->opcode() == HloOpcode::kAllReduceStart) {
-    ABSL_ASSIGN_OR_RETURN(candidate, NormalizeAsyncCandidate(
-                                    Cast<HloAllReduceInstruction>(candidate)));
+    ABSL_ASSIGN_OR_RETURN(
+        candidate,
+        NormalizeAsyncCandidate(Cast<HloAllReduceInstruction>(candidate)));
   }
   const bool should_flatten = ShouldFlatten(candidate);
   HloComputation* computation = candidate->parent();
@@ -194,6 +197,10 @@ absl::Status FuseCandidate(HloInstruction* candidate,
   ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(candidate));
   if (should_flatten) {
     ABSL_RETURN_IF_ERROR(FlattenCollectiveFusion(fusion_instr));
+  }
+  if (fusion_instr->fused_expression_root()->opcode() ==
+      HloOpcode::kReduceScatter) {
+    ABSL_RETURN_IF_ERROR(FlattenReduceScatterFusion(fusion_instr));
   }
   // NB: Must be done after flattening.
   ABSL_RETURN_IF_ERROR(TrySetGpuBackendConfigForCollective(
@@ -223,7 +230,8 @@ absl::StatusOr<bool> CollectiveFusion::RunImpl(
   VLOG(3) << "Found " << candidates.size()
           << " candidates for collective fusion.";
   for (HloInstruction* candidate : candidates) {
-    ABSL_RETURN_IF_ERROR(FuseCandidate(candidate, gpu_topology_, device_assignment));
+    ABSL_RETURN_IF_ERROR(
+        FuseCandidate(candidate, gpu_topology_, device_assignment));
   }
   return !candidates.empty();
 }

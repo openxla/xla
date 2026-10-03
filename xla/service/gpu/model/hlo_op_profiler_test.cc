@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/model/hlo_op_profiler.h"
 
-#include <unordered_set>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <unordered_set>
+
 #include "absl/container/flat_hash_set.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_opcode.h"

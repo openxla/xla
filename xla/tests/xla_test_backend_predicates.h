@@ -15,9 +15,10 @@ limitations under the License.
 #ifndef XLA_TESTS_XLA_TEST_BACKEND_PREDICATES_H_
 #define XLA_TESTS_XLA_TEST_BACKEND_PREDICATES_H_
 
+#include <gtest/gtest.h>
+
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/nullability.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

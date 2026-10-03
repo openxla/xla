@@ -32,9 +32,9 @@ namespace {
 
 /// Remove memref::CopyOp whose target (can be either a memref::SubViewOp or
 /// memref::AllocOp) has no other users.
-LogicalResult removeCopy(memref::CopyOp op, PatternRewriter &rewriter) {
+LogicalResult removeCopy(memref::CopyOp op, PatternRewriter& rewriter) {
   Value valueIt = op.getTarget();
-  Operation *onlyNonStoreLikeUser = op;
+  Operation* onlyNonStoreLikeUser = op;
   for (auto subviewOp = valueIt.getDefiningOp<memref::SubViewOp>(); subviewOp;
        onlyNonStoreLikeUser = subviewOp, valueIt = subviewOp.getSource(),
             subviewOp = valueIt.getDefiningOp<memref::SubViewOp>()) {
@@ -49,7 +49,7 @@ LogicalResult removeCopy(memref::CopyOp op, PatternRewriter &rewriter) {
   }
 
   auto hasOnlyStoreLikeUsers = [&](Value alloc) {
-    return !llvm::any_of(alloc.getUsers(), [&](Operation *op) {
+    return !llvm::any_of(alloc.getUsers(), [&](Operation* op) {
       if (op == onlyNonStoreLikeUser) return false;
       // TODO(vuson) remove this exception when MemoryEffectOpInterface gets
       // corrected for linalg::FillOp. Right now it has MemoryEffects::Read
@@ -76,7 +76,7 @@ struct NaiveCopyRemovalPass
     : public impl::NaiveCopyRemovalPassBase<NaiveCopyRemovalPass> {
   void runOnOperation() override {
     auto func = getOperation();
-    auto *ctx = func.getContext();
+    auto* ctx = func.getContext();
 
     RewritePatternSet patterns(ctx);
     patterns.add(removeCopy);

@@ -44,7 +44,7 @@ absl::StatusOr<bool> NullaryFunctionWrapInliner::RunImpl(
     for (HloInstruction* call : calls_to_inline) {
       HloInstruction* token_op = call->mutable_operand(0);
       ABSL_ASSIGN_OR_RETURN(CallInliner::InlinedInstructionMap inlined_map,
-                       CallInliner::Inline(call));
+                            CallInliner::Inline(call));
       for (const auto& [orig_inst, inlined_inst] : inlined_map) {
         if (orig_inst->opcode() != HloOpcode::kParameter) {
           ABSL_RETURN_IF_ERROR(token_op->AddControlDependencyTo(inlined_inst));

@@ -16,11 +16,12 @@ limitations under the License.
 #ifndef XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
 #define XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/test.h"
 
 namespace xla {

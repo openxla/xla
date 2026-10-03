@@ -25,14 +25,14 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/shape.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -295,7 +295,8 @@ CollectiveTransformationReorder::ReorderAllReduceTransformations(
       cur_operand = computation->AddInstruction(
           HloInstruction::CreateReshape(reshapes[i]->shape(), cur_operand));
     }
-    ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(all_reduce, cur_operand));
+    ABSL_RETURN_IF_ERROR(
+        computation->ReplaceInstruction(all_reduce, cur_operand));
   }
   return true;
 }
@@ -303,10 +304,10 @@ CollectiveTransformationReorder::ReorderAllReduceTransformations(
 absl::StatusOr<bool> CollectiveTransformationReorder::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_ASSIGN_OR_RETURN(bool ag_changed,
-                   ReorderAllGatherTransformations(module, execution_threads));
-  ABSL_ASSIGN_OR_RETURN(bool ar_changed,
-                   ReorderAllReduceTransformations(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool ag_changed, ReorderAllGatherTransformations(
+                                             module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool ar_changed, ReorderAllReduceTransformations(
+                                             module, execution_threads));
   if (ag_changed || ar_changed) {
     // Remove the original all-gathers/all-reduces and reshapes.
     HloDCE dce;

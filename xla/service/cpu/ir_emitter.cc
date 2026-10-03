@@ -233,7 +233,7 @@ absl::StatusOr<llvm::Function*> IrEmitter::EmitComputation(
   bool has_thread_local_param = false;
   for (const HloInstruction* param : computation->parameter_instructions()) {
     ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice param_slice,
-                     assignment_.GetUniqueTopLevelSlice(param));
+                          assignment_.GetUniqueTopLevelSlice(param));
     has_thread_local_param |= param_slice.allocation()->is_thread_local();
     computation_parameter_allocations_[param_slice.allocation()->index()] =
         param->parameter_number();
@@ -461,7 +461,7 @@ void IrEmitter::AttachInvariantLoadMetadataForLoad(llvm::LoadInst* load) const {
 absl::Status IrEmitter::HandleGetTupleElement(
     HloInstruction* get_tuple_element) {
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice slice,
-                   assignment_.GetUniqueTopLevelSlice(get_tuple_element));
+                        assignment_.GetUniqueTopLevelSlice(get_tuple_element));
   llvm::Value* addr = EmitBufferPointer(slice, get_tuple_element->shape());
   emitted_value_[get_tuple_element] = addr;
   return absl::OkStatus();
@@ -486,11 +486,11 @@ absl::Status IrEmitter::HandleInfeed(HloInstruction* instruction) {
 
   // Write the tuple index table.
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice data_slice,
-                   assignment_.GetUniqueSlice(infeed, {0}));
+                        assignment_.GetUniqueSlice(infeed, {0}));
   llvm::Value* data_address = EmitBufferPointer(data_slice, data_shape);
   llvm::Type* data_type = IrShapeType(data_shape);
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice token_slice,
-                   assignment_.GetUniqueSlice(infeed, {1}));
+                        assignment_.GetUniqueSlice(infeed, {1}));
   llvm::Value* token_address = EmitBufferPointer(
       token_slice, ShapeUtil::GetTupleElementShape(infeed->shape(), 1));
   llvm_ir::EmitTuple(GetIrArrayFor(infeed), {data_address, token_address}, b());
@@ -505,7 +505,7 @@ absl::Status IrEmitter::HandleInfeed(HloInstruction* instruction) {
     std::vector<llvm::Value*> tuple_element_addresses;
     for (int i = 0; i < data_shape.tuple_shapes().size(); ++i) {
       ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice buffer,
-                       assignment_.GetUniqueSlice(infeed, {0, i}));
+                            assignment_.GetUniqueSlice(infeed, {0, i}));
 
       const Shape& tuple_element_shape =
           ShapeUtil::GetTupleElementShape(data_shape, i);
@@ -517,8 +517,8 @@ absl::Status IrEmitter::HandleInfeed(HloInstruction* instruction) {
       llvm::Value* tuple_element_address =
           EmitBufferPointer(buffer, tuple_element_shape);
 
-      ABSL_RETURN_IF_ERROR(EmitXfeedTransfer(XfeedKind::kInfeed, tuple_element_shape,
-                                        tuple_element_address));
+      ABSL_RETURN_IF_ERROR(EmitXfeedTransfer(
+          XfeedKind::kInfeed, tuple_element_shape, tuple_element_address));
 
       tuple_element_addresses.push_back(tuple_element_address);
     }
@@ -621,8 +621,8 @@ absl::Status IrEmitter::HandleOutfeed(HloInstruction* outfeed) {
     llvm::Value* tuple_element = llvm_ir::EmitGetTupleElement(
         tuple_element_shape, i, MinimumAlignmentForShape(tuple_element_shape),
         value, IrShapeType(operand_shape), b());
-    ABSL_RETURN_IF_ERROR(EmitXfeedTransfer(XfeedKind::kOutfeed, tuple_element_shape,
-                                      tuple_element));
+    ABSL_RETURN_IF_ERROR(EmitXfeedTransfer(XfeedKind::kOutfeed,
+                                           tuple_element_shape, tuple_element));
   }
 
   return absl::OkStatus();
@@ -999,7 +999,7 @@ absl::Status IrEmitter::HandleAllReduceSingleReplica(HloInstruction* crs) {
   for (int64_t i = 0; i < crs->operand_count(); ++i) {
     llvm::Value* in_ptr = GetEmittedValueFor(crs->operand(i));
     ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_slice,
-                     assignment_.GetUniqueSlice(crs, {i}));
+                          assignment_.GetUniqueSlice(crs, {i}));
 
     const Shape& operand_shape = crs->operand(i)->shape();
     CHECK(operand_shape.IsArray())
@@ -1066,7 +1066,7 @@ absl::Status IrEmitter::HandleAllReduceMultipleReplica(HloInstruction* crs) {
     for (int64_t i = 0; i < crs->operand_count(); i++) {
       const HloInstruction* op = crs->operand(i);
       ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_slice,
-                       assignment_.GetUniqueSlice(crs, {i}));
+                            assignment_.GetUniqueSlice(crs, {i}));
       const Shape& operand_shape = crs->operand(i)->shape();
       CHECK(operand_shape.IsArray())
           << "Operands to all-reduce must be arrays: " << crs->ToString();
@@ -1076,9 +1076,9 @@ absl::Status IrEmitter::HandleAllReduceMultipleReplica(HloInstruction* crs) {
   } else {
     Shape shape = crs->operand(0)->shape();
     ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice input_slice,
-                     assignment_.GetUniqueSlice(crs->operand(0), {}));
+                          assignment_.GetUniqueSlice(crs->operand(0), {}));
     ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
-                     assignment_.GetUniqueSlice(crs, {}));
+                          assignment_.GetUniqueSlice(crs, {}));
     input_buffer_ptrs.push_back(EmitBufferPointer(input_slice, shape));
     output_buffer_ptrs.push_back(EmitBufferPointer(output_slice, shape));
   }
@@ -1090,8 +1090,8 @@ absl::Status IrEmitter::HandleAllReduceMultipleReplica(HloInstruction* crs) {
 
   int32_t shape_length;
   ABSL_ASSIGN_OR_RETURN(llvm::Value * shape_ptr,
-                   llvm_ir::EncodeSelfDescribingShapeConstant(
-                       crs->shape(), &shape_length, b()));
+                        llvm_ir::EncodeSelfDescribingShapeConstant(
+                            crs->shape(), &shape_length, b()));
 
   bool use_global_device_ids =
       Cast<HloAllReduceInstruction>(crs)->use_global_device_ids();
@@ -1151,9 +1151,9 @@ absl::Status IrEmitter::HandleReduceScatter(HloInstruction* rs) {
 
   Shape shape = rs->operand(0)->shape();
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice input_slice,
-                   assignment_.GetUniqueSlice(rs->operand(0), {}));
+                        assignment_.GetUniqueSlice(rs->operand(0), {}));
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
-                   assignment_.GetUniqueSlice(rs, {}));
+                        assignment_.GetUniqueSlice(rs, {}));
   llvm::Value* input_buffer = EmitBufferPointer(input_slice, shape);
   llvm::Value* output_buffer = EmitBufferPointer(output_slice, shape);
 
@@ -1205,7 +1205,7 @@ absl::Status IrEmitter::HandleAllToAll(HloInstruction* instruction) {
   for (int64_t i = 0; i < instruction->operand_count(); i++) {
     const HloInstruction* op = instruction->operand(i);
     ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_slice,
-                     assignment_.GetUniqueSlice(instruction, {i}));
+                          assignment_.GetUniqueSlice(instruction, {i}));
     const Shape& operand_shape = instruction->operand(i)->shape();
     CHECK(operand_shape.IsArray())
         << "Operands to all-to-all must be arrays: " << instruction->ToString();
@@ -1257,9 +1257,9 @@ absl::Status IrEmitter::HandleAllGather(HloInstruction* instruction) {
 
   const HloInstruction* op = instruction->operand(0);
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice in_slice,
-                   assignment_.GetUniqueSlice(op, {}));
+                        assignment_.GetUniqueSlice(op, {}));
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_slice,
-                   assignment_.GetUniqueSlice(instruction, {}));
+                        assignment_.GetUniqueSlice(instruction, {}));
   const Shape& operand_shape = op->shape();
   CHECK(op->shape().IsArray())
       << "Operand to all-gather must be arrays: " << instruction->ToString();
@@ -1306,11 +1306,11 @@ absl::Status IrEmitter::HandleCollectivePermute(HloInstruction* crs) {
   Shape shape = crs->operand(0)->shape();
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice input_slice,
-                   assignment_.GetUniqueSlice(crs->operand(0), {}));
+                        assignment_.GetUniqueSlice(crs->operand(0), {}));
   llvm::Value* input_buffer = EmitBufferPointer(input_slice, shape);
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
-                   assignment_.GetUniqueSlice(crs, {}));
+                        assignment_.GetUniqueSlice(crs, {}));
   llvm::Value* output_buffer = EmitBufferPointer(output_slice, shape);
 
   EmitCallToFunc(
@@ -1335,7 +1335,7 @@ absl::Status IrEmitter::HandleCollectivePermute(HloInstruction* crs) {
 absl::Status IrEmitter::HandlePartitionId(HloInstruction* hlo) {
   ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(hlo));
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
-                   assignment_.GetUniqueSlice(hlo, {}));
+                        assignment_.GetUniqueSlice(hlo, {}));
   llvm::Value* output_buffer = EmitBufferPointer(output_slice, hlo->shape());
   EmitCallToFunc(runtime::kPartitionIdSymbolName,
                  {/*run_options=*/GetExecutableRunOptionsArgument(),
@@ -1347,7 +1347,7 @@ absl::Status IrEmitter::HandlePartitionId(HloInstruction* hlo) {
 absl::Status IrEmitter::HandleReplicaId(HloInstruction* hlo) {
   ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(hlo));
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
-                   assignment_.GetUniqueSlice(hlo, {}));
+                        assignment_.GetUniqueSlice(hlo, {}));
   llvm::Value* output_buffer = EmitBufferPointer(output_slice, hlo->shape());
   EmitCallToFunc(runtime::kReplicaIdSymbolName,
                  {/*run_options=*/GetExecutableRunOptionsArgument(),
@@ -1786,9 +1786,9 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
     llvm_ir::IrArray::Index array_index(array_multi_index, reduce->shape(),
                                         b()->getInt64Ty());
     ABSL_ASSIGN_OR_RETURN(std::vector<llvm::Value*> accumulator,
-                     EmitInnerLoopForVectorizedReduction(
-                         reduction_generator, array_index, vector_type,
-                         init_value, arg, dimensions, element_alignment));
+                          EmitInnerLoopForVectorizedReduction(
+                              reduction_generator, array_index, vector_type,
+                              init_value, arg, dimensions, element_alignment));
 
     llvm_ir::IrArray target_array = GetIrArrayFor(reduce);
     llvm::Value* output_address =
@@ -1825,9 +1825,9 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
     flags.setAllowReassoc(true);
     b()->setFastMathFlags(flags);
     ABSL_ASSIGN_OR_RETURN(std::vector<llvm::Value*> accumulator,
-                     EmitInnerLoopForVectorizedReduction(
-                         reduction_generator, array_index, vector_type,
-                         init_value, arg, dimensions, element_alignment));
+                          EmitInnerLoopForVectorizedReduction(
+                              reduction_generator, array_index, vector_type,
+                              init_value, arg, dimensions, element_alignment));
 
     llvm_ir::IrArray target_array = GetIrArrayFor(reduce);
     llvm::Value* output_address =
@@ -2146,8 +2146,9 @@ absl::Status IrEmitter::HandleFusion(HloInstruction* fusion) {
       return llvm_ir::EmitFusedDynamicUpdateSliceInPlace(
           fusion, GetIrArrayFor(fusion), &fused_emitter, b());
     }
-    ABSL_ASSIGN_OR_RETURN(auto generator, fused_emitter.GetGenerator(
-                                         *fusion->fused_expression_root()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto generator,
+        fused_emitter.GetGenerator(*fusion->fused_expression_root()));
     return EmitTargetElementLoop(fusion, "kLoop_fusion", generator,
                                  std::nullopt);
   } else if (fusion->IsOutputFusion()) {
@@ -2261,7 +2262,7 @@ absl::Status IrEmitter::HandlePadToStatic(HloInstruction* hlo) {
   ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(hlo));
 
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice data_slice,
-                   assignment_.GetUniqueSlice(hlo, {0}));
+                        assignment_.GetUniqueSlice(hlo, {0}));
   std::vector<llvm::Value*> dynamic_dims;
   std::vector<llvm::Value*> tuple_operand_ptrs;
   const Shape& data_shape = ShapeUtil::GetSubshape(hlo->shape(), {0});
@@ -2283,7 +2284,7 @@ absl::Status IrEmitter::HandlePadToStatic(HloInstruction* hlo) {
     const Shape& dim_shape = ShapeUtil::GetSubshape(hlo->shape(), {i});
     TF_RET_CHECK(Shape::Equal()(dim_shape, ShapeUtil::MakeScalarShape(S32)));
     ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice dim_size_slice,
-                     assignment_.GetUniqueSlice(hlo, {i}));
+                          assignment_.GetUniqueSlice(hlo, {i}));
     llvm::Value* dest_dim_size_address =
         EmitBufferPointer(dim_size_slice, data_shape);
     const int64_t dim_index = i - 1;
@@ -2339,11 +2340,11 @@ absl::Status IrEmitter::HandleTopK(HloInstruction* hlo) {
       << hlo->ToString();
 
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice values_slice,
-                   assignment_.GetUniqueSlice(hlo->operand(0), {}));
+                        assignment_.GetUniqueSlice(hlo->operand(0), {}));
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_values_slice,
-                   assignment_.GetUniqueSlice(hlo, {0}));
+                        assignment_.GetUniqueSlice(hlo, {0}));
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_indices_slice,
-                   assignment_.GetUniqueSlice(hlo, {1}));
+                        assignment_.GetUniqueSlice(hlo, {1}));
   llvm::Value* values_ptr =
       EmitBufferPointer(values_slice, hlo->operand(0)->shape());
   llvm::Value* out_values_ptr =
@@ -2389,7 +2390,7 @@ absl::Status IrEmitter::HandleCustomCall(HloInstruction* custom_call) {
               return absl::OkStatus();
             }
             ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                             assignment_.GetUniqueSlice(operand, index));
+                                  assignment_.GetUniqueSlice(operand, index));
             operand_values.push_back(EmitBufferPointer(slice, shape));
             return absl::OkStatus();
           }));
@@ -2432,7 +2433,7 @@ absl::Status IrEmitter::HandleCustomCall(HloInstruction* custom_call) {
         TF_RET_CHECK(!elem_shape.IsTuple()) << "Nested tuples not implemented";
       }
       ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice slice,
-                       assignment_.GetUniqueSlice(custom_call, {i}));
+                            assignment_.GetUniqueSlice(custom_call, {i}));
       tuple_ptrs.push_back(EmitBufferPointer(slice, elem_shape));
     }
     llvm_ir::EmitTuple(GetIrArrayFor(custom_call), tuple_ptrs, b());
@@ -2481,8 +2482,9 @@ absl::Status IrEmitter::HandleCustomCall(HloInstruction* custom_call) {
             if (!shape.IsArray() && !shape.IsToken()) {
               return absl::OkStatus();
             }
-            ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                             assignment_.GetUniqueSlice(custom_call, index));
+            ABSL_ASSIGN_OR_RETURN(
+                BufferAllocation::Slice slice,
+                assignment_.GetUniqueSlice(custom_call, index));
             buffer_ptrs.push_back(EmitBufferPointer(slice, shape));
             return absl::OkStatus();
           }));
@@ -2553,9 +2555,9 @@ absl::Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
         ABSL_RETURN_IF_ERROR(check(
             xla_while, xla_while->while_condition()->parameter_instruction(0),
             index));
-        ABSL_RETURN_IF_ERROR(check(xla_while,
-                              xla_while->while_body()->parameter_instruction(0),
-                              index));
+        ABSL_RETURN_IF_ERROR(
+            check(xla_while, xla_while->while_body()->parameter_instruction(0),
+                  index));
         ABSL_RETURN_IF_ERROR(check(
             xla_while, xla_while->while_body()->root_instruction(), index));
         return absl::OkStatus();
@@ -3018,9 +3020,10 @@ absl::Status IrEmitter::HandleConcatenate(HloInstruction* concatenate) {
     for (HloInstruction* operand : concatenate->operands()) {
       source_arrays.emplace_back(GetIrArrayFor(operand));
     }
-    ABSL_RETURN_IF_ERROR(::xla::cpu::EmitFastConcatenate(concatenate, source_arrays,
-                                                    target_array, module_, *b())
-                        .status());
+    ABSL_RETURN_IF_ERROR(
+        ::xla::cpu::EmitFastConcatenate(concatenate, source_arrays,
+                                        target_array, module_, *b())
+            .status());
     VLOG(1) << "Emitted fast concatenate for " << concatenate->ToString();
     return absl::OkStatus();
   }
@@ -3565,7 +3568,7 @@ llvm::Value* IrEmitter::EmitBufferPointer(const BufferAllocation::Slice& slice,
 absl::Status IrEmitter::EmitTargetAddressForOp(const HloInstruction* op) {
   const Shape& target_shape = op->shape();
   ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice slice,
-                   assignment_.GetUniqueTopLevelSlice(op));
+                        assignment_.GetUniqueTopLevelSlice(op));
   llvm::Value* addr = EmitBufferPointer(slice, target_shape);
   addr->setName(IrName(op));
   emitted_value_[op] = addr;
@@ -3596,15 +3599,16 @@ absl::Status IrEmitter::EmitTargetElementLoop(
     std::vector<llvm_ir::IrArray> output_arrays;
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(target_shape); ++i) {
       ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                       assignment_.GetUniqueSlice(target_op, {i}));
+                            assignment_.GetUniqueSlice(target_op, {i}));
       const Shape& element_shape = ShapeUtil::GetSubshape(target_shape, {i});
       llvm::Value* op_target_address = EmitBufferPointer(slice, element_shape);
       llvm::Type* op_target_type = IrShapeType(element_shape);
       output_arrays.push_back(
           llvm_ir::IrArray(op_target_address, op_target_type, element_shape));
     }
-    ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(element_generator, output_arrays, b())
-                        .EmitLoop(IrName(target_op, desc)));
+    ABSL_RETURN_IF_ERROR(
+        llvm_ir::LoopEmitter(element_generator, output_arrays, b())
+            .EmitLoop(IrName(target_op, desc)));
 
     std::vector<llvm::Value*> tuple_operand_ptrs;
     tuple_operand_ptrs.reserve(output_arrays.size());
@@ -3614,8 +3618,9 @@ absl::Status IrEmitter::EmitTargetElementLoop(
     llvm_ir::EmitTuple(target_array, tuple_operand_ptrs, b());
 
   } else {
-    ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(element_generator, target_array, b())
-                        .EmitLoop(IrName(target_op, desc)));
+    ABSL_RETURN_IF_ERROR(
+        llvm_ir::LoopEmitter(element_generator, target_array, b())
+            .EmitLoop(IrName(target_op, desc)));
   }
   return absl::OkStatus();
 }
@@ -3830,10 +3835,10 @@ absl::StatusOr<llvm::Function*> IrEmitter::EmitNestedComputation(
                              instr->opcode() == HloOpcode::kReduceWindow;
     for (HloComputation* called_computation : instr->called_computations()) {
       // reassociation is transitive so we "or" the caller and the callee.
-      ABSL_RETURN_IF_ERROR(EmitNestedComputation(*called_computation,
-                                            llvm_ir::IrName(instr),
-                                            is_reducer || nested_is_reducer)
-                          .status());
+      ABSL_RETURN_IF_ERROR(
+          EmitNestedComputation(*called_computation, llvm_ir::IrName(instr),
+                                is_reducer || nested_is_reducer)
+              .status());
     }
   }
 

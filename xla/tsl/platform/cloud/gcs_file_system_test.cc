@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/cloud/auth_provider.h"
 #include "xla/tsl/platform/cloud/file_block_cache.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/retrying_utils.h"
 
 // Undef DeleteFile macro defined in wndows.h.
 #ifdef PLATFORM_WINDOWS
@@ -634,7 +634,8 @@ TEST(GcsFileSystemTest, NewRandomAccessFile_WithBlockCache) {
       std::unique_ptr<HttpRequest::Factory>(
           new FakeHttpRequestFactory(&requests)),
       std::unique_ptr<ZoneProvider>(new FakeZoneProvider), 9 /* block size */,
-      18 /* max bytes */, 0 /* max staleness */, 3600 /* stat cache max age */,
+      1 << 20 /* max bytes: large enough that nothing is evicted */,
+      0 /* max staleness */, 3600 /* stat cache max age */,
       0 /* stat cache max entries */, 0 /* matching paths cache max age */,
       0 /* matching paths cache max entries */, kTestRetryConfig,
       kTestTimeoutConfig, *kAllowedLocationsDefault,
@@ -723,7 +724,8 @@ TEST(GcsFileSystemTest, NewRandomAccessFile_WithBlockCache_Flush) {
       std::unique_ptr<HttpRequest::Factory>(
           new FakeHttpRequestFactory(&requests)),
       std::unique_ptr<ZoneProvider>(new FakeZoneProvider), 9 /* block size */,
-      18 /* max bytes */, 0 /* max staleness */, 3600 /* stat cache max age */,
+      1 << 20 /* max bytes: large enough that nothing is evicted */,
+      0 /* max staleness */, 3600 /* stat cache max age */,
       0 /* stat cache max entries */, 0 /* matching paths cache max age */,
       0 /* matching paths cache max entries */, kTestRetryConfig,
       kTestTimeoutConfig, *kAllowedLocationsDefault,
@@ -843,7 +845,8 @@ TEST(GcsFileSystemTest,
       std::unique_ptr<HttpRequest::Factory>(
           new FakeHttpRequestFactory(&requests)),
       std::unique_ptr<ZoneProvider>(new FakeZoneProvider), 9 /* block size */,
-      18 /* max bytes */, 0 /* max staleness */, 0 /* stat cache max age */,
+      1 << 20 /* max bytes: large enough that nothing is evicted */,
+      0 /* max staleness */, 0 /* stat cache max age */,
       0 /* stat cache max entries */, 0 /* matching paths cache max age */,
       0 /* matching paths cache max entries */, kTestRetryConfig,
       kTestTimeoutConfig, *kAllowedLocationsDefault,

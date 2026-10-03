@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
@@ -26,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -33,6 +35,13 @@ namespace {
 class SwapConvOperandsTest
     : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
  public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = HloInterpreterReferenceMixin<
+        HloPjRtGpuTestBase>::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_enable_conv_fusion(false);
+    return debug_options;
+  }
+
   void MatchOptimizedHlo(absl::string_view hlo,
                          absl::string_view expected_hlo) {
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,

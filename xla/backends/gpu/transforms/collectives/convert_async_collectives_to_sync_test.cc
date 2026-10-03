@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -38,7 +39,7 @@ class GpuConvertAsyncCollectivesToSyncTest
  public:
   absl::Status RunPass(HloModule* module, bool expect_change) {
     ABSL_ASSIGN_OR_RETURN(bool changed,
-                     GpuConvertAsyncCollectivesToSync().Run(module));
+                          GpuConvertAsyncCollectivesToSync().Run(module));
     EXPECT_EQ(changed, expect_change);
     return absl::OkStatus();
   }

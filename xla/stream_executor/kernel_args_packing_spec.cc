@@ -90,6 +90,39 @@ KernelArgPackingSpec KernelArgPackingSpec::BuildArgRelocation(
           KernelArgPackingRelocation::Kind::kBits64Absolute, argument_index)});
 }
 
+KernelArgsPackingSpec KernelArgsPackingSpec::Identity(int num_args) {
+  CHECK_GE(num_args, 0);
+  std::vector<KernelArgPackingSpec> kernel_arguments;
+  kernel_arguments.reserve(num_args);
+  for (int i = 0; i < num_args; ++i) {
+    kernel_arguments.push_back(KernelArgPackingSpec::BuildArgRelocation(i));
+  }
+  return KernelArgsPackingSpec(std::move(kernel_arguments));
+}
+
+std::optional<int> KernelArgsPackingSpec::MaxArgumentIndex() const {
+  std::optional<int> max_index;
+  for (const KernelArgPackingSpec& kernel_argument : kernel_arguments_) {
+    std::optional<int> index = kernel_argument.relocation_argument_index();
+    if (index.has_value() && (!max_index.has_value() || *index > *max_index)) {
+      max_index = index;
+    }
+  }
+  return max_index;
+}
+
+absl::Status KernelArgsPackingSpec::Validate(size_t num_available_args) const {
+  std::optional<int> max_index = MaxArgumentIndex();
+  if (max_index.has_value() &&
+      static_cast<size_t>(*max_index) >= num_available_args) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Kernel arguments packing spec refers to device buffer %d, but only "
+        "%zu buffers are available",
+        *max_index, num_available_args));
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<std::unique_ptr<KernelArgsPackedVector>>
 KernelArgsPackingSpec::BuildArguments(
     absl::Span<const std::unique_ptr<PackedArgBase>> args,
@@ -98,7 +131,7 @@ KernelArgsPackingSpec::BuildArguments(
   result.reserve(kernel_arguments_.size());
   for (const KernelArgPackingSpec& kernel_argument : kernel_arguments_) {
     ABSL_ASSIGN_OR_RETURN(std::vector<char> arg,
-                     kernel_argument.BuildArgument(args));
+                          kernel_argument.BuildArgument(args));
     result.push_back(std::move(arg));
   }
   return std::make_unique<KernelArgsPackedVector>(std::move(result),
@@ -154,7 +187,7 @@ absl::StatusOr<KernelArgPackingRelocation>
 KernelArgPackingRelocation::FromProto(
     const KernelArgPackingRelocationProto& proto) {
   ABSL_ASSIGN_OR_RETURN(KernelArgPackingRelocation::Kind kind,
-                   FromProtoKind(proto.kind()));
+                        FromProtoKind(proto.kind()));
   if (proto.argument_index() < 0) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Argument index cannot be negative: %d", proto.argument_index()));
@@ -166,7 +199,8 @@ absl::StatusOr<KernelArgsPackingSpecProto> KernelArgsPackingSpec::ToProto()
     const {
   KernelArgsPackingSpecProto proto;
   for (const KernelArgPackingSpec& kernel_argument : kernel_arguments_) {
-    ABSL_ASSIGN_OR_RETURN(*proto.add_kernel_arguments(), kernel_argument.ToProto());
+    ABSL_ASSIGN_OR_RETURN(*proto.add_kernel_arguments(),
+                          kernel_argument.ToProto());
   }
   return proto;
 }
@@ -177,8 +211,9 @@ absl::StatusOr<KernelArgsPackingSpec> KernelArgsPackingSpec::FromProto(
   kernel_arguments.reserve(proto.kernel_arguments().size());
   for (const KernelArgPackingSpecProto& kernel_argument_proto :
        proto.kernel_arguments()) {
-    ABSL_ASSIGN_OR_RETURN(KernelArgPackingSpec kernel_argument,
-                     KernelArgPackingSpec::FromProto(kernel_argument_proto));
+    ABSL_ASSIGN_OR_RETURN(
+        KernelArgPackingSpec kernel_argument,
+        KernelArgPackingSpec::FromProto(kernel_argument_proto));
     kernel_arguments.push_back(std::move(kernel_argument));
   }
   return KernelArgsPackingSpec(std::move(kernel_arguments));

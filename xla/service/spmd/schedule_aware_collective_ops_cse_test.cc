@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -41,8 +42,9 @@ class CollectiveOpsCseTest : public HloHardwareIndependentTestBase {
  public:
   absl::StatusOr<std::unique_ptr<HloModule>> RunPass(
       absl::string_view hlo_module, int64_t distance_threshold = 100) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(
-                                      hlo_module, GetModuleConfigForTest()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto module,
+        ParseAndReturnVerifiedModule(hlo_module, GetModuleConfigForTest()));
     HloPassPipeline pipeline("all-gather-cse");
     pipeline.AddPass<ScheduleAwareCollectiveOpsCSE>(distance_threshold,
                                                     /*for_replicas=*/false);

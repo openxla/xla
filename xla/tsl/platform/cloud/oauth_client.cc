@@ -23,17 +23,18 @@ limitations under the License.
 #include <sys/types.h>
 #endif
 
-#include "absl/status/status.h"
-#include "absl/status/status_macros.h"
-#include "absl/strings/str_cat.h"
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
+
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/strings/str_cat.h"
+#include "tsl/platform/base64.h"
 #include "xla/tsl/platform/cloud/curl_http_request.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/base64.h"
 
 namespace tsl {
 
@@ -194,7 +195,8 @@ absl::Status OAuthClient::GetTokenFromServiceAccountJson(
         "'token' and 'expiration_timestamp_sec' cannot be nullptr.");
   }
   std::string private_key_serialized, private_key_id, client_id, client_email;
-  ABSL_RETURN_IF_ERROR(ReadJsonString(json, "private_key", &private_key_serialized));
+  ABSL_RETURN_IF_ERROR(
+      ReadJsonString(json, "private_key", &private_key_serialized));
   ABSL_RETURN_IF_ERROR(ReadJsonString(json, "private_key_id", &private_key_id));
   ABSL_RETURN_IF_ERROR(ReadJsonString(json, "client_id", &client_id));
   ABSL_RETURN_IF_ERROR(ReadJsonString(json, "client_email", &client_email));
@@ -217,7 +219,7 @@ absl::Status OAuthClient::GetTokenFromServiceAccountJson(
   std::string encoded_claim, encoded_header;
   ABSL_RETURN_IF_ERROR(EncodeJwtHeader(private_key_id, &encoded_header));
   ABSL_RETURN_IF_ERROR(EncodeJwtClaim(client_email, scope, oauth_server_uri,
-                                 request_timestamp_sec, &encoded_claim));
+                                      request_timestamp_sec, &encoded_claim));
   const std::string to_sign = encoded_header + "." + encoded_claim;
   std::string signature;
   ABSL_RETURN_IF_ERROR(CreateSignature(private_key.get(), to_sign, &signature));
@@ -235,8 +237,8 @@ absl::Status OAuthClient::GetTokenFromServiceAccountJson(
 
   absl::string_view response =
       absl::string_view(response_buffer.data(), response_buffer.size());
-  ABSL_RETURN_IF_ERROR(ParseOAuthResponse(response, request_timestamp_sec, token,
-                                     expiration_timestamp_sec));
+  ABSL_RETURN_IF_ERROR(ParseOAuthResponse(response, request_timestamp_sec,
+                                          token, expiration_timestamp_sec));
   return absl::OkStatus();
 }
 
@@ -267,8 +269,8 @@ absl::Status OAuthClient::GetTokenFromRefreshTokenJson(
 
   absl::string_view response =
       absl::string_view(response_buffer.data(), response_buffer.size());
-  ABSL_RETURN_IF_ERROR(ParseOAuthResponse(response, request_timestamp_sec, token,
-                                     expiration_timestamp_sec));
+  ABSL_RETURN_IF_ERROR(ParseOAuthResponse(response, request_timestamp_sec,
+                                          token, expiration_timestamp_sec));
   return absl::OkStatus();
 }
 

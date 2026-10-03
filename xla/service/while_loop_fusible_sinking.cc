@@ -257,7 +257,8 @@ WhileLoopFusibleSinking::TryRewritingBroadcastAsAllocateBuffer(
         while_instr->parent()->AddInstruction(HloInstruction::CreateCustomCall(
             buffer_clone->shape(), {}, "AllocateBuffer"));
     ABSL_RETURN_IF_ERROR(buffer_clone->ReplaceAllUsesWith(new_buffer));
-    ABSL_RETURN_IF_ERROR(buffer_clone->parent()->RemoveInstruction(buffer_clone));
+    ABSL_RETURN_IF_ERROR(
+        buffer_clone->parent()->RemoveInstruction(buffer_clone));
     // Broadcast the predicate to the shape of the buffer.
     HloInstruction* is_first_iteration_pred_broadcast =
         while_body->AddInstruction(HloInstruction::CreateBroadcast(
@@ -527,7 +528,8 @@ absl::StatusOr<bool> WhileLoopFusibleSinking::RunImpl(
   }
 
   for (HloInstruction* while_instr : while_instrs) {
-    ABSL_ASSIGN_OR_RETURN(bool result, TrySinkingFusiblesIntoWhileLoop(while_instr));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          TrySinkingFusiblesIntoWhileLoop(while_instr));
     changed |= result;
   }
 
@@ -537,7 +539,7 @@ absl::StatusOr<bool> WhileLoopFusibleSinking::RunImpl(
         // TODO: b/358837872 - Handle loops with sharding.
         if (Match(instr, match::While()) && !instr->has_sharding()) {
           ABSL_ASSIGN_OR_RETURN(bool result,
-                           TryRewritingBroadcastAsAllocateBuffer(instr));
+                                TryRewritingBroadcastAsAllocateBuffer(instr));
           changed |= result;
         }
       }

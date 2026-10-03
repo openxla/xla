@@ -16,10 +16,11 @@ limitations under the License.
 #ifndef XLA_PJRT_PLUGIN_TEST_PLUGIN_TEST_FIXTURE_H_
 #define XLA_PJRT_PLUGIN_TEST_PLUGIN_TEST_FIXTURE_H_
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"

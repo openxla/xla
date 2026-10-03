@@ -33,13 +33,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/error_spec.h"
 #include "xla/fp_util.h"
 #include "xla/index_util.h"
@@ -187,8 +187,8 @@ absl::Status Equal(LiteralSlice expected, LiteralSlice actual,
                                    mismatched, allow_rounding_difference));
     } else {
       ABSL_RETURN_IF_ERROR(Equal<NativeT>(expected, actual, multi_index,
-                                     dimension + 1, mismatched,
-                                     allow_rounding_difference));
+                                          dimension + 1, mismatched,
+                                          allow_rounding_difference));
     }
   }
   return result;

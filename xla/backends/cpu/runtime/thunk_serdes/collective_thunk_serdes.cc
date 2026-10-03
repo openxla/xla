@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
@@ -45,7 +46,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {
@@ -97,14 +97,14 @@ GetCollectiveThunkParamsFromProto(
     const std::vector<BufferAllocation>& buffer_allocations,
     const std::vector<std::shared_ptr<Resource>>& resources) {
   ABSL_ASSIGN_OR_RETURN(CollectiveThunk::OpParams op_params,
-                   OpParamsFromProto(proto.op_params()));
+                        OpParamsFromProto(proto.op_params()));
 
   CollectiveThunk::OpBuffers op_buffers;
   for (const auto& shape_buffer_slice_proto :
        proto.op_buffers().source_shapes_buffer_slices()) {
     ABSL_ASSIGN_OR_RETURN(auto slice_shape,
-                     DeserializeSliceShapeFromProto(shape_buffer_slice_proto,
-                                                    buffer_allocations));
+                          DeserializeSliceShapeFromProto(
+                              shape_buffer_slice_proto, buffer_allocations));
     const auto& [slice, shape] = slice_shape;
     op_buffers.source_buffers.push_back(slice);
     op_buffers.source_shapes.push_back(shape);
@@ -113,8 +113,8 @@ GetCollectiveThunkParamsFromProto(
   for (const auto& shape_buffer_slice_proto :
        proto.op_buffers().destination_shapes_buffer_slices()) {
     ABSL_ASSIGN_OR_RETURN(auto slice_shape,
-                     DeserializeSliceShapeFromProto(shape_buffer_slice_proto,
-                                                    buffer_allocations));
+                          DeserializeSliceShapeFromProto(
+                              shape_buffer_slice_proto, buffer_allocations));
 
     const auto& [slice, shape] = slice_shape;
     op_buffers.destination_buffers.push_back(slice);
@@ -134,9 +134,10 @@ GetCollectiveThunkParamsFromProto(
 
     // Validate that the serialized resource has the same type as the
     // resource we are setting.
-    ABSL_ASSIGN_OR_RETURN(std::shared_ptr<Resource> communicator_resource_from_proto,
-                     CreateResourceFromProto(
-                         proto.op_resources().communicator_resource().value()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::shared_ptr<Resource> communicator_resource_from_proto,
+        CreateResourceFromProto(
+            proto.op_resources().communicator_resource().value()));
 
     if (communicator_resource_from_proto->kind() !=
         op_resources.communicator_resource->kind()) {
@@ -195,7 +196,7 @@ absl::Status CollectiveThunkToProto(const Thunk& thunk, ThunkProto& proto) {
       proto.mutable_collective_thunk();
 
   ABSL_ASSIGN_OR_RETURN(*collective_thunk_proto->mutable_op_params(),
-                   OpParamsToProto(collective_thunk.op_params()));
+                        OpParamsToProto(collective_thunk.op_params()));
 
   collective_thunk_proto->mutable_op_resources()
       ->mutable_communicator_resource()

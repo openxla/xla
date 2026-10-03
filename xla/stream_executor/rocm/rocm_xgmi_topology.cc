@@ -49,7 +49,8 @@ absl::StatusOr<XgmiTopologyInfo> GetRocmXgmiTopology(
 
   // Count peers reachable over xGMI by querying the link type to every other
   // device. This counts peer GPUs, not physical links.
-  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices, EnumerateDevices());
+  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices,
+                        EnumerateDevices());
   if (devices.size() <= 1) return info;
 
   int xgmi_links = 0;

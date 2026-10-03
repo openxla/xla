@@ -23,10 +23,11 @@ limitations under the License.
 // The fusions under test are produced by the real ConvKindAssignment +
 // ConvFusionRewriter passes, so they cannot drift from pipeline output.
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -78,7 +79,7 @@ class CudnnFusionCompilerDevicelessTest
   static absl::StatusOr<GpuTargetConfig> DevicelessTargetConfig(
       GpuModel model) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto proto,
-                     GetGpuTargetConfig(model));
+                          GetGpuTargetConfig(model));
     return GpuTargetConfig::FromProto(proto);
   }
 
@@ -90,7 +91,7 @@ class CudnnFusionCompilerDevicelessTest
       absl::string_view hlo_text, const se::DeviceDescription& device_info,
       se::dnn::VersionInfo dnn_version, ConvolutionKind expected_kind) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     ConvKindAssignment kind_assignment(device_info.gpu_compute_capability(),
                                        dnn_version);
     ABSL_RETURN_IF_ERROR(RunHloPass(&kind_assignment, module.get()).status());
@@ -377,6 +378,41 @@ TEST_F(CudnnFusionCompilerDevicelessTest, GroupedFp8ConvDeliversVerdict) {
   EXPECT_NE(CuDnnFusionCompiler::SupportsFusionDeviceless(
                 target_config.device_description, *fusion),
             DevicelessFusionSupport::kUnknown);
+}
+
+TEST_F(CudnnFusionCompilerDevicelessTest,
+       ConvWith1DBatchBroadcastEpilogueSupported) {
+  constexpr absl::string_view kConvWithBatchBroadcastHlo = R"(
+    ENTRY e {
+      input = f32[2,10,10,16] parameter(0)
+      filter = f32[16,3,3,16] parameter(1)
+      mask = bf16[2] parameter(2)
+      mask_f32 = f32[2] convert(mask)
+      c_neg1 = f32[] constant(-1)
+      c_neg1_bcast = f32[2] broadcast(c_neg1), dimensions={}
+      sub = f32[2] add(mask_f32, c_neg1_bcast)
+      zero = f32[] constant(0)
+      zero_bcast = f32[2] broadcast(zero), dimensions={}
+      max = f32[2] maximum(zero_bcast, sub)
+      mask_bcast = f32[2,10,10,16] broadcast(max), dimensions={0}
+      conv = f32[2,10,10,16] convolution(input, filter),
+        window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f
+      ROOT out = f32[2,10,10,16] multiply(conv, mask_bcast)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(GpuTargetConfig target_config,
+                       DevicelessTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      BuildConvFusionModule(
+          kConvWithBatchBroadcastHlo, target_config.device_description,
+          se::dnn::VersionInfo(target_config.device_description.dnn_version()),
+          CONVOLUTION_KIND_FPROP));
+  const HloFusionInstruction* fusion = FindCudnnFusion(*module);
+  ASSERT_NE(fusion, nullptr);
+  EXPECT_EQ(CuDnnFusionCompiler::SupportsFusionDeviceless(
+                target_config.device_description, *fusion),
+            DevicelessFusionSupport::kSupported);
 }
 
 // The deviceless verdict must agree with live plan enumeration on the

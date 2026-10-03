@@ -76,7 +76,8 @@ using ::xla::xtile::BlockLevelParameters;
 // Extracts the TritonGemmConfig from the given fusion's backend config.
 absl::StatusOr<TritonGemmConfig> GetTritonGemmConfig(
     const HloFusionInstruction& fusion) {
-  ABSL_ASSIGN_OR_RETURN(auto gpu_config, fusion.backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                        fusion.backend_config<GpuBackendConfig>());
   const FusionBackendConfig& backend_config =
       gpu_config.fusion_backend_config();
   if (!backend_config.has_triton_gemm_config()) {
@@ -138,21 +139,21 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
 
     // Annotate the dot with the contraction tile size.
     ABSL_ASSIGN_OR_RETURN(xla::xtile::Tile tile_sizes,
-                     dot->backend_config<xla::xtile::Tile>());
+                          dot->backend_config<xla::xtile::Tile>());
     tile_sizes.add_sizes(config.block_k);
     ABSL_RETURN_IF_ERROR(dot->set_backend_config(tile_sizes));
 
     // Annotate the fusion itself with the block-level parameters.
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     fusion->backend_config<GpuBackendConfig>());
+                          fusion->backend_config<GpuBackendConfig>());
     FusionBackendConfig& backend_config =
         *gpu_config.mutable_fusion_backend_config();
     backend_config.clear_triton_gemm_config();
     backend_config.set_kind(kTritonNestedGemmFusionKind);
 
     ABSL_ASSIGN_OR_RETURN(BlockLevelParameters block_level_parameters,
-                     FindBlockLevelParameters(dot, config, mlir_context_,
-                                              device_description_));
+                          FindBlockLevelParameters(dot, config, mlir_context_,
+                                                   device_description_));
 
     *backend_config.mutable_block_level_fusion_config() =
         block_level_parameters.ToBlockLevelFusionConfig();
@@ -192,9 +193,9 @@ absl::StatusOr<bool> ConvertTritonGemmConfig::RunImpl(
 
 // Finds the block-level parameters using the experimental TilingSpace
 // propagation framework.
-absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
-    const HloInstruction* dot, const TritonGemmConfig& config,
-    MLIRContext* mlir_context,
+absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
+    const HloFusionAdaptor& fusion_adaptor, const HloInstruction* dot,
+    const TritonGemmConfig& config, MLIRContext* mlir_context,
     const se::DeviceDescription& device_description) {
   // M and N block sizes are defined at the fusion root output. However, because
   // the output shape may be transposed, elementwise fused, or broadcasted, M
@@ -210,9 +211,6 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
   using TilingSpace = experimental::TilingSpace;
   using DimensionSemantics = TilingSpace::DimensionSemantics;
   using DimensionInfo = TilingSpace::DimensionInfo;
-  const HloComputation* computation = dot->parent();
-  std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
-      HloFusionAdaptor::ForComputation(computation);
 
   int64_t dot_rank = dot->shape().dimensions().size();
   if (dot_rank < 2) {
@@ -221,8 +219,12 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
   }
   llvm::SmallVector<int64_t> expected_dot_tile_sizes(dot_rank - 2, 1);
   expected_dot_tile_sizes.append({config.block_m, config.block_n});
-  int64_t root_rank =
-      computation->root_instruction()->shape().dimensions().size();
+  if (fusion_adaptor.GetRoots().size() != 1) {
+    return absl::InternalError(
+        absl::StrCat("Expected fusion to have a single root, got ",
+                     fusion_adaptor.GetRoots().size()));
+  }
+  int64_t root_rank = fusion_adaptor.GetRoots()[0].shape().dimensions().size();
   if (root_rank < 2) {
     return absl::InternalError(absl::StrCat(
         "Expected computation root shape to have rank >= 2, got ", root_rank));
@@ -234,7 +236,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
   do {
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<experimental::TilingSpace> ts,
-        experimental::TilingSpace::Create(*fusion_adaptor, mlir_context));
+        experimental::TilingSpace::Create(fusion_adaptor, mlir_context));
     llvm::SmallVector<int64_t> tile_sizes(ts->num_dimensions(), 1);
     for (const DimensionInfo& dim : ts->dimensions()) {
       if (dim.type == DimensionSemantics::kParallel) {
@@ -256,7 +258,7 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
       continue;
     }
     absl::StatusOr<experimental::TiledHloComputation> tiled_computation =
-        experimental::TiledHloComputation::Tile(*fusion_adaptor, std::move(ts));
+        experimental::TiledHloComputation::Tile(fusion_adaptor, std::move(ts));
     if (!tiled_computation.ok()) {
       VLOG(8) << "Failed to tile the computation with output tile sizes "
               << absl::StrJoin(parallel_tile_sizes, ",")
@@ -273,15 +275,15 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParametersWithTilingSpace(
     }
     // Finds the corresponding tiled instruction for its original HLO
     // instruction.
-    auto tiled_dot =
-        absl::c_find_if(tiled_computation->tiled_root_region().instructions(),
-                        [&](const auto& tiled) { return tiled->hlo() == dot; });
+    absl::Span<const experimental::TiledHloInstruction* const> instructions =
+        tiled_computation->instructions();
+    auto tiled_dot = absl::c_find_if(
+        instructions, [&](const auto* tiled) { return tiled->hlo() == dot; });
     // That should never happen.
-    CHECK(tiled_dot !=
-          tiled_computation->tiled_root_region().instructions().end())
+    CHECK(tiled_dot != instructions.end())
         << "Dot tiled instruction not found in tiled computation";
     absl::StatusOr<llvm::SmallVector<int64_t>> static_tile_sizes =
-        tiled_dot->get()->tile().GetStaticTileSizes();
+        (*tiled_dot)->tile().GetStaticTileSizes();
     if (!static_tile_sizes.ok()) {
       VLOG(8) << "Failed to get static tile sizes for dot instruction "
               << dot->ToString()
@@ -327,8 +329,9 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
           ->config()
           .debug_options()
           .xla_gpu_experimental_enable_tiling_propagation()) {
-    return FindBlockLevelParametersWithTilingSpace(dot, config, mlir_context,
-                                                   device_description);
+    return FindBlockLevelParameters(
+        *HloFusionAdaptor::ForComputation(computation), dot, config,
+        mlir_context, device_description);
   }
 
   VLOG(3) << "FindOutputTileSizesForEpilogue of computation: "
@@ -408,13 +411,13 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
 
     Tiling tiling(std::move(tile_mapping));
     ABSL_ASSIGN_OR_RETURN(bool parameters_satisfy_constraints,
-                     analysis.ParametersSatisfyConstraints(tiling));
+                          analysis.ParametersSatisfyConstraints(tiling));
     if (!parameters_satisfy_constraints) {
       VLOG(4) << "Parameters don't satisfy constraints";
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(FlatTiling flat_tiling_parameters,
-                     tiling.Flatten(tiling_specification));
+                          tiling.Flatten(tiling_specification));
     llvm::SmallVector<int64_t> mapped_dot_tile_sizes =
         EvaluateTileSizes(tiled_dot.symbolic_tile(), flat_tiling_parameters);
     if (mapped_dot_tile_sizes == expected_dot_tile_sizes) {

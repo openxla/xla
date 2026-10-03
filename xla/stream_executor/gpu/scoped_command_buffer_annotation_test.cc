@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/scoped_command_buffer_annotation.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 

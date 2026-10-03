@@ -57,9 +57,10 @@ AsyncThunkSequence MemcpyFusion::Emit(
         if (!subshape.IsArray()) {
           return absl::OkStatus();
         }
-        ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                         ir_emitter_context.buffer_assignment().GetUniqueSlice(
-                             &fusion, index));
+        ABSL_ASSIGN_OR_RETURN(
+            BufferAllocation::Slice slice,
+            ir_emitter_context.buffer_assignment().GetUniqueSlice(&fusion,
+                                                                  index));
         dst_buffers.push_back(slice);
         return absl::OkStatus();
       }));

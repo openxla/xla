@@ -14,6 +14,8 @@
 
 #include "xla/python/ifrt_proxy/server/ifrt_backend.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <sys/types.h>
 
 #include <cstdint>
@@ -23,8 +25,6 @@
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -41,6 +41,8 @@
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -90,8 +92,6 @@
 #include "xla/tsl/protobuf/status.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -348,13 +348,14 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
       make_array->mutable_shape()->add_dims(2);
       make_array->set_host_buffer_handle(host_buffer_handle);
 
-      ABSL_ASSIGN_OR_RETURN(auto* device, mock_client_->LookupDevice(DeviceId(1)));
+      ABSL_ASSIGN_OR_RETURN(auto* device,
+                            mock_client_->LookupDevice(DeviceId(1)));
       ABSL_RETURN_IF_ERROR(SingleDeviceSharding::Create(device, MemoryKind())
-                          ->ToProto(*make_array->mutable_sharding(),
-                                    ifrt_serdes_version()));
+                               ->ToProto(*make_array->mutable_sharding(),
+                                         ifrt_serdes_version()));
     }
     ABSL_ASSIGN_OR_RETURN(auto make_array_response,
-                     CallBackend(std::move(ifrt_request)));
+                          CallBackend(std::move(ifrt_request)));
 
     ABSL_RETURN_IF_ERROR(tsl::StatusFromProto(
         make_array_response->response_metadata().status()));
@@ -371,7 +372,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
       auto serialize_options =
           std::make_unique<SerializeOptions>(ifrt_serdes_version());
       ABSL_ASSIGN_OR_RETURN(*compile_request->mutable_program(),
-                       Serialize(program, std::move(serialize_options)));
+                            Serialize(program, std::move(serialize_options)));
     }
     {
       TestCompileOptions compile_options;
@@ -387,7 +388,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
             std::move(loaded_executable))));
 
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<IfrtResponse> response,
-                     CallBackend(std::move(request)));
+                          CallBackend(std::move(request)));
 
     TF_RET_CHECK(response->has_compile_response());
     return response->compile_response();
@@ -400,7 +401,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
     auto request = NewIfrtRequest(NewOpId());
     request->mutable_check_future_request()->set_future_handle(handle);
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<IfrtResponse> response,
-                     CallBackend(std::move(request)));
+                          CallBackend(std::move(request)));
     return tsl::StatusFromProto(response->response_metadata().status());
   }
 
@@ -411,7 +412,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
     auto request = NewIfrtRequest(NewOpId());
     request->mutable_check_value_ready_request()->add_value_handles(handle);
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<IfrtResponse> response,
-                     CallBackend(std::move(request)));
+                          CallBackend(std::move(request)));
     return tsl::StatusFromProto(response->response_metadata().status());
   }
 
@@ -1231,6 +1232,7 @@ TEST_P(IfrtBackendHandlerTest, CompileSuccess) {
   std::vector<MockDevice> devices(4);
   for (int i = 0; i < 4; ++i) {
     EXPECT_CALL(devices[i], Id()).WillRepeatedly(Return(DeviceId(i)));
+    EXPECT_CALL(devices[i], IsAddressable()).WillRepeatedly(Return(true));
   }
 
   std::vector<xla::ifrt::Device*> addressable_devices;
@@ -1242,11 +1244,8 @@ TEST_P(IfrtBackendHandlerTest, CompileSuccess) {
 
   auto executable = std::make_unique<MockLoadedExecutable>();
   EXPECT_CALL(*executable, name()).WillOnce(Return("executable_name"));
-  EXPECT_CALL(*executable, num_devices()).WillOnce(Return(4));
   EXPECT_CALL(*executable, devices())
       .WillOnce(Return(std::make_optional(device_list)));
-  EXPECT_CALL(*executable, addressable_devices())
-      .WillOnce(Return(absl::MakeSpan(addressable_devices)));
   EXPECT_CALL(*executable, Fingerprint()).WillOnce(Return("fingerprint"));
 
   TF_ASSERT_OK_AND_ASSIGN(CompileResponse response,
@@ -1465,7 +1464,7 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableExecute) {
       request->mutable_loaded_executable_fetch_execute_result_request()
           ->set_result_status_handle(handle);
       ABSL_ASSIGN_OR_RETURN(std::shared_ptr<IfrtResponse> response,
-                       CallBackend(std::move(request)));
+                            CallBackend(std::move(request)));
       return tsl::StatusFromProto(response->response_metadata().status());
     } else {
       return CheckFuture(handle);
@@ -1910,11 +1909,8 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableMetadataWithMpmd) {
     MockMpmdLoadedExecutable* executable = e.get();
 
     ON_CALL(*executable, name()).WillByDefault(Return("mpmd_exec"));
-    ON_CALL(*executable, num_devices()).WillByDefault(Return(1));
     auto device_list = BasicDeviceList::Create({});
     ON_CALL(*executable, devices()).WillByDefault(Return(device_list));
-    ON_CALL(*executable, addressable_devices())
-        .WillByDefault(Return(absl::Span<xla::ifrt::Device* const>({})));
     ON_CALL(*executable, Fingerprint())
         .WillByDefault(Return("mpmd_fingerprint"));
 
@@ -1973,11 +1969,8 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableMpmdCostAnalysis) {
     MockMpmdLoadedExecutable* executable = e.get();
 
     ON_CALL(*executable, name()).WillByDefault(Return("mpmd_exec"));
-    ON_CALL(*executable, num_devices()).WillByDefault(Return(1));
     auto device_list = BasicDeviceList::Create({});
     ON_CALL(*executable, devices()).WillByDefault(Return(device_list));
-    ON_CALL(*executable, addressable_devices())
-        .WillByDefault(Return(absl::Span<xla::ifrt::Device* const>()));
     ON_CALL(*executable, Fingerprint())
         .WillByDefault(Return("mpmd_fingerprint"));
 
@@ -2022,11 +2015,8 @@ TEST_P(IfrtBackendHandlerTest, CompileSuccessWithMpmdAddressableDevices) {
   auto executable = std::make_unique<MockMpmdLoadedExecutable>();
 
   ON_CALL(*executable, name()).WillByDefault(Return("mpmd_exec"));
-  ON_CALL(*executable, num_devices()).WillByDefault(Return(1));
   auto empty_device_list = BasicDeviceList::Create({});
   ON_CALL(*executable, devices()).WillByDefault(Return(empty_device_list));
-  ON_CALL(*executable, addressable_devices())
-      .WillByDefault(Return(absl::Span<xla::ifrt::Device* const>()));
   ON_CALL(*executable, Fingerprint()).WillByDefault(Return("mpmd_fingerprint"));
 
   std::vector<xla::ifrt::Device*> mesh1_devices = {mock_devices_[0].get()};

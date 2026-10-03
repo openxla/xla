@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/rng_seed_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -41,7 +42,7 @@ namespace {
 static absl::StatusOr<se::StreamExecutor*> GpuExecutor() {
   ABSL_ASSIGN_OR_RETURN(auto name, PlatformUtil::CanonicalPlatformName("gpu"));
   ABSL_ASSIGN_OR_RETURN(auto* platform, se::PlatformManager::PlatformWithName(
-                                       absl::AsciiStrToUpper(name)));
+                                            absl::AsciiStrToUpper(name)));
   return platform->ExecutorForDevice(0);
 }
 

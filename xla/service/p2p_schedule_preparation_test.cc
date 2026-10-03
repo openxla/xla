@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/p2p_schedule_preparation.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_format.h"

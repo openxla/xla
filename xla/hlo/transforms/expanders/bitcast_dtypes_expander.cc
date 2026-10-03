@@ -79,7 +79,7 @@ absl::StatusOr<HloInstruction*> Downcast(HloInstruction* input,
       MakeScalarLike(logical_input, output_bit_width_mask);
 
   ABSL_ASSIGN_OR_RETURN(HloInstruction * masked,
-                   MakeBinaryHlo(HloOpcode::kAnd, shifted, scalar_mask));
+                        MakeBinaryHlo(HloOpcode::kAnd, shifted, scalar_mask));
 
   return MakeConvertToHlo(masked, output_logical_type);
 }
@@ -114,7 +114,7 @@ absl::StatusOr<HloInstruction*> Upcast(HloInstruction* input,
 
   // Reshape input to collapse the last two dimensions.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * collapsed_input,
-                   CollapseLastDimension(input));
+                        CollapseLastDimension(input));
   const Shape& collapsed_shape = collapsed_input->shape();
   int64_t collapsed_rank = collapsed_shape.dimensions().size();
 
@@ -149,7 +149,8 @@ absl::StatusOr<HloInstruction*> Upcast(HloInstruction* input,
     ABSL_ASSIGN_OR_RETURN(
         HloInstruction * shifted_slice,
         MakeBinaryHlo(HloOpcode::kShiftLeft, converted_slice, scalar_shift));
-    ABSL_ASSIGN_OR_RETURN(acc, MakeBinaryHlo(HloOpcode::kOr, acc, shifted_slice));
+    ABSL_ASSIGN_OR_RETURN(acc,
+                          MakeBinaryHlo(HloOpcode::kOr, acc, shifted_slice));
   }
   return input->shape().dimensions().size() > 1
              ? acc

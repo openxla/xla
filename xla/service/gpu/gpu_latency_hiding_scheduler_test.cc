@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -93,9 +94,9 @@ class GpuLatencyHidingSchedulerBaseTest
     options.set_xla_gpu_pgle_accuracy_checker(strictness);
 
     ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, /*pointer_size=*/8,
-                                      gpu_device_info, &mlir_context_,
-                                      &alias_info)
-                        .status());
+                                           gpu_device_info, &mlir_context_,
+                                           &alias_info)
+                             .status());
     return module;
   }
 
@@ -1509,7 +1510,8 @@ HloModule test, num_partitions=4
   %param_2 = s32[] parameter(2)
   %param_3 = s32[] parameter(3)
   ROOT %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %param_2, %param_3), dynamic_slice_sizes={1,2,2},
-      backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+      backend_config={"dynamic_slice_config":{
+        "linear":{"byte_offset":"0","byte_stride":"0"}}}
 }
 
 %async_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
@@ -1815,7 +1817,8 @@ dynamic_slice_computation {
   i2 = s32[] parameter(3)
   ROOT dynamic_slice = f32[1,2,2] dynamic-slice(input, i0, i1, i2),
     dynamic_slice_sizes={1,2,2},
-    backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+    backend_config={"dynamic_slice_config":{
+      "linear":{"byte_offset":"0","byte_stride":"0"}}}
 }
 
 async_computation {
@@ -1945,7 +1948,8 @@ dynamic_slice_computation {
   i2 = s32[] parameter(3)
   ROOT dynamic_slice = f32[1,2,2] dynamic-slice(input, i0, i1, i2),
     dynamic_slice_sizes={1,2,2},
-    backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+    backend_config={"dynamic_slice_config":{
+      "linear":{"byte_offset":"0","byte_stride":"0"}}}
 }
 
 async_computation {

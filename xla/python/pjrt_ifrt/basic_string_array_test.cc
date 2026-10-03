@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/basic_string_array.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -114,10 +115,10 @@ CreateNonReadyTestArray(
   Shape shape({1});
   ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
 
-  ABSL_ASSIGN_OR_RETURN(auto array,
-                   BasicStringArray::Create(client, shape, sharding,
-                                            std::move(buffers_future),
-                                            std::move(on_done_with_buffer)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto array, BasicStringArray::Create(client, shape, sharding,
+                                           std::move(buffers_future),
+                                           std::move(on_done_with_buffer)));
 
   return std::make_pair(std::move(array), std::move(buffers_promise));
 }
@@ -423,7 +424,8 @@ absl::StatusOr<ArrayRef> MakeShardedStringTestArray(
         "Test client has too few devices. Need 4, got:", devices.size()));
   }
 
-  ABSL_ASSIGN_OR_RETURN(DeviceListRef device_list, client->MakeDeviceList(devices));
+  ABSL_ASSIGN_OR_RETURN(DeviceListRef device_list,
+                        client->MakeDeviceList(devices));
   ShardingRef sharding = ConcreteEvenSharding::Create(
       std::move(device_list), MemoryKind(), Shape({2, 1}), Shape({1}),
       is_fully_replicated);
@@ -431,7 +433,7 @@ absl::StatusOr<ArrayRef> MakeShardedStringTestArray(
   std::vector<ArrayRef> arrays;
   for (int i = 0; i < 2; ++i) {
     ABSL_ASSIGN_OR_RETURN(auto array, MakeSingleDeviceStringTestArray(
-                                     {data[i]}, client, devices[i]));
+                                          {data[i]}, client, devices[i]));
     arrays.push_back(std::move(array));
   }
 

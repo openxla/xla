@@ -35,6 +35,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -48,8 +50,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -193,8 +193,7 @@ absl::StatusOr<InstructionAndIndex> WalkUpMemoryOffload(
       return InstructionAndIndex(instruction, index);
     }
     default: {
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Invalid opcode %s", instruction->ToString()));
+      return InvalidArgument("Invalid opcode %s", instruction->ToString());
     }
   }
 }
@@ -236,14 +235,14 @@ absl::StatusOr<std::vector<InstructionAndIndex>> WalkDownMemoryOffload(
       std::vector<HloInstruction*> callers =
           call_graph.GetComputationCallers(current_value.instruction->parent());
       if (callers.size() != 1 || callers[0]->opcode() != HloOpcode::kWhile) {
-        return absl::InvalidArgumentError(absl::StrFormat(
+        return InvalidArgument(
             "Expected computation \"%s\" to be called only by one caller "
             "and that caller to be a While. There are %d caller(s): [%s]",
             current_value.instruction->parent()->name(), callers.size(),
             absl::StrJoin(callers, ", ",
                           [](std::string* out, const HloInstruction* instr) {
                             absl::StrAppend(out, instr->name());
-                          })));
+                          }));
       }
       ABSL_RETURN_IF_ERROR(add_gte_for_idx(callers[0], current_value.index));
       return results;
@@ -324,8 +323,7 @@ absl::StatusOr<std::vector<InstructionAndIndex>> WalkDownMemoryOffload(
         [[fallthrough]];
       }
       default: {
-        return absl::InvalidArgumentError(
-            absl::StrFormat("Unrecognized user name: %s", user->name()));
+        return InvalidArgument("Unrecognized user name: %s", user->name());
       }
     }
   }
@@ -389,10 +387,10 @@ absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastReducedRank(
   const Shape& before_bitcast_shape = bitcast->operand(0)->shape();
   if (!(ShapeUtil::IsEffectivelyMostMajorDimension(before_bitcast_shape, 0) &&
         before_bitcast_shape.dimensions(0) == 1)) {
-    return absl::InternalError(
-        absl::StrFormat("Only handling bitcasts with majormost dimension "
-                        "of size 1. This bitcast is \"%s\"",
-                        bitcast->ToString()));
+    return Internal(
+        "Only handling bitcasts with majormost dimension "
+        "of size 1. This bitcast is \"%s\"",
+        bitcast->ToString());
   }
   const Shape new_bitcast_shape = RemoveMajormostDimension(shape_before_copy);
   VLOG(2) << absl::StreamFormat(
@@ -413,10 +411,10 @@ absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastIncreasedRank(
   const Shape& after_bitcast_shape = bitcast->shape();
   if (!(ShapeUtil::IsEffectivelyMostMajorDimension(after_bitcast_shape, 0) &&
         after_bitcast_shape.dimensions(0) == 1)) {
-    return absl::UnimplementedError(
-        absl::StrFormat("Only handling bitcasts with majormost dimension "
-                        "of size 1. This bitcast is \"%s\"",
-                        bitcast->ToString()));
+    return Unimplemented(
+        "Only handling bitcasts with majormost dimension "
+        "of size 1. This bitcast is \"%s\"",
+        bitcast->ToString());
   }
   const Shape new_bitcast_shape = AddMajormostDimension(shape_before_copy);
   VLOG(2) << absl::StreamFormat(
@@ -442,12 +440,12 @@ absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastSameRank(
                                      before_bitcast_shape)) {
     // Something about the shape other than the layout changes. This is not
     // supported.
-    return absl::UnimplementedError(absl::StrFormat(
+    return Unimplemented(
         "Only handling bitcasts which change the layout. This bitcast (\"%s\") "
         "has input shape \"%s\" and output shape \"%s\".",
         bitcast->name(),
         bitcast->operand(0)->shape().ToString(/*print_layout=*/true),
-        bitcast->shape().ToString(/*print_layout=*/true)));
+        bitcast->shape().ToString(/*print_layout=*/true));
   }
 
   if (Shape::Equal()(after_bitcast_shape, before_bitcast_shape)) {
@@ -508,10 +506,10 @@ absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcastSameRank(
       return std::make_pair(new_shape_before_copy, new_shape_after_copy);
     }
   }
-  return absl::UnimplementedError(absl::StrFormat(
+  return Unimplemented(
       "Something about this layout changed other than the minor-to-major "
       "ordering. This is unsuppored. Bitcast: \"%s\"",
-      bitcast->ToString()));
+      bitcast->ToString());
 }
 
 // This function is to be called when we are moving a copy down the graph. The
@@ -523,9 +521,9 @@ absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcast(
     const Shape& shape_before_copy, const Shape& shape_after_copy) {
   if (!Shape::Equal().IgnoreLayout()(copy_to_move->operand(0)->shape(),
                                      copy_to_move->shape())) {
-    return absl::InternalError(absl::StrFormat(
+    return Internal(
         "Expecting copy to only change instruction's layout. Copy: %s",
-        copy_to_move->ToString()));
+        copy_to_move->ToString());
   }
 
   const Shape& before_bitcast_shape = bitcast->operand(0)->shape();
@@ -555,9 +553,9 @@ absl::StatusOr<std::pair<Shape, Shape>> GetNewShapesAfterBitcast(
   }
 
   // Dimensionality changes in some other way.
-  return absl::UnimplementedError(absl::StrFormat(
+  return Unimplemented(
       "Bitcast changes dimensionality in an unsupported way. Bitcast: \"%s\"",
-      bitcast->ToString()));
+      bitcast->ToString());
 }
 
 absl::Status MoveCopyDown(
@@ -607,9 +605,10 @@ absl::Status MoveCopyDown(
       const int index = instruction_and_index.index;
       if (instruction->opcode() == HloOpcode::kBitcast) {
         std::pair<Shape, Shape> new_shapes;
-        ABSL_ASSIGN_OR_RETURN(new_shapes, GetNewShapesAfterBitcast(
-                                         instruction, copy_to_move,
-                                         shape_before_copy, shape_after_copy));
+        ABSL_ASSIGN_OR_RETURN(
+            new_shapes,
+            GetNewShapesAfterBitcast(instruction, copy_to_move,
+                                     shape_before_copy, shape_after_copy));
         shape_before_copy = new_shapes.first;
         shape_after_copy = new_shapes.second;
       } else if (instruction->opcode() == HloOpcode::kSlice ||
@@ -701,7 +700,8 @@ absl::Status MoveCopyDown(
             instruction->AddInstruction(annotation->CloneWithNewOperands(
                 instruction->operand(1)->shape(),
                 {instruction->mutable_operand(1)}));
-        ABSL_RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, new_annotation));
+        ABSL_RETURN_IF_ERROR(
+            instruction->ReplaceOperandWith(1, new_annotation));
         ABSL_RETURN_IF_ERROR(
             annotation->ReplaceAllUsesWith(annotation->mutable_operand(0)));
         processed_annotations.insert(annotation);
@@ -738,7 +738,8 @@ absl::Status MoveCopyDown(
 
 // Returns true if the copy should be moved. A copy can be moved if there is
 // always a place for it after being moved back to device.
-bool ShouldMoveCopyDown(HloInstruction* copy_to_move) {
+bool ShouldMoveCopyDown(HloInstruction* copy_to_move,
+                        const CallGraph& call_graph) {
   std::queue<host_offload_utils::InstructionAndShapeIndex> queue;
   queue.push(host_offload_utils::InstructionAndShapeIndex(copy_to_move));
   while (!queue.empty()) {
@@ -754,7 +755,7 @@ bool ShouldMoveCopyDown(HloInstruction* copy_to_move) {
 
     // Push successors onto the queue to be visited.
     absl::StatusOr<std::vector<host_offload_utils::InstructionAndShapeIndex>>
-        successors = host_offload_utils::GetSuccessors(current);
+        successors = host_offload_utils::GetSuccessors(current, call_graph);
     if (!successors.ok()) {
       return false;
     }
@@ -878,7 +879,7 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
                 call_graph->GetComputationCallers(annotation->parent());
             if (callers.size() != 1 ||
                 callers[0]->opcode() != HloOpcode::kWhile) {
-              return absl::InvalidArgumentError(absl::StrFormat(
+              return InvalidArgument(
                   "Expected computation \"%s\" to be called only by one caller "
                   "and that caller to be a While. There are %d caller(s): [%s]",
                   current_value.instruction->parent()->name(), callers.size(),
@@ -886,7 +887,7 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
                       callers, ", ",
                       [](std::string* out, const HloInstruction* instr) {
                         absl::StrAppend(out, instr->name());
-                      })));
+                      }));
             }
             for (int i = 0; i < user->operands().size(); i++) {
               if (user->operands()[i] == annotation &&
@@ -943,9 +944,9 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
   for (auto it = copies_to_move.rbegin(); it != copies_to_move.rend(); ++it) {
     InstructionAndIndex& copy_to_move_and_index = *it;
     HloInstruction* copy_to_move = copy_to_move_and_index.instruction;
-    if (ShouldMoveCopyDown(copy_to_move)) {
+    if (ShouldMoveCopyDown(copy_to_move, *call_graph)) {
       ABSL_RETURN_IF_ERROR(MoveCopyDown(copy_to_move_and_index, call_graph,
-                                   processed_annotations, to_remove));
+                                        processed_annotations, to_remove));
       changed = true;
     } else {
       // We should not move this copy down; maybe we can move it up. For now, we
@@ -981,9 +982,9 @@ absl::StatusOr<bool> FixupInterveningCopies(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(bool changed_annotation_for_copy_movement,
-                     ProcessAnnotationForCopyMovement(instruction, call_graph,
-                                                      processed_annotations,
-                                                      annotations_to_remove));
+                          ProcessAnnotationForCopyMovement(
+                              instruction, call_graph, processed_annotations,
+                              annotations_to_remove));
     changed |= changed_annotation_for_copy_movement;
   }
   for (HloInstruction* instruction : annotations_to_remove) {

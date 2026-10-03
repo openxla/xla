@@ -33,13 +33,13 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/init_main.h"
 #include "xla/client/client.h"
 #include "xla/client/client_library.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace tools {

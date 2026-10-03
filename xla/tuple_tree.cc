@@ -194,7 +194,8 @@ absl::StatusOr<const IndexTable::Entry*> IndexTable::GetEntry(
 
 absl::StatusOr<IndexTable> IndexTable::CreateFromSubtree(
     const IndexTable& original_table, const ShapeIndex& index) {
-  ABSL_ASSIGN_OR_RETURN(const Entry* root_entry, original_table.GetEntry(index));
+  ABSL_ASSIGN_OR_RETURN(const Entry* root_entry,
+                        original_table.GetEntry(index));
 
   size_t num_nodes = CountSubtreeNodes(original_table, root_entry);
   if (num_nodes == 0) {

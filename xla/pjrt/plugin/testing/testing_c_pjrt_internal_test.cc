@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/testing/testing_c_pjrt_internal.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "xla/pjrt/c/pjrt_c_api.h"

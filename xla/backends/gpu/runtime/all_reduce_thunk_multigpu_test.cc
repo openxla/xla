@@ -18,12 +18,13 @@ limitations under the License.
 // Requires exactly kNumDevices GPUs (>= 2) and CUDA 12.9+ driver/toolkit for
 // CreateChildCommand / UpdateChildCommand support.
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -45,10 +46,8 @@ namespace xla::gpu {
 namespace {
 
 static constexpr int kNumDevices = 2;
-static constexpr int64_t kLength = 4;
-static constexpr int64_t kByteLength = sizeof(float) * kLength;
-static_assert(kLength % kNumDevices == 0);
-static constexpr int64_t kReduceScatterLength = kLength / kNumDevices;
+static_assert(kNumElements % kNumDevices == 0);
+static constexpr int64_t kReduceScatterLength = kNumElements / kNumDevices;
 static constexpr int64_t kReduceScatterByteLength =
     sizeof(float) * kReduceScatterLength;
 
@@ -115,14 +114,14 @@ static DirectAllReduceThunk MakeAllReduceThunk(
     const BufferAllocation& alloc_src, const BufferAllocation& alloc_dst) {
   return DirectAllReduceThunk(
       Thunk::ThunkInfo(), MakeSumConfig(),
-      {MakeBuffer(alloc_src, alloc_dst, kLength, kLength)});
+      {MakeBuffer(alloc_src, alloc_dst, kNumElements, kNumElements)});
 }
 
 static ReduceScatterThunk MakeReduceScatterThunk(
     const BufferAllocation& alloc_src, const BufferAllocation& alloc_dst) {
   return ReduceScatterThunk(
       Thunk::ThunkInfo(), MakeSumConfig(),
-      {MakeBuffer(alloc_src, alloc_dst, kLength, kReduceScatterLength)});
+      {MakeBuffer(alloc_src, alloc_dst, kNumElements, kReduceScatterLength)});
 }
 
 using DeviceTestSlot = CollectiveThunkMultiGpuTestState;
@@ -151,7 +150,7 @@ static float DeviceScaleSum() {
 static std::vector<float> AllReduceInput(int device_ordinal,
                                          float phase_scale) {
   return std::vector<float>(
-      kLength, static_cast<float>(device_ordinal + 1) * phase_scale);
+      kNumElements, static_cast<float>(device_ordinal + 1) * phase_scale);
 }
 
 static std::vector<float> AllReduceExpected(float phase_scale) {
@@ -159,15 +158,15 @@ static std::vector<float> AllReduceExpected(float phase_scale) {
   for (int d = 0; d < kNumDevices; ++d) {
     sum += static_cast<float>(d + 1) * phase_scale;
   }
-  return std::vector<float>(kLength, sum);
+  return std::vector<float>(kNumElements, sum);
 }
 
 static std::vector<float> ReduceScatterInput(int device_ordinal,
                                              float phase_scale) {
   std::vector<float> data;
-  data.reserve(kLength);
+  data.reserve(kNumElements);
   float scale = DeviceScale(device_ordinal) * phase_scale;
-  for (int i = 0; i < kLength; ++i) {
+  for (int i = 0; i < kNumElements; ++i) {
     data.push_back(static_cast<float>(i + 1) * scale);
   }
   return data;
@@ -211,7 +210,7 @@ static std::vector<float> ExpectedValues(CollectiveTestKind kind,
 static int64_t DestinationByteLength(CollectiveTestKind kind) {
   switch (kind) {
     case CollectiveTestKind::kAllReduce:
-      return kByteLength;
+      return kFloatByteLength;
     case CollectiveTestKind::kReduceScatter:
       return kReduceScatterByteLength;
   }
@@ -225,7 +224,7 @@ static absl::Status SetupDeviceSlot(int device_ordinal, DeviceTestSlot& slot,
                                     AllReduceReduceScatterThunkBase& thunk,
                                     const DeviceAssignment& device_assignment,
                                     CollectiveTestKind kind) {
-  std::vector<int64_t> buffer_sizes = {kByteLength,
+  std::vector<int64_t> buffer_sizes = {kFloatByteLength,
                                        DestinationByteLength(kind)};
   return SetupCollectiveThunkDevice(device_ordinal, kNumDevices, buffer_sizes,
                                     thunk, device_assignment, slot);
@@ -250,8 +249,9 @@ static absl::Status RunCreatePhase(DeviceTestSlot& slot,
   // would otherwise cause CUDA_ERROR_STREAM_CAPTURE_INVALIDATED.
   ABSL_RETURN_IF_ERROR(ExecuteOnStreamAndBlock(thunk, execute_params));
   ABSL_RETURN_IF_ERROR(RecordCommandBufferCreate(slot, thunk, execute_params));
-  ABSL_RETURN_IF_ERROR(FillDeviceBuffer(*slot.stream, slot.create_buffers[1],
-                                   SentinelValues(expected_values.size())));
+  ABSL_RETURN_IF_ERROR(
+      FillDeviceBuffer(*slot.stream, slot.create_buffers[1],
+                       SentinelValues(expected_values.size())));
   ABSL_RETURN_IF_ERROR(SubmitCommandBuffer(slot));
   return VerifyDeviceBuffer(*slot.stream, slot.create_buffers[1],
                             expected_values);
@@ -273,8 +273,9 @@ static absl::Status RunUpdatePhase(DeviceTestSlot& slot,
 
   ABSL_RETURN_IF_ERROR(
       RecordCommandBufferUpdate(slot, thunk, execute_params, {0, 1}));
-  ABSL_RETURN_IF_ERROR(FillDeviceBuffer(*slot.stream, slot.update_buffers[1],
-                                   SentinelValues(expected_values.size())));
+  ABSL_RETURN_IF_ERROR(
+      FillDeviceBuffer(*slot.stream, slot.update_buffers[1],
+                       SentinelValues(expected_values.size())));
   ABSL_RETURN_IF_ERROR(SubmitCommandBuffer(slot));
   return VerifyDeviceBuffer(*slot.stream, slot.update_buffers[1],
                             expected_values);
@@ -287,10 +288,10 @@ static absl::Status SetupAndCreate(int d, DeviceTestSlot* slots,
                                    CollectiveTestKind kind) {
   ABSL_RETURN_IF_ERROR(
       SetupDeviceSlot(d, slots[d], *thunk, *device_assignment, kind));
-  ABSL_RETURN_IF_ERROR(RunCreatePhase(slots[d], *thunk,
-                                 InputValues(kind, d, /*phase_scale=*/1.0f),
-                                 ExpectedValues(kind, d,
-                                                /*phase_scale=*/1.0f)));
+  ABSL_RETURN_IF_ERROR(RunCreatePhase(
+      slots[d], *thunk, InputValues(kind, d, /*phase_scale=*/1.0f),
+      ExpectedValues(kind, d,
+                     /*phase_scale=*/1.0f)));
   return absl::OkStatus();
 }
 
@@ -298,10 +299,10 @@ static absl::Status SetupAndCreate(int d, DeviceTestSlot* slots,
 static absl::Status RunUpdate(int d, DeviceTestSlot* slots,
                               AllReduceReduceScatterThunkBase* thunk,
                               CollectiveTestKind kind) {
-  ABSL_RETURN_IF_ERROR(RunUpdatePhase(slots[d], *thunk,
-                                 InputValues(kind, d, /*phase_scale=*/100.0f),
-                                 ExpectedValues(kind, d,
-                                                /*phase_scale=*/100.0f)));
+  ABSL_RETURN_IF_ERROR(RunUpdatePhase(
+      slots[d], *thunk, InputValues(kind, d, /*phase_scale=*/100.0f),
+      ExpectedValues(kind, d,
+                     /*phase_scale=*/100.0f)));
   return absl::OkStatus();
 }
 
@@ -320,8 +321,8 @@ TEST(AllReduceThunkMultiGpuTest, RecordCommandBufferCreate) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
-  BufferAllocation alloc_dst(/*index=*/1, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kFloatByteLength, /*color=*/0);
   DirectAllReduceThunk thunk = MakeAllReduceThunk(alloc_src, alloc_dst);
 
   std::vector<DeviceTestSlot> slots(kNumDevices);
@@ -345,8 +346,8 @@ TEST(AllReduceThunkMultiGpuTest, RecordCommandBufferUpdate) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
-  BufferAllocation alloc_dst(/*index=*/1, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kFloatByteLength, /*color=*/0);
   DirectAllReduceThunk thunk = MakeAllReduceThunk(alloc_src, alloc_dst);
 
   std::vector<DeviceTestSlot> slots(kNumDevices);
@@ -381,7 +382,7 @@ TEST(ReduceScatterThunkMultiGpuTest, RecordCommandBufferCreate) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, kReduceScatterByteLength,
                              /*color=*/0);
   ReduceScatterThunk thunk = MakeReduceScatterThunk(alloc_src, alloc_dst);
@@ -407,7 +408,7 @@ TEST(ReduceScatterThunkMultiGpuTest, RecordCommandBufferUpdate) {
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
-  BufferAllocation alloc_src(/*index=*/0, kByteLength, /*color=*/0);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
   BufferAllocation alloc_dst(/*index=*/1, kReduceScatterByteLength,
                              /*color=*/0);
   ReduceScatterThunk thunk = MakeReduceScatterThunk(alloc_src, alloc_dst);

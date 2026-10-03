@@ -37,7 +37,7 @@ absl::StatusOr<std::string> XlaExecutableAbiVersion::Serialize(
     options = std::make_unique<SerializeOptions>();
   }
   ABSL_ASSIGN_OR_RETURN(xla::ifrt::Serialized proto,
-                   xla::ifrt::Serialize(*this, std::move(options)));
+                        xla::ifrt::Serialize(*this, std::move(options)));
   std::string result;
   if (!proto.SerializeToString(&result)) {
     return absl::InternalError(

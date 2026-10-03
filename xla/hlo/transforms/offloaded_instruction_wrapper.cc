@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::offloader_util {
 
@@ -133,7 +133,8 @@ FindAndWrapOffloadedComputations(
         }
         offloaded_call_instr = absl::down_cast<HloCallInstruction*>(call_instr);
         CHECK_NE(offloaded_call_instr, nullptr);
-        ABSL_RETURN_IF_ERROR(clear_backend_config_device_type(offloaded_call_instr));
+        ABSL_RETURN_IF_ERROR(
+            clear_backend_config_device_type(offloaded_call_instr));
         ABSL_RETURN_IF_ERROR(
             ClearComputeTypeFrontendAttribute(offloaded_call_instr));
         ClearSideEffects(instr);

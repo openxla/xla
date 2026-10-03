@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/hlo_graph_dumper.h"
 
+#include <gmock/gmock.h>
+
 #include <string>
 
-#include <gmock/gmock.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"

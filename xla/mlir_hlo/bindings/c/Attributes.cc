@@ -26,13 +26,13 @@ limitations under the License.
 
 MlirAttribute mlirMhloScatterDimensionNumbersGet(
     MlirContext ctx,                                                  //
-    intptr_t nUpdateWindowDims, const int64_t *updateWindowDims,      //
-    intptr_t nInsertedWindowDims, const int64_t *insertedWindowDims,  //
-    intptr_t nInputBatchingDims, const int64_t *inputBatchingDims,    //
+    intptr_t nUpdateWindowDims, const int64_t* updateWindowDims,      //
+    intptr_t nInsertedWindowDims, const int64_t* insertedWindowDims,  //
+    intptr_t nInputBatchingDims, const int64_t* inputBatchingDims,    //
     intptr_t nScatterIndicesBatchingDims,
-    const int64_t *scatterIndicesBatchingDims,  //
+    const int64_t* scatterIndicesBatchingDims,  //
     intptr_t nScatteredDimsToOperandDims,
-    const int64_t *scatteredDimsToOperandDims,  //
+    const int64_t* scatteredDimsToOperandDims,  //
     int64_t indexVectorDim) {
   return wrap(mlir::mhlo::ScatterDimensionNumbersAttr::get(
       unwrap(ctx), llvm::ArrayRef(updateWindowDims, nUpdateWindowDims),
@@ -123,12 +123,12 @@ int64_t mlirMhloDimensionNumbersGetIndexVectorDim(MlirAttribute attr) {
 
 MlirAttribute mlirMhloGatherDimensionNumbersGet(
     MlirContext ctx,                                                    //
-    intptr_t nOffsetDims, const int64_t *offsetDims,                    //
-    intptr_t nCollapsedSliceDims, const int64_t *collapsedSliceDims,    //
-    intptr_t nOperandBatchingDims, const int64_t *operandBatchingDims,  //
+    intptr_t nOffsetDims, const int64_t* offsetDims,                    //
+    intptr_t nCollapsedSliceDims, const int64_t* collapsedSliceDims,    //
+    intptr_t nOperandBatchingDims, const int64_t* operandBatchingDims,  //
     intptr_t nStartIndicesBatchingDims,
-    const int64_t *startIndicesBatchingDims,                //
-    intptr_t nStartIndexMap, const int64_t *startIndexMap,  //
+    const int64_t* startIndicesBatchingDims,                //
+    intptr_t nStartIndexMap, const int64_t* startIndexMap,  //
     int64_t indexVectorDim) {
   return wrap(mlir::mhlo::GatherDimensionNumbersAttr::get(
       unwrap(ctx), llvm::ArrayRef(offsetDims, nOffsetDims),
@@ -217,10 +217,10 @@ int64_t mlirMhloGatherDimensionNumbersGetIndexVectorDim(MlirAttribute attr) {
 
 MlirAttribute mlirMhloDotDimensionNumbersGet(
     MlirContext ctx, intptr_t nLhsBatchingDimensions,
-    const int64_t *lhsBatchingDimensions, intptr_t nRhsBatchingDimensions,
-    const int64_t *rhsBatchingDimensions, intptr_t nLhsContractingDimensions,
-    const int64_t *lhsContractingDimensions, intptr_t nRhsContractingDimensions,
-    const int64_t *rhsContractingDimensions) {
+    const int64_t* lhsBatchingDimensions, intptr_t nRhsBatchingDimensions,
+    const int64_t* rhsBatchingDimensions, intptr_t nLhsContractingDimensions,
+    const int64_t* lhsContractingDimensions, intptr_t nRhsContractingDimensions,
+    const int64_t* rhsContractingDimensions) {
   return wrap(mlir::mhlo::DotDimensionNumbersAttr::get(
       unwrap(ctx),
       llvm::ArrayRef(lhsBatchingDimensions, nLhsBatchingDimensions),
@@ -291,11 +291,11 @@ int64_t mlirMhloDotDimensionNumbersGetRhsContractingDimensionsElem(
 
 MlirAttribute mlirMhloConvDimensionNumbersGet(
     MlirContext ctx, int64_t inputBatchDimension, int64_t inputFeatureDimension,
-    intptr_t nInputSpatialDimensions, const int64_t *inputSpatialDimensions,
+    intptr_t nInputSpatialDimensions, const int64_t* inputSpatialDimensions,
     int64_t kernelInputFeatureDimension, int64_t kernelOutputFeatureDimension,
-    intptr_t nKernelSpatialDimensions, const int64_t *kernelSpatialDimensions,
+    intptr_t nKernelSpatialDimensions, const int64_t* kernelSpatialDimensions,
     int64_t outputBatchDimension, int64_t outputFeatureDimension,
-    intptr_t nOutputSpatialDimensions, const int64_t *outputSpatialDimensions) {
+    intptr_t nOutputSpatialDimensions, const int64_t* outputSpatialDimensions) {
   return wrap(mlir::mhlo::ConvDimensionNumbersAttr::get(
       unwrap(ctx), inputBatchDimension, inputFeatureDimension,
       llvm::ArrayRef(inputSpatialDimensions, nInputSpatialDimensions),
@@ -389,8 +389,8 @@ int64_t mlirMhloConvDimensionNumbersGetOutputSpatialDimensionsElem(
 
 MLIR_CAPI_EXPORTED MlirAttribute mlirMhloOutputOperandAliasGet(
     MlirContext ctx, intptr_t nOutputTupleIndices,
-    const int64_t *outputTupleIndices, int64_t operandIndex,
-    intptr_t nOperandTupleIndices, const int64_t *operandTupleIndices) {
+    const int64_t* outputTupleIndices, int64_t operandIndex,
+    intptr_t nOperandTupleIndices, const int64_t* operandTupleIndices) {
   return wrap(mlir::mhlo::OutputOperandAliasAttr::get(
       unwrap(ctx), llvm::ArrayRef(outputTupleIndices, nOutputTupleIndices),
       operandIndex, llvm::ArrayRef(operandTupleIndices, nOperandTupleIndices)));
@@ -667,7 +667,7 @@ int64_t mlirMhloChannelHandleGetType(MlirAttribute attr) {
 //
 
 MlirAttribute mlirMhloTypeExtensionsGet(MlirContext ctx, intptr_t nBounds,
-                                        const int64_t *bounds) {
+                                        const int64_t* bounds) {
   return wrap(mlir::mhlo::TypeExtensionsAttr::get(
       unwrap(ctx), llvm::ArrayRef(bounds, nBounds)));
 }
@@ -686,4 +686,3 @@ int64_t mlirMhloTypeExtensionsGetBoundsElem(MlirAttribute attr, intptr_t pos) {
   return mlir::cast<mlir::mhlo::TypeExtensionsAttr>(unwrap(attr))
       .getBounds()[pos];
 }
-

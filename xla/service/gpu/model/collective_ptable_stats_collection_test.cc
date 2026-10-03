@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/model/collective_ptable_stats_collection.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {

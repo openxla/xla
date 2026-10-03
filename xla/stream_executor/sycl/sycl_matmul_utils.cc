@@ -325,7 +325,7 @@ absl::StatusOr<dnnl::memory::desc> ShapeToMemDesc(const xla::Shape& shape) {
     return dnnl::memory::desc{};
   }
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type dtype,
-                   sycl::ToOneDnnDataType(shape.element_type()));
+                        sycl::ToOneDnnDataType(shape.element_type()));
   return dnnl::memory::desc(dims, dtype, strides);
 }
 
@@ -400,11 +400,11 @@ CreateMatMulPrimDescFromGemmConfig(
 
   // Get OneDNN data type from layout
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type lhs_dtype,
-                   sycl::ToOneDnnDataType(lhs_layout.dtype));
+                        sycl::ToOneDnnDataType(lhs_layout.dtype));
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type rhs_dtype,
-                   sycl::ToOneDnnDataType(rhs_layout.dtype));
+                        sycl::ToOneDnnDataType(rhs_layout.dtype));
   ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type output_dtype,
-                   sycl::ToOneDnnDataType(output_layout.dtype));
+                        sycl::ToOneDnnDataType(output_layout.dtype));
 
   auto lhs_md = dnnl::memory::desc(lhs_dims, lhs_dtype, lhs_strides);
   auto rhs_md = dnnl::memory::desc(rhs_dims, rhs_dtype, rhs_strides);
@@ -416,7 +416,7 @@ CreateMatMulPrimDescFromGemmConfig(
   // Set up post-ops based on epilogue
   dnnl::post_ops post_ops;
   ABSL_ASSIGN_OR_RETURN(sycl_gemm::GemmBackendEpilogue sycl_epilogue,
-                   sycl_gemm::AsSYCLEpilogue(epilogue));
+                        sycl_gemm::AsSYCLEpilogue(epilogue));
 
   switch (sycl_epilogue) {
     case sycl_gemm::GemmBackendEpilogue::RELU:
@@ -530,7 +530,7 @@ absl::Status DoOnednnGemm(int64_t batch_size, const MatrixDescriptor& lhs,
   if (scratchpad_size > 0) {
     if (scratch_allocator != nullptr) {
       ABSL_ASSIGN_OR_RETURN(stream_executor::DeviceAddress<uint8_t> alloc,
-                       scratch_allocator->AllocateBytes(scratchpad_size));
+                            scratch_allocator->AllocateBytes(scratchpad_size));
       workspace_addr = alloc.opaque();
     } else {
       workspace_addr = workspace.opaque();

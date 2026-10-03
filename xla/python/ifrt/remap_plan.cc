@@ -61,7 +61,7 @@ absl::StatusOr<RemapPlan::InputDeviceRange> InputDeviceRangeFromProto(
   RemapPlan::InputDeviceRange range;
   range.in_array = proto.in_array();
   ABSL_ASSIGN_OR_RETURN(range.input_devices,
-                   DeviceList::FromProto(client, proto.device_list()));
+                        DeviceList::FromProto(client, proto.device_list()));
   return range;
 }
 
@@ -221,8 +221,9 @@ InputDevicesForOutputMapFromMappings(Client* client,
                  absl::c_equal(builder.devices, out_devices->devices())) {
         interval_device_list = out_devices;
       } else {
-        ABSL_ASSIGN_OR_RETURN(interval_device_list,
-                         client->MakeDeviceList(std::move(builder.devices)));
+        ABSL_ASSIGN_OR_RETURN(
+            interval_device_list,
+            client->MakeDeviceList(std::move(builder.devices)));
       }
       ranges.push_back({builder.in_array, std::move(interval_device_list)});
     }
@@ -437,9 +438,9 @@ absl::Status CheckArraySpecConsistency(int in_array, const ArraySpec& in_spec,
   }
 
   ABSL_ASSIGN_OR_RETURN(const Shape in_shard_shape,
-                   in_spec.sharding->GetShardShape(in_spec.shape));
+                        in_spec.sharding->GetShardShape(in_spec.shape));
   ABSL_ASSIGN_OR_RETURN(const Shape out_shard_shape,
-                   out_spec.sharding->GetShardShape(out_spec.shape));
+                        out_spec.sharding->GetShardShape(out_spec.shape));
   if (in_shard_shape != out_shard_shape) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Input and output must have the same shard shape: %v (input %d) vs. %v "
@@ -614,7 +615,7 @@ absl::StatusOr<RemapPlan> RemapPlan::FromProto(Client* client,
   input_specs.reserve(proto.input_specs_size());
   for (const auto& input_spec_proto : proto.input_specs()) {
     ABSL_ASSIGN_OR_RETURN(ArraySpec input_spec,
-                     ArraySpec::FromProto(client, input_spec_proto));
+                          ArraySpec::FromProto(client, input_spec_proto));
     input_specs.push_back(std::move(input_spec));
   }
 
@@ -622,7 +623,7 @@ absl::StatusOr<RemapPlan> RemapPlan::FromProto(Client* client,
   output_specs.reserve(proto.output_specs_size());
   for (const auto& output_spec_proto : proto.output_specs()) {
     ABSL_ASSIGN_OR_RETURN(ArraySpec output_spec,
-                     ArraySpec::FromProto(client, output_spec_proto));
+                          ArraySpec::FromProto(client, output_spec_proto));
     output_specs.push_back(std::move(output_spec));
   }
 
@@ -634,8 +635,8 @@ absl::StatusOr<RemapPlan> RemapPlan::FromProto(Client* client,
         input_devices_for_output_map[inputs_for_output_proto.out_array()];
     for (const auto& inputs_range_proto :
          inputs_for_output_proto.input_devices()) {
-      ABSL_ASSIGN_OR_RETURN(auto devices,
-                       InputDeviceRangeFromProto(client, inputs_range_proto));
+      ABSL_ASSIGN_OR_RETURN(
+          auto devices, InputDeviceRangeFromProto(client, inputs_range_proto));
       input_ranges.push_back(std::move(devices));
     }
   }
@@ -643,8 +644,8 @@ absl::StatusOr<RemapPlan> RemapPlan::FromProto(Client* client,
   if (input_devices_for_output_map.size() < output_specs.size() &&
       !proto.mappings().empty()) {
     ABSL_ASSIGN_OR_RETURN(auto computed_map,
-                     InputDevicesForOutputMapFromMappings(client, input_specs,
-                                                          output_specs, proto));
+                          InputDevicesForOutputMapFromMappings(
+                              client, input_specs, output_specs, proto));
     if (input_devices_for_output_map.empty()) {
       input_devices_for_output_map = std::move(computed_map);
     } else {
@@ -685,7 +686,8 @@ absl::Status RemapPlan::ToProto(RemapPlanProto& proto,
   }
   proto.mutable_output_specs()->Reserve(rep_->output_specs.size());
   for (const auto& output_spec : rep_->output_specs) {
-    ABSL_RETURN_IF_ERROR(output_spec.ToProto(*proto.add_output_specs(), version));
+    ABSL_RETURN_IF_ERROR(
+        output_spec.ToProto(*proto.add_output_specs(), version));
   }
 
   proto.mutable_input_devices_for_output()->Reserve(

@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -47,8 +49,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -161,7 +161,8 @@ absl::Status HloControlFlowFlattening::FlattenWhileLoop(
   HloInstruction* new_tuple =
       TupleUtil::AppendSuffix(old_tuple, {initialization});
   int new_tuple_size = new_tuple->shape().tuple_shapes().size();
-  ABSL_RETURN_IF_ERROR(while_hlo->ReplaceOperandWithDifferentShape(0, new_tuple));
+  ABSL_RETURN_IF_ERROR(
+      while_hlo->ReplaceOperandWithDifferentShape(0, new_tuple));
 
   auto change_op_shape = [&](HloInstruction* instruction) {
     Shape* shape = instruction->mutable_shape();
@@ -188,7 +189,8 @@ absl::Status HloControlFlowFlattening::FlattenWhileLoop(
         prefix = TupleUtil::ExtractPrefix(
             new_tuple, new_tuple->shape().tuple_shapes().size() - 1);
       }
-      ABSL_RETURN_IF_ERROR(new_tuple->ReplaceUseWithDifferentShape(user, prefix));
+      ABSL_RETURN_IF_ERROR(
+          new_tuple->ReplaceUseWithDifferentShape(user, prefix));
     }
     return prefix;
   };
@@ -249,7 +251,8 @@ absl::Status HloControlFlowFlattening::FlattenWhileLoop(
 
   // Take care of the users of this while loop.
   ABSL_RETURN_IF_ERROR(change_op_shape(while_hlo));
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * prefix, replace_non_gte_users(while_hlo));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * prefix,
+                        replace_non_gte_users(while_hlo));
 
   // If the while loop had been the root of its computation, make the prefix new
   // root.
@@ -345,7 +348,8 @@ absl::Status HloControlFlowFlattening::RemoveOutfeed(
   // For SPMD graphs, partitioner requires that side-effecting custom calls have
   // a sharding that is non-replicated.
   custom_call->set_sharding(HloSharding::Manual());
-  ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(outfeed_hlo, custom_call));
+  ABSL_RETURN_IF_ERROR(
+      computation->ReplaceInstruction(outfeed_hlo, custom_call));
   custom_call->SetAndSanitizeName(outfeed_hlo->name());
 
   return absl::OkStatus();
@@ -469,10 +473,10 @@ absl::Status HloControlFlowFlattening::RemoveEntryComputationLayoutDynamism(
       Shape parameter_shape =
           module->config().entry_computation_layout().parameter_shape(idx);
       ABSL_RETURN_IF_ERROR(module->mutable_config()
-                          .mutable_entry_computation_layout()
-                          ->mutable_parameter_layout(idx)
-                          ->CopyLayoutFromShape(
-                              ShapeUtil::MakeStaticShape(parameter_shape)));
+                               .mutable_entry_computation_layout()
+                               ->mutable_parameter_layout(idx)
+                               ->CopyLayoutFromShape(ShapeUtil::MakeStaticShape(
+                                   parameter_shape)));
     }
     Shape result_shape =
         module->config().entry_computation_layout().result_shape();
@@ -591,7 +595,8 @@ absl::StatusOr<bool> HloControlFlowFlattening::RunImpl(
   }
 
   HloDCE hlo_dce;
-  ABSL_ASSIGN_OR_RETURN(bool dce_changed, hlo_dce.Run(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool dce_changed,
+                        hlo_dce.Run(module, execution_threads));
   changed |= dce_changed;
 
   // Fix the schedule if the module was scheduled.

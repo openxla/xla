@@ -96,7 +96,7 @@ absl::Status RewriteScanToTritonFusion(HloInstruction* scan) {
   module->SetAndUniquifyInstrName(fusion, "triton_scan");
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   fusion->backend_config<GpuBackendConfig>());
+                        fusion->backend_config<GpuBackendConfig>());
   gpu_config.mutable_fusion_backend_config()->set_kind(kTritonFusionKind);
   ABSL_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 

@@ -233,9 +233,11 @@ absl::StatusOr<bool> AllReduceReassociate::RunImpl(
       // Check Dynamic-slice pattern is identical
       if (lhs->opcode() == HloOpcode::kDynamicSlice) {
         HloInstruction* original_rhs_operand = rhs->mutable_operand(0);
-        ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, lhs->mutable_operand(0)));
+        ABSL_RETURN_IF_ERROR(
+            rhs->ReplaceOperandWith(0, lhs->mutable_operand(0)));
         if (!lhs->Identical(*rhs)) {
-          ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, original_rhs_operand));
+          ABSL_RETURN_IF_ERROR(
+              rhs->ReplaceOperandWith(0, original_rhs_operand));
           continue;
         }
         ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, original_rhs_operand));

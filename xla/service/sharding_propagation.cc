@@ -207,6 +207,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReverse:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kShiftLeft:
     case HloOpcode::kShiftRightArithmetic:
@@ -248,12 +249,14 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kDivide:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kLogistic:
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
@@ -1561,8 +1564,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
           auto copy = computation->AddInstruction(HloInstruction::CreateUnary(
               instruction->shape(), HloOpcode::kCopy,
               instruction->mutable_operand(0)));
-          ABSL_ASSIGN_OR_RETURN(std::ignore,
-                           computation->ReplaceInstruction(
+          ABSL_ASSIGN_OR_RETURN(
+              std::ignore, computation->ReplaceInstruction(
                                instruction, copy, /*preserve_sharding=*/false,
                                /*relay_control_dependency=*/false,
                                /*remove_unused_operands=*/false));
@@ -1582,8 +1585,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
               instruction->sharding());
         }
         if (shard_group_remove_instruction) {
-          ABSL_ASSIGN_OR_RETURN(std::ignore,
-                           computation->ReplaceInstruction(
+          ABSL_ASSIGN_OR_RETURN(
+              std::ignore, computation->ReplaceInstruction(
                                instruction, instruction->mutable_operand(0),
                                /*preserve_sharding=*/false,
                                /*relay_control_dependency=*/false,
@@ -1591,8 +1594,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
         }
       } else {
         ABSL_ASSIGN_OR_RETURN(std::ignore,
-                         process_shard_group_instruction(
-                             instruction, /*replaced_with_copy=*/false));
+                              process_shard_group_instruction(
+                                  instruction, /*replaced_with_copy=*/false));
       }
     }
   }
@@ -1634,7 +1637,7 @@ int64_t ComputeNonRootUsers(const HloInstruction* instr) {
     const DomainMetadata::Domain& domain, const DomainMetadata* metadata) {
   if (metadata != nullptr) {
     ABSL_ASSIGN_OR_RETURN(const auto& sharding_metadata,
-                     ShardingMetadata::ToShardingMetadata(metadata));
+                          ShardingMetadata::ToShardingMetadata(metadata));
     const auto& sharding = sharding_metadata->sharding();
     if (sharding != nullptr) {
       bool is_spatially_partitioned = !sharding->IsSingleDevice();
@@ -3528,11 +3531,11 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
       if (instruction->IsCustomCall(spmd::kShardBarrierFrom) ||
           instruction->IsCustomCall(spmd::kShardBarrierTo)) {
         ABSL_ASSIGN_OR_RETURN(std::ignore,
-                         computation->ReplaceInstruction(
-                             instruction, instruction->mutable_operand(0),
-                             /*preserve_sharding=*/false,
-                             /*relay_control_dependency=*/false,
-                             /*remove_unused_operands=*/false));
+                              computation->ReplaceInstruction(
+                                  instruction, instruction->mutable_operand(0),
+                                  /*preserve_sharding=*/false,
+                                  /*relay_control_dependency=*/false,
+                                  /*remove_unused_operands=*/false));
       }
     }
   }
@@ -3615,9 +3618,10 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
       module, allow_spmd_sharding_propagation_to_output_vector_,
       allow_spmd_sharding_propagation_to_parameters_vector_);
 
-  ABSL_RETURN_IF_ERROR(hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-      module, allow_spmd_sharding_propagation_to_output_vector_,
-      allow_spmd_sharding_propagation_to_parameters_vector_));
+  ABSL_RETURN_IF_ERROR(
+      hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
+          module, allow_spmd_sharding_propagation_to_output_vector_,
+          allow_spmd_sharding_propagation_to_parameters_vector_));
 
   VLOG(1) << "Sharding propagation completed after " << iterations
           << " iterations";

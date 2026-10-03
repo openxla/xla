@@ -136,7 +136,8 @@ class HloPassFix : public Pass {
     // If Pass does not override the default
     // HloPassInterface::RunOnChangedComputations that calls into
     // HloPassFix<Pass>::RunImpl, avoid infinite recursion.
-    ABSL_ASSIGN_OR_RETURN(bool changed, Pass::RunImpl(module, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(bool changed,
+                          Pass::RunImpl(module, execution_threads));
     if (changed) {
       auto computations = module->computations(execution_threads);
       run_state->changed_this_iteration.insert(computations.begin(),

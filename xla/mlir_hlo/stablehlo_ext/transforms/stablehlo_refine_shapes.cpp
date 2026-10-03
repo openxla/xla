@@ -165,8 +165,8 @@ struct StablehloRefineShapesPass
 
 }  // namespace
 
-void populateStablehloExtRefineShapesPatterns(RewritePatternSet *patterns,
-                                              MLIRContext *context) {
+void populateStablehloExtRefineShapesPatterns(RewritePatternSet* patterns,
+                                              MLIRContext* context) {
   stablehlo::populateStablehloRefineShapesPatterns(context, patterns);
   stablehlo::populateStablehloShapeFolderPatterns(context, patterns);
   patterns->add<RefineDynamicReduceWindowOpPattern>(context);

@@ -77,7 +77,8 @@ absl::StatusOr<std::vector<SmiDeviceHandle>> EnumerateDevices() {
 }
 
 absl::StatusOr<SmiDeviceHandle> FindDevice(const BdfComponents& target_bdf) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices, EnumerateDevices());
+  ABSL_ASSIGN_OR_RETURN(std::vector<SmiDeviceHandle> devices,
+                        EnumerateDevices());
 
   for (SmiDeviceHandle device : devices) {
     uint64_t bdfid = 0;
@@ -122,6 +123,11 @@ absl::StatusOr<PcieLinkStatus> QueryPcieLinkStatus(SmiDeviceHandle device) {
   return PcieLinkStatus{
       static_cast<uint32_t>(gpu_metrics.pcie_link_speed) * 100,
       gpu_metrics.pcie_link_width};
+}
+
+absl::StatusOr<uint64_t> QueryPeakMemoryBandwidthGbps(SmiDeviceHandle) {
+  return absl::UnimplementedError(
+      "rocm-smi cannot report peak VRAM bandwidth; amd-smi (ROCm 7.13+) can");
 }
 
 absl::StatusOr<uint64_t> QueryHiveId(SmiDeviceHandle device) {

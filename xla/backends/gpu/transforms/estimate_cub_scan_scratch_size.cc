@@ -51,9 +51,9 @@ static absl::StatusOr<int64_t> InvokeInstantiateHandlerAndGetScratchSize(
   ffi::ExecutionState state;
   ffi::InvokeContext context{};
   context.state_context = {&state, nullptr, nullptr};
-  ABSL_RETURN_IF_ERROR(ffi::Invoke(ffi::GetXlaFfiApi(),
-                              registration.bundle.instantiate, call_frame,
-                              context, XLA_FFI_ExecutionStage_INSTANTIATE));
+  ABSL_RETURN_IF_ERROR(
+      ffi::Invoke(ffi::GetXlaFfiApi(), registration.bundle.instantiate,
+                  call_frame, context, XLA_FFI_ExecutionStage_INSTANTIATE));
 
   // Read the scratch size from the execution state.
   ABSL_ASSIGN_OR_RETURN(int64_t* scratch_size_ptr, state.Get<int64_t>());
@@ -65,11 +65,12 @@ absl::Status EstimateCubScanScratchSize::RunOnScanInstruction(
   CHECK_EQ(custom_call->custom_call_target(),
            kCubDeviceScanUnassignedScratchSizeTarget);
   ABSL_ASSIGN_OR_RETURN(CubScanOptions options,
-                   custom_call->backend_config<CubScanOptions>());
+                        custom_call->backend_config<CubScanOptions>());
 
-  ABSL_ASSIGN_OR_RETURN(ffi::HandlerRegistration handler,
-                   ffi::FindHandler(kCubDeviceScanUnassignedScratchSizeTarget,
-                                    platform_name_));
+  ABSL_ASSIGN_OR_RETURN(
+      ffi::HandlerRegistration handler,
+      ffi::FindHandler(kCubDeviceScanUnassignedScratchSizeTarget,
+                       platform_name_));
 
   ffi::CallFrameBuilder::AttributesBuilder attrs;
   xla::PrimitiveType type = custom_call->operand(0)->shape().element_type();
@@ -104,8 +105,9 @@ absl::Status EstimateCubScanScratchSize::RunOnScanInstruction(
       static_cast<int32_t>(options.kind()),
       options.is_reverse() ? "true" : "false");
   new_custom_call->set_raw_backend_config_string(backend_config);
-  ABSL_RETURN_IF_ERROR(custom_call->parent()->ReplaceInstructionWithDifferentShape(
-      custom_call, new_custom_call));
+  ABSL_RETURN_IF_ERROR(
+      custom_call->parent()->ReplaceInstructionWithDifferentShape(
+          custom_call, new_custom_call));
   return absl::OkStatus();
 }
 

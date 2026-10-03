@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu/model/sol_gpu_cost_model_stats_collection.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"

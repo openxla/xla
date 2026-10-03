@@ -13,13 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -32,7 +34,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tests/test_utils.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla {
@@ -121,8 +122,8 @@ TEST_P(CollectivePipelineParallelismTest,
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
   std::unique_ptr<VerifiedHloModule> module;
-  TF_ASSERT_OK_AND_ASSIGN(module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
   // Inputs for replica i are
   // A = {{i+1, i+1},
@@ -139,7 +140,7 @@ TEST_P(CollectivePipelineParallelismTest,
   for (int64_t i = 0; i < kNumReplicas; ++i) {
     inputs.push_back({&inputs_a[i], &input_b_replicated});
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
       ExecuteReplicated(std::move(module), inputs, kNumReplicas,
                         /*run_hlo_passes=*/true));
@@ -316,7 +317,7 @@ TEST_P(CollectivePipelineParallelismTest, NaiveBFSMicrobatch4Replica4) {
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -345,10 +346,9 @@ TEST_P(CollectivePipelineParallelismTest, NaiveBFSMicrobatch4Replica4) {
                                              {&weights_r1, &fake_input},
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
 
   // Check pipeline output for last replica.
   // The combined effect of the pipeline is to scale the input data by 24.0.
@@ -440,7 +440,7 @@ TEST_P(CollectivePipelineParallelismTest, NaiveBFSMicrobatch5Replica4) {
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -473,10 +473,9 @@ TEST_P(CollectivePipelineParallelismTest, NaiveBFSMicrobatch5Replica4) {
                                              {&weights_r1, &fake_input},
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
                                            ErrorSpec{1e-5, 1e-5}));
 }
@@ -563,7 +562,7 @@ TEST_P(CollectivePipelineParallelismTest,
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -598,10 +597,9 @@ TEST_P(CollectivePipelineParallelismTest,
                                              {&weights_r1, &fake_input},
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
                                            ErrorSpec{1e-5, 1e-5}));
 }
@@ -704,7 +702,7 @@ TEST_P(CollectivePipelineParallelismTest,
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -739,10 +737,9 @@ TEST_P(CollectivePipelineParallelismTest,
                                              {&weights_r1, &fake_input},
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
                                            ErrorSpec{1e-5, 1e-5}));
 }
@@ -847,7 +844,7 @@ TEST_P(CollectivePipelineParallelismTest,
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -882,10 +879,9 @@ TEST_P(CollectivePipelineParallelismTest,
                                              {&weights_r1, &fake_input},
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
                                            ErrorSpec{1e-5, 1e-5}));
 }
@@ -947,8 +943,8 @@ TEST_P(CollectivePipelineParallelismTest, SendRecvLoop) {
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
   std::unique_ptr<VerifiedHloModule> module;
-  TF_ASSERT_OK_AND_ASSIGN(module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
   // Create input data.
   std::vector<Literal> literals;
@@ -969,7 +965,7 @@ TEST_P(CollectivePipelineParallelismTest, SendRecvLoop) {
   }
 
   // Execute and check results.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
       ExecuteReplicated(std::move(module), inputs,
                         /*num_replicas=*/kNumPartitions,
@@ -1038,8 +1034,8 @@ TEST_P(CollectivePipelineParallelismTest, SendRecvLoop2Devices) {
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
   std::unique_ptr<VerifiedHloModule> module;
-  TF_ASSERT_OK_AND_ASSIGN(module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
   // Create input data.
   std::vector<Literal> literals;
@@ -1060,7 +1056,7 @@ TEST_P(CollectivePipelineParallelismTest, SendRecvLoop2Devices) {
   }
 
   // Execute and check results.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
       ExecuteReplicated(std::move(module), inputs,
                         /*num_replicas=*/kNumPartitions,
@@ -1139,8 +1135,8 @@ TEST_P(CollectivePipelineParallelismTest, PartiallyPipelinedAsyncSendRecvLoop) {
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
   std::unique_ptr<VerifiedHloModule> module;
-  TF_ASSERT_OK_AND_ASSIGN(module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
   // Create input data.
   std::vector<Literal> literals;
@@ -1161,7 +1157,7 @@ TEST_P(CollectivePipelineParallelismTest, PartiallyPipelinedAsyncSendRecvLoop) {
   }
 
   // Execute and check results.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
       ExecuteReplicated(std::move(module), inputs,
                         /*num_replicas=*/kNumPartitions,
@@ -1242,8 +1238,8 @@ TEST_P(CollectivePipelineParallelismTest,
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
   std::unique_ptr<VerifiedHloModule> module;
-  TF_ASSERT_OK_AND_ASSIGN(module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
   // Create input data.
   std::vector<Literal> literals;
@@ -1264,7 +1260,7 @@ TEST_P(CollectivePipelineParallelismTest,
   }
 
   // Execute and check results.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
       ExecuteReplicated(std::move(module), inputs,
                         /*num_replicas=*/kNumPartitions,
@@ -1472,7 +1468,7 @@ TEST_P(CollectivePipelineParallelismTest,
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<VerifiedHloModule> module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -1498,10 +1494,9 @@ TEST_P(CollectivePipelineParallelismTest,
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
   // TODO(rosiezou): enable send/recv combiner pass.
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
                                            ErrorSpec{1e-5, 1e-5}));
 }
@@ -1659,7 +1654,7 @@ TEST_P(CollectivePipelineParallelismTest,
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
                                        /*name=*/"test", kMoreComputationsStr),
@@ -1684,10 +1679,9 @@ TEST_P(CollectivePipelineParallelismTest,
                                              {&weights_r1, &fake_input},
                                              {&weights_r2, &fake_input},
                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                       ExecuteReplicated(std::move(module), args, kNumReplicas,
+                                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(
       expected_output, results[3],
       ErrorSpec{/*abs_error=*/1e-5, /*rel_error=*/1e-5}));
@@ -2001,8 +1995,8 @@ ENTRY %main.204 (Arg_0.1: f32[4,4096,4096], Arg_1.2: f32[4,5,4096,8192])
 
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
   // Create device assignment running across partitions.
   DeviceAssignment device_assignment(/*replica_count=*/kNumReplicas,
@@ -2011,13 +2005,13 @@ ENTRY %main.204 (Arg_0.1: f32[4,4096,4096], Arg_1.2: f32[4,5,4096,8192])
     device_assignment(0, i) = i;
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> fake_args,
-                          MakeFakeArguments(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> fake_args,
+                       MakeFakeArguments(module.get()));
   std::vector<Literal*> args;
   for (auto& arg : fake_args) {
     args.push_back(&arg);
   }
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::vector<Literal> results,
       ExecuteReplicated(std::move(module), args,
                         /*num_replicas=*/kNumPartitions, &device_assignment,

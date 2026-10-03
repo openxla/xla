@@ -36,6 +36,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/future.h"
 #include "xla/layout.h"
@@ -63,9 +66,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -115,7 +115,7 @@ PjRtDeviceEventRef ToCpuEvent(tsl::Future<void> future) {
 CpuRawBuffer::Allocate(PjRtMemorySpace* memory_space, size_t size_bytes,
                        const CpuDeviceMemory::Allocator& allocator) {
   ABSL_ASSIGN_OR_RETURN(auto memory,
-                   CpuDeviceMemory::Allocate(size_bytes, allocator));
+                        CpuDeviceMemory::Allocate(size_bytes, allocator));
   return tsl::MakeRef<CpuRawBuffer>(memory_space, std::move(memory), size_bytes,
                                     /*is_mutable=*/true);
 }

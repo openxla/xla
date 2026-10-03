@@ -405,8 +405,8 @@ static std::optional<DynamicSliceConfig> ComputeStaticSliceConfig(
     byte_offset += slice->slice_starts(dim) * (*byte_strides)[dim];
   }
   DynamicSliceConfig config;
-  config.set_byte_offset(byte_offset);
-  config.set_byte_stride(0);
+  config.mutable_linear()->set_byte_offset(byte_offset);
+  config.mutable_linear()->set_byte_stride(0);
   return config;
 }
 
@@ -418,7 +418,8 @@ static absl::StatusOr<std::vector<Offset>> ResolveOffsets(
   offsets.reserve(instr->operand_count() - first_offset_index);
   for (int64_t i = first_offset_index; i < instr->operand_count(); ++i) {
     int64_t dim = i - first_offset_index;
-    ABSL_ASSIGN_OR_RETURN(Offset::Expr expr, BuildOffsetExpr(instr->operand(i)));
+    ABSL_ASSIGN_OR_RETURN(Offset::Expr expr,
+                          BuildOffsetExpr(instr->operand(i)));
     offsets.push_back(Offset{dim, std::move(expr)});
   }
   return offsets;
@@ -508,6 +509,7 @@ DynamicSliceFusion::ResolveParameter(const HloInstruction* operand) {
     source = slice->operand(0);
   }
 
+  Shape source_shape = source->shape();
   source = WalkThroughBitcasts(source);
   auto* parameter = DynCast<HloParameterInstruction>(source);
   if (parameter == nullptr) {
@@ -519,7 +521,7 @@ DynamicSliceFusion::ResolveParameter(const HloInstruction* operand) {
 
   return DynamicSliceFusion::Parameter{
       parameter->parameter_number(),
-      source->shape(),
+      std::move(source_shape),
       slice_shape,
       config,
       std::move(offsets),
@@ -533,7 +535,7 @@ DynamicSliceFusion::ResolveParameters(const HloInstruction* hero) {
 
   for (const HloInstruction* operand : hero->operands()) {
     ABSL_ASSIGN_OR_RETURN(DynamicSliceFusion::Parameter parameter,
-                     ResolveParameter(operand));
+                          ResolveParameter(operand));
     result.push_back(std::move(parameter));
   }
 
@@ -561,7 +563,7 @@ DynamicSliceFusion::ResolveResults(const HloInstruction* hero) {
 
       for (const HloInstruction* user : leaf_gte->users()) {
         ABSL_ASSIGN_OR_RETURN(auto rs,
-                         ResolveOneResultChain(user, leaves[i].shape, i));
+                              ResolveOneResultChain(user, leaves[i].shape, i));
         if (rs.has_value()) {
           results[i] = *std::move(rs);
         }
@@ -572,7 +574,8 @@ DynamicSliceFusion::ResolveResults(const HloInstruction* hero) {
 
   // Non-tuple hero: single result.
   for (const HloInstruction* user : hero->users()) {
-    ABSL_ASSIGN_OR_RETURN(auto rs, ResolveOneResultChain(user, hero->shape(), 0));
+    ABSL_ASSIGN_OR_RETURN(auto rs,
+                          ResolveOneResultChain(user, hero->shape(), 0));
     if (rs.has_value()) {
       return std::vector{*std::move(rs)};
     }

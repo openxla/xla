@@ -55,8 +55,8 @@ absl::StatusOr<EventPool::Handle> EventPool::AllocateEvent(
   }
   if (!event) {
     ABSL_ASSIGN_OR_RETURN(event, NeverRunOnFiber(async_work_runner, [&]() {
-                       return executor->CreateEvent();
-                     }));
+                            return executor->CreateEvent();
+                          }));
   }
   return EventPool::Handle(pool, std::move(event));
 }
@@ -70,7 +70,7 @@ void EventPool::ThenRecordEvent(se::Stream* stream, EventPool::Handle& handle) {
 absl::StatusOr<EventPool::Handle> EventPool::ThenAllocateAndRecordEvent(
     AsyncWorkRunner* async_work_runner, se::Stream* stream) {
   ABSL_ASSIGN_OR_RETURN(EventPool::Handle handle,
-                   AllocateEvent(async_work_runner, stream->parent()));
+                        AllocateEvent(async_work_runner, stream->parent()));
   ThenRecordEvent(stream, handle);
   return handle;
 }

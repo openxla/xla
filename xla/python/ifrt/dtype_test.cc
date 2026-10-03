@@ -14,11 +14,12 @@
 
 #include "xla/python/ifrt/dtype.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "xla/python/ifrt/dtype.pb.h"

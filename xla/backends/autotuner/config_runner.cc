@@ -23,18 +23,19 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "google/protobuf/any.pb.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
@@ -130,11 +131,23 @@ ConfigRunner::ConfigProfile ConfigRunner::ProfileCandidate(
       profiler_->Profile(candidate.executable.get(), input_buffers);
 
   if (!profile_result.ok()) {
+    if (options_.enable_correctness_check) {
+      absl::Status redzone = profiler_->CheckInputBuffers(input_buffers);
+      if (!redzone.ok()) {
+        return ConfigProfile{
+            /*config=*/std::move(candidate.config),
+            /*failure=*/
+            Failure{FailureKind::kRedzoneCheckFailed, redzone.ToString()},
+        };
+      }
+    }
+    FailureKind failure_kind =
+        absl::StrContains(profile_result.status().message(), "Redzone")
+            ? FailureKind::kRedzoneCheckFailed
+            : FailureKind::kExecutionFailed;
     return ConfigProfile{
         /*config=*/std::move(candidate.config),
-        /*failure=*/
-        Failure{FailureKind::kExecutionFailed,
-                profile_result.status().ToString()},
+        /*failure=*/Failure{failure_kind, profile_result.status().ToString()},
     };
   }
 

@@ -27,6 +27,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
@@ -41,8 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -64,8 +64,8 @@ absl::Status GenericTransferManager::WriteSingleTupleIndexTable(
   for (const se::DeviceAddressBase& element : elements) {
     element_pointers->push_back(element.opaque());
   }
-  ABSL_RETURN_IF_ERROR(TransferBufferToDevice(stream, GetByteSizeRequirement(shape),
-                                         element_pointers->data(), region));
+  ABSL_RETURN_IF_ERROR(TransferBufferToDevice(
+      stream, GetByteSizeRequirement(shape), element_pointers->data(), region));
   // Ensure the buffer is transferred before we destroy element_pointers.
   ABSL_RETURN_IF_ERROR(
       stream->DoHostCallback([element_pointers{std::move(element_pointers)}]() {
@@ -256,7 +256,7 @@ absl::Status GenericTransferManager::TransferIntNArrayFromDevice(
   int64_t packed_size = CeilOfRatio(num_elements, elements_per_byte);
   auto packed_dst_data = std::make_unique<std::vector<char>>(packed_size);
   ABSL_RETURN_IF_ERROR(TransferBufferFromDevice(stream, source, packed_size,
-                                           packed_dst_data->data()));
+                                                packed_dst_data->data()));
   ABSL_RETURN_IF_ERROR(
       stream->DoHostCallback([destination, bit_width, num_elements,
                               packed_dst_data = std::move(packed_dst_data)]() {
@@ -278,8 +278,8 @@ absl::Status GenericTransferManager::TransferIntNArrayToDevice(
            absl::MakeSpan(static_cast<const char*>(source), num_elements),
            absl::MakeSpan(*packed_src_data));
   TF_RET_CHECK(packed_src_data->size() == destination->size());
-  ABSL_RETURN_IF_ERROR(TransferBufferToDevice(stream, packed_src_data->size(),
-                                         packed_src_data->data(), destination));
+  ABSL_RETURN_IF_ERROR(TransferBufferToDevice(
+      stream, packed_src_data->size(), packed_src_data->data(), destination));
   return stream->DoHostCallback([keep_alive = std::move(packed_src_data)] {});
 }
 

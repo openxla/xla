@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla::gpu {
 
@@ -98,7 +98,7 @@ absl::StatusOr<int64_t> GetTotalTimePs(const XPlane& plane) {
   int64_t total_time_ps = 0;
   for (const auto& line : plane.lines()) {
     ABSL_ASSIGN_OR_RETURN(xla::gpu::LineStats line_stats,
-                     xla::gpu::ProcessLineEvents(line));
+                          xla::gpu::ProcessLineEvents(line));
     total_time_ps += line_stats.device_time_ps;
   }
   return total_time_ps;
@@ -203,7 +203,7 @@ absl::StatusOr<GpuDeviceStats> CalculateGpuDeviceStats(const XSpace& xspace) {
   if (const XPlane* host_plane = tsl::profiler::FindPlaneWithName(
           xspace, tsl::profiler::kHostThreadsPlaneName)) {
     ABSL_ASSIGN_OR_RETURN(result.peak_memory_usage_bytes,
-                     GetGPUPeakMemory(host_plane));
+                          GetGPUPeakMemory(host_plane));
   }
 
   // Iterate over all planes to find GPU devices
@@ -234,7 +234,7 @@ absl::StatusOr<GpuDeviceStats> CalculateGpuDeviceStats(const XSpace& xspace) {
     for (const auto& line : plane.lines()) {
       if (absl::StartsWith(line.name(), "Stream #")) {
         ABSL_ASSIGN_OR_RETURN(LineStats line_stats,
-                         ProcessLineEvents(line, memcpy_details_id));
+                              ProcessLineEvents(line, memcpy_details_id));
         if (line_stats.device_time_ps > 0) {
           plane_device_time_ps += line_stats.device_time_ps;
           plane_memcpy_time_ps += line_stats.memcpy_time_ps;

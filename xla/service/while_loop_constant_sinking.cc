@@ -30,14 +30,14 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/while_util.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -208,7 +208,7 @@ absl::StatusOr<bool> WhileLoopConstantSinking::RunImpl(
       // if this is a while instruction.
       if (instr->opcode() == HloOpcode::kWhile) {
         ABSL_ASSIGN_OR_RETURN(bool result,
-                         TrySinkingConstantsIntoWhileLoop(module, instr));
+                              TrySinkingConstantsIntoWhileLoop(module, instr));
         changed |= result;
       }
       for (HloComputation* child : instr->called_computations()) {

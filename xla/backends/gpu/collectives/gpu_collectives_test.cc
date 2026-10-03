@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
 #include "absl/log/check.h"
@@ -166,15 +167,15 @@ TEST(GpuCollectivesTest, GroupLaunchMultipleCommunicators) {
     GpuCollectives::Executor executor2(streams[2].get());
     GpuCollectives::Executor executor3(streams[3].get());
 
-    ABSL_RETURN_IF_ERROR(comms01[0]->LaunchAllReduce(send_buffers[0],
-                                                recv_buffers[0], F32, kCount,
-                                                ReductionKind::SUM, executor0));
-    ABSL_RETURN_IF_ERROR(comms01[1]->LaunchAllReduce(send_buffers[1],
-                                                recv_buffers[1], F32, kCount,
-                                                ReductionKind::SUM, executor1));
-    ABSL_RETURN_IF_ERROR(comms23[0]->LaunchAllReduce(send_buffers[2],
-                                                recv_buffers[2], F32, kCount,
-                                                ReductionKind::SUM, executor2));
+    ABSL_RETURN_IF_ERROR(
+        comms01[0]->LaunchAllReduce(send_buffers[0], recv_buffers[0], F32,
+                                    kCount, ReductionKind::SUM, executor0));
+    ABSL_RETURN_IF_ERROR(
+        comms01[1]->LaunchAllReduce(send_buffers[1], recv_buffers[1], F32,
+                                    kCount, ReductionKind::SUM, executor1));
+    ABSL_RETURN_IF_ERROR(
+        comms23[0]->LaunchAllReduce(send_buffers[2], recv_buffers[2], F32,
+                                    kCount, ReductionKind::SUM, executor2));
     return comms23[1]->LaunchAllReduce(send_buffers[3], recv_buffers[3], F32,
                                        kCount, ReductionKind::SUM, executor3);
   }));
@@ -483,18 +484,18 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
   auto f0 = MakeFutureOn<void>(exec, [&]() -> absl::Status {
     GpuCollectives::Executor gpu_exec(stream0.get());
     ABSL_RETURN_IF_ERROR(comms[0]
-                        ->Put(send0_addr, symm_recv[0].get(), 0, kNumBytes,
-                              RankId(1), gpu_exec)
-                        .Await());
+                             ->Put(send0_addr, symm_recv[0].get(), 0, kNumBytes,
+                                   RankId(1), gpu_exec)
+                             .Await());
     return comms[0]->WaitSignal(RankId(1), 1, signal_desc, gpu_exec).Await();
   });
 
   auto f1 = MakeFutureOn<void>(exec, [&]() -> absl::Status {
     GpuCollectives::Executor gpu_exec(stream1.get());
     ABSL_RETURN_IF_ERROR(comms[1]
-                        ->Put(send1_addr, symm_recv[1].get(), 0, kNumBytes,
-                              RankId(0), gpu_exec)
-                        .Await());
+                             ->Put(send1_addr, symm_recv[1].get(), 0, kNumBytes,
+                                   RankId(0), gpu_exec)
+                             .Await());
     return comms[1]->WaitSignal(RankId(0), 1, signal_desc, gpu_exec).Await();
   });
 

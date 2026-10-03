@@ -31,6 +31,7 @@ limitations under the License.
 #include "highwayhash/arch_specific.h"
 #include "highwayhash/hh_types.h"
 #include "highwayhash/highwayhash.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/layout.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/index.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace ifrt {

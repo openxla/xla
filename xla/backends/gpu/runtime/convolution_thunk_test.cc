@@ -15,15 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 
@@ -151,13 +151,13 @@ TEST(ConvolutionThunkTest, ProtoRoundTrip) {
   buffer_allocations.emplace_back(/*index=*/2, /*size=*/4, /*color=*/0);
   buffer_allocations.emplace_back(/*index=*/3, /*size=*/1024, /*color=*/0);
 
-  TF_ASSERT_OK_AND_ASSIGN(Thunk::ThunkInfo thunk_info,
-                          Thunk::ThunkInfo::FromProto(proto.thunk_info()));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(Thunk::ThunkInfo thunk_info,
+                       Thunk::ThunkInfo::FromProto(proto.thunk_info()));
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ConvolutionThunk> thunk,
       ConvolutionThunk::FromProto(thunk_info, proto.convolution_thunk(),
                                   buffer_allocations));
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
+  ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 

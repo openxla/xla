@@ -541,11 +541,12 @@ absl::StatusOr<Literal> GenerateParameterLiteral(
         }
       }
       int64_t flat_idx = current_flat_idx++;
-      ABSL_ASSIGN_OR_RETURN(Literal elem_lit,
-                       MakeDataflowConstrainedLiteral(
-                           param_shape.tuple_shapes(j), elem_state,
-                           absl::StrFormat("%s (element %d)", param->name(), j),
-                           flat_idx, options, engine));
+      ABSL_ASSIGN_OR_RETURN(
+          Literal elem_lit,
+          MakeDataflowConstrainedLiteral(
+              param_shape.tuple_shapes(j), elem_state,
+              absl::StrFormat("%s (element %d)", param->name(), j), flat_idx,
+              options, engine));
       elements.push_back(std::move(elem_lit));
     }
     return LiteralUtil::MakeTupleOwned(std::move(elements));
@@ -606,10 +607,10 @@ absl::StatusOr<std::vector<Literal>> MakeDataflowConstrainedArguments(
   int64_t current_flat_idx = 0;
   std::vector<Literal> arguments(params.size());
   for (int i = 0; i < params.size(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(arguments[i],
-                     GenerateParameterLiteral(params[i], get_param_shape(i),
-                                              constraint_states, options,
-                                              engine, current_flat_idx));
+    ABSL_ASSIGN_OR_RETURN(
+        arguments[i], GenerateParameterLiteral(params[i], get_param_shape(i),
+                                               constraint_states, options,
+                                               engine, current_flat_idx));
   }
   return std::move(arguments);
 }

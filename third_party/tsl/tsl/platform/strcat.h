@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/strings/str_cat.h"
-#include "xla/tsl/platform/macros.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/macros.h"
 
 // The AlphaNum type was designed to be used as the parameter type for StrCat().
 // Any routine accepting either a string or a number may accept it.

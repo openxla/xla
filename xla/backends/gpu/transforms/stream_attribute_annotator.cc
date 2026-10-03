@@ -137,7 +137,8 @@ absl::StatusOr<bool> WrapIntoFusionAndAnnotateStreamAttributes(
   ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
 
   instr_gpu_config.set_operation_queue_id(channel_id);
-  ABSL_RETURN_IF_ERROR(fusion_instruction->set_backend_config(instr_gpu_config));
+  ABSL_RETURN_IF_ERROR(
+      fusion_instruction->set_backend_config(instr_gpu_config));
   VLOG(3) << "Add async stream " << channel_id << " and wrapped instruction "
           << instruction->ToString();
   VLOG(3) << "  Fusion wrapper: " << fusion_instruction->ToString();
@@ -165,14 +166,14 @@ absl::StatusOr<bool> StreamAttributeAnnotator::RunImpl(
       // running on non-default stream.
       if (HloPredicateIsOp<HloOpcode::kFusion>(instr)) {
         ABSL_ASSIGN_OR_RETURN(bool comp_result,
-                         AnnotateStreamAttributesForInstruction(
-                             instr, instr_gpu_config.value()));
+                              AnnotateStreamAttributesForInstruction(
+                                  instr, instr_gpu_config.value()));
         changed |= comp_result;
       } else if (instr->opcode() == HloOpcode::kCopyStart &&
                  module->has_schedule()) {
         ABSL_ASSIGN_OR_RETURN(bool comp_result,
-                         AnnotateStreamAttributesForCopyStart(
-                             instr, channel_id, instr_gpu_config.value()));
+                              AnnotateStreamAttributesForCopyStart(
+                                  instr, channel_id, instr_gpu_config.value()));
         changed |= comp_result;
         continue;
       } else if (comp->IsAsyncComputation() &&
@@ -180,9 +181,9 @@ absl::StatusOr<bool> StreamAttributeAnnotator::RunImpl(
                   instr->opcode() == HloOpcode::kDynamicUpdateSlice) &&
                  module->has_schedule()) {
         ABSL_ASSIGN_OR_RETURN(bool comp_result,
-                         WrapIntoFusionAndAnnotateStreamAttributes(
-                             instr, channel_id, instr_gpu_config.value(),
-                             device_description_));
+                              WrapIntoFusionAndAnnotateStreamAttributes(
+                                  instr, channel_id, instr_gpu_config.value(),
+                                  device_description_));
         changed |= comp_result;
         continue;
       }

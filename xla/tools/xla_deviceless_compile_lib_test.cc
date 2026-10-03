@@ -13,16 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -41,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -65,8 +66,8 @@ absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
       tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
                         "backends/gpu/target_config/specs", spec_file);
   stream_executor::GpuTargetConfigProto target_config_proto;
-  ABSL_RETURN_IF_ERROR(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
-                                     &target_config_proto));
+  ABSL_RETURN_IF_ERROR(tsl::ReadTextProto(
+      tsl::Env::Default(), target_config_path, &target_config_proto));
   return Compiler::GpuTargetConfig::FromProto(target_config_proto);
 }
 

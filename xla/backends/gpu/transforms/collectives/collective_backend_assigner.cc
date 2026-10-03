@@ -59,7 +59,8 @@ absl::StatusOr<bool> AssignCollectivesMode(
         continue;
       }
 
-      ABSL_ASSIGN_OR_RETURN(auto config, instr->backend_config<GpuBackendConfig>());
+      ABSL_ASSIGN_OR_RETURN(auto config,
+                            instr->backend_config<GpuBackendConfig>());
       config.mutable_collective_backend_config()->set_collectives_mode(mode);
       ABSL_RETURN_IF_ERROR(instr->set_backend_config(config));
       changed = true;

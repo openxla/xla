@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/xtile/codegen/tiled_emitter_constraints.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "mlir/IR/MLIRContext.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/service/instruction_fusion.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace {

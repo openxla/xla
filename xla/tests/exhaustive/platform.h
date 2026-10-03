@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef XLA_TESTS_EXHAUSTIVE_PLATFORM_H_
 #define XLA_TESTS_EXHAUSTIVE_PLATFORM_H_
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 
 namespace xla {
 namespace exhaustive_op_test {

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/tstring.h"
 #include "xla/tsl/lib/io/random_inputstream.h"
 #include "xla/tsl/lib/io/snappy/snappy_inputbuffer.h"
 #include "xla/tsl/lib/io/snappy/snappy_inputstream.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/tstring.h"
 
 namespace tsl {
 
@@ -104,7 +104,8 @@ absl::Status TestMultipleWritesWriteFile(size_t compress_input_buf_size,
     std::string corrupt_fname =
         testing::TmpDir() + "/snappy_buffers_test_corrupt";
     std::unique_ptr<WritableFile> corrupt_file_writer;
-    ABSL_RETURN_IF_ERROR(env->NewWritableFile(corrupt_fname, &corrupt_file_writer));
+    ABSL_RETURN_IF_ERROR(
+        env->NewWritableFile(corrupt_fname, &corrupt_file_writer));
 
     std::unique_ptr<RandomAccessFile> file_reader;
     ABSL_RETURN_IF_ERROR(env->NewRandomAccessFile(fname, &file_reader));

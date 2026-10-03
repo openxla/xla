@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -205,13 +206,22 @@ static CUmemAccessDesc GetAccessDesc(int device) {
   return descriptor;
 }
 
-// Allocates device memory using CUDA Virtual Memory Management (VMM) APIs.
+// Allocates device memory using CUDA Virtual Memory Management (VMM) APIs,
+// or falls back to cuMemAlloc when VMM is disabled.
 // Returns (virtual_address, padded_size, allocation_handle).
 static absl::StatusOr<std::tuple<void*, uint64_t, CUmemGenericAllocationHandle>>
 AllocateDeviceMemory(StreamExecutor* executor,
                      const CudaDeviceAllocator::Options& options,
                      uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
+  if (!options.use_vmm) {
+    CUdeviceptr result = 0;
+    ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemAlloc(&result, size)));
+    void* ptr = absl::bit_cast<void*>(result);
+    XLA_VLOG_DEVICE(3, executor->device_ordinal())
+        << "Allocated legacy ptr=" << ptr << " size: " << size;
+    return std::make_tuple(ptr, size, /*handle=*/0);
+  }
 
   CUdevice device;
   ABSL_RETURN_IF_ERROR(
@@ -227,7 +237,7 @@ AllocateDeviceMemory(StreamExecutor* executor,
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, effective_alignment);
 
   ABSL_ASSIGN_OR_RETURN(CUmemGenericAllocationHandle handle,
-                   CreatePhysicalAllocation(properties, padded_size));
+                        CreatePhysicalAllocation(properties, padded_size));
 
   absl::Cleanup release_handle = [&] {
     absl::Status status = cuda::ToStatus(cuMemRelease(handle));
@@ -253,7 +263,8 @@ AllocateDeviceMemory(StreamExecutor* executor,
           << "Failed to free VMM address during cleanup: " << status;
     }
   };
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
 
   // Grant read/write access — to all peers if peer access is enabled,
   // otherwise only to the owning device.
@@ -389,6 +400,16 @@ void DeallocateDeviceMemory(StreamExecutor* executor, void* ptr,
                             CUmemGenericAllocationHandle handle) {
   XLA_VLOG_DEVICE(3, executor->device_ordinal())
       << "Deallocating " << ptr << " padded size: " << padded_size;
+  if (handle == 0) {
+    std::unique_ptr<ActivateContext> activation = executor->Activate();
+    CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(ptr);
+    absl::Status status = cuda::ToStatus(cuMemFree(pointer));
+    if (!status.ok()) {
+      XLA_LOG_DEVICE(ERROR, executor->device_ordinal())
+          << "Failed to free device memory at " << ptr << ": " << status;
+    }
+    return;
+  }
 
   ExecutorVmmState* state = GetExecutorVmmState(executor);
   {
@@ -484,7 +505,7 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> CudaDeviceAllocator::Allocate(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto result,
-                   AllocateDeviceMemory(executor_, options_, size));
+                        AllocateDeviceMemory(executor_, options_, size));
   auto [ptr, padded_size, handle] = result;
 
   return std::make_unique<CudaDeviceMemoryAllocation>(executor_, ptr, size,

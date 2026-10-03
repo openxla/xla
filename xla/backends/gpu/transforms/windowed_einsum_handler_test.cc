@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/windowed_einsum_handler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -30,7 +31,6 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -102,12 +102,12 @@ ENTRY test_main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
 
   HloInstruction* ag_loop =
@@ -185,12 +185,12 @@ ENTRY main.9_spmd {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
 
   HloInstruction* rs_loop =
@@ -265,12 +265,12 @@ ENTRY main.12_spmd {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
   HloInstruction* inst =
       FindInstructionByName(module->entry_computation(), "dot.7");
@@ -382,17 +382,17 @@ CHECK-DAG: %[[ADD2:.*]] = bf16[1,4,2048,32768]{3,2,1,0} add(%[[DOT2:.*]], %[[ADD
 CHECK: ROOT {{.*}} = bf16[1,4,2048,32768]{3,2,1,0} add(%[[DOT3:.*]], %[[ADD2:.*]])
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_enable_alltoall_windowed_einsum(true);
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                          RunFileCheck(module->ToString(), kExpected));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
+                       RunFileCheck(module->ToString(), kExpected));
   EXPECT_TRUE(filecheck_matched);
 }
 
@@ -457,17 +457,17 @@ CHECK-DAG: %[[ADD2:.*]] = bf16[1,4,2048,8192]{3,2,1,0} add(%[[A2A2:.*]], %[[ADD1
 CHECK: ROOT {{.*}} = bf16[1,4,2048,8192]{3,2,1,0} add(%[[A2A3:.*]], %[[ADD2:.*]])
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_enable_alltoall_windowed_einsum(true);
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                          RunFileCheck(module->ToString(), kExpected));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
+                       RunFileCheck(module->ToString(), kExpected));
   EXPECT_TRUE(filecheck_matched);
 }
 
@@ -542,18 +542,18 @@ CHECK-DAG: %[[ADD2:.*]] = bf16[1,4,2048,32768]{3,2,1,0} add(%[[DOT2:.*]], %[[ADD
 CHECK: ROOT {{.*}} = bf16[1,4,2048,32768]{3,2,1,0} add(%[[DOT3:.*]], %[[ADD2:.*]])
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_enable_alltoall_windowed_einsum(true);
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                          RunFileCheck(module->ToString(), kExpected));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
+                       RunFileCheck(module->ToString(), kExpected));
   EXPECT_TRUE(filecheck_matched);
 }
 
@@ -629,18 +629,18 @@ CHECK-DAG: %[[RESHAPE0:.*]] = bf16[1,4,1,2048,8192]{4,3,2,1,0} reshape(%[[COPY1:
 CHECK: ROOT {{.*}} = bf16[1,4,1,1,2048,8192]{5,4,3,2,1,0} reshape(%[[RESHAPE0:.*]])
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_enable_alltoall_windowed_einsum(true);
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                          RunFileCheck(module->ToString(), kExpected));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
+                       RunFileCheck(module->ToString(), kExpected));
   EXPECT_TRUE(filecheck_matched);
 }
 
@@ -1029,8 +1029,8 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   RunAndFilecheckHloRewrite(kHloString, WindowedEinsumHandler(),
                             R"(
@@ -1126,12 +1126,12 @@ ENTRY main.12_spmd {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   WindowedEinsumHandler gpu_handler;
   bool changed;
-  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
 
   HloInstruction* ag_loop =

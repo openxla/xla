@@ -52,7 +52,8 @@ ThreadDimProto stream_executor::ThreadDim::ToProto() const {
 }
 
 absl::StatusOr<ThreadDim> ThreadDim::FromProto(const ThreadDimProto& proto) {
-  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates, Dim3D::FromProto(proto.coordinates()));
+  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates,
+                        Dim3D::FromProto(proto.coordinates()));
   return ThreadDim(coordinates);
 }
 
@@ -63,7 +64,8 @@ BlockDimProto stream_executor::BlockDim::ToProto() const {
 }
 
 absl::StatusOr<BlockDim> BlockDim::FromProto(const BlockDimProto& proto) {
-  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates, Dim3D::FromProto(proto.coordinates()));
+  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates,
+                        Dim3D::FromProto(proto.coordinates()));
   return BlockDim(coordinates);
 }
 
@@ -74,7 +76,8 @@ ClusterDimProto stream_executor::ClusterDim::ToProto() const {
 }
 
 absl::StatusOr<ClusterDim> ClusterDim::FromProto(const ClusterDimProto& proto) {
-  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates, Dim3D::FromProto(proto.coordinates()));
+  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates,
+                        Dim3D::FromProto(proto.coordinates()));
   return ClusterDim(coordinates);
 }
 

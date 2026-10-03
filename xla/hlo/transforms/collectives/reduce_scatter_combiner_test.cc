@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/reduce_scatter_combiner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -48,26 +50,25 @@ class ReduceScatterCombinerTest : public HloHardwareIndependentTestBase {
       int64_t byte_threshold = kMaxByteCount,
       int64_t count_threshold = kMaxCombineCount, bool combine_by_dim = true,
       bool combine_while_loops = true) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_module));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_module));
 
     VLOG(1) << "Before running ReduceScatterCombiner: "
             << ReduceScatterCount(module.get()) << " reduce-scatter ops";
 
-    auto changed = ReduceScatterCombiner(byte_threshold, count_threshold,
-                                         combine_by_dim, combine_while_loops)
-                       .Run(module.get());
-    if (!changed.ok()) {
-      return changed.status();
-    }
+    ABSL_ASSIGN_OR_RETURN(
+        bool changed, ReduceScatterCombiner(byte_threshold, count_threshold,
+                                            combine_by_dim, combine_while_loops)
+                          .Run(module.get()));
 
     VLOG(1) << "After running ReduceScatterCombiner: "
             << ReduceScatterCount(module.get()) << " reduce-scatter ops";
 
-    EXPECT_EQ(changed.value(), expect_change);
+    EXPECT_EQ(changed, expect_change);
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  size_t ReduceScatterCount(HloModule *module) {
+  size_t ReduceScatterCount(HloModule* module) {
     int64_t sum = 0;
     for (auto comp : module->computations()) {
       sum += absl::c_count_if(comp->instructions(),

@@ -17,9 +17,10 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <tuple>
+#include <vector>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 
@@ -130,7 +132,16 @@ bool IsLayoutSupportedByYnn(const Shape& shape) {
     // TODO(b/460602165): We should eliminate this limitation.
     return false;
   }
-  return !shape.has_layout() || LayoutUtil::HasDescendingLayout(shape.layout());
+  if (!shape.has_layout()) {
+    return true;
+  }
+  std::vector<int64_t> minor_to_major;
+  for (int64_t dim : shape.layout().minor_to_major()) {
+    if (shape.dimensions(dim) != 1) {
+      minor_to_major.push_back(dim);
+    }
+  }
+  return absl::c_is_sorted(minor_to_major, std::greater<int64_t>());
 }
 
 namespace {
@@ -163,6 +174,28 @@ bool IsBitcastOpSupportedByYnn(const HloInstruction* hlo) {
   }
 
   return hlo->shape().element_type() == input->shape().element_type();
+}
+
+bool IsCopyOpSupportedByYnn(const HloInstruction* hlo) {
+  CHECK_EQ(hlo->opcode(), HloOpcode::kCopy);
+  if (!CheckOperandCount(hlo, 1)) {
+    return false;
+  }
+  if (!YnnType(hlo->shape().element_type()).ok()) {
+    return false;
+  }
+  const HloInstruction* input = hlo->operand(0);
+  if (hlo->shape().element_type() != input->shape().element_type()) {
+    return false;
+  }
+  if (hlo->shape().dimensions() != input->shape().dimensions()) {
+    return false;
+  }
+  if (!IsLayoutSupportedByYnn(hlo->shape()) ||
+      !IsLayoutSupportedByYnn(input->shape())) {
+    return false;
+  }
+  return true;
 }
 
 bool IsReshapeOpSupportedByYnn(const HloInstruction* hlo) {
@@ -403,11 +436,12 @@ absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo) {
   }
 
   // Check shapes.
-  ABSL_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
-                                                   rhs_shape, out_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      DotShape dot_shape,
+      GetDotShape(dot_dimensions, lhs_shape, rhs_shape, out_shape));
 
   ABSL_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
-                   GetDotCanonicalDims(dot_dimensions, dot_shape));
+                        GetDotCanonicalDims(dot_dimensions, dot_shape));
 
   if (dot_canonical_dims.m == 1 || dot_canonical_dims.n == 1) {
     // TODO(b/430079105): YNNPACK does not handle vectors in dots. We could

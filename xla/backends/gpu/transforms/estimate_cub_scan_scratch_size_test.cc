@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/estimate_cub_scan_scratch_size.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/strings/string_view.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"

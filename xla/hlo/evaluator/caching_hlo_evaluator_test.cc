@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/evaluator/hlo_evaluator_interface.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -96,7 +96,8 @@ class CachingHloEvaluatorTest : public ::testing::Test {
 
   absl::StatusOr<int64_t> ChildCount() const {
     std::vector<std::string> children;
-    ABSL_RETURN_IF_ERROR(tsl::Env::Default()->GetChildren(cache_dir_, &children));
+    ABSL_RETURN_IF_ERROR(
+        tsl::Env::Default()->GetChildren(cache_dir_, &children));
     return children.size();
   }
 

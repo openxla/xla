@@ -35,30 +35,30 @@ namespace xla {
 // max_brute_force_iters may be returned if we can pattern-match the loop
 // condition.
 std::optional<int64_t> ComputeWhileLoopTripCount(
-    const HloInstruction *while_op, int64_t max_brute_force_iters = 128);
+    const HloInstruction* while_op, int64_t max_brute_force_iters = 128);
 
 // Returns an upper bound on the trip count of the loop if it's statically
 // known, nullopt otherwise.
 std::optional<int64_t> ComputeWhileLoopTripCountUpperBound(
-    const HloInstruction *while_op);
+    const HloInstruction* while_op);
 
 // The below function identifies a subset of all possible auxiliary
 // induction variables (AIV). Specifically, candidates are gtes, e.g.,
 // gte(param0, N)
-std::vector<const HloInstruction *> GetAuxiliaryLoopInductionVars(
-    const HloInstruction *while_op);
+std::vector<const HloInstruction*> GetAuxiliaryLoopInductionVars(
+    const HloInstruction* while_op);
 // Returns the tuple index of the loop induction variable if there is such an
 // induction variable detected. It is also checked that all ops that depend on
 // the induction variable have scalar shape. Otherwise returns nullopt.
 std::optional<int64_t> GetLoopInductionVarTupleIdx(
-    const HloInstruction *while_op);
+    const HloInstruction* while_op);
 
 // Same as above, but also handles cases where the range of the induction
 // variable depends on previously known values rather than constants. This is
 // useful for unrolling nested loops.
 std::optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
-    const HloInstruction *while_op,
-    const absl::flat_hash_map<const HloInstruction *, Range> &known_values);
+    const HloInstruction* while_op,
+    const absl::flat_hash_map<const HloInstruction*, Range>& known_values);
 
 // Checks the following conditions:
 //  - `i`, the induction variable, is initialized to a scalar constant K
@@ -67,19 +67,19 @@ std::optional<int64_t> GetLoopInductionVarTupleIdxWithKnownValues(
 //  - the while body does `i += C` (where C is a positive constant)
 // If so, it's trivial to compute the loop bound as `(N - K) div C` or
 // `(N - K + 1) div C`, respectively.
-std::optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction *while_op,
+std::optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
                                                  int64_t indvar_tuple_idx,
-                                                 const Literal &indvar_init);
+                                                 const Literal& indvar_init);
 
 // Same as above, but returns the loop range, i.e., start (inclusive), end
 // (inclusive) and step instead of the trip count.
-std::optional<Range> MatchTrivialLoopRange(const HloInstruction *while_op);
+std::optional<Range> MatchTrivialLoopRange(const HloInstruction* while_op);
 
 // Same as above, but matches loops whose initial values or termination
 // conditions depend on known values rather than constants.
 std::optional<Range> MatchLoopRangeWithKnownValues(
-    const HloInstruction *while_op, int64_t induction_var_idx,
-    const absl::flat_hash_map<const HloInstruction *, Range> &known_values);
+    const HloInstruction* while_op, int64_t induction_var_idx,
+    const absl::flat_hash_map<const HloInstruction*, Range>& known_values);
 }  // namespace xla
 
 #endif  // XLA_HLO_ANALYSIS_WHILE_LOOP_ANALYSIS_H_

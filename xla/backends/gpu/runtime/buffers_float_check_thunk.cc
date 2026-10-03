@@ -173,8 +173,8 @@ absl::Status CheckFloatsAndLog(
   const size_t num_blocks = block_dim.x * block_dim.y * block_dim.z;
 
   ABSL_RETURN_IF_ERROR(map_kernel.Launch(thread_dim, block_dim, stream, buffer,
-                                    buffer.ElementCount(), tmp_ptr,
-                                    tmp_ptr.ElementCount()));
+                                         buffer.ElementCount(), tmp_ptr,
+                                         tmp_ptr.ElementCount()));
   // Operations on the same stream perform in sequence, so at this point the
   // results of the previous FloatCheck operation are available.
   ABSL_RETURN_IF_ERROR(reduce_append_kernel.Launch(

@@ -91,11 +91,12 @@ TriangularSolveThunk::FromProto(
     ThunkInfo thunk_info, const TriangularSolveThunkProto& proto,
     absl::Span<const BufferAllocation> allocations) {
   ABSL_ASSIGN_OR_RETURN(ShapedSlice a_buffer,
-                   ShapedSlice::FromProto(proto.a_buffer(), allocations));
+                        ShapedSlice::FromProto(proto.a_buffer(), allocations));
   ABSL_ASSIGN_OR_RETURN(ShapedSlice b_buffer,
-                   ShapedSlice::FromProto(proto.b_buffer(), allocations));
-  ABSL_ASSIGN_OR_RETURN(ShapedSlice temp_buffer,
-                   ShapedSlice::FromProto(proto.temp_buffer(), allocations));
+                        ShapedSlice::FromProto(proto.b_buffer(), allocations));
+  ABSL_ASSIGN_OR_RETURN(
+      ShapedSlice temp_buffer,
+      ShapedSlice::FromProto(proto.temp_buffer(), allocations));
 
   if (b_buffer.shape.dimensions().size() < 2) {
     return absl::InvalidArgumentError("Unsupported shape for b");
@@ -133,11 +134,11 @@ absl::StatusOr<ThunkProto> TriangularSolveThunk::ToProto() const {
   }
 
   ABSL_ASSIGN_OR_RETURN(*triangular_solve_thunk_proto->mutable_a_buffer(),
-                   a_buffer_.ToProto());
+                        a_buffer_.ToProto());
   ABSL_ASSIGN_OR_RETURN(*triangular_solve_thunk_proto->mutable_b_buffer(),
-                   b_buffer_.ToProto());
+                        b_buffer_.ToProto());
   ABSL_ASSIGN_OR_RETURN(*triangular_solve_thunk_proto->mutable_temp_buffer(),
-                   temp_buffer_.ToProto());
+                        temp_buffer_.ToProto());
   return proto;
 }
 
@@ -215,9 +216,9 @@ absl::Status RunTriangularSolve(se::DeviceAddressBase a_data,
                                      batch_pointers_bytes);
 
     ABSL_RETURN_IF_ERROR(MakeBatchPointers(stream, a_data, a_batch_stride,
-                                      batch_size, a_pointers));
+                                           batch_size, a_pointers));
     ABSL_RETURN_IF_ERROR(MakeBatchPointers(stream, b_data, b_batch_stride,
-                                      batch_size, b_pointers));
+                                           batch_size, b_pointers));
 
     switch (type) {
       case F32: {

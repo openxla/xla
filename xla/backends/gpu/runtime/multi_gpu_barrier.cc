@@ -101,8 +101,9 @@ absl::Status LaunchMultiGpuBarrier(
     signal_buffers[peer] = barrier_addresses[peer].opaque();
   }
 
-  ABSL_ASSIGN_OR_RETURN(MultiGpuBarrierKernel::KernelType * kernel,
-                   GetCachedKernel<MultiGpuBarrierKernel>(stream->parent()));
+  ABSL_ASSIGN_OR_RETURN(
+      MultiGpuBarrierKernel::KernelType * kernel,
+      GetCachedKernel<MultiGpuBarrierKernel>(stream->parent()));
 
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);

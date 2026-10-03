@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -52,7 +53,7 @@ class ProgramMemoryTracerTest
   absl::StatusOr<std::shared_ptr<IfrtIrLoadedExecutable>> GetIfrtIrExecutable(
       absl::string_view source, DeviceListRef devices) {
     ABSL_ASSIGN_OR_RETURN(LoadedExecutableRef executable,
-                     CompileProgram(source, devices));
+                          CompileProgram(source, devices));
     return std::static_pointer_cast<IfrtIrLoadedExecutable>(
         std::move(executable));
   }
@@ -72,7 +73,7 @@ module {
     // The output array should be deleted as soon as the op completes.
     %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) : (!array1) -> !array0
 
-    %out_2, %ctrl_2 = ifrt.CopyArrays(%out_0) {donated=true}
+    %out_2, %ctrl_2 = ifrt.CopyArrays(%out_0) <donated=true>
       : (!array1) -> !array0
 
     // Should not increase peak memory usage on device 1 because the other array
@@ -112,7 +113,7 @@ module {
       %arg0: !array0 {ifrt.donated}, %arg1: !array1 {ifrt.donated}) -> (!array1)
       attributes {ifrt.function} {
     %0, %1, %ctrl_0 = ifrt.BitcastArrays(%arg0, %arg1)
-      {donated=true} : (!array0, !array1) -> (!array1, !array0)
+      <donated=true> : (!array0, !array1) -> (!array1, !array0)
     return %0 : !array1
   }
 }
@@ -143,15 +144,15 @@ module {
   func.func @main(%arg0: !input) -> (!array0) attributes {ifrt.function} {
     %out_0, %ctrl_0 = ifrt.Call @generate_data(%arg0) on devices [0]
       : (!input) -> !array0
-    %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) {donated=true}
+    %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) <donated=true>
       : (!array0) -> !array1
 
     // The input array is donated so peak on device 1 should only increase by
     // the code size.
     %out_2, %ctrl_2 = ifrt.Call @identity(%out_1) on devices [1]
-      {io_aliases = [array<i32: 0, 0>]} : (!array1) -> !array1
+      <io_aliases = [array<i32: 0, 0>]> : (!array1) -> !array1
 
-    %out_3, %ctrl_3 = ifrt.CopyArrays(%out_2) {donated=true}
+    %out_3, %ctrl_3 = ifrt.CopyArrays(%out_2) <donated=true>
       : (!array1) -> !array0
 
     return %out_3 : !array0
@@ -215,12 +216,12 @@ module {
   func.func @main(%arg0: !input) -> (!array) attributes {ifrt.function} {
     %out_0, %ctrl_0 = ifrt.Call @generate_data(%arg0) on devices [0, 1]
       : (!input) -> !array
-    %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) {donated=true}
+    %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) <donated=true>
       : (!array) -> !array
 
     // The input array is donated so peak should only increase by code size.
     %out_2, %ctrl_2 = ifrt.Call @identity(%out_1) on devices [0, 1]
-      {io_aliases = [array<i32: 0, 0>]} : (!array) -> !array
+      <io_aliases = [array<i32: 0, 0>]> : (!array) -> !array
 
     return %out_2 : !array
   }
@@ -283,7 +284,7 @@ module @sin_from_offloaded_arg {
     return %out : !array
   }
 
-  module @sin attributes {sym_visibility = "private"} {
+  module @sin <sym_visibility = "private"> {
     func.func @main(%arg0: tensor<16xf32> {mhlo.memory_kind = "pinned_host"})
         -> tensor<16xf32> {
       %0 = stablehlo.custom_call @annotate_device_placement(%arg0) {

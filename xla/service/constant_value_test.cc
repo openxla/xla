@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/constant_value.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "xla/literal_util.h"
 
 namespace xla {

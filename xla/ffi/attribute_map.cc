@@ -208,20 +208,20 @@ absl::StatusOr<AttributesMap> BuildAttributesMap(mlir::DictionaryAttr dict) {
       };
     };
 
-    ABSL_RETURN_IF_ERROR((
-        llvm::TypeSwitch<mlir::Attribute, absl::Status>(value)
-            .Case<mlir::BoolAttr>(convert_with(ConvertBoolAttr))
-            .Case<mlir::IntegerAttr>(convert_with(ConvertIntegerAttr))
-            .Case<mlir::FloatAttr>(convert_with(ConvertFloatAttr))
-            .Case<mlir::DenseArrayAttr>(convert_with(ConvertArrayAttr))
-            .Case<mlir::DenseIntOrFPElementsAttr>(
-                convert_with(ConvertDenseElementsAttr))
-            .Case<mlir::StringAttr>(convert_with(ConvertStringAttr))
-            .Case<mlir::DictionaryAttr>(convert_with(ConvertDictionaryAttr))
-            .Default([&](mlir::Attribute) {
-              return absl::InvalidArgumentError(absl::StrCat(
-                  "Unsupported attribute type for attribute: ", name));
-            })));
+    ABSL_RETURN_IF_ERROR(
+        (llvm::TypeSwitch<mlir::Attribute, absl::Status>(value)
+             .Case<mlir::BoolAttr>(convert_with(ConvertBoolAttr))
+             .Case<mlir::IntegerAttr>(convert_with(ConvertIntegerAttr))
+             .Case<mlir::FloatAttr>(convert_with(ConvertFloatAttr))
+             .Case<mlir::DenseArrayAttr>(convert_with(ConvertArrayAttr))
+             .Case<mlir::DenseIntOrFPElementsAttr>(
+                 convert_with(ConvertDenseElementsAttr))
+             .Case<mlir::StringAttr>(convert_with(ConvertStringAttr))
+             .Case<mlir::DictionaryAttr>(convert_with(ConvertDictionaryAttr))
+             .Default([&](mlir::Attribute) {
+               return absl::InvalidArgumentError(absl::StrCat(
+                   "Unsupported attribute type for attribute: ", name));
+             })));
   }
 
   return attributes;

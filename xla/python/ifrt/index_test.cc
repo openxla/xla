@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/python/ifrt/index.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "xla/python/ifrt/index.pb.h"
 #include "xla/python/ifrt/serdes_test_util.h"

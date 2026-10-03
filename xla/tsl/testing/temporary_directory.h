@@ -16,11 +16,12 @@ limitations under the License.
 #ifndef XLA_TSL_TESTING_TEMPORARY_DIRECTORY_H_
 #define XLA_TSL_TESTING_TEMPORARY_DIRECTORY_H_
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 
 namespace tsl {
