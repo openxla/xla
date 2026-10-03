@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
@@ -64,8 +66,25 @@ const std::string& GetCppGenIrString(
   return ::llvm_ir::kEigenUnary16LlIr;
 }
 
+bool ContainsCppGenFunctions(const std::string& bitcode) {
+  if (bitcode.empty()) {
+    return false;
+  }
+  llvm::LLVMContext context;
+  std::unique_ptr<llvm::Module> module = ParseEmbeddedBitcode(context, bitcode);
+  return llvm::any_of(*module, [](const llvm::Function& function) {
+    return !function.isDeclaration() && function.getName().starts_with("xla.");
+  });
+}
+
 bool AreEigenIntrinsicsAvailable() {
-  return !GetCppGenIrString(intrinsics::IntrinsicOptions()).empty();
+  // The library sources are compiled to an empty translation unit if the
+  // compiler lacks the required vector extensions. That still yields a valid,
+  // non-empty bitcode module, so check that it actually defines functions.
+  // All vector widths are built from the same source, so one is representative.
+  static const bool kAvailable = ContainsCppGenFunctions(
+      GetCppGenIrString(intrinsics::IntrinsicOptions()));
+  return kAvailable;
 }
 
 namespace {
