@@ -53,12 +53,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/random.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
@@ -81,8 +75,6 @@ limitations under the License.
 #include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/device_event_utils.h"
-#include "xla/pjrt/distributed/client.h"
-#include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
@@ -144,6 +136,12 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/random.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/traceme.h"
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
     defined(TENSORFLOW_USE_SYCL)
@@ -409,8 +407,8 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       client->gpu_run_options()->clique_id_callback();
 
   // Acquire the GPU clique for this receive. Guard the acquisition with a hang
-  // watchdog because AcquireGpuClique can block indefinitely inside
-  // ncclCommInit waiting for remote nodes during NCCL communicator setup.
+  // watchdog because AcquireClique can block indefinitely inside ncclCommInit
+  // waiting for remote nodes during NCCL communicator setup.
   if (!acquired_cliques_map.contains(clique_key)) {
     int32_t device_ordinal = stream->parent()->device_ordinal();
     absl::Duration watchdog_timeout = PjRtClientWatchdogTimeout();
@@ -418,7 +416,7 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
     std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
     if (watchdog_timeout < absl::InfiniteDuration()) {
       std::string watchdog_name =
-          absl::StrFormat("[%d] PjRt GPU client AcquireGpuClique for %v",
+          absl::StrFormat("[%d] PjRt GPU client AcquireClique for %v",
                           device_ordinal, clique_key);
       guard = HangWatchdog::Global().Watch(
           watchdog_name, watchdog_timeout,
@@ -427,11 +425,11 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
 
     ABSL_ASSIGN_OR_RETURN(
         acquired_cliques_map[clique_key],
-        AcquireGpuClique(gpu_collectives,
-                         /*device=*/stream->parent(), RunId(0), clique_key,
-                         device_groups, clique_id_callback, rank_id,
-                         acquired_cliques_map,
-                         /*max_nchannels=*/0));
+        AcquireClique(gpu_collectives,
+                      /*device=*/stream->parent(), RunId(0), clique_key,
+                      device_groups, clique_id_callback, rank_id,
+                      acquired_cliques_map,
+                      /*max_nchannels=*/0));
   }
   std::shared_ptr<gpu::LockableGpuClique::Lock> clique =
       acquired_cliques_map[clique_key];
@@ -1937,6 +1935,20 @@ StreamExecutorGpuHbmMemorySpace::StreamExecutorGpuHbmMemorySpace(
     int id, PjRtDevice* device)
     : PjRtStreamExecutorMemorySpace(id, device, kKind, kKindId) {}
 
+// Returns an execution timeout handler that aborts local collectives if work in
+// the given `scope` does not complete within `abort_timeout`.
+static gpu::ExecutionTimeoutHandler AbortCollectivesOnTimeout(
+    gpu::ExecutionTimeoutHandler::Scope scope, absl::Duration abort_timeout) {
+  auto abort = [](absl::string_view action, absl::Duration timeout) {
+    if (auto s = gpu::AbortAllCliques(); !s.ok()) {
+      LOG(WARNING) << absl::StreamFormat(
+          "Failed to abort collectives after %s failed to finish in %v: %v",
+          action, timeout, s);
+    }
+  };
+  return {scope, abort_timeout, std::move(abort)};
+}
+
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options) {
 #if TENSORFLOW_USE_ROCM
@@ -1983,37 +1995,15 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     gpu_run_options->set_enable_mock_collectives();
   }
 
-  if (options.abort_collectives_on_failure) {
-    gpu_run_options->set_execution_timeout_handler(
-        [process_index = options.node_id,
-         distributed_client = options.distributed_client](
-            absl::string_view action, absl::Duration timeout) {
-          absl::Status error = absl::DeadlineExceededError(
-              absl::StrFormat("%s failed to finish in %v", action, timeout));
-
-          if (absl::Status s =
-                  gpu::AbortCollectivesOnTaskFailure(process_index, error);
-              !s.ok()) {
-            LOG(WARNING) << s;
-          }
-
-          if (distributed_client != nullptr) {
-            absl::StatusOr<CoordinationServiceAgent*> agent =
-                distributed_client->GetCoordinationServiceAgent();
-            if (agent.ok()) {
-              if (absl::Status s = (*agent)->ReportError(error); !s.ok()) {
-                LOG(WARNING) << "Failed to report execution timeout to "
-                                "coordination service: "
-                             << s;
-              }
-            } else {
-              LOG(WARNING) << "Failed to get coordination service agent: "
-                           << agent.status();
-            }
-          } else {
-            LOG(INFO) << "Skipping coordination service error report: "
-                         "distributed client is not available.";
-          }
+  if (options.abort_collectives_timeout < absl::InfiniteDuration()) {
+    gpu_run_options->set_execution_timeout_handlers(
+        [abort_timeout = options.abort_collectives_timeout] {
+          std::vector<gpu::ExecutionTimeoutHandler> handlers;
+          handlers.push_back(AbortCollectivesOnTimeout(
+              gpu::ExecutionTimeoutHandler::Scope::kHost, abort_timeout));
+          handlers.push_back(AbortCollectivesOnTimeout(
+              gpu::ExecutionTimeoutHandler::Scope::kDevice, abort_timeout));
+          return handlers;
         });
   }
 
