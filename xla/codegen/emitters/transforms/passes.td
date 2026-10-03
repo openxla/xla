@@ -189,19 +189,15 @@ def PropagateSliceIndicesPass :
   ];
 }
 
-def SimplifyAffinePass : Pass<"xla-simplify-affine", "mlir::ModuleOp"> {
-  let summary = "Simplifies affine.apply using XLA's range-aware simplifier.";
+def ExpandApplyIndexingPass : Pass<"xla-expand-apply-indexing", "mlir::ModuleOp"> {
+  let summary = "Expands apply_indexing using XLA's range-aware simplifier.";
 
   let description = [{
-      The standard affine canonicalizer cannot simplify all expressions, since
-      it is unaware of range information. This pass uses `xla.range` attributes
-      on arguments and ops for simplification. It also lowers floordiv and mod
-      to simpler expressions than lower-affine. This pass only works for
-      expressions for which we can prove the LHS of mod and div is nonnegative.
+      Simplifies apply_indexing using range information and lowers it to arith ops.
   }];
 
   let dependentDialects = [
-    "mlir::affine::AffineDialect", "mlir::func::FuncDialect",
+    "mlir::func::FuncDialect",
     "mlir::scf::SCFDialect",
   ];
 }
