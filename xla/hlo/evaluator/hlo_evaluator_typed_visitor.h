@@ -35,6 +35,7 @@ limitations under the License.
 
 #include "absl/base/attributes.h"
 #include "absl/base/casts.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -2501,12 +2502,9 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
   }
 
  private:
-  template <typename UnaryOp>
-  absl::StatusOr<Literal> ElementWiseUnaryOp(const HloInstruction* instruction,
-                                             UnaryOp&& unary_op) {
-    static_assert(std::is_invocable_r_v<ElementwiseT, UnaryOp, ElementwiseT>,
-                  "Invalid UnaryOp signature");
-
+  absl::StatusOr<Literal> ElementWiseUnaryOp(
+      const HloInstruction* instruction,
+      absl::FunctionRef<ElementwiseT(ElementwiseT)> unary_op) {
     const Literal& operand_literal =
         parent_->GetEvaluatedLiteralFor(instruction->operand(0));
     ABSL_ASSIGN_OR_RETURN(
@@ -2517,13 +2515,9 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     return result_literal;
   }
 
-  template <typename BinaryOp>
-  absl::StatusOr<Literal> ElementWiseBinaryOp(const HloInstruction* instruction,
-                                              BinaryOp&& binary_op) {
-    static_assert(std::is_invocable_r_v<ElementwiseT, BinaryOp, ElementwiseT,
-                                        ElementwiseT>,
-                  "Invalid BinaryOp signature");
-
+  absl::StatusOr<Literal> ElementWiseBinaryOp(
+      const HloInstruction* instruction,
+      absl::FunctionRef<ElementwiseT(ElementwiseT, ElementwiseT)> binary_op) {
     Shape shape = GetShapeWithLayout(instruction->shape());
     const auto* lhs = instruction->operand(0);
     const auto* rhs = instruction->operand(1);
@@ -2560,14 +2554,10 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     return result;
   }
 
-  template <typename LhsType, typename RhsType, typename EhsType,
-            typename TernaryOp>
+  template <typename LhsType, typename RhsType, typename EhsType>
   absl::StatusOr<Literal> ElementwiseTernaryOp(
-      const HloInstruction* instruction, TernaryOp&& ternary_op) {
-    static_assert(
-        std::is_invocable_r_v<ReturnT, TernaryOp, LhsType, RhsType, EhsType>,
-        "Invalid TernaryOp signature");
-
+      const HloInstruction* instruction,
+      absl::FunctionRef<ReturnT(LhsType, RhsType, EhsType)> ternary_op) {
     Shape shape = GetShapeWithLayout(instruction->shape());
     const auto* lhs = instruction->operand(0);
     const auto* rhs = instruction->operand(1);
