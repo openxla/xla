@@ -122,10 +122,8 @@ absl::Status FoldTransposeIntoDot(InstructionOperandsPair& pair) {
       rhs = rhs->mutable_operand(0);
     }
   }
-  HloInstruction* new_dot =
-      dot->parent()->AddInstruction(HloInstruction::CreateDot(
-          dot->shape(), lhs, rhs, new_dot_dims, dot->precision_config()));
-  dot->SetupDerivedInstruction(new_dot);
+  HloInstruction* new_dot = dot->AddInstruction(HloInstruction::CreateDot(
+      dot->shape(), lhs, rhs, new_dot_dims, dot->precision_config()));
   return dot->parent()->ReplaceInstruction(dot, new_dot);
 }
 
