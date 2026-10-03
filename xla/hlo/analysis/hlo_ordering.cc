@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <memory>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -70,11 +69,10 @@ HloOrdering::ExecutionConstraint HloOrdering::GetExecutionConstraint(
   if (a == b || is_async_wrapped(a, b) || is_async_wrapped(b, a)) {
     return ExecutionConstraint::kIsSame;
   }
-  const HloInstruction* a_ancestor;
-  const HloInstruction* b_ancestor;
-  std::tie(a_ancestor, b_ancestor) =
-      call_graph_->NearestAncestorsInSameComputation(
-          const_cast<HloInstruction*>(a), const_cast<HloInstruction*>(b));
+  const CallGraph::NearestAncestors ancestors =
+      call_graph_->NearestAncestorsWithChildren(a, b);
+  const HloInstruction* a_ancestor = ancestors.a;
+  const HloInstruction* b_ancestor = ancestors.b;
 
   if (a_ancestor == nullptr) {
     VLOG(4) << "Ancestors in a common computation could not be found between"
@@ -86,6 +84,22 @@ HloOrdering::ExecutionConstraint HloOrdering::GetExecutionConstraint(
   CHECK_NE(b_ancestor, nullptr);
   CHECK_EQ(a_ancestor->parent(), b_ancestor->parent());
 
+  // Whether 'a' (or 'b') is nested in 'callee', a computation called by the
+  // common ancestor. When the flag is set, 'a_child' dominates the computation
+  // of 'a' (it is nullptr when 'a' is the ancestor itself). No other callee of
+  // the ancestor can dominate it, so 'callee' contains 'a' iff it is
+  // 'a_child'. Otherwise the dominance query decides.
+  auto a_nested_in = [&](const HloComputation* callee) {
+    return ancestors.a_child_dominates
+               ? ancestors.a_child == callee
+               : call_graph_->InstructionIsNestedIn(a, callee);
+  };
+  auto b_nested_in = [&](const HloComputation* callee) {
+    return ancestors.b_child_dominates
+               ? ancestors.b_child == callee
+               : call_graph_->InstructionIsNestedIn(b, callee);
+  };
+
   // If the common ancestor is a while instruction there is an additional
   // ordering criteria which may apply. The condition computation is considered
   // to execute before the body computation so if 'a' is in the condition and
@@ -93,8 +107,7 @@ HloOrdering::ExecutionConstraint HloOrdering::GetExecutionConstraint(
   if (a_ancestor == b_ancestor && a_ancestor->opcode() == HloOpcode::kWhile) {
     const HloComputation* body = a_ancestor->while_body();
     const HloComputation* condition = a_ancestor->while_condition();
-    if (call_graph_->InstructionIsNestedIn(a, condition) &&
-        call_graph_->InstructionIsNestedIn(b, body)) {
+    if (a_nested_in(condition) && b_nested_in(body)) {
       return ExecutionConstraint::kRunBeforeEnd;
     }
   }
@@ -109,12 +122,10 @@ HloOrdering::ExecutionConstraint HloOrdering::GetExecutionConstraint(
     int a_branch = -1;
     int b_branch = -1;
     for (int j = 0; j < a_ancestor->branch_count(); ++j) {
-      if (call_graph_->InstructionIsNestedIn(
-              a, a_ancestor->branch_computation(j))) {
+      if (a_nested_in(a_ancestor->branch_computation(j))) {
         a_branch = j;
       }
-      if (call_graph_->InstructionIsNestedIn(
-              b, a_ancestor->branch_computation(j))) {
+      if (b_nested_in(a_ancestor->branch_computation(j))) {
         b_branch = j;
       }
     }
