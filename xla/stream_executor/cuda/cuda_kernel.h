@@ -71,7 +71,8 @@ class CudaKernel : public Kernel {
  private:
   absl::Status Launch(const ThreadDim& thread_dims, const BlockDim& block_dims,
                       const std::optional<ClusterDim>& cluster_dims,
-                      Stream* stream, const KernelArgs& args) override;
+                      Stream* stream, const KernelArgs& args,
+                      Event* launch_completion_event) override;
 
   StreamExecutor* executor_ = nullptr;
 

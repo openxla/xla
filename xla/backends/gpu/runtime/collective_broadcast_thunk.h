@@ -49,6 +49,7 @@ struct CollectiveBroadcastMetadata {
 // Thunk that performs a collective broadcast.
 class CollectiveBroadcastThunk : public CollectiveThunk {
  public:
+  bool RecordsLaunchCompletion() const override { return true; }
   static absl::Status CheckImplementable(const HloInstruction* instr,
                                          int64_t replica_count,
                                          int64_t partition_count);
@@ -97,7 +98,8 @@ class CollectiveBroadcastThunk : public CollectiveThunk {
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                                     se::Stream& stream, Communicator& comm,
                                     CollectiveBroadcastMetadata* cb_metadata,
-                                    bool has_dynamic_root = false);
+                                    bool has_dynamic_root = false,
+                                    se::Event* launch_event = nullptr);
 
 }  // namespace xla::gpu
 

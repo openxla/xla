@@ -65,6 +65,60 @@ static Thunk::ThunkInfo ThunkInfo(absl::string_view name) {
   return info;
 };
 
+// Executes nothing. `records` makes the map treat it as a producer.
+class FakeThunk : public Thunk {
+ public:
+  explicit FakeThunk(bool records)
+      : Thunk(records ? Thunk::kAllReduce : Thunk::kKernel, Thunk::ThunkInfo()),
+        records_(records) {}
+  bool RecordsLaunchCompletion() const override { return records_; }
+  absl::Status ExecuteOnStream(const ExecuteParams&) override {
+    return absl::OkStatus();
+  }
+  BufferUses buffer_uses() const override { return {}; }
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("not needed");
+  }
+
+ private:
+  bool records_;
+};
+
+TEST(ThunkExecutorTest, LaunchDependencyMap) {
+  // Nested, so the builder has to flatten.
+  ThunkSequence body;
+  body.push_back(std::make_unique<FakeThunk>(true));
+  body.push_back(std::make_unique<FakeThunk>(false));
+  body.push_back(std::make_unique<FakeThunk>(true));
+  body.push_back(std::make_unique<FakeThunk>(false));
+  const Thunk* first = body[0].get();
+  const Thunk* after_first = body[1].get();
+  const Thunk* second = body[2].get();
+  const Thunk* after_second = body[3].get();
+
+  ThunkSequence sequence;
+  sequence.push_back(std::make_unique<WhileThunk>(
+      ThunkInfo("while"), BufferAllocation::Slice(), ThunkSequence(),
+      std::move(body), /*trip_count=*/2));
+  ThunkExecutor executor(std::move(sequence));
+
+  LaunchDependencyMap map =
+      ThunkExecutor::BuildLaunchDependencyMap(executor, true);
+
+  EXPECT_EQ(map.num_slots(), 2);
+  EXPECT_TRUE(map.RecordSlot(first).has_value());
+  EXPECT_NE(map.RecordSlot(first), map.RecordSlot(second));
+  EXPECT_FALSE(map.RecordSlot(after_first).has_value());
+
+  // Everything after a producer waits on it.
+  EXPECT_EQ(map.LastProducerSlot(after_first), map.RecordSlot(first));
+  EXPECT_EQ(map.LastProducerSlot(second), map.RecordSlot(first));
+  EXPECT_EQ(map.LastProducerSlot(after_second), map.RecordSlot(second));
+
+  EXPECT_EQ(
+      ThunkExecutor::BuildLaunchDependencyMap(executor, false).num_slots(), 0);
+}
+
 TEST(ThunkExecutorDefinitionTrackerTest, InvokesCallbackAfterLastUse) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * stream_executor, GpuExecutor());
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,

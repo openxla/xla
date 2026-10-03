@@ -579,6 +579,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
+  opts.set_xla_gpu_explicit_launch_ordering(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
 
 #if defined(ABSL_HAVE_ADDRESS_SANITIZER) ||   \
@@ -3743,6 +3744,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_native_emitter_tune_unroll_factor_for_loops(),
       "Experimental: If set, autotune the unroll factor for loop fusions in "
       "native emitter."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_explicit_launch_ordering",
+      bool_setter_for(&DebugOptions::set_xla_gpu_explicit_launch_ordering),
+      debug_options->xla_gpu_explicit_launch_ordering(),
+      "If true, order kernel launches on dispatch rather than completion."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_fusion",
       bool_setter_for(

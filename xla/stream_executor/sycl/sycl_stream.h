@@ -121,7 +121,8 @@ class SyclStream : public StreamCommon {
                             const BlockDim& block_dims,
                             const std::optional<ClusterDim>& cluster_dims,
                             void* function, absl::string_view name, void** args,
-                            int64_t shmem_bytes, bool use_pdl) override;
+                            int64_t shmem_bytes, bool use_pdl,
+                            Event* launch_completion_event) override;
 
   // The Executor to which this stream is bound.
   StreamExecutor* executor_;

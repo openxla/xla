@@ -120,6 +120,12 @@ absl::Status ThunkExecutor::ExecuteOnStream(
         "[thunk=%d/%d] Start ThunkExecutor::ExecuteOnStream: %s (%v)%v", i,
         thunks_.size(), thunk->profile_annotation(), thunk->kind(), loop_nest);
 
+    // Producer events fire at dispatch or earlier, so collectives overlap.
+    if (const LaunchOrdering* ordering = params.launch_ordering) {
+      ABSL_RETURN_IF_ERROR(
+          ordering->WaitForProducers(thunk.get(), params.stream));
+    }
+
     // Execute thunk and launch "work" on the GPU stream.
     ABSL_RETURN_IF_ERROR(thunk->ExecuteOnStream(params));
 
@@ -172,6 +178,19 @@ static bool IsHostExecutionThunk(Thunk::Kind kind) {
   return kind == Thunk::kHostExecuteDone || kind == Thunk::kHostExecuteStart ||
          kind == Thunk::kHostRecv || kind == Thunk::kHostRecvDone ||
          kind == Thunk::kHostSend || kind == Thunk::kHostSendDone;
+}
+
+LaunchDependencyMap ThunkExecutor::BuildLaunchDependencyMap(
+    const ThunkExecutor& executor, bool ordering_enabled) {
+  if (!ordering_enabled) return LaunchDependencyMap();
+
+  // Depth-first order matches the order each executor runs its own thunks.
+  std::vector<const Thunk*> execution_order;
+  for (const std::unique_ptr<Thunk>& thunk : executor.thunks()) {
+    thunk->Walk(
+        [&](const Thunk* nested) { execution_order.push_back(nested); });
+  }
+  return LaunchDependencyMap(execution_order);
 }
 
 ThunkExecutor::DefinitionPlan ThunkExecutor::BuildDefinitionPlan(

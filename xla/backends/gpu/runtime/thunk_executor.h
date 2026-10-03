@@ -56,6 +56,9 @@ class ThunkExecutor {
   // Builds a buffer definition plan for `executor` and its nested thunks.
   static DefinitionPlan BuildDefinitionPlan(const ThunkExecutor& executor);
 
+  static LaunchDependencyMap BuildLaunchDependencyMap(
+      const ThunkExecutor& executor, bool ordering_enabled);
+
   // Callback invoked immediately after all work touching the buffer allocations
   // at `indices` has been scheduled. `stream` is ordered after that work and
   // can be used to record one definition event for all the allocations. For
