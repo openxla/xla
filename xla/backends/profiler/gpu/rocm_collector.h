@@ -67,70 +67,6 @@ inline std::string ToXStat(const KernelDetails& kernel_info,
                       " occ_pct:", occupancy_pct);
 }
 
-struct RocmDeviceOccupancyParams {
-  hipFuncAttributes attributes = {};
-  int block_size = 0;
-  size_t dynamic_smem_size = 0;
-  void* func_ptr;
-  uint32_t max_waves_per_cu = 0;
-  uint32_t wave_front_size = 0;
-
-  friend bool operator==(const RocmDeviceOccupancyParams& a,
-                         const RocmDeviceOccupancyParams& b) noexcept {
-    // Compare only the fields that affect occupancy decisions.
-    return std::tuple{a.attributes.binaryVersion,
-                      a.attributes.cacheModeCA,
-                      a.attributes.constSizeBytes,
-                      a.attributes.localSizeBytes,
-                      a.attributes.maxDynamicSharedSizeBytes,
-                      a.attributes.maxThreadsPerBlock,
-                      a.attributes.numRegs,
-                      a.attributes.preferredShmemCarveout,
-                      a.attributes.ptxVersion,
-                      a.block_size,
-                      a.dynamic_smem_size,
-                      a.func_ptr,
-                      a.max_waves_per_cu,
-                      a.wave_front_size} ==
-           std::tuple{b.attributes.binaryVersion,
-                      b.attributes.cacheModeCA,
-                      b.attributes.constSizeBytes,
-                      b.attributes.localSizeBytes,
-                      b.attributes.maxDynamicSharedSizeBytes,
-                      b.attributes.maxThreadsPerBlock,
-                      b.attributes.numRegs,
-                      b.attributes.preferredShmemCarveout,
-                      b.attributes.ptxVersion,
-                      b.block_size,
-                      b.dynamic_smem_size,
-                      b.func_ptr,
-                      b.max_waves_per_cu,
-                      b.wave_front_size};
-  }
-
-  friend bool operator!=(const RocmDeviceOccupancyParams& a,
-                         const RocmDeviceOccupancyParams& b) noexcept {
-    return !(a == b);
-  }
-
-  template <typename H>
-  friend H AbslHashValue(H hash_state,
-                         const RocmDeviceOccupancyParams& params) {
-    return H::combine(
-        std::move(hash_state), params.attributes.maxThreadsPerBlock,
-        params.attributes.numRegs, params.attributes.sharedSizeBytes,
-        params.attributes.maxDynamicSharedSizeBytes, params.block_size,
-        params.dynamic_smem_size, params.func_ptr, params.max_waves_per_cu,
-        params.wave_front_size);
-  }
-};
-
-// FIXME: rocprofiler-sdk does not have this one yet
-struct OccupancyStats {
-  double occupancy_pct = 0.0;
-  int min_grid_size = 0;
-  int suggested_block_size = 0;
-};
 
 class RocmTraceCollector {
  public:
@@ -172,7 +108,6 @@ class PerDeviceCollector {
                              tsl::profiler::XPlaneBuilder* device_plane);
 
  private:
-  OccupancyStats GetOccupancy(const RocmDeviceOccupancyParams& params) const;
   void CreateXEvent(const RocmTracerEvent& event,
                     tsl::profiler::XPlaneBuilder* plane, uint64_t start_gpu_ns,
                     uint64_t end_gpu_ns, tsl::profiler::XLineBuilder* line);
@@ -182,8 +117,6 @@ class PerDeviceCollector {
  private:
   absl::Mutex events_mutex_;
   std::vector<RocmTracerEvent> events_ ABSL_GUARDED_BY(events_mutex_);
-  absl::flat_hash_map<RocmDeviceOccupancyParams, OccupancyStats>
-      occupancy_cache_;
 };  // PerDeviceCollector
 
 class RocmTraceCollectorImpl : public RocmTraceCollector {
