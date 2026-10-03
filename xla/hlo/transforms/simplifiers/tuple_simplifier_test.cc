@@ -441,5 +441,133 @@ ENTRY main {
   EXPECT_TRUE(ordering.ExecutesBefore(op_start_1, op_done_1));
 }
 
+TEST_F(TupleSimplifierTest,
+       StableScheduleWithControlPredecessorAfterReplacement) {
+  constexpr absl::string_view kHlo = R"(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  arg.0 = (s32[], s32[]) parameter(0)
+  gte.0 = s32[] get-tuple-element(arg.0), index=0
+  copy.0 = s32[] copy(gte.0)
+  middle_op = s32[] add(gte.0, gte.0)
+  tuple.0 = (s32[]) tuple(copy.0)
+  gte.1 = s32[] get-tuple-element(tuple.0), index=0, control-predecessors={middle_op}
+  ROOT root_op = s32[] add(gte.1, middle_op)
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* copy_0 = FindInstruction(module.get(), "copy.0");
+  HloInstruction* middle_op = FindInstruction(module.get(), "middle_op");
+  HloInstruction* root_op = FindInstruction(module.get(), "root_op");
+
+  // Before simplification, copy.0 executes before middle_op, which executes
+  // before root_op.
+  {
+    SequentialHloOrdering ordering(module->schedule());
+    EXPECT_TRUE(ordering.ExecutesBefore(copy_0, middle_op));
+    EXPECT_TRUE(ordering.ExecutesBefore(middle_op, root_op));
+  }
+
+  Run(module.get(), /*change_expected=*/true);
+
+  // The control predecessor of gte.1 (middle_op) must be forwarded to root_op,
+  // not to copy.0, preserving the schedule order copy.0 before middle_op.
+  EXPECT_FALSE(copy_0->HasControlDependencies());
+  EXPECT_TRUE(
+      absl::c_linear_search(root_op->control_predecessors(), middle_op));
+
+  // Verify that the schedule remains completely intact and valid.
+  ASSERT_OK(module->schedule().Verify());
+  SequentialHloOrdering ordering(module->schedule());
+  EXPECT_TRUE(ordering.ExecutesBefore(copy_0, middle_op));
+  EXPECT_TRUE(ordering.ExecutesBefore(middle_op, root_op));
+}
+
+TEST_F(TupleSimplifierTest, RemoveWholeTupleWithControlDependencies) {
+  constexpr absl::string_view kHlo = R"(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  arg.0 = (s32[], s32[]) parameter(0)
+  gte.0 = s32[] get-tuple-element(arg.0), index=0
+  gte.1 = s32[] get-tuple-element(arg.0), index=1
+  pred_op = s32[] add(gte.0, gte.1)
+  tuple.0 = (s32[], s32[]) tuple(gte.0, gte.1), control-predecessors={pred_op}
+  succ_op = s32[] negate(pred_op), control-predecessors={tuple.0}
+  user_gte = s32[] get-tuple-element(tuple.0), index=0
+  ROOT root_op = s32[] add(user_gte, succ_op)
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* arg_0 = FindInstruction(module.get(), "arg.0");
+  HloInstruction* pred_op = FindInstruction(module.get(), "pred_op");
+  HloInstruction* succ_op = FindInstruction(module.get(), "succ_op");
+  HloInstruction* user_gte = FindInstruction(module.get(), "user_gte");
+  HloInstruction* root_op = FindInstruction(module.get(), "root_op");
+
+  Run(module.get(), /*change_expected=*/true);
+
+  // Control predecessor pred_op should be forwarded to user_gte (user of
+  // tuple.0), and control successor succ_op should be forwarded from arg.0.
+  EXPECT_TRUE(absl::c_linear_search(arg_0->control_successors(), succ_op));
+  EXPECT_TRUE(absl::c_linear_search(user_gte->control_predecessors(), pred_op));
+
+  ASSERT_OK(module->schedule().Verify());
+  SequentialHloOrdering ordering(module->schedule());
+  EXPECT_TRUE(ordering.ExecutesBefore(pred_op, succ_op));
+  EXPECT_TRUE(ordering.ExecutesBefore(succ_op, root_op));
+}
+
+TEST_F(TupleSimplifierTest, PreservesUnscheduledThreads) {
+  constexpr absl::string_view kHlo = R"(
+HloModule main, is_scheduled=true
+
+%sc_comp (param: s32[]) -> s32[] {
+  %param = s32[] parameter(0)
+  %tuple.sc = (s32[]) tuple(%param)
+  %gte.sc = s32[] get-tuple-element(%tuple.sc), index=0
+  ROOT %root.sc = s32[] copy(%gte.sc)
+}, execution_thread="sparsecore"
+
+ENTRY main {
+  arg.0 = (s32[]) parameter(0)
+  gte.0 = s32[] get-tuple-element(arg.0), index=0
+  tuple.0 = (s32[]) tuple(gte.0)
+  gte.1 = s32[] get-tuple-element(tuple.0), index=0
+  call-start = ((s32[]), s32[], s32[]) call-start(gte.1), async_execution_thread="sparsecore", to_apply=%sc_comp
+  call-done = s32[] call-done(call-start)
+  ROOT root_op = s32[] copy(call-done)
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  HloComputation* main_comp = module->entry_computation();
+  HloComputation* sc_comp = module->GetComputationWithName("sc_comp");
+
+  // Remove all sparsecore computations from the schedule so that thread starts
+  // unscheduled.
+  for (HloComputation* comp :
+       module->MakeNonfusionComputations({"sparsecore"})) {
+    module->schedule().remove_computation(comp);
+  }
+  EXPECT_TRUE(module->schedule().is_computation_scheduled(main_comp));
+  EXPECT_FALSE(module->schedule().is_computation_scheduled(sc_comp));
+
+  // Run TupleSimplifier targeting only the main execution thread.
+  TupleSimplifier simplifier;
+  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get(), {"main"}));
+  EXPECT_TRUE(changed);
+
+  // The main computation schedule should be updated.
+  EXPECT_TRUE(module->schedule().is_computation_scheduled(main_comp));
+  // The sparsecore computation must remain unscheduled (not forcibly
+  // scheduled).
+  EXPECT_FALSE(module->schedule().is_computation_scheduled(sc_comp));
+}
+
 }  // namespace
 }  // namespace xla
