@@ -20,10 +20,9 @@ limitations under the License.
 
 #include <memory>
 
-#include "tsl/platform/statusor.h"
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/pattern_matcher.h"
@@ -54,11 +53,8 @@ TEST_F(SliceSinkerTest, TernaryOperation) {
       ROOT tuple = (f32[2,9], f32[6,9]) tuple(sel0, sel1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -94,11 +90,8 @@ TEST_F(SliceSinkerTest, OverlappingPartialSlicesBeneficial) {
       ROOT tuple = (f32[2,9], f32[5,9], f32[8,4]) tuple(add0, add1, add2)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -140,11 +133,8 @@ TEST_F(SliceSinkerTest, SameSliceSourcesTwoPeerGroups) {
       ROOT tuple = (f32[2,9], f32[6,9], f32[8,2], f32[8,7]) tuple(add0, add1, mul0, mul1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -189,11 +179,8 @@ TEST_F(SliceSinkerTest, OverlappingMultipleSlices) {
       ROOT tuple = (f32[2,9], f32[5,9], f32[3,9]) tuple(add0, add1, add2)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -229,11 +216,8 @@ TEST_F(SliceSinkerTest, DisjointedPartialSlices) {
       ROOT tuple = (f32[2,9], f32[5,9]) tuple(add0, add1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(SliceSinkerTest, OverlappingPartialSlicesNotBeneficial) {
@@ -251,11 +235,8 @@ TEST_F(SliceSinkerTest, OverlappingPartialSlicesNotBeneficial) {
       ROOT tuple = (f32[2,7], f32[6,7]) tuple(add0, add1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(SliceSinkerTest, DifferentOrderingOfSliceSources) {
@@ -273,11 +254,8 @@ TEST_F(SliceSinkerTest, DifferentOrderingOfSliceSources) {
       ROOT tuple = (f32[2,7], f32[6,7]) tuple(add0, add1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(SliceSinkerTest, SlicesFromDifferentIndices) {
@@ -295,11 +273,8 @@ TEST_F(SliceSinkerTest, SlicesFromDifferentIndices) {
       ROOT tuple = (f32[4,9], f32[4,9]) tuple(add0, add1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(SliceSinkerTest, DifferentOperator) {
@@ -317,11 +292,8 @@ TEST_F(SliceSinkerTest, DifferentOperator) {
       ROOT tuple = (f32[2,9], f32[6,9]) tuple(mul, add)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(SliceSinkerTest, SameOperatorDifferentAttributes) {
@@ -339,11 +311,8 @@ TEST_F(SliceSinkerTest, SameOperatorDifferentAttributes) {
       ROOT tuple = (pred[2,9], pred[6,9]) tuple(cmp1, cmp2)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(SliceSinkerTest, SlicesWithMultiUsers) {
@@ -363,11 +332,8 @@ TEST_F(SliceSinkerTest, SlicesWithMultiUsers) {
       ROOT tuple = (f32[2,9], f32[6,9], f32[2,9], f32[6,9]) tuple(add0, add1, mul0, mul1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -428,11 +394,8 @@ TEST_F(SliceSinkerTest, SlicesWithNontrivialStrides) {
       ROOT tuple = (f32[4,9], f32[4,9]) tuple(add0, add1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -488,11 +451,8 @@ TEST_F(SliceSinkerTest, Cascade) {
       ROOT tuple = (f32[2,9], f32[6,9]) tuple(add0, add1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, SliceSinker()));
   HloInstruction* inst = module->entry_computation()->root_instruction();
   const HloInstruction* slice0;
   const HloInstruction* slice1;
@@ -522,11 +482,8 @@ TEST_F(SliceSinkerTest, SameOpcodeDifferentResultElementTypes) {
       ROOT tuple = (s32[2,9], s64[6,9]) tuple(convert0, convert1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  SliceSinker slice_sinker;
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&slice_sinker, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr, SliceSinker(),
+                                  /*expect_change=*/false));
 }
 
 }  // namespace
