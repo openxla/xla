@@ -233,6 +233,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:compiled_module",
+        "//xla/service:compiled_module_base",
         "//xla/service:compiler",
         "//xla/service:computation_layout",
         "//xla/service:device_assignment",
