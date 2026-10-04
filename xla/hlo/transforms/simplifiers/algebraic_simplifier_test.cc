@@ -2966,7 +2966,7 @@ TEST_F(AlgebraicSimplifierTest, PowExp) {
       GmockMatch(m::Exp(m::Multiply(m::Parameter(0), m::Parameter(1)))));
 }
 
-// Test that ln(pow(A, B)) is simplified to ln(A)*B
+// Test that ln(pow(A, B)) is simplified to ln(A)*B with fast math enabled.
 TEST_F(AlgebraicSimplifierTest, LnPow) {
   auto m = CreateNewVerifiedModule();
   Shape r0f32 = ShapeUtil::MakeShape(F32, {});
@@ -2985,7 +2985,9 @@ TEST_F(AlgebraicSimplifierTest, LnPow) {
   EXPECT_THAT(computation->root_instruction(),
               GmockMatch(m::Log(m::Power(m::Parameter(0), m::Parameter(1)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  AlgebraicSimplifier simplifier(options);
   ASSERT_TRUE(simplifier.Run(m.get()).value());
 
   EXPECT_THAT(
@@ -2994,6 +2996,28 @@ TEST_F(AlgebraicSimplifierTest, LnPow) {
           m::Eq(m::Parameter(1), m::ConstantScalar(0.0f)),
           m::ConstantScalar(0.0f),
           m::Multiply(m::Log(m::Abs(m::Parameter(0))), m::Parameter(1)))));
+}
+
+TEST_F(AlgebraicSimplifierTest, LnPowNotFoldedByDefault) {
+  auto m = CreateNewVerifiedModule();
+  Shape r0f32 = ShapeUtil::MakeShape(F32, {});
+  HloComputation::Builder builder(TestName());
+  HloInstruction* param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, r0f32, "param0"));
+  HloInstruction* param1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, r0f32, "param1"));
+  HloInstruction* pow = builder.AddInstruction(
+      HloInstruction::CreateBinary(r0f32, HloOpcode::kPower, param0, param1));
+  builder.AddInstruction(
+      HloInstruction::CreateUnary(r0f32, HloOpcode::kLog, pow));
+
+  auto computation = m->AddEntryComputationWithLayouts(builder.Build());
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).ok());
+
+  EXPECT_THAT(computation->root_instruction(),
+              GmockMatch(m::Log(m::Power(m::Parameter(0), m::Parameter(1)))));
 }
 
 TEST_F(AlgebraicSimplifierTest, LnSqrt) {
