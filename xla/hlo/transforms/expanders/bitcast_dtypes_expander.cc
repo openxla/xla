@@ -112,6 +112,10 @@ absl::StatusOr<HloInstruction*> Upcast(HloInstruction* input,
       primitive_util::UnsignedIntegralTypeForBitWidth(output_bit_width);
   int64_t factor = output_bit_width / input_bit_width;
 
+  if (primitive_util::IsFloatingPointType(input->shape().element_type())) {
+    input = MakeBitcastConvertToHlo(input, input_logical_type);
+  }
+
   // Reshape input to collapse the last two dimensions.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * collapsed_input,
                         CollapseLastDimension(input));
@@ -134,10 +138,10 @@ absl::StatusOr<HloInstruction*> Upcast(HloInstruction* input,
     ABSL_ASSIGN_OR_RETURN(
         HloInstruction * slice,
         MakeSliceHlo(collapsed_input, start_indices, limit_indices, strides));
-    HloInstruction* logical_slice =
+    HloInstruction* bitcast_slice =
         MakeBitcastConvertToHlo(slice, input_logical_type);
     HloInstruction* converted_slice =
-        MakeConvertToHlo(logical_slice, output_logical_type);
+        MakeConvertToHlo(bitcast_slice, output_logical_type);
 
     if (dim_index == 0) {
       acc = converted_slice;
