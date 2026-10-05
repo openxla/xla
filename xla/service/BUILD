@@ -3388,10 +3388,14 @@ xla_cc_test(
     name = "hlo_module_metadata_test",
     srcs = ["hlo_module_metadata_test.cc"],
     deps = [
+        ":hlo_module_config",
+        ":hlo_proto_cc",
+        ":metrics_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:status_matchers",
     ],
 )
 
