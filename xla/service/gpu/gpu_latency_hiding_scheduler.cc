@@ -556,14 +556,25 @@ static bool IsPartiallyPipelinedSendRecv(const HloInstruction* instr) {
 static constexpr int64_t kMinForceEarlyFillBytes = 1024 * 1024;
 
 // Returns true if `instr` is a large fill: a loop fusion with no operands, such
-// as a broadcast of a scalar constant or an iota, producing an array of at
-// least kMinForceEarlyFillBytes. Fills that carry an explicit placement
-// constraint are excluded.
+// as a broadcast of a scalar constant or an iota, whose outputs total at least
+// kMinForceEarlyFillBytes. Multi-output fills count, too: copy insertion and
+// copy fusion leave behind fusions that emit a broadcast together with a copy
+// of it, and at scheduling time those are the largest fills in the module.
+// Fills that carry an explicit placement constraint are excluded.
 static bool IsLargeIndependentFill(const HloInstruction& instr) {
   if (instr.opcode() != HloOpcode::kFusion ||
       instr.fusion_kind() != HloInstruction::FusionKind::kLoop ||
-      instr.operand_count() != 0 || !instr.shape().IsArray() ||
-      ShapeUtil::ByteSizeOfElements(instr.shape()) < kMinForceEarlyFillBytes) {
+      instr.operand_count() != 0) {
+    return false;
+  }
+  int64_t output_bytes = 0;
+  ShapeUtil::ForEachSubshape(
+      instr.shape(), [&output_bytes](const Shape& subshape, const ShapeIndex&) {
+        if (subshape.IsArray()) {
+          output_bytes += ShapeUtil::ByteSizeOfElements(subshape);
+        }
+      });
+  if (output_bytes < kMinForceEarlyFillBytes) {
     return false;
   }
   // Scheduling groups are placed as a unit by the annotation scheduler.

@@ -2364,9 +2364,16 @@ streamed_body {
 
 multi_body {
   zero = f32[] constant(0)
-  broadcast0 = f32[512,512]{1,0} broadcast(zero), dimensions={}
-  broadcast1 = f32[512,512]{1,0} broadcast(zero), dimensions={}
-  ROOT tuple = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(broadcast0, broadcast1)
+  broadcast = f32[384,384]{1,0} broadcast(zero), dimensions={}
+  copy = f32[384,384]{1,0} copy(broadcast)
+  ROOT tuple = (f32[384,384]{1,0}, f32[384,384]{1,0}) tuple(broadcast, copy)
+}
+
+small_multi_body {
+  zero = f32[] constant(0)
+  broadcast = f32[256,256]{1,0} broadcast(zero), dimensions={}
+  copy = f32[256,256]{1,0} copy(broadcast)
+  ROOT tuple = (f32[256,256]{1,0}, f32[256,256]{1,0}) tuple(broadcast, copy)
 }
 
 ENTRY main {
@@ -2378,8 +2385,9 @@ ENTRY main {
   earliest_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=earliest_body, backend_config={"force_earliest_schedule":true}
   grouped_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=grouped_body, frontend_attributes={_scheduling_group_id="0"}
   streamed_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=streamed_body, backend_config={"operation_queue_id":"1"}
-  multi_fill = (f32[512,512]{1,0}, f32[512,512]{1,0}) fusion(), kind=kLoop, calls=multi_body
-  ROOT result = (f32[512,512]{1,0}, s32[512,512]{1,0}, f32[16,16]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, (f32[512,512]{1,0}, f32[512,512]{1,0})) tuple(fill, iota_fill, small_fill, scaled, earliest_fill, grouped_fill, streamed_fill, multi_fill)
+  multi_fill = (f32[384,384]{1,0}, f32[384,384]{1,0}) fusion(), kind=kLoop, calls=multi_body
+  small_multi_fill = (f32[256,256]{1,0}, f32[256,256]{1,0}) fusion(), kind=kLoop, calls=small_multi_body
+  ROOT result = (f32[512,512]{1,0}, s32[512,512]{1,0}, f32[16,16]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, (f32[384,384]{1,0}, f32[384,384]{1,0}), (f32[256,256]{1,0}, f32[256,256]{1,0})) tuple(fill, iota_fill, small_fill, scaled, earliest_fill, grouped_fill, streamed_fill, multi_fill, small_multi_fill)
 }
 )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -2421,8 +2429,10 @@ ENTRY main {
   EXPECT_TRUE(node("earliest_fill").GetForceDelay());
   EXPECT_FALSE(node("grouped_fill").GetForceEarly());
   EXPECT_FALSE(node("streamed_fill").GetForceEarly());
-  // Multi-output fills are not handled.
-  EXPECT_FALSE(node("multi_fill").GetForceEarly());
+  // Multi-output fills count the bytes of all outputs: two 576 KiB outputs
+  // qualify, two 256 KiB outputs do not.
+  EXPECT_TRUE(node("multi_fill").GetForceEarly());
+  EXPECT_FALSE(node("small_multi_fill").GetForceEarly());
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
