@@ -28,6 +28,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
@@ -402,7 +403,12 @@ class BufferAllocation {
   absl::Status AddAssignment(const HloValue& buffer, int64_t offset,
                              int64_t size);
 
-  void set_index(Index index) { index_ = index; }
+  void set_index(Index index) {
+    index_ = index;
+    for (HeapSimulatorTrace& trace : heap_traces_) {
+      trace.set_buffer_allocation_index(index);
+    }
+  }
   void set_size(int64_t size) { size_ = size; }
 
   // The index of the allocation in the BufferAssignment.
@@ -691,8 +697,45 @@ class BufferAssignment {
     allocations_.clear();
     temp_allocation_total_size_ = 0;
     allocation_index_for_value_.clear();
+    fragmentation_bytes_by_color_.clear();
     stats_ = Stats();
   }
+
+  // Encapsulates the state of the buffer assignment.
+  struct State {
+    std::vector<BufferAllocation> allocations;
+    int64_t temp_allocation_total_size = 0;
+    absl::flat_hash_map<const HloValue*, BufferAllocation::Index>
+        allocation_index_for_value;
+    absl::btree_map<LogicalBuffer::Color, int64_t> fragmentation_bytes_by_color;
+    Stats stats;
+  };
+
+  // Takes a snapshot of the current state.
+  State GetState() const {
+    return {allocations_, temp_allocation_total_size_,
+            allocation_index_for_value_, fragmentation_bytes_by_color_, stats_};
+  }
+
+  // Restores the state from a snapshot.
+  void RestoreState(State state) {
+    allocations_ = std::move(state.allocations);
+    temp_allocation_total_size_ = state.temp_allocation_total_size;
+    allocation_index_for_value_ = std::move(state.allocation_index_for_value);
+    fragmentation_bytes_by_color_ =
+        std::move(state.fragmentation_bytes_by_color);
+    stats_ = state.stats;
+  }
+
+  // Replaces allocations and fragmentation stats for `colors` with those from
+  // `state`, leaving all other colors untouched.
+  void RestoreStateForColors(
+      const State& state,
+      const absl::flat_hash_set<LogicalBuffer::Color>& colors);
+
+  // Clears only the buffer allocations belonging to `colors`.
+  void ClearAllocationsForColors(
+      const absl::flat_hash_set<LogicalBuffer::Color>& colors);
 
   // Creates and returns a new BufferAllocation, with no assigned
   // LogicalBuffers. Ownership is maintained internally.
@@ -792,6 +835,8 @@ class BufferAssignment {
 
   Stats stats_;
 
+  absl::btree_map<LogicalBuffer::Color, int64_t> fragmentation_bytes_by_color_;
+
   absl::flat_hash_map<HloBuffer::Id, int64_t> cached_buffer_sizes_;
 
   BufferAssignment(const BufferAssignment&) = delete;
@@ -852,6 +897,12 @@ class BufferAllocationsManagerForComputationsWithoutOrdering {
 // A class which constructs a buffer assignment.
 class BufferAssigner {
  public:
+  struct AssignmentStrategy {
+    buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto::
+        Value non_sequential_algorithm;
+    buffer_assignment::BufferAssignmentAlgorithmProto::Value
+        sequential_algorithm;
+  };
   friend class BufferAssignmentTest;
   using Colorer =
       std::function<absl::Status(HloAliasAnalysis*, const HloOrdering&)>;
@@ -945,6 +996,11 @@ class BufferAssigner {
     // If set and returns > 0, the returned limit is used instead of the
     // default module config's device memory size.
     std::function<int64_t(LogicalBuffer::Color)> color_memory_limit;
+
+    // Whether a buffer color supports fast buffer assignment (FAST_MERGE /
+    // FAST_SPLIT); unsupported colors use the DEFAULT algorithm.
+    std::function<bool(LogicalBuffer::Color)> supports_fast_buffer_assignment =
+        [](LogicalBuffer::Color) { return true; };
   };
 
   static std::unique_ptr<BufferAllocationsManagerForComputationsWithoutOrdering>
@@ -1026,7 +1082,12 @@ class BufferAssigner {
           sequential_algorithm,
       buffer_assignment::
           AssignmentAlgorithmForComputationsWithoutOrderingProto::Value
-              non_sequential_algorithm);
+              non_sequential_algorithm,
+      const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
+          nullptr,
+      absl::flat_hash_map<const HloComputation*,
+                          absl::flat_hash_set<const HloValue*>>*
+          precomputed_sequential_buffers = nullptr);
 
   absl::Status RunAssignBuffersWithFallback(
       const HloModule* module,
@@ -1046,7 +1107,9 @@ class BufferAssigner {
       BufferAssignment* assignment,
       buffer_assignment::
           AssignmentAlgorithmForComputationsWithoutOrderingProto::Value
-              algorithm);
+              algorithm,
+      const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
+          nullptr);
 
   // Returns true if buffer's live range interferences with buffer2's.
   bool LiveRangeInterferes(const HloValue* buffer1,
@@ -1059,7 +1122,9 @@ class BufferAssigner {
   // to assigned_buffers and skip buffer allocation.
   absl::Status AssignPresetBuffers(
       absl::flat_hash_set<const HloBuffer*>* assigned_buffers,
-      BufferAssignment* assignment);
+      BufferAssignment* assignment,
+      const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
+          nullptr);
 
   // Assigns HloBuffers that require dedicated allocations upfront (constants,
   // entry parameters, thread-local, tuples).

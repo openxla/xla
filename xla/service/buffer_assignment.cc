@@ -1212,6 +1212,46 @@ absl::Status BufferAssignment::CombineTempAllocations(
   return absl::OkStatus();
 }
 
+void BufferAssignment::RestoreStateForColors(
+    const State& state,
+    const absl::flat_hash_set<LogicalBuffer::Color>& colors) {
+  std::erase_if(allocations_, [&](const BufferAllocation& alloc) {
+    return colors.contains(alloc.color());
+  });
+  for (const BufferAllocation& alloc : state.allocations) {
+    if (colors.contains(alloc.color())) {
+      allocations_.push_back(alloc);
+    }
+  }
+
+  temp_allocation_total_size_ = 0;
+  allocation_index_for_value_.clear();
+  // NOLINTNEXTLINE : the order of the loop is not important.
+  for (LogicalBuffer::Color color : colors) {
+    auto it = state.fragmentation_bytes_by_color.find(color);
+    if (it != state.fragmentation_bytes_by_color.end()) {
+      fragmentation_bytes_by_color_[color] = it->second;
+    } else {
+      fragmentation_bytes_by_color_.erase(color);
+    }
+  }
+  stats_ = Stats();
+  for (BufferAllocation::Index index = 0; index < allocations_.size();
+       ++index) {
+    BufferAllocation& allocation = allocations_[index];
+    allocation.set_index(index);
+    // NOLINTNEXTLINE : the order of the loop is not important.
+    for (const auto& [value, offset_size] : allocation.assigned_buffers_) {
+      allocation_index_for_value_[value] = index;
+    }
+  }
+}
+
+void BufferAssignment::ClearAllocationsForColors(
+    const absl::flat_hash_set<LogicalBuffer::Color>& colors) {
+  RestoreStateForColors(State{}, colors);
+}
+
 void BufferAssignment::ComputeSummaryStats() {
   for (auto& allocation : Allocations()) {
     if (allocation.is_entry_computation_parameter()) {
@@ -1232,6 +1272,12 @@ void BufferAssignment::ComputeSummaryStats() {
     }
     stats_.total_allocation_count++;
     stats_.total_allocation_bytes += allocation.size();
+  }
+  if (!fragmentation_bytes_by_color_.empty()) {
+    stats_.preallocated_temp_fragmentation_bytes = 0;
+    for (const auto& [color, bytes] : fragmentation_bytes_by_color_) {
+      stats_.preallocated_temp_fragmentation_bytes += bytes;
+    }
   }
 }
 
@@ -2275,7 +2321,8 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
         buffers_to_assign_sequentially,
     BufferAssignment* assignment,
     buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto::
-        Value algorithm) {
+        Value algorithm,
+    const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign) {
   if (computations.empty()) {
     return absl::OkStatus();
   }
@@ -2284,8 +2331,8 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
   // First assign the preset allocations.
   absl::flat_hash_set<const HloBuffer*> preset_assigned_buffers;
 
-  ABSL_RETURN_IF_ERROR(
-      AssignPresetBuffers(&preset_assigned_buffers, assignment));
+  ABSL_RETURN_IF_ERROR(AssignPresetBuffers(&preset_assigned_buffers, assignment,
+                                           colors_to_assign));
 
   const HloAliasAnalysis& alias_analysis = assignment->alias_analysis();
 
@@ -2299,10 +2346,31 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
       continue;
     }
     TF_RET_CHECK(!buffer.values().empty());
+    ABSL_ASSIGN_OR_RETURN(LogicalBuffer::Color color, buffer.color());
+    if (colors_to_assign != nullptr && !colors_to_assign->contains(color)) {
+      continue;
+    }
     const HloComputation* comp = buffer.values()[0]->instruction()->parent();
     if (computations_set.contains(comp)) {
       sorted_buffers.push_back(&buffer);
     }
+  }
+
+  for (const HloComputation* computation : computations) {
+    const HloInstructionSequence* instruction_sequence =
+        assignment->hlo_ordering().SequentialOrder(*computation);
+    const bool has_sequential_order = instruction_sequence != nullptr;
+    if (has_sequential_order && buffers_to_assign_sequentially != nullptr) {
+      // Every sequential computation must get an entry in the
+      // buffers_to_assign_sequentially map, even if we end up with an empty
+      // set of buffers. This ensures we can correctly determine whether to
+      // run whole-module heap simulation.
+      buffers_to_assign_sequentially->emplace(computation,
+                                              flat_hash_set<const HloValue*>());
+    }
+  }
+  if (sorted_buffers.empty()) {
+    return absl::OkStatus();
   }
 
   // Generate a post order sort of instructions for sorting of the
@@ -2323,20 +2391,6 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
       post_order_position.emplace(instruction, position);
       position++;
-    }
-  }
-
-  for (const HloComputation* computation : computations) {
-    const HloInstructionSequence* instruction_sequence =
-        assignment->hlo_ordering().SequentialOrder(*computation);
-    const bool has_sequential_order = instruction_sequence != nullptr;
-    if (has_sequential_order && buffers_to_assign_sequentially != nullptr) {
-      // Every sequential computation must get an entry in the
-      // buffers_to_assign_sequentially map, even if we end up with an empty
-      // set of buffers. This ensures we can correctly determine whether to
-      // run whole-module heap simulation.
-      buffers_to_assign_sequentially->emplace(computation,
-                                              flat_hash_set<const HloValue*>());
     }
   }
 
@@ -2399,7 +2453,7 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
         buffer_assignment::
             AssignmentAlgorithmForComputationsWithoutOrderingProto::
                 FAST_MERGE) {
-      if (GetMemoryLimit(*assignment, color) > 0) {
+      if (opts_.supports_fast_buffer_assignment(color)) {
         return &fast_manager;
       }
     }
@@ -2662,7 +2716,8 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
 
 absl::Status BufferAssigner::AssignPresetBuffers(
     absl::flat_hash_set<const HloBuffer*>* assigned_buffers,
-    BufferAssignment* assignment) {
+    BufferAssignment* assignment,
+    const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign) {
   if (!opts_.preset_assignments) {
     return absl::OkStatus();
   }
@@ -2673,6 +2728,9 @@ absl::Status BufferAssigner::AssignPresetBuffers(
   for (auto& color_and_info :
        opts_.preset_assignments->assignment_informations()) {
     LogicalBuffer::Color color(color_and_info.first);
+    if (colors_to_assign != nullptr && !colors_to_assign->contains(color)) {
+      continue;
+    }
     auto inserted = preset_allocations.emplace(
         color,
         assignment->NewEmptyAllocation(color_and_info.second.size, color));
@@ -2691,6 +2749,10 @@ absl::Status BufferAssigner::AssignPresetBuffers(
     const HloPosition& defining_position = position_and_chunk.first;
     const HloBuffer& buffer = alias_analysis.GetUniqueBufferAt(
         defining_position.instruction, defining_position.index);
+    ABSL_ASSIGN_OR_RETURN(LogicalBuffer::Color color, buffer.color());
+    if (colors_to_assign != nullptr && !colors_to_assign->contains(color)) {
+      continue;
+    }
     for (const HloValue* value : buffer.values()) {
       VLOG(3) << "Preset allocation for value: " << value->ToShortString();
       const HeapSimulator::Chunk& chunk = position_and_chunk.second;
@@ -2806,8 +2868,10 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     buffer_assignment::BufferAssignmentAlgorithmProto::Value algo_to_use =
         buffer_assignment_algorithm;
     if (algo_to_use ==
-        buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE) {
-      if (GetMemoryLimit(*assignment, color) == 0) {
+            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE ||
+        algo_to_use ==
+            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT) {
+      if (!opts_.supports_fast_buffer_assignment(color)) {
         algo_to_use =
             buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
       }
@@ -3094,11 +3158,8 @@ absl::Status BufferAssigner::AssignBuffersFromHeapSimulator(
     BufferValue::Color color,
     std::optional<BufferAssignment::BufferIsolationOptions> isolation_options) {
   IsolateHeapBuffers(isolation_options, assignment, color, result);
-  if (assignment->stats_.preallocated_temp_fragmentation_bytes == -1) {
-    assignment->stats_.preallocated_temp_fragmentation_bytes =
-        result.fragmentation_size;
-  } else {
-    assignment->stats_.preallocated_temp_fragmentation_bytes +=
+  if (result.fragmentation_size >= 0) {
+    assignment->fragmentation_bytes_by_color_[color] +=
         result.fragmentation_size;
   }
   VLOG(1) << "Result size from heap simulator: " << result.heap_size;
@@ -3228,27 +3289,85 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
     backup_presets = opts_.preset_assignments->ClonePresetAssignments();
   }
 
-  // 2. Primary Run: Execute buffer assignment using the primary configured
-  // algorithms.
-  absl::Status primary_status = RunAssignBuffers(
-      module, global_computations, thread_local_computations, assignment,
-      opts_.buffer_assignment_algorithm,
-      opts_.assignment_algorithm_for_computations_without_ordering);
+  // 2. Define the assignment strategies to try.
+  const std::vector<BufferAssigner::AssignmentStrategy> assignment_strategies =
+      {
+          {opts_.assignment_algorithm_for_computations_without_ordering,
+           opts_.buffer_assignment_algorithm},
+          {opts_.assignment_algorithm_for_computations_without_ordering,
+           buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT},
+          {opts_.fallback_algorithm_for_computations_without_ordering,
+           opts_.fallback_algorithm},
+      };
 
-  // 3. Check if the primary run succeeded and met memory limits.
-  // We calculate the total allocated memory per color and compare it against
-  // the adjusted memory limit (subtracting a safety margin of 2.5 GiB).
-  bool need_fallback = false;
-  if (absl::IsResourceExhausted(primary_status)) {
-    need_fallback = true;
-    VLOG(1) << "Primary BufferAssignment failed with ResourceExhausted. "
-            << "Triggering in-place fallback.";
-  } else if (primary_status.ok()) {
-    // Aggregate total allocated bytes across all allocations by color.
-    // Ensure we account for alignment fragmentation exactly the way
-    // CombineTempAllocations will.
+  std::optional<
+      buffer_assignment::
+          AssignmentAlgorithmForComputationsWithoutOrderingProto::Value>
+      cached_non_sequential_algorithm;
+  BufferAssignment::State cached_non_sequential_assignment_state;
+  absl::flat_hash_map<const HloComputation*,
+                      absl::flat_hash_set<const HloValue*>>
+      cached_buffers_to_assign_sequentially;
+
+  int64_t best_memory_usage = INT64_MAX;
+  std::optional<BufferAssignment::State> best_state;
+
+  // `nullopt` on the first strategy means assign all colors; on subsequent
+  // strategies it holds only the colors that exceeded their memory limit.
+  std::optional<absl::flat_hash_set<LogicalBuffer::Color>> active_colors;
+
+  // 3. Iterate through the assignment strategies. Return the first result that
+  // fits the limit for all colors, or the best if none fit.
+  for (const BufferAssigner::AssignmentStrategy& strategy :
+       assignment_strategies) {
+    LOG(INFO) << "Trying strategy: " << strategy.non_sequential_algorithm
+              << ", " << strategy.sequential_algorithm;
+    const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
+        active_colors.has_value() ? &*active_colors : nullptr;
+
+    if (cached_non_sequential_algorithm == strategy.non_sequential_algorithm) {
+      if (colors_to_assign != nullptr) {
+        assignment->RestoreStateForColors(
+            cached_non_sequential_assignment_state, *colors_to_assign);
+        for (auto& [comp, buffers] : cached_buffers_to_assign_sequentially) {
+          absl::erase_if(buffers, [&](const HloValue* value) {
+            return !colors_to_assign->contains(value->color());
+          });
+        }
+      } else {
+        assignment->RestoreState(cached_non_sequential_assignment_state);
+      }
+      ABSL_RETURN_IF_ERROR(RunAssignBuffers(
+          module, global_computations, thread_local_computations, assignment,
+          strategy.sequential_algorithm, strategy.non_sequential_algorithm,
+          colors_to_assign, &cached_buffers_to_assign_sequentially));
+    } else {
+      if (backup_presets) {
+        opts_.preset_assignments = backup_presets->ClonePresetAssignments();
+      }
+      if (colors_to_assign != nullptr) {
+        assignment->ClearAllocationsForColors(*colors_to_assign);
+      } else {
+        assignment->ClearAllocations();
+      }
+      cached_buffers_to_assign_sequentially.clear();
+      ABSL_RETURN_IF_ERROR(AssignBuffersForComputations(
+          global_computations, /*is_thread_local=*/false,
+          &cached_buffers_to_assign_sequentially, assignment,
+          strategy.non_sequential_algorithm, colors_to_assign));
+
+      cached_non_sequential_algorithm = strategy.non_sequential_algorithm;
+      cached_non_sequential_assignment_state = assignment->GetState();
+
+      // Proceed identically to what RunAssignBuffers does, but skip Phase 1
+      // since we just did it.
+      ABSL_RETURN_IF_ERROR(RunAssignBuffers(
+          module, global_computations, thread_local_computations, assignment,
+          strategy.sequential_algorithm, strategy.non_sequential_algorithm,
+          colors_to_assign, &cached_buffers_to_assign_sequentially));
+    }
+
     absl::btree_map<LogicalBuffer::Color, int64_t> allocated_bytes_by_color;
-
     for (const BufferAllocation& alloc : assignment->Allocations()) {
       LogicalBuffer::Color color = alloc.color();
       if (alloc.IsPreallocatedTempBuffer()) {
@@ -3261,8 +3380,11 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
       }
     }
 
+    int64_t total_memory_used = 0;
+    absl::flat_hash_set<LogicalBuffer::Color> fallback_colors;
     for (const auto& [color, total_allocated_bytes] :
          allocated_bytes_by_color) {
+      total_memory_used += total_allocated_bytes;
       int64_t memory_limit = GetMemoryLimit(*assignment, color);
       if (memory_limit > 0) {
         // Apply a safety margin of 2.5 GiB to the initial memory limit.
@@ -3271,36 +3393,47 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
             std::max<int64_t>(0, memory_limit - kTwoPointFiveGiB);
 
         if (total_allocated_bytes > adjusted_limit) {
-          need_fallback = true;
-          VLOG(1) << "Primary BufferAssignment exceeded memory limit for color "
-                  << color << " (" << total_allocated_bytes
-                  << " bytes vs limit of " << adjusted_limit
-                  << " bytes). Triggering in-place fallback to DEFAULT.";
-          break;
+          fallback_colors.insert(color);
+          VLOG(1) << "BufferAssignment strategy (non_sequential: "
+                  << strategy.non_sequential_algorithm
+                  << ", sequential: " << strategy.sequential_algorithm
+                  << ") exceeded memory limit for color " << color << " ("
+                  << total_allocated_bytes << " bytes vs limit of "
+                  << adjusted_limit << " bytes).";
+        } else {
+          VLOG(1) << "BufferAssignment strategy (non_sequential: "
+                  << strategy.non_sequential_algorithm
+                  << ", sequential: " << strategy.sequential_algorithm
+                  << ") did not exceed memory limit for color " << color << " ("
+                  << total_allocated_bytes << " bytes vs limit of "
+                  << adjusted_limit << " bytes).";
         }
-        VLOG(1)
-            << "Primary BufferAssignment did not exceed memory limit for color "
-            << color << " (" << total_allocated_bytes << " bytes vs limit of "
-            << adjusted_limit << " bytes).";
+      } else {
+        VLOG(1) << "BufferAssignment strategy (non_sequential: "
+                << strategy.non_sequential_algorithm
+                << ", sequential: " << strategy.sequential_algorithm
+                << ") did not set memory limit for color " << color
+                << ". Fallback not triggered.";
       }
     }
+
+    if (fallback_colors.empty()) {
+      return absl::OkStatus();
+    }
+    // Record the best memory usage over all colors so far.
+    if (total_memory_used < best_memory_usage) {
+      best_memory_usage = total_memory_used;
+      best_state = assignment->GetState();
+    }
+    active_colors = std::move(fallback_colors);
+  }
+  if (best_state.has_value()) {
+    assignment->RestoreState(*std::move(best_state));
+    return absl::OkStatus();
   }
 
-  // 4. Execute In-Place Fallback if needed.
-  // We reset the BufferAssignment object allocations in-place, restore the
-  // backup preset assignments, and execute the assignment passes using the
-  // DEFAULT fallback algorithms.
-  if (need_fallback) {
-    assignment->ClearAllocations();
-    if (backup_presets) {
-      opts_.preset_assignments = backup_presets->ClonePresetAssignments();
-    }
-    ABSL_RETURN_IF_ERROR(RunAssignBuffers(
-        module, global_computations, thread_local_computations, assignment,
-        opts_.fallback_algorithm,
-        opts_.fallback_algorithm_for_computations_without_ordering));
-  }
-  return absl::OkStatus();
+  return absl::ResourceExhaustedError(
+      "Buffer assignment failed for all fallback variants.");
 }
 
 absl::Status BufferAssigner::RunAssignBuffers(
@@ -3311,15 +3444,26 @@ absl::Status BufferAssigner::RunAssignBuffers(
     buffer_assignment::BufferAssignmentAlgorithmProto::Value
         sequential_algorithm,
     buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto::
-        Value non_sequential_algorithm) {
+        Value non_sequential_algorithm,
+    const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign,
+    flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>*
+        precomputed_sequential_buffers) {
   // First assign buffers for global computations. Temporary buffers for
   // sequential computations are collected in
   // 'buffers_to_assign_sequentially'.
   flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>
-      buffers_to_assign_sequentially;
-  ABSL_RETURN_IF_ERROR(AssignBuffersForComputations(
-      global_computations, /*is_thread_local=*/false,
-      &buffers_to_assign_sequentially, assignment, non_sequential_algorithm));
+      local_buffers_to_assign_sequentially;
+  flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>&
+      buffers_to_assign_sequentially =
+          precomputed_sequential_buffers ? *precomputed_sequential_buffers
+                                         : local_buffers_to_assign_sequentially;
+
+  if (!precomputed_sequential_buffers) {
+    ABSL_RETURN_IF_ERROR(AssignBuffersForComputations(
+        global_computations, /*is_thread_local=*/false,
+        &buffers_to_assign_sequentially, assignment, non_sequential_algorithm,
+        colors_to_assign));
+  }
   // Assign buffers with sequential ordering, if any. If all global
   // computations are sequential, we can run heap simulation on the whole
   // module, which reduces memory usage.
@@ -3351,7 +3495,7 @@ absl::Status BufferAssigner::RunAssignBuffers(
   ABSL_RETURN_IF_ERROR(AssignBuffersForComputations(
       thread_local_computations_no_fusion, /*is_thread_local=*/true,
       /*buffers_to_assign_sequentially=*/nullptr, assignment,
-      non_sequential_algorithm));
+      non_sequential_algorithm, colors_to_assign));
 
   // Mark all buffers which may be live out of the entry computation as
   // "liveout".
