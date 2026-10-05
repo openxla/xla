@@ -2427,8 +2427,17 @@ ENTRY main {
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
        LargeFillIsScheduledNextToItsUserAfterLoop) {
+  // The latency hiding scheduler only schedules computations that contain an
+  // async op, so an unrelated all-reduce keeps the entry computation on its
+  // path.
   constexpr absl::string_view kHloModule = R"(
 HloModule test
+
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
 
 fill_body {
   zero = f32[] constant(0)
@@ -2454,12 +2463,16 @@ body {
 
 ENTRY main {
   input = f32[512,512]{1,0} parameter(0)
+  other = f32[512,512]{1,0} parameter(1)
   zero = s32[] constant(0)
   initial = (s32[], f32[512,512]{1,0}) tuple(zero, input)
   fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
   loop = (s32[], f32[512,512]{1,0}) while(initial), condition=condition, body=body
   looped = f32[512,512]{1,0} get-tuple-element(loop), index=1
-  ROOT result = f32[512,512]{1,0} add(looped, fill)
+  sum = f32[512,512]{1,0} add(looped, fill)
+  ar-start = f32[512,512]{1,0} all-reduce-start(other), to_apply=apply_op
+  ar-done = f32[512,512]{1,0} all-reduce-done(ar-start)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(sum, ar-done)
 }
 )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -2470,10 +2483,13 @@ ENTRY main {
       module->schedule().sequence(module->entry_computation()).instructions();
 
   // The fill's buffer is not live across the loop. Only the no-op
-  // get-tuple-element may sit between the fill and its user.
+  // get-tuple-element, which the scheduler emits as soon as it is ready, may
+  // sit between the fill and its user.
   EXPECT_LT(GetIndexByName(sequence, "loop"), GetIndexByName(sequence, "fill"));
   EXPECT_LT(GetIndexByName(sequence, "fill"),
             GetIndexByName(sequence, "looped"));
+  EXPECT_LT(GetIndexByName(sequence, "looped"),
+            GetIndexByName(sequence, "sum"));
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
