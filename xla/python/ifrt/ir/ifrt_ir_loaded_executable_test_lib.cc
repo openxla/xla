@@ -485,7 +485,7 @@ module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %0 : !array
   }
 
@@ -532,7 +532,7 @@ module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %0 : !array
   }
 
@@ -577,7 +577,7 @@ TEST_F(IfrtIrLoadedExecutableTest, AliasingCopyArrays) {
 module {
   func.func @main(%arg0: !array0) -> !array0
       attributes {ifrt.function} {
-    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {reuse=true} : (!array0) -> !array0
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) <reuse=true> : (!array0) -> !array0
     return %0 : !array0
   }
 }
@@ -608,7 +608,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CrashOnProgramExecWithDonatedAliasedInput) {
 module {
   func.func @main(%arg0: !array {ifrt.donated}, %arg1: !array)
       -> (!array, !array) attributes {ifrt.function} {
-    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {donated=true} : (!array) -> !array
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) <donated=true> : (!array) -> !array
     %1, %ctrl_1 = ifrt.CopyArrays(%arg1) : (!array) -> !array
     return %0, %1 : !array, !array
   }
@@ -640,7 +640,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CopyArraysOpDonationOverride) {
 module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
-    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {donated=true} : (!array) -> !array
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) <donated=true> : (!array) -> !array
     return %0 : !array
   }
 }
@@ -687,7 +687,7 @@ module {
     %0, %1, %ctrl_0 = ifrt.RemapArrays(%arg0)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<0, 1, [#ifrt.mapping<[1:2:1] to [0:1:1]>]>]
-      {donated=true}
+      <donated=true>
       : (!array) -> (!array0, !array1)
     return %0, %1 : !array0, !array1
   }
@@ -747,7 +747,7 @@ module {
     %0, %ctrl_0 = ifrt.RemapArrays(%arg0, %arg1)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<1, 0, [#ifrt.mapping<[0:1:1] to [1:2:1]>]>]
-      {donated=true}
+      <donated=true>
       : (!array0, !array1) -> (!array)
     return %0 : !array
   }
@@ -801,7 +801,7 @@ module {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
         : (!array) -> !array
     %1, %ctrl_1 = ifrt.Call @add_one(%0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %1 : !array
   }
 
@@ -1013,14 +1013,14 @@ module {
   func.func @main(%arg0: !input) -> (!array0) attributes {ifrt.function} {
     %out, %ctrl = ifrt.Call @generate_data(%arg0) on devices [0]
       : (!input) -> !array0
-    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) {donated=true}
+    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) <donated=true>
       : (!array0) -> !array1
     %out_2, %ctrl_3 = ifrt.Call @identity(%out_0) on devices [1]
-      {io_aliases = [array<i32: 0, 0>]} : (!array1) -> !array1
-    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) {donated=true}
+      <io_aliases = [array<i32: 0, 0>]> : (!array1) -> !array1
+    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) <donated=true>
       : (!array1) -> !array0
     %out_6, %ctrl_7 = ifrt.Call @identity(%out_4) on devices [0]
-      {io_aliases = [array<i32: 0, 0>]} : (!array0) -> !array0
+      <io_aliases = [array<i32: 0, 0>]> : (!array0) -> !array0
     return %out_6 : !array0
   }
 
@@ -1519,7 +1519,7 @@ module {
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>]
       : (!array) -> !array0
     %2, %ctrl_2 = ifrt.Call @add_two(%0) on devices [0]
-      {io_aliases = [array<i32: 0, 0>]} : (!array0) -> !array0
+      <io_aliases = [array<i32: 0, 0>]> : (!array0) -> !array0
     %3, %ctrl_3 = ifrt.Call @add_one(%arg0) on devices [0,1]
         : (!array) -> !array
     return %3 : !array
@@ -1588,7 +1588,7 @@ module {
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>]
       : (!array) -> !array0
     %2, %3, %ctrl_2 = ifrt.Call @callee(%0, %1) on devices [0]
-      {io_aliases = [array<i32: 0, 0>, array<i32: 1, 1>]}
+      <io_aliases = [array<i32: 0, 0>, array<i32: 1, 1>]>
       : (!array0, !array0) -> (!array0, !array0)
     return %2, %3 : !array0, !array0
   }
@@ -1659,7 +1659,7 @@ module {
     %0, %ctrl_0 = ifrt.RemapArrays(%arg0, %arg1)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<1, 0, [#ifrt.mapping<[0:1:1] to [1:2:1]>]>]
-      {donated=true} : (!array0, !array1) -> (!array2)
+      <donated=true> : (!array0, !array1) -> (!array2)
     return %0 : !array2
   }
 }
@@ -1710,7 +1710,7 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> !array1
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.BitcastArrays(%arg0)
-      {donated=true} : (!array0) -> !array1
+      <donated=true> : (!array0) -> !array1
     return %0 : !array1
   }
 }
@@ -1746,7 +1746,7 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> !array1
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.BitcastArrays(%arg0)
-      {donated=true} : (!array0) -> !array1
+      <donated=true> : (!array0) -> !array1
     return %0 : !array1
   }
 }
@@ -1789,7 +1789,7 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}, %arg1: !array1 {ifrt.donated})
       -> (!array2, !array3) attributes {ifrt.function} {
     %0, %1, %ctrl_0 = ifrt.BitcastArrays(%arg0, %arg1)
-      {donated=true} : (!array0, !array1) -> (!array2, !array3)
+      <donated=true> : (!array0, !array1) -> (!array2, !array3)
     return %0, %1 : !array2, !array3
   }
 }
@@ -1850,9 +1850,9 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> !array0
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.BitcastArrays(%arg0)
-      {donated=true} : (!array0) -> !array1
+      <donated=true> : (!array0) -> !array1
     %1, %ctrl_1 = ifrt.Call @add_one(%0) on devices [0,1] : (!array1) -> !array1
-    %2, %ctrl_2 = ifrt.BitcastArrays(%1) {donated=true} : (!array1) -> !array0
+    %2, %ctrl_2 = ifrt.BitcastArrays(%1) <donated=true> : (!array1) -> !array0
     return %2 : !array0
   }
 
@@ -1910,7 +1910,7 @@ module @auto_layout {
       on devices [0, 1, 2, 3] : (!array) -> !array
     return %out_0, %out_0, %out_1, %arg1 : !array, !array, !array, !array
   }
-  module @transpose attributes {sym_visibility = "private"} {
+  module @transpose <sym_visibility = "private"> {
     func.func @main(%arg0: tensor<2x2xi32> {mhlo.layout_mode = "auto"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
       %0 = stablehlo.transpose %arg0, dims = [1, 0]
@@ -1918,7 +1918,7 @@ module @auto_layout {
       return %0 : tensor<2x2xi32>
     }
   }
-  module @transpose_w_custom_layout attributes {sym_visibility = "private"} {
+  module @transpose_w_custom_layout <sym_visibility = "private"> {
     func.func public @main(%arg0: tensor<2x2xi32>
         {mhlo.sharding = "{devices=[2,1,2]<=[4] last_tile_dim_replicate}"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
@@ -1981,7 +1981,7 @@ module @custom_layout_copy_arrays {
     %out_1, %ctrl_1 = ifrt.CopyArrays(%arg0) : (!array) -> !array
     return %out_0, %out_1 : !array, !array
   }
-  module @transpose_w_custom_layout attributes {sym_visibility = "private"} {
+  module @transpose_w_custom_layout <sym_visibility = "private"> {
     func.func public @main(%arg0: tensor<2x2xi32>
         {mhlo.sharding = "{devices=[2,1,2]<=[4] last_tile_dim_replicate}"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
@@ -2058,7 +2058,7 @@ module @custom_output_layout_copy_arrays {
     %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) : (!array) -> !array
     return %out_0, %out_1 : !array, !array
   }
-  module @transpose_w_custom_layout attributes {sym_visibility = "private"} {
+  module @transpose_w_custom_layout <sym_visibility = "private"> {
     func.func public @main(%arg0: tensor<2x2xi32>
         {mhlo.sharding = "{devices=[2,1,2]<=[4] last_tile_dim_replicate}"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
@@ -2121,7 +2121,7 @@ module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %0 : !array
   }
 
@@ -2184,14 +2184,14 @@ module {
   func.func @main(%arg0: !input) -> (!array0) attributes {ifrt.function} {
     %out, %ctrl = ifrt.Call @generate_data(%arg0) on devices [0]
       : (!input) -> !array0
-    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) {donated=true}
+    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) <donated=true>
       : (!array0) -> !array1
     %out_2, %ctrl_3 = ifrt.Call @identity(%out_0) on devices [1]
-      {io_aliases = [array<i32: 0, 0>]} : (!array1) -> !array1
-    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) {donated=true}
+      <io_aliases = [array<i32: 0, 0>]> : (!array1) -> !array1
+    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) <donated=true>
       : (!array1) -> !array0
     %out_6, %ctrl_7 = ifrt.Call @identity(%out_4) on devices [0]
-      {io_aliases = [array<i32: 0, 0>]} : (!array0) -> !array0
+      <io_aliases = [array<i32: 0, 0>]> : (!array0) -> !array0
     return %out_6 : !array0
   }
 
@@ -2336,13 +2336,13 @@ module {
     %0, %ctrl_0 = ifrt.Call @generate(%arg0) on devices [0]
         : (!array0) -> (!array1)
     %2, %3, %ctrl_1 = ifrt.Call @wait_4sec_and_add(%arg0, %0) on devices [0]
-        {io_aliases = [array<i32: 1, 1>]}
+        <io_aliases = [array<i32: 1, 1>]>
         : (!array0, !array1) -> (!array0, !array1)
     %4, %5, %ctrl_2 = ifrt.Call @wait_4sec_and_add(%2, %3) on devices [0]
-        {io_aliases = [array<i32: 1, 1>]}
+        <io_aliases = [array<i32: 1, 1>]>
         : (!array0, !array1) -> (!array0, !array1)
     %6, %7, %ctrl_3 = ifrt.Call @wait_4sec_and_add(%4, %5) on devices [0]
-        {io_aliases = [array<i32: 1, 1>]}
+        <io_aliases = [array<i32: 1, 1>]>
         : (!array0, !array1) -> (!array0, !array1)
     return %6, %7 : !array0, !array1
   }

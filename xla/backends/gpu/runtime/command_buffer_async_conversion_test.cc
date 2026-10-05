@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
@@ -420,15 +421,15 @@ TEST_F(CommandBufferAsyncConversionTest, DuplicateOutstandingStart) {
   // The runtime permits only one outstanding start per AsyncExecution, so this
   // sequence can never execute. Debug builds catch it in the pass; optimized
   // builds leave the region as thunks and still capture the trailing command.
-#ifndef NDEBUG
-  EXPECT_DEATH(Convert(thunks).IgnoreError(), "started twice");
-#else
-  ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
-  EXPECT_TRUE(changed);
-  EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
-                                    Thunk::kAsyncDone, Thunk::kAsyncDone,
-                                    Thunk::kCommandBuffer));
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    EXPECT_DEATH(Convert(thunks).IgnoreError(), "started twice");
+  } else {
+    ASSERT_OK_AND_ASSIGN(bool changed, Convert(thunks));
+    EXPECT_TRUE(changed);
+    EXPECT_THAT(thunks, ThunkKindsAre(Thunk::kAsyncStart, Thunk::kAsyncStart,
+                                      Thunk::kAsyncDone, Thunk::kAsyncDone,
+                                      Thunk::kCommandBuffer));
+  }
 }
 
 }  // namespace

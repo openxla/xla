@@ -356,7 +356,9 @@ void SetKernelEventUponApiExit(CuptiTracerEvent& event, uint32_t device_id,
                                uint64_t start_time, uint64_t end_time) {
   event.type = CuptiTracerEventType::Kernel;
   event.source = CuptiTracerEventSource::DriverCallback;
-  event.name = cbdata->symbolName ? cbdata->symbolName : cbdata->functionName;
+  event.name = cbdata->symbolName
+                   ? cbdata->symbolName
+                   : (cbdata->functionName ? cbdata->functionName : "");
   event.start_time_ns = start_time;
   event.end_time_ns = end_time;
   event.thread_id = Env::Default()->GetCurrentThreadId();
@@ -807,10 +809,12 @@ void SetCudaGraphNodeEventUponApiExit(CuptiTracerEvent& event,
   event.graph_id = graph_id_info.graph_id;
   // TODO(rahulnayar): Re-enable this check once the bug is fixed.
   // DCHECK_EQ(graph_id_info.node_id_map.size(), 1);
-  event.graph_node_id = graph_id_info.node_id_map.begin()->first;
   event.cuda_graph_info.orig_graph_id = graph_id_info.orig_graph_id;
-  event.cuda_graph_info.orig_graph_node_id =
-      graph_id_info.node_id_map.begin()->second;
+  if (!graph_id_info.node_id_map.empty()) {
+    event.graph_node_id = graph_id_info.node_id_map.begin()->first;
+    event.cuda_graph_info.orig_graph_node_id =
+        graph_id_info.node_id_map.begin()->second;
+  }
   VLOG(3) << "Observed CudaGraphNode API exit."
           << " name=" << cbdata->functionName;
   graph_id_info.node_id_map.clear();
@@ -1537,6 +1541,7 @@ absl::Status CuptiTracer::PrepareSubscriberForSession(
   }
   if (!use_v2_subscriber) {
     if (subscribe_status == CUPTI_ERROR_NOT_SUPPORTED ||
+        subscribe_status == CUPTI_ERROR_NOT_COMPATIBLE ||
         subscribe_status == CUPTI_ERROR_UNKNOWN) {
       subscribe_status = cupti_interface_->Subscribe(
           &subscriber_, (CUpti_CallbackFunc)ApiCallback, this);
