@@ -1,0 +1,187 @@
+/* Copyright 2026 The OpenXLA Authors.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/stream_executor/rocm/rocm_data_caches.h"
+
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+#include <cstdint>
+
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
+#include "absl/types/span.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/smi_util.h"
+
+namespace stream_executor::gpu {
+namespace {
+
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
+using ::testing::ElementsAre;
+
+constexpr int64_t kKiB = 1024;
+constexpr int64_t kMiB = 1024 * kKiB;
+
+TEST(BuildDataCacheHierarchyTest, Mi350x) {
+  // MI350X-like. The scalar L1 is dropped and the L2 count comes from the XCDs.
+  const SmiDataCache caches[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/256},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/128},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+      {/*level=*/3, /*size_bytes=*/256 * kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(
+      BuildDataCacheHierarchy(caches, /*core_count=*/256, /*xcc_count=*/8),
+      IsOkAndHolds(ElementsAre(DataCacheInfo{1, 32 * kKiB, 256},
+                               DataCacheInfo{2, 4 * kMiB, 8},
+                               DataCacheInfo{3, 256 * kMiB, 1})));
+}
+
+TEST(BuildDataCacheHierarchyTest, KeepsOneCachePerLevel) {
+  // RDNA3-like, shuffled. The GL1 and the scalar cache are dropped.
+  const SmiDataCache caches[] = {
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
+      {/*level=*/3, /*size_bytes=*/96 * kMiB, /*num_instances=*/1},
+      {/*level=*/2, /*size_bytes=*/6 * kMiB, /*num_instances=*/1},
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/96},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/48},
+  };
+
+  EXPECT_THAT(
+      BuildDataCacheHierarchy(caches, /*core_count=*/96, /*xcc_count=*/1),
+      IsOkAndHolds(ElementsAre(DataCacheInfo{1, 32 * kKiB, 96},
+                               DataCacheInfo{2, 6 * kMiB, 1},
+                               DataCacheInfo{3, 96 * kMiB, 1})));
+}
+
+TEST(BuildDataCacheHierarchyTest, HarvestingDoesNotChangeTheResult) {
+  // Two GPUs of one model, harvested differently. The scalar caches and a
+  // 256 KiB cache shared by 7 to 9 CUs are split into differing groups.
+  const SmiDataCache gpu0[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/256},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/32},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/8},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+  };
+  const SmiDataCache gpu2[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/256},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/32},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/16},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/16},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+  };
+
+  auto build = [](absl::Span<const SmiDataCache> caches) {
+    return BuildDataCacheHierarchy(caches, /*core_count=*/256,
+                                   /*xcc_count=*/1);
+  };
+  EXPECT_THAT(build(gpu0),
+              IsOkAndHolds(ElementsAre(DataCacheInfo{1, 32 * kKiB, 256},
+                                       DataCacheInfo{2, 4 * kMiB, 1})));
+  EXPECT_EQ(build(gpu0), build(gpu2));
+}
+
+TEST(BuildDataCacheHierarchyTest, L1CountIsTheCoreCount) {
+  // rocm_smi folds orphaned gfx9 scalar caches into the vector L1 group.
+  const SmiDataCache caches[] = {
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/54},
+      {/*level=*/2, /*size_bytes=*/8 * kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(
+      BuildDataCacheHierarchy(caches, /*core_count=*/110, /*xcc_count=*/1),
+      IsOkAndHolds(ElementsAre(DataCacheInfo{1, 16 * kKiB, 110},
+                               DataCacheInfo{2, 8 * kMiB, 1})));
+}
+
+TEST(BuildDataCacheHierarchyTest, SkipsInvalidEntries) {
+  const SmiDataCache caches[] = {
+      {/*level=*/0, /*size_bytes=*/16 * kKiB, /*num_instances=*/4},
+      {/*level=*/1, /*size_bytes=*/0, /*num_instances=*/4},
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/4},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(
+      BuildDataCacheHierarchy(caches, /*core_count=*/4, /*xcc_count=*/1),
+      IsOkAndHolds(ElementsAre(DataCacheInfo{1, 32 * kKiB, 4},
+                               DataCacheInfo{2, 4 * kMiB, 1})));
+}
+
+TEST(BuildDataCacheHierarchyTest, DropsGarbageLevels) {
+  const SmiDataCache caches[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/4},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+      {/*level=*/0xFFFFFFFF, /*size_bytes=*/kMiB, /*num_instances=*/1},
+      {/*level=*/7, /*size_bytes=*/kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(
+      BuildDataCacheHierarchy(caches, /*core_count=*/4, /*xcc_count=*/1),
+      IsOkAndHolds(ElementsAre(DataCacheInfo{1, 32 * kKiB, 4},
+                               DataCacheInfo{2, 4 * kMiB, 1})));
+}
+
+TEST(BuildDataCacheHierarchyTest, DropsLevelsAboveAGap) {
+  const SmiDataCache caches[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/4},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+      {/*level=*/4, /*size_bytes=*/256 * kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(
+      BuildDataCacheHierarchy(caches, /*core_count=*/4, /*xcc_count=*/1),
+      IsOkAndHolds(ElementsAre(DataCacheInfo{1, 32 * kKiB, 4},
+                               DataCacheInfo{2, 4 * kMiB, 1})));
+}
+
+TEST(BuildDataCacheHierarchyTest, FailsWithoutL1) {
+  const SmiDataCache caches[] = {
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+      {/*level=*/3, /*size_bytes=*/256 * kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(BuildDataCacheHierarchy(caches, /*core_count=*/256,
+                                      /*xcc_count=*/8),
+              StatusIs(absl::StatusCode::kNotFound));
+}
+
+TEST(BuildDataCacheHierarchyTest, FailsWithoutL2) {
+  const SmiDataCache caches[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/256},
+      {/*level=*/3, /*size_bytes=*/256 * kMiB, /*num_instances=*/1},
+  };
+
+  EXPECT_THAT(BuildDataCacheHierarchy(caches, /*core_count=*/256,
+                                      /*xcc_count=*/8),
+              StatusIs(absl::StatusCode::kNotFound));
+}
+
+TEST(BuildDataCacheHierarchyTest, FailsWithoutCaches) {
+  EXPECT_THAT(BuildDataCacheHierarchy({}, /*core_count=*/1, /*xcc_count=*/1),
+              StatusIs(absl::StatusCode::kNotFound));
+}
+
+TEST(QueryRocmDataCachesTest, InvalidBdfFails) {
+  EXPECT_FALSE(QueryRocmDataCaches("invalid").ok());
+}
+
+}  // namespace
+}  // namespace stream_executor::gpu

@@ -43,7 +43,8 @@ AutotuneCacheContext CreateCacheContext(
   device_description.set_core_count(device_core_count);
   device_description.set_clock_rate_ghz(1.41);
   device_description.set_memory_bandwidth(1555000000000);
-  device_description.set_l2_cache_size(41943040);
+  device_description.set_data_caches(
+      {{/*level=*/2, /*size_bytes=*/41943040, /*num_instances=*/1}});
 
   stream_executor::CudaComputeCapability cuda_cc(8, 0);
   stream_executor::GpuComputeCapability gpu_cc(cuda_cc);
