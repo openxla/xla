@@ -159,6 +159,7 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
     absl::Span<const std::pair<HloInstruction*, HloInstruction*>> async_pairs) {
   absl::flat_hash_map<HloInstruction*, HloInstruction*> replaced_ops;
   for (auto& [async_start, async_done] : async_pairs) {
+    const bool has_intermediaries = async_done->operand(0) != async_start;
     ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> group_id,
                           GetSchedulingAnnotationGroupId(async_done));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * sync,
@@ -172,8 +173,13 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
                    << sync->name() << ".";
     }
 
-    replaced_ops[async_start] = nullptr;
-    replaced_ops[async_done] = sync;
+    if (has_intermediaries) {
+      replaced_ops[async_start] = sync;
+      replaced_ops[async_done] = nullptr;
+    } else {
+      replaced_ops[async_start] = nullptr;
+      replaced_ops[async_done] = sync;
+    }
   }
 
   // Update schedule, if there is one.

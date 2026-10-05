@@ -717,7 +717,7 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
         !IsSafelyRemovable(item, ignore_control_dependencies,
                            computation_callers,
                            remove_dead_parameters_from_entry_computation) ||
-        (item->HasSideEffect() && item != instruction)) {
+        (item != instruction && item->HasSideEffect())) {
       continue;
     }
     if (ignore_control_dependencies) {

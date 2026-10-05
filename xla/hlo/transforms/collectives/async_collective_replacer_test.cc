@@ -470,6 +470,45 @@ TEST_F(AsyncCollectiveReplacerTest, ReduceScatterReplacedWithUnrelatedOp) {
               m::ReduceScatter());
 }
 
+TEST_F(AsyncCollectiveReplacerTest, ReduceScatterReplacedWithOptBarrier) {
+  const absl::string_view hlo_string = R"(
+      HloModule test
+
+      apply_op {
+        x = u32[] parameter(0)
+        y = u32[] parameter(1)
+        ROOT apply_op = u32[] add(x, y)
+      }
+
+      reduce_scatter_computation {
+        p0 = u32[4] parameter(0)
+        ROOT result = u32[2] reduce-scatter(p0), replica_groups={{0,1}}, dimensions={0}, to_apply=apply_op
+      }
+
+      ENTRY test_computation {
+        p = u32[4] parameter(0)
+        other = u32[4] parameter(1)
+        start = ((u32[4]), u32[2]) async-start(p), calls=reduce_scatter_computation
+        tup = (((u32[4]), u32[2]), u32[4]) tuple(start, other)
+        barrier = (((u32[4]), u32[2]), u32[4]) opt-barrier(tup)
+        gte = ((u32[4]), u32[2]) get-tuple-element(barrier), index=0
+        done = u32[2] async-done(gte), calls=reduce_scatter_computation
+        gte_other = u32[4] get-tuple-element(barrier), index=1
+        ROOT result = (u32[2], u32[4]) tuple(done, gte_other)
+      }
+    )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  AsyncCollectiveReplacer::Config config;
+  config.convert_reduce_scatter = HloPredicateTrue;
+  ASSERT_OK(RunPass(module.get(), /*expect_change=*/true, config));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              m::Tuple(m::GetTupleElement(m::OptimizationBarrier(m::Tuple(
+                                              m::ReduceScatter(m::Parameter(0)),
+                                              m::Parameter(1))),
+                                          0),
+                       m::GetTupleElement(m::OptimizationBarrier(), 1)));
+}
+
 TEST_F(AsyncCollectiveReplacerTest, AllReduceReplacedWithControlDep) {
   const absl::string_view hlo_string = R"(
       HloModule test

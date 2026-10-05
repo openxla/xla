@@ -300,7 +300,8 @@ class HloAsyncInstruction : public HloInstruction {
   std::vector<HloAsyncInstruction*> GetAsyncChain() const;
 
   bool HasSideEffect() const override {
-    return async_wrapped_instruction()->HasSideEffect();
+    const HloInstruction* instr = async_wrapped_instruction();
+    return instr != nullptr && instr->HasSideEffect();
   }
 
   // Updates all future instructions in the async chain to match the shape of

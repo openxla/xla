@@ -235,6 +235,48 @@ TEST_F(ConvertAsyncCollectivesToSyncTest, SimpleReduceScatter) {
   EXPECT_EQ(rs->scatter_dimension(), 0);
 }
 
+TEST_F(ConvertAsyncCollectivesToSyncTest, ReduceScatterWithOptBarrier) {
+  const absl::string_view hlo_string = R"(
+  HloModule test, is_scheduled=true
+
+  add {
+    lhs = u32[] parameter(0)
+    rhs = u32[] parameter(1)
+    ROOT add = u32[] add(lhs, rhs)
+  }
+
+  reduce_scatter {
+    p0 = u32[8] parameter(0)
+    ROOT result = u32[4] reduce-scatter(p0), replica_groups={{0,3}, {1,2}},
+                      dimensions={0}, to_apply=add
+  }
+
+  ENTRY main {
+    data = u32[8] parameter(0)
+    other = u32[8] parameter(1)
+    rs-start = ((u32[8]{0}), u32[4]{0}) async-start(u32[8]{0} %data), calls=reduce_scatter
+    tup = (((u32[8]{0}), u32[4]{0}), u32[8]{0}) tuple(%rs-start, %other)
+    barrier = (((u32[8]{0}), u32[4]{0}), u32[8]{0}) opt-barrier(tup)
+    gte = ((u32[8]{0}), u32[4]{0}) get-tuple-element(barrier), index=0
+    ars = u32[4]{0} async-done(gte), calls=reduce_scatter
+    gte_other = u32[8]{0} get-tuple-element(barrier), index=1
+    ROOT result = (u32[4]{0}, u32[8]{0}) tuple(ars, gte_other)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HloPredicate is_nop =
+      HloPredicateIsOp<HloOpcode::kTuple, HloOpcode::kOptimizationBarrier,
+                       HloOpcode::kGetTupleElement, HloOpcode::kParameter>;
+  ASSERT_OK(RunPass(module.get(), /*expect_change=*/true, is_nop));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              m::Tuple(m::GetTupleElement(m::OptimizationBarrier(m::Tuple(
+                                              m::ReduceScatter(m::Parameter(0)),
+                                              m::Parameter(1))),
+                                          0),
+                       m::GetTupleElement(m::OptimizationBarrier(), 1)));
+}
+
 TEST_F(ConvertAsyncCollectivesToSyncTest, SimpleAllToAll) {
   const absl::string_view hlo_string = R"(
   HloModule test, is_scheduled=true
