@@ -24,6 +24,7 @@ limitations under the License.
 #include <stack>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
+#include "xla/pjrt/se/event_polling_callback_runner.h"
 #include "xla/pjrt/se/event_pool.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/worker_thread.h"
@@ -213,6 +215,25 @@ class LocalDeviceState {
         nullptr, "ThenRelease");
   }
 
+  // Returns a single-threaded runner on which chunked staged host-to-device
+  // transfers (used under GPU Confidential Computing) issue their copies, so
+  // at most one staged transfer at a time issues copies to this device's
+  // `host_to_device_stream()`. Created on first use.
+  AsyncWorkRunner* staged_host_to_device_runner();
+
+  // Returns true if ThenExecuteCallback polls events instead of enqueuing
+  // stream host callbacks. Event polling is used when GPU Confidential
+  // Computing is enabled, where stream host callbacks can deadlock in the
+  // driver with concurrent kernel setup or event recording.
+  bool uses_event_polling_callbacks() const {
+    return event_polling_callback_runner_ != nullptr;
+  }
+
+  // Test-only: makes ThenExecuteCallback use event polling instead of stream
+  // host callbacks even when Confidential Computing is disabled. Must be
+  // called before any work is enqueued on this device.
+  void UseEventPollingCallbacksForTesting();
+
   std::optional<Semaphore>& compute_semaphore() { return compute_semaphore_; }
 
   // Whether to allow deleting a buffer before the operation fulfilling the
@@ -239,6 +260,9 @@ class LocalDeviceState {
 
  private:
   absl::Status SynchronizeAllActivity();
+
+  // Creates `event_polling_callback_runner_` if it does not exist yet.
+  void UseEventPollingCallbacks();
 
   AllocationModel allocation_model_;
 
@@ -274,6 +298,9 @@ class LocalDeviceState {
   std::stack<std::unique_ptr<se::Stream>> usage_stream_pool_
       ABSL_GUARDED_BY(stream_pool_mu_);
 
+  absl::once_flag staged_host_to_device_runner_once_;
+  std::unique_ptr<AsyncWorkRunner> staged_host_to_device_runner_;
+
   // Callback map pairs callback stream with a device stream and is used for
   // running short host-side callbacks after device side events, without
   // preventing the device-side stream from doing useful work.
@@ -293,6 +320,11 @@ class LocalDeviceState {
   // semaphore during calls to Execute but release it from a callback and if
   // they are the same thread we might deadlock.
   std::unique_ptr<WorkerThread> callback_thread_;
+
+  // If set, ThenExecuteCallback records events and polls them on this
+  // runner's thread instead of enqueuing stream host callbacks. The runner
+  // forwards each callback to `callback_thread_`.
+  std::unique_ptr<EventPollingCallbackRunner> event_polling_callback_runner_;
 
   // One thread dedicated to cleaning up buffers. Scheduled work on this thread
   // may wait for other threads to schedule writes to buffers.

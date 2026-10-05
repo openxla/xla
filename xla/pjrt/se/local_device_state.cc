@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
+#include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform.h"
@@ -155,9 +157,28 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
       tsl::Env::Default(), thread_options, "py_xla_callback");
   cleanup_thread_ = std::make_unique<WorkerThread>(
       tsl::Env::Default(), thread_options, "py_xla_cleanup");
+  // Under GPU Confidential Computing, stream host callbacks (cuLaunchHostFunc)
+  // can deadlock in the driver with concurrent kernel setup or event
+  // recording, so ThenExecuteCallback polls events instead.
+  if (executor->GetDeviceDescription().confidential_computing_enabled()) {
+    UseEventPollingCallbacks();
+  }
+}
+
+void LocalDeviceState::UseEventPollingCallbacks() {
+  if (event_polling_callback_runner_ != nullptr) {
+    return;
+  }
+  tsl::ThreadOptions thread_options;
+  thread_options.numa_node = executor_->numa_node();
+  event_polling_callback_runner_ = std::make_unique<EventPollingCallbackRunner>(
+      executor_, tsl::Env::Default(), thread_options, "py_xla_event_poller");
 }
 
 LocalDeviceState::~LocalDeviceState() {
+  // Finish staged host-to-device copies before synchronizing the streams they
+  // use.
+  staged_host_to_device_runner_.reset();
   absl::Status status = SynchronizeAllActivity();
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
@@ -167,6 +188,15 @@ LocalDeviceState::~LocalDeviceState() {
   // enqueued.
   execute_thread_.reset();
   async_dispatch_thread_.reset();
+
+  // All events recorded for polled callbacks completed in
+  // SynchronizeAllActivity() above, so this delivers every pending callback to
+  // `callback_thread_` (drained below) and stops the polling thread. The
+  // runner is kept alive (not reset) because closures still running on
+  // `callback_thread_` may call ThenExecuteCallback, which then fails cleanly.
+  if (event_polling_callback_runner_ != nullptr) {
+    event_polling_callback_runner_->Shutdown();
+  }
 
   // 2. Clear streams and stream pools to trigger all pending
   // callbacks/finalizations.
@@ -240,6 +270,17 @@ absl::Status LocalDeviceState::SynchronizeAllActivity() {
   return status;
 }
 
+AsyncWorkRunner* LocalDeviceState::staged_host_to_device_runner() {
+  absl::call_once(staged_host_to_device_runner_once_, [this] {
+    tsl::ThreadOptions thread_options;
+    thread_options.numa_node = executor_->numa_node();
+    staged_host_to_device_runner_ =
+        MakeThreadPoolAsyncWorkRunner(tsl::Env::Default(), "py_xla_staged_h2d",
+                                      /*num_threads=*/1, thread_options);
+  });
+  return staged_host_to_device_runner_.get();
+}
+
 absl::Status LocalDeviceState::ThenMemcpyDeviceToDevice(
     se::Stream* transfer_stream, se::Stream* dst_stream,
     se::DeviceAddressBase src_buffer, se::DeviceAddressBase dst_buffer) {
@@ -256,6 +297,29 @@ absl::Status LocalDeviceState::ThenExecuteCallback(
     return tag.empty() ? "ThenExecuteCallback"
                        : absl::StrCat("ThenExecuteCallback:", tag);
   });
+  if (event_polling_callback_runner_ != nullptr) {
+    // Recording an event does not block `stream`, so no callback stream is
+    // needed. The polling thread forwards to `callback_thread_`, preserving
+    // per-stream callback order.
+    return event_polling_callback_runner_->ThenCall(
+        stream,
+        [worker = callback_thread_.get(), callback = std::move(callback),
+         error_cb = std::move(error_cb)](absl::Status status) mutable {
+          worker->Schedule([status = std::move(status),
+                            callback = std::move(callback),
+                            error_cb = std::move(error_cb)]() mutable {
+            if (!status.ok()) {
+              if (error_cb) {
+                std::move(error_cb)(std::move(status));
+                return;
+              }
+              // Stream host callbacks run regardless, so do the same.
+              LOG(ERROR) << "Running stream callback despite error: " << status;
+            }
+            std::move(callback)();
+          });
+        });
+  }
   if (callback_stream_map_.has_value()) {
     se::Stream* callback_exec_stream = nullptr;
     {
@@ -289,6 +353,10 @@ absl::Status LocalDeviceState::ThenExecuteCallback(
         worker->Schedule(std::move(callback));
       },
       std::move(error_cb));
+}
+
+void LocalDeviceState::UseEventPollingCallbacksForTesting() {
+  UseEventPollingCallbacks();
 }
 
 se::Stream* LocalDeviceState::GetDeviceToHostStream() {

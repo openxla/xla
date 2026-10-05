@@ -31,6 +31,46 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "event_polling_callback_runner",
+    srcs = ["event_polling_callback_runner.cc"],
+    hdrs = ["event_polling_callback_runner.h"],
+    deps = [
+        "//xla:types",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+xla_cc_test(
+    name = "event_polling_callback_runner_test",
+    srcs = ["event_polling_callback_runner_test.cc"],
+    deps = [
+        ":event_polling_callback_runner",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:mock_stream",
+        "//xla/stream_executor:mock_stream_executor",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "tracked_device_buffer_test",
     srcs = ["tracked_device_buffer_test.cc"],
@@ -73,6 +113,7 @@ cc_library(
         "local_device_state.h",
     ],
     deps = [
+        ":event_polling_callback_runner",
         ":event_pool",
         "//xla:util",
         "//xla/client:local_client",
@@ -80,6 +121,7 @@ cc_library(
         "//xla/pjrt:device_event",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:semaphore",
+        "//xla/pjrt:thread_pool_async_work_runner",
         "//xla/pjrt:worker_thread",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:event",
@@ -111,6 +153,25 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+xla_cc_test(
+    name = "local_device_state_test",
+    srcs = ["local_device_state_test.cc"],
+    deps = [
+        ":local_device_state",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:mock_platform",
+        "//xla/stream_executor:mock_stream",
+        "//xla/stream_executor:mock_stream_executor",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
