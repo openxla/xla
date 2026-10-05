@@ -27,7 +27,11 @@ gpu_device_info {
   block_dim_limit_y: 4294967295
   block_dim_limit_z: 4294967295
   memory_bandwidth: 1228800000000
-  l2_cache_size: 201326592
+  data_caches {
+    level: 2
+    size_bytes: 201326592
+    num_instances: 1
+  }
   clock_rate_ghz: 1.55
   device_memory_size: 48946688000
   shared_memory_per_block_optin: 131072

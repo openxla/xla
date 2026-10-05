@@ -168,6 +168,7 @@ cc_library(
         ":rocm_command_buffer",
         ":rocm_compute_capability",
         ":rocm_context",
+        ":rocm_data_caches",
         ":rocm_event",
         ":rocm_kernel",
         ":rocm_memory_bandwidth",
@@ -497,6 +498,43 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
+    name = "rocm_data_caches",
+    srcs = ["rocm_data_caches.cc"],
+    hdrs = ["rocm_data_caches.h"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":smi_util",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "rocm_data_caches_test",
+    srcs = ["rocm_data_caches_test.cc"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":rocm_data_caches",
+        ":smi_util",
+        "//xla/stream_executor:device_description",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

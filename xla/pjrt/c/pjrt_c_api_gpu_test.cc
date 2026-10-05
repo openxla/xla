@@ -1071,7 +1071,11 @@ constexpr char const* kTargetConfigString = R"(gpu_device_info {
   block_dim_limit_y: 65535
   block_dim_limit_z: 65535
   memory_bandwidth: 898048000000
-  l2_cache_size: 6291456
+  data_caches {
+    level: 2
+    size_bytes: 6291456
+    num_instances: 1
+  }
   clock_rate_ghz: 1.53
   device_memory_size: 34072559616
   shared_memory_per_block_optin: 98304

@@ -27,7 +27,11 @@ gpu_device_info {
   core_count: 114
   device_memory_size: 84942979072
   fpus_per_core: 128
-  l2_cache_size: 52428800
+  data_caches {
+    level: 2
+    size_bytes: 52428800
+    num_instances: 1
+  }
   memory_bandwidth: 2039040000000
   shared_memory_per_block_optin: 232448
   shared_memory_per_block: 49152

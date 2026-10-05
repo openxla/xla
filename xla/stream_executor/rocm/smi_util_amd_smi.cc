@@ -13,6 +13,7 @@ limitations under the License.
 // amd_smi backend for the SMI queries declared in smi_util.h. Compiled in
 // from ROCm 7.13 on; smi_util_rocm_smi.cc takes its place below that.
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -167,6 +168,31 @@ absl::StatusOr<uint64_t> QueryPeakMemoryBandwidthGbps(SmiDeviceHandle device) {
         "amd_smi gpu_metrics reports no peak VRAM bandwidth (got ", gbps, ")"));
   }
   return gbps;
+}
+
+absl::StatusOr<std::vector<SmiDataCache>> QueryDataCaches(
+    SmiDeviceHandle device) {
+  amdsmi_gpu_cache_info_t cache_info = {};
+  if (amdsmi_status_t status =
+          amdsmi_get_gpu_cache_info(ToProcessorHandle(device), &cache_info);
+      status != AMDSMI_STATUS_SUCCESS) {
+    return SmiError("amdsmi_get_gpu_cache_info", status);
+  }
+
+  std::vector<SmiDataCache> caches;
+  const uint32_t num_types =
+      std::min<uint32_t>(cache_info.num_cache_types, AMDSMI_MAX_CACHE_TYPES);
+  for (uint32_t i = 0; i < num_types; ++i) {
+    const auto& cache = cache_info.cache[i];
+    if ((cache.cache_properties & AMDSMI_CACHE_PROPERTY_DATA_CACHE) == 0) {
+      continue;
+    }
+    // cache_size is in KB.
+    caches.push_back(SmiDataCache{cache.cache_level,
+                                  static_cast<int64_t>(cache.cache_size) * 1024,
+                                  cache.num_cache_instance});
+  }
+  return caches;
 }
 
 absl::StatusOr<uint64_t> QueryHiveId(SmiDeviceHandle device) {
