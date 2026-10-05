@@ -92,6 +92,20 @@ bool IsConvDepthwise(const HloInstruction* instr) {
   return input_feature_count == feature_group_count;
 }
 
+// cuDNN has no FP8 graph engine for grouped convolutions with fewer than four
+// input channels per group, which includes every depthwise convolution. Such
+// convolutions keep the default lowering instead of an FP8 graph.
+bool HasFewerThanFourInputChannelsPerGroup(const HloInstruction* instr) {
+  int64_t feature_group_count = instr->feature_group_count();
+  if (feature_group_count == 1) {
+    return false;
+  }
+  const HloInstruction* input = instr->operand(0);
+  int64_t input_feature_count = input->shape().dimensions(
+      instr->convolution_dimension_numbers().input_feature_dimension());
+  return input_feature_count / feature_group_count < 4;
+}
+
 // We don't want to upgrade depthwise convolutions to ConvBiasActivation,
 // because the fused CUDNN functions are slower for some of those.
 bool IsNonDepthwiseConvCustomCall(const HloInstruction* instr) {
@@ -895,6 +909,9 @@ absl::StatusOr<bool> F8GraphConv(HloComputation* comp,
             .WithPredicate(IsConvCustomCall),
         0);
     if (Match(instr, pattern)) {
+      if (HasFewerThanFourInputChannelsPerGroup(convolution)) {
+        continue;
+      }
       if (!ConsumeFuel("cudnn-fused-convolution-rewriter", [&] {
             return absl::StrCat("F8GraphConv: ", convolution->ToString());
           })) {
