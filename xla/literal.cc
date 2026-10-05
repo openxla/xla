@@ -1752,8 +1752,8 @@ void LiteralBase::EachCellAsString(
 namespace {
 
 template <typename NativeSrcT, typename NativeDestT>
-void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
-                               void* dst_base) {
+void ConvertBetweenNativeTypes(const void* __restrict src_untyped,
+                               int64_t count, void* __restrict dst_untyped) {
   static_assert(!std::is_same_v<NativeSrcT, NativeDestT>);
   auto converter = [](NativeSrcT src) -> NativeDestT {
     // C++ [conv.bool]p1:
@@ -1803,51 +1803,54 @@ void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
     }
   };
 
-  NativeDestT* dest_data = static_cast<NativeDestT*>(dst_base);
-  for (const NativeSrcT& src : src_data) {
-    *(dest_data++) = converter(src);
+  const NativeSrcT* __restrict src_data =
+      static_cast<const NativeSrcT*>(src_untyped);
+  NativeDestT* __restrict dest_data = static_cast<NativeDestT*>(dst_untyped);
+  for (int64_t i = 0; i < count; ++i) {
+    dest_data[i] = converter(src_data[i]);
   }
 }
 
 template <PrimitiveType kSrcType>
-absl::Status ConvertIfDestTypeMatches(const LiteralBase& src_literal,
-                                      MutableLiteralBase& dst_literal) {
-  DCHECK(dst_literal.shape().IsArray());
+void ConvertIfDestTypeMatches(const void* src_base, int64_t count,
+                              void* dst_base,
+                              PrimitiveType primitive_dest_type) {
   using NativeSrcT = NativeTypeOf<kSrcType>;
-  // Pass raw data Span/pointers to called template methods to avoid duplicating
-  // the Literal method calls to many time which hurts code size.
-  auto src_data = src_literal.data<NativeSrcT>();
-  void* dst_base = dst_literal.untyped_data();
-  DCHECK_EQ(src_data.size(), dst_literal.element_count());
-  return primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsComplexType(kSrcType) &&
-                      !primitive_util::IsComplexType(primitive_type_constant)) {
-          return Unimplemented("%s from type %s to type %s is not implemented.",
-                               "Converting", PrimitiveType_Name(kSrcType),
-                               PrimitiveType_Name(primitive_type_constant()));
-        } else if constexpr (kSrcType != primitive_type_constant) {
-          using NativeDestT = NativeTypeOf<primitive_type_constant>;
-          ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
-                                                             dst_base);
-        }
-        return absl::OkStatus();
-      },
-      dst_literal.shape().element_type());
+  auto convert = [=](auto primitive_type_constant) {
+    if constexpr (kSrcType != primitive_type_constant) {
+      using NativeDestT = NativeTypeOf<primitive_type_constant>;
+      ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_base, count,
+                                                         dst_base);
+    }
+  };
+  if constexpr (primitive_util::IsComplexType(kSrcType)) {
+    primitive_util::ComplexTypeSwitch(convert, primitive_dest_type);
+  } else if (primitive_util::IsFloatingPointType(primitive_dest_type)) {
+    primitive_util::FloatingPointTypeSwitch(convert, primitive_dest_type);
+  } else if (primitive_util::IsIntegralType(primitive_dest_type)) {
+    primitive_util::IntegralTypeSwitch(convert, primitive_dest_type);
+  } else if (primitive_util::IsComplexType(primitive_dest_type)) {
+    primitive_util::ComplexTypeSwitch(convert, primitive_dest_type);
+  } else {
+    DCHECK_EQ(primitive_dest_type, PRED);
+    convert(primitive_util::PrimitiveTypeConstant<PRED>());
+  }
 }
 
 absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
                                       PrimitiveType primitive_dest_type) {
   TF_RET_CHECK(literal.shape().IsArray());
-  if (literal.shape().element_type() == primitive_dest_type) {
+  const PrimitiveType primitive_src_type = literal.shape().element_type();
+  if (primitive_src_type == primitive_dest_type) {
     return literal.Clone();
   }
   // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
-      !primitive_util::IsArrayType(literal.shape().element_type())) {
+      !primitive_util::IsArrayType(primitive_src_type) ||
+      (primitive_util::IsComplexType(primitive_src_type) &&
+       !primitive_util::IsComplexType(primitive_dest_type))) {
     return Unimplemented("%s from type %s to type %s is not implemented.",
-                         "Converting",
-                         PrimitiveType_Name(literal.shape().element_type()),
+                         "Converting", PrimitiveType_Name(primitive_src_type),
                          PrimitiveType_Name(primitive_dest_type));
   }
   // At this point, we know both src & dst are array types, while src is not
@@ -1855,12 +1858,18 @@ absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
   // duplicating it N^2 times in the conversion implementation.
   Literal result(
       ShapeUtil::ChangeElementType(literal.shape(), primitive_dest_type));
-  ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        return ConvertIfDestTypeMatches<primitive_type_constant>(literal,
-                                                                 result);
+  // Pass raw data pointers/count to called template methods to avoid
+  // duplicating the Literal method calls too many times which hurts code size.
+  const void* src_base = literal.untyped_data();
+  void* dst_base = result.untyped_data();
+  const int64_t count = literal.element_count();
+  DCHECK_EQ(count, result.element_count());
+  primitive_util::ArrayTypeSwitch(
+      [=](auto primitive_type_constant) {
+        ConvertIfDestTypeMatches<primitive_type_constant>(
+            src_base, count, dst_base, primitive_dest_type);
       },
-      literal.shape().element_type()));
+      primitive_src_type);
   return result;
 }
 
