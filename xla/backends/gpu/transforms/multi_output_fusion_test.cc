@@ -2218,9 +2218,10 @@ TEST_F(ReduceMultiOutputFusionTest, SiblingFusionOfCustomKernelConsumers) {
       kCustomFusionConsumersCheck);
 }
 
-// A custom fusion is never a producer for producer-consumer multi-output
-// fusion, even when a consumer would otherwise absorb it.
-TEST_F(ReduceMultiOutputFusionTest, NoProducerConsumerFusionIntoCustomFusion) {
+// A custom fusion is never fused into its consumer by producer-consumer
+// multi-output fusion. Its body is elementwise, so the reduction would
+// otherwise absorb it.
+TEST_F(ReduceMultiOutputFusionTest, NoProducerConsumerFusionOfCustomFusion) {
   CheckMultiOutputFusion(R"(
 HloModule module
 
@@ -2230,10 +2231,9 @@ add {
   ROOT c = f32[] add(a, b)
 }
 
-triton_gemm {
-  p0 = f32[64,32] parameter(0)
-  p1 = f32[32,128] parameter(1)
-  ROOT d = f32[64,128] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+triton_fusion {
+  p = f32[64,128] parameter(0)
+  ROOT n = f32[64,128] negate(p)
 }
 
 fused_reduction {
@@ -2243,12 +2243,11 @@ fused_reduction {
 }
 
 ENTRY computation {
-  p0 = f32[64,32] parameter(0)
-  p1 = f32[32,128] parameter(1)
-  gemm = f32[64,128] fusion(p0, p1), kind=kCustom, calls=triton_gemm,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
-  r = f32[64] fusion(gemm), kind=kInput, calls=fused_reduction
-  ROOT out = (f32[64,128], f32[64]) tuple(gemm, r)
+  p0 = f32[64,128] parameter(0)
+  t = f32[64,128] fusion(p0), kind=kCustom, calls=triton_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+  r = f32[64] fusion(t), kind=kInput, calls=fused_reduction
+  ROOT out = (f32[64,128], f32[64]) tuple(t, r)
 }
 )",
                          std::nullopt);

@@ -477,10 +477,6 @@ absl::StatusOr<bool> MultiOutputFusion::DoMultiOutputFusion() {
                      &fusion_info_cache, &cost_analysis)) {
       changed = true;
     }
-    // Custom fusions cannot absorb consumers as additional outputs.
-    if (producer->IsCustomFusion()) {
-      continue;
-    }
     // Second, perform producer-consumer multi-output fusion. This order will
     // ensure that all get-tuple-element ops inserted as a by-product of
     // multi-output fusion will occur before the current op in the order of
