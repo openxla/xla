@@ -23,7 +23,9 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"
 #include "xla/hlo/tools/hlo_diff/graph/utils/hlo_gumgraph_bfs.h"
@@ -36,8 +38,16 @@ namespace {
 
 bool IsChangedInstruction(const HloInstructionNode* left_node,
                           const HloInstructionNode* right_node) {
-  return left_node->props.canonical_fingerprint !=
-         right_node->props.canonical_fingerprint;
+  if (left_node->props.canonical_fingerprint !=
+      right_node->props.canonical_fingerprint) {
+    return true;
+  }
+  // Entry parameter numbers define the module signature but are excluded
+  // from canonical_fingerprint.
+  return left_node->instruction->opcode() == HloOpcode::kParameter &&
+         left_node->instruction->parent()->IsEntryComputation() &&
+         left_node->instruction->parameter_number() !=
+             right_node->instruction->parameter_number();
 }
 
 }  // namespace

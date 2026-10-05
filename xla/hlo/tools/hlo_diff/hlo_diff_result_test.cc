@@ -35,6 +35,7 @@ namespace xla {
 namespace hlo_diff {
 namespace {
 
+using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Property;
@@ -206,6 +207,160 @@ ENTRY entry {
                        DiffType::kChanged)));
 }
 
+TEST_F(HloDiffTest, MatchedParametersWithDifferentNumbersMarkAsChanged) {
+  // Create left module with entry computation containing the following
+  // structure:
+  // [Param 0] ---> ┌------------┐      ┌------┐
+  //                | subtract_0 | ---> | ROOT |
+  // [Param 1] ---> └------------┘      └------┘
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_l,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  parameter.0 = f32[] parameter(0)
+  parameter.1 = f32[] parameter(1)
+  subtract.0 = f32[] subtract(parameter.0, parameter.1)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_l,
+                          HloGumgraph::Create(module_l.get()));
+
+  // Create right module with entry computation containing the following
+  // structure:
+  // [Param 1] ---> ┌------------┐      ┌------┐
+  //                | subtract_0 | ---> | ROOT |
+  // [Param 0] ---> └------------┘      └------┘
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_r,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  parameter.0 = f32[] parameter(0)
+  parameter.1 = f32[] parameter(1)
+  subtract.0 = f32[] subtract(parameter.1, parameter.0)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_r,
+                          HloGumgraph::Create(module_r.get()));
+  auto mappings = std::make_unique<HloGumgraphMappings>();
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "subtract.0"),
+                               GetNodeByName(*graph_r, "subtract.0"), *mappings,
+                               /*position_unchanged=*/true));
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "parameter.0"),
+                               GetNodeByName(*graph_r, "parameter.1"),
+                               *mappings, /*position_unchanged=*/true));
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "parameter.1"),
+                               GetNodeByName(*graph_r, "parameter.0"),
+                               *mappings, /*position_unchanged=*/true));
+  auto diff_result = ConstructDiffResult(*graph_l, *graph_r, *mappings);
+
+  EXPECT_THAT(
+      diff_result->changed_instructions,
+      UnorderedElementsAre(
+          Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+               Pointee(Property(&HloInstruction::name, "parameter.1"))),
+          Pair(Pointee(Property(&HloInstruction::name, "parameter.1")),
+               Pointee(Property(&HloInstruction::name, "parameter.0")))));
+  EXPECT_THAT(diff_result->unchanged_instructions,
+              UnorderedElementsAre(Pair(
+                  Pointee(Property(&HloInstruction::name, "subtract.0")),
+                  Pointee(Property(&HloInstruction::name, "subtract.0")))));
+
+  EXPECT_THAT(diff_result->left_diff_codes,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+                       DiffType::kChanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.1")),
+                       DiffType::kChanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "subtract.0")),
+                       DiffType::kUnchanged)));
+  EXPECT_THAT(diff_result->right_diff_codes,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+                       DiffType::kChanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.1")),
+                       DiffType::kChanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "subtract.0")),
+                       DiffType::kUnchanged)));
+}
+
+TEST_F(HloDiffTest, NonEntryParametersWithDifferentNumbersMarkAsUnchanged) {
+  // Create left module with a called computation containing the following
+  // structure:
+  // [Param 0] ---> ┌-------┐      ┌------┐
+  //                | add_0 | ---> | ROOT |
+  // [Param 1] ---> └-------┘      └------┘
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_l,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+add_computation {
+  parameter.0 = f32[] parameter(0)
+  parameter.1 = f32[] parameter(1)
+  ROOT add.0 = f32[] add(parameter.0, parameter.1)
+}
+
+ENTRY entry {
+  parameter.2 = f32[] parameter(0)
+  parameter.3 = f32[] parameter(1)
+  ROOT call.0 = f32[] call(parameter.2, parameter.3), to_apply=add_computation
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_l,
+                          HloGumgraph::Create(module_l.get()));
+
+  // Create right module with a called computation containing the following
+  // structure:
+  // [Param 1] ---> ┌-------┐      ┌------┐
+  //                | add_0 | ---> | ROOT |
+  // [Param 0] ---> └-------┘      └------┘
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_r,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+add_computation {
+  parameter.0 = f32[] parameter(0)
+  parameter.1 = f32[] parameter(1)
+  ROOT add.0 = f32[] add(parameter.1, parameter.0)
+}
+
+ENTRY entry {
+  parameter.2 = f32[] parameter(0)
+  parameter.3 = f32[] parameter(1)
+  ROOT call.0 = f32[] call(parameter.2, parameter.3), to_apply=add_computation
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_r,
+                          HloGumgraph::Create(module_r.get()));
+  auto mappings = std::make_unique<HloGumgraphMappings>();
+  ASSERT_NO_FATAL_FAILURE(OverwriteMapInstructions(
+      GetNodeByName(*graph_l, "add.0"), GetNodeByName(*graph_r, "add.0"),
+      *mappings, /*position_unchanged=*/true));
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "parameter.0"),
+                               GetNodeByName(*graph_r, "parameter.1"),
+                               *mappings, /*position_unchanged=*/true));
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "parameter.1"),
+                               GetNodeByName(*graph_r, "parameter.0"),
+                               *mappings, /*position_unchanged=*/true));
+  auto diff_result = ConstructDiffResult(*graph_l, *graph_r, *mappings);
+
+  EXPECT_THAT(diff_result->changed_instructions, IsEmpty());
+  EXPECT_THAT(diff_result->unchanged_instructions,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+                       Pointee(Property(&HloInstruction::name, "parameter.1"))),
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.1")),
+                       Pointee(Property(&HloInstruction::name, "parameter.0"))),
+                  Pair(Pointee(Property(&HloInstruction::name, "add.0")),
+                       Pointee(Property(&HloInstruction::name, "add.0")))));
+}
+
 TEST_F(HloDiffTest, UnmatchedInstructionsMarkAsUnmatched) {
   // Create left module with entry computation containing the following
   // structure:
@@ -369,6 +524,85 @@ ENTRY entry {
                DiffType::kUnchanged),
           Pair(Pointee(Property(&HloInstruction::name, "add.0")),
                DiffType::kUnchanged)));
+}
+
+TEST_F(HloDiffTest, LargeConstantsWithDifferentValuesMarkAsChanged) {
+  // Create left module with entry computation containing the following
+  // structure:
+  // [Param 0] ---> ┌-------┐
+  //                | add_0 |
+  // [Const 0] ---> └-------┘
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_l,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  parameter.0 = s32[16]{0} parameter(0)
+  constant.0 = s32[16]{0} constant({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+  add.0 = s32[16]{0} add(parameter.0, constant.0)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_l,
+                          HloGumgraph::Create(module_l.get()));
+
+  // Create right module with entry computation containing the following
+  // structure:
+  // [Param 0] ---> ┌-------┐
+  //                | add_0 |
+  // [Const 0] ---> └-------┘
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_r,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  parameter.0 = s32[16]{0} parameter(0)
+  constant.0 = s32[16]{0} constant({99, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+  add.0 = s32[16]{0} add(parameter.0, constant.0)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<const HloGumgraph> graph_r,
+                          HloGumgraph::Create(module_r.get()));
+  auto mappings = std::make_unique<HloGumgraphMappings>();
+  ASSERT_NO_FATAL_FAILURE(OverwriteMapInstructions(
+      GetNodeByName(*graph_l, "add.0"), GetNodeByName(*graph_r, "add.0"),
+      *mappings, /*position_unchanged=*/true));
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "parameter.0"),
+                               GetNodeByName(*graph_r, "parameter.0"),
+                               *mappings, /*position_unchanged=*/true));
+  ASSERT_NO_FATAL_FAILURE(
+      OverwriteMapInstructions(GetNodeByName(*graph_l, "constant.0"),
+                               GetNodeByName(*graph_r, "constant.0"), *mappings,
+                               /*position_unchanged=*/true));
+  auto diff_result = ConstructDiffResult(*graph_l, *graph_r, *mappings);
+
+  EXPECT_THAT(diff_result->changed_instructions,
+              UnorderedElementsAre(Pair(
+                  Pointee(Property(&HloInstruction::name, "constant.0")),
+                  Pointee(Property(&HloInstruction::name, "constant.0")))));
+  EXPECT_THAT(diff_result->unchanged_instructions,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+                       Pointee(Property(&HloInstruction::name, "parameter.0"))),
+                  Pair(Pointee(Property(&HloInstruction::name, "add.0")),
+                       Pointee(Property(&HloInstruction::name, "add.0")))));
+
+  EXPECT_THAT(diff_result->left_diff_codes,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "constant.0")),
+                       DiffType::kChanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+                       DiffType::kUnchanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "add.0")),
+                       DiffType::kUnchanged)));
+  EXPECT_THAT(diff_result->right_diff_codes,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "constant.0")),
+                       DiffType::kChanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "parameter.0")),
+                       DiffType::kUnchanged),
+                  Pair(Pointee(Property(&HloInstruction::name, "add.0")),
+                       DiffType::kUnchanged)));
 }
 
 TEST_F(HloDiffTest, DiffResultToAndFromProtoWorks) {
