@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/make_batch_pointers.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -42,8 +44,8 @@ absl::Status MakeBatchPointers(se::Stream* stream,
     if (platform_id == stream_executor::rocm::kROCmPlatformId) {
       return 256;
     } else if (platform_id == stream_executor::sycl::kSyclPlatformId) {
-      return std::min<int64_t>(
-          128, executor->GetDeviceDescription().threads_per_block_limit());
+      return static_cast<size_t>(std::min<int64_t>(
+          128, executor->GetDeviceDescription().threads_per_block_limit()));
     }
     return 128;
   }();
