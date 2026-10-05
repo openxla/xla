@@ -1038,6 +1038,7 @@ TEST_F(DynamicSliceFusionTest, OffsetIsExprChecksScalarIntegerOperations) {
       float_param = f32[] parameter(3)
       vector_param = s32[1] parameter(4)
       non_scalar_param = s32[2] parameter(5)
+      s8_param = s8[] parameter(6)
       c0 = s32[] constant(0)
       c1 = s64[] constant(1)
       pred_const = pred[] constant(true)
@@ -1059,13 +1060,17 @@ TEST_F(DynamicSliceFusionTest, OffsetIsExprChecksScalarIntegerOperations) {
       float_convert = f32[] convert(p0)
       pred_convert = pred[] convert(p0)
       non_scalar_add = s32[2] add(non_scalar_param, non_scalar_param)
+      float_bitcast = s32[] bitcast(float_param)
+      narrow_convert = s32[] convert(s8_param)
+      from_pred_convert = s32[] convert(pred_param)
       ROOT root = (s32[], s64[], pred[], s32[], pred[], s64[], s32[],
                    s32[], s32[1], s32[], s32[], s32[], s32[], s32[], f32[],
-                   f32[], pred[], s32[2]) tuple(
+                   f32[], pred[], s32[2], s32[], s32[], s32[]) tuple(
           add, multiply, compare, select, pred_select, convert,
           bitcast, scalar_reshape, vector_reshape,
           maximum, minimum, divide, remainder, clamp, float_add,
-          float_convert, pred_convert, non_scalar_add)
+          float_convert, pred_convert, non_scalar_add, float_bitcast,
+          narrow_convert, from_pred_convert)
     }
   )";
 
@@ -1100,6 +1105,9 @@ TEST_F(DynamicSliceFusionTest, OffsetIsExprChecksScalarIntegerOperations) {
   EXPECT_FALSE(Offset::IsExpr(c->GetInstructionWithName("float_convert")));
   EXPECT_FALSE(Offset::IsExpr(c->GetInstructionWithName("pred_convert")));
   EXPECT_FALSE(Offset::IsExpr(c->GetInstructionWithName("non_scalar_add")));
+  EXPECT_FALSE(Offset::IsExpr(c->GetInstructionWithName("float_bitcast")));
+  EXPECT_FALSE(Offset::IsExpr(c->GetInstructionWithName("narrow_convert")));
+  EXPECT_FALSE(Offset::IsExpr(c->GetInstructionWithName("from_pred_convert")));
 }
 
 TEST_F(DynamicSliceFusionTest, CollectOffsetParameters) {

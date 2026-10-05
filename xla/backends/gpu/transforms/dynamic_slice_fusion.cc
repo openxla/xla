@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -51,6 +52,7 @@ limitations under the License.
 namespace xla::gpu {
 
 using Offset = DynamicSliceFusion::Offset;
+using OffsetResolution = DynamicSliceFusion::OffsetResolution;
 
 // Single-element arrays (e.g. `s32[1]`) are treated as scalars in offset
 // expressions, because reshapes and bitcasts between them are no-ops.
@@ -68,9 +70,15 @@ bool Offset::IsExpr(const HloInstruction* instr) {
   switch (instr->opcode()) {
     case HloOpcode::kParameter:
     case HloOpcode::kConstant:
+      return IsScalarIntegerOrPred(instr->shape());
     case HloOpcode::kBitcast:
     case HloOpcode::kReshape:
-      return IsScalarIntegerOrPred(instr->shape());
+      // HLO bitcasts can change the element type (e.g. `s32[] bitcast(f32[])`),
+      // only bitcasts and reshapes between single-element arrays of the same
+      // element type are no-ops.
+      return IsScalarIntegerOrPred(instr->shape()) &&
+             ShapeUtil::SameElementType(instr->shape(),
+                                        instr->operand(0)->shape());
     case HloOpcode::kAdd:
     case HloOpcode::kSubtract:
     case HloOpcode::kMultiply:
@@ -88,8 +96,13 @@ bool Offset::IsExpr(const HloInstruction* instr) {
                  .debug_options()
                  .xla_gpu_experimental_enable_dynamic_slice_extended_offsets();
     case HloOpcode::kConvert:
+      // Offset verification reads offset parameters only as 32- or 64-bit
+      // integers, so we don't convert from narrower types, which would make
+      // them offset expression parameters.
       return IsScalarInteger(instr->shape()) &&
-             IsScalarIntegerOrPred(instr->operand(0)->shape());
+             IsScalarInteger(instr->operand(0)->shape()) &&
+             primitive_util::BitWidth(
+                 instr->operand(0)->shape().element_type()) >= 32;
     case HloOpcode::kCompare:
       return IsScalarInteger(instr->operand(0)->shape()) &&
              IsScalarInteger(instr->operand(1)->shape());
@@ -214,8 +227,6 @@ static absl::StatusOr<int64_t> GetScalarIntegerLiteral(
 
 static absl::StatusOr<Offset::Expr> BuildOffsetExpr(
     const HloInstruction* instr) {
-  instr = WalkThroughBitcasts(instr);
-
   if (!Offset::IsExpr(instr)) {
     return Internal(
         "DynamicSliceFusion: expected DS/DUS offset to be a scalar "
@@ -276,6 +287,10 @@ static absl::StatusOr<Offset::Expr> BuildOffsetExpr(
       return Offset::Minimum(Offset::Maximum(std::move(x), std::move(lo)),
                              std::move(hi));
     }
+    case HloOpcode::kBitcast:
+    case HloOpcode::kReshape:
+      // Bitcasts and reshapes between single-element arrays are no-ops.
+      return BuildOffsetExpr(instr->operand(0));
     case HloOpcode::kConvert:
       // Offset expressions are evaluated in int64_t, so integer converts are
       // no-ops (assuming offsets do not overflow the narrower type).
@@ -525,15 +540,26 @@ static std::optional<DynamicSliceConfig> ComputeStaticSliceConfig(
   return config;
 }
 
-absl::StatusOr<std::vector<Offset>> DynamicSliceFusion::ResolveOffsets(
-    const HloDynamicIndexInstruction* instr) {
+// Resolves per-dimension offset expressions of a DS/DUS. Returns one
+// expression per dimension, or std::nullopt if offsets are not representable as
+// Offset::Expr and offset resolution is optional.
+static absl::StatusOr<std::optional<std::vector<Offset>>> ResolveOffsets(
+    const HloDynamicIndexInstruction* instr,
+    OffsetResolution offset_resolution) {
   absl::Span<HloInstruction* const> index_operands = instr->index_operands();
   std::vector<Offset> offsets;
   offsets.reserve(index_operands.size());
   for (int64_t dim = 0; dim < index_operands.size(); ++dim) {
-    ABSL_ASSIGN_OR_RETURN(Offset::Expr expr,
-                          BuildOffsetExpr(index_operands[dim]));
-    offsets.push_back(Offset{dim, std::move(expr)});
+    absl::StatusOr<Offset::Expr> expr = BuildOffsetExpr(index_operands[dim]);
+    if (!expr.ok()) {
+      if (offset_resolution == OffsetResolution::kOptional) {
+        VLOG(3) << "Failed to resolve offset expression of " << instr->name()
+                << ": " << expr.status();
+        return std::nullopt;
+      }
+      return expr.status();
+    }
+    offsets.push_back(Offset{dim, *std::move(expr)});
   }
   return offsets;
 }
@@ -542,7 +568,8 @@ absl::StatusOr<std::vector<Offset>> DynamicSliceFusion::ResolveOffsets(
 // DUS, extracts the config, and finds the target parameter.
 static absl::StatusOr<std::optional<DynamicSliceFusion::Result>>
 ResolveOneResultChain(const HloInstruction* start, const Shape& hero_shape,
-                      int64_t result_number) {
+                      int64_t result_number,
+                      OffsetResolution offset_resolution) {
   const HloInstruction* walk = start;
   while (walk->opcode() == HloOpcode::kBitcast) {
     if (walk->user_count() != 1) {
@@ -566,7 +593,7 @@ ResolveOneResultChain(const HloInstruction* start, const Shape& hero_shape,
         target->ToString());
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto offsets, DynamicSliceFusion::ResolveOffsets(dus));
+  ABSL_ASSIGN_OR_RETURN(auto offsets, ResolveOffsets(dus, offset_resolution));
 
   return DynamicSliceFusion::Result{
       std::optional<int64_t>(target_param->parameter_number()),
@@ -574,7 +601,7 @@ ResolveOneResultChain(const HloInstruction* start, const Shape& hero_shape,
       dus->operand(0)->shape(),
       dus->operand(1)->shape(),
       config,
-      std::optional(std::move(offsets)),
+      std::move(offsets),
   };
 }
 
@@ -603,7 +630,8 @@ static const HloInstruction* WalkGteChain(const HloInstruction* instr,
 }
 
 absl::StatusOr<DynamicSliceFusion::Parameter>
-DynamicSliceFusion::ResolveParameter(const HloInstruction* operand) {
+DynamicSliceFusion::ResolveParameter(const HloInstruction* operand,
+                                     OffsetResolution offset_resolution) {
   const HloInstruction* walk = WalkThroughBitcasts(operand);
 
   std::optional<DynamicSliceConfig> config;
@@ -613,7 +641,7 @@ DynamicSliceFusion::ResolveParameter(const HloInstruction* operand) {
 
   if (auto* ds = DynCast<HloDynamicSliceInstruction>(walk)) {
     config = ExtractDynamicSliceConfig(ds);
-    ABSL_ASSIGN_OR_RETURN(offsets, ResolveOffsets(ds));
+    ABSL_ASSIGN_OR_RETURN(offsets, ResolveOffsets(ds, offset_resolution));
     slice_shape = ds->shape();
     source = ds->operand(0);
   } else if (auto* slice = DynCast<HloSliceInstruction>(walk)) {
@@ -656,7 +684,8 @@ DynamicSliceFusion::ResolveParameters(const HloInstruction* hero) {
 }
 
 absl::StatusOr<std::vector<DynamicSliceFusion::Result>>
-DynamicSliceFusion::ResolveResults(const HloInstruction* hero) {
+DynamicSliceFusion::ResolveResults(const HloInstruction* hero,
+                                   OffsetResolution offset_resolution) {
   if (hero->shape().IsTuple()) {
     auto leaves = ShapeUtil::GetLeafShapes(hero->shape());
     int64_t n = leaves.size();
@@ -675,8 +704,9 @@ DynamicSliceFusion::ResolveResults(const HloInstruction* hero) {
       }
 
       for (const HloInstruction* user : leaf_gte->users()) {
-        ABSL_ASSIGN_OR_RETURN(auto rs,
-                              ResolveOneResultChain(user, leaves[i].shape, i));
+        ABSL_ASSIGN_OR_RETURN(
+            auto rs,
+            ResolveOneResultChain(user, leaves[i].shape, i, offset_resolution));
         if (rs.has_value()) {
           results[i] = *std::move(rs);
         }
@@ -687,8 +717,8 @@ DynamicSliceFusion::ResolveResults(const HloInstruction* hero) {
 
   // Non-tuple hero: single result.
   for (const HloInstruction* user : hero->users()) {
-    ABSL_ASSIGN_OR_RETURN(auto rs,
-                          ResolveOneResultChain(user, hero->shape(), 0));
+    ABSL_ASSIGN_OR_RETURN(auto rs, ResolveOneResultChain(user, hero->shape(), 0,
+                                                         offset_resolution));
     if (rs.has_value()) {
       return std::vector{*std::move(rs)};
     }

@@ -20,7 +20,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
@@ -37,6 +36,8 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+using OffsetResolution = DynamicSliceFusion::OffsetResolution;
 
 bool IsBitcastOrReshape(const HloInstruction* instr) {
   return instr->opcode() == HloOpcode::kBitcast ||
@@ -104,15 +105,6 @@ bool IsSlicingInstructionCompatible(const HloInstruction* instr) {
   return HasDynamicSliceConfig(instr);
 }
 
-bool AllSlicingInstructionsCompatible(const HloComputation* body) {
-  for (const HloInstruction* instr : body->instructions()) {
-    if (IsSlicingInstruction(instr) && !IsSlicingInstructionCompatible(instr)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 std::optional<int64_t> StaticSliceByteOffset(const HloSliceInstruction* slice) {
   auto byte_strides = ShapeUtil::ByteStrides(slice->operand(0)->shape());
   if (!byte_strides.has_value()) {
@@ -161,6 +153,19 @@ std::optional<DynamicSliceCopyCandidate> FindDynamicSliceCopyCandidate(
   return std::nullopt;
 }
 
+// Returns true if slicing instructions on the copy data path are compatible.
+// The candidate DS/DUS always has a DynamicSliceConfig, so we only check the
+// copy operand. Slicing instructions in the offset subgraph (e.g. a table
+// lookup) are not checked, because the copy thunk never executes them and
+// computes offsets from the DynamicSliceConfig.
+bool DataPathSlicingInstructionsCompatible(
+    const DynamicSliceCopyCandidate& candidate) {
+  const HloInstruction* source =
+      WalkThroughBitcastsAndReshapes(candidate.copy_operand);
+  return !IsSlicingInstruction(source) ||
+         IsSlicingInstructionCompatible(source);
+}
+
 bool CanUseAsUnslicedParameter(const DynamicSliceFusion::Parameter& parameter) {
   if (parameter.slice_config.has_value()) {
     return true;
@@ -181,61 +186,6 @@ bool HasCompatibleCopyShapes(const Shape& source,
              ShapeUtil::ByteSizeOf(result.update_shape);
 }
 
-// Resolves offset expressions of a DS/DUS in a copy fusion. Unlike fusions
-// created by DynamicSliceFusionRewriterV2, copy fusions are created by fusion
-// passes that can fuse offset producers that are not representable as
-// Offset::Expr (e.g. a table lookup). The runtime computes offsets from the
-// DynamicSliceConfig, and offset expressions are only used for offset
-// verification, so we skip it for such offsets.
-std::optional<std::vector<DynamicSliceFusion::Offset>> ResolveCopyOffsets(
-    const HloDynamicIndexInstruction* instr) {
-  auto offsets = DynamicSliceFusion::ResolveOffsets(instr);
-  if (!offsets.ok()) {
-    VLOG(3) << "Failed to resolve offset expression: " << offsets.status()
-            << ". Skip verification.";
-    return std::nullopt;
-  }
-  return *std::move(offsets);
-}
-
-// Resolves the copy operand. A DS operand is resolved here to relax offset
-// resolution, everything else is resolved by DynamicSliceFusion.
-std::optional<DynamicSliceFusion::Parameter> ResolveCopyParameter(
-    const HloInstruction* operand) {
-  auto* ds = DynCast<HloDynamicSliceInstruction>(
-      WalkThroughBitcastsAndReshapes(operand));
-  if (ds == nullptr) {
-    auto parameter = DynamicSliceFusion::ResolveParameter(operand);
-    if (!parameter.ok()) {
-      return std::nullopt;
-    }
-    return *std::move(parameter);
-  }
-
-  auto* param = DynCast<HloParameterInstruction>(
-      WalkThroughBitcastsAndReshapes(ds->operand(0)));
-  if (param == nullptr) {
-    return std::nullopt;
-  }
-  return DynamicSliceFusion::Parameter{
-      param->parameter_number(), ds->operand(0)->shape(), ds->shape(),
-      ExtractDynamicSliceConfig(ds), ResolveCopyOffsets(ds)};
-}
-
-// Resolves the result of a DUS copy.
-std::optional<DynamicSliceFusion::Result> ResolveCopyResult(
-    const HloDynamicUpdateSliceInstruction* dus) {
-  auto* param = DynCast<HloParameterInstruction>(
-      WalkThroughBitcastsAndReshapes(dus->operand(0)));
-  if (param == nullptr) {
-    return std::nullopt;
-  }
-  return DynamicSliceFusion::Result{
-      param->parameter_number(),      0,
-      dus->operand(0)->shape(),       dus->operand(1)->shape(),
-      ExtractDynamicSliceConfig(dus), ResolveCopyOffsets(dus)};
-}
-
 }  // namespace
 
 absl::StatusOr<std::optional<DynamicSliceCopyFusion>>
@@ -250,36 +200,44 @@ AnalyzeDynamicSliceCopyFusion(const HloInstruction* instr) {
     return std::nullopt;
   }
 
-  const HloComputation* body = instr->fused_instructions_computation();
-  if (!AllSlicingInstructionsCompatible(body)) {
+  if (!DataPathSlicingInstructionsCompatible(*candidate)) {
     return std::nullopt;
   }
 
-  std::optional<DynamicSliceFusion::Parameter> parameter =
-      ResolveCopyParameter(candidate->copy_operand);
-  if (!parameter.has_value() || !CanUseAsUnslicedParameter(*parameter)) {
+  // Copy fusions are created by generic fusion passes that can fuse offset
+  // producers that are not representable as Offset::Expr. Copy fusions are
+  // emitted as a copy thunk addressed only by the DynamicSliceConfig, and
+  // offset expressions are used only for verification, so they are optional
+  // here.
+  absl::StatusOr<DynamicSliceFusion::Parameter> parameter =
+      DynamicSliceFusion::ResolveParameter(candidate->copy_operand,
+                                           OffsetResolution::kOptional);
+  if (!parameter.ok() || !CanUseAsUnslicedParameter(*parameter)) {
     return std::nullopt;
   }
 
-  std::optional<DynamicSliceFusion::Result> result;
+  std::vector<DynamicSliceFusion::Result> results;
   if (candidate->slicing->opcode() == HloOpcode::kDynamicSlice) {
     const Shape& shape = candidate->copy_operand->shape();
-    result = DynamicSliceFusion::Result{std::nullopt, 0,           shape, shape,
-                                        std::nullopt, std::nullopt};
+    results.push_back(DynamicSliceFusion::Result{std::nullopt, 0, shape, shape,
+                                                 std::nullopt, std::nullopt});
   } else {
-    result = ResolveCopyResult(
-        Cast<HloDynamicUpdateSliceInstruction>(candidate->slicing));
+    absl::StatusOr<std::vector<DynamicSliceFusion::Result>> resolved_results =
+        DynamicSliceFusion::ResolveResults(candidate->copy_operand,
+                                           OffsetResolution::kOptional);
+    if (!resolved_results.ok()) {
+      return std::nullopt;
+    }
+    results = std::move(resolved_results).value();
   }
 
-  if (!result.has_value() ||
-      !HasCompatibleCopyShapes(candidate->copy_operand->shape(), *result)) {
+  if (results.size() != 1 ||
+      !HasCompatibleCopyShapes(candidate->copy_operand->shape(), results[0])) {
     return std::nullopt;
   }
 
   std::vector<DynamicSliceFusion::Parameter> parameters;
-  parameters.push_back(*std::move(parameter));
-  std::vector<DynamicSliceFusion::Result> results;
-  results.push_back(*std::move(result));
+  parameters.push_back(std::move(parameter).value());
   return DynamicSliceCopyFusion{candidate->copy_operand, std::move(parameters),
                                 std::move(results)};
 }

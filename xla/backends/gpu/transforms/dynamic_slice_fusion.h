@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -182,7 +181,8 @@ struct DynamicSliceFusion {
     // Per-dimension offset expressions from the DS index operands, used only
     // for offset verification (the runtime computes offsets from
     // `slice_config`). Absent when the operand is not sliced by a DS, or when
-    // offsets are not representable as Offset::Expr (see dynamic_slice_copy).
+    // offsets are not representable as Offset::Expr in a dynamic-slice copy
+    // fusion (see OffsetResolution).
     std::optional<std::vector<Offset>> slice_offsets;
   };
 
@@ -213,9 +213,25 @@ struct DynamicSliceFusion {
     // Per-dimension offset expressions from the DUS index operands, used only
     // for offset verification (the runtime computes offsets from
     // `update_config`). Absent when the result does not flow through a DUS, or
-    // when offsets are not representable as Offset::Expr (see
-    // dynamic_slice_copy).
+    // when offsets are not representable as Offset::Expr in a dynamic-slice
+    // copy fusion (see OffsetResolution).
     std::optional<std::vector<Offset>> update_offsets;
+  };
+
+  // Controls how DS/DUS offsets that are not representable as Offset::Expr are
+  // handled when resolving parameters and results.
+  enum class OffsetResolution {
+    // Offsets must be representable as Offset::Expr, otherwise resolution
+    // fails. This is the default for all dynamic-slice fusions.
+    kRequired,
+
+    // Offsets that are not representable as Offset::Expr are left empty. Use
+    // only for dynamic-slice copy fusions (see dynamic_slice_copy.h): a DS/DUS
+    // copy is emitted as a single copy thunk addressed only by the
+    // DynamicSliceConfig, so offset expressions are needed only for offset
+    // verification, which is skipped. Not safe for fusions where the runtime
+    // depends on offset expressions.
+    kOptional,
   };
 
   // Finds the "hero" instruction inside a dynamic-slice fusion body.
@@ -231,17 +247,14 @@ struct DynamicSliceFusion {
   // to inspect a value as if it were copied by a trivial hero, without
   // materializing a temporary HLO instruction.
   static absl::StatusOr<Parameter> ResolveParameter(
-      const HloInstruction* operand);
+      const HloInstruction* operand,
+      OffsetResolution offset_resolution = OffsetResolution::kRequired);
 
   // Resolves results for the hero instruction. Returns an entry for all results
   // of the dynamic slice fusion (root of the hero, or for each tuple entry).
   static absl::StatusOr<std::vector<Result>> ResolveResults(
-      const HloInstruction* hero);
-
-  // Resolves per-dimension offset expressions of a DS/DUS. Returns one
-  // expression per dimension.
-  static absl::StatusOr<std::vector<Offset>> ResolveOffsets(
-      const HloDynamicIndexInstruction* instr);
+      const HloInstruction* hero,
+      OffsetResolution offset_resolution = OffsetResolution::kRequired);
 
   // Evaluates an offset expression with parameter values represented as
   // (fusion parameter number, scalar value) pairs.
