@@ -5479,6 +5479,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleOptimizationBarrier(
   int64_t current_index = 0;
   for (int64_t element = 0; element < used_elements.size(); ++element) {
     if (!used_elements[element]) {
+      if (operand->opcode() == HloOpcode::kTuple) {
+        ABSL_RETURN_IF_ERROR(
+            operand->mutable_operand(element)->AddControlDependencyTo(barrier));
+      }
       continue;
     }
     index_map[element] = current_index++;
