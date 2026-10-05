@@ -8,7 +8,6 @@ ${SCRIPT_DIR}/build_tools/rocm/run_xla_ci_build.sh \
     --config=rocm_rbe \
     --config=ci_single_gpu \
     --@rules_ml_toolchain//common:enable_xla_test_global_symbol_version=True \
-    --override_module=rules_ml_toolchain=/home/atheodor/projects/rules_ml_toolchain/ \
     --repo_env=REMOTE_GPU_TESTING=1 \
     --repo_env=ROCM_DISTRO_URL="https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz" \
     --repo_env=ROCM_DISTRO_HASH="1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6" \
