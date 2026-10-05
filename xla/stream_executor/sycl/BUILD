@@ -708,10 +708,9 @@ sycl_library(
     name = "cub_sort_kernel_sycl_impl",
     srcs = ["cub_sort_kernel_sycl_impl.dp.cpp"],
     hdrs = ["cub_sort_kernel_sycl.h"],
-    # oneDPL enables its bfloat16 radix sort support only when the compiler
-    # advertises SYCL_EXT_ONEAPI_BFLOAT16, which older DPC++ releases (e.g.
-    # 2025.1) do not do. TODO(intel-tf) Remove this once we upgrade to 2026.0."
-    # ::sycl::ext::oneapi::bfloat16.
+    # Enables oneDPL's bfloat16 radix sort, which older DPC++ compilers do not
+    # turn on by default.
+    # TODO(intel-tf): Remove once we require DPC++ 2026.0 or newer.
     copts = ["-DSYCL_EXT_ONEAPI_BFLOAT16=1"],
     tags = [
         "gpu",
@@ -727,7 +726,7 @@ sycl_library(
     alwayslink = 1,
 )
 
-cc_library(
+sycl_library(
     name = "cub_sort_kernel_sycl",
     srcs = ["cub_sort_kernel_sycl.cc"],
     hdrs = ["cub_sort_kernel_sycl.h"],
@@ -748,8 +747,6 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-    ] + if_sycl_is_configured([
-        "@local_config_sycl//sycl:sycl_headers",
-    ]),
+    ],
     alwayslink = True,
 )

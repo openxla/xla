@@ -41,10 +41,7 @@ constexpr size_t kMaxRadixSortItems = size_t{1} << 30;
 // Runs `enqueue`, converting the exceptions oneDPL and SYCL use to report
 // errors (e.g. a failed scratch allocation) into a status.
 template <typename F>
-absl::Status EnqueueRadixSort(size_t num_items, F&& enqueue) {
-  TF_RET_CHECK(num_items < kMaxRadixSortItems)
-      << "Cannot sort " << num_items << " keys, the limit is "
-      << kMaxRadixSortItems;
+absl::Status EnqueueRadixSort(F&& enqueue) {
   try {
     enqueue();
   } catch (const std::exception& e) {
@@ -58,12 +55,13 @@ absl::Status EnqueueRadixSort(size_t num_items, F&& enqueue) {
 }
 
 // Enqueues the sort of one segment out-of-place, from `keys_in` into
-// `keys_out`.
+// `keys_out`. Asynchronous: returns once the sort is submitted to `stream`,
+// so the buffers must stay valid until the stream's work completes.
 template <typename KeyT>
 absl::Status RadixSortKeys(const KeyT* keys_in, KeyT* keys_out,
                            size_t num_items, bool descending,
                            ::sycl::queue* stream) {
-  return EnqueueRadixSort(num_items, [&] {
+  return EnqueueRadixSort([&] {
     if (descending) {
       kt::gpu::radix_sort</*is_ascending=*/false, /*radix_bits=*/8>(
           *stream, keys_in, keys_in + num_items, keys_out, RadixSortParams{});
@@ -81,7 +79,7 @@ absl::Status RadixSortPairs(const KeyT* keys_in, KeyT* keys_out,
                             const ValT* values_in, ValT* values_out,
                             size_t num_items, bool descending,
                             ::sycl::queue* stream) {
-  return EnqueueRadixSort(num_items, [&] {
+  return EnqueueRadixSort([&] {
     if (descending) {
       kt::gpu::radix_sort_by_key</*is_ascending=*/false, /*radix_bits=*/8>(
           *stream, keys_in, keys_in + num_items, values_in, keys_out,
@@ -101,6 +99,16 @@ absl::Status CubSortKeys(void* d_temp_storage, size_t& temp_bytes,
                          const void* d_keys_in, void* d_keys_out,
                          size_t num_items, bool descending, size_t batch_size,
                          ::sycl::queue* stream) {
+  TF_RET_CHECK(num_items > 0) << "num_items must be > 0";
+  TF_RET_CHECK(batch_size > 0) << "batch_size must be > 0";
+  TF_RET_CHECK(num_items % batch_size == 0)
+      << "num_items (" << num_items << ") must be divisible by batch_size ("
+      << batch_size << ")";
+  const size_t segment_size = num_items / batch_size;
+  TF_RET_CHECK(segment_size < kMaxRadixSortItems)
+      << "Cannot sort " << segment_size << " keys, the limit is "
+      << kMaxRadixSortItems;
+
   // The compile-time scratch-size query passes null buffers. oneDPL allocates
   // its own temporaries, so no caller scratch is needed.
   if (d_keys_in == nullptr && d_keys_out == nullptr) {
@@ -109,16 +117,12 @@ absl::Status CubSortKeys(void* d_temp_storage, size_t& temp_bytes,
   }
 
   TF_RET_CHECK(stream != nullptr) << "SYCL queue cannot be null";
-  TF_RET_CHECK(num_items > 0) << "num_items must be > 0";
-  TF_RET_CHECK(batch_size > 0) << "batch_size must be > 0";
-  TF_RET_CHECK(num_items % batch_size == 0)
-      << "num_items (" << num_items << ") must be divisible by batch_size ("
-      << batch_size << ")";
 
   // oneDPL's sort entry points all take a single flat range, so sort each
   // segment with a separate call.
-  // TODO(intel-tf): revisit when oneDPL provides a segmented sort.
-  const size_t segment_size = num_items / batch_size;
+  // TODO(intel-tf): revisit when oneDPL provides a segmented sort. Each call
+  // allocates its own device temporaries (hidden from XLA by temp_bytes = 0),
+  // so a large batch_size may OOM; bound in-flight segments if needed.
   const KeyT* keys_in = static_cast<const KeyT*>(d_keys_in);
   KeyT* keys_out = static_cast<KeyT*>(d_keys_out);
   for (size_t i = 0; i < batch_size; ++i) {
@@ -135,6 +139,16 @@ absl::Status CubSortPairs(void* d_temp_storage, size_t& temp_bytes,
                           const void* d_values_in, void* d_values_out,
                           size_t num_items, bool descending, size_t batch_size,
                           ::sycl::queue* stream) {
+  TF_RET_CHECK(num_items > 0) << "num_items must be > 0";
+  TF_RET_CHECK(batch_size > 0) << "batch_size must be > 0";
+  TF_RET_CHECK(num_items % batch_size == 0)
+      << "num_items (" << num_items << ") must be divisible by batch_size ("
+      << batch_size << ")";
+  const size_t segment_size = num_items / batch_size;
+  TF_RET_CHECK(segment_size < kMaxRadixSortItems)
+      << "Cannot sort " << segment_size << " keys, the limit is "
+      << kMaxRadixSortItems;
+
   // The compile-time scratch-size query passes null buffers. oneDPL allocates
   // its own temporaries, so no caller scratch is needed.
   if (d_keys_in == nullptr && d_keys_out == nullptr) {
@@ -143,16 +157,12 @@ absl::Status CubSortPairs(void* d_temp_storage, size_t& temp_bytes,
   }
 
   TF_RET_CHECK(stream != nullptr) << "SYCL queue cannot be null";
-  TF_RET_CHECK(num_items > 0) << "num_items must be > 0";
-  TF_RET_CHECK(batch_size > 0) << "batch_size must be > 0";
-  TF_RET_CHECK(num_items % batch_size == 0)
-      << "num_items (" << num_items << ") must be divisible by batch_size ("
-      << batch_size << ")";
 
   // oneDPL's sort entry points all take a single flat range, so sort each
   // segment with a separate call.
-  // TODO(intel-tf): revisit when oneDPL provides a segmented sort.
-  const size_t segment_size = num_items / batch_size;
+  // TODO(intel-tf): revisit when oneDPL provides a segmented sort. Each call
+  // allocates its own device temporaries (hidden from XLA by temp_bytes = 0),
+  // so a large batch_size may OOM; bound in-flight segments if needed.
   const KeyT* keys_in = static_cast<const KeyT*>(d_keys_in);
   KeyT* keys_out = static_cast<KeyT*>(d_keys_out);
   const ValT* values_in = static_cast<const ValT*>(d_values_in);
@@ -195,49 +205,31 @@ XLA_CUB_INSTANTIATE_SORT_KEYS(uint32_t);
 XLA_CUB_INSTANTIATE_SORT_KEYS(uint64_t);
 
 // Pairs with 8-bit key.
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint8_t, ::sycl::half);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint8_t, float);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint8_t, double);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint8_t, uint16_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint8_t, uint32_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint8_t, uint64_t);
 
 // Pairs with 16-bit key.
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint16_t, ::sycl::half);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint16_t, float);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint16_t, double);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint16_t, uint16_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint16_t, uint32_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint16_t, uint64_t);
 
 // Pairs with signed 32-bit key.
-XLA_CUB_INSTANTIATE_SORT_PAIRS(int32_t, ::sycl::half);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(int32_t, float);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(int32_t, double);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(int32_t, uint16_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(int32_t, uint32_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(int32_t, uint64_t);
 
 // Pairs with unsigned 32-bit key.
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint32_t, ::sycl::half);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint32_t, float);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint32_t, double);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint32_t, uint16_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint32_t, uint32_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint32_t, uint64_t);
 
 // Pairs with 64-bit key.
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint64_t, ::sycl::half);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint64_t, float);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(uint64_t, double);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint64_t, uint16_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint64_t, uint32_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(uint64_t, uint64_t);
 
 // Pairs with f32 key.
-XLA_CUB_INSTANTIATE_SORT_PAIRS(float, ::sycl::half);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(float, float);
-XLA_CUB_INSTANTIATE_SORT_PAIRS(float, double);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(float, uint16_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(float, uint32_t);
 XLA_CUB_INSTANTIATE_SORT_PAIRS(float, uint64_t);

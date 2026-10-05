@@ -147,6 +147,10 @@ absl::StatusOr<std::unique_ptr<int64_t>> CubSortKeysInstantiate(
     ffi::Result<ffi::BufferR1<xla::U8>> d_temp_storage, bool descending,
     int64_t batch_size) {
   ABSL_RETURN_IF_ERROR(VerifySortKeysBuffers(d_keys_in, d_keys_out));
+  if (batch_size <= 0) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("batch_size must be > 0, got ", batch_size));
+  }
 
   ABSL_ASSIGN_OR_RETURN(auto fn, GetSortKeysFn(d_keys_in.element_type()));
   size_t temp_bytes = 0;
@@ -162,6 +166,10 @@ absl::Status CubSortKeysExecute(
     ffi::Result<ffi::BufferR1<xla::U8>> d_temp_storage, bool descending,
     int64_t batch_size, ::sycl::queue* stream) {
   ABSL_RETURN_IF_ERROR(VerifySortKeysBuffers(d_keys_in, d_keys_out));
+  if (batch_size <= 0) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("batch_size must be > 0, got ", batch_size));
+  }
 
   ABSL_ASSIGN_OR_RETURN(auto fn, GetSortKeysFn(d_keys_in.element_type()));
   size_t temp_bytes = d_temp_storage->size_bytes();
@@ -210,6 +218,10 @@ absl::StatusOr<std::unique_ptr<int64_t>> CubSortPairsInstantiate(
     int64_t batch_size) {
   ABSL_RETURN_IF_ERROR(
       VerifySortPairsBuffers(d_keys_in, d_values_in, d_keys_out, d_values_out));
+  if (batch_size <= 0) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("batch_size must be > 0, got ", batch_size));
+  }
 
   ABSL_ASSIGN_OR_RETURN(
       auto fn, GetSortPairsFn(
@@ -232,6 +244,10 @@ absl::Status CubSortPairsExecute(
     int64_t batch_size, ::sycl::queue* stream) {
   ABSL_RETURN_IF_ERROR(
       VerifySortPairsBuffers(d_keys_in, d_values_in, d_keys_out, d_values_out));
+  if (batch_size <= 0) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("batch_size must be > 0, got ", batch_size));
+  }
 
   ABSL_ASSIGN_OR_RETURN(
       auto fn, GetSortPairsFn(
