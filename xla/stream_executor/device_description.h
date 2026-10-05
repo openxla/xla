@@ -26,7 +26,9 @@ limitations under the License.
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
@@ -219,6 +221,37 @@ struct DeviceInterconnectInfo {
   }
 };
 
+struct DataCacheInfo {
+  // Level as numbered by the driver, starting at 1.
+  int level = 0;
+  // Size of one instance.
+  int64_t size_bytes = 0;
+  int num_instances = 0;
+
+  int64_t total_size_bytes() const { return size_bytes * num_instances; }
+
+  bool operator==(const DataCacheInfo& other) const {
+    return level == other.level && size_bytes == other.size_bytes &&
+           num_instances == other.num_instances;
+  }
+  bool operator!=(const DataCacheInfo& other) const {
+    return !(*this == other);
+  }
+
+  DataCacheInfoProto ToProto() const {
+    DataCacheInfoProto proto;
+    proto.set_level(level);
+    proto.set_size_bytes(size_bytes);
+    proto.set_num_instances(num_instances);
+    return proto;
+  }
+
+  static DataCacheInfo FromProto(const DataCacheInfoProto& proto) {
+    return DataCacheInfo{proto.level(), proto.size_bytes(),
+                         proto.num_instances()};
+  }
+};
+
 // Data that describes the execution target of the StreamExecutor, in terms of
 // important logical parameters. These include dimensionality limits and
 // physical parameters of interest, such as number of cores present on the
@@ -347,8 +380,18 @@ class DeviceDescription {
   // Returns the device memory size in bytes.
   int64_t device_memory_size() const { return device_memory_size_; }
 
-  // Returns the L2 cache size in bytes.
-  int64_t l2_cache_size() const { return l2_cache_size_; }
+  // Returns the device's data caches, ordered by level, then by decreasing
+  // num_instances (most private first). A level may hold several caches or
+  // none.
+  absl::Span<const DataCacheInfo> data_caches() const { return data_caches_; }
+
+  // Returns the most private data cache at `level`, or nullptr if there is
+  // none.
+  const DataCacheInfo* data_cache(int level) const;
+
+  // Returns the size of one L2 instance in bytes, not the total across all
+  // instances, or -1 if there is no L2.
+  int64_t l2_cache_size() const;
 
   // Returns the device's memory bandwidth in bytes/sec.  (This is for
   // reads/writes to/from the device's own memory, not for transfers between the
@@ -423,20 +466,10 @@ class DeviceDescription {
   // configured as shared memory; there is no easy way to query its actual size;
   // also we do not count what occupies cache, but rather claim that what is
   // much smaller than the cache size will likely stay in it.
-  int64_t l1_cache_size_per_SM() const {
-    if (auto* capability = gpu_compute_capability_.rocm_compute_capability()) {
-      // MI100 and MI200 has 16KB L1 cache per CU.
-      if (capability->gfx9_mi100() || capability->gfx9_mi200()) {
-        return 16 * 1024;
-      }
-      // MI300 has 32KB L1 cache per CU.
-      if (capability->gfx9_mi300_series()) {
-        return 32 * 1024;
-      }
-    }
-    // Default return for other GPUs (e.g., RTX A6000).
-    return 2 * 1024;
-  }
+  int64_t l1_cache_size_per_SM() const;
+
+  // Returns the L1 size per core reported by platforms that cannot query it.
+  static int64_t DefaultL1CacheSizePerCore(const GpuComputeCapability& cc);
 
   int64_t dram_to_l2_transaction_size_bytes() const {
     if (auto* capability = gpu_compute_capability_.rocm_compute_capability()) {
@@ -549,7 +582,11 @@ class DeviceDescription {
 
   void set_device_address_bits(int64_t value) { device_address_bits_ = value; }
   void set_device_memory_size(int64_t value) { device_memory_size_ = value; }
-  void set_l2_cache_size(int64_t value) { l2_cache_size_ = value; }
+  ABSL_DEPRECATED("Use set_data_caches() instead.")
+  void set_l2_cache_size(int64_t value);
+  void set_data_caches(std::vector<DataCacheInfo> value) {
+    data_caches_ = std::move(value);
+  }
   void set_memory_bandwidth(int64_t value) { memory_bandwidth_ = value; }
   void set_pcie_bandwidth(int64_t value) { pcie_bandwidth_ = value; }
   void set_mem_clock_ghz(float value) { mem_clock_ghz_ = value; }
@@ -657,7 +694,7 @@ class DeviceDescription {
 
   int64_t device_address_bits_ = kUninitialized<int64_t>;
   int64_t device_memory_size_ = kUninitialized<int64_t>;
-  int64_t l2_cache_size_ = kUninitialized<int64_t>;
+  std::vector<DataCacheInfo> data_caches_;
 
   int64_t memory_bandwidth_ = kUninitialized<int64_t>;
   int64_t pcie_bandwidth_ = kUninitialized<int64_t>;

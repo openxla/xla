@@ -2061,7 +2061,6 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
 
   int64_t l2_cache_bytes =
       GetDeviceAttribute(CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE, device).value();
-  desc.set_l2_cache_size(l2_cache_bytes);
 
   absl::StatusOr<int> mem_clock_khz =
       GetDeviceAttribute(CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE, device_ordinal);
@@ -2168,6 +2167,12 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   int core_count = GetMultiprocessorCount(device).value();
   desc.set_core_count(core_count);
   const GpuComputeCapability gpu_cc(cc);
+  // TODO: Report the actual L1 size instead of the default.
+  desc.set_data_caches(
+      {DataCacheInfo{/*level=*/1,
+                     DeviceDescription::DefaultL1CacheSizePerCore(gpu_cc),
+                     /*num_instances=*/core_count},
+       DataCacheInfo{/*level=*/2, l2_cache_bytes, /*num_instances=*/1}});
   desc.set_fpus_per_core(GetFpusPerCore(gpu_cc));
   desc.set_threads_per_core_limit(
       GetMaxThreadsPerMultiprocessor(device).value());

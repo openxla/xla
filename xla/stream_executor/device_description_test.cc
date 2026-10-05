@@ -17,8 +17,11 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <initializer_list>
 #include <string>
+#include <utility>
 
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -30,6 +33,8 @@ limitations under the License.
 namespace stream_executor {
 namespace {
 using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Pointee;
@@ -226,6 +231,213 @@ TEST(DeviceDescription, OversizedSharedMemoryPerBlockProtoConversion) {
 
   EXPECT_EQ(from_proto.oversized_shared_memory_per_block(),
             desc.oversized_shared_memory_per_block());
+}
+
+TEST(DataCacheInfo, ProtoConversion) {
+  DataCacheInfo cache{/*level=*/2, /*size_bytes=*/4 * 1024 * 1024,
+                      /*num_instances=*/8};
+
+  EXPECT_EQ(DataCacheInfo::FromProto(cache.ToProto()), cache);
+  EXPECT_EQ(cache.total_size_bytes(), 32 * 1024 * 1024);
+}
+
+TEST(DeviceDescription, DataCachesProtoConversion) {
+  // RDNA3-like: the L0 and the GL1 both at level 1.
+  const DataCacheInfo l0{/*level=*/1, /*size_bytes=*/32 * 1024,
+                         /*num_instances=*/96};
+  const DataCacheInfo gl1{/*level=*/1, /*size_bytes=*/256 * 1024,
+                          /*num_instances=*/12};
+  const DataCacheInfo l2{/*level=*/2, /*size_bytes=*/6 * 1024 * 1024,
+                         /*num_instances=*/1};
+  const DataCacheInfo l3{/*level=*/3, /*size_bytes=*/96 * 1024 * 1024,
+                         /*num_instances=*/1};
+  DeviceDescription desc;
+  desc.set_data_caches({l0, gl1, l2, l3});
+
+  ASSERT_OK_AND_ASSIGN(DeviceDescription from_proto,
+                       DeviceDescription::FromProto(desc.ToProto()));
+
+  EXPECT_THAT(from_proto.data_caches(), ElementsAre(l0, gl1, l2, l3));
+}
+
+TEST(DeviceDescription, DataCachesDefaultToEmpty) {
+  DeviceDescription desc;
+  EXPECT_THAT(desc.data_caches(), IsEmpty());
+
+  ASSERT_OK_AND_ASSIGN(DeviceDescription from_proto,
+                       DeviceDescription::FromProto(desc.ToProto()));
+  EXPECT_THAT(from_proto.data_caches(), IsEmpty());
+}
+
+TEST(DeviceDescription, DataCachesMaySkipLevels) {
+  // Only the L2 is known.
+  const DataCacheInfo l2{/*level=*/2, /*size_bytes=*/50 * 1024 * 1024,
+                         /*num_instances=*/1};
+  DeviceDescription desc;
+  desc.set_data_caches({l2});
+
+  ASSERT_OK_AND_ASSIGN(DeviceDescription from_proto,
+                       DeviceDescription::FromProto(desc.ToProto()));
+
+  EXPECT_THAT(from_proto.data_caches(), ElementsAre(l2));
+}
+
+TEST(DeviceDescription, DataCachesRejectBadOrder) {
+  // Each pair is (level, num_instances).
+  auto proto_with = [](std::initializer_list<std::pair<int, int>> caches) {
+    GpuDeviceInfoProto proto;
+    for (const auto& [level, num_instances] : caches) {
+      DataCacheInfoProto* cache = proto.add_data_caches();
+      cache->set_level(level);
+      cache->set_size_bytes(1024);
+      cache->set_num_instances(num_instances);
+    }
+    return proto;
+  };
+
+  // Ties are allowed.
+  EXPECT_OK(DeviceDescription::FromProto(
+      proto_with({{1, 96}, {1, 96}, {1, 12}, {2, 1}})));
+  EXPECT_THAT(DeviceDescription::FromProto(proto_with({{2, 1}, {1, 96}})),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(DeviceDescription::FromProto(proto_with({{1, 12}, {1, 96}})),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(DeviceDescription::FromProto(proto_with({{0, 1}})),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(DeviceDescription, EqualsToComparesDataCaches) {
+  DeviceDescription desc;
+  desc.set_data_caches({DataCacheInfo{/*level=*/2,
+                                      /*size_bytes=*/4 * 1024 * 1024,
+                                      /*num_instances=*/8}});
+  DeviceDescription other = desc;
+  other.set_data_caches({DataCacheInfo{/*level=*/2,
+                                       /*size_bytes=*/4 * 1024 * 1024,
+                                       /*num_instances=*/1}});
+
+  EXPECT_NE(desc, other);
+  // kPortable does not ignore the caches.
+  EXPECT_FALSE(
+      desc.EqualsTo(other, {DeviceDescription::CompareOptions::kPortable}));
+}
+
+TEST(DeviceDescription, DataCacheReturnsMostPrivateAtLevel) {
+  const DataCacheInfo l0{/*level=*/1, /*size_bytes=*/32 * 1024,
+                         /*num_instances=*/96};
+  const DataCacheInfo gl1{/*level=*/1, /*size_bytes=*/256 * 1024,
+                          /*num_instances=*/12};
+  DeviceDescription desc;
+  desc.set_data_caches({l0, gl1});
+
+  EXPECT_THAT(desc.data_cache(1), Pointee(Eq(l0)));
+  EXPECT_EQ(desc.data_cache(2), nullptr);
+}
+
+TEST(DeviceDescription, OldProtoL2BecomesDataCache) {
+  // A proto predating data_caches.
+  GpuDeviceInfoProto proto;
+  proto.set_l2_cache_size(6 * 1024 * 1024);
+
+  ASSERT_OK_AND_ASSIGN(DeviceDescription desc,
+                       DeviceDescription::FromProto(proto));
+
+  EXPECT_THAT(desc.data_caches(),
+              ElementsAre(DataCacheInfo{/*level=*/2,
+                                        /*size_bytes=*/6 * 1024 * 1024,
+                                        /*num_instances=*/0}));
+}
+
+TEST(DeviceDescription, DataCachesWinOverOldL2Field) {
+  GpuDeviceInfoProto proto;
+  proto.set_l2_cache_size(1024);
+  DataCacheInfoProto* l2 = proto.add_data_caches();
+  l2->set_level(2);
+  l2->set_size_bytes(4 * 1024 * 1024);
+  l2->set_num_instances(8);
+
+  ASSERT_OK_AND_ASSIGN(DeviceDescription desc,
+                       DeviceDescription::FromProto(proto));
+
+  EXPECT_THAT(desc.data_caches(),
+              ElementsAre(DataCacheInfo{/*level=*/2,
+                                        /*size_bytes=*/4 * 1024 * 1024,
+                                        /*num_instances=*/8}));
+}
+
+TEST(DeviceDescription, ToProtoKeepsWritingOldL2Field) {
+  DeviceDescription desc;
+  EXPECT_EQ(desc.ToProto().l2_cache_size(), -1);
+
+  desc.set_data_caches({DataCacheInfo{/*level=*/2,
+                                      /*size_bytes=*/4 * 1024 * 1024,
+                                      /*num_instances=*/8}});
+  EXPECT_EQ(desc.ToProto().l2_cache_size(), 4 * 1024 * 1024);
+}
+
+TEST(DeviceDescription, L1CacheSizePerSMUsesPerCoreEntry) {
+  DeviceDescription desc;
+  desc.set_rocm_compute_capability("gfx1100");
+  desc.set_core_count(96);
+  desc.set_data_caches({DataCacheInfo{/*level=*/1, /*size_bytes=*/32 * 1024,
+                                      /*num_instances=*/96},
+                        DataCacheInfo{/*level=*/1, /*size_bytes=*/256 * 1024,
+                                      /*num_instances=*/12}});
+
+  EXPECT_EQ(desc.l1_cache_size_per_SM(), 32 * 1024);
+}
+
+TEST(DeviceDescription, L1CacheSizePerSMFallsBackToDefault) {
+  DeviceDescription rocm;
+  rocm.set_rocm_compute_capability("gfx942");
+  rocm.set_core_count(304);
+  EXPECT_EQ(rocm.l1_cache_size_per_SM(), 32 * 1024);
+
+  // A shared level 1 cache (GL1) is not per-core.
+  rocm.set_data_caches({DataCacheInfo{/*level=*/1, /*size_bytes=*/256 * 1024,
+                                      /*num_instances=*/38}});
+  EXPECT_EQ(rocm.l1_cache_size_per_SM(), 32 * 1024);
+
+  DeviceDescription cuda;
+  cuda.set_cuda_compute_capability(CudaComputeCapability::Hopper());
+  EXPECT_EQ(cuda.l1_cache_size_per_SM(), 2 * 1024);
+}
+
+TEST(DeviceDescription, DefaultL1CacheSizePerCoreKeepsTable) {
+  EXPECT_EQ(DeviceDescription::DefaultL1CacheSizePerCore(
+                GpuComputeCapability(RocmComputeCapability("gfx90a"))),
+            16 * 1024);
+  EXPECT_EQ(DeviceDescription::DefaultL1CacheSizePerCore(
+                GpuComputeCapability(RocmComputeCapability("gfx950"))),
+            32 * 1024);
+  EXPECT_EQ(DeviceDescription::DefaultL1CacheSizePerCore(
+                GpuComputeCapability(RocmComputeCapability("gfx1100"))),
+            2 * 1024);
+  EXPECT_EQ(DeviceDescription::DefaultL1CacheSizePerCore(
+                CudaComputeCapability::Hopper()),
+            2 * 1024);
+}
+
+TEST(DeviceDescription, L2AccessorsUseDataCaches) {
+  const DataCacheInfo l1{/*level=*/1, /*size_bytes=*/32 * 1024,
+                         /*num_instances=*/256};
+  const DataCacheInfo l3{/*level=*/3, /*size_bytes=*/256 * 1024 * 1024,
+                         /*num_instances=*/1};
+  DeviceDescription desc;
+  desc.set_data_caches({l1, l3});
+  EXPECT_EQ(desc.l2_cache_size(), -1);
+
+  // Inserts an L2 between the L1 and the L3.
+  desc.set_l2_cache_size(4 * 1024 * 1024);
+  const DataCacheInfo l2{/*level=*/2, /*size_bytes=*/4 * 1024 * 1024,
+                         /*num_instances=*/0};
+  EXPECT_THAT(desc.data_caches(), ElementsAre(l1, l2, l3));
+  EXPECT_EQ(desc.l2_cache_size(), 4 * 1024 * 1024);
+
+  // Updates the existing L2 in place.
+  desc.set_l2_cache_size(8 * 1024 * 1024);
+  EXPECT_EQ(desc.data_cache(2)->size_bytes, 8 * 1024 * 1024);
+  EXPECT_EQ(desc.data_caches().size(), 3);
 }
 
 TEST(DeviceDescription, ProtoConversion) {

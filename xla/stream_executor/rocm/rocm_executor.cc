@@ -82,6 +82,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_command_buffer.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/rocm/rocm_context.h"
+#include "xla/stream_executor/rocm/rocm_data_caches.h"
 #include "xla/stream_executor/rocm/rocm_event.h"
 #include "xla/stream_executor/rocm/rocm_kernel.h"
 #include "xla/stream_executor/rocm/rocm_memory_bandwidth.h"
@@ -1161,6 +1162,7 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
                                              : tsl::port::kNUMANoAffinity);
   }
 
+  int64_t hip_l2_cache_size = 0;
   hipDeviceProp_t prop;
   if (GetDeviceProperties(&prop, device_ordinal)) {
     desc.set_threads_per_block_limit(prop.maxThreadsPerBlock);
@@ -1182,7 +1184,7 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
         pci_bus_id, RocmComputeCapability(gcn_arch_name), prop.memoryBusWidth,
         prop.memoryClockRate));
 
-    desc.set_l2_cache_size(prop.l2CacheSize);
+    hip_l2_cache_size = prop.l2CacheSize;
   }
 
   {
@@ -1263,6 +1265,16 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
       GetMaxSharedMemoryPerBlock(device).value());
   int core_count = GetMultiprocessorCount(device).value();
   desc.set_core_count(core_count);
+  {
+    // One L2 per XCD.
+    absl::StatusOr<int> xcc_count =
+        GetSimpleAttribute<int>(device, hipDeviceAttributeNumberOfXccs);
+    desc.set_data_caches(gpu::GetRocmDataCaches(
+        pci_bus_id, core_count, xcc_count.ok() ? *xcc_count : 1,
+        hip_l2_cache_size,
+        DeviceDescription::DefaultL1CacheSizePerCore(
+            desc.gpu_compute_capability())));
+  }
   {
     const GpuComputeCapability cc{RocmComputeCapability(gcn_arch_name)};
     desc.set_fpus_per_core(GetFpusPerCore(cc));

@@ -130,6 +130,11 @@ absl::StatusOr<uint64_t> QueryPeakMemoryBandwidthGbps(SmiDeviceHandle) {
       "rocm-smi cannot report peak VRAM bandwidth; amd-smi (ROCm 7.13+) can");
 }
 
+absl::StatusOr<std::vector<SmiDataCache>> QueryDataCaches(SmiDeviceHandle) {
+  return absl::UnimplementedError(
+      "rocm-smi cannot report the cache topology; amd-smi (ROCm 7.13+) can");
+}
+
 absl::StatusOr<uint64_t> QueryHiveId(SmiDeviceHandle device) {
   uint64_t hive_id = 0;
   if (rsmi_status_t status =
