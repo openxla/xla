@@ -551,6 +551,40 @@ static bool IsPartiallyPipelinedSendRecv(const HloInstruction* instr) {
              instr->users().front());
 }
 
+// Fills below this size are cheap to keep live, and pinning them next to their
+// users would only take scheduling freedom away from the ready-set heuristics.
+static constexpr int64_t kMinForceEarlyFillBytes = 1024 * 1024;
+
+// Returns true if `instr` is a large fill: a loop fusion with no operands, such
+// as a broadcast of a scalar constant or an iota, producing an array of at
+// least kMinForceEarlyFillBytes. Fills that carry an explicit placement
+// constraint are excluded.
+static bool IsLargeIndependentFill(const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.fusion_kind() != HloInstruction::FusionKind::kLoop ||
+      instr.operand_count() != 0 || !instr.shape().IsArray() ||
+      ShapeUtil::ByteSizeOfElements(instr.shape()) < kMinForceEarlyFillBytes) {
+    return false;
+  }
+  // Scheduling groups are placed as a unit by the annotation scheduler.
+  if (instr.frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr)) {
+    return false;
+  }
+  if (instr.has_backend_config()) {
+    absl::StatusOr<GpuBackendConfig> gpu_config =
+        instr.backend_config<GpuBackendConfig>();
+    // ForceEarly takes precedence over ForceDelay in the ready-set comparison,
+    // so a fill with force_earliest_schedule must keep its explicit placement.
+    // Fills on an explicit stream or on the host are left alone as well.
+    if (!gpu_config.ok() || gpu_config->force_earliest_schedule() ||
+        gpu_config->operation_queue_id() != 0 ||
+        gpu_config->device_type() == DEVICE_TYPE_HOST) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void GpuAsyncTrackerBase::PostProcessScheduleGraph(
     HloScheduleGraph* schedule_graph,
     const LatencyEstimator* latency_estimator) const {
@@ -597,6 +631,20 @@ void GpuAsyncTrackerBase::PostProcessScheduleGraph(
         node.SetForceDelay(gpu_config->force_earliest_schedule());
         VLOG(5) << "Setting force delay for instruction: " << inst->ToString();
       }
+    }
+
+    // A large fill has no operands to anchor it near its users. The bottom-up
+    // ready-set heuristics (async depth, number of nodes made ready, original
+    // order) keep passing it over, so it floats to the top of the schedule and
+    // its buffer stays live across everything that follows. The fill becomes
+    // ready as soon as its earliest user is scheduled, so forcing it early
+    // places it immediately before that user. Doing this inside the scheduler
+    // keeps the memory and overlap accounting accurate, which a post-scheduling
+    // rewrite of the sequence would not.
+    if (IsLargeIndependentFill(*inst)) {
+      HloGraphNode& node = schedule_graph->GetNode(inst);
+      node.SetForceEarly(true);
+      VLOG(5) << "Setting force early for fill: " << inst->ToString();
     }
 
     if (config_.enable_selective_resources) {
