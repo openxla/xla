@@ -387,20 +387,13 @@ absl::StatusOr<int64_t> GetMaxSharedMemoryPerBlockOptin(CUdevice device) {
       device, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN);
 }
 
-// Only queried on SM 10.7, matching cuDNN, which leaves the value 0 elsewhere
-// and rejects serialized plans whose non-zero value differs from its own.
-int64_t GetMaxOversizedSharedMemoryPerBlock(
-    CUdevice device, const CudaComputeCapability& cc) {
+int64_t GetMaxOversizedSharedMemoryPerBlock(CUdevice device) {
 #if CUDA_VERSION >= 13040
-  if (cc.major != 10 || cc.minor != 7) {
-    return 0;
-  }
   return GetSimpleAttribute<int64_t>(
              device, CU_DEVICE_ATTRIBUTE_MAX_OVERSIZED_SHARED_MEMORY_PER_BLOCK)
       .value_or(0);
 #else
   (void)device;
-  (void)cc;
   return 0;
 #endif
 }
@@ -1865,7 +1858,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   desc.set_shared_memory_per_block_optin(
       GetMaxSharedMemoryPerBlockOptin(device).value());
   desc.set_oversized_shared_memory_per_block(
-      GetMaxOversizedSharedMemoryPerBlock(device, cc));
+      GetMaxOversizedSharedMemoryPerBlock(device));
   desc.set_reserved_shared_memory_per_block(
       GetReservedSharedMemoryPerBlock(device).value());
   desc.set_max_blocks_per_multiprocessor(
