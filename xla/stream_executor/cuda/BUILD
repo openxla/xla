@@ -930,18 +930,14 @@ xla_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "cuda_memory_reservation_test",
     srcs = ["cuda_memory_reservation_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
-        "requires-gpu-nvidia",
-    ],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
     deps = [
         ":cuda_device_allocator",
         ":cuda_memory_reservation",
-        ":cuda_platform",
         ":cuda_platform_id",
         ":cuda_raw_memory_allocation",
         "//xla/stream_executor:device_address",

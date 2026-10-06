@@ -2976,7 +2976,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
       static_cast<int>(gpu::MemorySpaceColor::kCollective);
   constexpr uint64_t kBytes = uint64_t{1} << 20;
   auto address = [](const se::ScopedDeviceAddress<uint8_t>& memory) {
-    return absl::bit_cast<uintptr_t>(memory->opaque());
+    return reinterpret_cast<uintptr_t>(memory->opaque());
   };
 
   ASSERT_OK_AND_ASSIGN(

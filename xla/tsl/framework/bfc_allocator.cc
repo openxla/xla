@@ -190,7 +190,7 @@ size_t BFCAllocator::TailExtensionBytes(const AllocationRegion& region,
   // tail is free and can be merged into it: TryToCoalesce (ignore_freed_at =
   // false) skips in-use and timestamped tails, and lower-end chunks never
   // extend past the initial region.
-  uintptr_t chunk_start = absl::bit_cast<uintptr_t>(region.end_ptr());
+  uintptr_t chunk_start = reinterpret_cast<uintptr_t>(region.end_ptr());
   size_t existing = 0;
   if (!c->in_use() && c->freed_at_count == 0 && c->tag != ChunkTag::kLower) {
     chunk_start = absl::bit_cast<uintptr_t>(c->ptr);
@@ -1297,10 +1297,12 @@ void BFCAllocator::ReturnBoundaryChunkToGap(BFCAllocator::ChunkHandle h) {
   // Only the region containing the original shared allocation can have a
   // central gap. That region may extend past the fixed lower-end limit, but
   // separate regions stay upper-owned even if they support coalescing.
-  if (opts_.allow_growth &&
-      absl::bit_cast<uintptr_t>(region_manager_.RegionStart(c->ptr)) !=
-          spatial_region_start_) {
-    return;
+  if (opts_.allow_growth) {
+    const uintptr_t region_start =
+        reinterpret_cast<uintptr_t>(region_manager_.RegionStart(c->ptr));
+    if (region_start != spatial_region_start_) {
+      return;
+    }
   }
   if (ABSL_PREDICT_TRUE(c->tag == ChunkTag::kLower)) {
     ChunkHandle n = c->next;
