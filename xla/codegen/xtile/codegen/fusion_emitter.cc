@@ -758,6 +758,45 @@ absl::StatusOr<TensorValue> EmitConcatenate(
     return absl::InternalError("Concatenate has no active operands");
   }
 
+  auto pad_or_broadcast_to_result_type =
+      [&](const TiledHloInstruction* active_operand,
+          TensorValue val) -> absl::StatusOr<TensorValue> {
+    if (val.getType() == result_type) {
+      return val;
+    }
+    // If the active operand is an effective scalar constant, re-emit
+    // with padded_tile_sizes.
+    if (active_operand->hlo()->opcode() == HloOpcode::kConstant &&
+        ShapeUtil::IsEffectiveScalar(active_operand->hlo()->shape())) {
+      return EmitConstant(b, *active_operand->hlo(), padded_tile_sizes);
+    }
+    // For general tensor operands whose non-matching dimensions are 1
+    // (e.g. padded trailing operand):
+    auto current_type = val.getType();
+    if (current_type.getRank() == padded_tile_sizes.size()) {
+      bool can_broadcast = true;
+      SmallVector<int64_t> broadcast_dims;
+      for (int64_t d = 0; d < current_type.getRank(); ++d) {
+        if (current_type.getDimSize(d) == padded_tile_sizes[d] ||
+            current_type.getDimSize(d) == 1) {
+          broadcast_dims.push_back(d);
+        } else {
+          can_broadcast = false;
+          break;
+        }
+      }
+      if (can_broadcast) {
+        return xtile::BroadcastInDims(b, val, padded_tile_sizes,
+                                      broadcast_dims);
+      }
+    }
+    return absl::InternalError(absl::StrCat(
+        "Concatenate operand type mismatch and cannot pad/broadcast: ",
+        active_operand->ToString(), " has type ",
+        llvm_ir::DumpToString(val.getType()), " but expected ",
+        llvm_ir::DumpToString(result_type)));
+  };
+
   // Optimization: If only a single operand is active for this tile, we can
   // bypass the generated scf.if control flow entirely and directly return
   // the result of emitting that single active operand.
@@ -771,7 +810,14 @@ absl::StatusOr<TensorValue> EmitConcatenate(
     TF_RET_CHECK(it != values.end())
         << "Concatenate operand " << active_operand->ToString()
         << " is not found in the values map (not part of the region?)";
-    return it->second;
+    TensorValue yielded_val = it->second;
+    if (yielded_val.getType() != result_type) {
+      ABSL_ASSIGN_OR_RETURN(
+          yielded_val,
+          pad_or_broadcast_to_result_type(active_operand, yielded_val));
+      values[active_operand] = yielded_val;
+    }
+    return yielded_val;
   }
 
   Value concatenate_dimension_offset =
@@ -824,7 +870,14 @@ absl::StatusOr<TensorValue> EmitConcatenate(
     TF_RET_CHECK(it != values.end())
         << "Concatenate operand " << active_operand->ToString()
         << " is not found in the values map (not part of the region?)";
-    mlir::scf::YieldOp::create(b, it->second);
+    TensorValue yielded_val = it->second;
+    if (yielded_val.getType() != result_type) {
+      ABSL_ASSIGN_OR_RETURN(
+          yielded_val,
+          pad_or_broadcast_to_result_type(active_operand, yielded_val));
+      values[active_operand] = yielded_val;
+    }
+    mlir::scf::YieldOp::create(b, yielded_val);
   }
   b.setInsertionPointAfter(if_ops.front());
   return mlir::cast<TensorValue>(if_ops.front().getResult(0));
