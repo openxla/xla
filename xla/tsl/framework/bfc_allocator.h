@@ -200,8 +200,10 @@ class BFCAllocator : public Allocator {
     bool enable_spatial_partitioning = false;
 
     // Size of the initial shared region for growable spatial arenas. It is
-    // allocated in full on the first request; total_memory remains the cap
-    // across all regions. Must be a multiple of the suballocator granularity.
+    // requested on the first allocation and, like a fixed pool, shrinks if
+    // the suballocator cannot provide that much; the lower end is then
+    // confined to what was obtained. total_memory remains the cap across all
+    // regions. Must be a multiple of the suballocator granularity.
     size_t initial_region_bytes = 0;
 
     // Policies for owned-hole reuse and gap carves, independent of placement
@@ -863,10 +865,12 @@ class BFCAllocator : public Allocator {
   // Structures immutable after construction
   size_t memory_limit_ = 0;
 
-  // Base of the initial shared region in growable spatial mode. Its size is
-  // opts_.initial_region_bytes and remains the lower-end allocation limit.
-  // Contiguous growth may merge free chunks across that limit for upper use.
+  // Base and size of the initial shared region in growable spatial mode. The
+  // size is opts_.initial_region_bytes unless the suballocator could only
+  // provide less, and remains the lower-end allocation limit. Contiguous
+  // growth may merge free chunks across that limit for upper use.
   uintptr_t spatial_region_start_ ABSL_GUARDED_BY(mutex_) = 0;
+  size_t spatial_region_bytes_ ABSL_GUARDED_BY(mutex_) = 0;
 
   // Maximum bytes a chunk may exceed the requested size before it is split, to
   // bound internal fragmentation. Derived from Options::fragmentation_fraction

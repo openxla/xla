@@ -114,8 +114,14 @@ class FakeSubAllocator : public SubAllocator {
 // initial shared allocation. No real memory is allocated.
 class SpatialGrowthSubAllocator : public FakeSubAllocator {
  public:
+  // A reserved arena maps each extension right after the previous one, no
+  // matter which alignment the request asked for; mimic that when adjacent.
   explicit SpatialGrowthSubAllocator(bool adjacent = false)
-      : supports_coalescing(adjacent), adjacent_(adjacent) {}
+      : FakeSubAllocator(
+            adjacent ? std::optional<size_t>(BFCAllocator::kMinAllocationSize)
+                     : std::nullopt),
+        supports_coalescing(adjacent),
+        adjacent_(adjacent) {}
 
   void* Alloc(size_t alignment, size_t num_bytes,
               size_t* bytes_received) override {
@@ -1387,22 +1393,35 @@ TEST(BFCAllocatorTest, SpatialFirstUpperRequestCanExceedInitialRegion) {
   }
 }
 
-TEST(BFCAllocatorTest, SpatialInitialRegionDoesNotBackpedal) {
+TEST(BFCAllocatorTest, SpatialInitialRegionBackpedalsWhenMemoryIsShort) {
   constexpr size_t kMiB = 1 << 20;
   auto sub = std::make_unique<SpatialGrowthSubAllocator>();
   auto* source = sub.get();
+  // Another process holds most of the device: only 4 MiB can be obtained.
   source->max_allocation_bytes = 4 * kMiB;
   auto opts = SharedGpuPoolOptions();
   opts.allow_growth = true;
   opts.initial_region_bytes = 8 * kMiB;
-  BFCAllocator alloc(std::move(sub), 16 * kMiB, "initial_failure", opts);
-  EXPECT_EQ(alloc.AllocateRaw(kAlignment, kMiB, *kUpper), nullptr);
-  EXPECT_EQ(source->requests, std::vector<size_t>{8 * kMiB});
-  EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 0);
-  source->max_allocation_bytes = 8 * kMiB;
+  BFCAllocator alloc(std::move(sub), 16 * kMiB, "initial_backpedal", opts);
+  // Like a fixed pool, the initial region shrinks until it fits.
   void* lower = alloc.AllocateRaw(kAlignment, kMiB, *kLower);
   ASSERT_NE(lower, nullptr);
-  EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 8 * kMiB);
+  ASSERT_GT(source->requests.size(), 1);
+  EXPECT_EQ(source->requests.front(), 8 * kMiB);
+  EXPECT_LE(source->requests.back(), 4 * kMiB);
+  const int64_t initial_pool = alloc.GetStats()->pool_bytes.value();
+  EXPECT_EQ(initial_pool, source->requests.back());
+  // The lower end is confined to what was actually obtained, not to the
+  // configured 8 MiB, and never triggers growth.
+  const size_t requests_after_initial = source->requests.size();
+  EXPECT_EQ(alloc.AllocateRaw(kAlignment, 4 * kMiB, *kLower), nullptr);
+  EXPECT_EQ(source->requests.size(), requests_after_initial);
+  // Upper requests still grow once memory becomes available again.
+  source->max_allocation_bytes = 8 * kMiB;
+  void* upper = alloc.AllocateRaw(kAlignment, 6 * kMiB, *kUpper);
+  ASSERT_NE(upper, nullptr);
+  EXPECT_GT(alloc.GetStats()->pool_bytes.value(), initial_pool);
+  alloc.DeallocateRaw(upper);
   alloc.DeallocateRaw(lower);
 }
 

@@ -2,8 +2,10 @@
 
 Preallocated spatial GPU BFC pools grow by default when using device memory.
 The memory fraction or absolute size determines the initial physical
-allocation, which must succeed in full. The growth cap is a fraction of total
-device memory (all of it by default), rounded down to the mapping granularity.
+allocation. If that much memory is not available, the initial region shrinks
+like a fixed pool does, with a warning, and the collective (lower-end) limit is
+whatever was obtained. The growth cap is a fraction of total device memory (all
+of it by default), rounded down to the mapping granularity.
 Reserving this capacity does not allocate physical memory or guarantee that
 growth will succeed. Non-spatial pools, unified memory, and other allocator
 kinds retain their existing behavior.

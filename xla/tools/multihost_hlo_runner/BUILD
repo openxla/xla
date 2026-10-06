@@ -57,16 +57,9 @@ cc_library(
     deps = [
         ":create_client",
         ":functional_hlo_runner",
-        ":profiler_interface",
         "//xla:debug_options_flags",
-        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/distributed",
-        "//xla/pjrt/distributed:client",
-        "//xla/pjrt/distributed:key_value_store_interface",
-        "//xla/pjrt/distributed:service",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:cpu_plugin",
@@ -81,30 +74,21 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
         "//xla/backends/profiler/gpu:device_tracer",
-    ]) + if_cuda([
-        "//xla/stream_executor:cuda_platform",
-        "//xla/backends/profiler/gpu:cupti_tracer",
-    ] + if_google(
+    ]) + if_cuda(if_google(
         [
             "//third_party/py/jax/jaxlib/cuda:cuda_gpu_kernels",  # fixdeps: keep
         ],
-    )) + if_rocm([
-        "//xla/stream_executor:rocm_platform",
-    ]),
+    )),
     alwayslink = True,
 )
 

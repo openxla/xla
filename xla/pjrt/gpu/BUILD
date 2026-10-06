@@ -283,7 +283,6 @@ cc_library(
         "//xla/pjrt/se:local_device_state",
         "//xla/pjrt/se:pjrt_stream_executor_client",
         "//xla/runtime:device_id",
-        "//xla/service:device_assignment",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service/gpu:gpu_executable_run_options",

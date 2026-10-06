@@ -186,21 +186,25 @@ size_t BFCAllocator::TailExtensionBytes(const AllocationRegion& region,
                                         size_t alignment,
                                         size_t rounded_bytes) const {
   const Chunk* c = ChunkFromHandle(RegionTail(region));
-  // Extend only coalesces the new chunk with a free predecessor that is not
-  // held back by a timestamp (TryToCoalesce with ignore_freed_at=false).
-  // Lower-end chunks never extend past the initial region.
-  if (c->in_use() || c->freed_at_count != 0 || c->tag == ChunkTag::kLower) {
-    return rounded_bytes;
+  // Memory mapped right after the region starts a chunk at end_ptr, unless the
+  // tail is free and can be merged into it: TryToCoalesce (ignore_freed_at =
+  // false) skips in-use and timestamped tails, and lower-end chunks never
+  // extend past the initial region.
+  uintptr_t chunk_start = absl::bit_cast<uintptr_t>(region.end_ptr());
+  size_t existing = 0;
+  if (!c->in_use() && c->freed_at_count == 0 && c->tag != ChunkTag::kLower) {
+    chunk_start = absl::bit_cast<uintptr_t>(c->ptr);
+    existing = c->size;
   }
-  // The merged chunk starts at c->ptr. An upper-end allocation fits once the
-  // chunk covers the alignment padding of that start plus the request.
-  const size_t padding =
-      LowEndAlignmentPadding(absl::bit_cast<uintptr_t>(c->ptr), alignment);
+  // An upper-end allocation fits once the chunk covers the alignment padding
+  // of its start plus the request. This can exceed rounded_bytes: an adjacent
+  // extension cannot be placed at an aligned address of its own.
+  const size_t padding = LowEndAlignmentPadding(chunk_start, alignment);
   if (rounded_bytes > std::numeric_limits<size_t>::max() - padding) {
-    return rounded_bytes;
+    return std::numeric_limits<size_t>::max();
   }
   const size_t needed = padding + rounded_bytes;
-  return needed - std::min(needed, c->size);
+  return needed - std::min(needed, existing);
 }
 
 bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
@@ -227,15 +231,19 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   DCHECK(!initial_spatial_region || rounded_bytes % granularity == 0)
       << "initial_region_bytes must be a multiple of the granularity";
 
-  // The smallest allocation that can still serve this request. Only a
-  // contiguous spatial extension may be smaller than rounded_bytes: it just
-  // has to complete the free tail it will coalesce with. Physical memory can
-  // run out long before the reserved capacity does, so this floor applies to
-  // every extension rather than only at the cap.
+  // The smallest allocation that can still serve this request. A contiguous
+  // spatial extension lands right after an existing region, so it may be
+  // smaller than rounded_bytes when it completes a free tail, or larger when
+  // the request's alignment leaves padding at the merged chunk's start.
+  // Physical memory can run out long before the reserved capacity does, so
+  // this floor applies to every extension rather than only at the cap. The
+  // initial shared region may shrink all the way down to one granule, like a
+  // fixed pool that backpedals when memory is short.
   size_t min_bytes = rounded_bytes;
   const bool may_complete_tail =
       opts_.enable_spatial_partitioning && coalesce_regions_ && !first_region;
   if (may_complete_tail) {
+    min_bytes = std::numeric_limits<size_t>::max();
     for (const AllocationRegion& region : region_manager_.regions()) {
       min_bytes = std::min(
           min_bytes, TailExtensionBytes(region, alignment, rounded_bytes));
@@ -244,6 +252,8 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
       // A tail that already fits would have been found by FindChunkPtr.
       return false;
     }
+  } else if (initial_spatial_region) {
+    min_bytes = granularity;
   }
   if (min_bytes > std::numeric_limits<size_t>::max() - (granularity - 1)) {
     return false;
@@ -275,11 +285,6 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   size_t bytes_received;
   void* mem_addr = sub_allocator_->Alloc(alignment, bytes, &bytes_received);
   if (mem_addr == nullptr) {
-    // All ranks must start with the configured shared capacity. Backpedaling
-    // remains available for later upper-only capacity.
-    if (initial_spatial_region) {
-      return false;
-    }
     static constexpr float kBackpedalFactor = 0.9;
 
     // Try allocating less memory, stepping down in whole granules so that a
@@ -300,10 +305,7 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
     }
   }
 
-  if (opts_.enable_spatial_partitioning &&
-      (bytes_received > available_bytes ||
-       (initial_spatial_region &&
-        bytes_received != opts_.initial_region_bytes))) {
+  if (opts_.enable_spatial_partitioning && bytes_received > available_bytes) {
     sub_allocator_->Free(mem_addr, bytes_received);
     return false;
   }
@@ -321,6 +323,17 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   }
   if (initial_spatial_region) {
     spatial_region_start_ = absl::bit_cast<uintptr_t>(mem_addr);
+    // The lower end is confined to what was actually obtained. Ranks that end
+    // up with different initial sizes keep identical collective offsets from
+    // the base, but their collective capacity differs.
+    spatial_region_bytes_ = bytes_received;
+    if (bytes_received < opts_.initial_region_bytes) {
+      LOG(WARNING) << Name() << ": initial shared region is "
+                   << strings::HumanReadableNumBytes(bytes_received)
+                   << " instead of the configured "
+                   << strings::HumanReadableNumBytes(opts_.initial_region_bytes)
+                   << "; collective (lower-end) capacity is limited to it.";
+    }
     // After preallocation, use BFC's normal growth sizing (starting at 2 MiB).
     curr_region_allocation_bytes_ =
         RoundedBytes(std::min(memory_limit_, size_t{2 << 20}));
@@ -909,10 +922,10 @@ void* BFCAllocator::FindChunkPtrInCentralGap(size_t rounded_bytes,
       // Coalescing may grow the gap into the extension. Only its prefix within
       // the initial shared region is available to the lower end.
       const uintptr_t offset = chunk_start - spatial_region_start_;
-      if (offset >= opts_.initial_region_bytes) {
+      if (offset >= spatial_region_bytes_) {
         return nullptr;
       }
-      available = std::min(available, opts_.initial_region_bytes - offset);
+      available = std::min(available, spatial_region_bytes_ - offset);
     }
     if (ABSL_PREDICT_FALSE(align_padding > available ||
                            rounded_bytes > available - align_padding)) {
@@ -974,8 +987,8 @@ void* BFCAllocator::AllocateChunkFromLowEnd(ChunkHandle h, size_t rounded_bytes,
   if (opts_.enable_spatial_partitioning && opts_.allow_growth) {
     const uintptr_t offset =
         absl::bit_cast<uintptr_t>(chunk->ptr) - spatial_region_start_;
-    DCHECK_LT(offset, opts_.initial_region_bytes);
-    available = std::min(available, opts_.initial_region_bytes - offset);
+    DCHECK_LT(offset, spatial_region_bytes_);
+    available = std::min(available, spatial_region_bytes_ - offset);
   }
   // Apply the lower policy to its eligible capacity only. Even heuristic
   // padding must stop at the fixed lower-end limit; the suffix remains free
