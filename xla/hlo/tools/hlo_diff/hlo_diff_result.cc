@@ -23,7 +23,9 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"
 #include "xla/hlo/tools/hlo_diff/graph/utils/hlo_gumgraph_bfs.h"
@@ -34,10 +36,44 @@ namespace xla {
 namespace hlo_diff {
 namespace {
 
+// Returns true if any matched operand of left_node is mapped to an
+// instruction other than the operand at the same position in right_node.
+// canonical_fingerprint does not print operand names, so swapped or rewired
+// operands (e.g. subtract(a, b) vs subtract(b, a)) are otherwise invisible.
+// Unmatched operands are skipped as they are already reported as unmatched.
+bool HasRewiredOperands(const HloInstructionNode* left_node,
+                        const HloInstructionNode* right_node,
+                        const HloGumgraphMappings& mappings) {
+  if (left_node->children.size() != right_node->children.size()) {
+    return true;
+  }
+  for (int i = 0; i < left_node->children.size(); ++i) {
+    const std::optional<const HloInstructionNode*> mapped_right_child =
+        mappings.left_to_right_instruction_map.GetRight(left_node->children[i]);
+    if (mapped_right_child.has_value() &&
+        *mapped_right_child != right_node->children[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool IsChangedInstruction(const HloInstructionNode* left_node,
-                          const HloInstructionNode* right_node) {
-  return left_node->props.canonical_fingerprint !=
-         right_node->props.canonical_fingerprint;
+                          const HloInstructionNode* right_node,
+                          const HloGumgraphMappings& mappings) {
+  if (left_node->props.canonical_fingerprint !=
+      right_node->props.canonical_fingerprint) {
+    return true;
+  }
+  // Entry parameter numbers define the module signature but are excluded
+  // from canonical_fingerprint.
+  if (left_node->instruction->opcode() == HloOpcode::kParameter &&
+      left_node->instruction->parent()->IsEntryComputation() &&
+      left_node->instruction->parameter_number() !=
+          right_node->instruction->parameter_number()) {
+    return true;
+  }
+  return HasRewiredOperands(left_node, right_node, mappings);
 }
 
 }  // namespace
@@ -115,7 +151,7 @@ std::unique_ptr<const DiffResult> ConstructDiffResult(
                                                    right_node->instruction)] =
         mapping_props->matcher_debug_info;
 
-    if (IsChangedInstruction(left_node, right_node)) {
+    if (IsChangedInstruction(left_node, right_node, mappings)) {
       diff_result->AddChangedInstruction(left_node->instruction,
                                          right_node->instruction);
       continue;
