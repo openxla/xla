@@ -21,6 +21,7 @@ limitations under the License.
 #endif
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -66,69 +67,78 @@ struct PerThreadConsumeData {
   std::vector<TraceEventInfo> events;
 };
 
+// Trivially copyable and trivially destructible trace record.
+// References acquired on construction are explicitly released in batches by
+// PythonHookContext::Consume(), CollectData(), or ~PythonHookContext().
 struct PythonTraceEntry {
   // Capture the source/line information for a PyCodeObject object.
   // In eager mode, keeping a reference to PyCodeObject leaks device memory.
   PythonTraceEntry(uint64_t start, uint64_t end, PyCodeObject* py_code_object)
       : start_time_ns(start),
         end_time_ns(end),
-        co_filename(py_code_object->co_filename),
-        co_name(py_code_object->co_name),
-        co_firstlineno(py_code_object->co_firstlineno) {
+        co_filename(py_code_object != nullptr ? py_code_object->co_filename
+                                              : nullptr),
+        co_name(py_code_object != nullptr ? py_code_object->co_name : nullptr),
+        method_name(nullptr),
+        co_firstlineno(
+            py_code_object != nullptr ? py_code_object->co_firstlineno : 0),
+        is_python_call(true) {
     Py_XINCREF(co_filename);
     Py_XINCREF(co_name);
   }
+
   // Capture the source/line information for a PyCFunctionObject object.
   // In eager mode, keeping a reference to PyCFunctionObject leaks device
-  // memory.
+  // memory. If m_self is a PyCapsule (e.g. pybind11::cpp_function), retain a
+  // reference to the capsule so heap-allocated PyMethodDef::ml_name stays
+  // valid until references are released.
   PythonTraceEntry(uint64_t start, uint64_t end,
                    PyCFunctionObject* py_c_function)
       : start_time_ns(start),
         end_time_ns(end),
-        m_module(py_c_function->m_module) {
+        m_module(py_c_function != nullptr ? py_c_function->m_module : nullptr),
+        c_capsule((py_c_function != nullptr &&
+                   py_c_function->m_self != nullptr &&
+                   PyCapsule_CheckExact(py_c_function->m_self))
+                      ? py_c_function->m_self
+                      : nullptr),
+        method_name((py_c_function != nullptr && py_c_function->m_ml != nullptr)
+                        ? py_c_function->m_ml->ml_name
+                        : nullptr),
+        co_firstlineno(0),
+        is_python_call(false) {
     Py_XINCREF(m_module);
-    if (auto* method_def = py_c_function->m_ml;
-        method_def != nullptr && method_def->ml_name != nullptr) {
-      method_name = method_def->ml_name;
+    if (c_capsule != nullptr) {
+      Py_INCREF(c_capsule);
     }
   }
 
-  ~PythonTraceEntry() {
-    Py_XDECREF(co_filename);
-    Py_XDECREF(co_name);
-    Py_XDECREF(m_module);
-  }
-
-  PythonTraceEntry(PythonTraceEntry&& other) noexcept {
-    start_time_ns = other.start_time_ns;
-    end_time_ns = other.end_time_ns;
-    co_firstlineno = other.co_firstlineno;
-    co_filename = other.co_filename;
-    co_name = other.co_name;
-    method_name = std::move(other.method_name);
-    m_module = other.m_module;
-    other.co_filename = nullptr;
-    other.co_name = nullptr;
-    other.method_name = "";
-    other.m_module = nullptr;
-  }
+  bool IsPythonCall() const { return is_python_call; }
 
   std::string Name() const;
 
   uint64_t start_time_ns;
   uint64_t end_time_ns;
-  PyObject* co_filename = nullptr;
-  PyObject* co_name = nullptr;
+  union {
+    PyObject* co_filename;  // Active when is_python_call is true.
+    PyObject* m_module;     // Active when is_python_call is false.
+  };
+  union {
+    PyObject* co_name;    // Active when is_python_call is true.
+    PyObject* c_capsule;  // Active when is_python_call is false.
+  };
+  const char* method_name = nullptr;
   int co_firstlineno = 0;
-  std::string method_name;
-  PyObject* m_module = nullptr;
-
-  PythonTraceEntry(const PythonTraceEntry& other) = delete;
-  void operator=(const PythonTraceEntry&) = delete;
-  void operator=(PythonTraceEntry&&) = delete;
+  bool is_python_call = false;
 };
 
 struct PerThreadEvents {
+  PerThreadEvents() = default;
+  PerThreadEvents(PerThreadEvents&&) = default;
+  PerThreadEvents& operator=(PerThreadEvents&&) = default;
+  PerThreadEvents(const PerThreadEvents&) = delete;
+  PerThreadEvents& operator=(const PerThreadEvents&) = delete;
+
   std::deque<PythonTraceEntry> completed;
   std::stack<PythonTraceEntry> active;
   // Track C Functions call in its own stack.
@@ -180,7 +190,7 @@ class PythonHookContext {
   std::array<EntryShard, kNumEntryShards> entry_shards_;
   uint64_t start_timestamp_ns_;
   PythonHooksOptions options_;
-  bool stopped_ = false;
+  std::atomic<bool> stopped_ = false;
   // In end to end mode, Python get uninitialized before Stop()/Finalize(), we
   // need to buffer the result.
   std::optional<tensorflow::profiler::XPlane> end_to_end_xplane_;
@@ -219,10 +229,7 @@ class PythonHooks {
     if (!active_context_) {
       return {};
     }
-    if (Py_IsInitialized()) {
-      return active_context_->Consume();
-    }
-    return {};
+    return active_context_->Consume();
   }
 
   friend class ::xla::profiler::PythonHookContext;
