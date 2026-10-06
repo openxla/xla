@@ -13,11 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <string>
 #include <tuple>
 
+#include <gtest/gtest.h>
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -241,7 +240,6 @@ INSTANTIATE_TEST_SUITE_P(
                    PC::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM),
             Values(F8E4M3FNUZ), Values(F8E4M3FNUZ),
             Values(F8E4M3FNUZ, F16, BF16, F32), Values(CC(8, 9)),
-            Values(SemanticVersion{6, 3, 0}),
             Values(BackendRestriction::kNoRestriction),
             Values(Sizes{32, 32}, Sizes{16, 2})),
     TestParamsToString);
@@ -252,7 +250,6 @@ INSTANTIATE_TEST_SUITE_P(
                    PC::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM),
             Values(F8E5M2FNUZ), Values(F8E4M3FNUZ),
             Values(F8E5M2FNUZ, F16, BF16, F32), Values(CC(8, 9)),
-            Values(SemanticVersion{6, 3, 0}),
             Values(BackendRestriction::kNoRestriction),
             Values(Sizes{32, 32}, Sizes{16, 2})),
     TestParamsToString);
@@ -263,7 +260,6 @@ INSTANTIATE_TEST_SUITE_P(
                    PC::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM),
             Values(F8E4M3FNUZ), Values(F8E5M2FNUZ),
             Values(F8E5M2FNUZ, F16, BF16, F32), Values(CC(8, 9)),
-            Values(SemanticVersion{6, 3, 0}),
             Values(BackendRestriction::kNoRestriction),
             Values(Sizes{32, 32}, Sizes{16, 2})),
     TestParamsToString);
