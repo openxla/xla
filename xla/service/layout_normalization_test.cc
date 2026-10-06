@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -1101,6 +1102,65 @@ ENTRY main {
 // CHECK: %[[OP1:.*]] = f32[32,1,1,1]{3,2,1,0} bitcast(%[[P1]])
 // CHECK: %[[CONV:.*]] = f32[2,3,3,32]{3,2,1,0} convolution(%[[P0:.*]], {{.*}}), window={size=1x1}, dim_labels=b01f_oi10->b01f
 )");
+}
+
+TEST_F(LayoutNormalizationTest, LegalizesBitcastsInAsyncComputation) {
+  const char* hlo = R"(
+HloModule test
+body {
+  p = f32[2,3]{0,1} parameter(0)
+  ROOT neg = f32[2,3]{0,1} negate(p)
+}
+ENTRY main {
+  p0 = f32[2,3]{0,1} parameter(0)
+  start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-start(p0), calls=body
+  ROOT done = f32[2,3]{0,1} async-done(start)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* body = module->GetComputationWithName("body");
+
+  LayoutNormalization normalization;
+  ASSERT_OK_AND_ASSIGN(bool changed, normalization.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  // async-start calls into a valid async computation that wraps body.
+  HloInstruction* start =
+      module->entry_computation()->GetInstructionWithName("start");
+  ASSERT_EQ(start->async_wrapped_instruction()->opcode(), HloOpcode::kCall);
+  EXPECT_EQ(start->async_wrapped_instruction()->to_apply(), body);
+  EXPECT_TRUE(
+      start->async_wrapped_computation()->CanExpandIntoSingleInstruction());
+
+  // A bitcast was inserted into body.
+  ASSERT_EQ(body->root_instruction()->opcode(), HloOpcode::kBitcast);
+  const HloInstruction* neg = body->root_instruction()->operand(0);
+  ASSERT_EQ(neg->opcode(), HloOpcode::kNegate);
+  EXPECT_EQ(neg->operand(0)->opcode(), HloOpcode::kBitcast);
+}
+
+TEST_F(LayoutNormalizationTest, LegalizesEvenWhenVisitorDoesNotChangeLayouts) {
+  const char* hlo = R"(
+HloModule test
+body {
+  p = f32[2,3]{1,0} parameter(0)
+  neg = f32[2,3]{1,0} negate(p)
+  ROOT abs = f32[2,3]{1,0} abs(neg)
+}
+ENTRY main {
+  p0 = f32[2,3]{1,0} parameter(0)
+  start = ((f32[2,3]{1,0}), f32[2,3]{1,0}, s32[]) async-start(p0), calls=body
+  ROOT done = f32[2,3]{1,0} async-done(start)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  LayoutNormalization normalization;
+  ASSERT_OK_AND_ASSIGN(bool changed, normalization.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(module->entry_computation()
+                  ->root_instruction()
+                  ->async_wrapped_computation()
+                  ->CanExpandIntoSingleInstruction());
 }
 
 }  // namespace
