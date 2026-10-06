@@ -240,6 +240,20 @@ std::string FpValueToString(NativeT value) {
   }
 }
 
+std::string FpValueToString(PrimitiveType type, double value) {
+  return primitive_util::PrimitiveTypeSwitch<std::string>(
+      [&](auto primitive_type) -> std::string {
+        if constexpr (primitive_util::IsFloatingPointType(primitive_type) ||
+                      primitive_util::IsComplexType(primitive_type)) {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type>;
+          return FpValueToString(static_cast<NativeT>(value));
+        }
+        LOG(FATAL) << "Unsupported primitive type: "
+                   << PrimitiveType_Name(type);
+      },
+      type);
+}
+
 template <typename NativeT>
 double FpAbsoluteValue(NativeT value) {
   return static_cast<double>(Eigen::numext::abs(value));
@@ -257,7 +271,6 @@ inline double RoundUpTo1SigFig(double val) {
 }
 
 // Helper class for comparing floating-point literals within an error bound.
-template <typename NativeT>
 class NearComparator {
  public:
   // Compares the two array literals elementwise and returns a comparison
@@ -269,16 +282,16 @@ class NearComparator {
                               const ShapeIndex& shape_index, ErrorSpec error,
                               bool detailed_message,
                               const MiscompareCallback& miscompare_callback) {
-    NearComparator<NativeT> comparator(expected, actual, shape_index, error,
-                                       detailed_message, miscompare_callback);
+    NearComparator comparator(expected, actual, shape_index, error,
+                              detailed_message, miscompare_callback);
     return comparator.Run();
   }
 
  private:
   // Data structure encapsulating metadata about a single element mismatch.
   struct Mismatch {
-    NativeT actual;
-    NativeT expected;
+    double actual;
+    double expected;
     double rel_error;
     double abs_error;
 
@@ -296,7 +309,8 @@ class NearComparator {
       auto s = absl::StrFormat(
           "actual %s, expected %s, index %s, rel error %8.3g, abs error "
           "%8.3g",
-          FpValueToString(actual), FpValueToString(expected),
+          FpValueToString(shape.element_type(), actual),
+          FpValueToString(shape.element_type(), expected),
           LiteralUtil::MultiIndexAsString(
               IndexUtil::LinearIndexToMultidimensionalIndex(shape,
                                                             linear_index)),
@@ -336,7 +350,19 @@ class NearComparator {
     mismatches_ = Literal(ShapeUtil::ChangeElementType(actual_.shape(), PRED));
     mismatches_.PopulateWithValue(false);
 
-    CompareLiterals();
+    primitive_util::PrimitiveTypeSwitch<void>(
+        [&](auto primitive_type) {
+          if constexpr (primitive_util::IsFloatingPointType(primitive_type) ||
+                        primitive_util::IsComplexType(primitive_type)) {
+            using NativeT = primitive_util::NativeTypeOf<primitive_type>;
+            CompareLiterals<NativeT>();
+            return;
+          }
+          LOG(FATAL) << "Unsupported primitive type in near comparator: "
+                     << PrimitiveType_Name(expected_.shape().element_type())
+                     << ". Must be floating-point type.";
+        },
+        expected_.shape().element_type());
 
     if (num_mismatches_ == 0) {
       return absl::OkStatus();
@@ -350,10 +376,9 @@ class NearComparator {
 
   // Insert the given absolute value into the absolute value bucket vector. The
   // bounds of the buckets are given by kAbsValueBucketBounds.
-  void UpdateAbsValueBucket(NativeT value, bool is_mismatch) {
+  void UpdateAbsValueBucket(double abs_value, bool is_mismatch) {
     // Adjust the bucket containing the absolute values of the 'actual'
     // elements.
-    const double abs_value = FpAbsoluteValue(value);
     for (int i = 0; i < abs_value_buckets_.size(); ++i) {
       if (i == abs_value_buckets_.size() - 1 ||
           (abs_value >= kAbsValueBucketBounds[i] &&
@@ -431,8 +456,7 @@ class NearComparator {
     }
   }
 
-  template <typename T>
-  int CalculateFloatDistance(T expected, T actual) {
+  int CalculateFloatDistance(double expected, double actual) {
     if (error_.low_precision_fp_error_spec.type ==
         PrimitiveType::PRIMITIVE_TYPE_INVALID)
       return -1;
@@ -501,7 +525,8 @@ class NearComparator {
       abs_error = std::numeric_limits<double>::infinity();
       rel_error = std::numeric_limits<double>::infinity();
     } else {
-      float_distance = CalculateFloatDistance<T>(expected, actual);
+      float_distance = CalculateFloatDistance(static_cast<double>(expected),
+                                              static_cast<double>(actual));
       abs_error = FpAbsoluteValue(actual - expected);
       if (!std::numeric_limits<T>::is_signed && IsNaN(abs_error)) {
         abs_error = FpAbsoluteValue(expected - actual);
@@ -546,7 +571,7 @@ class NearComparator {
       UpdateErrorBucket(abs_error, absl::MakeSpan(abs_error_buckets_));
     }
 
-    UpdateAbsValueBucket(actual, is_mismatch);
+    UpdateAbsValueBucket(FpAbsoluteValue(actual), is_mismatch);
 
     if (!is_mismatch) {
       return;
@@ -558,8 +583,8 @@ class NearComparator {
     // Keep track of the kTopRelativeErrorCount relative error mismatches.
     if (top_rel_mismatches_.size() < kTopRelativeErrorCount ||
         rel_error > top_rel_mismatches_.begin()->rel_error) {
-      Mismatch mismatch = {/*actual=*/actual,
-                           /*expected=*/expected,
+      Mismatch mismatch = {/*actual=*/static_cast<double>(actual),
+                           /*expected=*/static_cast<double>(expected),
                            /*rel_error=*/rel_error,
                            /*abs_error=*/abs_error,
                            /*linear_index=*/linear_index,
@@ -590,6 +615,7 @@ class NearComparator {
   }
 
   // Compares the two literals elementwise.
+  template <typename NativeT>
   void CompareLiterals() {
     // Fast path optimization for the case were layouts match and the shapes are
     // static.
@@ -605,12 +631,13 @@ class NearComparator {
       return;
     }
     std::vector<int64_t> multi_index(actual_.shape().dimensions().size(), 0);
-    CompareLiteralsSlow(0, &multi_index);
+    CompareLiteralsSlow<NativeT>(0, &multi_index);
   }
 
   // Slow path for CompareLiterals when 'actual' and 'expected' literals are
   // dynamic or have different layouts. In this case, multidimensional indices
   // are constructed and indexed for each element.
+  template <typename NativeT>
   void CompareLiteralsSlow(int64_t dimension,
                            std::vector<int64_t>* multi_index) {
     if (dimension == multi_index->size()) {
@@ -627,7 +654,7 @@ class NearComparator {
       }
       for (int64_t i = 0; i < upper_bound; ++i) {
         (*multi_index)[dimension] = i;
-        CompareLiteralsSlow(dimension + 1, multi_index);
+        CompareLiteralsSlow<NativeT>(dimension + 1, multi_index);
       }
     }
   }
@@ -906,20 +933,8 @@ absl::Status NearHelper(const LiteralSlice& expected,
       ShapeUtil::ElementIsComplex(expected.shape())) {
     bool use_detailed_message = detailed_message.value_or(
         ShapeUtil::ElementsIn(expected.shape()) >= 64);
-    return primitive_util::PrimitiveTypeSwitch<absl::Status>(
-        [&](auto primitive_type) -> absl::Status {
-          if constexpr (primitive_util::IsFloatingPointType(primitive_type) ||
-                        primitive_util::IsComplexType(primitive_type)) {
-            using NativeT = primitive_util::NativeTypeOf<primitive_type>;
-            return NearComparator<NativeT>::Compare(
-                expected, actual, shape_index, error, use_detailed_message,
-                miscompare_callback);
-          }
-          LOG(FATAL) << "Unsupported primitive type in near comparator: "
-                     << PrimitiveType_Name(expected.shape().element_type())
-                     << ". Must be floating-point type.";
-        },
-        expected.shape().element_type());
+    return NearComparator::Compare(expected, actual, shape_index, error,
+                                   use_detailed_message, miscompare_callback);
   }
 
   // Non-floating point, non-tuple literal.
