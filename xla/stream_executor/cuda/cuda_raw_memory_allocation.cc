@@ -42,6 +42,18 @@ CudaRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
 
   ABSL_ASSIGN_OR_RETURN(CudaDeviceAllocator::Options options,
                         QueryDeviceAllocatorOptions(device));
+  return Create(executor, size, options);
+}
+
+absl::StatusOr<std::unique_ptr<CudaRawMemoryAllocation>>
+CudaRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size,
+                                const CudaDeviceAllocator::Options& options) {
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
+
+  CUdevice device;
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
+
   CUmemAllocationProp props = BuildVmmAllocationProp(device, options);
 
   size_t granularity = 0;
@@ -50,20 +62,10 @@ CudaRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
-  CUmemGenericAllocationHandle handle;
-  CUresult err = cuMemCreate(&handle, padded_size, &props, 0);
-#if CUDA_VERSION >= 12030
-  // Strip FABRIC and retry on NOT_PERMITTED/NOT_SUPPORTED.
-  if ((err == CUDA_ERROR_NOT_PERMITTED || err == CUDA_ERROR_NOT_SUPPORTED) &&
-      (static_cast<int>(props.requestedHandleTypes) &
-       CU_MEM_HANDLE_TYPE_FABRIC)) {
-    props.requestedHandleTypes = static_cast<CUmemAllocationHandleType>(
-        static_cast<int>(props.requestedHandleTypes) &
-        ~CU_MEM_HANDLE_TYPE_FABRIC);
-    err = cuMemCreate(&handle, padded_size, &props, 0);
-  }
-#endif
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(err, "cuMemCreate"));
+  // Shared fallback: FABRIC+POSIX_FD -> POSIX_FD -> NONE, including on
+  // CUDA_ERROR_INVALID_VALUE from older drivers.
+  ABSL_ASSIGN_OR_RETURN(CUmemGenericAllocationHandle handle,
+                        CreateVmmPhysicalAllocation(props, padded_size));
 
   return std::unique_ptr<CudaRawMemoryAllocation>(
       new CudaRawMemoryAllocation(executor, handle, padded_size));

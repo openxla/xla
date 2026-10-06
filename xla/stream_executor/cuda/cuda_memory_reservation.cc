@@ -46,6 +46,18 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
 
   ABSL_ASSIGN_OR_RETURN(CudaDeviceAllocator::Options options,
                         QueryDeviceAllocatorOptions(device));
+  return Create(executor, size, options);
+}
+
+absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
+CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size,
+                              const CudaDeviceAllocator::Options& options) {
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
+
+  CUdevice device;
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
+
   CUmemAllocationProp props = BuildVmmAllocationProp(device, options);
 
   size_t granularity = 0;

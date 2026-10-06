@@ -84,7 +84,9 @@ class FakeReservation : public MemoryReservation {
     EXPECT_EQ(allocation_offset, 0);
     EXPECT_EQ(size, allocation.address().size());
     EXPECT_LE(offset + size, capacity_);
-    if (!state_.map_status.ok()) return state_.map_status;
+    if (!state_.map_status.ok()) {
+      return state_.map_status;
+    }
     EXPECT_TRUE(state_.mappings
                     .emplace(offset, reinterpret_cast<uintptr_t>(
                                          allocation.address().opaque()))
@@ -106,17 +108,24 @@ class FakeReservation : public MemoryReservation {
 
 class ReservationExecutor : public MockStreamExecutor {
  public:
+  ReservationExecutor() {
+    ON_CALL(*this, SynchronizeAllActivity()).WillByDefault(Return(true));
+  }
   MemoryState state;
   absl::StatusOr<std::unique_ptr<MemoryReservation>> CreateMemoryReservation(
       uint64_t size) override {
-    if (!state.reserve_status.ok()) return state.reserve_status;
+    if (!state.reserve_status.ok()) {
+      return state.reserve_status;
+    }
     state.reserved_bytes = size;
     return std::make_unique<FakeReservation>(state, size);
   }
   absl::StatusOr<std::unique_ptr<MemoryAllocation>>
   CreatePhysicalMemoryAllocation(uint64_t size) override {
     state.allocation_requests.push_back(size);
-    if (!state.allocate_status.ok()) return state.allocate_status;
+    if (!state.allocate_status.ok()) {
+      return state.allocate_status;
+    }
     ++state.physical_live;
     return std::make_unique<GenericMemoryAllocation>(
         reinterpret_cast<void*>(++state.next_handle), (size + 255) / 256 * 256,
@@ -142,6 +151,13 @@ TEST(DeviceMemAllocatorTest, ReservesOnlyVaAndAppendsPhysicalBacking) {
     ASSERT_OK(allocator.ReserveMemory(16384));
     EXPECT_TRUE(allocator.SupportsCoalescing());
     EXPECT_EQ(allocator.GetAllocationGranularity(), 256);
+    // Returning the whole mapped range synchronizes the device exactly once,
+    // before any mapping is torn down.
+    EXPECT_CALL(executor, SynchronizeAllActivity()).WillOnce([&] {
+      EXPECT_THAT(executor.state.unmapped_offsets, IsEmpty());
+      EXPECT_EQ(executor.state.physical_live, 2);
+      return true;
+    });
     EXPECT_EQ(executor.state.reserved_bytes, 16384);
     EXPECT_THAT(executor.state.allocation_requests, IsEmpty());
     EXPECT_THAT(executor.state.mappings, IsEmpty());
@@ -170,6 +186,8 @@ class DeviceMemAllocatorFailureTest : public ::testing::TestWithParam<Failure> {
 TEST_P(DeviceMemAllocatorFailureTest,
        FailedExtensionPreservesPrefixAndCanRetry) {
   ReservationExecutor executor;
+  // Failed extensions never synchronize; only the destructor does.
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(1);
   DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
   ASSERT_OK(allocator.ReserveMemory(16384));
   size_t received = 0;
@@ -211,6 +229,7 @@ INSTANTIATE_TEST_SUITE_P(Growth, DeviceMemAllocatorFailureTest,
 
 TEST(DeviceMemAllocatorTest, BackendPaddingCannotExceedCapacity) {
   ReservationExecutor executor;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(1);
   DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
   ASSERT_OK(allocator.ReserveMemory(1025));
   size_t received = 0;
@@ -229,20 +248,45 @@ TEST(DeviceMemAllocatorTest, BackendPaddingCannotExceedCapacity) {
 
 TEST(DeviceMemAllocatorTest, ReturnedSuffixCanBeMappedAgain) {
   ReservationExecutor executor;
+  int syncs = 0;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).WillRepeatedly([&] {
+    ++syncs;
+    return true;
+  });
+  {
+    DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
+    ASSERT_OK(allocator.ReserveMemory(1024));
+    size_t received = 0;
+    ASSERT_EQ(allocator.Alloc(256, 512, &received), Address(0));
+    ASSERT_EQ(allocator.Alloc(256, 256, &received), Address(512));
+    // A just-mapped suffix was never published, so returning it must not
+    // synchronize: BFC can extend during stream capture.
+    allocator.Free(Address(512), 256);
+    EXPECT_EQ(syncs, 0);
+    EXPECT_THAT(executor.state.unmapped_offsets, ElementsAre(512));
+    EXPECT_EQ(allocator.Alloc(256, 512, &received), Address(512));
+    EXPECT_EQ(received, 512);
+    EXPECT_EQ(executor.state.physical_live, 2);
+  }
+  // Teardown returns the whole range and synchronizes once.
+  EXPECT_EQ(syncs, 1);
+}
+
+TEST(DeviceMemAllocatorTest, SyncFailureDoesNotPreventUnmap) {
+  ReservationExecutor executor;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).WillOnce(Return(false));
   DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
   ASSERT_OK(allocator.ReserveMemory(1024));
   size_t received = 0;
   ASSERT_EQ(allocator.Alloc(256, 512, &received), Address(0));
-  ASSERT_EQ(allocator.Alloc(256, 256, &received), Address(512));
-  allocator.Free(Address(512), 256);
-  EXPECT_THAT(executor.state.unmapped_offsets, ElementsAre(512));
-  EXPECT_EQ(allocator.Alloc(256, 512, &received), Address(512));
-  EXPECT_EQ(received, 512);
-  EXPECT_EQ(executor.state.physical_live, 2);
+  allocator.Free(Address(0), 512);
+  EXPECT_THAT(executor.state.unmapped_offsets, ElementsAre(0));
+  EXPECT_EQ(executor.state.physical_live, 0);
 }
 
 TEST(DeviceMemAllocatorTest, ReservationErrorsAreReported) {
   ReservationExecutor executor;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(0);
   DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
   EXPECT_THAT(allocator.ReserveMemory(0),
               StatusIs(absl::StatusCode::kInvalidArgument));
@@ -258,6 +302,8 @@ TEST(DeviceMemAllocatorTest, ReservationErrorsAreReported) {
 
 TEST(DeviceMemAllocatorTest, LegacyModeUsesExecutorAllocation) {
   MockStreamExecutor executor;
+  // Legacy frees go through Deallocate, which defers reclamation itself.
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(0);
   DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
   EXPECT_THAT(allocator.ReserveMemory(1024),
               StatusIs(absl::StatusCode::kUnimplemented));

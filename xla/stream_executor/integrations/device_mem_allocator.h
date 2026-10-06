@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
@@ -66,13 +67,13 @@ class DeviceMemAllocator : public tsl::SubAllocator {
       return absl::InvalidArgumentError(
           "ReserveMemory requires a positive capacity and an unused allocator");
     }
-    auto reservation = stream_exec_->CreateMemoryReservation(capacity);
-    if (!reservation.ok()) return reservation.status();
-    if ((*reservation)->address().size() < capacity) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MemoryReservation> reservation,
+                          stream_exec_->CreateMemoryReservation(capacity));
+    if (reservation->address().size() < capacity) {
       return absl::InternalError(
           "Device VA reservation is smaller than capacity");
     }
-    reservation_ = std::move(*reservation);
+    reservation_ = std::move(reservation);
     capacity_ = capacity;
     return absl::OkStatus();
   }
@@ -81,7 +82,9 @@ class DeviceMemAllocator : public tsl::SubAllocator {
               size_t* bytes_received) override {
     tsl::profiler::TraceMe traceme("DeviceMemAllocator::Alloc");
 
-    if (num_bytes > 0) allocations_started_ = true;
+    if (num_bytes > 0) {
+      allocations_started_ = true;
+    }
     if (reservation_ != nullptr) {
       return AllocReserved(num_bytes, bytes_received);
     }
@@ -114,6 +117,27 @@ class DeviceMemAllocator : public tsl::SubAllocator {
         CHECK_GE(start, base);
         CHECK_LE(start - base, mapped_bytes_);
         CHECK_EQ(num_bytes, mapped_bytes_ - (start - base));
+        if (start == base) {
+          // Whole-range return: BFC tearing down, rejecting the initial
+          // region, or garbage-collecting the region. Buffers in this range
+          // may have been handed out, and cuMemUnmap (unlike cuMemFree)
+          // invalidates mappings immediately, so drain the device first.
+          // SynchronizeAllActivity bypasses CudaDeviceAllocator's graph
+          // capture guard; that is acceptable only because none of these
+          // callers runs while a capture using this arena is active.
+          //
+          // A suffix return (start > base) hands back backing that Extend
+          // mapped moments ago and never published, so no device work can
+          // reference it. It must not synchronize: Extend can run during
+          // stream capture, where a context synchronize would fail and
+          // invalidate the capture.
+          if (!stream_exec_->SynchronizeAllActivity()) {
+            LOG(WARNING) << "Failed to synchronize device "
+                         << device_id_.value()
+                         << " before unmapping its BFC arena; in-flight work "
+                            "may still reference it.";
+          }
+        }
         while (num_bytes > 0) {
           const DeviceAddressBase address =
               regions_.back().mapping.mapped_address();
@@ -147,7 +171,9 @@ class DeviceMemAllocator : public tsl::SubAllocator {
  private:
   void* AllocReserved(size_t num_bytes, size_t* bytes_received) {
     *bytes_received = 0;
-    if (num_bytes == 0 || num_bytes > capacity_ - mapped_bytes_) return nullptr;
+    if (num_bytes == 0 || num_bytes > capacity_ - mapped_bytes_) {
+      return nullptr;
+    }
 
     auto allocation = stream_exec_->CreatePhysicalMemoryAllocation(num_bytes);
     if (!allocation.ok()) {
@@ -155,7 +181,9 @@ class DeviceMemAllocator : public tsl::SubAllocator {
       return nullptr;
     }
     const size_t size = (*allocation)->address().size();
-    if (size < num_bytes || size > capacity_ - mapped_bytes_) return nullptr;
+    if (size < num_bytes || size > capacity_ - mapped_bytes_) {
+      return nullptr;
+    }
     auto mapping = reservation_->MapTo(mapped_bytes_, 0, size, **allocation);
     if (!mapping.ok()) {
       VLOG(2) << "Mapping device memory failed: " << mapping.status();

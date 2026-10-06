@@ -914,6 +914,7 @@ xla_test(
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
+        ":cuda_device_allocator",
         ":cuda_platform_id",
         ":cuda_raw_memory_allocation",
         "//xla/stream_executor:platform",
@@ -938,6 +939,7 @@ xla_cc_test(
         "requires-gpu-nvidia",
     ],
     deps = [
+        ":cuda_device_allocator",
         ":cuda_memory_reservation",
         ":cuda_platform",
         ":cuda_platform_id",

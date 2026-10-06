@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
@@ -37,8 +38,17 @@ class CudaMemoryReservation : public MemoryReservation {
  public:
   // Reserves a virtual address range of at least `size` bytes using
   // cuMemAddressReserve. StreamExecutor is used only for context activation.
+  // Probes the device's allocator options on every call; prefer the overload
+  // below when the caller already holds them.
   static absl::StatusOr<std::unique_ptr<CudaMemoryReservation>> Create(
       StreamExecutor* executor, uint64_t size);
+
+  // Same, but derives the mapping granularity from `options` instead of
+  // probing the device, so it matches physical allocations created with the
+  // same options.
+  static absl::StatusOr<std::unique_ptr<CudaMemoryReservation>> Create(
+      StreamExecutor* executor, uint64_t size,
+      const CudaDeviceAllocator::Options& options);
 
   // Returns the base address and padded size of the reserved virtual range.
   DeviceAddressBase address() const override;

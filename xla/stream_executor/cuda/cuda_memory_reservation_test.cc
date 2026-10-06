@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 #include "xla/stream_executor/device_address.h"
@@ -81,6 +82,19 @@ TEST_F(CudaMemoryReservationTest, MapToWrongType) {
   FakeAllocation fake;
   EXPECT_THAT(res->MapTo(0, 0, kTestSize, fake),
               StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+// Verifies that callers can supply allocator options instead of probing them.
+TEST_F(CudaMemoryReservationTest, CreateWithExplicitOptions) {
+  CudaDeviceAllocator::Options options;
+  options.enable_posix_fd_handle = false;
+  options.enable_fabric_handle = false;
+  ASSERT_OK_AND_ASSIGN(
+      auto res, CudaMemoryReservation::Create(executor_, kTestSize, options));
+
+  EXPECT_NE(res->address().opaque(), nullptr);
+  EXPECT_GE(res->address().size(), kTestSize);
+  EXPECT_GT(res->granularity(), 0);
 }
 
 // Verifies the full MapTo workflow. The ScopedMapping is destroyed first,
