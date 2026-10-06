@@ -112,9 +112,7 @@ namespace xla {
 
 namespace {
 #ifdef __AVX__
-static constexpr int kMaxInnerBlockSizeBytes = sizeof(__m256i);
-#elif defined(XLA_HAS_VEC128)
-static constexpr int kMaxInnerBlockSizeBytes = sizeof(Vec128);
+static constexpr int kMaxInnerBlockSizeBytes = 32;
 #else
 static constexpr int kMaxInnerBlockSizeBytes = 16;
 #endif
