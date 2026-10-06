@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -435,38 +436,6 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
   thunk_info.thunk_id = thunk_id;
   auto gpu_backend_config = instr->backend_config<GpuBackendConfig>();
   return thunk_info;
-}
-
-LaunchDependencyMap::LaunchDependencyMap(
-    absl::Span<const Thunk* const> execution_order) {
-  std::optional<SlotId> pending;
-  for (const Thunk* thunk : execution_order) {
-    // Dispatch then follows thunk order, which is the same on every device.
-    if (pending) last_producer_[thunk] = *pending;
-    if (thunk->RecordsLaunchCompletion()) {
-      pending = num_slots_++;
-      recorded_slot_[thunk] = *pending;
-    }
-  }
-}
-
-absl::Status LaunchOrdering::WaitForProducers(const Thunk* thunk,
-                                              se::Stream* stream) const {
-  std::optional<LaunchDependencyMap::SlotId> last = map.LastProducerSlot(thunk);
-  if (!last.has_value()) return absl::OkStatus();
-
-  for (size_t& cursor = waited[stream]; cursor <= *last; ++cursor) {
-    if (!event_bound[cursor]) continue;
-    ABSL_RETURN_IF_ERROR(stream->WaitFor(events[cursor]->get()));
-  }
-  return absl::OkStatus();
-}
-
-void LaunchOrdering::ClaimSlot(LaunchDependencyMap::SlotId slot) const {
-  event_bound[slot] = true;
-  for (auto& [stream, cursor] : waited) {
-    if (cursor > slot) cursor = slot;
-  }
 }
 
 se::Event* Thunk::ExecuteParams::TakeLaunchEvent(const Thunk* thunk) const {

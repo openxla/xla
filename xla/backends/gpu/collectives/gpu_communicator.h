@@ -176,7 +176,7 @@ class GpuCommunicator : public Communicator {
   // network transfers to remote (non-LSA) peers.
   virtual bool SupportsGin() const { return false; }
 
-  // Returns true iff the communicator records the launch-completion event it
+  // Returns true if the communicator records the launch-completion event it
   // is handed. A backend that ignores the event must answer false, or callers
   // will order work against a record that never happens.
   virtual bool SupportsLaunchCompletion() const { return false; }

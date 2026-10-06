@@ -523,6 +523,13 @@ GpuExecutable::GpuExecutable(
   }
   set_module_stats(std::move(module_stats));
 
+  if (debug_options.xla_gpu_explicit_launch_ordering() &&
+      absl::c_linear_search(debug_options.xla_gpu_enable_command_buffer(),
+                            DebugOptions::COLLECTIVES)) {
+    LOG(WARNING) << "xla_gpu_explicit_launch_ordering does not order "
+                    "collectives inside command buffers";
+  }
+
   const DebugOptions* allocation_debug_options =
       has_module() ? &module_config().debug_options() : nullptr;
   buffer_allocator_ = GpuExecutableBufferAllocator::Create(

@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/service/buffer_assignment.h"

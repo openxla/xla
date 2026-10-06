@@ -3640,7 +3640,10 @@ xla_cc_test(
 cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
-    hdrs = ["thunk.h"],
+    hdrs = [
+        "launch_ordering.h",
+        "thunk.h",
+    ],
     visibility = internal_visibility([
         ":friends",
         "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",

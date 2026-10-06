@@ -230,6 +230,30 @@ TEST_F(CudaStreamTest, LaunchKernel) {
   EXPECT_THAT(host_buffer, Each(3));
 }
 
+TEST_F(CudaStreamTest, LaunchKernelRecordsLaunchCompletionEvent) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
+                       CudaStream::Create(executor_,
+                                          /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(auto add, LoadAddI32TestKernel(executor_));
+  ASSERT_OK_AND_ASSIGN(CudaEvent event,
+                       CudaEvent::Create(executor_, /*allow_timing=*/false));
+  DeviceAddress<int32_t> buffer = executor_->AllocateArray<int32_t>(1, 0);
+
+  // Hold the stream so the launch is queued but its blocks are not dispatched.
+  absl::Notification release;
+  EXPECT_THAT(stream->DoHostCallback([&] { release.WaitForNotification(); }),
+              IsOk());
+  EXPECT_THAT(
+      add.LaunchWithCompletionEvent(ThreadDim(), BlockDim(), stream.get(),
+                                    &event, buffer, buffer, buffer),
+      IsOk());
+  EXPECT_EQ(event.PollForStatus(), Event::Status::kPending);
+
+  release.Notify();
+  EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
+  EXPECT_EQ(event.PollForStatus(), Event::Status::kComplete);
+}
+
 TEST_F(CudaStreamTest, SetName) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
                        CudaStream::Create(executor_,
