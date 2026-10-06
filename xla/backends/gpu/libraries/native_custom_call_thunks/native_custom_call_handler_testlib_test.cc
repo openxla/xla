@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -27,11 +28,16 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_emitter_context.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registration.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registry.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_utils.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_scratch_context.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/ffi/attributes.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -86,6 +92,33 @@ absl::StatusOr<ThunkSequence> EmptyHandler(
 // a target to resolve.
 XLA_GPU_REGISTER_NATIVE_CUSTOM_CALL_HANDLER("xla.gpu.test_testlib_registered",
                                             EmptyHandler);
+
+// Asks for one scratch buffer in default memory and one in collective memory.
+absl::StatusOr<std::vector<Shape>> TwoScratchBuffers(
+    const HloCustomCallInstruction&, const NativeCustomCallScratchContext&) {
+  ABSL_ASSIGN_OR_RETURN(Shape plain, MakeScratchShape(F32, {16}));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape collective,
+      MakeScratchShape(S32, {4}, NativeCustomCallMemorySpace::kCollective));
+  return std::vector<Shape>{plain, collective};
+}
+
+XLA_GPU_REGISTER_NATIVE_CUSTOM_CALL_HANDLER(
+    "xla.gpu.test_testlib_scratch",
+    NativeCustomCallHandlerBundle{
+        /*emit_thunks=*/EmptyHandler,
+        /*request_scratch_buffers=*/TwoScratchBuffers});
+
+constexpr absl::string_view kScratchHlo = R"hlo(
+  ENTRY e {
+    p0 = f32[4] parameter(0)
+    c0 = f32[4] custom-call(p0),
+      custom_call_target="xla.gpu.test_testlib_scratch"
+    neg = f32[4] negate(c0)
+    ROOT c1 = f32[4] custom-call(neg),
+      custom_call_target="xla.gpu.test_testlib_scratch"
+  }
+)hlo";
 
 constexpr absl::string_view kHlo = R"hlo(
   ENTRY e {
@@ -161,6 +194,48 @@ TEST(NativeCustomCallHandlerTesterTest, RejectsAnUnknownInstructionName) {
                   kHlo, {/*gpu_model=*/GpuModel::H100_SXM,
                          /*instruction_name=*/"nope"}),
               StatusIs(absl::StatusCode::kNotFound, HasSubstr("nope")));
+}
+
+TEST(NativeCustomCallHandlerTesterTest, AppendsScratchBuffersToTheResult) {
+  ASSERT_OK_AND_ASSIGN(auto tester,
+                       NativeCustomCallHandlerTester::Create(kScratchHlo));
+
+  // The scratch assigner turned the array result into a tuple of the original
+  // result plus the two scratch buffers. Note that buffer assignment rewrites
+  // the memory space in the layout to the allocation color, so the S(8) scratch
+  // buffer shows up as S(7) from here on (just like S(1) buffers do).
+  const HloCustomCallInstruction& instr = tester->instruction();
+  EXPECT_EQ(instr.name(), "c1");
+  EXPECT_EQ(instr.shape().ToString(/*print_layout=*/true),
+            "(f32[4]{0}, f32[16]{0}, s32[4]{0:S(7)})");
+
+  ASSERT_OK_AND_ASSIGN(ShapedSlice result,
+                       tester->context().GetResultShapedSlice({0}));
+  ASSERT_OK_AND_ASSIGN(ShapedSlice plain,
+                       tester->context().GetResultShapedSlice({1}));
+  ASSERT_OK_AND_ASSIGN(ShapedSlice collective,
+                       tester->context().GetResultShapedSlice({2}));
+  EXPECT_EQ(result.shape, ShapeUtil::MakeShape(F32, {4}));
+  EXPECT_EQ(plain.shape, ShapeUtil::MakeShape(F32, {16}));
+  EXPECT_EQ(plain.slice.size(), 16 * sizeof(float));
+  EXPECT_EQ(collective.shape.layout().memory_space(),
+            static_cast<int64_t>(MemorySpaceColor::kCollective));
+  EXPECT_EQ(collective.slice.size(), 4 * sizeof(int32_t));
+  EXPECT_EQ(collective.slice.allocation()->color(),
+            static_cast<int>(MemorySpaceColor::kCollective));
+
+  // One operand plus three results.
+  ASSERT_OK_AND_ASSIGN(emitters::KernelArguments kernel_args,
+                       tester->context().CreateKernelArguments());
+  EXPECT_EQ(kernel_args.args().size(), 4);
+}
+
+TEST(NativeCustomCallHandlerTesterTest, CanSkipTheScratchAssigner) {
+  NativeCustomCallHandlerTester::Options options;
+  options.run_scratch_assigner = false;
+  ASSERT_OK_AND_ASSIGN(
+      auto tester, NativeCustomCallHandlerTester::Create(kScratchHlo, options));
+  EXPECT_EQ(tester->instruction().shape(), ShapeUtil::MakeShape(F32, {4}));
 }
 
 }  // namespace

@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_constants.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -471,6 +472,104 @@ TEST_F(GpuMemorySpaceAssignmentTest,
         (int)(is_symmetric ? MemorySpaceColor::kCollective
                            : MemorySpaceColor::kDefault);
     ASSERT_THAT(value->color(), Eq(expected_color));
+  }
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest,
+       TestResultsMemorySpacesWithNativeCustomCallScratchBuffersTuple) {
+  // When a custom call returns a tuple and has scratch buffers appended, its
+  // result shape is ((A, B), S0, ...). results_memory_spaces="{0:7}" requests
+  // collective memory for A (shape index {0, 0}), while B ({0, 1}) and the
+  // scratch buffer S0 ({1}) remain in default memory.
+  const std::string hlo_text = absl::StrCat(
+      R"(
+    HloModule m
+
+    ENTRY main {
+      ROOT %custom-call = ((f16[8], f16[8]), f16[16]) custom-call(),
+        custom_call_target="xla.gpu.test_target",
+        frontend_attributes={
+          results_memory_spaces="{0:7}",
+          )",
+      kNativeCustomCallNumScratchBuffersAttr,
+      R"(="1"
+        }
+    }
+  )");
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  const DependencyHloOrdering ordering(module.get());
+  EXPECT_OK(colorer(alias_analysis.get(), ordering));
+
+  const int kExpectedBuffersCount = 5;
+  ASSERT_THAT(alias_analysis->buffers(), SizeIs(kExpectedBuffersCount));
+
+  for (const auto& buffer : alias_analysis->buffers()) {
+    ASSERT_THAT(buffer.values(), SizeIs(1));
+    const HloValue* value = buffer.values()[0];
+    ASSERT_THAT(value, NotNull());
+    ASSERT_THAT(value->has_color(), IsTrue());
+    const bool is_symmetric = value->defining_index() == ShapeIndex({0, 0});
+    const int expected_color =
+        (int)(is_symmetric ? MemorySpaceColor::kCollective
+                           : MemorySpaceColor::kDefault);
+    EXPECT_EQ(value->color(), expected_color);
+  }
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest,
+       TestResultsMemorySpacesWithNativeCustomCallScratchBuffersNonTuple) {
+  // When a custom call returns a non-tuple and has scratch buffers appended,
+  // its result shape is (A, S0, ...). results_memory_spaces="{0:7}" requests
+  // collective memory for A (shape index {0}), while the scratch buffer S0
+  // ({1}) remains in default memory.
+  const std::string hlo_text = absl::StrCat(
+      R"(
+    HloModule m
+
+    ENTRY main {
+      ROOT %custom-call = (f16[8], f16[16]) custom-call(),
+        custom_call_target="xla.gpu.test_target",
+        frontend_attributes={
+          results_memory_spaces="{0:7}",
+          )",
+      kNativeCustomCallNumScratchBuffersAttr,
+      R"(="1"
+        }
+    }
+  )");
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  const DependencyHloOrdering ordering(module.get());
+  EXPECT_OK(colorer(alias_analysis.get(), ordering));
+
+  const int kExpectedBuffersCount = 3;
+  ASSERT_THAT(alias_analysis->buffers(), SizeIs(kExpectedBuffersCount));
+
+  for (const auto& buffer : alias_analysis->buffers()) {
+    ASSERT_THAT(buffer.values(), SizeIs(1));
+    const HloValue* value = buffer.values()[0];
+    ASSERT_THAT(value, NotNull());
+    ASSERT_THAT(value->has_color(), IsTrue());
+    const bool is_symmetric = value->defining_index() == ShapeIndex({0});
+    const int expected_color =
+        (int)(is_symmetric ? MemorySpaceColor::kCollective
+                           : MemorySpaceColor::kDefault);
+    EXPECT_EQ(value->color(), expected_color);
   }
 }
 

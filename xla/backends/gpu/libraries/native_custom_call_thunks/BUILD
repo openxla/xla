@@ -20,6 +20,7 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -82,11 +83,22 @@ cc_library(
 )
 
 cc_library(
+    name = "native_custom_call_constants",
+    hdrs = ["native_custom_call_constants.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = ["//xla:internal"],
+    deps = [
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "native_custom_call_handler_registry",
     srcs = ["native_custom_call_handler_registry.cc"],
     hdrs = ["native_custom_call_handler_registry.h"],
     visibility = ["//xla:internal"],
     deps = [
+        ":native_custom_call_constants",
         ":native_custom_call_emitter_context",
         ":native_custom_call_scratch_context",
         "//xla:shape_util",
@@ -160,6 +172,7 @@ cc_library(
         "//xla/backends/gpu/runtime:thunk",
         "//xla/backends/gpu/runtime:thunk_id",
         "//xla/backends/gpu/target_config",
+        "//xla/backends/gpu/transforms:custom_call_scratch_assigner",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/ffi:attributes",
         "//xla/hlo/analysis:alias_info",
@@ -172,6 +185,7 @@ cc_library(
         "//xla/service:logical_buffer",
         "//xla/service:shaped_slice",
         "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "@com_google_absl//absl/memory",
@@ -190,7 +204,10 @@ xla_cc_test(
     deps = [
         ":native_custom_call_emitter_context",
         ":native_custom_call_handler_registration",
+        ":native_custom_call_handler_registry",
         ":native_custom_call_handler_testlib",
+        ":native_custom_call_handler_utils",
+        ":native_custom_call_scratch_context",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/runtime:thunk",
@@ -198,7 +215,9 @@ xla_cc_test(
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/ffi:attributes",
         "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
         "//xla/service:shaped_slice",
+        "//xla/service/gpu:gpu_memory_space_assignment",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
