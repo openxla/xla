@@ -133,8 +133,10 @@ class DeviceMemAllocator : public tsl::SubAllocator {
 
   bool SupportsCoalescing() const override { return reservation_ != nullptr; }
 
-  // Use this to round the initial backing size when reserving a growing arena.
-  size_t GetAllocationGranularity() const {
+  // Mapping granularity of the reserved arena; BFC sizes extensions and
+  // backpedal retries in multiples of it. Also used to round the initial
+  // backing size when reserving a growing arena.
+  size_t GetAllocationGranularity() const override {
     return reservation_ != nullptr ? reservation_->granularity() : 1;
   }
 

@@ -527,12 +527,19 @@ class BFCAllocator : public Allocator {
     void set_handle(const void* p, ChunkHandle h) { handles_[IndexFor(p)] = h; }
     void erase(const void* p) { set_handle(p, kInvalidChunkHandle); }
 
+    // The last chunk in the region (its `next` is kInvalidChunkHandle).
+    // Maintained by Extend, SplitChunk and MergeChunks so that extending a
+    // region does not require walking its chunk list.
+    ChunkHandle tail() const { return tail_; }
+    void set_tail(ChunkHandle h) { tail_ = h; }
+
    private:
     void Swap(AllocationRegion* other) {
       std::swap(ptr_, other->ptr_);
       std::swap(memory_size_, other->memory_size_);
       std::swap(end_ptr_, other->end_ptr_);
       std::swap(handles_, other->handles_);
+      std::swap(tail_, other->tail_);
     }
 
     size_t IndexFor(const void* p) const {
@@ -552,6 +559,8 @@ class BFCAllocator : public Allocator {
     // indexed by (p-base) / kMinAllocationSize, contains ChunkHandle
     // for the memory allocation represented by "p"
     std::vector<ChunkHandle> handles_;
+
+    ChunkHandle tail_ = kInvalidChunkHandle;
 
     AllocationRegion(const AllocationRegion&) = delete;
     void operator=(const AllocationRegion&) = delete;
@@ -619,9 +628,25 @@ class BFCAllocator : public Allocator {
     }
     void erase(const void* p) { return MutableRegionFor(p)->erase(p); }
 
+    // Records `h` as the last chunk of the region containing `p`.
+    void set_tail(const void* p, ChunkHandle h) {
+      MutableRegionFor(p)->set_tail(h);
+    }
+
     const std::vector<AllocationRegion>& regions() const { return regions_; }
 
     void* RegionStart(const void* p) const { return RegionFor(p)->ptr(); }
+
+    // Returns the region whose end_ptr() is `p`, i.e. the one that
+    // AddOrExtendAllocationRegion(p, ...) would extend, or nullptr.
+    const AllocationRegion* RegionEndingAt(const void* p) const {
+      auto entry =
+          std::upper_bound(regions_.begin(), regions_.end(), p, &Comparator);
+      if (entry != regions_.begin() && (entry - 1)->end_ptr() == p) {
+        return &*(entry - 1);
+      }
+      return nullptr;
+    }
 
    private:
     static bool Comparator(const void* ptr, const AllocationRegion& other) {
@@ -671,9 +696,25 @@ class BFCAllocator : public Allocator {
 
   // Try to add a new memory region that can satisfy an allocation of
   // 'rounded_bytes' bytes.  Returns true on success and false on
-  // failure.
+  // failure. Requests are sized in multiples of the suballocator's
+  // allocation granularity. A contiguous spatial extension may be smaller
+  // than 'rounded_bytes' when it only has to complete a free tail chunk.
   bool Extend(size_t alignment, size_t rounded_bytes,
               AllocationEnd allocation_end)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // The last chunk of `region`, validated against the region bounds in debug
+  // builds. Must not be called between AllocationRegion::extend and the
+  // linking of the new chunk.
+  ChunkHandle RegionTail(const AllocationRegion& region) const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Bytes that an extension adjacent to `region` must add so that an
+  // allocation of `rounded_bytes` aligned to `alignment` fits in the chunk
+  // formed by merging the extension with the region's free tail. Returns
+  // `rounded_bytes` when the tail cannot be merged into.
+  size_t TailExtensionBytes(const AllocationRegion& region, size_t alignment,
+                            size_t rounded_bytes) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Deallocate free regions to give back the memory to suballocator, so that
