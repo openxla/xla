@@ -826,7 +826,8 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
   CommandSequence commands;
   commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
                                                LaunchDimensions(1, 4),
-                                               /*shmem_bytes=*/0));
+                                               /*shmem_bytes=*/0,
+                                               /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
                        CommandExecutor::Create(std::move(commands), serialize));
 
@@ -932,7 +933,8 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
   CommandSequence commands;
   commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
                                                LaunchDimensions(1, 4),
-                                               /*shmem_bytes=*/0));
+                                               /*shmem_bytes=*/0,
+                                               /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
                        CommandExecutor::Create(std::move(commands), serialize));
 
@@ -1326,10 +1328,12 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
   CommandSequence commands;
   commands.Append(KernelThunk::MakeKernelThunk("AddI32", args, args_access,
                                                LaunchDimensions(1, 4),
-                                               /*shmem_bytes=*/0));
+                                               /*shmem_bytes=*/0,
+                                               /*devices_per_host=*/1));
   commands.Append(KernelThunk::MakeKernelThunk("AddI32", args_1, args_access,
                                                LaunchDimensions(1, 4),
-                                               /*shmem_bytes=*/0));
+                                               /*shmem_bytes=*/0,
+                                               /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(CommandExecutor executor,
                        CommandExecutor::Create(std::move(commands), serialize));
 
@@ -1453,7 +1457,8 @@ TEST(CommandBufferThunkTest, ConditionalThunkCaseCommand) {
         {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};
     branch_thunks[0].push_back(KernelThunk::MakeKernelThunk(
         "AddI32", args, args_access, LaunchDimensions(1, 4),
-        /*shmem_bytes=*/0));
+        /*shmem_bytes=*/0,
+        /*devices_per_host=*/1));
   }
 
   {  // Case 1: b = b + b
@@ -1461,7 +1466,8 @@ TEST(CommandBufferThunkTest, ConditionalThunkCaseCommand) {
         {slice_b, shape}, {slice_b, shape}, {slice_b, shape}};
     branch_thunks[1].push_back(KernelThunk::MakeKernelThunk(
         "AddI32", args, args_access, LaunchDimensions(1, 4),
-        /*shmem_bytes=*/0));
+        /*shmem_bytes=*/0,
+        /*devices_per_host=*/1));
   }
 
   // Prepare thunk sequence for command buffer conversion.
@@ -1567,13 +1573,15 @@ TEST(CommandBufferThunkTest, WhileThunk) {
   ThunkSequence cond_thunks;
   cond_thunks.push_back(KernelThunk::MakeKernelThunk(
       "IncAndCmp", cond_args, cond_args_access, LaunchDimensions(1, 1),
-      /*shmem_bytes=*/0));
+      /*shmem_bytes=*/0,
+      /*devices_per_host=*/1));
 
   // Prepare thunk sequence for loop `body`.
   ThunkSequence body_thunks;
   body_thunks.push_back(KernelThunk::MakeKernelThunk(
       "AddI32", body_args, body_args_access, LaunchDimensions(1, 4),
-      /*shmem_bytes=*/0));
+      /*shmem_bytes=*/0,
+      /*devices_per_host=*/1));
 
   // Prepare thunk sequence for command buffer conversion.
   ThunkSequence thunks = ThunkSequence::Of<WhileThunk>(
