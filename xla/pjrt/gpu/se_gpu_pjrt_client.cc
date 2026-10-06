@@ -1301,6 +1301,39 @@ BuildLocalDeviceStates(LocalClient* xla_client, bool schedule_async,
   return std::move(addressable_devices);
 }
 
+absl::StatusOr<MemFraction> ResolveBfcMemFraction(
+    const GpuAllocatorConfig& config, const DebugOptions& debug_options) {
+  MemFraction fraction = config.memory_fraction;
+  if (!debug_options.xla_gpu_memory_fraction_policy().empty()) {
+    absl::StatusOr<MemFraction> from_flag =
+        ParseMemFraction(debug_options.xla_gpu_memory_fraction_policy());
+    if (!from_flag.ok()) {
+      return InvalidArgument("--xla_gpu_memory_fraction_policy: %s",
+                             from_flag.status().message());
+    }
+    fraction = *from_flag;
+  }
+  // Automatic registration of the arena's backing allocations requires a
+  // fixed, fully registered arena: if BFC grew later, ranks could register
+  // inconsistent sets of allocations. The explicit opt-in takes precedence.
+  const bool spatial_pool =
+      config.preallocate &&
+      debug_options.xla_gpu_enable_allocator_spatial_partitioning();
+  if (spatial_pool &&
+      debug_options.xla_gpu_enable_nccl_user_buffers_in_default_space() &&
+      std::holds_alternative<FlexMemFraction>(fraction)) {
+    const double start = MemFractionStart(fraction);
+    LOG(WARNING) << "Pinning the BFC pool to a fixed " << start
+                 << " of device memory (memory fraction "
+                 << MemFractionToString(fraction)
+                 << " requested) because "
+                    "--xla_gpu_enable_nccl_user_buffers_in_default_space "
+                    "requires a fixed, fully registered arena.";
+    fraction = FixedMemFraction{start};
+  }
+  return fraction;
+}
+
 // Constructs a GPU device memory allocator to use, according to the allocator
 // configuration the client requested.
 absl::StatusOr<std::unique_ptr<se::DeviceAddressAllocator>>
@@ -1329,7 +1362,8 @@ GetStreamExecutorGpuDeviceAllocator(
         ABSL_ASSIGN_OR_RETURN(
             auto async_allocator,
             CreateCudaAsyncAllocator(
-                *(ordinal_and_device.second), allocator_config.memory_fraction,
+                *(ordinal_and_device.second),
+                MemFractionStart(allocator_config.memory_fraction),
                 allocator_config.preallocate, false, false, true));
         allocators.push_back(
             {std::move(async_allocator),
@@ -1356,6 +1390,9 @@ GetStreamExecutorGpuDeviceAllocator(
       shared_collective_pool =
           allocator_config.preallocate &&
           debug_options.xla_gpu_enable_allocator_spatial_partitioning();
+      ABSL_ASSIGN_OR_RETURN(
+          const MemFraction bfc_memory_fraction,
+          ResolveBfcMemFraction(allocator_config, debug_options));
       // Without spatial partitioning the BFC allocator only serves the lower
       // end, so default memory must keep the default allocation end.
       const tsl::AllocationEnd default_allocation_end =
@@ -1365,13 +1402,12 @@ GetStreamExecutorGpuDeviceAllocator(
         ABSL_ASSIGN_OR_RETURN(
             auto bfc_allocator,
             CreateBFCAllocator(
-                ordinal_and_device.second->executor(),
-                allocator_config.memory_fraction, allocator_config.preallocate,
+                ordinal_and_device.second->executor(), bfc_memory_fraction,
+                allocator_config.preallocate,
                 allocator_config.gpu_system_memory_size,
                 allocator_config.sub_allocator_alloc_visitors,
                 allocator_config.sub_allocator_free_visitors,
-                /*enable_spatial_partitioning=*/
-                shared_collective_pool, allocator_config.bfc_allow_growth));
+                /*enable_spatial_partitioning=*/shared_collective_pool));
         allocators.push_back(
             {bfc_allocator, ordinal_and_device.second->compute_stream(),
              /*memory_space=*/
@@ -1462,7 +1498,7 @@ GetStreamExecutorGpuDeviceAllocator(
             {device->executor(), device->compute_stream()});
       }
       return se::gpu::CudaDeviceAddressVmmAllocator::Create(
-          platform, allocator_config.memory_fraction,
+          platform, MemFractionStart(allocator_config.memory_fraction),
           allocator_config.gpu_system_memory_size, executor_streams,
           /*reclaim_exempt_memory_space=*/
           static_cast<int64_t>(gpu::MemorySpaceColor::kCollective));
@@ -1474,7 +1510,7 @@ GetStreamExecutorGpuDeviceAllocator(
             {device->executor(), device->compute_stream()});
       }
       return se::gpu::RocmDeviceAddressVmmAllocator::Create(
-          platform, allocator_config.memory_fraction,
+          platform, MemFractionStart(allocator_config.memory_fraction),
           allocator_config.gpu_system_memory_size, executor_streams,
           /*reclaim_exempt_memory_space=*/
           static_cast<int64_t>(gpu::MemorySpaceColor::kCollective));
@@ -1494,7 +1530,8 @@ GetStreamExecutorGpuDeviceAllocator(
           auto collective_bfc_allocator,
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
-              /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
+              /*memory_fraction=*/
+              1.0 - MemFractionStart(allocator_config.memory_fraction),
               allocator_config.collective_memory_size));
       allocators.push_back(
           {std::move(collective_bfc_allocator),
@@ -1567,11 +1604,9 @@ CreateAllocatorMemoryRegistration(GpuAllocatorConfig* allocator_config) {
     return nullptr;
   }
   // Automatic memory registration is only safe for preallocated BFC arenas.
-  // If BFC grows later, ranks may not see a consistent set of registered
-  // backing allocations, which can lead to undefined behavior or deadlocks.
-  if (!allocator_config->preallocate ||
-      (allocator_config->bfc_allow_growth &&
-       debug_options.xla_gpu_enable_allocator_spatial_partitioning())) {
+  // ResolveBfcMemFraction pins a growable shared pool to a fixed fraction when
+  // this flag is set, so the registered arena never grows.
+  if (!allocator_config->preallocate) {
     return nullptr;
   }
 
@@ -1585,6 +1620,11 @@ CreateAllocatorMemoryRegistration(GpuAllocatorConfig* allocator_config) {
       memory_registration->free_visitor());
 
   return memory_registration;
+}
+
+absl::StatusOr<MemFraction> ResolveBfcMemFraction(
+    const GpuAllocatorConfig& allocator_config) {
+  return ResolveBfcMemFraction(allocator_config, GetDebugOptionsFromFlags());
 }
 
 struct PjRtDevicesAndTopology {

@@ -479,7 +479,8 @@ PjRtEnvironment& CollectivePerfTableGen::GetPjRtEnv() {
     GpuClientOptions gpu_opts;
     gpu_opts.num_nodes = config_.num_nodes;
     gpu_opts.node_id = config_.task_id;
-    gpu_opts.allocator_config.memory_fraction = kGpuMemFraction;
+    gpu_opts.allocator_config.memory_fraction =
+        MemFractionFromFraction(kGpuMemFraction);
     absl::StatusOr<PjRtEnvironment> pjrt_env = GetPjRtEnvironmentForGpu(
         config_.coordinator_address, gpu_opts, config_.connection_timeout);
     CHECK_OK(pjrt_env);

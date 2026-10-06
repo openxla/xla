@@ -23,6 +23,7 @@ limitations under the License.
 #include <set>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/log/log.h"
@@ -101,11 +102,11 @@ void EnablePeerAccess(absl::Span<se::StreamExecutor* const> executors) {
 
 // Builds a BFCAllocator for all local GPUs.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
-    se::StreamExecutor* executor, double memory_fraction, bool preallocate,
-    std::optional<int64_t> gpu_system_memory_size,
+    se::StreamExecutor* executor, const MemFraction& memory_fraction,
+    bool preallocate, std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
-    bool enable_spatial_partitioning, bool allow_growth) {
+    bool enable_spatial_partitioning) {
   if (enable_spatial_partitioning && !preallocate) {
     return InvalidArgument(
         "Spatial partitioning of the BFC allocator requires preallocate=true.");
@@ -118,16 +119,29 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
                << status.message();
   }
 
-  // This option extends preallocated spatial device-memory pools. Other modes
-  // retain their existing relationship between preallocation and growth.
-  allow_growth =
-      allow_growth && enable_spatial_partitioning && !enable_unified_memory;
+  // Only preallocated spatial device-memory pools grow. Other modes retain
+  // their existing relationship between preallocation and growth and use just
+  // the start fraction.
+  const double start_fraction = MemFractionStart(memory_fraction);
+  const auto* flex = std::get_if<FlexMemFraction>(&memory_fraction);
+  const bool allow_growth =
+      flex != nullptr && enable_spatial_partitioning && !enable_unified_memory;
+  const double growth_fraction = flex != nullptr ? flex->cap : start_fraction;
   if (allow_growth &&
       ((!gpu_system_memory_size &&
-        (!std::isfinite(memory_fraction) || memory_fraction <= 0 ||
-         memory_fraction > 1)) ||
+        (!std::isfinite(start_fraction) || start_fraction <= 0 ||
+         start_fraction > 1)) ||
        (gpu_system_memory_size && *gpu_system_memory_size <= 0))) {
     return InvalidArgument("Invalid initial BFC allocation size or fraction.");
+  }
+  if (allow_growth &&
+      (!std::isfinite(growth_fraction) || growth_fraction <= 0 ||
+       growth_fraction > 1 ||
+       (!gpu_system_memory_size && growth_fraction < start_fraction))) {
+    return InvalidArgument(
+        "Invalid BFC memory fraction %s: the growth cap must be in (0, 1] and "
+        "at least the start fraction.",
+        MemFractionToString(memory_fraction));
   }
 
   int device_ordinal = executor->device_ordinal();
@@ -144,8 +158,8 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
   // When unified memory is enabled, allow GPU memory oversubscription by
   // setting memory_fraction > 1.
   size_t allocator_memory = enable_unified_memory
-                                ? total_memory * fmax(1.0, memory_fraction)
-                                : total_memory * memory_fraction;
+                                ? total_memory * fmax(1.0, start_fraction)
+                                : total_memory * start_fraction;
   // If gpu_system_memory_size is set, use it instead of default value.
   if (gpu_system_memory_size.has_value()) {
     allocator_memory = gpu_system_memory_size.value();
@@ -153,7 +167,20 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
 
   allocator_memory = RoundUpGpuMemoryLimit(allocator_memory);
 
-  size_t growth_capacity = total_memory;
+  // Cap on the mapped prefix: a fraction of total (not free) device memory,
+  // rounded down to the mapping granularity once the reservation reports it.
+  size_t growth_capacity =
+      allow_growth ? static_cast<size_t>(total_memory * growth_fraction)
+                   : static_cast<size_t>(total_memory);
+  if (allow_growth && allocator_memory > growth_capacity) {
+    return InvalidArgument(
+        "Initial BFC allocation of %d bytes exceeds the growth cap of %d bytes "
+        "(%g of %d bytes of device memory, memory fraction %s). Lower the "
+        "start fraction or gpu_system_memory_size, or raise the cap (for "
+        "example \"0.75-0.9\").",
+        allocator_memory, growth_capacity, growth_fraction, total_memory,
+        MemFractionToString(memory_fraction));
+  }
   if (enable_unified_memory) {
     ABSL_ASSIGN_OR_RETURN(
         auto unified_memory_allocator,
@@ -229,13 +256,19 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
   if (allow_growth) {
     if (allocator_memory == 0 || allocator_memory > growth_capacity) {
       return InvalidArgument(
-          "Initial BFC allocation must fit in device memory.");
+          "Initial BFC allocation (%d bytes after rounding up to the mapping "
+          "granularity) does not fit under the growth cap (%d bytes after "
+          "rounding down; %g of device memory).",
+          allocator_memory, growth_capacity, growth_fraction);
     }
     opts.allow_growth = true;
     opts.initial_region_bytes = allocator_memory;
     allocator_memory = growth_capacity;
     LOG(INFO) << "BFC may extend default memory up to " << allocator_memory
-              << " bytes on device " << device_ordinal;
+              << " bytes (" << growth_fraction
+              << " of device memory, memory fraction "
+              << MemFractionToString(memory_fraction) << ") on device "
+              << device_ordinal;
   }
   return std::make_shared<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,

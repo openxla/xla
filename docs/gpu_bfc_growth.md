@@ -1,13 +1,48 @@
 # GPU BFC growth in a reserved virtual arena
 
 Preallocated spatial GPU BFC pools grow by default when using device memory.
-C++ clients can set `GpuAllocatorConfig::bfc_allow_growth=false` to keep the
-initial shared pool fixed. The memory fraction or absolute size determines the
-initial physical allocation, which must succeed in full. Total device memory,
-rounded down to the mapping granularity, is the growth cap. Reserving this
-capacity does not allocate physical memory or guarantee that growth will succeed.
-Non-spatial pools, unified memory, and other allocator kinds retain their
-existing behavior.
+The memory fraction or absolute size determines the initial physical
+allocation, which must succeed in full. The growth cap is a fraction of total
+device memory (all of it by default), rounded down to the mapping granularity.
+Reserving this capacity does not allocate physical memory or guarantee that
+growth will succeed. Non-spatial pools, unified memory, and other allocator
+kinds retain their existing behavior.
+
+## Configuration
+
+One setting describes both the initial allocation and the growth cap. It is
+spelled as `START` or `START-CAP`, fractions of total device memory, and parsed
+into a typed `MemFraction` (`FlexMemFraction` or `FixedMemFraction`) that is
+passed through to allocator construction:
+
+| String      | Parsed policy                  | Behavior                                                             |
+|-------------|--------------------------------|----------------------------------------------------------------------|
+| `0.75`      | `FlexMemFraction{0.75, 1.0}`   | Today's default and every existing script: preallocate 75%, grow to all device memory. |
+| `0.75-0.85` | `FlexMemFraction{0.75, 0.85}`  | Preallocate 75%, grow to at most 85%; leaves headroom for other CUDA users. |
+| `0.75-0.75` | `FixedMemFraction{0.75}`       | Hard cap, the pre-growth semantics; the pool never grows.            |
+| `0.5-1.0`   | `FlexMemFraction{0.5, 1.0}`    | Small start, full growth.                                            |
+
+A bare fraction at or above 1 is fixed (there is nothing to grow into; values
+above 1 only make sense with unified memory). The cap must be at least the start
+and a growth cap cannot exceed 1.
+
+Where the string is accepted:
+
+- `XLA_PYTHON_CLIENT_MEM_FRACTION` in JAX, forwarded as the PJRT C API create
+  option `memory_fraction_policy` (string). The older float option
+  `memory_fraction` still works and means a bare fraction.
+- `--xla_gpu_memory_fraction_policy` in `XLA_FLAGS`, which overrides the
+  client's setting for the BFC allocator and works without any JAX change.
+- `GpuAllocatorConfig::memory_fraction` for C++ clients; `ParseMemFraction`
+  converts the string form.
+
+The initial allocation (the start fraction, or `gpu_system_memory_size` when
+set) must fit under the cap or client creation fails with `InvalidArgument`.
+Once a pool reaches its cap, allocation reverts to the usual retry and OOM path.
+`--xla_gpu_enable_nccl_user_buffers_in_default_space` pins a growable policy to
+`FixedMemFraction{start}` with a warning, because automatic registration needs a
+fixed, fully registered arena. Allocator kinds other than the BFC pool use only
+the start fraction.
 
 ## Virtual reservation and physical backing
 
@@ -50,21 +85,38 @@ chunks. S(0) buffers can span physical mapping boundaries. S(1), including
 alignment and padding, remains confined to the original allocation even when a
 free span crosses P. A lower-end request never triggers growth.
 
-Near the cap, BFC can request just enough additional memory to complete an
-immediately safe free tail. Generic suballocators that do not reserve VA retain
-separate-region growth: nonadjacent allocations stay upper-owned and cannot
-coalesce. Only an explicitly unsupported reservation falls back to that path;
-actual CUDA reservation failures are reported.
+BFC asks for its normal growth size first, then backpedals in whole mapping
+granules. The floor is the amount needed to complete the region's free tail,
+not the full request, so a request can succeed when physical memory is nearly
+exhausted but a free tail only needs a small adjacent extension. Generic
+suballocators that do not reserve VA retain separate-region growth: nonadjacent
+allocations stay upper-owned and cannot coalesce, and an extension that was
+sized for a tail but lands elsewhere is returned. Only an explicitly unsupported
+reservation falls back to that path; actual CUDA reservation failures are
+reported.
 
 Allocation policy remains attached to the memory space: S(1) uses ascending
 equal-size holes and exact splitting; S(0) uses descending equal-size holes and
 the BFC heuristic for both holes and gap carves.
 
-Ranks may grow independently. Optional automatic registration of ordinary
-backing allocations is disabled for growing pools; collective-window
-registration continues to use the fixed S(1) range. Existing buffers never
-move or change backing. Each physical handle is retained until its mapping is
-unmapped at teardown, then the VA reservation is released.
+Ranks may grow independently. When optional automatic registration of ordinary
+backing allocations is requested, the pool is pinned to a fixed fraction for
+that client so the registered arena never grows; collective-window registration
+continues to use the fixed S(1) range. Existing buffers never move or change backing. Each
+physical handle is retained until its mapping is unmapped at teardown, after the
+device has been synchronized, then the VA reservation is released.
+
+## Headroom and host run-ahead
+
+Without growth, a default-memory miss enters the allocator retry path and waits
+up to about ten seconds for in-flight frees, which throttles a host thread that
+has run ahead of the device. With growth, the miss maps more physical memory
+immediately, so run-ahead can inflate the mapped prefix. Freed buffers return to
+BFC, but their backing stays mapped until teardown (`garbage_collection=false`).
+Memory consumed this way is not available to cuDNN or NCCL workspaces, CUDA graph
+instantiation, or other processes sharing the GPU. Use a capped policy such as
+`0.75-0.85` to leave headroom, or a fixed one such as `0.75-0.75` to restore the
+fixed-pool back-pressure.
 
 Growth adds no headroom or future collective-gap reservation. Live S(0)
 buffers can still occupy initial capacity needed by a later S(1) request.

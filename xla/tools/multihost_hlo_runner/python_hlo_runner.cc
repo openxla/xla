@@ -80,7 +80,8 @@ struct PyHloRunnerConfig {
   int32_t num_repeats_with_profiler = 1;
   std::string execution_options_path = "";
   int64_t gpu_client_initialization_timeout_sec = 300;
-  float gpu_client_mem_fraction = GpuAllocatorConfig{}.memory_fraction;
+  float gpu_client_mem_fraction =
+      MemFractionStart(GpuAllocatorConfig{}.memory_fraction);
   bool profile_execution = false;
   std::string xla_gpu_dump_xspace_to = "";
 };
@@ -181,7 +182,8 @@ absl::Status RunHloFiles(const std::vector<std::string>& hlo_files,
     gpu_options.node_id = opts.task_id;
     gpu_options.num_nodes = opts.num_nodes;
     gpu_options.enable_mock_nccl = opts.enable_mock_nccl;
-    gpu_options.allocator_config.memory_fraction = opts.gpu_client_mem_fraction;
+    gpu_options.allocator_config.memory_fraction =
+        MemFractionFromFraction(opts.gpu_client_mem_fraction);
     ABSL_ASSIGN_OR_RETURN(
         env, GetPjRtEnvironmentForGpu(
                  opts.address, gpu_options,

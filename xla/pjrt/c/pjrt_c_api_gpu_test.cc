@@ -713,6 +713,9 @@ TEST(PjrtCApiGpuAllocatorTest, ValidOptionsParsing) {
     if (allocator_option == "bfc" || allocator_option == "cuda_async") {
       options["memory_fraction"] = 0.5f;
     }
+    if (allocator_option == "bfc") {
+      options["memory_fraction_policy"] = static_cast<std::string>("0.5-0.9");
+    }
     if (allocator_option == "cuda_async") {
       options["preallocate"] = true;
     }
@@ -778,6 +781,42 @@ TEST(PjrtCApiGpuAllocatorTest, InvalidAllocatorOptionsParsing) {
                   "Allocator invalid_allocator not supported for PJRT GPU "
                   "plugin. Supported allocator options are: 'default', "
                   "'platform', 'bfc', 'cuda_async', 'vmm' and 'address'."));
+
+  PJRT_Error_Destroy_Args error_destroy_args;
+  error_destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+  error_destroy_args.extension_start = nullptr;
+  error_destroy_args.error = error;
+
+  api->PJRT_Error_Destroy(&error_destroy_args);
+}
+
+TEST(PjrtCApiGpuAllocatorTest, InvalidMemoryFractionPolicyRejected) {
+  auto api = GetPjrtApi();
+  absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+      {"allocator", static_cast<std::string>("bfc")},
+      {"memory_fraction_policy", static_cast<std::string>("0.9-0.5")},
+  };
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                          ::pjrt::ConvertToPjRtNamedValueList(options));
+  PJRT_Client_Create_Args create_arg;
+  create_arg.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  create_arg.extension_start = nullptr;
+  create_arg.client = nullptr;
+  create_arg.create_options = c_options.data();
+  create_arg.num_options = c_options.size();
+  create_arg.kv_get_callback = nullptr;
+  create_arg.kv_get_user_arg = nullptr;
+  create_arg.kv_try_get_callback = nullptr;
+  create_arg.kv_try_get_user_arg = nullptr;
+  create_arg.kv_put_callback = nullptr;
+  create_arg.kv_put_user_arg = nullptr;
+  PJRT_Error* error = api->PJRT_Client_Create(&create_arg);
+  EXPECT_NE(error, nullptr);
+  EXPECT_THAT(::pjrt::PjrtErrorToStatus(error, api),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  HasSubstr("memory_fraction_policy: Invalid memory fraction "
+                            "\"0.9-0.5\"")));
 
   PJRT_Error_Destroy_Args error_destroy_args;
   error_destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;

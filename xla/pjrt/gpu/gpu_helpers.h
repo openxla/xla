@@ -62,17 +62,22 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> GetGpuHostAllocator(
 // Collective allocations split exactly; default allocations use the BFC split
 // heuristic, for both owned-hole reuse and central-gap carves.
 // Equal-size holes prefer lower addresses for collective memory and higher
-// addresses for default memory. By default, spatial device-memory pools can
-// add default-only backing beyond the initial allocation, up to device memory.
-// CUDA reserves the cap in VA and extends the mapped prefix without moving it.
-// Set allow_growth=false to keep the spatial pool fixed. This option does not
-// affect non-spatial or unified-memory pools.
+// addresses for default memory.
+//
+// memory_fraction decides how the pool may use device memory (see
+// MemFraction). A FlexMemFraction only takes effect for spatial device-memory
+// pools: the initial allocation given by its start (or gpu_system_memory_size)
+// is mapped up front and default-only backing is added on demand, up to
+// cap * total device memory rounded down to the mapping granularity. CUDA
+// reserves the cap in VA and extends the mapped prefix without moving it. The
+// initial allocation must fit under the cap, otherwise InvalidArgument is
+// returned. Non-spatial and unified-memory pools use only the start fraction.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
-    se::StreamExecutor* executor, double memory_fraction, bool preallocate,
-    std::optional<int64_t> gpu_system_memory_size,
+    se::StreamExecutor* executor, const MemFraction& memory_fraction,
+    bool preallocate, std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
-    bool enable_spatial_partitioning = false, bool allow_growth = true);
+    bool enable_spatial_partitioning = false);
 
 // Builds a BFCAllocator for all local GPUs that uses collective memory.
 absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
