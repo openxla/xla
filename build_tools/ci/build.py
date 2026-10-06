@@ -31,6 +31,7 @@ import os
 import subprocess
 import sys
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
+import uuid
 
 # Ensure the XLA repository root is on sys.path when invoked directly as a
 # script in OSS (e.g. `python3 build_tools/ci/build.py` without PYTHONPATH).
@@ -93,6 +94,58 @@ def retry(
 def sh(args, check=True, **kwargs):
   logging.info("Starting process: %s", " ".join(args))
   return subprocess.run(args, check=check, **kwargs)
+
+
+_RESULTSTORE_BASE_URL = "https://source.cloud.google.com/results/invocations"
+
+
+def inject_and_report_invocation_id(
+    command: List[str], build_name: str, inv_id: Optional[str] = None
+) -> List[str]:
+  """Injects --invocation_id into a bazel command and reports its URL."""
+  if not command or command[0] != "bazel" or "--nobuild" in command:
+    return command
+  if any(arg.startswith("--invocation_id=") for arg in command):
+    return command
+
+  subcommand_idx = None
+  for idx in range(1, len(command)):
+    if not command[idx].startswith("-"):
+      subcommand_idx = idx
+      break
+
+  if subcommand_idx is None or command[subcommand_idx] not in ("build", "test"):
+    return command
+
+  subcommand = command[subcommand_idx]
+  resolved_inv_id = inv_id or str(uuid.uuid4())
+  url = f"{_RESULTSTORE_BASE_URL}/{resolved_inv_id}"
+
+  sys.stdout.write(
+      f"::warning title=ResultStore ({build_name} - bazel"
+      f" {subcommand})::{url}\n"
+  )
+  sys.stdout.flush()
+
+  step_summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+  if step_summary_file:
+    try:
+      with open(step_summary_file, "a", encoding="utf-8") as f:
+        f.write(
+            f"### ResultStore (`bazel {subcommand}`)\n"
+            f"- **Build:** `{build_name}`\n"
+            f"- **Invocation:** [{resolved_inv_id}]({url})\n\n"
+        )
+    except OSError as e:
+      logging.warning(
+          "Failed to write ResultStore link to GITHUB_STEP_SUMMARY: %s", e
+      )
+
+  return [
+      *command[: subcommand_idx + 1],
+      f"--invocation_id={resolved_inv_id}",
+      *command[subcommand_idx + 1 :],
+  ]
 
 
 def _dict_to_cli_options(d: Dict[str, Any]) -> List[str]:
@@ -1068,6 +1121,7 @@ def main():
         target_pattern_file = decision.impacted_targets_file
 
   for command in build.commands(target_pattern_file=target_pattern_file):
+    command = inject_and_report_invocation_id(command, str(build.type_))
     result = sh(command, check=False)
     if result.returncode == 4 and target_pattern_file:
       logging.info(
