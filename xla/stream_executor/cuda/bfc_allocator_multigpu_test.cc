@@ -56,8 +56,9 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
   void SetUp() override {
     ASSERT_OK_AND_ASSIGN(
         auto* platform, PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
-    if (platform->VisibleDeviceCount() < 2)
+    if (platform->VisibleDeviceCount() < 2) {
       GTEST_SKIP() << "Requires two CUDA devices";
+    }
     for (int rank = 0; rank < 2; ++rank) {
       ASSERT_OK_AND_ASSIGN(executors_[rank], platform->ExecutorForDevice(rank));
     }
@@ -68,7 +69,9 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
     for (int rank = 0; rank < 2; ++rank) {
       ASSERT_OK_AND_ASSIGN(uint64_t granularity,
                            executors_[rank]->GetCollectiveMemoryGranularity());
-      if (rank == 0) page_ = granularity;
+      if (rank == 0) {
+        page_ = granularity;
+      }
       ASSERT_EQ(granularity, page_);
       auto sub = std::make_unique<DeviceMemAllocator>(
           executors_[rank], tsl::PlatformDeviceId(rank));
@@ -103,16 +106,22 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
 
   void TearDown() override {
     OnBothRanks([&](int rank) {
-      if (!executors_[rank]) return;
+      if (!executors_[rank]) {
+        return;
+      }
       auto activation = executors_[rank]->Activate();
       for (auto window : windows_[rank]) {
-        if (window)
+        if (window) {
           EXPECT_EQ(ncclCommWindowDeregister(comms_[rank], window),
                     ncclSuccess);
+        }
       }
-      if (comms_[rank]) EXPECT_EQ(ncclCommDestroy(comms_[rank]), ncclSuccess);
-      if (streams_[rank])
+      if (comms_[rank]) {
+        EXPECT_EQ(ncclCommDestroy(comms_[rank]), ncclSuccess);
+      }
+      if (streams_[rank]) {
         EXPECT_EQ(cuStreamDestroy(streams_[rank]), CUDA_SUCCESS);
+      }
       allocators_[rank].reset();
     });
   }
@@ -125,8 +134,9 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
                                        NCCL_WIN_COLL_SYMMETRIC),
                 ncclSuccess);
     });
-    for (int rank = 0; rank < 2; ++rank)
+    for (int rank = 0; rank < 2; ++rank) {
       ASSERT_NE(windows_[rank][index], nullptr);
+    }
   }
 
   void AllReduce(int index) {
@@ -253,7 +263,9 @@ TEST_F(CudaBfcSymmetricGrowthTest, WindowsSurviveAsymmetricGrowth) {
 TEST(CudaBfcGrowthTest, FirstRequestCanSpanInitialBackingAndExtensionAtCap) {
   ASSERT_OK_AND_ASSIGN(auto* platform,
                        PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
-  if (platform->VisibleDeviceCount() < 1) GTEST_SKIP() << "Requires CUDA";
+  if (platform->VisibleDeviceCount() < 1) {
+    GTEST_SKIP() << "Requires CUDA";
+  }
   ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
   auto sub =
       std::make_unique<DeviceMemAllocator>(executor, tsl::PlatformDeviceId(0));
