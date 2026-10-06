@@ -752,8 +752,11 @@ class BufferAssignment {
   BufferAllocation* GetMutableAllocation(BufferAllocation::Index index);
 
   // Combines allocations of temporary buffers into one big BufferAllocation.
+  // Allocations whose index is in `keep_separate` are left untouched (apart
+  // from being re-indexed).
   absl::Status CombineTempAllocations(
-      std::optional<BufferValue::Color> temp_buffer_color);
+      std::optional<BufferValue::Color> temp_buffer_color,
+      const absl::flat_hash_set<BufferAllocation::Index>& keep_separate = {});
 
   // Computes stats for the assignment, to be retrieved by GetStats.
   void ComputeSummaryStats();
@@ -945,6 +948,20 @@ class BufferAssigner {
     // If set and returns > 0, the returned limit is used instead of the
     // default module config's device memory size.
     std::function<int64_t(LogicalBuffer::Color)> color_memory_limit;
+
+    // Optional callback that assigns values to "exclusive groups". All buffers
+    // whose values map to the same group key share one dedicated allocation
+    // (all at offset 0, sized for the largest member), and that allocation is
+    // never shared with any other buffer. Members of a group must therefore
+    // have non-interfering live ranges, otherwise buffer assignment fails. All
+    // values of one HloBuffer must map to the same key. Values that map to
+    // std::nullopt are assigned as usual.
+    //
+    // Backends use this for buffers that are accessed from outside the
+    // program's own synchronization (e.g. by remote devices), where sharing
+    // storage with an unrelated buffer would be unsafe even when live ranges
+    // don't overlap.
+    std::function<std::optional<std::string>(const HloValue&)> exclusive_group;
   };
 
   static std::unique_ptr<BufferAllocationsManagerForComputationsWithoutOrdering>
@@ -1062,12 +1079,30 @@ class BufferAssigner {
       BufferAssignment* assignment);
 
   // Assigns HloBuffers that require dedicated allocations upfront (constants,
-  // entry parameters, thread-local, tuples).
+  // entry parameters, thread-local, tuples, exclusive groups).
   absl::StatusOr<bool> AssignSpecialHloBuffer(
       const HloBuffer* hlo_buffer, bool is_thread_local,
       BufferAllocationsManagerForComputationsWithoutOrdering*
           allocation_manager,
       BufferAssignment* assignment);
+
+  // Computes the exclusive group (see Options::exclusive_group) of every
+  // HloBuffer in `alias_analysis` into exclusive_group_by_buffer_. Returns an
+  // error if the values of one HloBuffer disagree on their group.
+  absl::Status ComputeExclusiveGroups(const HloAliasAnalysis& alias_analysis);
+
+  // Assigns `hlo_buffer` to the allocation of its exclusive group (see
+  // Options::exclusive_group), creating the allocation on first use. Returns
+  // false if the buffer is not in an exclusive group, and an error if it
+  // interferes with a group member.
+  absl::StatusOr<bool> MaybeAssignExclusiveGroupBuffer(
+      const HloBuffer* hlo_buffer, BufferAssignment* assignment);
+
+  // Returns true if `allocation` is dedicated to an exclusive group and must
+  // not be shared with buffers outside of that group.
+  bool IsExclusiveGroupAllocation(const BufferAllocation& allocation) const {
+    return exclusive_group_allocations_.contains(allocation.index());
+  }
 
   // Assigns a single hlo buffer to an HLO allocation.
   absl::Status AssignSingleHloBuffer(
@@ -1151,6 +1186,17 @@ class BufferAssigner {
 
   const AliasInfo* alias_info_;
   Options opts_;
+
+  // Exclusive group of each HloBuffer that is in one (see
+  // ComputeExclusiveGroups). Computed once per CreateAssignment.
+  absl::flat_hash_map<HloBuffer::Id, std::string> exclusive_group_by_buffer_;
+
+  // Exclusive group key -> index of the allocation dedicated to that group, and
+  // the set of those indices. Both only describe the assignment run in
+  // progress and are reset at the start of RunAssignBuffers.
+  absl::flat_hash_map<std::string, BufferAllocation::Index>
+      exclusive_group_allocation_indices_;
+  absl::flat_hash_set<BufferAllocation::Index> exclusive_group_allocations_;
 
   BufferAssigner(const BufferAssigner&) = delete;
   BufferAssigner& operator=(const BufferAssigner&) = delete;

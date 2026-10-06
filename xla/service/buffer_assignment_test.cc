@@ -27,9 +27,11 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -300,6 +302,43 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
                [alignment](LogicalBuffer::Color) { return alignment; },
                std::move(opts))
         .value();
+  }
+
+  // Runs buffer assignment with Options::exclusive_group set to
+  // `exclusive_group`. Returns the status instead of crashing, so tests can
+  // check the error cases of exclusive groups. With `sequential_ordering`,
+  // the module is scheduled in post order so that temp buffers go through the
+  // heap simulator.
+  absl::StatusOr<std::unique_ptr<BufferAssignment>>
+  RunBufferAssignmentWithExclusiveGroup(
+      HloModule* module,
+      std::function<std::optional<std::string>(const HloValue&)>
+          exclusive_group,
+      BufferAssigner::CanUseAllocation can_use_allocation =
+          BufferAssigner::DefaultCanUseAllocation(),
+      bool sequential_ordering = false,
+      absl::FunctionRef<void(BufferAssigner::Options&)> adjust_options =
+          [](BufferAssigner::Options&) {}) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.exclusive_group = std::move(exclusive_group);
+    opts.can_use_allocation = std::move(can_use_allocation);
+    adjust_options(opts);
+    std::unique_ptr<HloOrdering> ordering;
+    if (sequential_ordering) {
+      HloSchedule schedule(module);
+      for (HloComputation* computation : module->MakeNonfusionComputations()) {
+        schedule.set_sequence(computation,
+                              computation->MakeInstructionPostOrder());
+      }
+      ABSL_RETURN_IF_ERROR(schedule.Update());
+      ordering = std::make_unique<SequentialHloOrdering>(schedule);
+    } else {
+      ordering = std::make_unique<DependencyHloOrdering>(module);
+    }
+    return BufferAssigner::Run(
+        module, std::move(ordering), &BufferSizeBytes, &alias_info_,
+        [](LogicalBuffer::Color) { return 1; }, std::move(opts));
   }
 
   std::unique_ptr<BufferAssignment> RunBufferAssignmentWithIsolationOptions(
@@ -1301,6 +1340,209 @@ ENTRY main {
   EXPECT_EQ(neg0_allocation.color(), 1);
   EXPECT_EQ(neg0_allocation.size(), BufferSizeBytes(neg0_value));
   EXPECT_EQ(neg1_allocation.color(), 0);
+}
+
+// Groups the scratch result (tuple index 1) of custom calls by target, the way
+// a backend would for buffers that remote devices may access.
+std::optional<std::string> ScratchExclusiveGroup(const HloValue& value) {
+  const HloInstruction* instr = value.defining_instruction();
+  if (instr->opcode() != HloOpcode::kCustomCall ||
+      value.defining_index() != ShapeIndex{1}) {
+    return std::nullopt;
+  }
+  return std::string(instr->custom_call_target());
+}
+
+TEST_F(BufferAssignmentTest, ExclusiveGroupSharesOneDedicatedAllocation) {
+  // Two calls to the same target each produce a scratch buffer (tuple index 1)
+  // that is never read. Both scratch buffers go into one allocation at offset
+  // 0, sized for the larger one, and no other buffer gets into it even though
+  // there would be room and the live ranges would allow it.
+  const char* const hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  cc1 = (f32[8]{0}, f32[16]{0}) custom-call(p0), custom_call_target="foo"
+  r1 = f32[8]{0} get-tuple-element(cc1), index=0
+  neg = f32[8]{0} negate(r1)
+  cc2 = (f32[8]{0}, f32[4]{0}) custom-call(neg), custom_call_target="foo"
+  ROOT r2 = f32[8]{0} get-tuple-element(cc2), index=0
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BufferAssignment> assignment,
+                       RunBufferAssignmentWithExclusiveGroup(
+                           module.get(), ScratchExclusiveGroup));
+
+  HloInstruction* cc1 = FindInstruction(module.get(), "cc1");
+  HloInstruction* cc2 = FindInstruction(module.get(), "cc2");
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice scratch1,
+                       assignment->GetUniqueSlice(cc1, {1}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice scratch2,
+                       assignment->GetUniqueSlice(cc2, {1}));
+
+  EXPECT_EQ(scratch1.index(), scratch2.index());
+  EXPECT_EQ(scratch1.offset(), 0);
+  EXPECT_EQ(scratch2.offset(), 0);
+  EXPECT_EQ(scratch1.size(), 64);
+  EXPECT_EQ(scratch2.size(), 16);
+  EXPECT_EQ(scratch1.allocation()->size(), 64);
+  EXPECT_TRUE(scratch1.allocation()->IsPreallocatedTempBuffer());
+
+  // Only the two scratch values live in the group allocation.
+  EXPECT_EQ(scratch1.allocation()->assigned_buffers().size(), 2);
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    if (instr == cc1 || instr == cc2) {
+      continue;
+    }
+    for (const BufferAllocation::Slice& slice :
+         assignment->GetAllSlices(instr, {})) {
+      EXPECT_NE(slice.index(), scratch1.index()) << instr->ToString();
+    }
+  }
+}
+
+TEST_F(BufferAssignmentTest,
+       ExclusiveGroupAllocationIsNotUsedForCrossColorReuse) {
+  // Even with cross-color reuse enabled, an S(0) temp must not be placed into
+  // the free space of an exclusive group allocation. With a sequential
+  // schedule, `neg` is heap-simulated and would otherwise fit into the hole of
+  // the large S(1) scratch allocation.
+  const char* const hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  cc1 = (f32[8]{0}, f32[1024]{0:S(1)}) custom-call(p0), custom_call_target="foo"
+  r1 = f32[8]{0} get-tuple-element(cc1), index=0
+  neg = f32[8]{0} negate(r1)
+  ROOT abs = f32[8]{0} abs(neg)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      RunBufferAssignmentWithExclusiveGroup(
+          module.get(), ScratchExclusiveGroup,
+          BufferAssigner::AllowCrossColorReuse(/*from_color=*/0,
+                                               /*to_color=*/1),
+          /*sequential_ordering=*/true));
+
+  HloInstruction* cc1 = FindInstruction(module.get(), "cc1");
+  HloInstruction* neg = FindInstruction(module.get(), "neg");
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice scratch,
+                       assignment->GetUniqueSlice(cc1, {1}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice neg_slice,
+                       assignment->GetUniqueSlice(neg, {}));
+
+  EXPECT_EQ(scratch.allocation()->color(), 1);
+  EXPECT_NE(scratch.index(), neg_slice.index());
+  EXPECT_EQ(scratch.allocation()->assigned_buffers().size(), 1);
+}
+
+TEST_F(BufferAssignmentTest, ExclusiveGroupMembersMustNotInterfere) {
+  // cc2 reads cc1's scratch buffer, so both scratch buffers are live at the
+  // same time and can't share offset 0 of the group allocation.
+  const char* const hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  cc1 = (f32[8]{0}, f32[8]{0}) custom-call(p0), custom_call_target="foo"
+  scratch1 = f32[8]{0} get-tuple-element(cc1), index=1
+  cc2 = (f32[8]{0}, f32[8]{0}) custom-call(scratch1), custom_call_target="foo"
+  ROOT r2 = f32[8]{0} get-tuple-element(cc2), index=0
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  EXPECT_THAT(RunBufferAssignmentWithExclusiveGroup(module.get(),
+                                                    ScratchExclusiveGroup),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("live ranges interfere")));
+}
+
+TEST_F(BufferAssignmentTest, ExclusiveGroupValuesOfOneBufferMustAgree) {
+  // The custom call result aliases its operand, so both values share one
+  // HloBuffer. Only the custom call result is in a group, which is a
+  // contradiction the assigner must reject.
+  const char* const hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  neg = f32[8]{0} negate(p0)
+  ROOT cc = (f32[8]{0}, f32[8]{0}) custom-call(neg), custom_call_target="foo", output_to_operand_aliasing={{1}: (0, {})}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  EXPECT_THAT(
+      RunBufferAssignmentWithExclusiveGroup(module.get(),
+                                            ScratchExclusiveGroup),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             HasSubstr("disagree on their exclusive group")));
+}
+
+TEST_F(BufferAssignmentTest, ExclusiveGroupSurvivesFallbackRun) {
+  // Backends typically derive the group from the layout's memory space, which
+  // buffer assignment overwrites with the allocation color as it goes. The
+  // group must therefore be determined before the first run, otherwise the
+  // fallback run would not see it anymore.
+  const char* const hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[8]{0} parameter(0)
+  cc1 = (f32[8]{0}, f32[16]{0:S(1)}) custom-call(p0), custom_call_target="foo"
+  r1 = f32[8]{0} get-tuple-element(cc1), index=0
+  neg = f32[8]{0} negate(r1)
+  cc2 = (f32[8]{0}, f32[4]{0:S(1)}) custom-call(neg), custom_call_target="foo"
+  ROOT r2 = f32[8]{0} get-tuple-element(cc2), index=0
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  auto group_from_layout =
+      [](const HloValue& value) -> std::optional<std::string> {
+    const Shape& shape = value.defining_position().shape();
+    if (!shape.has_layout() || shape.layout().memory_space() != 1) {
+      return std::nullopt;
+    }
+    return std::string(value.defining_instruction()->custom_call_target());
+  };
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      RunBufferAssignmentWithExclusiveGroup(
+          module.get(), group_from_layout,
+          BufferAssigner::DefaultCanUseAllocation(),
+          /*sequential_ordering=*/false, [](BufferAssigner::Options& opts) {
+            // Color everything 0 (like the GPU colorer maps S(1) and S(8) to
+            // the collective color), so the first run rewrites the S(1)
+            // layouts to S(0).
+            opts.colorer = [](HloAliasAnalysis* alias_analysis,
+                              const HloOrdering&) {
+              for (HloValue* value :
+                   alias_analysis->dataflow_analysis().values()) {
+                value->set_color(BufferValue::Color(0));
+              }
+              return absl::OkStatus();
+            };
+            // A memory limit of one byte is always exceeded, which forces the
+            // fallback run.
+            opts.enable_fallback = true;
+            opts.color_memory_limit = [](LogicalBuffer::Color) { return 1; };
+          }));
+
+  HloInstruction* cc1 = FindInstruction(module.get(), "cc1");
+  HloInstruction* cc2 = FindInstruction(module.get(), "cc2");
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice scratch1,
+                       assignment->GetUniqueSlice(cc1, {1}));
+  ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice scratch2,
+                       assignment->GetUniqueSlice(cc2, {1}));
+  EXPECT_EQ(scratch1.index(), scratch2.index());
+  EXPECT_EQ(scratch1.offset(), 0);
+  EXPECT_EQ(scratch2.offset(), 0);
+  EXPECT_EQ(scratch1.allocation()->assigned_buffers().size(), 2);
 }
 
 TEST_F(BufferAssignmentTest, AddCannotReuse) {

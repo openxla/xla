@@ -185,6 +185,11 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
       static_cast<int>(MemorySpaceColor::kDefault),
       static_cast<int>(MemorySpaceColor::kCollective));
 
+  // Scratch buffers of custom calls in memory space S(8) only ever share their
+  // allocation with the same scratch buffer of other calls to the same target
+  // (see MemorySpaceColor::kCollectiveExclusive).
+  opts.exclusive_group = CollectiveExclusiveGroup;
+
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
     case DebugOptions::CONCURRENT:

@@ -19,8 +19,10 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -43,6 +45,7 @@ namespace {
 using ::testing::Eq;
 using ::testing::IsTrue;
 using ::testing::NotNull;
+using ::testing::Optional;
 using ::testing::SizeIs;
 
 class GpuMemorySpaceAssignmentTest : public HloHardwareIndependentTestBase {};
@@ -626,6 +629,95 @@ TEST_F(GpuMemorySpaceAssignmentTest, CustomCallTupleResultMemorySpace) {
       if (idx.size() == 1 && (idx[0] == 0 || idx[0] == 1)) {
         EXPECT_EQ(value->color(), (int)MemorySpaceColor::kCollective)
             << "Tuple element " << idx[0] << " should have color kCollective";
+      }
+    }
+  }
+}
+
+TEST(AsMemorySpaceColorTest, AcceptsCollectiveExclusive) {
+  EXPECT_THAT(
+      AsMemorySpaceColor(8),
+      ::absl_testing::IsOkAndHolds(MemorySpaceColor::kCollectiveExclusive));
+  EXPECT_THAT(AsMemorySpaceColor(1),
+              ::absl_testing::IsOkAndHolds(MemorySpaceColor::kCollective));
+  EXPECT_FALSE(AsMemorySpaceColor(9).ok());
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest,
+       CollectiveExclusiveLayoutIsColoredCollective) {
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = f32[1024]{0} parameter(0)
+      custom-call = (f32[1024]{0}, f32[512]{0:S(8)}, f32[256]{0:S(1)})
+        custom-call(p0), custom_call_target="my_custom_call"
+      ROOT gte = f32[1024]{0} get-tuple-element(custom-call), index=0
+    }
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  EXPECT_OK(colorer(alias_analysis.get(), ordering));
+
+  for (const auto& buffer : alias_analysis->buffers()) {
+    for (const HloValue* value : buffer.values()) {
+      if (value->instruction()->name() != "custom-call") {
+        continue;
+      }
+      const ShapeIndex& idx = value->defining_index();
+      if (idx.empty()) {
+        continue;
+      }
+      // Element 0 stays in default memory; the S(8) and the legacy S(1)
+      // elements both end up in collective memory.
+      int expected = idx[0] == 0 ? (int)MemorySpaceColor::kDefault
+                                 : (int)MemorySpaceColor::kCollective;
+      EXPECT_EQ(value->color(), expected) << "Tuple element " << idx[0];
+    }
+  }
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest, CollectiveExclusiveGroup) {
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = f32[1024]{0} parameter(0)
+      custom-call = (f32[1024]{0}, f32[512]{0:S(8)}, f32[256]{0:S(7)})
+        custom-call(p0), custom_call_target="my_custom_call"
+      other = f32[8]{0:S(8)} custom-call(p0), custom_call_target="other"
+      not-a-custom-call = f32[1024]{0:S(8)} negate(p0)
+      ROOT gte = f32[1024]{0} get-tuple-element(custom-call), index=0
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+
+  for (const auto& buffer : alias_analysis->buffers()) {
+    for (const HloValue* value : buffer.values()) {
+      std::optional<std::string> group = CollectiveExclusiveGroup(*value);
+      absl::string_view name = value->instruction()->name();
+      const ShapeIndex& idx = value->defining_index();
+      if (name == "custom-call" && idx == ShapeIndex{1}) {
+        EXPECT_THAT(group, Optional(std::string("my_custom_call/{1}")));
+      } else if (name == "other") {
+        EXPECT_THAT(group, Optional(std::string("other/{}")));
+      } else {
+        // Other elements, other memory spaces and non-custom-calls are not
+        // grouped.
+        EXPECT_EQ(group, std::nullopt) << name << " " << idx.ToString();
       }
     }
   }
