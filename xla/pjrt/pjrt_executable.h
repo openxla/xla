@@ -339,6 +339,10 @@ struct ExecuteOptions {
   // only after all the sub-buffers are deleted.
   bool use_output_arena = false;
 
+  // If true, poison device output buffers immediately upon allocation before
+  // execution launch. Useful for tests to detect unwritten outputs.
+  bool poison_output_buffers = false;
+
   absl::StatusOr<ExecuteOptionsProto> ToProto() const;
   static absl::StatusOr<ExecuteOptions> FromProto(
       const ExecuteOptionsProto& proto);
