@@ -1169,6 +1169,8 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
                  buffer_sequencing_events) {
               SetEventAsError(buffer_sequencing_event, results.status());
             }
+            // Descriptor consumers must also see the failure; they may be waiting
+            // for this callback before they can start or cancel the remote send.
             notifier(results.status());
             return;
           }
