@@ -626,6 +626,25 @@ class LayoutAssignment : public HloModulePass {
   virtual bool PropagateReductionLayoutToOperand(const HloInstruction* user) {
     return false;
   }
+  // Called before the layout preferred by `user` (or by the computation result
+  // when `user` is null) is propagated into the result of `instruction`.
+  // Returning true leaves that result unconstrained by this use, so `user`
+  // gets a copy of it instead. Backends use this for slices of much larger
+  // arrays: a slice cannot change layout, so a layout wanted downstream of it
+  // would otherwise be imposed on the whole array it reads from.
+  virtual bool PreferCopyOfResultOverPropagation(
+      const HloInstruction* instruction, const HloInstruction* user) {
+    return false;
+  }
+  // Called before the layout of operand `operand_no` of `user` is propagated
+  // to the other operands and the result of `user`. Returning true keeps them
+  // unconstrained by this operand, so the operand gets a copy instead. The
+  // mirror case of the hook above: the update of a dynamic-update-slice would
+  // otherwise impose its layout on the much larger array being updated.
+  virtual bool PreferCopyOfOperandOverSiblingPropagation(
+      const HloInstruction* user, int64_t operand_no) {
+    return false;
+  }
 
  protected:
   // These methods, invoked by PropagateConstraints, propagate a layout

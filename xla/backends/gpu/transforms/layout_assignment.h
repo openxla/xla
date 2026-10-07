@@ -85,6 +85,12 @@ class GpuLayoutAssignment : public LayoutAssignment {
   bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction) override;
 
+  bool PreferCopyOfResultOverPropagation(const HloInstruction* instruction,
+                                         const HloInstruction* user) override;
+
+  bool PreferCopyOfOperandOverSiblingPropagation(const HloInstruction* user,
+                                                 int64_t operand_no) override;
+
   std::unique_ptr<Layout> ChooseOperandLayoutFromOutputLayout(
       const Layout& output_layout, const HloInstruction* instruction,
       int64_t operand_no) override;

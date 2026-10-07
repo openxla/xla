@@ -1147,5 +1147,58 @@ GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
       operand_layout, user, operand_no);
 }
 
+namespace {
+
+// A slice result, or the update of a dynamic-update-slice, is treated as a
+// small piece of the array it reads from or writes into when that array is at
+// least this many times larger and at least this large. Below these sizes
+// changing the large array's layout is cheap enough not to bother.
+constexpr int64_t kSmallPieceMinRatio = 8;
+constexpr int64_t kSmallPieceMinLargeBytes = int64_t{64} << 20;
+
+int64_t ArrayBytes(const Shape& shape) {
+  return ShapeUtil::ElementsIn(shape) *
+         ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type());
+}
+
+bool IsSmallPieceOfLargeArray(const Shape& piece, const Shape& large) {
+  if (!piece.IsArray() || !large.IsArray()) {
+    return false;
+  }
+  const int64_t large_bytes = ArrayBytes(large);
+  return large_bytes >= kSmallPieceMinLargeBytes &&
+         large_bytes >= kSmallPieceMinRatio * ArrayBytes(piece);
+}
+
+}  // namespace
+
+bool GpuLayoutAssignment::PreferCopyOfResultOverPropagation(
+    const HloInstruction* instruction, const HloInstruction* user) {
+  // A slice cannot change layout, so a layout wanted downstream of a small
+  // slice (for example by an all-gather, which needs its gather dimension to
+  // be most major) would be imposed on the whole array being sliced. When that
+  // array's layout is fixed elsewhere, as for a parameter or a value carried
+  // through a loop, this costs a copy of the whole array that stays live for
+  // as long as the slices are taken. Copying the slice instead is bounded by
+  // the slice's own size.
+  if (instruction->opcode() != HloOpcode::kDynamicSlice &&
+      instruction->opcode() != HloOpcode::kSlice) {
+    return false;
+  }
+  return IsSmallPieceOfLargeArray(instruction->shape(),
+                                  instruction->operand(0)->shape());
+}
+
+bool GpuLayoutAssignment::PreferCopyOfOperandOverSiblingPropagation(
+    const HloInstruction* user, int64_t operand_no) {
+  // The mirror case: the update of a dynamic-update-slice would otherwise
+  // impose its layout on the much larger array being updated.
+  if (user->opcode() != HloOpcode::kDynamicUpdateSlice || operand_no != 1) {
+    return false;
+  }
+  return IsSmallPieceOfLargeArray(user->operand(1)->shape(),
+                                  user->operand(0)->shape());
+}
+
 }  // namespace gpu
 }  // namespace xla
