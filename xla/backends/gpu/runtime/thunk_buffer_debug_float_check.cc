@@ -399,7 +399,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithSyncDumpThunk(
     ThunkPassBufferAllocator& allocator,
     const absl::flat_hash_map<absl::string_view, const HloInstruction*>&
         hlo_instruction_map,
-    BufferAllocation* absl_nullable global_backup_alloc, int devices_per_host) {
+    BufferAllocation* absl_nullable global_backup_alloc) {
   if (thunk->buffer_uses().empty()) {
     VLOG(3) << "Skipping sync dump wrapping for thunk "
             << thunk->thunk_info().thunk_id << ": no buffers used";
@@ -530,7 +530,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithSyncDumpThunk(
 
   auto check_thunk = std::make_unique<BuffersDebugFloatCheckThunk>(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      std::move(buffers_to_check), metadata_store, devices_per_host);
+      std::move(buffers_to_check), metadata_store);
   sequence.push_back(std::move(check_thunk));
   sequence.push_back(std::move(dump_thunk));
 
@@ -542,7 +542,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithFloatCheckThunk(
     std::unique_ptr<Thunk> thunk, BufferAllocation::Slice log_slice,
     const Thunk& predecessor_thunk, Thunk& successor_thunk,
     std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store,
-    ThunkPassBufferAllocator& allocator, int devices_per_host) {
+    ThunkPassBufferAllocator& allocator) {
   if (thunk->buffer_uses().empty()) {
     VLOG(1) << "No buffers in thunk " << thunk->thunk_info().thunk_id
             << ", skipping";
@@ -571,8 +571,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithFloatCheckThunk(
   auto buffer_debug_float_check_thunk =
       std::make_unique<BuffersDebugFloatCheckThunk>(
           Thunk::ThunkInfo(), thunk_ptr->thunk_info(), log_slice, tmp_slice,
-          std::move(buffers_to_check), std::move(metadata_store),
-          devices_per_host);
+          std::move(buffers_to_check), std::move(metadata_store));
   thunk_and_checks.push_back(std::move(buffer_debug_float_check_thunk));
   auto wrapped_thunk = std::make_unique<SequentialThunk>(
       Thunk::ThunkInfo(), std::move(thunk_and_checks));
@@ -801,7 +800,7 @@ CreateOutputBuffersCheckThunk(
     const std::vector<ShapedSlice>& module_output_slices,
     BufferAllocation::Slice log_slice,
     std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store,
-    ThunkPassBufferAllocator& allocator, int devices_per_host) {
+    ThunkPassBufferAllocator& allocator) {
   if (!debug_options.xla_gpu_experimental_thunk_buffer_debug_module_outputs()) {
     return nullptr;
   }
@@ -837,7 +836,7 @@ CreateOutputBuffersCheckThunk(
 
   return std::make_unique<BuffersDebugFloatCheckThunk>(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      std::move(buffers_to_check), metadata_store, devices_per_host);
+      std::move(buffers_to_check), metadata_store);
 }
 
 // Allocates a single global scratch buffer to be shared sequentially by all
@@ -878,7 +877,7 @@ absl::Status RunFloatCheckPassInternal(
     ThunkSequence* thunk_sequence, const DebugOptions& debug_options,
     const HloModule* absl_nonnull hlo_module,
     const std::vector<ShapedSlice>& module_output_slices,
-    ThunkPassBufferAllocator& allocator, int devices_per_host) {
+    ThunkPassBufferAllocator& allocator) {
   const bool dump_mode =
       debug_options.xla_gpu_detect_nan() == DebugOptions::DETECTION_MODE_DUMP ||
       debug_options.xla_gpu_detect_inf() == DebugOptions::DETECTION_MODE_DUMP;
@@ -919,7 +918,7 @@ absl::Status RunFloatCheckPassInternal(
       }
       return WrapWithSyncDumpThunk(std::move(thunk), metadata_store, log_slice,
                                    hlo_module, allocator, hlo_instruction_map,
-                                   global_backup_alloc, devices_per_host);
+                                   global_backup_alloc);
     };
     ABSL_RETURN_IF_ERROR(thunk_sequence->TransformNested(transform_callback));
 
@@ -942,16 +941,16 @@ absl::Status RunFloatCheckPassInternal(
     return WrapWithFloatCheckThunk(
         std::move(thunk), log_slice,
         /*predecessor_thunk=*/*buffer_debug_init_thunk,
-        /*successor_thunk=*/*buffer_debug_dump_thunk, metadata_store, allocator,
-        devices_per_host);
+        /*successor_thunk=*/*buffer_debug_dump_thunk, metadata_store,
+        allocator);
   };
 
   ABSL_RETURN_IF_ERROR(thunk_sequence->TransformNested(transform_callback));
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<BuffersDebugFloatCheckThunk> output_buffers_check_thunk,
-      CreateOutputBuffersCheckThunk(
-          debug_options, hlo_module, module_output_slices, log_slice,
-          metadata_store, allocator, devices_per_host));
+      CreateOutputBuffersCheckThunk(debug_options, hlo_module,
+                                    module_output_slices, log_slice,
+                                    metadata_store, allocator));
 
   thunk_sequence->reserve(thunk_sequence->size() + 3);
   thunk_sequence->insert(thunk_sequence->begin(),

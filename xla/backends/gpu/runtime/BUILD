@@ -5283,7 +5283,6 @@ cc_library(
         ":buffer_debug_log_entry_metadata_store",
         ":buffer_debug_log_proto_cc",
         ":buffer_debug_log_structs",
-        ":per_device_state",
         ":thunk",
         ":thunk_proto_cc",
         "//xla:types",
@@ -5302,6 +5301,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -5309,6 +5309,7 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
