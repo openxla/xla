@@ -452,6 +452,7 @@ xla_test(
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:event",
+        "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
@@ -493,7 +494,6 @@ xla_test(
         "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/bytes:string_writer",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_compute_capability",
