@@ -54,7 +54,7 @@ static void RunAddTwoScalars(benchmark::State* state = nullptr) {
   GpuClientOptions client_option;
   client_option.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   client_option.allocator_config.preallocate = true;
-  client_option.allocator_config.memory_fraction = 0.005;
+  client_option.allocator_config.memory_fraction = FlexMemFraction{0.005, 1.0};
   client_option.allowed_devices = {0};
 
   auto client = GetStreamExecutorGpuClient(client_option);
@@ -135,7 +135,7 @@ static void RunAddManyScalars(benchmark::State* state = nullptr) {
   GpuClientOptions client_option;
   client_option.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   client_option.allocator_config.preallocate = true;
-  client_option.allocator_config.memory_fraction = 0.005;
+  client_option.allocator_config.memory_fraction = FlexMemFraction{0.005, 1.0};
   client_option.allowed_devices = {0};
 
   auto client = GetStreamExecutorGpuClient(client_option);

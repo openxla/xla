@@ -2961,7 +2961,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
   options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   options.allocator_config.preallocate = true;
   // The layout does not depend on the arena size; keep preallocation small.
-  options.allocator_config.memory_fraction = 0.05;
+  options.allocator_config.memory_fraction = MemFractionFromFraction(0.05);
   options.allowed_devices = {0};
   ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
@@ -2975,7 +2975,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
       static_cast<int>(gpu::MemorySpaceColor::kCollective);
   constexpr uint64_t kBytes = uint64_t{1} << 20;
   auto address = [](const se::ScopedDeviceAddress<uint8_t>& memory) {
-    return absl::bit_cast<uintptr_t>(memory->opaque());
+    return reinterpret_cast<uintptr_t>(memory->opaque());
   };
 
   ASSERT_OK_AND_ASSIGN(
