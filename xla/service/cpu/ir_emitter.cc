@@ -3502,25 +3502,17 @@ llvm::Value* IrEmitter::EmitThreadLocalBufferPointer(
       return param_address_untyped;
     }
 
-    // Every value of a thread-local allocation spans the whole allocation
-    // (in-place ops such as dynamic-update-slice share one buffer between
-    // operand and result), so a single alloca serves all of them.
-    const auto& assigned_buffers = allocation.assigned_buffers();
-    CHECK(!assigned_buffers.empty());
-    const Shape& shape = assigned_buffers.begin()->first->shape();
-    for (const auto& [value, offset_size] : assigned_buffers) {
-      CHECK_EQ(ByteSizeOf(value->shape()), ByteSizeOf(shape))
-          << "Aliased thread-local values differ in size: "
-          << value->ToString();
-    }
-
     std::pair<llvm::Function*, BufferAllocation::Slice> key = {
         compute_function()->function(), slice};
     auto buf_it = thread_local_buffers_.find(key);
     if (buf_it == thread_local_buffers_.end()) {
+      // A thread-local allocation may hold several aliased values (in-place
+      // ops such as dynamic-update-slice share one buffer between operand and
+      // result), so size the alloca by the allocation, not by one value.
       llvm::Value* buffer = llvm_ir::EmitAllocaAtFunctionEntry(
-          IrShapeType(shape), absl::StrCat("thread_local", slice.ToString()),
-          b(), MinimumAlignmentForShape(target_shape));
+          llvm::ArrayType::get(b()->getInt8Ty(), allocation.size()),
+          absl::StrCat("thread_local", slice.ToString()), b(),
+          MinimumAlignmentForShape(target_shape));
       auto it_inserted_pair = thread_local_buffers_.insert({key, buffer});
       CHECK(it_inserted_pair.second);
       buf_it = it_inserted_pair.first;

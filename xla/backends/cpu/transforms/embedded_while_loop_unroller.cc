@@ -54,18 +54,15 @@ std::vector<HloInstruction*> EmbeddedWhileLoops(
 absl::StatusOr<bool> EmbeddedWhileLoopUnroller::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  if (EmbeddedWhileLoops(module, execution_threads).empty()) {
-    return false;
-  }
-  ABSL_ASSIGN_OR_RETURN(
-      bool changed,
-      WhileLoopUnroller::PrepareModuleForUnrolling(module, execution_threads));
   // Unrolling runs DCE on the module and may expose loops nested in the
   // unrolled body, so re-collect the loops after every successful unroll.
+  bool changed = false;
   bool unrolled = true;
   while (unrolled) {
     unrolled = false;
     for (HloInstruction* loop : EmbeddedWhileLoops(module, execution_threads)) {
+      // No `prepare`: PrepareModuleForUnrolling would also rewrite loops in
+      // the entry computation.
       ABSL_ASSIGN_OR_RETURN(UnrollResult result,
                             WhileLoopUnroller::UnrollAndReturnReplacement(
                                 loop, /*unroll_factor=*/-1,

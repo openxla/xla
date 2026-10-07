@@ -393,6 +393,61 @@ ENTRY main {
 )");
 }
 
+// Unrolling the loop moves the scatter into the comparator, where it has to
+// be expanded (and the resulting loop unrolled) in turn.
+TEST_F(SortComparatorTest, ScatterInWhileInSortComparator) {
+  RunAndExpectSorted(R"(
+HloModule scatter_in_while_in_sort_comparator
+
+overwrite {
+  lhs = f32[] parameter(0)
+  ROOT rhs = f32[] parameter(1)
+}
+
+body {
+  state = (s32[], f32[3]) parameter(0)
+  i = s32[] get-tuple-element(state), index=0
+  buffer = f32[3] get-tuple-element(state), index=1
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  indices = s32[2,1] constant({{0}, {1}})
+  updates = f32[2] constant({5, 2})
+  next_buffer = f32[3] scatter(buffer, indices, updates), update_window_dims={}, inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, index_vector_dim=1, to_apply=overwrite
+  ROOT next_state = (s32[], f32[3]) tuple(next_i, next_buffer)
+}
+
+condition {
+  state = (s32[], f32[3]) parameter(0)
+  i = s32[] get-tuple-element(state), index=0
+  two = s32[] constant(2)
+  ROOT continue = pred[] compare(i, two), direction=LT
+}
+
+compare {
+  p0 = s32[] parameter(0)
+  p1 = s32[] parameter(1)
+  c = f32[] convert(p1)
+  operand = f32[3] broadcast(c), dimensions={}
+  zero = s32[] constant(0)
+  init = (s32[], f32[3]) tuple(zero, operand)
+  loop = (s32[], f32[3]) while(init), condition=condition, body=body
+  buffer_out = f32[3] get-tuple-element(loop), index=1
+  a = f32[1] slice(buffer_out), slice={[0:1]}
+  b = f32[1] slice(buffer_out), slice={[1:2]}
+  a_scalar = f32[] reshape(a)
+  b_scalar = f32[] reshape(b)
+  flip = pred[] compare(a_scalar, b_scalar), direction=GT
+  ge = pred[] compare(p0, p1), direction=GE
+  ROOT result = pred[] xor(ge, flip)
+}
+
+ENTRY main {
+  x = s32[7] parameter(0)
+  ROOT sorted = s32[7] sort(x), dimensions={0}, is_stable=true, to_apply=compare
+}
+)");
+}
+
 // A scatter with more indices than the unroll threshold stays a loop, which
 // the nested emitter must reject with a status instead of a CHECK failure.
 TEST_F(SortComparatorTest, LargeScatterInSortComparatorIsUnimplemented) {

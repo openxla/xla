@@ -947,20 +947,25 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<SelectAndScatterExpander>();
   pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateSimpleScatters);
   pipeline.AddPass<ScatterSimplifier>();
+  // The nested IR emitter cannot emit while loops (e.g. the ones the scatter
+  // expansion produces) inside embedded computations, so unroll them.
   if (kFusionEmitterScatterEnabled) {
     // Fusions are never formed inside embedded computations (e.g. sort
-    // comparators), so scatters there cannot use the fusion emitter.
-    pipeline.AddPass<ScatterExpander>(
+    // comparators), so scatters there cannot use the fusion emitter. Unrolling
+    // a loop can move a scatter from its body into an embedded computation, so
+    // expand and unroll to a fixed point.
+    auto& embedded_pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
+        "embedded_scatter_expansion");
+    embedded_pipeline.AddPass<ScatterExpander>(
         ScatterExpander::kEliminateAllScatters,
         [](const HloInstruction* instr) {
           return InstructionFusion::IsEmbeddedComputation(instr->parent());
         });
+    embedded_pipeline.AddPass<EmbeddedWhileLoopUnroller>();
   } else {
     pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
+    pipeline.AddPass<EmbeddedWhileLoopUnroller>();
   }
-  // The nested IR emitter cannot emit while loops (e.g. the ones the scatter
-  // expansion produces) inside embedded computations, so unroll them.
-  pipeline.AddPass<EmbeddedWhileLoopUnroller>();
 
   pipeline.AddPass(CreateSimplificationPipeline(
       "post_scatter_expansion_simplification", module, use_onednn_custom_call));
