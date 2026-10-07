@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -574,6 +575,14 @@ bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
                 .WithBinaryOperandsAnyOrder(match::Parameter(0),
                                             match::Parameter(1)))) {
     if (input_dtype != out_dtype) {
+      return false;
+    }
+    if (primitive_util::IsFloatingPointType(out_dtype) &&
+        !hlo->GetModule()
+             ->config()
+             .debug_options()
+             .xla_cpu_enable_fast_min_max()) {
+      // YNN min/max reductions do not preserve NaN.
       return false;
     }
     static const absl::NoDestructor<absl::flat_hash_set<PrimitiveType>>
