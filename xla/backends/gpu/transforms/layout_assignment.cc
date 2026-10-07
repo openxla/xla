@@ -1170,6 +1170,31 @@ bool IsSmallPieceOfLargeArray(const Shape& piece, const Shape& large) {
          large_bytes >= kSmallPieceMinRatio * ArrayBytes(piece);
 }
 
+// The shape of `instruction` with its layout, if that layout is already
+// decided: either the shape carries one, or the instruction is an entry
+// parameter whose layout the entry computation layout fixes.
+std::optional<Shape> ShapeWithKnownLayout(
+    const HloInstruction* instruction,
+    const ComputationLayout* entry_computation_layout) {
+  if (!instruction->shape().IsArray()) {
+    return std::nullopt;
+  }
+  if (instruction->shape().has_layout()) {
+    return instruction->shape();
+  }
+  if (instruction->opcode() == HloOpcode::kParameter &&
+      instruction->parent()->IsEntryComputation() &&
+      entry_computation_layout != nullptr) {
+    const ShapeLayout& parameter_layout =
+        entry_computation_layout->parameter_layout(
+            instruction->parameter_number());
+    if (parameter_layout.LayoutIsSet() && parameter_layout.shape().IsArray()) {
+      return parameter_layout.shape();
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 bool GpuLayoutAssignment::PreferCopyOfResultOverPropagation(
@@ -1198,6 +1223,52 @@ bool GpuLayoutAssignment::PreferCopyOfOperandOverSiblingPropagation(
   }
   return IsSmallPieceOfLargeArray(user->operand(1)->shape(),
                                   user->operand(0)->shape());
+}
+
+Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
+  // A value carried through while loops that nothing inside them constrains
+  // (for example a weight stack that is only ever sliced) would get the
+  // default layout, and the caller then pays a copy of the whole array if it
+  // produces the value by transposing something whose layout is fixed. Loop
+  // bodies are assigned before their callers, so follow the loop operands
+  // back to that producer and pick the layout that keeps the transpose a
+  // bitcast.
+  const HloInstruction* parameter = buffer.instruction();
+  ShapeIndex index = buffer.index();
+  for (int depth = 0; depth < 8 && parameter->opcode() == HloOpcode::kParameter;
+       ++depth) {
+    const auto callers =
+        parameter->parent()->caller_instructions(HloOpcode::kWhile);
+    if (callers.size() != 1) {
+      break;
+    }
+    const HloValueSet& values =
+        dataflow_analysis().GetValueSet(callers[0]->operand(0), index);
+    if (values.values().size() != 1) {
+      break;
+    }
+    const HloValue* value = values.values().front();
+    const HloInstruction* producer = value->defining_instruction();
+    if (producer->opcode() == HloOpcode::kTranspose) {
+      std::optional<Shape> operand_shape = ShapeWithKnownLayout(
+          producer->operand(0), &saved_entry_computation_layout());
+      if (operand_shape.has_value()) {
+        Shape permuted = ShapeUtil::PermuteDimensions(producer->dimensions(),
+                                                      *operand_shape);
+        if (ShapeUtil::Compatible(permuted, buffer.shape())) {
+          return permuted.layout();
+        }
+      }
+      break;
+    }
+    if (producer->opcode() != HloOpcode::kParameter) {
+      break;
+    }
+    // Carried in from an enclosing loop; keep following.
+    parameter = producer;
+    index = value->index();
+  }
+  return LayoutAssignment::GetUnconstrainedLayout(buffer);
 }
 
 }  // namespace gpu

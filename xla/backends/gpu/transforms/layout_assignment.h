@@ -91,6 +91,8 @@ class GpuLayoutAssignment : public LayoutAssignment {
   bool PreferCopyOfOperandOverSiblingPropagation(const HloInstruction* user,
                                                  int64_t operand_no) override;
 
+  Layout GetUnconstrainedLayout(const HloValue& buffer) override;
+
   std::unique_ptr<Layout> ChooseOperandLayoutFromOutputLayout(
       const Layout& output_layout, const HloInstruction* instruction,
       int64_t operand_no) override;
