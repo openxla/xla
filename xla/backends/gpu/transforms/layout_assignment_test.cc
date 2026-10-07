@@ -1442,22 +1442,24 @@ main {
       << module->ToString();
 }
 
-// The all-gather below needs its gather dimension (the 448 one after the
-// transpose) to be most major. Propagating that layout into the dynamic-slice
-// would impose it on the whole array being sliced, which is a parameter with a
-// fixed layout, and so cost a copy of the whole array. The copy should land on
-// the slice instead.
-TEST_F(LayoutAssignmentTest, SliceOfLargeParameterIsCopiedNotTheParameter) {
+// FSDP-style weight gather: the weights are sharded on a non-leading dimension
+// (448 of 7168), transposed so that dimension leads, then sliced per layer and
+// all-gathered. XLA:GPU needs the gather dimension to be most major. A slice
+// cannot change layout, so without the size rule that requirement is pushed
+// through the slice onto the transpose, which then has to materialize the
+// whole weight array in the gathered layout. With the rule the transpose is a
+// bitcast and only the per-layer slice is copied.
+TEST_F(LayoutAssignmentTest, SliceOfLargeTransposedParameterCopiesTheSlice) {
   constexpr absl::string_view kHlo = R"(
 HloModule m, replica_count=2
 
 ENTRY main {
-  p = bf16[16,64,448,1024]{3,2,1,0} parameter(0)
+  w = bf16[32,64,448,1024]{3,2,1,0} parameter(0)
   idx = s32[] parameter(1)
+  wt = bf16[448,64,32,1024] transpose(w), dimensions={2,1,0,3}
   zero = s32[] constant(0)
-  ds = bf16[16,1,448,1024] dynamic-slice(p, zero, idx, zero, zero), dynamic_slice_sizes={16,1,448,1024}
-  t = bf16[448,1,16,1024] transpose(ds), dimensions={2,1,0,3}
-  ROOT ag = bf16[896,1,16,1024]{3,2,1,0} all-gather(t), dimensions={0}, replica_groups={{0,1}}
+  ds = bf16[448,1,32,1024] dynamic-slice(wt, zero, idx, zero, zero), dynamic_slice_sizes={448,1,32,1024}
+  ROOT ag = bf16[896,1,32,1024]{3,2,1,0} all-gather(ds), dimensions={0}, replica_groups={{0,1}}
 })";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                        ParseAndReturnVerifiedModule(kHlo));
@@ -1467,62 +1469,69 @@ ENTRY main {
                                         default_device_description_);
   EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
 
-  const HloInstruction* p = m->entry_computation()->parameter_instruction(0);
-  ASSERT_EQ(p->user_count(), 1);
-  EXPECT_EQ(p->users()[0]->opcode(), HloOpcode::kDynamicSlice);
-  const HloInstruction* ds = p->users()[0];
-  EXPECT_TRUE(LayoutUtil::Equal(ds->shape().layout(), p->shape().layout()));
+  const HloInstruction* w = m->entry_computation()->parameter_instruction(0);
+  const HloInstruction* wt = FindInstruction(m.get(), HloOpcode::kTranspose);
+  ASSERT_THAT(wt, NotNull());
+  EXPECT_TRUE(
+      ShapeUtil::TransposeIsBitcast(w->shape(), wt->shape(), wt->dimensions()));
+  const HloInstruction* ds = FindInstruction(m.get(), HloOpcode::kDynamicSlice);
+  ASSERT_THAT(ds, NotNull());
+  EXPECT_TRUE(LayoutUtil::Equal(ds->shape().layout(), wt->shape().layout()));
   const HloInstruction* ag = m->entry_computation()->root_instruction();
   EXPECT_TRUE(
       ShapeUtil::IsEffectivelyMostMajorDimension(ag->operand(0)->shape(), 0));
-  // The only copy is of the slice.
-  int64_t copies = 0;
+  int64_t slice_copies = 0, other_copies = 0;
   for (const HloInstruction* instr : m->entry_computation()->instructions()) {
-    if (instr->opcode() == HloOpcode::kCopy) {
-      ++copies;
-      EXPECT_EQ(ShapeUtil::ElementsIn(instr->shape()),
-                ShapeUtil::ElementsIn(ds->shape()));
-    }
+    if (instr->opcode() != HloOpcode::kCopy) continue;
+    (ShapeUtil::ElementsIn(instr->shape()) == ShapeUtil::ElementsIn(ds->shape())
+         ? slice_copies
+         : other_copies)++;
   }
-  EXPECT_EQ(copies, 1);
+  EXPECT_EQ(slice_copies, 1);
+  EXPECT_EQ(other_copies, 0);
 }
 
-// Same shape of graph, but the sliced array is carried through a loop, which
-// is how the layout of a parameter normally reaches a slice: the loop body is
-// assigned first, and whatever layout its parameter ends up with is imposed on
-// the loop operand in the caller.
-TEST_F(LayoutAssignmentTest, SliceOfLoopCarriedArrayIsCopiedNotTheArray) {
+// The same inside a training loop, which is how it appears in practice: the
+// weight stack is carried through the loop in its parameter shape and the body
+// transposes it before slicing the current layer. The body is assigned before
+// the entry, so a layout it wants for its parameter is imposed on the loop
+// operand outside. Without the size rule the gather layout travels through
+// the slice and the transpose onto the loop parameter, and the entry has to
+// copy the whole stack into that layout before the loop. With the rule the
+// in-body transpose is a bitcast and only the per-layer slice is copied.
+TEST_F(LayoutAssignmentTest, SliceOfLargeLoopCarriedWeightsCopiesTheSlice) {
   constexpr absl::string_view kHlo = R"(
 HloModule m, replica_count=2
 
 cond {
-  p = (s32[], bf16[16,64,448,1024], bf16[896,1,16,1024]) parameter(0)
+  p = (s32[], bf16[32,64,448,1024], bf16[896,1,32,1024]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
   limit = s32[] constant(4)
   ROOT lt = pred[] compare(i, limit), direction=LT
 }
 
 body {
-  p = (s32[], bf16[16,64,448,1024], bf16[896,1,16,1024]) parameter(0)
+  p = (s32[], bf16[32,64,448,1024], bf16[896,1,32,1024]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
-  w = bf16[16,64,448,1024] get-tuple-element(p), index=1
+  w = bf16[32,64,448,1024] get-tuple-element(p), index=1
+  wt = bf16[448,64,32,1024] transpose(w), dimensions={2,1,0,3}
   zero = s32[] constant(0)
-  ds = bf16[16,1,448,1024] dynamic-slice(w, zero, i, zero, zero), dynamic_slice_sizes={16,1,448,1024}
-  t = bf16[448,1,16,1024] transpose(ds), dimensions={2,1,0,3}
-  ag = bf16[896,1,16,1024] all-gather(t), dimensions={0}, replica_groups={{0,1}}
+  ds = bf16[448,1,32,1024] dynamic-slice(wt, zero, i, zero, zero), dynamic_slice_sizes={448,1,32,1024}
+  ag = bf16[896,1,32,1024] all-gather(ds), dimensions={0}, replica_groups={{0,1}}
   one = s32[] constant(1)
   next = s32[] add(i, one)
-  ROOT r = (s32[], bf16[16,64,448,1024], bf16[896,1,16,1024]) tuple(next, w, ag)
+  ROOT r = (s32[], bf16[32,64,448,1024], bf16[896,1,32,1024]) tuple(next, w, ag)
 }
 
 ENTRY main {
-  w0 = bf16[16,64,448,1024]{3,2,1,0} parameter(0)
+  w0 = bf16[32,64,448,1024]{3,2,1,0} parameter(0)
+  w = bf16[32,64,448,1024] negate(w0)
   zero = s32[] constant(0)
   zero_bf16 = bf16[] constant(0)
-  init_ag = bf16[896,1,16,1024] broadcast(zero_bf16), dimensions={}
-  init = (s32[], bf16[16,64,448,1024], bf16[896,1,16,1024]) tuple(zero, w0, init_ag)
-  loop = (s32[], bf16[16,64,448,1024], bf16[896,1,16,1024]) while(init), condition=cond, body=body
-  ROOT out = bf16[896,1,16,1024]{3,2,1,0} get-tuple-element(loop), index=2
+  init_ag = bf16[896,1,32,1024] broadcast(zero_bf16), dimensions={}
+  init = (s32[], bf16[32,64,448,1024], bf16[896,1,32,1024]) tuple(zero, w, init_ag)
+  loop = (s32[], bf16[32,64,448,1024], bf16[896,1,32,1024]) while(init), condition=cond, body=body
+  ROOT out = bf16[896,1,32,1024]{3,2,1,0} get-tuple-element(loop), index=2
 })";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                        ParseAndReturnVerifiedModule(kHlo));
@@ -1532,69 +1541,69 @@ ENTRY main {
                                         default_device_description_);
   EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
 
-  // The weights enter the loop in their parameter layout, without a copy.
   const HloInstruction* w0 = m->entry_computation()->parameter_instruction(0);
-  ASSERT_EQ(w0->user_count(), 1);
-  EXPECT_EQ(w0->users()[0]->opcode(), HloOpcode::kTuple);
   const HloInstruction* loop = FindInstruction(m.get(), HloOpcode::kWhile);
   ASSERT_THAT(loop, NotNull());
   EXPECT_TRUE(LayoutUtil::Equal(loop->shape().tuple_shapes(1).layout(),
                                 w0->shape().layout()));
-  // Inside the body the slice keeps that layout and is copied for the gather.
+  const HloInstruction* wt = FindInstruction(m.get(), HloOpcode::kTranspose);
+  ASSERT_THAT(wt, NotNull());
+  EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(wt->operand(0)->shape(),
+                                            wt->shape(), wt->dimensions()));
   const HloInstruction* ds = FindInstruction(m.get(), HloOpcode::kDynamicSlice);
   ASSERT_THAT(ds, NotNull());
-  EXPECT_TRUE(LayoutUtil::Equal(ds->shape().layout(), w0->shape().layout()));
-  int64_t slice_copies = 0, other_copies = 0;
+  int64_t slice_copies = 0, large_copies = 0;
   for (const HloComputation* computation : m->computations()) {
     for (const HloInstruction* instr : computation->instructions()) {
       if (instr->opcode() != HloOpcode::kCopy) continue;
       if (ShapeUtil::ElementsIn(instr->shape()) ==
           ShapeUtil::ElementsIn(ds->shape())) {
         ++slice_copies;
-      } else {
-        ++other_copies;
+      } else if (ShapeUtil::ElementsIn(instr->shape()) ==
+                 ShapeUtil::ElementsIn(w0->shape())) {
+        ++large_copies;
       }
     }
   }
   EXPECT_EQ(slice_copies, 1);
-  EXPECT_EQ(other_copies, 0);
+  EXPECT_EQ(large_copies, 0);
 }
 
-// Below the size threshold the previous behaviour is kept: the layout wanted
-// by the gather is propagated through the slice to the loop-carried array,
-// and the array is copied once before the loop.
-TEST_F(LayoutAssignmentTest, SliceOfSmallLoopCarriedArrayPropagatesLayout) {
+// Below the size threshold the previous behaviour is kept: the gather layout
+// reaches the loop parameter and the whole stack is copied before the loop.
+TEST_F(LayoutAssignmentTest, SliceOfSmallLoopCarriedWeightsKeepsPropagation) {
   constexpr absl::string_view kHlo = R"(
 HloModule m, replica_count=2
 
 cond {
-  p = (s32[], bf16[16,64,448,32], bf16[896,1,16,32]) parameter(0)
+  p = (s32[], bf16[32,64,448,32], bf16[896,1,32,32]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
   limit = s32[] constant(4)
   ROOT lt = pred[] compare(i, limit), direction=LT
 }
 
 body {
-  p = (s32[], bf16[16,64,448,32], bf16[896,1,16,32]) parameter(0)
+  p = (s32[], bf16[32,64,448,32], bf16[896,1,32,32]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
-  w = bf16[16,64,448,32] get-tuple-element(p), index=1
+  w = bf16[32,64,448,32] get-tuple-element(p), index=1
+  wt = bf16[448,64,32,32] transpose(w), dimensions={2,1,0,3}
   zero = s32[] constant(0)
-  ds = bf16[16,1,448,32] dynamic-slice(w, zero, i, zero, zero), dynamic_slice_sizes={16,1,448,32}
-  t = bf16[448,1,16,32] transpose(ds), dimensions={2,1,0,3}
-  ag = bf16[896,1,16,32] all-gather(t), dimensions={0}, replica_groups={{0,1}}
+  ds = bf16[448,1,32,32] dynamic-slice(wt, zero, i, zero, zero), dynamic_slice_sizes={448,1,32,32}
+  ag = bf16[896,1,32,32] all-gather(ds), dimensions={0}, replica_groups={{0,1}}
   one = s32[] constant(1)
   next = s32[] add(i, one)
-  ROOT r = (s32[], bf16[16,64,448,32], bf16[896,1,16,32]) tuple(next, w, ag)
+  ROOT r = (s32[], bf16[32,64,448,32], bf16[896,1,32,32]) tuple(next, w, ag)
 }
 
 ENTRY main {
-  w0 = bf16[16,64,448,32]{3,2,1,0} parameter(0)
+  w0 = bf16[32,64,448,32]{3,2,1,0} parameter(0)
+  w = bf16[32,64,448,32] negate(w0)
   zero = s32[] constant(0)
   zero_bf16 = bf16[] constant(0)
-  init_ag = bf16[896,1,16,32] broadcast(zero_bf16), dimensions={}
-  init = (s32[], bf16[16,64,448,32], bf16[896,1,16,32]) tuple(zero, w0, init_ag)
-  loop = (s32[], bf16[16,64,448,32], bf16[896,1,16,32]) while(init), condition=cond, body=body
-  ROOT out = bf16[896,1,16,32]{3,2,1,0} get-tuple-element(loop), index=2
+  init_ag = bf16[896,1,32,32] broadcast(zero_bf16), dimensions={}
+  init = (s32[], bf16[32,64,448,32], bf16[896,1,32,32]) tuple(zero, w, init_ag)
+  loop = (s32[], bf16[32,64,448,32], bf16[896,1,32,32]) while(init), condition=cond, body=body
+  ROOT out = bf16[896,1,32,32]{3,2,1,0} get-tuple-element(loop), index=2
 })";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                        ParseAndReturnVerifiedModule(kHlo));
@@ -1605,18 +1614,35 @@ ENTRY main {
   EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
 
   const HloInstruction* w0 = m->entry_computation()->parameter_instruction(0);
-  ASSERT_EQ(w0->user_count(), 1);
-  EXPECT_EQ(w0->users()[0]->opcode(), HloOpcode::kCopy);
+  const HloInstruction* loop = FindInstruction(m.get(), HloOpcode::kWhile);
+  ASSERT_THAT(loop, NotNull());
+  EXPECT_FALSE(LayoutUtil::Equal(loop->shape().tuple_shapes(1).layout(),
+                                 w0->shape().layout()));
   const HloInstruction* ds = FindInstruction(m.get(), HloOpcode::kDynamicSlice);
   ASSERT_THAT(ds, NotNull());
-  EXPECT_FALSE(LayoutUtil::Equal(ds->shape().layout(), w0->shape().layout()));
+  int64_t slice_copies = 0, large_copies = 0;
+  for (const HloComputation* computation : m->computations()) {
+    for (const HloInstruction* instr : computation->instructions()) {
+      if (instr->opcode() != HloOpcode::kCopy) continue;
+      if (ShapeUtil::ElementsIn(instr->shape()) ==
+          ShapeUtil::ElementsIn(ds->shape())) {
+        ++slice_copies;
+      } else if (ShapeUtil::ElementsIn(instr->shape()) ==
+                 ShapeUtil::ElementsIn(w0->shape())) {
+        ++large_copies;
+      }
+    }
+  }
+  EXPECT_EQ(slice_copies, 0);
+  EXPECT_EQ(large_copies, 1);
 }
 
-// Mirror case: a reduce-scatter result (scatter dimension most major) is
-// written into a large loop-carried accumulator. The update should be copied
-// into the accumulator's layout rather than the accumulator re-laid out.
-TEST_F(LayoutAssignmentTest,
-       UpdateOfLargeAccumulatorIsCopiedNotTheAccumulator) {
+// Mirror case: per-layer gradients come out of a reduce-scatter with the
+// scatter dimension most major and are accumulated into a large loop-carried
+// array that is consumed in the default layout afterwards. Without the size
+// rule the accumulator takes the gradient's layout and is copied in full at
+// the end; with it the per-layer update is copied instead.
+TEST_F(LayoutAssignmentTest, UpdateOfLargeAccumulatorCopiesTheUpdate) {
   constexpr absl::string_view kHlo = R"(
 HloModule m, replica_count=2
 
@@ -1627,34 +1653,37 @@ add {
 }
 
 cond {
-  p = (s32[], bf16[16,64,448,1024], bf16[896,16,1024]) parameter(0)
+  p = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
   limit = s32[] constant(4)
   ROOT lt = pred[] compare(i, limit), direction=LT
 }
 
 body {
-  p = (s32[], bf16[16,64,448,1024], bf16[896,16,1024]) parameter(0)
+  p = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
-  acc = bf16[16,64,448,1024] get-tuple-element(p), index=1
-  x = bf16[896,16,1024] get-tuple-element(p), index=2
-  rs = bf16[448,16,1024] reduce-scatter(x), dimensions={0}, replica_groups={{0,1}}, to_apply=add
-  t = bf16[16,448,1024] transpose(rs), dimensions={1,0,2}
-  r = bf16[16,1,448,1024] reshape(t)
+  acc = bf16[32,64,448,1024] get-tuple-element(p), index=1
+  x = bf16[896,32,1024] get-tuple-element(p), index=2
+  rs = bf16[448,32,1024] reduce-scatter(x), dimensions={0}, replica_groups={{0,1}}, to_apply=add
+  t = bf16[32,448,1024] transpose(rs), dimensions={1,0,2}
+  r = bf16[32,1,448,1024] reshape(t)
   zero = s32[] constant(0)
-  dus = bf16[16,64,448,1024] dynamic-update-slice(acc, r, zero, i, zero, zero)
+  dus = bf16[32,64,448,1024] dynamic-update-slice(acc, r, zero, i, zero, zero)
   one = s32[] constant(1)
   next = s32[] add(i, one)
-  ROOT out = (s32[], bf16[16,64,448,1024], bf16[896,16,1024]) tuple(next, dus, x)
+  ROOT out = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) tuple(next, dus, x)
 }
 
 ENTRY main {
-  acc0 = bf16[16,64,448,1024]{3,2,1,0} parameter(0)
-  x0 = bf16[896,16,1024]{2,1,0} parameter(1)
+  base = bf16[32,64,448,1024]{3,2,1,0} parameter(0)
+  x0 = bf16[896,32,1024]{2,1,0} parameter(1)
   zero = s32[] constant(0)
-  init = (s32[], bf16[16,64,448,1024], bf16[896,16,1024]) tuple(zero, acc0, x0)
-  loop = (s32[], bf16[16,64,448,1024], bf16[896,16,1024]) while(init), condition=cond, body=body
-  ROOT out = bf16[16,64,448,1024]{3,2,1,0} get-tuple-element(loop), index=1
+  zero_bf16 = bf16[] constant(0)
+  acc0 = bf16[32,64,448,1024] broadcast(zero_bf16), dimensions={}
+  init = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) tuple(zero, acc0, x0)
+  loop = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) while(init), condition=cond, body=body
+  acc = bf16[32,64,448,1024] get-tuple-element(loop), index=1
+  ROOT out = bf16[32,64,448,1024]{3,2,1,0} add(acc, base)
 })";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                        ParseAndReturnVerifiedModule(kHlo));
@@ -1664,24 +1693,28 @@ ENTRY main {
                                         default_device_description_);
   EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
 
-  const HloInstruction* acc0 = m->entry_computation()->parameter_instruction(0);
-  ASSERT_EQ(acc0->user_count(), 1);
-  EXPECT_EQ(acc0->users()[0]->opcode(), HloOpcode::kTuple);
+  const HloInstruction* base = m->entry_computation()->parameter_instruction(0);
   const HloInstruction* dus =
       FindInstruction(m.get(), HloOpcode::kDynamicUpdateSlice);
   ASSERT_THAT(dus, NotNull());
-  EXPECT_TRUE(LayoutUtil::Equal(dus->shape().layout(), acc0->shape().layout()));
+  EXPECT_TRUE(LayoutUtil::Equal(dus->shape().layout(), base->shape().layout()));
   EXPECT_TRUE(LayoutUtil::Equal(dus->operand(1)->shape().layout(),
                                 dus->shape().layout()));
-  // Nothing of the accumulator's size is copied.
+  int64_t update_copies = 0, large_copies = 0;
   for (const HloComputation* computation : m->computations()) {
     for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() == HloOpcode::kCopy) {
-        EXPECT_LT(ShapeUtil::ElementsIn(instr->shape()),
-                  ShapeUtil::ElementsIn(acc0->shape()));
+      if (instr->opcode() != HloOpcode::kCopy) continue;
+      if (ShapeUtil::ElementsIn(instr->shape()) ==
+          ShapeUtil::ElementsIn(base->shape())) {
+        ++large_copies;
+      } else if (ShapeUtil::ElementsIn(instr->shape()) ==
+                 ShapeUtil::ElementsIn(dus->operand(1)->shape())) {
+        ++update_copies;
       }
     }
   }
+  EXPECT_EQ(large_copies, 0);
+  EXPECT_GE(update_copies, 1);
 }
 
 }  // namespace
