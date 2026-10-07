@@ -186,6 +186,12 @@ def xla_test(
         this_backend_kwargs = dict(kwargs)
         for k, v in backend_kwargs.get(backend, {}).items():
             this_backend_kwargs[k] = v
+
+        # Add "flaky" tag if the test is marked as flaky (either globally or per-backend)
+        is_flaky = kwargs.get("flaky", False) or this_backend_kwargs.get("flaky", False)
+        if is_flaky and "flaky" not in this_backend_tags:
+            this_backend_tags.append("flaky")
+
         this_backend_data = []
         backend_deps = []
         if backend == "cpu":

@@ -38,6 +38,7 @@ TAG_FILTERS=(
     -no_oss
     -oss_excluded
     -oss_serial
+    -flaky
 )
 
 echo $(
