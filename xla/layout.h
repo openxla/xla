@@ -52,7 +52,7 @@ class Tile {
     Tile tile;
     tile.dimensions_.reserve(tile_proto.dimensions_size());
     for (int64_t dimension : tile_proto.dimensions()) {
-      TF_RET_CHECK(dimension >= 0 || dimension == kCombineDimension);
+      TF_RET_CHECK(dimension >= 0);
       tile.add_dimensions(dimension);
     }
     return tile;
@@ -95,10 +95,7 @@ class Tile {
   }
 
   // This dimension size means the corresponding dimension in the shape is
-  // combined with the next minor dimension before tiling is applied. In a top
-  // level tile T(*, N), it indicates an unpadded dynamic dimension whose
-  // extent equals the logical dimension rounded up to the subtile packing
-  // factor.
+  // combined with the next minor dimension before tiling is applied.
   static constexpr int64_t kCombineDimension =
       std::numeric_limits<int64_t>::min();
 
