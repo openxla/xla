@@ -63,8 +63,6 @@ class GpuModel(enum.Enum):
 
   RTX6000PRO = 19
 
-  GFX1250 = 20
-
   MI350 = 13
 
 def get_gpu_spec(gpu_model: GpuModel) -> GpuTargetConfig: ...

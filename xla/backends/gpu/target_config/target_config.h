@@ -42,14 +42,15 @@ enum class GpuModel {
   H100_SXM_MIG,
   H200,
   MI200,
+  MI300,
   MI350,
+  MI450,
   P100,
   PVC,
   V100,
   GB200,
   GB300,
   RTX6000PRO,
-  GFX1250,
 };
 
 // Description of a target device for compilation.
