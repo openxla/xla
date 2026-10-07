@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
-#define XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
+#ifndef XLA_PJRT_GPU_ALLOCATOR_CONFIG_H_
+#define XLA_PJRT_GPU_ALLOCATOR_CONFIG_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -30,10 +30,10 @@ limitations under the License.
 namespace xla {
 
 // How much of a device's memory the BFC allocator may use, as fractions of
-// total device memory. ParseMemFraction accepts the grammar of JAX's
-// XLA_PYTHON_CLIENT_MEM_FRACTION:
+// total device memory. ParseMemFraction accepts the following grammar:
 //
-//   "0.75"       FlexMemFraction{0.75, 1.0}: preallocate 75%, grow to all
+//   "0.75"       FixedMemFraction{0.75}: hard cap at 75%
+//   "0.75+"      FlexMemFraction{0.75, 1.0}: preallocate 75%, grow to all
 //   "0.75-0.85"  FlexMemFraction{0.75, 0.85}: preallocate 75%, grow to 85%
 //   "0.75-0.75"  FixedMemFraction{0.75}: hard cap, the pool never grows
 //
@@ -56,12 +56,13 @@ struct FlexMemFraction {
 
 using MemFraction = std::variant<FixedMemFraction, FlexMemFraction>;
 
-// Parses "START" or "START-CAP" as described above. Returns InvalidArgument
-// for malformed input, a cap below the start, or a growth cap above 1.
+// Parses "START", "START+", or "START-CAP" as described above. "START+" is
+// shorthand for "START-1.0". Returns InvalidArgument for malformed input,
+// a cap below the start, or a growth cap above 1.
 absl::StatusOr<MemFraction> ParseMemFraction(absl::string_view spec);
 
-// Policy denoted by a bare fraction: growable to all device memory when
-// `fraction` is below 1, otherwise fixed (there is nothing to grow into).
+// Policy denoted by a bare fraction: a fixed cap, preserving the semantics of
+// the numeric PJRT C API memory_fraction option.
 MemFraction MemFractionFromFraction(double fraction);
 
 // Fraction allocated up front: FixedMemFraction::fraction or
@@ -89,9 +90,8 @@ struct GpuAllocatorConfig {
   Kind kind = Kind::kDefault;
 
   // Only used if kind == kBFC (or kDefault). How much of total device memory
-  // the allocator may use; see MemFraction above. The default preallocates 75%
-  // and lets the shared spatial pool grow to all of device memory. This is the
-  // default value of XLA_CLIENT_MEM_FRACTION.
+  // the allocator may use; see MemFraction above. The default is a fixed cap
+  // of 75%, matching the default value of XLA_CLIENT_MEM_FRACTION.
   //
   // If `gpu_system_memory_size` is set, it replaces the start fraction as the
   // initial allocation; a growth cap from `memory_fraction` still applies.
@@ -99,7 +99,7 @@ struct GpuAllocatorConfig {
   //
   // PJRT C API create options: "memory_fraction" (float, a bare fraction) and
   // "memory_fraction_policy" (string, the full grammar; takes precedence).
-  MemFraction memory_fraction = FlexMemFraction{};
+  MemFraction memory_fraction = FixedMemFraction{};
 
   // Only used if kind == kBFC. The absolute size of reserved memory space for
   // GPU system in bytes.
@@ -128,4 +128,4 @@ struct GpuAllocatorConfig {
 
 }  // namespace xla
 
-#endif  // XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
+#endif  // XLA_PJRT_GPU_ALLOCATOR_CONFIG_H_

@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/logging.h"

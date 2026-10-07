@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/client/local_client.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/bfc_allocator.h"

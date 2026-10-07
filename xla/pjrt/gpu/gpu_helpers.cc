@@ -36,7 +36,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/integrations/stream_executor_allocator.h"

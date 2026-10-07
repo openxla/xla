@@ -16,7 +16,7 @@ limitations under the License.
 #include <cstdlib>
 #include <utility>
 
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/tests/pjrt_client_registry.h"

@@ -789,6 +789,30 @@ TEST(PjrtCApiGpuAllocatorTest, InvalidAllocatorOptionsParsing) {
   api->PJRT_Error_Destroy(&error_destroy_args);
 }
 
+TEST(PjrtCApiGpuAllocatorTest, MemoryFractionPolicies) {
+  const PJRT_Api* api = GetPjrtApi();
+  for (const char* policy : {"0.01", "0.01+", "0.01-0.02", "0.01-0.01"}) {
+    SCOPED_TRACE(policy);
+    absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+        {"allocator", std::string("bfc")},
+        {"visible_devices", std::vector<int64_t>{0}},
+        {"memory_fraction_policy", std::string(policy)},
+    };
+    ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                         ConvertToPjRtNamedValueList(options));
+    PJRT_Client_Create_Args create_args = {};
+    create_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+    create_args.create_options = c_options.data();
+    create_args.num_options = c_options.size();
+    std::unique_ptr<PJRT_Error, PJRT_ErrorDeleter> error(
+        api->PJRT_Client_Create(&create_args), MakeErrorDeleter(api));
+    std::unique_ptr<PJRT_Client, PJRT_ClientDeleter> client(
+        create_args.client, MakeClientDeleter(api));
+    ASSERT_EQ(error, nullptr) << GetErrorMessage(error.get(), api);
+    ASSERT_NE(client, nullptr);
+  }
+}
+
 TEST(PjrtCApiGpuAllocatorTest, InvalidMemoryFractionPolicyRejected) {
   auto api = GetPjrtApi();
   absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
