@@ -215,8 +215,8 @@ absl::Status ExchangeEmptyStreamExecutorGpuTopology(
 std::shared_ptr<gpu::AllocatorMemoryRegistration>
 CreateAllocatorMemoryRegistration(GpuAllocatorConfig* allocator_config);
 
-// Memory fraction the BFC allocator is built with: the client's
-// memory_fraction unless --xla_gpu_memory_fraction_policy is set, pinned to a
+// Memory fraction the BFC allocator is built with: the client's resolved
+// policy unless --xla_gpu_memory_fraction_policy is set, pinned to a
 // FixedMemFraction (with a warning) when
 // --xla_gpu_enable_nccl_user_buffers_in_default_space requires a fixed arena
 // for the shared spatial pool. Fails if the flag does not parse.
