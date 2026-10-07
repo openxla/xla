@@ -987,6 +987,9 @@ CudaExecutor::CreateMemoryAllocator(MemorySpace type) {
 
 absl::StatusOr<std::unique_ptr<MemoryReservation>>
 CudaExecutor::CreateMemoryReservation(uint64_t size) {
+  if (!device_allocator_options_.use_vmm) {
+    return absl::UnimplementedError("CUDA VMM is disabled");
+  }
   // Use the options probed in Init() (e.g. fabric handles disabled outside a
   // cluster) so the reservation granularity matches physical allocations.
   return CudaMemoryReservation::Create(this, size, device_allocator_options_);
@@ -994,6 +997,9 @@ CudaExecutor::CreateMemoryReservation(uint64_t size) {
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 CudaExecutor::CreatePhysicalMemoryAllocation(uint64_t size) {
+  if (!device_allocator_options_.use_vmm) {
+    return absl::UnimplementedError("CUDA VMM is disabled");
+  }
   return CudaRawMemoryAllocation::Create(this, size, device_allocator_options_);
 }
 

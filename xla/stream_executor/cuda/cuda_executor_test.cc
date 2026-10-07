@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/match.h"
+#include "xla/debug_options_flags.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -43,6 +45,8 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/command_line_flags.h"
+#include "xla/xla.pb.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -308,6 +312,38 @@ TEST(CudaExecutorTest, MultipleExecutorsForSameDevice) {
         collective_allocator->Allocate(4096));
     EXPECT_NE(collective_allocation->address().opaque(), nullptr);
   }
+}
+
+TEST(CudaExecutorTest, DisabledVmmRejectsReservationAndPhysicalAllocation) {
+  const bool was_disabled =
+      xla::GetDebugOptionsFromFlags().xla_gpu_experimental_vmm_disabled();
+  std::vector<tsl::Flag> flags;
+  xla::AppendDebugOptionsFlags(&flags);
+  auto set_vmm_disabled = [&](bool disabled) {
+    std::vector<std::string> args = {
+        disabled ? "--xla_gpu_experimental_vmm_disabled=true"
+                 : "--xla_gpu_experimental_vmm_disabled=false"};
+    EXPECT_TRUE(tsl::Flags::Parse(args, flags));
+    EXPECT_TRUE(args.empty());
+  };
+  absl::Cleanup restore_flag = [&] { set_vmm_disabled(was_disabled); };
+  set_vmm_disabled(true);
+
+  // Use a fresh executor: cached executors retain the options from Init().
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_GT(platform->VisibleDeviceCount(), 0);
+  CudaExecutor executor(platform, /*device_ordinal=*/0);
+  ASSERT_OK(executor.Init());
+  EXPECT_THAT(executor.CreateMemoryReservation(4096),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+  EXPECT_THAT(executor.CreatePhysicalMemoryAllocation(4096),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+
+  // A caller falling back from reservation mode can still allocate normally.
+  DeviceAddressBase memory = executor.Allocate(4096, /*memory_space=*/0);
+  EXPECT_NE(memory.opaque(), nullptr);
+  executor.Deallocate(&memory);
 }
 
 TEST(CudaExecutorTest, RetainVmmMemoryHandleForDefaultDeviceMemory) {
