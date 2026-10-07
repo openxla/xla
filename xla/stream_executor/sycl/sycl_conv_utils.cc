@@ -77,6 +77,9 @@ absl::StatusOr<ConvBufferPointers> GetConvBufferPointers(
   auto opaque_ptr = [](const DeviceAddressBase& addr) {
     return const_cast<void*>(addr.opaque());
   };
+  if (operand_buffers.size() < 2) {
+    return absl::InvalidArgumentError("Insufficient operand buffers");
+  }
   void* op0 = opaque_ptr(operand_buffers[0]);
   void* op1 = opaque_ptr(operand_buffers[1]);
   void* res = opaque_ptr(result_buffer);

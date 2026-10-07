@@ -50,6 +50,12 @@ absl::StatusOr<dnn::VersionInfo> OnednnSupport::GetVersion() {
 }
 
 namespace {
+size_t GetConvWorkspaceSize(const OneDnnConvPrimitiveDesc& primitive_desc) {
+  return std::visit(
+      [](const auto& pd) { return pd.scratchpad_desc().get_size(); },
+      primitive_desc.conv_pd);
+}
+
 class OnednnConvRunner : public dnn::ConvRunner {
  public:
   OnednnConvRunner(OneDnnConvPrimitiveDesc onednn_conv_primitive_desc,
@@ -128,9 +134,7 @@ OnednnSupport::ConvolveRunnerFromDesc(
                            filter_descriptor, output_descriptor,
                            convolution_descriptor},
           stream));
-  size_t workspace_size =
-      std::visit([](const auto& pd) { return pd.scratchpad_desc().get_size(); },
-                 primitive_desc.conv_pd);
+  size_t workspace_size = GetConvWorkspaceSize(primitive_desc);
   return {std::make_unique<OnednnConvRunner>(std::move(primitive_desc),
                                              workspace_size)};
 }
@@ -157,9 +161,7 @@ OnednnSupport::FusedConvolveRunnerFromDesc(
               OneDnnConvConfig::Fusion{activation_mode, side_input_scale,
                                        leakyrelu_alpha}},
           stream));
-  size_t workspace_size =
-      std::visit([](const auto& pd) { return pd.scratchpad_desc().get_size(); },
-                 primitive_desc.conv_pd);
+  size_t workspace_size = GetConvWorkspaceSize(primitive_desc);
   return {std::make_unique<OnednnFusedConvRunner>(std::move(primitive_desc),
                                                   workspace_size)};
 }
