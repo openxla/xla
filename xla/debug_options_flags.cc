@@ -2417,10 +2417,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       string_setter_for(&DebugOptions::set_xla_gpu_memory_fraction_policy),
       debug_options->xla_gpu_memory_fraction_policy(),
       "Overrides the client's memory fraction for the GPU BFC allocator, as "
-      "START or START-CAP fractions of total device memory: \"0.75\" "
-      "preallocates 75% and lets the shared spatial pool grow to all device "
-      "memory, \"0.75-0.85\" caps growth at 85%, \"0.75-0.75\" is a fixed "
-      "pool that never grows. Empty keeps the client's setting."));
+      "START, START+, or START-CAP fractions of total device memory: \"0.75\" "
+      "is fixed at 75%, \"0.75+\" preallocates 75% and lets the shared spatial "
+      "pool grow to all device memory, and \"0.75-0.85\" caps growth at 85%. "
+      "Empty keeps the client's setting."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_nccl_symmetric_buffers",
       bool_setter_for(

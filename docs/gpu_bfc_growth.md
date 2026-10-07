@@ -1,11 +1,12 @@
 # GPU BFC growth in a reserved virtual arena
 
-Preallocated spatial GPU BFC pools grow by default when using device memory.
+Preallocated spatial GPU BFC pools can opt into growth when using device memory.
+The default memory policy retains a fixed cap of 75% of device memory.
 The memory fraction or absolute size determines the initial physical
 allocation. If that much memory is not available, the initial region shrinks
 like a fixed pool does, with a warning, and the collective (lower-end) limit is
 whatever was obtained. The growth cap is a fraction of total device memory (all
-of it by default), rounded down to the mapping granularity.
+of it for the `START+` shorthand), rounded down to the mapping granularity.
 Reserving this capacity does not allocate physical memory or guarantee that
 growth will succeed. Non-spatial pools, unified memory, and other allocator
 kinds retain their existing behavior.
@@ -13,26 +14,28 @@ kinds retain their existing behavior.
 ## Configuration
 
 One setting describes both the initial allocation and the growth cap. It is
-spelled as `START` or `START-CAP`, fractions of total device memory, and parsed
-into a typed `MemFraction` (`FlexMemFraction` or `FixedMemFraction`) that is
+spelled as `START`, `START+`, or `START-CAP`, fractions of total device memory,
+and parsed into a typed `MemFraction` (`FlexMemFraction` or `FixedMemFraction`) that is
 passed through to allocator construction:
 
-| String      | Parsed policy                  | Behavior                                                             |
-|-------------|--------------------------------|----------------------------------------------------------------------|
-| `0.75`      | `FlexMemFraction{0.75, 1.0}`   | Today's default and every existing script: preallocate 75%, grow to all device memory. |
-| `0.75-0.85` | `FlexMemFraction{0.75, 0.85}`  | Preallocate 75%, grow to at most 85%; leaves headroom for other CUDA users. |
-| `0.75-0.75` | `FixedMemFraction{0.75}`       | Hard cap, the pre-growth semantics; the pool never grows.            |
-| `0.5-1.0`   | `FlexMemFraction{0.5, 1.0}`    | Small start, full growth.                                            |
+| String      | Parsed policy                 | Behavior                                       |
+|-------------|-------------------------------|------------------------------------------------|
+| `0.75`      | `FixedMemFraction{0.75}`      | Default: retain the existing fixed cap of 75%. |
+| `0.75+`     | `FlexMemFraction{0.75, 1.0}`  | Preallocate 75%, grow to all device memory.    |
+| `0.75-0.85` | `FlexMemFraction{0.75, 0.85}` | Preallocate 75%, grow to at most 85%.          |
+| `0.75-0.75` | `FixedMemFraction{0.75}`      | Fixed cap of 75%, equivalent to `0.75`.        |
+| `0.5-1.0`   | `FlexMemFraction{0.5, 1.0}`   | Preallocate 50%, grow to all device memory.    |
 
-A bare fraction at or above 1 is fixed (there is nothing to grow into; values
-above 1 only make sense with unified memory). The cap must be at least the start
-and a growth cap cannot exceed 1.
+A bare fraction is always fixed; values above 1 only make sense with unified
+memory. `START+` is shorthand for `START-1.0`, so `1+` is fixed and a start above
+1 is rejected. The cap must be at least the start and a growth cap cannot exceed 1.
 
 Where the string is accepted:
 
-- `XLA_PYTHON_CLIENT_MEM_FRACTION` in JAX, forwarded as the PJRT C API create
-  option `memory_fraction_policy` (string). The older float option
-  `memory_fraction` still works and means a bare fraction.
+- The PJRT C API create option `memory_fraction_policy` (string). The older
+  float option `memory_fraction` still works and retains its fixed cap. JAX
+  support for the extended `XLA_PYTHON_CLIENT_MEM_FRACTION` grammar requires
+  forwarding the string through `memory_fraction_policy`.
 - `--xla_gpu_memory_fraction_policy` in `XLA_FLAGS`, which overrides the
   client's setting for the BFC allocator and works without any JAX change.
 - `GpuAllocatorConfig::memory_fraction` for C++ clients; `ParseMemFraction`
