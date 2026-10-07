@@ -79,9 +79,9 @@ absl::StatusOr<bool> ThunkBufferDebugPass::Run(
           allocator, devices_per_host_));
       break;
     case Mode::kFloatChecker:
-      ABSL_RETURN_IF_ERROR(
-          RunFloatCheckPassInternal(thunk_sequence, debug_options, hlo_module,
-                                    module_output_slices_, allocator));
+      ABSL_RETURN_IF_ERROR(RunFloatCheckPassInternal(
+          thunk_sequence, debug_options, hlo_module, module_output_slices_,
+          allocator, devices_per_host_));
       break;
     case Mode::kBufferSaver:
       ABSL_RETURN_IF_ERROR(RunDebugSaverInserter(
