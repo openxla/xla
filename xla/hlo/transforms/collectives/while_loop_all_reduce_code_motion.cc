@@ -76,6 +76,7 @@ struct UpdateSliceContext {
   Shape update_slice_shape;
   std::vector<int64_t> update_slice_offsets;
   int64_t param_tuple_index;
+  PrimitiveType index_element_type = S32;
 };
 
 // Describes whether an all-reduce instruction can be sinked from a while body
@@ -342,6 +343,7 @@ std::optional<MovableAllReduceContext> MatchDynamicUpdateSliceContext(
     for (int i = 0; i < size; ++i) {
       const HloInstruction* index_op =
           hlo->operand(dus->first_index_operand_number() + i);
+      context.index_element_type = index_op->shape().element_type();
       if (index_op->IsConstant()) {
         context.update_slice_offsets[i] +=
             index_op->literal().GetFirstInteger().value();
@@ -1308,14 +1310,15 @@ absl::StatusOr<HloInstruction*> AddSinkedAllReducesAndReplaceWhile(
   HloComputation* while_parent = while_instruction->parent();
 
   // Constants cache (results in a more readable HLO).
-  absl::flat_hash_map<int64_t, HloInstruction*> constants;
-  auto get_or_create_constant = [&](int64_t value) -> HloInstruction* {
-    auto it = constants.find(value);
+  absl::flat_hash_map<std::pair<PrimitiveType, int64_t>, HloInstruction*>
+      constants;
+  auto get_or_create_constant = [&](PrimitiveType type,
+                                    int64_t value) -> HloInstruction* {
+    auto it = constants.find({type, value});
     if (it == constants.end()) {
-      HloInstruction* constant =
-          while_parent->AddInstruction(HloInstruction::CreateConstant(
-              LiteralUtil::CreateR0<int64_t>(value)));
-      it = constants.insert({value, constant}).first;
+      HloInstruction* constant = while_parent->AddInstruction(
+          HloInstruction::CreateConstant(LiteralUtil::CreateR0(type, value)));
+      it = constants.insert({{type, value}, constant}).first;
     }
     return it->second;
   };
@@ -1374,8 +1377,9 @@ absl::StatusOr<HloInstruction*> AddSinkedAllReducesAndReplaceWhile(
     if (!ShapeUtil::Equal(update->shape(), result_tuple_element->shape())) {
       std::vector<HloInstruction*> start_indices;
       start_indices.reserve(context.update_slice_offsets.size());
-      for (int offset : context.update_slice_offsets) {
-        start_indices.push_back(get_or_create_constant(offset));
+      for (int64_t offset : context.update_slice_offsets) {
+        start_indices.push_back(
+            get_or_create_constant(context.index_element_type, offset));
       }
       update =
           while_parent->AddInstruction(HloInstruction::CreateDynamicUpdateSlice(

@@ -1785,7 +1785,7 @@ TEST_F(WhileLoopAllReduceCodeMotionTest, MultipleDUSAndConvert) {
     CHECK: %[[conv:.+]] = f16[16,1]{1,0} convert(%[[slice]])
     CHECK: %[[ar:.+]] = f16[16,1]{1,0} all-reduce(%[[conv]]){{.*}}, to_apply=%reduction
     CHECK: %[[update:.+]] = f32[16,1]{1,0} convert(%[[ar]])
-    CHECK: %[[zero:.+]] = s64[] constant(0)
+    CHECK: %[[zero:.+]] = s32[] constant(0)
     CHECK: %[[dus:.+]] = f32[16,64]{1,0} dynamic-update-slice(%[[gte]], %[[update]], %[[zero]], %[[zero]])
     CHECK: tuple({{.+}}, {{.+}}, {{.+}}, %[[dus]])
   )"),
