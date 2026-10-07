@@ -53,7 +53,7 @@ namespace {
 absl::StatusOr<HloInstruction*> PartitionConvolutionWithBatchGroupCount(
     PartitionedHlo lhs, PartitionedHlo rhs, const Shape& output_base_shape,
     const HloSharding& output_sharding,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     int64_t num_partitions, SpmdBuilder* b) {
   TF_RET_CHECK(original_hlo->opcode() == HloOpcode::kConvolution);
@@ -145,7 +145,7 @@ absl::StatusOr<HloInstruction*> PartitionConvolutionWithBatchGroupCount(
 absl::StatusOr<HloInstruction*> PartitionConvolutionWithFeatureGroupCount(
     PartitionedHlo lhs, PartitionedHlo rhs, const Shape& output_base_shape,
     const HloSharding& output_sharding,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     int64_t num_partitions, SpmdBuilder* b) {
   TF_RET_CHECK(original_hlo->opcode() == HloOpcode::kConvolution);
@@ -239,7 +239,7 @@ absl::StatusOr<HloInstruction*>
 PartitionConvolutionWithSpatialDimensionHaloExchangeOnRHS(
     PartitionedHlo lhs, PartitionedHlo rhs, const Shape& output_base_shape,
     const HloSharding& output_sharding,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     HloInstruction* partition_id, HloModule* module, SpmdBuilder* b) {
   TF_RET_CHECK(original_hlo->opcode() == HloOpcode::kConvolution);
@@ -533,7 +533,7 @@ absl::StatusOr<HloInstruction*>
 PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
     PartitionedHlo lhs, PartitionedHlo rhs, const Shape& output_base_shape,
     const HloSharding& output_sharding,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     HloInstruction* partition_id, HloModule* module, SpmdBuilder* b) {
   TF_RET_CHECK(original_hlo->opcode() == HloOpcode::kConvolution);
@@ -763,7 +763,7 @@ PartitionConvolutionWithSpatialDimensionHaloExchangeOnLHS(
 absl::StatusOr<HloInstruction*> PartitionConvolutionTiledOutput(
     PartitionedHlo lhs, PartitionedHlo rhs, const Shape& output_base_shape,
     const HloSharding& output_sharding,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo, SpmdBuilder* b) {
   TF_RET_CHECK(original_hlo->opcode() == HloOpcode::kConvolution);
   const auto& dnums = original_hlo->convolution_dimension_numbers();
@@ -853,7 +853,7 @@ absl::StatusOr<HloInstruction*> PartitionConvolutionTiledOutput(
 absl::StatusOr<HloInstruction*> PartitionConvolutionBaseCase(
     const PartitionedHlo& lhs, const PartitionedHlo& rhs,
     const Shape& output_base_shape, const HloSharding& output_sharding,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     int64_t num_partitions, const SpmdPartitionerOptions& options,
     HloInstruction* partition_id, HloModule* module, SpmdBuilder* b) {
@@ -1020,7 +1020,7 @@ absl::StatusOr<HloInstruction*> PartitionConvolution(
     const PartitionedHlo& lhs, const PartitionedHlo& rhs,
     const Shape& output_base_shape, const HloSharding& output_sharding,
     const dot_as_convolution_util::DotConvolutionDimsInfo& dims_mapping,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     int64_t num_partitions, const SpmdPartitionerOptions& options,
     HloInstruction* partition_id, HloModule* module, SpmdBuilder* b) {
@@ -1053,8 +1053,7 @@ absl::Status SpmdPartitioningVisitor::HandleConvolution(HloInstruction* hlo) {
 
   CreateShardedConvolutionFunctor create_sharded_conv_functor(hlo, dims_info);
 
-  return HandleDotHelper<CreateShardedConvolutionFunctor>(
-      hlo, dims_info, create_sharded_conv_functor);
+  return HandleDotHelper(hlo, dims_info, create_sharded_conv_functor);
 }
 
 }  // namespace spmd

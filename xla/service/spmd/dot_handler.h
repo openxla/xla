@@ -25,10 +25,6 @@ limitations under the License.
 namespace xla {
 namespace spmd {
 
-class CreateShardedConvolutionFunctor;
-class CreateShardedDotFunctor;
-class CreateShardedScaledDotFunctor;
-
 // Abstract base class for functors creating sharded dots, block-scaled dots and
 // convolutions.
 template <typename PartitionedHloMaybeMX>

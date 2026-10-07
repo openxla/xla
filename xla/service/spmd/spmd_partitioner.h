@@ -53,6 +53,9 @@ limitations under the License.
 namespace xla {
 namespace spmd {
 
+template <typename PartitionedHloMaybeMX>
+class CreateShardedFunctorBase;
+
 // Enum representing the partitioning methods for gather and scatter.
 enum class GatherScatterPartitioningMethod {
   kExplicitBatch,
@@ -767,11 +770,11 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   // go/keep-sorted end
 
   // Implementation of dot partitioning given DotGeneralDimsMapping.
-  template <typename CreateShardedFunctor>
+  template <typename PartitionedHloMaybeMX>
   absl::Status HandleDotHelper(
       HloInstruction* hlo,
       const dot_as_convolution_util::DotConvolutionDimsInfo& dims_mapping,
-      CreateShardedFunctor& create_sharded_dot);
+      CreateShardedFunctorBase<PartitionedHloMaybeMX>& create_sharded_dot);
 
   // Common handle for elementwise HLOs.
   absl::Status HandleElementwise(HloInstruction* hlo);

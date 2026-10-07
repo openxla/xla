@@ -39,7 +39,7 @@ absl::StatusOr<HloInstruction*> PartitionConvolution(
     const PartitionedHlo& lhs, const PartitionedHlo& rhs,
     const Shape& output_base_shape, const HloSharding& output_sharding,
     const dot_as_convolution_util::DotConvolutionDimsInfo& dims_mapping,
-    CreateShardedConvolutionFunctor& create_sharded_conv,
+    CreateShardedFunctorBase<PartitionedHlo>& create_sharded_conv,
     const Window& conv_window, HloInstruction* original_hlo,
     int64_t num_partitions, const SpmdPartitionerOptions& options,
     HloInstruction* partition_id, HloModule* module, SpmdBuilder* b);

@@ -1410,8 +1410,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCall(HloInstruction* hlo) {
     dot_as_convolution_util::DotConvolutionDimsInfo mapping =
         dot_as_convolution_util::ParseDotGeneralFromDot(dot.get());
 
-    return HandleDotHelper<CreateShardedScaledDotFunctor>(
-        hlo, mapping, create_sharded_scaled_dot_functor);
+    return HandleDotHelper(hlo, mapping, create_sharded_scaled_dot_functor);
   }
 
   return DefaultAction(hlo);
