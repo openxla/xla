@@ -100,6 +100,8 @@ jobs:
             --//jax:build_jax=true \
             --local_test_jobs=1 \
             --action_env=JAX_ENABLE_X64=0 \
+            --tls_client_certificate="/data/temp-rbe-cert.crt" \
+            --tls_client_key="/data/temp-rbe-cert.key" \
             --repo_env=HERMETIC_PYTHON_VERSION=3.14 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
             --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="${ROCM_SINGLE_GPU_RBE_POOL}" \
