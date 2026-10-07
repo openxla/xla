@@ -1231,6 +1231,46 @@ TEST_F(HloInstructionTest, IdenticalInstructions) {
                              shape, op1, {0, 1}, shuffle::Rotate({2, 3})),
                          *HloInstruction::CreateShuffle(
                              shape, op1, {1, 0}, shuffle::Rotate({2, 3}))));
+  EXPECT_TRUE(
+      Identical(*HloInstruction::CreateShuffle(
+                    shape, op1, {0},
+                    shuffle::Permute(LiteralUtil::CreateR1<int32_t>({1, 0}))),
+                *HloInstruction::CreateShuffle(
+                    shape, op1, {0},
+                    shuffle::Permute(LiteralUtil::CreateR1<int32_t>({1, 0})))));
+  EXPECT_FALSE(
+      Identical(*HloInstruction::CreateShuffle(
+                    shape, op1, {0},
+                    shuffle::Permute(LiteralUtil::CreateR1<int32_t>({1, 0}))),
+                *HloInstruction::CreateShuffle(
+                    shape, op1, {0},
+                    shuffle::Permute(LiteralUtil::CreateR1<int32_t>({0, 1})))));
+  EXPECT_FALSE(Identical(
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::Permute(LiteralUtil::CreateR1<int32_t>({1, 0}))),
+      *HloInstruction::CreateShuffle(shape, op1, {0}, shuffle::Rotate({1}))));
+  EXPECT_TRUE(Identical(
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 0}}))),
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 0}})))));
+  EXPECT_FALSE(Identical(
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 0}}))),
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::MultiRotate(LiteralUtil::CreateR2<int32_t>({{0, 1}})))));
+  EXPECT_FALSE(Identical(
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::MultiRotate(LiteralUtil::CreateR2<int32_t>({{1, 0}}))),
+      *HloInstruction::CreateShuffle(
+          shape, op1, {0},
+          shuffle::Permute(LiteralUtil::CreateR2<int32_t>({{1, 0}})))));
 
   // Tuples.
   EXPECT_TRUE(Identical(*HloInstruction::CreateTuple({op1, op2}),
