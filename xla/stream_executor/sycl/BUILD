@@ -599,9 +599,10 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "onemkl_util_test",
     srcs = ["onemkl_util_test.cc"],
+    backends = ["gpu"],
     tags = [
         "gpu",
         "oneapi-only",
@@ -613,7 +614,6 @@ xla_cc_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@local_config_sycl//sycl:sycl_headers",
-        "@oneapi//:libs",
     ],
 )
 
