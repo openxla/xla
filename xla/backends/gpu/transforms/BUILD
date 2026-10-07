@@ -2303,6 +2303,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_layout",
         "//xla/service:hlo_value",

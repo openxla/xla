@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/layout.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"

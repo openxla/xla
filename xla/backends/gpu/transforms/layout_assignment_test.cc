@@ -1482,7 +1482,9 @@ ENTRY main {
       ShapeUtil::IsEffectivelyMostMajorDimension(ag->operand(0)->shape(), 0));
   int64_t slice_copies = 0, other_copies = 0;
   for (const HloInstruction* instr : m->entry_computation()->instructions()) {
-    if (instr->opcode() != HloOpcode::kCopy) continue;
+    if (instr->opcode() != HloOpcode::kCopy) {
+      continue;
+    }
     (ShapeUtil::ElementsIn(instr->shape()) == ShapeUtil::ElementsIn(ds->shape())
          ? slice_copies
          : other_copies)++;
@@ -1555,7 +1557,9 @@ ENTRY main {
   int64_t slice_copies = 0, large_copies = 0;
   for (const HloComputation* computation : m->computations()) {
     for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() != HloOpcode::kCopy) continue;
+      if (instr->opcode() != HloOpcode::kCopy) {
+        continue;
+      }
       if (ShapeUtil::ElementsIn(instr->shape()) ==
           ShapeUtil::ElementsIn(ds->shape())) {
         ++slice_copies;
@@ -1623,7 +1627,9 @@ ENTRY main {
   int64_t slice_copies = 0, large_copies = 0;
   for (const HloComputation* computation : m->computations()) {
     for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() != HloOpcode::kCopy) continue;
+      if (instr->opcode() != HloOpcode::kCopy) {
+        continue;
+      }
       if (ShapeUtil::ElementsIn(instr->shape()) ==
           ShapeUtil::ElementsIn(ds->shape())) {
         ++slice_copies;
@@ -1703,7 +1709,9 @@ ENTRY main {
   int64_t update_copies = 0, large_copies = 0;
   for (const HloComputation* computation : m->computations()) {
     for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() != HloOpcode::kCopy) continue;
+      if (instr->opcode() != HloOpcode::kCopy) {
+        continue;
+      }
       if (ShapeUtil::ElementsIn(instr->shape()) ==
           ShapeUtil::ElementsIn(base->shape())) {
         ++large_copies;
@@ -1789,7 +1797,9 @@ ENTRY main {
   const HloInstruction* w = m->entry_computation()->parameter_instruction(0);
   const HloInstruction* wt = nullptr;
   for (const HloInstruction* instr : m->entry_computation()->instructions()) {
-    if (instr->opcode() == HloOpcode::kTranspose) wt = instr;
+    if (instr->opcode() == HloOpcode::kTranspose) {
+      wt = instr;
+    }
   }
   ASSERT_THAT(wt, NotNull());
   EXPECT_TRUE(
@@ -1800,7 +1810,9 @@ ENTRY main {
   int64_t slice_copies = 0, large_copies = 0;
   for (const HloComputation* computation : m->computations()) {
     for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() != HloOpcode::kCopy) continue;
+      if (instr->opcode() != HloOpcode::kCopy) {
+        continue;
+      }
       if (ShapeUtil::ElementsIn(instr->shape()) ==
           ShapeUtil::ElementsIn(ds->shape())) {
         ++slice_copies;
@@ -1812,6 +1824,113 @@ ENTRY main {
   }
   EXPECT_EQ(slice_copies, 1);
   EXPECT_EQ(large_copies, 0);
+}
+
+// Entry constraints can differ from the layouts attached to HLO instructions.
+// The caller transpose must use the actual parameter layout to stay a bitcast.
+TEST_F(LayoutAssignmentTest,
+       UnconstrainedLoopParameterUsesEntryLayoutConstraint) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+cond {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(4)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+body {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[3,2] get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT t = (s32[], f32[3,2]) tuple(next, w)
+}
+ENTRY main {
+  p = f32[2,3]{1,0} parameter(0)
+  t = f32[3,2] transpose(p), dimensions={1,0}
+  zero = s32[] constant(0)
+  init = (s32[], f32[3,2]) tuple(zero, t)
+  loop = (s32[], f32[3,2]) while(init), condition=cond, body=body
+  ROOT r = f32[3,2]{1,0} get-tuple-element(loop), index=1
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  computation_layout.mutable_parameter_layout(0)->ResetLayout(
+      LayoutUtil::MakeLayout({0, 1}));
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  const HloInstruction* transpose =
+      FindInstruction(module.get(), HloOpcode::kTranspose);
+  ASSERT_THAT(transpose, NotNull());
+  EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(transpose->operand(0)->shape(),
+                                            transpose->shape(),
+                                            transpose->dimensions()))
+      << module->ToString();
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+    }
+  }
+}
+
+// A memory-space-only AUTO layout cannot determine a transpose bitcast layout.
+TEST_F(LayoutAssignmentTest, UnconstrainedLoopParameterWithAutoCallerLayout) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+cond {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(4)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+body {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[3,2] get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT t = (s32[], f32[3,2]) tuple(next, w)
+}
+ENTRY main {
+  p = f32[2,3]{1,0} parameter(0)
+  t = f32[3,2] transpose(p), dimensions={1,0}
+  zero = s32[] constant(0)
+  init = (s32[], f32[3,2]) tuple(zero, t)
+  loop = (s32[], f32[3,2]) while(init), condition=cond, body=body
+  ROOT r = f32[3,2] get-tuple-element(loop), index=1
+})";
+  // Cover AUTO layouts on the instruction and only in the entry constraints.
+  for (bool clear_instruction_layout : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    // Install AUTO after parsing so the initial transpose shape verification
+    // does not try to permute a layout without a dimension order.
+    Layout auto_layout;
+    auto_layout.set_memory_space(Layout::kHostMemorySpace);
+    computation_layout.mutable_parameter_layout(0)->ResetLayout(auto_layout);
+    HloInstruction* parameter =
+        module->entry_computation()->parameter_instruction(0);
+    if (clear_instruction_layout) {
+      LayoutUtil::ClearLayout(parameter->mutable_shape());
+    } else {
+      *parameter->mutable_shape()->mutable_layout() = auto_layout;
+    }
+    GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    const HloInstruction* loop =
+        FindInstruction(module.get(), HloOpcode::kWhile);
+    ASSERT_THAT(loop, NotNull());
+    EXPECT_TRUE(LayoutUtil::HasMinorToMajorSetInLayout(loop->shape()));
+  }
 }
 
 }  // namespace

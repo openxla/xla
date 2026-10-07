@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -1170,17 +1171,15 @@ bool IsSmallPieceOfLargeArray(const Shape& piece, const Shape& large) {
          large_bytes >= kSmallPieceMinRatio * ArrayBytes(piece);
 }
 
-// The shape of `instruction` with its layout, if that layout is already
-// decided: either the shape carries one, or the instruction is an entry
-// parameter whose layout the entry computation layout fixes.
-std::optional<Shape> ShapeWithKnownLayout(
+// Prefer the entry computation's parameter layout over the instruction's
+// existing layout, which is only a hint before layout assignment. An AUTO
+// layout, including one with only a memory space, has no dimension order to
+// propagate through a transpose.
+std::optional<Shape> ShapeWithLayoutHint(
     const HloInstruction* instruction,
     const ComputationLayout* entry_computation_layout) {
   if (!instruction->shape().IsArray()) {
     return std::nullopt;
-  }
-  if (instruction->shape().has_layout()) {
-    return instruction->shape();
   }
   if (instruction->opcode() == HloOpcode::kParameter &&
       instruction->parent()->IsEntryComputation() &&
@@ -1188,9 +1187,14 @@ std::optional<Shape> ShapeWithKnownLayout(
     const ShapeLayout& parameter_layout =
         entry_computation_layout->parameter_layout(
             instruction->parameter_number());
-    if (parameter_layout.LayoutIsSet() && parameter_layout.shape().IsArray()) {
+    if (parameter_layout.shape().IsArray() &&
+        parameter_layout.MinorToMajorInLayoutIsSet()) {
       return parameter_layout.shape();
     }
+    return std::nullopt;
+  }
+  if (LayoutUtil::HasMinorToMajorSetInLayout(instruction->shape())) {
+    return instruction->shape();
   }
   return std::nullopt;
 }
@@ -1250,7 +1254,7 @@ Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
     const HloValue* value = values.values().front();
     const HloInstruction* producer = value->defining_instruction();
     if (producer->opcode() == HloOpcode::kTranspose) {
-      std::optional<Shape> operand_shape = ShapeWithKnownLayout(
+      std::optional<Shape> operand_shape = ShapeWithLayoutHint(
           producer->operand(0), &saved_entry_computation_layout());
       if (operand_shape.has_value()) {
         Shape permuted = ShapeUtil::PermuteDimensions(producer->dimensions(),
