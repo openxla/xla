@@ -18,16 +18,35 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/literal.h"
+#include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace shuffle {
 
+ShuffleMode Permute(const LiteralSlice& indices) {
+  ShuffleMode mode;
+  *mode.mutable_permute()->mutable_indices() = indices.ToProto();
+  return mode;
+}
+
 ShuffleMode Rotate(absl::Span<const int64_t> shifts) {
   ShuffleMode mode;
   mode.mutable_rotate()->mutable_shifts()->Assign(shifts.begin(), shifts.end());
   return mode;
+}
+
+absl::StatusOr<Literal> GetPermuteIndices(const ShuffleMode& mode) {
+  CHECK(mode.has_permute()) << "the mode of the shuffle is not permute";
+  return Literal::CreateFromProto(mode.permute().indices());
+}
+
+absl::StatusOr<Shape> GetPermuteIndicesShape(const ShuffleMode& mode) {
+  CHECK(mode.has_permute()) << "the mode of the shuffle is not permute";
+  return Shape::FromProto(mode.permute().indices().shape());
 }
 
 int64_t NormalizeShift(int64_t shift, int64_t dim_size) {

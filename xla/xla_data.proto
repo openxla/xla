@@ -975,6 +975,13 @@ enum RandomAlgorithm {
 // The name of a case of the `mode` oneof is also the name of the mode in the
 // HLO text format, e.g. `mode=rotate`.
 message ShuffleMode {
+  // Permutes the elements along the shuffled dimensions
+  message Permute {
+    // The operand coordinates that each result element is taken from along the
+    // shuffled dimensions, as an integer array.
+    LiteralProto indices = 1;
+  }
+
   // Rotates the elements along each shuffled dimension to the left, wrapping
   // the elements that fall off the front around to the back, e.g. rotating
   // `[1, 2, 3, 4]` by a shift of 1 yields `[2, 3, 4, 1]`.
@@ -988,10 +995,11 @@ message ShuffleMode {
   }
 
   oneof mode {
-    Rotate rotate = 1;
+    Permute permute = 1;
+    Rotate rotate = 2;
   }
 
-  // Next: 2
+  // Next: 3
 }
 
 message TriangularSolveOptions {
