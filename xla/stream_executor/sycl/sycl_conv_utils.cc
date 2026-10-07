@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/shape.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
@@ -166,12 +165,8 @@ dnnl::memory::dims ToOneDnnFilterDims(const FilterDescriptor& descriptor,
 // Allocates a temporary buffer and wraps it in a dnnl::memory.
 // Such buffers are used for oneDNN scratchpad and pre-packed filter.
 absl::StatusOr<dnnl::memory> AllocateDnnlBuffer(
-    const dnnl::memory::desc& desc, const dnnl::engine& engine,
-    ScratchAllocator* scratch_allocator) {
-  stream_executor::DeviceMemory<uint8_t> buffer;
-  ABSL_ASSIGN_OR_RETURN(buffer,
-                        scratch_allocator->AllocateBytes(desc.get_size()));
-  return CreateDnnlMemory(desc, engine, buffer.opaque());
+    const dnnl::memory::desc& desc, const dnnl::engine& engine) {
+  return CreateDnnlMemory(desc, engine);
 }
 
 // Builds a forward convolution primitive descriptor. `bias_md` is present only
@@ -209,7 +204,7 @@ absl::StatusOr<ConvOp> BuildConvOp(
     int weights_arg_key, dnnl::memory dst, int dst_arg_key,
     const dnnl::memory::desc& filter_md,
     const dnnl::memory::desc& weights_target_desc, bool prepack_filter,
-    const dnnl::engine& engine, ScratchAllocator* scratch_allocator,
+    const dnnl::engine& engine,
     std::optional<ReorderOp>* out_filter_reorder) {
   ConvOp op;
   op.src = std::move(src);
@@ -217,11 +212,11 @@ absl::StatusOr<ConvOp> BuildConvOp(
   op.dst = std::move(dst);
   ABSL_ASSIGN_OR_RETURN(
       op.scratchpad,
-      AllocateDnnlBuffer(pd.scratchpad_desc(), engine, scratch_allocator));
+      AllocateDnnlBuffer(pd.scratchpad_desc(), engine));
   if (filter_md != weights_target_desc) {
     ABSL_ASSIGN_OR_RETURN(
         op.internal_filter,
-        AllocateDnnlBuffer(weights_target_desc, engine, scratch_allocator));
+        AllocateDnnlBuffer(weights_target_desc, engine));
     *out_filter_reorder = prepack_filter
                               ? CreateReorderOp(op.filter, op.internal_filter)
                               : CreateReorderOp(op.internal_filter, op.filter);
@@ -242,7 +237,6 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
   OneDnnConvPrimitiveDesc pd;
   ::sycl::queue* sycl_queue =
       absl::bit_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
-  pd.engine = FindOrCreateEngine(sycl_queue);
 
   const DataLayout input_dl = config.input_descriptor.layout();
   const FilterLayout filter_dl = config.filter_descriptor.layout();
@@ -278,33 +272,35 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
   const absl::Span<const int64_t> dilations_dimensions =
       config.conv_desc.dilations();
 
+
+  std::vector<int64_t> src_full =
+      config.input_descriptor.full_dims(DataLayout::kBatchDepthYX);
+  std::vector<int64_t> dst_full =
+      config.output_descriptor.full_dims(DataLayout::kBatchDepthYX);
+  dnnl::memory::dims src_dims(src_full.begin(), src_full.end());
+  dnnl::memory::dims dst_dims(dst_full.begin(), dst_full.end());
+  dnnl::memory::dims filter_dims =
+      ToOneDnnFilterDims(config.filter_descriptor, group_count);
+  dnnl::memory::dims bias_dims = {output_channels};
+  dnnl::memory::dims stride_dims(stride_dimensions.begin(),
+                                  stride_dimensions.end());
+  dnnl::memory::dims padding_dims_l(padding_dimensions.begin(),
+                                    padding_dimensions.end());
+  dnnl::memory::dims padding_dims_r = padding_dims_l;
+  dnnl::memory::dims dilation_dims(dilations_dimensions.size());
+  std::transform(dilations_dimensions.begin(), dilations_dimensions.end(),
+                  dilation_dims.begin(), [](int64_t d) { return d - 1; });
+
+  dnnl::memory::format_tag src_fmt, weight_fmt, dst_fmt;
+  ABSL_ASSIGN_OR_RETURN(src_fmt, ToOneDnnDataFormatTag(input_dl, is_conv3d));
+  ABSL_ASSIGN_OR_RETURN(weight_fmt, ToOneDnnFilterFormatTag(
+                                        filter_dl, is_conv3d, is_group_conv));
+  ABSL_ASSIGN_OR_RETURN(dst_fmt, ToOneDnnDataFormatTag(output_dl, is_conv3d));
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type data_type,
+                        ToOneDnnDataType(input_type));
+  pd.kind = conv_kind;
   try {
-    std::vector<int64_t> src_full =
-        config.input_descriptor.full_dims(DataLayout::kBatchDepthYX);
-    std::vector<int64_t> dst_full =
-        config.output_descriptor.full_dims(DataLayout::kBatchDepthYX);
-    dnnl::memory::dims src_dims(src_full.begin(), src_full.end());
-    dnnl::memory::dims dst_dims(dst_full.begin(), dst_full.end());
-    dnnl::memory::dims filter_dims =
-        ToOneDnnFilterDims(config.filter_descriptor, group_count);
-    dnnl::memory::dims bias_dims = {output_channels};
-    dnnl::memory::dims stride_dims(stride_dimensions.begin(),
-                                   stride_dimensions.end());
-    dnnl::memory::dims padding_dims_l(padding_dimensions.begin(),
-                                      padding_dimensions.end());
-    dnnl::memory::dims padding_dims_r = padding_dims_l;
-    dnnl::memory::dims dilation_dims(dilations_dimensions.size());
-    std::transform(dilations_dimensions.begin(), dilations_dimensions.end(),
-                   dilation_dims.begin(), [](int64_t d) { return d - 1; });
-
-    dnnl::memory::format_tag src_fmt, weight_fmt, dst_fmt;
-    ABSL_ASSIGN_OR_RETURN(src_fmt, ToOneDnnDataFormatTag(input_dl, is_conv3d));
-    ABSL_ASSIGN_OR_RETURN(weight_fmt, ToOneDnnFilterFormatTag(
-                                          filter_dl, is_conv3d, is_group_conv));
-    ABSL_ASSIGN_OR_RETURN(dst_fmt, ToOneDnnDataFormatTag(output_dl, is_conv3d));
-    ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type data_type,
-                          ToOneDnnDataType(input_type));
-
+    pd.engine = FindOrCreateEngine(sycl_queue);
     pd.src_md = dnnl::memory::desc({src_dims}, data_type, src_fmt);
     pd.dst_md = dnnl::memory::desc({dst_dims}, data_type, dst_fmt);
     pd.filter_md = dnnl::memory::desc({filter_dims}, data_type, weight_fmt);
@@ -315,7 +311,7 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
     bool use_plain_weight = false;
     ABSL_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar("ONEDNN_PLAIN_WEIGHT", false,
                                                  &use_plain_weight));
-    pd.filter_md_prefer =
+    dnnl::memory::desc filter_md_prefer =
         use_plain_weight
             ? dnnl::memory::desc({filter_dims}, data_type, weight_fmt)
             : dnnl::memory::desc({filter_dims}, data_type,
@@ -381,10 +377,11 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
           return absl::InvalidArgumentError("Unsupported Activation mode");
       }
     }
-    pd.post_ops_attr.set_post_ops(po);
-    pd.post_ops_attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+    dnnl::primitive_attr post_ops_attr;
+    post_ops_attr.set_post_ops(po);
+    post_ops_attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
     if (input_type == dnn::DataType::kFloat) {
-      pd.post_ops_attr.set_fpmath_mode(GetFP32MathMode());
+      post_ops_attr.set_fpmath_mode(GetFP32MathMode());
     }
 
     // Backward primitives don't take post-ops; their pds only need
@@ -408,38 +405,38 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
         if (pd.bias.has_value() && pd.bias->arg_key == DNNL_ARG_BIAS) {
           primitive_bias_md = pd.bias->md;
         }
-        pd.conv_pd = CreateConvFwdPd(pd.engine, pd.src_md, pd.filter_md_prefer,
+        pd.conv_pd = CreateConvFwdPd(pd.engine, pd.src_md, filter_md_prefer,
                                      primitive_bias_md, pd.dst_md, stride_dims,
                                      dilation_dims, padding_dims_l,
-                                     padding_dims_r, pd.post_ops_attr);
+                                     padding_dims_r, post_ops_attr);
         break;
       }
       case dnn::ConvolutionKind::BACKWARD_DATA: {
         ConvFwdPd fwd_hint = CreateConvFwdPd(
-            pd.engine, pd.src_md, pd.filter_md_prefer, /*bias_md=*/std::nullopt,
+            pd.engine, pd.src_md, filter_md_prefer, /*bias_md=*/std::nullopt,
             pd.dst_md, stride_dims, dilation_dims, padding_dims_l,
             padding_dims_r, bwd_attr);
         pd.conv_pd = ConvBwdInputPd(
             pd.engine, dnnl::algorithm::convolution_direct, pd.src_md,
-            pd.filter_md_prefer, pd.dst_md, stride_dims, dilation_dims,
+            filter_md_prefer, pd.dst_md, stride_dims, dilation_dims,
             padding_dims_l, padding_dims_r, fwd_hint, bwd_attr);
         break;
       }
       case dnn::ConvolutionKind::BACKWARD_FILTER: {
         ConvFwdPd fwd_hint = CreateConvFwdPd(
-            pd.engine, pd.src_md, pd.filter_md_prefer, /*bias_md=*/std::nullopt,
+            pd.engine, pd.src_md, filter_md_prefer, /*bias_md=*/std::nullopt,
             pd.dst_md, stride_dims, dilation_dims, padding_dims_l,
             padding_dims_r, bwd_attr);
         pd.conv_pd = ConvBwdFilterPd(
             pd.engine, dnnl::algorithm::convolution_direct, pd.src_md,
-            pd.filter_md_prefer, pd.dst_md, stride_dims, dilation_dims,
+            filter_md_prefer, pd.dst_md, stride_dims, dilation_dims,
             padding_dims_l, padding_dims_r, fwd_hint, bwd_attr);
         break;
       }
       default:
         return absl::InvalidArgumentError("Unknown convolution kind");
     }
-  } catch (dnnl::error& e) {
+  } catch (const dnnl::error& e) {
     return absl::InternalError(absl::StrCat("OneDNN Conv error: ", e.message));
   }
   return pd;
@@ -448,8 +445,7 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
 absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     const OneDnnConvPrimitiveDesc& pd,
     absl::Span<const DeviceAddressBase> operand_buffers,
-    DeviceAddressBase result_buffer, Stream* stream,
-    ScratchAllocator* scratch_allocator) {
+    DeviceAddressBase result_buffer, Stream* stream) {
   OneDnnConvPrimitive onednn_conv_primitive;
   ::sycl::queue* sycl_queue =
       absl::bit_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
@@ -457,22 +453,22 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
   onednn_conv_primitive.stream = dnnl::sycl_interop::make_stream(
       onednn_conv_primitive.engine, *sycl_queue);
 
-  const dnn::ConvolutionKind conv_kind =
-      pd.conv_pd.index() == 0   ? dnn::ConvolutionKind::FORWARD
-      : pd.conv_pd.index() == 1 ? dnn::ConvolutionKind::BACKWARD_DATA
-                                : dnn::ConvolutionKind::BACKWARD_FILTER;
+  const dnn::ConvolutionKind conv_kind = pd.kind;
   ABSL_ASSIGN_OR_RETURN(
       ConvBufferPointers buffers,
       GetConvBufferPointers(conv_kind, operand_buffers, result_buffer));
 
   void* bias_data = nullptr;
   void* side_input_data = nullptr;
-  const bool has_fusion = pd.bias.has_value() || pd.has_side_input_sum;
-  if (has_fusion) {
+  if (pd.bias.has_value() && operand_buffers.size() >= 3) {
     bias_data = const_cast<void*>(operand_buffers[2].opaque());
-    if (operand_buffers.size() >= 4) {
-      side_input_data = const_cast<void*>(operand_buffers[3].opaque());
-    }
+  }
+  if (pd.has_side_input_sum && operand_buffers.size() >= 4) {
+    side_input_data = const_cast<void*>(operand_buffers[3].opaque());
+  }
+  if (pd.has_side_input_sum && side_input_data == nullptr) {
+    return absl::InvalidArgumentError(
+        "Fused convolution requires a side input buffer");
   }
 
   try {
@@ -508,10 +504,10 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
                 std::move(dst_memory), DNNL_ARG_DST, pd.filter_md,
                 fwd_pd.weights_desc(),
                 /*prepack_filter=*/true, onednn_conv_primitive.engine,
-                scratch_allocator, &onednn_conv_primitive.filter_reorder)));
+                &onednn_conv_primitive.filter_reorder)));
 
         fwd.side_input = std::move(side_input_memory);
-        if (pd.bias.has_value()) {
+        if (pd.bias.has_value() && bias_data != nullptr) {
           fwd.bias = CreateDnnlMemory(pd.bias->md, onednn_conv_primitive.engine,
                                       bias_data);
           fwd.args.insert({pd.bias->arg_key, fwd.bias});
@@ -532,7 +528,7 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
                 std::move(dst_memory), DNNL_ARG_DIFF_DST, pd.filter_md,
                 bwd_input_pd.weights_desc(),
                 /*prepack_filter=*/true, onednn_conv_primitive.engine,
-                scratch_allocator, &onednn_conv_primitive.filter_reorder)));
+                &onednn_conv_primitive.filter_reorder)));
         onednn_conv_primitive.op = std::move(bwd);
         break;
       }
@@ -549,7 +545,7 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
                 std::move(dst_memory), DNNL_ARG_DIFF_DST, pd.filter_md,
                 bwd_filter_pd.diff_weights_desc(),
                 /*prepack_filter=*/false, onednn_conv_primitive.engine,
-                scratch_allocator, &onednn_conv_primitive.filter_reorder)));
+                &onednn_conv_primitive.filter_reorder)));
         onednn_conv_primitive.op = std::move(bwd);
         break;
       }

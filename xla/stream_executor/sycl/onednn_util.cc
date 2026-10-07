@@ -121,7 +121,7 @@ absl::StatusOr<dnnl::memory::data_type> ToOneDnnDataType(
       return dnnl::memory::data_type::s32;
     default:
       return absl::InvalidArgumentError(absl::StrCat(
-          "Unsupported DNN datatype: ", static_cast<int>(dnn_type)));
+          "Unsupported DNN datatype: ", dnn::DataType_Name(dnn_type)));
   }
 }
 

@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "dnnl.hpp"
 #include "dnnl_sycl.hpp"
-#include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/stream.h"
@@ -83,10 +82,10 @@ struct OneDnnConvPrimitive {
 // Everything the oneDNN convolution execution path needs that is derivable
 // from an OneDnnConvConfig alone (no device buffers).
 struct OneDnnConvPrimitiveDesc {
+  dnn::ConvolutionKind kind;
   dnnl::engine engine;
   dnnl::memory::desc src_md;
   dnnl::memory::desc filter_md;
-  dnnl::memory::desc filter_md_prefer;
   dnnl::memory::desc dst_md;
   // Bias for the fused forward path; absent otherwise. `arg_key` is the
   // execution-args key to bind the bias buffer under:
@@ -101,7 +100,6 @@ struct OneDnnConvPrimitiveDesc {
   // True when a `sum` post-op is present; the caller must copy side_input
   // into dst before executing the primitive.
   bool has_side_input_sum = false;
-  dnnl::primitive_attr post_ops_attr;
   std::variant<dnnl::convolution_forward::primitive_desc,
                dnnl::convolution_backward_data::primitive_desc,
                dnnl::convolution_backward_weights::primitive_desc>

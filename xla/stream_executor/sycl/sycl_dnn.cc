@@ -21,8 +21,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "dnnl.hpp"
-#include "xla/service/gpu/gpu_conv_runner.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
@@ -55,7 +54,7 @@ class OnednnConvRunner : public dnn::ConvRunner {
  public:
   OnednnConvRunner(OneDnnConvPrimitiveDesc onednn_conv_primitive_desc,
                    size_t workspace_size)
-      : onednn_conv_primitive_desc_(onednn_conv_primitive_desc),
+      : onednn_conv_primitive_desc_(std::move(onednn_conv_primitive_desc)),
         workspace_size_(workspace_size) {}
   std::string ToString() const override { return "OnednnConvRunner"; }
 
@@ -85,7 +84,7 @@ class OnednnFusedConvRunner : public dnn::FusedConvRunner {
  public:
   OnednnFusedConvRunner(OneDnnConvPrimitiveDesc onednn_conv_primitive_desc,
                         size_t workspace_size)
-      : onednn_conv_primitive_desc_(onednn_conv_primitive_desc),
+      : onednn_conv_primitive_desc_(std::move(onednn_conv_primitive_desc)),
         workspace_size_(workspace_size) {}
   std::string ToString() const override { return "OnednnFusedConvRunner"; }
 
@@ -132,7 +131,7 @@ OnednnSupport::ConvolveRunnerFromDesc(
   size_t workspace_size =
       std::visit([](const auto& pd) { return pd.scratchpad_desc().get_size(); },
                  primitive_desc.conv_pd);
-  return {std::make_unique<OnednnConvRunner>(primitive_desc, workspace_size)};
+  return {std::make_unique<OnednnConvRunner>(std::move(primitive_desc), workspace_size)};
 }
 
 absl::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>>
@@ -150,15 +149,18 @@ OnednnSupport::FusedConvolveRunnerFromDesc(
   ABSL_ASSIGN_OR_RETURN(
       OneDnnConvPrimitiveDesc primitive_desc,
       CreateOneDnnConvPrimitiveDesc(
-          OneDnnConvConfig{kind, element_type, output_type, input_descriptor,
-                           filter_descriptor, output_descriptor,
-                           convolution_descriptor},
+          OneDnnConvConfig{
+              kind, element_type, output_type, input_descriptor,
+              filter_descriptor, output_descriptor, convolution_descriptor,
+              conv_scale,
+              OneDnnConvConfig::Fusion{activation_mode, side_input_scale,
+                                       leakyrelu_alpha}},
           stream));
   size_t workspace_size =
       std::visit([](const auto& pd) { return pd.scratchpad_desc().get_size(); },
                  primitive_desc.conv_pd);
   return {
-      std::make_unique<OnednnFusedConvRunner>(primitive_desc, workspace_size)};
+      std::make_unique<OnednnFusedConvRunner>(std::move(primitive_desc), workspace_size)};
 }
 
 void initialize_onednn() {
