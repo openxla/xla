@@ -4029,7 +4029,6 @@ cc_library(
         "//xla/stream_executor/gpu:buffer_comparator_kernel",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/tsl/platform:env",
-        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

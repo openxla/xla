@@ -20,11 +20,11 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -55,6 +55,54 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+namespace {
+
+// Persistent, per-StreamExecutor device scalar used as the mismatch counter by
+// DeviceCompare. It is attached to the StreamExecutor as a Resource, so it is
+// allocated once per executor on first use and freed when the executor is
+// destroyed.
+//
+// This avoids calling AllocateScalar/Deallocate on every comparison. On CUDA
+// with the virtual-memory-management allocator, a per-call allocate/deallocate
+// of this 8-byte scalar triggers cuMemCreate/cuMemMap/cuMemRelease plus a
+// context-wide cuCtxSynchronize, which is extremely expensive at the scale of
+// autotuning (hundreds of comparisons per module).
+class MismatchCounterResource : public se::StreamExecutor::Resource {
+ public:
+  MismatchCounterResource(se::StreamExecutor* executor,
+                          se::DeviceAddress<uint64_t> counter)
+      : executor_(executor), counter_(counter) {}
+
+  ~MismatchCounterResource() override {
+    if (!counter_.is_null()) {
+      executor_->Deallocate(&counter_);
+    }
+  }
+
+  se::DeviceAddress<uint64_t> counter() const { return counter_; }
+
+ private:
+  se::StreamExecutor* executor_;
+  se::DeviceAddress<uint64_t> counter_;
+};
+
+// Returns the executor's persistent mismatch counter, allocating and attaching
+// it on first use. Returns an error if the one-time allocation fails.
+static absl::StatusOr<se::DeviceAddress<uint64_t>> GetMismatchCounter(
+    se::StreamExecutor* executor) {
+  MismatchCounterResource* resource =
+      executor->GetOrCreateResource<MismatchCounterResource>([&] {
+        return std::make_unique<MismatchCounterResource>(
+            executor, executor->AllocateScalar<uint64_t>());
+      });
+  if (resource->counter().is_null()) {
+    return Internal("Failed to allocate device mismatch counter");
+  }
+  return resource->counter();
+}
+
+}  // namespace
+
 struct ComparisonParams {
   double relative_tol = 0.1;
   bool verbose = true;
@@ -77,14 +125,15 @@ static absl::StatusOr<bool> DeviceCompare(const ComparisonParams& params) {
   // mismatching element. Keeping the counter in device memory serves these
   // atomics from the L2 cache instead of crossing PCIe per element.
   //
+  // The counter is a persistent per-executor scalar (see
+  // MismatchCounterResource) that is reused across comparisons and freed when
+  // the executor is destroyed, rather than being allocated/freed per call. It
+  // is MemZero'd below before the kernel runs, so reuse is safe.
+  //
   // Reading it back stays correct because the `Memcpy` and `BlockHostUntilDone`
   // below are stream-ordered after the kernel.
-  se::DeviceAddress<uint64_t> out_device = executor->AllocateScalar<uint64_t>();
-  if (out_device.is_null()) {
-    return Internal("Failed to allocate device mismatch counter");
-  }
-  // Free the counter on every return path.
-  absl::Cleanup free_counter = [&] { executor->Deallocate(&out_device); };
+  ABSL_ASSIGN_OR_RETURN(se::DeviceAddress<uint64_t> out_device,
+                        GetMismatchCounter(executor));
   se::DeviceAddressBase out_addr(out_device);
 
   ABSL_RETURN_IF_ERROR(params.stream->MemZero(&out_addr, sizeof(uint64_t)));

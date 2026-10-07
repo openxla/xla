@@ -503,6 +503,27 @@ TEST_F(BufferComparatorTest, ErrorReportOnMultidimensionalMismatch) {
   EXPECT_THAT(error_report, ::testing::HasSubstr("Max absolute difference:"));
 }
 
+// The mismatch counter used by DeviceCompare is a persistent per-StreamExecutor
+// resource that is reused across comparisons. This test runs many comparisons
+// back-to-back on the same
+// executor, alternating between equal and mismatching buffers, to pin that the
+// counter is correctly re-zeroed between calls and that a prior mismatch never
+// leaks into a subsequent equal comparison (or vice versa).
+TEST_F(BufferComparatorTest, ReusedCounterIsRezeroedAcrossComparisons) {
+  const std::vector<float> equal_a = {1.0f, 2.0f, 3.0f, 4.0f};
+  const std::vector<float> equal_b = {1.0f, 2.0f, 3.0f, 4.0f};
+  const std::vector<float> mismatch_b = {1.0f, 99.0f, 3.0f, 4.0f};
+
+  for (int i = 0; i < 50; ++i) {
+    // Equal comparison must return true even right after a mismatch.
+    EXPECT_TRUE(CompareEqualFloatBuffers<float>(equal_a, equal_b, 0.01))
+        << "equal comparison failed on iteration " << i;
+    // Mismatch comparison must return false even right after an equal compare.
+    EXPECT_FALSE(CompareEqualFloatBuffers<float>(equal_a, mismatch_b, 0.01))
+        << "mismatch comparison failed on iteration " << i;
+  }
+}
+
 // The following tests exercise the *parallel* host-compare path, which is only
 // taken for buffers with at least `kParallelThreshold` (1 << 20) elements AND a
 // non-null error_report. Because the parallel path is a second, independent
