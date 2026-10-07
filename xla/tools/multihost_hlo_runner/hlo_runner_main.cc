@@ -125,7 +125,8 @@ struct HloRunnerConfig {
   bool recreate_profiler_session_between_repeats = false;
   std::string execution_options_path = "";
   int64_t gpu_client_initialization_timeout_sec = 300;
-  float gpu_client_mem_fraction = xla::GpuAllocatorConfig{}.memory_fraction;
+  float gpu_client_mem_fraction =
+      xla::MemFractionStart(xla::GpuAllocatorConfig{}.memory_fraction);
   bool profile_execution = false;
   std::string append_profile_to_csv_file = "";
   std::string profile_csv_statistic = "mean";
@@ -433,7 +434,8 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
     gpu_options.node_id = opts.task_id;
     gpu_options.num_nodes = opts.num_nodes;
     gpu_options.enable_mock_nccl = opts.enable_mock_nccl;
-    gpu_options.allocator_config.memory_fraction = opts.gpu_client_mem_fraction;
+    gpu_options.allocator_config.memory_fraction =
+        xla::MemFractionFromFraction(opts.gpu_client_mem_fraction);
     ABSL_ASSIGN_OR_RETURN(
         env, xla::GetPjRtEnvironmentForGpu(
                  opts.address_str, gpu_options,

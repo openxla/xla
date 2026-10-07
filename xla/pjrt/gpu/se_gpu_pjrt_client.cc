@@ -1320,7 +1320,8 @@ GetStreamExecutorGpuDeviceAllocator(
         ABSL_ASSIGN_OR_RETURN(
             auto async_allocator,
             CreateCudaAsyncAllocator(
-                *(ordinal_and_device.second), allocator_config.memory_fraction,
+                *(ordinal_and_device.second),
+                MemFractionStart(allocator_config.memory_fraction),
                 allocator_config.preallocate, false, false, true));
         allocators.push_back(
             {std::move(async_allocator),
@@ -1452,7 +1453,7 @@ GetStreamExecutorGpuDeviceAllocator(
             {device->executor(), device->compute_stream()});
       }
       return se::gpu::CudaDeviceAddressVmmAllocator::Create(
-          platform, allocator_config.memory_fraction,
+          platform, MemFractionStart(allocator_config.memory_fraction),
           allocator_config.gpu_system_memory_size, executor_streams,
           /*reclaim_exempt_memory_space=*/
           static_cast<int64_t>(gpu::MemorySpaceColor::kCollective));
@@ -1464,7 +1465,7 @@ GetStreamExecutorGpuDeviceAllocator(
             {device->executor(), device->compute_stream()});
       }
       return se::gpu::RocmDeviceAddressVmmAllocator::Create(
-          platform, allocator_config.memory_fraction,
+          platform, MemFractionStart(allocator_config.memory_fraction),
           allocator_config.gpu_system_memory_size, executor_streams,
           /*reclaim_exempt_memory_space=*/
           static_cast<int64_t>(gpu::MemorySpaceColor::kCollective));
@@ -1484,7 +1485,8 @@ GetStreamExecutorGpuDeviceAllocator(
           auto collective_bfc_allocator,
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
-              /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
+              /*memory_fraction=*/
+              1.0 - MemFractionStart(allocator_config.memory_fraction),
               allocator_config.collective_memory_size));
       allocators.push_back(
           {std::move(collective_bfc_allocator),

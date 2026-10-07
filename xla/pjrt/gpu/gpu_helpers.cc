@@ -34,12 +34,13 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/numbers.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/integrations/stream_executor_allocator.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
+#include "tsl/platform/numbers.h"
 
 namespace xla {
 
@@ -100,8 +102,8 @@ void EnablePeerAccess(absl::Span<se::StreamExecutor* const> executors) {
 
 // Builds a BFCAllocator for all local GPUs.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
-    se::StreamExecutor* executor, double memory_fraction, bool preallocate,
-    std::optional<int64_t> gpu_system_memory_size,
+    se::StreamExecutor* executor, const MemFraction& memory_fraction,
+    bool preallocate, std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
     bool enable_spatial_partitioning) {
@@ -144,9 +146,12 @@ absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
   // unified memory.
   // When unified memory is enabled, allow GPU memory oversubscription by
   // setting memory_fraction > 1.
+  // Growth for FlexMemFraction policies is wired up by a follow-up change;
+  // until then only the start fraction matters.
+  const double start_fraction = MemFractionStart(memory_fraction);
   size_t allocator_memory = enable_unified_memory
-                                ? total_memory * fmax(1.0, memory_fraction)
-                                : total_memory * memory_fraction;
+                                ? total_memory * fmax(1.0, start_fraction)
+                                : total_memory * start_fraction;
   // If gpu_system_memory_size is set, use it instead of default value.
   if (gpu_system_memory_size.has_value()) {
     allocator_memory = gpu_system_memory_size.value();

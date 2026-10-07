@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
@@ -479,7 +480,8 @@ PjRtEnvironment& CollectivePerfTableGen::GetPjRtEnv() {
     GpuClientOptions gpu_opts;
     gpu_opts.num_nodes = config_.num_nodes;
     gpu_opts.node_id = config_.task_id;
-    gpu_opts.allocator_config.memory_fraction = kGpuMemFraction;
+    gpu_opts.allocator_config.memory_fraction =
+        MemFractionFromFraction(kGpuMemFraction);
     absl::StatusOr<PjRtEnvironment> pjrt_env = GetPjRtEnvironmentForGpu(
         config_.coordinator_address, gpu_opts, config_.connection_timeout);
     CHECK_OK(pjrt_env);
