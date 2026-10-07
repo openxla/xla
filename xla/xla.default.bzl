@@ -90,8 +90,6 @@ def xla_cc_binary(deps = [], copts = tsl_copts(), **kwargs):
 def xla_cc_test(
         name,
         deps = [],
-        tags = [],
-        flaky = False,
         **kwargs):
     """A wrapper around strict_cc_test that adds XLA-specific dependencies.
 
@@ -101,21 +99,20 @@ def xla_cc_test(
     Args:
       name: The name of the test.
       deps: The dependencies of the test.
-      tags: Tags for the test.
-      flaky: If True, adds "flaky" tag to the test for tracking purposes.
-      **kwargs: Other arguments to pass to the test.
+      **kwargs: Other arguments to pass to the test, including:
+        - tags: Tags for the test.
+        - flaky: If True, retries test up to 3 times and adds "flaky" tag.
     """
 
-    # Add "flaky" tag if flaky parameter is set to True
-    test_tags = list(tags)
-    if flaky and "flaky" not in test_tags:
-        test_tags.append("flaky")
+    # If flaky is set, add "flaky" tag to existing tags
+    if kwargs.get("flaky", False):
+        existing_tags = kwargs.get("tags", [])
+        if "flaky" not in existing_tags:
+            kwargs["tags"] = existing_tags + ["flaky"]
 
     strict_cc_test(
         name = name,
         deps = deps + _XLA_SHARED_OBJECT_SENSITIVE_DEPS,
-        tags = test_tags,
-        flaky = flaky,
         exec_properties = tf_exec_properties(kwargs),
         **kwargs
     )
