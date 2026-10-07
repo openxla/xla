@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/status_macros.h"
 #include "xla/tools/hlo_decomposer.h"
+#include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -310,11 +311,12 @@ absl::Status ConfigAssigner::AssignConfigs(
 }
 
 absl::Status ConfigAssigner::AssignConfig(HloInstruction* instr) {
-  ABSL_ASSIGN_OR_RETURN(Config config, GetConfig(instr).Await());
+  ABSL_ASSIGN_OR_RETURN(std::vector<Config> configs,
+                        GetConfigsForAll({{instr}}));
   if (options_.dump_hlos) {
-    ABSL_RETURN_IF_ERROR(DumpHlo(*instr, config));
+    ABSL_RETURN_IF_ERROR(DumpHlo(*instr, configs[0]));
   }
-  ABSL_RETURN_IF_ERROR(orchestrator_->ApplyConfig(*instr, config));
+  ABSL_RETURN_IF_ERROR(orchestrator_->ApplyConfig(*instr, configs[0]));
   if (autotuner_ != nullptr) {
     ABSL_RETURN_IF_ERROR(autotuner_->DumpTuningLogs());
   }
@@ -362,18 +364,19 @@ tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetConfig(
 
   // Autotuning enabled but we prefer estimated configs if they are available
   if (options_.prefer_estimated_configs) {
-    absl::StatusOr<Config> compilable_config =
-        GetFirstCompilableEstimatedConfig(instr,
-                                          /*only_with_estimates=*/true);
-    if (compilable_config.ok()) {
-      ABSL_RETURN_IF_ERROR(Insert(instr, *compilable_config));
-      return std::move(*compilable_config);
-    }
-
-    VLOG(1) << "Failed to find compilable estimated config: "
-            << compilable_config.status();
+    return GetFirstCompilableEstimatedConfig(instr,
+                                             /*only_with_estimates=*/true)
+        .Map([this, instr](Config config) -> absl::StatusOr<Config> {
+          ABSL_RETURN_IF_ERROR(Insert(instr, config));
+          return std::move(config);
+        });
   }
 
+  return GetTunedConfig(instr);
+}
+
+tsl::Future<ConfigAssigner::Config> ConfigAssigner::GetTunedConfig(
+    const HloInstruction* instr) {
   TF_RET_CHECK(autotuner_ != nullptr)
       << "Cannot autotune HLO: " << instr->ToString()
       << ". Autotuner is not initialized.";
@@ -416,7 +419,7 @@ absl::StatusOr<ConfigAssigner::Config> ConfigAssigner::GetFirstCompilableConfig(
       "All supported configs failed to compile for HLO.");
 }
 
-absl::StatusOr<ConfigAssigner::Config>
+tsl::Future<ConfigAssigner::Config>
 ConfigAssigner::GetFirstCompilableEstimatedConfig(const HloInstruction* instr,
                                                   bool only_with_estimates) {
   ABSL_ASSIGN_OR_RETURN(
@@ -443,7 +446,17 @@ ConfigAssigner::GetFirstCompilableEstimatedConfig(const HloInstruction* instr,
     configs.push_back(std::move(config.config));
   }
 
-  return GetFirstCompilableConfig(instr, std::move(configs));
+  // Compile on the thread pool so that many instructions proceed in parallel,
+  // unless GetFirstCompilableConfig awaits the pool itself, which must not be
+  // done from a pool thread.
+  tsl::Executor* executor = thread_pool_ != nullptr && !configs.empty() &&
+                                    !options_.compile_all_supported_configs
+                                ? thread_pool_->AsExecutor()
+                                : &tsl::InlineExecutor::Instance();
+  return tsl::MakeFutureOn(
+      *executor, [this, instr, configs = std::move(configs)]() mutable {
+        return GetFirstCompilableConfig(instr, std::move(configs));
+      });
 }
 
 absl::StatusOr<ConfigAssigner::Config>
@@ -453,7 +466,8 @@ ConfigAssigner::GetFirstCompilableConfigOrDefault(const HloInstruction* instr) {
     // case the first good config is a config without estimates.
     absl::StatusOr<Config> compilable_config =
         GetFirstCompilableEstimatedConfig(instr,
-                                          /*only_with_estimates=*/false);
+                                          /*only_with_estimates=*/false)
+            .Await();
     if (compilable_config.ok()) {
       return compilable_config;
     }
@@ -523,6 +537,21 @@ ConfigAssigner::GetConfigsForAll(
   future_configs.reserve(instruction_groups.size());
   for (int i = 0; i < instruction_groups.size(); i++) {
     future_configs.push_back(GetConfig(instruction_groups[i][0]));
+  }
+
+  // Instructions whose estimated configs did not compile fall back to tuning.
+  // This is done on the calling thread: some backends' GetSupportedConfigs
+  // (e.g. the block-level emitter's tiling search) mutate backend-owned state
+  // that is not thread-safe.
+  if (options_.allow_autotuning && options_.prefer_estimated_configs &&
+      !options_.expect_all_instructions_in_cache) {
+    for (int i = 0; i < instruction_groups.size(); i++) {
+      const absl::Status& status = future_configs[i].Await().status();
+      if (!status.ok()) {
+        VLOG(1) << "Failed to find compilable estimated config: " << status;
+        future_configs[i] = GetTunedConfig(instruction_groups[i][0]);
+      }
+    }
   }
 
   std::vector<absl::StatusOr<Config>> status_or_configs;
