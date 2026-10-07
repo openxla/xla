@@ -27,7 +27,7 @@ namespace xla {
 namespace {
 
 using NumericTest =
-    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(NumericTest, Remainder) {
   XlaBuilder builder("remainder");

@@ -32,7 +32,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using StochasticConvertTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
+using StochasticConvertTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 const char* const kModuleStr = R"(
   HloModule stochastic-convert

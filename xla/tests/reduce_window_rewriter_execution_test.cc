@@ -33,7 +33,7 @@ namespace xla {
 namespace {
 
 class ReduceWindowRewriterExecutionTest
-    : public HloPjRtInterpreterReferenceMixin<HloTestBase> {};
+    : public HloInterpreterReferenceMixin<HloTestBase> {};
 
 TEST_F(ReduceWindowRewriterExecutionTest, RewriterTest) {
   absl::string_view hlo_string = R"(
