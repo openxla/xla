@@ -209,16 +209,4 @@ absl::StatusOr<bool> ScanRewriter::RunOnComputation(
   return changed;
 }
 
-absl::StatusOr<bool> ScanRewriter::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-  for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
-    changed |= result;
-  }
-  return changed;
-}
-
 }  // namespace xla::gpu

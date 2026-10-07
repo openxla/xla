@@ -159,20 +159,4 @@ absl::StatusOr<bool> EstimateCubSortScratchSize::RunOnComputation(
   return changed;
 }
 
-absl::StatusOr<bool> EstimateCubSortScratchSize::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  XLA_VLOG_LINES(3, "EstimateCubSortScratchSize::RunImpl(), before:\n" +
-                        module->ToString());
-  bool changed = false;
-  for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
-    changed |= result;
-  }
-  XLA_VLOG_LINES(3, "EstimateCubSortScratchSize::RunImpl(), after:\n" +
-                        module->ToString());
-  return changed;
-}
-
 }  // namespace xla::gpu

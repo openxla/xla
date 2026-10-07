@@ -76,6 +76,23 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
+    name = "hlo_pass_interface_test",
+    srcs = ["hlo_pass_interface_test.cc"],
+    deps = [
+        ":hlo_pass",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "hlo_pass_filter",
     srcs = ["hlo_pass_filter.cc"],
