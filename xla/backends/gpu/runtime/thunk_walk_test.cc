@@ -17,6 +17,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -118,7 +119,8 @@ TEST(ThunkWalkTest, WhileThunk) {
 
   WhileThunk while_thunk(Thunk::ThunkInfo(), BufferAllocation::Slice(),
                          std::move(condition_thunk_sequence),
-                         std::move(body_thunk_sequence));
+                         std::move(body_thunk_sequence),
+                         /*trip_count=*/std::nullopt, /*devices_per_host=*/1);
 
   EXPECT_THAT(
       GetAllThunks(&while_thunk),
