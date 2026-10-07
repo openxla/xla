@@ -286,9 +286,6 @@ requires runtime, driver, and build-time CUDA toolkit versions of at least 12.9.
 ROCm disables conditional/while graph capture, and oneAPI command buffer
 conversion is disabled. Enabling a category does not override these checks.
 
-Use `xla_gpu_command_buffer_scheduling_mode` instead of the deprecated
-`xla_gpu_graph_enable_concurrent_region`.
-
 For implementation details, see the
 [flag definitions](https://github.com/openxla/xla/blob/main/xla/debug_options_flags.cc),
 [option enums](https://github.com/openxla/xla/blob/main/xla/xla.proto),
