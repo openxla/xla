@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
@@ -102,6 +103,31 @@ TEST_F(CudaRawMemoryAllocationTest, SizeIsAtLeastRequested) {
 
   EXPECT_NE(alloc->GetHandle(), 0u);
   EXPECT_GE(alloc->address().size(), 1u);
+}
+
+// The allocation is VMM-only, so options that opt out of VMM are rejected
+// instead of silently issuing VMM driver calls.
+TEST_F(CudaRawMemoryAllocationTest, DisabledVmmOptionsAreRejected) {
+  CudaDeviceAllocator::Options options;
+  options.use_vmm = false;
+  EXPECT_THAT(CudaRawMemoryAllocation::Create(executor_, kTestSize, options),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+// As in CudaDeviceAllocator, the size is padded to the larger of
+// options.alignment and the mapping granularity.
+TEST_F(CudaRawMemoryAllocationTest, AlignmentLargerThanGranularityPadsSize) {
+  // A one-byte request with probed options is padded to exactly one granule.
+  ASSERT_OK_AND_ASSIGN(auto one_granule,
+                       CudaRawMemoryAllocation::Create(executor_, 1));
+  const uint64_t granularity = one_granule->address().size();
+
+  CudaDeviceAllocator::Options options;
+  options.alignment = 2 * granularity;
+  ASSERT_OK_AND_ASSIGN(auto alloc,
+                       CudaRawMemoryAllocation::Create(executor_, 1, options));
+
+  EXPECT_EQ(alloc->address().size(), 2 * granularity);
 }
 
 }  // namespace

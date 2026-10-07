@@ -45,13 +45,18 @@ class CudaMemoryReservation : public MemoryReservation {
 
   // Same, but derives the mapping granularity from `options` instead of
   // probing the device, so it matches physical allocations created with the
-  // same options.
+  // same options. Like CudaDeviceAllocator, the range is aligned and padded to
+  // the larger of `options.alignment` and the mapping granularity. Fails with
+  // InvalidArgument when `options.use_vmm` is false.
   static absl::StatusOr<std::unique_ptr<CudaMemoryReservation>> Create(
       StreamExecutor* executor, uint64_t size,
       const CudaDeviceAllocator::Options& options);
 
   // Returns the base address and padded size of the reserved virtual range.
   DeviceAddressBase address() const override;
+
+  // The mapping granularity reported by the driver for the handle types in
+  // use; mapping offsets and sizes must be multiples of it.
   size_t granularity() const override { return granularity_; }
 
   ~CudaMemoryReservation() override;
@@ -61,6 +66,12 @@ class CudaMemoryReservation : public MemoryReservation {
  private:
   explicit CudaMemoryReservation(StreamExecutor* executor, CUdeviceptr ptr,
                                  uint64_t size, size_t granularity);
+
+  // Shared by both Create overloads. The caller has activated the context and
+  // resolved `device`.
+  static absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
+  CreateWithDevice(StreamExecutor* executor, CUdevice device, uint64_t size,
+                   const CudaDeviceAllocator::Options& options);
 
   // Maps [reservation_offset, reservation_offset+size) in the reservation to
   // [allocation_offset, allocation_offset+size) in allocation via cuMemMap.

@@ -47,8 +47,9 @@ class MemoryReservation {
   virtual DeviceAddressBase address() const = 0;
 
   // Alignment required for mapping offsets and sizes. Backends may report a
-  // recommended granularity larger than their hardware minimum.
-  virtual size_t granularity() const { return 1; }
+  // recommended granularity larger than their hardware minimum. Pure virtual
+  // so that a backend cannot silently inherit a wrong value.
+  virtual size_t granularity() const = 0;
 
   // Describes a mapping from a memory reservation range
   // [reservation_offset, reservation_offset + size) to a physical allocation

@@ -852,6 +852,7 @@ cc_library(
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@local_config_cuda//cuda:cuda_headers",
@@ -921,6 +922,7 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",  # build_cleaner: keep
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",

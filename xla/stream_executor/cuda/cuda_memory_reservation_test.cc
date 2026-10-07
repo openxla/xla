@@ -96,6 +96,36 @@ TEST_F(CudaMemoryReservationTest, CreateWithExplicitOptions) {
   EXPECT_GT(res->granularity(), 0);
 }
 
+// The reservation is VMM-only, so options that opt out of VMM are rejected
+// instead of silently issuing VMM driver calls.
+TEST_F(CudaMemoryReservationTest, DisabledVmmOptionsAreRejected) {
+  CudaDeviceAllocator::Options options;
+  options.use_vmm = false;
+  EXPECT_THAT(CudaMemoryReservation::Create(executor_, kTestSize, options),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+// As in CudaDeviceAllocator, the range is aligned and padded to the larger of
+// options.alignment and the mapping granularity, while granularity() keeps
+// reporting the driver's mapping granularity.
+TEST_F(CudaMemoryReservationTest,
+       AlignmentLargerThanGranularityAlignsReservation) {
+  ASSERT_OK_AND_ASSIGN(auto probe, CudaMemoryReservation::Create(executor_, 1));
+  const size_t granularity = probe->granularity();
+  ASSERT_GT(granularity, 0);
+
+  CudaDeviceAllocator::Options options;
+  options.alignment = 2 * granularity;
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, 1, options));
+
+  EXPECT_EQ(res->granularity(), granularity);
+  EXPECT_EQ(res->address().size(), 2 * granularity);
+  EXPECT_EQ(
+      reinterpret_cast<uintptr_t>(res->address().opaque()) % (2 * granularity),
+      0);
+}
+
 // Verifies the full MapTo workflow. The ScopedMapping is destroyed first,
 // unmapping the reservation range, then the allocation is released.
 TEST_F(CudaMemoryReservationTest, MapToSingleAllocation) {
