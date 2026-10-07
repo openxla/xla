@@ -2542,12 +2542,24 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
 
   // Step 1: Collect the destination allocations we are allowed to reuse: the
   // already-materialized temp allocations of a different but compatible color.
+  // Invariant: A destination must be a non-empty preallocated temp allocation
+  // of a distinct color C where can_use_allocation(buffer_color, C) holds.
+  // Why: Zero-sized, same-color, or non-temp allocations (parameters, live-out,
+  // constants, thread-local) cannot safely host cross-color temp buffers.
+  // Example: S(1) 8 KiB temp allocation reused for S(0) temp buffers.
+  auto is_compatible_temp_destination =
+      [&](const BufferAllocation& allocation) {
+        return allocation.size() > 0 && allocation.color() != buffer_color &&
+               allocation.IsPreallocatedTempBuffer() &&
+               opts_.can_use_allocation(buffer_color, allocation.color());
+      };
+
   std::vector<BufferAllocation*> destinations;
+  int64_t max_destination_size = 0;
   for (BufferAllocation& allocation : assignment->allocations_) {
-    if (allocation.color() != buffer_color &&
-        allocation.IsPreallocatedTempBuffer() &&
-        opts_.can_use_allocation(buffer_color, allocation.color())) {
+    if (is_compatible_temp_destination(allocation)) {
       destinations.push_back(&allocation);
+      max_destination_size = std::max(max_destination_size, allocation.size());
     }
   }
   if (destinations.empty()) {
@@ -2578,10 +2590,24 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
              live_ranges.contains(buffer_value);
     };
 
-    if (absl::c_all_of(hlo_buffer.values(), is_moveable)) {
-      candidates.push_back(
-          ReuseCandidate{&hlo_buffer, assignment->HloBufferSize(hlo_buffer)});
+    if (!absl::c_all_of(hlo_buffer.values(), is_moveable)) {
+      continue;
     }
+
+    const int64_t buffer_size = assignment->HloBufferSize(hlo_buffer);
+    // Invariant: Candidate buffer size must not exceed the largest compatible
+    // destination allocation size.
+    // Why: ReuseCompatibleTempHeaps never grows destination allocations;
+    // skipping oversized candidates avoids redundant sorting and interference
+    // scans.
+    // Example: 8 KiB S(0) temp skipped when max S(1) temp allocation is 4 KiB.
+    if (buffer_size > max_destination_size) {
+      continue;
+    }
+    candidates.push_back(ReuseCandidate{&hlo_buffer, buffer_size});
+  }
+  if (candidates.empty()) {
+    return 0;
   }
 
   // Step 3: Try the largest buffers first; they are the hardest to fit into a
@@ -2612,8 +2638,17 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
   // Finds the best-fit free gap into which `candidate` fits inside
   // `allocation`, or nullopt if it does not fit. A gap is free if no buffer
   // occupying it is live at the same time as the candidate.
-  auto find_placement = [&](const ReuseCandidate& candidate,
-                            BufferAllocation& allocation) {
+  auto find_placement =
+      [&](const ReuseCandidate& candidate,
+          BufferAllocation& allocation) -> std::optional<ReusePlacement> {
+    // Invariant: Destination allocation size must be at least candidate.size.
+    // Why: FindBestFitGap rejects oversized candidates anyway, so guarding here
+    // avoids scanning allocation.assigned_buffers() for live-range interference
+    // when the buffer cannot possibly fit.
+    // Example: 4 KiB candidate skips scanning a 1 KiB compatible temp heap.
+    if (allocation.size() < candidate.size) {
+      return std::nullopt;
+    }
     // Collect the byte ranges that block the candidate: only buffers whose live
     // range overlaps the candidate's. Non-overlapping buffers are invisible
     // because the candidate can safely reuse their storage.
