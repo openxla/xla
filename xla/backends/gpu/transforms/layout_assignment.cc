@@ -1174,27 +1174,20 @@ bool IsSmallPieceOfLargeArray(const Shape& piece, const Shape& large) {
 // Prefer the entry computation's parameter layout over the instruction's
 // existing layout, which is only a hint before layout assignment. An AUTO
 // layout, including one with only a memory space, has no dimension order to
-// propagate through a transpose.
+// use as a hint. The index selects an array leaf of a tuple parameter.
 std::optional<Shape> ShapeWithLayoutHint(
     const HloInstruction* instruction,
-    const ComputationLayout* entry_computation_layout) {
-  if (!instruction->shape().IsArray()) {
-    return std::nullopt;
-  }
+    const ComputationLayout& entry_computation_layout,
+    ShapeIndexView index = {}) {
+  const Shape* shape = &instruction->shape();
   if (instruction->opcode() == HloOpcode::kParameter &&
-      instruction->parent()->IsEntryComputation() &&
-      entry_computation_layout != nullptr) {
-    const ShapeLayout& parameter_layout =
-        entry_computation_layout->parameter_layout(
-            instruction->parameter_number());
-    if (parameter_layout.shape().IsArray() &&
-        parameter_layout.MinorToMajorInLayoutIsSet()) {
-      return parameter_layout.shape();
-    }
-    return std::nullopt;
+      instruction->parent()->IsEntryComputation()) {
+    shape = &entry_computation_layout.parameter_shape(
+        instruction->parameter_number());
   }
-  if (LayoutUtil::HasMinorToMajorSetInLayout(instruction->shape())) {
-    return instruction->shape();
+  const Shape& subshape = ShapeUtil::GetSubshape(*shape, index);
+  if (subshape.IsArray() && LayoutUtil::HasMinorToMajorSetInLayout(subshape)) {
+    return subshape;
   }
   return std::nullopt;
 }
@@ -1237,54 +1230,40 @@ Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
   // bodies are assigned before their callers, so follow the loop operands
   // back to that producer and preserve its layout, or pick the layout that
   // keeps the transpose a bitcast.
-  const HloInstruction* parameter = buffer.instruction();
-  ShapeIndex index = buffer.index();
-  for (int depth = 0; depth < 8 && parameter->opcode() == HloOpcode::kParameter;
+  const HloValue* value = &buffer;
+  for (int depth = 0;
+       depth < 8 && value->instruction()->opcode() == HloOpcode::kParameter;
        ++depth) {
     const auto callers =
-        parameter->parent()->caller_instructions(HloOpcode::kWhile);
+        value->instruction()->parent()->caller_instructions(HloOpcode::kWhile);
     if (callers.size() != 1) {
       break;
     }
     const HloValueSet& values =
-        dataflow_analysis().GetValueSet(callers[0]->operand(0), index);
+        dataflow_analysis().GetValueSet(callers[0]->operand(0), value->index());
     if (values.values().size() != 1) {
       break;
     }
-    const HloValue* value = values.values().front();
+    value = values.values().front();
     const HloInstruction* producer = value->defining_instruction();
-    if (producer->opcode() == HloOpcode::kTranspose) {
-      std::optional<Shape> operand_shape = ShapeWithLayoutHint(
-          producer->operand(0), &saved_entry_computation_layout());
-      if (operand_shape.has_value()) {
-        Shape permuted = ShapeUtil::PermuteDimensions(producer->dimensions(),
-                                                      *operand_shape);
-        if (ShapeUtil::Compatible(permuted, buffer.shape())) {
-          return permuted.layout();
-        }
+    std::optional<Shape> hint;
+    if (producer->opcode() == HloOpcode::kParameter) {
+      if (!producer->parent()->IsEntryComputation()) {
+        continue;  // Carried in from an enclosing loop; keep following.
       }
-      break;
-    }
-    if (producer->opcode() != HloOpcode::kParameter) {
-      break;
-    }
-    if (producer->parent()->IsEntryComputation()) {
-      // The caller can pass an entry parameter directly, including a leaf of
-      // a tuple parameter. Its entry constraint is authoritative; the layout
-      // attached to the instruction may only be a hint.
-      const Shape& parameter_shape = ShapeUtil::GetSubshape(
-          saved_entry_computation_layout().parameter_shape(
-              producer->parameter_number()),
-          value->index());
-      if (LayoutUtil::HasMinorToMajorSetInLayout(parameter_shape) &&
-          ShapeUtil::Compatible(parameter_shape, buffer.shape())) {
-        return parameter_shape.layout();
+      hint = ShapeWithLayoutHint(producer, saved_entry_computation_layout(),
+                                 value->index());
+    } else if (producer->opcode() == HloOpcode::kTranspose) {
+      hint = ShapeWithLayoutHint(producer->operand(0),
+                                 saved_entry_computation_layout());
+      if (hint.has_value()) {
+        *hint = ShapeUtil::PermuteDimensions(producer->dimensions(), *hint);
       }
-      break;
     }
-    // Carried in from an enclosing loop; keep following.
-    parameter = producer;
-    index = value->index();
+    if (hint.has_value() && ShapeUtil::Compatible(*hint, buffer.shape())) {
+      return hint->layout();
+    }
+    break;
   }
   return LayoutAssignment::GetUnconstrainedLayout(buffer);
 }
