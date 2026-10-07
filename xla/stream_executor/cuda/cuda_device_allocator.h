@@ -103,6 +103,15 @@ CUmemAllocationProp BuildVmmAllocationProp(
 absl::StatusOr<CudaDeviceAllocator::Options> QueryDeviceAllocatorOptions(
     CUdevice device);
 
+// Creates a physical VMM allocation of `padded_size` bytes with cuMemCreate,
+// falling back through simpler handle types (FABRIC+POSIX_FD -> POSIX_FD ->
+// NONE) when the driver reports NOT_PERMITTED, NOT_SUPPORTED or INVALID_VALUE.
+// The returned handle may therefore carry fewer handle types than `properties`
+// requested; callers that computed `padded_size` from the original properties
+// accept that. The caller must have activated the device context.
+absl::StatusOr<CUmemGenericAllocationHandle> CreateVmmPhysicalAllocation(
+    CUmemAllocationProp properties, uint64_t padded_size);
+
 }  // namespace stream_executor::gpu
 
 #endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_DEVICE_ALLOCATOR_H_

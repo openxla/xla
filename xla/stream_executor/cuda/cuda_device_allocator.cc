@@ -151,7 +151,7 @@ absl::StatusOr<CudaDeviceAllocator::Options> QueryDeviceAllocatorOptions(
 // Creates a physical VMM allocation. Tries cuMemCreate with the given
 // properties and falls back through progressively simpler handle types:
 //   FABRIC+POSIX_FD -> POSIX_FD -> NONE
-static absl::StatusOr<CUmemGenericAllocationHandle> CreatePhysicalAllocation(
+absl::StatusOr<CUmemGenericAllocationHandle> CreateVmmPhysicalAllocation(
     CUmemAllocationProp properties, uint64_t padded_size) {
   CUmemGenericAllocationHandle handle;
 
@@ -237,7 +237,7 @@ AllocateDeviceMemory(StreamExecutor* executor,
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, effective_alignment);
 
   ABSL_ASSIGN_OR_RETURN(CUmemGenericAllocationHandle handle,
-                        CreatePhysicalAllocation(properties, padded_size));
+                        CreateVmmPhysicalAllocation(properties, padded_size));
 
   absl::Cleanup release_handle = [&] {
     absl::Status status = cuda::ToStatus(cuMemRelease(handle));
