@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 
 #include <string>
 #include <variant>
@@ -40,14 +40,25 @@ MATCHER_P(IsFixed, fraction, "") {
   return fixed != nullptr && fixed->fraction == fraction;
 }
 
-TEST(MemFractionTest, DefaultPreallocatesAndGrowsToAllDeviceMemory) {
-  EXPECT_THAT(GpuAllocatorConfig{}.memory_fraction, IsFlex(0.75, 1.0));
+TEST(MemFractionTest, DefaultHasFixedCap) {
+  EXPECT_THAT(GpuAllocatorConfig{}.memory_fraction, IsFixed(0.75));
 }
 
-TEST(MemFractionTest, BareFractionGrowsToAllDeviceMemory) {
+TEST(MemFractionTest, BareFractionHasFixedCap) {
   ASSERT_OK_AND_ASSIGN(MemFraction fraction, ParseMemFraction("0.75"));
-  EXPECT_THAT(fraction, IsFlex(0.75, 1.0));
-  EXPECT_THAT(ParseMemFraction(" 0.5 "), IsOkAndHolds(IsFlex(0.5, 1.0)));
+  EXPECT_THAT(fraction, IsFixed(0.75));
+  EXPECT_THAT(ParseMemFraction(" 0.5 "), IsOkAndHolds(IsFixed(0.5)));
+}
+
+TEST(MemFractionTest, PlusSuffixGrowsToAllDeviceMemory) {
+  EXPECT_THAT(ParseMemFraction("0.75+"), IsOkAndHolds(IsFlex(0.75, 1.0)));
+  EXPECT_THAT(ParseMemFraction(" 0.5+ "), IsOkAndHolds(IsFlex(0.5, 1.0)));
+  EXPECT_THAT(ParseMemFraction("0.75-1.0"), IsOkAndHolds(IsFlex(0.75, 1.0)));
+  // The shorthand has the same semantics as an explicit range ending at 1.
+  EXPECT_THAT(ParseMemFraction("1+"), IsOkAndHolds(IsFixed(1.0)));
+  EXPECT_THAT(ParseMemFraction("1.5+"),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("cap must be at least the start")));
 }
 
 TEST(MemFractionTest, RangeSetsStartAndCap) {
@@ -64,13 +75,27 @@ TEST(MemFractionTest, EqualEndsAreFixed) {
 TEST(MemFractionTest, BareFractionAtOrAboveOneIsFixed) {
   EXPECT_THAT(ParseMemFraction("1"), IsOkAndHolds(IsFixed(1.0)));
   EXPECT_THAT(ParseMemFraction("1.5"), IsOkAndHolds(IsFixed(1.5)));
-  EXPECT_THAT(MemFractionFromFraction(0.9), IsFlex(0.9, 1.0));
+}
+
+TEST(MemFractionTest, NumericFractionHasFixedCap) {
+  EXPECT_THAT(MemFractionFromFraction(0.75), IsFixed(0.75));
+  EXPECT_THAT(MemFractionFromFraction(0.9), IsFixed(0.9));
   EXPECT_THAT(MemFractionFromFraction(1.0), IsFixed(1.0));
+  EXPECT_THAT(MemFractionFromFraction(1.5), IsFixed(1.5));
+}
+
+TEST(MemFractionTest, ScientificNotation) {
+  EXPECT_THAT(ParseMemFraction("1e-3"), IsOkAndHolds(IsFixed(0.001)));
+  EXPECT_THAT(ParseMemFraction("1e-3+"), IsOkAndHolds(IsFlex(0.001, 1.0)));
+  EXPECT_THAT(ParseMemFraction("1e-3-2e-3"),
+              IsOkAndHolds(IsFlex(0.001, 0.002)));
+  EXPECT_THAT(ParseMemFraction("1E-3-1E+0"), IsOkAndHolds(IsFlex(0.001, 1.0)));
 }
 
 TEST(MemFractionTest, RejectsMalformedInput) {
-  for (const char* spec : {"", "abc", "0", "-0.5", "nan", "inf", "0.5-",
-                           "0.5-abc", "0.5-0.7-0.9"}) {
+  for (const char* spec :
+       {"", "abc", "0", "-0.5", "nan", "inf", "0.5-", "0.5-abc", "0.5-0.7-0.9",
+        "+", "0+", "-0.5+", "nan+", "inf+", "0.5++", "0.5+-1", "0.5-0.9+"}) {
     EXPECT_THAT(
         ParseMemFraction(spec),
         StatusIs(absl::StatusCode::kInvalidArgument, HasSubstr("START-CAP")))
@@ -90,7 +115,9 @@ TEST(MemFractionTest, StartIsThePreallocatedFraction) {
 }
 
 TEST(MemFractionTest, ToStringRoundTrips) {
-  for (const char* spec : {"0.75", "0.75-0.85", "0.75-0.75", "0.5", "1.5"}) {
+  for (const char* spec :
+       {"0.75", "0.75+", "0.75-1.0", "0.75-0.85", "0.75-0.75", "0.5", "1.5",
+        "1+", "1e-8", "1e-8+", "1e-8-2e-8"}) {
     ASSERT_OK_AND_ASSIGN(MemFraction fraction, ParseMemFraction(spec));
     const std::string text = MemFractionToString(fraction);
     ASSERT_OK_AND_ASSIGN(MemFraction reparsed, ParseMemFraction(text));
@@ -99,10 +126,13 @@ TEST(MemFractionTest, ToStringRoundTrips) {
     EXPECT_EQ(std::holds_alternative<FixedMemFraction>(reparsed),
               std::holds_alternative<FixedMemFraction>(fraction))
         << spec;
+    if (const auto* flex = std::get_if<FlexMemFraction>(&fraction)) {
+      EXPECT_THAT(reparsed, IsFlex(flex->start, flex->cap)) << spec;
+    }
   }
-  EXPECT_EQ(MemFractionToString(FlexMemFraction{0.75, 1.0}), "0.75");
+  EXPECT_EQ(MemFractionToString(FlexMemFraction{0.75, 1.0}), "0.75+");
   EXPECT_EQ(MemFractionToString(FlexMemFraction{0.75, 0.85}), "0.75-0.85");
-  EXPECT_EQ(MemFractionToString(FixedMemFraction{0.75}), "0.75-0.75");
+  EXPECT_EQ(MemFractionToString(FixedMemFraction{0.75}), "0.75");
 }
 
 }  // namespace

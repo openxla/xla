@@ -1017,7 +1017,7 @@ xla_test(
         "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
+        "//xla/pjrt/gpu:allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "//xla/service:hlo_runner_interface",

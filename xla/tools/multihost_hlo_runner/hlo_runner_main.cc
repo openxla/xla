@@ -38,10 +38,8 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
@@ -52,6 +50,8 @@ limitations under the License.
 #include "xla/tsl/util/fixed_option_set_flag.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
 namespace {
 const char* const kUsage = R"(
 This tool lets you run an HLO module on one or more GPUs.

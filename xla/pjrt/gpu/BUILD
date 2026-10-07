@@ -38,16 +38,41 @@ package(
 xla_gpu_internal_packages()
 
 cc_library(
+    name = "allocator_config",
+    srcs = ["allocator_config.cc"],
+    hdrs = ["allocator_config.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla/tsl/framework:allocator",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "allocator_config_test",
+    srcs = ["allocator_config_test.cc"],
+    deps = [
+        ":allocator_config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "gpu_helpers",
     srcs = ["gpu_helpers.cc"],
     hdrs = ["gpu_helpers.h"],
     visibility = internal_visibility(["//xla/pjrt:friends"]),
     deps = [
+        ":allocator_config",
         "//xla:types",
         "//xla:util",
         "//xla/client:client_library",
         "//xla/client:local_client",
-        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/service:platform_util",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
@@ -79,6 +104,7 @@ cc_library(
         "TENSORFLOW_USE_SYCL=1",
     ]),
     deps = [
+        ":allocator_config",
         ":gpu_helpers",
         ":gpu_metrics",
         ":se_gpu_pjrt_cross_host_transfer_proto_cc",
@@ -133,7 +159,6 @@ cc_library(
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/distributed:topology_util",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
-        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/pjrt/proto:topology_description_proto_cc",
@@ -256,6 +281,7 @@ cc_library(
     hdrs = ["se_gpu_pjrt_client.h"],
     visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_client_users"]),
     deps = [
+        ":allocator_config",
         ":se_gpu_pjrt_client_impl",
         ":se_gpu_pjrt_compiler_cuda_registration",
         ":se_gpu_topology_description",
@@ -278,7 +304,6 @@ cc_library(
         "//xla/pjrt:raw_buffer",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
-        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/se:local_device_state",
         "//xla/pjrt/se:pjrt_stream_executor_client",
@@ -382,6 +407,7 @@ xla_test(
     tags = ["nofixdeps"],
     use_legacy_runtime = True,
     deps = [
+        ":allocator_config",
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_client_test_lib",
         ":se_gpu_topology_description",
@@ -414,7 +440,6 @@ xla_test(
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:raw_buffer",
-        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/profiling:device_time_measurement",
         "//xla/pjrt/proto:compile_options_proto_cc",
@@ -714,13 +739,13 @@ xla_test(
     srcs = ["se_gpu_pjrt_client_benchmark_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":allocator_config",
         ":se_gpu_pjrt_client",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
-        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",

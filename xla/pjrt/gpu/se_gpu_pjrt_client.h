@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/numa.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -44,6 +43,7 @@ limitations under the License.
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -51,7 +51,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
@@ -71,6 +70,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/numa.h"
 
 namespace xla {
 

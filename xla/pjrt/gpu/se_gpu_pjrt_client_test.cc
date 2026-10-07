@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -32,6 +29,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
@@ -55,9 +54,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/ffi.h"
@@ -75,6 +74,7 @@ limitations under the License.
 #include "xla/parse_flags_from_env.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -85,7 +85,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/proto/compile_options.pb.h"

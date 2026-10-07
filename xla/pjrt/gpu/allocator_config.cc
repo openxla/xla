@@ -13,28 +13,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 
 namespace xla {
 namespace {
 
 constexpr absl::string_view kGrammar =
-    "expected START or START-CAP as fractions of total device memory, for "
-    "example \"0.75\" (preallocate 75%, grow to all memory), \"0.75-0.85\" "
-    "(grow to at most 85%) or \"0.75-0.75\" (fixed, never grow)";
+    "expected START, START+, or START-CAP as fractions of total device memory, "
+    "for example \"0.75\" (fixed at 75%), \"0.75+\" (preallocate 75%, grow to "
+    "all memory), or \"0.75-0.85\" (grow to at most 85%)";
 
 absl::Status InvalidSpec(absl::string_view spec, absl::string_view reason) {
   return absl::InvalidArgumentError(absl::StrCat(
@@ -54,16 +53,29 @@ absl::StatusOr<double> ParseFraction(absl::string_view text,
 }  // namespace
 
 absl::StatusOr<MemFraction> ParseMemFraction(absl::string_view spec) {
-  const std::vector<absl::string_view> parts =
-      absl::StrSplit(spec, absl::MaxSplits('-', 1));
-  absl::StatusOr<double> start = ParseFraction(parts[0], spec);
+  absl::string_view text = absl::StripAsciiWhitespace(spec);
+  const bool grow_to_full_memory = !text.empty() && text.back() == '+';
+  size_t separator = absl::string_view::npos;
+  if (grow_to_full_memory) {
+    text.remove_suffix(1);
+  } else {
+    // A minus sign in a numeric exponent is not a range separator.
+    separator = text.find('-');
+    while (separator != absl::string_view::npos && separator > 0 &&
+           (text[separator - 1] == 'e' || text[separator - 1] == 'E')) {
+      separator = text.find('-', separator + 1);
+    }
+  }
+  absl::StatusOr<double> start = ParseFraction(text.substr(0, separator), spec);
   if (!start.ok()) {
     return start.status();
   }
-  if (parts.size() == 1) {
+  if (!grow_to_full_memory && separator == absl::string_view::npos) {
     return MemFractionFromFraction(*start);
   }
-  absl::StatusOr<double> cap = ParseFraction(parts[1], spec);
+  absl::StatusOr<double> cap =
+      grow_to_full_memory ? absl::StatusOr<double>(1.0)
+                          : ParseFraction(text.substr(separator + 1), spec);
   if (!cap.ok()) {
     return cap.status();
   }
@@ -81,9 +93,6 @@ absl::StatusOr<MemFraction> ParseMemFraction(absl::string_view spec) {
 }
 
 MemFraction MemFractionFromFraction(double fraction) {
-  if (fraction < 1) {
-    return FlexMemFraction{fraction, 1.0};
-  }
   return FixedMemFraction{fraction};
 }
 
@@ -96,11 +105,11 @@ double MemFractionStart(const MemFraction& fraction) {
 
 std::string MemFractionToString(const MemFraction& fraction) {
   if (const auto* fixed = std::get_if<FixedMemFraction>(&fraction)) {
-    return absl::StrCat(fixed->fraction, "-", fixed->fraction);
+    return absl::StrCat(fixed->fraction);
   }
   const auto& flex = std::get<FlexMemFraction>(fraction);
-  if (flex.cap >= 1) {
-    return absl::StrCat(flex.start);
+  if (flex.cap == 1) {
+    return absl::StrCat(flex.start, "+");
   }
   return absl::StrCat(flex.start, "-", flex.cap);
 }
