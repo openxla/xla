@@ -13,29 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "absl/base/no_destructor.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "xla/backends/profiler/gpu/cuda_version_variants.h"
 
 namespace xla {
 namespace profiler {
 namespace cuda_versions {
-
-// Previous impacted version is 12.0, CBid supported here are [701, 782)
-const CbidCategoryMap& GetExtraCallbackIdCategories12080() {
-  if (GetSafeCudaVersion() < 12080) {
-    return EmptyCallbackIdCategories();
-  }
-  static const absl::NoDestructor<CbidCategoryMap> kCbidCategoryMap({
-      {CUPTI_DRIVER_TRACE_CBID_cuGraphAddNode /* 712 */,
-       CbidCategory::kGraphNode},
-      {CUPTI_DRIVER_TRACE_CBID_cuGraphAddNode_v2 /* 723 */,
-       CbidCategory::kGraphNode},
-  });
-  return *kCbidCategoryMap;
-}
 
 absl::string_view GetExtraActivityOverheadKindString12080(
     CUpti_ActivityOverheadKind kind) {

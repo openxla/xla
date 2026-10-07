@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -408,6 +409,74 @@ ENTRY main {
                            HloUse{add, 0, {}}));
 
   EXPECT_TRUE(analysis.GetValueDefinedAt(add).live_out_of_module());
+}
+
+TEST_P(HloDataflowAnalysisTest, CallInsideEmbeddedComputation) {
+  // A kCall nested inside a computation called in an embedded context (here
+  // the called computation of a custom-call) forwards the values of its
+  // callee's root, even though parameters in that context define their own
+  // values. The callee is additionally called from the entry computation so
+  // that its instructions are visited after the embedded call in the dataflow
+  // worklist (instructions reachable only through the custom-call get the
+  // lowest priority). The embedded call therefore has to be revisited once the
+  // callee's root value set is complete, otherwise its value set stays stale
+  // (empty at index {0}).
+  std::string hlo_str = R"(
+HloModule CallInsideEmbeddedComputation
+
+callee {
+  constant = f32[] constant(1.0)
+  ROOT tuple = (f32[]) tuple(constant)
+}
+
+embedded_computation {
+  embedded_param = f32[] parameter(0)
+  embedded_call = (f32[]) call(), to_apply=callee
+  embedded_gte = f32[] get-tuple-element(embedded_call), index=0
+  ROOT embedded_add = f32[] add(embedded_param, embedded_gte)
+}
+
+ENTRY main {
+  param = f32[] parameter(0)
+  entry_call = (f32[]) call(), to_apply=callee
+  entry_gte = f32[] get-tuple-element(entry_call), index=0
+  ROOT custom_call = f32[] custom-call(param, entry_gte), custom_call_target="foo", called_computations={embedded_computation}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+  SCOPED_TRACE(module_->ToString());
+
+  bool ssa_form = GetParam();
+  // Run the analysis directly, without flattening the call graph, so that the
+  // callee keeps both of its callers.
+  TF_ASSERT_OK_AND_ASSIGN(analysis_,
+                          HloDataflowAnalysis::Run(*module_, ssa_form));
+  const HloDataflowAnalysis& analysis = *analysis_;
+
+  const HloInstruction* constant = FindInstruction(module_.get(), "constant");
+  const HloInstruction* tuple = FindInstruction(module_.get(), "tuple");
+  const HloInstruction* embedded_call =
+      FindInstruction(module_.get(), "embedded_call");
+  const HloInstruction* embedded_gte =
+      FindInstruction(module_.get(), "embedded_gte");
+  const HloInstruction* entry_call =
+      FindInstruction(module_.get(), "entry_call");
+  const HloInstruction* entry_gte = FindInstruction(module_.get(), "entry_gte");
+
+  // Both calls forward the values of the callee's root.
+  for (const HloInstruction* call : {embedded_call, entry_call}) {
+    EXPECT_FALSE(analysis.ValueIsDefinedAt(call, /*index=*/{}));
+    EXPECT_FALSE(analysis.ValueIsDefinedAt(call, /*index=*/{0}));
+    EXPECT_THAT(HloValuesAt(call, /*index=*/{}),
+                UnorderedElementsAre(&analysis.GetValueDefinedAt(tuple)));
+    EXPECT_THAT(HloValuesAt(call, /*index=*/{0}),
+                UnorderedElementsAre(&analysis.GetValueDefinedAt(constant)));
+  }
+  EXPECT_THAT(HloValuesAt(embedded_gte),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(constant)));
+  EXPECT_THAT(HloValuesAt(entry_gte),
+              UnorderedElementsAre(&analysis.GetValueDefinedAt(constant)));
 }
 
 TEST_P(HloDataflowAnalysisTest, SingleWhile) {
@@ -4435,6 +4504,209 @@ ENTRY main {
   EXPECT_FALSE(analysis->ValueIsDefinedAt(after));
   EXPECT_EQ(&analysis->GetUniqueValueAt(after),
             &analysis->GetValueDefinedAt(add));
+}
+
+TEST_F(HloDataflowAnalysisTest, DataflowPropagationCallBoundaries) {
+  const char* hlo_text = R"hlo(
+HloModule module
+
+callee {
+  p0 = f32[4] parameter(0)
+  p1 = f32[4] parameter(1)
+  ROOT sum = f32[4] add(p0, p1)
+}
+
+true_branch {
+  ROOT tp = f32[4] parameter(0)
+}
+
+false_branch {
+  ROOT fp = f32[4] parameter(0)
+}
+
+while_cond {
+  wp = f32[4] parameter(0)
+  ROOT c = pred[] constant(false)
+}
+
+while_body {
+  wbp = f32[4] parameter(0)
+  ROOT wbs = f32[4] negate(wbp)
+}
+
+async_comp {
+  ap = f32[4] parameter(0)
+  ROOT aneg = f32[4] negate(ap)
+}
+
+fused_comp {
+  fp0 = f32[4] parameter(0)
+  ROOT fneg = f32[4] negate(fp0)
+}
+
+ENTRY main {
+  x = f32[4] parameter(0)
+  y = f32[4] parameter(1)
+  pred_val = pred[] parameter(2)
+  call_inst = f32[4] call(x, y), to_apply=callee
+  cond_inst = f32[4] conditional(pred_val, call_inst, y), true_computation=true_branch, false_computation=false_branch
+  while_inst = f32[4] while(cond_inst), condition=while_cond, body=while_body
+  async_start = ((f32[4]), f32[4], u32[]) async-start(while_inst), calls=async_comp
+  async_done = f32[4] async-done(async_start)
+  ROOT fusion_inst = f32[4] fusion(async_done), kind=kLoop, calls=fused_comp
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(
+                                    hlo_text, GetModuleConfigForTest()));
+
+  HloInstruction* call_inst = FindInstruction(module_.get(), "call_inst");
+  HloInstruction* cond_inst = FindInstruction(module_.get(), "cond_inst");
+  HloInstruction* while_inst = FindInstruction(module_.get(), "while_inst");
+  HloInstruction* async_start = FindInstruction(module_.get(), "async_start");
+  HloInstruction* fusion_inst = FindInstruction(module_.get(), "fusion_inst");
+
+  std::vector<HloInstruction*> called_params;
+  HloDataflowPropagation::ForEachCalledParameter(
+      call_inst, 1,
+      [&](HloInstruction* param) { called_params.push_back(param); });
+  EXPECT_THAT(
+      called_params,
+      ::testing::ElementsAre(
+          module_->GetComputationWithName("callee")->parameter_instruction(1)));
+
+  called_params.clear();
+  HloDataflowPropagation::ForEachCalledParameter(
+      cond_inst, 0,
+      [&](HloInstruction* param) { called_params.push_back(param); });
+  EXPECT_TRUE(called_params.empty());
+
+  HloDataflowPropagation::ForEachCalledParameter(
+      cond_inst, 2,
+      [&](HloInstruction* param) { called_params.push_back(param); });
+  EXPECT_THAT(called_params, ::testing::ElementsAre(
+                                 module_->GetComputationWithName("false_branch")
+                                     ->parameter_instruction(0)));
+
+  called_params.clear();
+  HloDataflowPropagation::ForEachCalledParameter(
+      while_inst, 0,
+      [&](HloInstruction* param) { called_params.push_back(param); });
+  EXPECT_THAT(called_params, ::testing::ElementsAre(
+                                 module_->GetComputationWithName("while_cond")
+                                     ->parameter_instruction(0),
+                                 module_->GetComputationWithName("while_body")
+                                     ->parameter_instruction(0)));
+
+  HloDataflowPropagation::ForEachCallBoundary(
+      async_start, [&](const HloCallBoundary& boundary) {
+        EXPECT_EQ(boundary.CallerOutputIndex({}), ShapeIndex({1}));
+        EXPECT_EQ(boundary.CalleeRootIndex({1}),
+                  std::optional<ShapeIndex>(ShapeIndex{}));
+        EXPECT_EQ(boundary.CalleeRootIndex({0}), std::nullopt);
+      });
+
+  int fusion_boundaries = 0;
+  HloDataflowPropagation::ForEachCallBoundary(
+      fusion_inst, [&](const HloCallBoundary&) { ++fusion_boundaries; });
+  EXPECT_EQ(fusion_boundaries, 1);
+  HloDataflowPropagation::ForEachCallBoundary(
+      fusion_inst, [&](const HloCallBoundary&) { ++fusion_boundaries; },
+      HloCallBoundaryOptions(/*include_calls_in=*/true,
+                             /*include_control_flow_in=*/true,
+                             /*include_fusions_in=*/false));
+  EXPECT_EQ(fusion_boundaries, 1);
+
+  std::vector<const HloInstruction*> while_boundary_insts;
+  HloDataflowPropagation::ForEachWhileBoundaryInstruction(
+      while_inst, [&](const HloInstruction* inst) {
+        while_boundary_insts.push_back(inst);
+      });
+  EXPECT_EQ(while_boundary_insts.size(), 5);
+
+  class TagPropagation final : public HloDataflowPropagation {
+   public:
+    explicit TagPropagation(const HloDataflowAnalysis* analysis)
+        : HloDataflowPropagation(analysis) {}
+
+    void SetTag(const HloInstruction* inst, const ShapeIndex& index, int tag) {
+      for (const HloValue* val :
+           dataflow_analysis().GetValueSet(inst, index).values()) {
+        tags_[val->id()] = tag;
+      }
+    }
+
+    std::optional<int> GetTag(const HloInstruction* inst,
+                              const ShapeIndex& index = {}) const {
+      std::optional<int> result;
+      for (const HloValue* val :
+           dataflow_analysis().GetValueSet(inst, index).values()) {
+        auto it = tags_.find(val->id());
+        if (it == tags_.end()) {
+          return std::nullopt;
+        }
+        if (result.has_value() && *result != it->second) {
+          return std::nullopt;
+        }
+        result = it->second;
+      }
+      return result;
+    }
+
+   protected:
+    bool HasValueAt(const HloInstruction* instruction,
+                    const ShapeIndex& index) const override {
+      return GetTag(instruction, index).has_value();
+    }
+
+    absl::Status PropagateAcrossEdge(const HloInstruction* src_instruction,
+                                     const ShapeIndex& src_index,
+                                     const HloInstruction* dst_instruction,
+                                     const ShapeIndex& dst_index,
+                                     bool allow_override,
+                                     bool* changed) override {
+      std::optional<int> src_tag = GetTag(src_instruction, src_index);
+      if (!src_tag.has_value()) {
+        return absl::OkStatus();
+      }
+      for (const HloValue* val : dataflow_analysis()
+                                     .GetValueSet(dst_instruction, dst_index)
+                                     .values()) {
+        auto it = tags_.find(val->id());
+        if (it == tags_.end() || (allow_override && it->second != *src_tag)) {
+          tags_[val->id()] = *src_tag;
+          if (changed != nullptr) {
+            *changed = true;
+          }
+        }
+      }
+      return absl::OkStatus();
+    }
+
+   private:
+    absl::flat_hash_map<HloValue::Id, int> tags_;
+  };
+
+  HloInstruction* x = FindInstruction(module_.get(), "x");
+  std::vector<HloComputation*> computations =
+      module_->MakeComputationPostOrder();
+  for (bool propagate_through_calls : {false, true}) {
+    for (bool propagate_through_control_flow : {false, true}) {
+      ASSERT_OK_AND_ASSIGN(
+          auto analysis,
+          HloDataflowAnalysis::Run(
+              *module_, /*ssa_form=*/false, /*bitcast_defines_value=*/false,
+              /*execution_threads=*/{}, propagate_through_calls,
+              /*precompute_uses=*/std::nullopt,
+              propagate_through_control_flow));
+
+      TagPropagation prop(analysis.get());
+      prop.SetTag(x, {}, 42);
+      ASSERT_OK(prop.Run(computations));
+      EXPECT_EQ(prop.GetTag(module_->GetComputationWithName("callee")
+                                ->parameter_instruction(0)),
+                42);
+    }
+  }
 }
 
 }  // namespace

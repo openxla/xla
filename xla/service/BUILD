@@ -135,6 +135,7 @@ cc_library(
     srcs = ["float_support.cc"],
     hdrs = ["float_support.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
     ],
@@ -746,6 +747,7 @@ cc_library(
         "//xla/hlo/parser:hlo_parser",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -2797,7 +2799,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/utils:hlo_matchers",
-        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
@@ -3471,6 +3473,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -3572,6 +3575,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -3790,6 +3794,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -5179,6 +5184,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:env",
     ],
 )
@@ -5634,6 +5640,7 @@ cc_library(
         ":call_inliner",
         ":gather_scatter_utils",
         ":hlo_creation_utils",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",

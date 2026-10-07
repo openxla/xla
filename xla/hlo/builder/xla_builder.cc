@@ -6627,6 +6627,11 @@ XlaOp Exp(const XlaOp operand,
   return operand.builder()->UnaryOp(HloOpcode::kExp, operand, result_accuracy);
 }
 
+XlaOp Exp2(const XlaOp operand,
+           const std::optional<ResultAccuracy>& result_accuracy) {
+  return operand.builder()->UnaryOp(HloOpcode::kExp2, operand, result_accuracy);
+}
+
 XlaOp Expm1(const XlaOp operand,
             const std::optional<ResultAccuracy>& result_accuracy) {
   return operand.builder()->UnaryOp(HloOpcode::kExpm1, operand,
@@ -6658,6 +6663,11 @@ XlaOp Log1p(const XlaOp operand,
             const std::optional<ResultAccuracy>& result_accuracy) {
   return operand.builder()->UnaryOp(HloOpcode::kLog1p, operand,
                                     result_accuracy);
+}
+
+XlaOp Log2(const XlaOp operand,
+           const std::optional<ResultAccuracy>& result_accuracy) {
+  return operand.builder()->UnaryOp(HloOpcode::kLog2, operand, result_accuracy);
 }
 
 XlaOp Erf(const XlaOp operand,

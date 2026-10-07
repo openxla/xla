@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace m = ::xla::match;
 
@@ -45,8 +44,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   TriangularSolveRewriter rewriter;
   EXPECT_THAT(rewriter.Run(module.get()), absl_testing::IsOkAndHolds(true));
@@ -67,8 +65,7 @@ ENTRY %RightLowerNoTranspose (a: f32[4,4], b: f32[3,4]) -> f32[3,4] {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
 
   TriangularSolveRewriter rewriter;
   EXPECT_THAT(rewriter.Run(module.get()), absl_testing::IsOkAndHolds(true));

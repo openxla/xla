@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -24,7 +25,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/layout_assignment.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -287,13 +287,13 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   MoveCopyToUsers pass;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
   EXPECT_TRUE(changed);
-  TF_ASSERT_OK_AND_ASSIGN(changed, pass.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, pass.Run(module.get()));
   EXPECT_FALSE(changed);
 }
 
