@@ -10,10 +10,9 @@ launches many small kernels. A workload dominated by a few long-running kernels
 may benefit less. Recording, updating, and retaining graphs also have costs, so
 measure the complete workload before adopting a setting.
 
-This guide describes upstream XLA `main` as of October 7, 2026
-([revision 82e6c3119a94](https://github.com/openxla/xla/commit/82e6c3119a9463bfc27add150c8ae8b12c2ca405)).
-Your framework's bundled XLA version may expose different flags or defaults.
-The defaults below are XLA defaults; a framework can override them.
+This guide describes upstream XLA `main`. Your framework's bundled XLA version
+may expose different flags or defaults. The defaults below are XLA defaults; a
+framework can override them.
 
 ## Set flags before starting your application
 
@@ -77,7 +76,7 @@ operations themselves: they execute through the normal GPU runtime.
 | `CUBLAS` | Yes | Operations using the GEMM thunk path. Retained as a category even when a build lowers most matrix multiplications through other paths. |
 | `CUBLASLT` | Yes | Matrix multiplication through the cuBLASLt thunk path. |
 | `CUDNN` | Yes | cuDNN thunk operations, such as supported library fusions. |
-| `CUSTOM_CALL` | Yes | Compatible custom calls and SelectK operations. An FFI handler must advertise command buffer compatibility. |
+| `CUSTOM_CALL` | Yes | Compatible custom calls. An FFI handler must advertise command buffer compatibility. |
 | `DYNAMIC_SLICE_FUSION` | Yes | Supported fusions combining dynamic slicing with other operations. |
 | `CONDITIONAL` | Yes | Supported conditional branches. |
 | `COLLECTIVES_KERNEL` | Yes | Collective-kernel thunks, such as eligible one-shot collective kernels. Separate from library collectives. |
@@ -150,7 +149,7 @@ buffers. Start with `LHS`, then compare one alternative at a time.
 | --- | --- | --- |
 | `LHS` | Uses the latency-hiding schedule's overlap decisions. | Default starting point, especially for workloads that overlap communication with computation. |
 | `SERIALIZE` | Serializes commands within each command buffer. | Diagnose whether concurrency affects performance or execution behavior. It does not serialize the entire application. |
-| `CONCURRENT_REGIONS` | Allows concurrency in regions of small, latency-bound kernels while serializing larger kernels. | Workloads with independent small kernels that individually underutilize the GPU. |
+| `CONCURRENT_REGIONS` | Allows concurrency in regions of small, latency-bound kernels while serializing larger kernels. Also changes buffer assignment to limit reuse within concurrent regions. | Workloads with independent small kernels that individually underutilize the GPU. Peak memory can increase compared with `LHS` or `SERIALIZE`. |
 | `CONCURRENT` | Allows independent operations to overlap and changes buffer assignment to support that overlap. | An aggressive experiment when the workload has available GPU capacity and memory headroom. Memory use can increase enough to cause an out-of-memory error. |
 
 ```bash
@@ -281,11 +280,11 @@ do not activate XLA's profiling-session detection may behave differently.
 | Higher memory use | Compare against `LHS`, the default trace-cache capacity, loop unrolling disabled, and `ALWAYS_UPDATE`, one change at a time. |
 | Unknown flag or enum value | Check the XLA version bundled with your framework. A newer upstream flag may not yet be in a release. |
 
-Backend support differs. In this revision, CUDA command buffer capture is
-disabled if either the known runtime or driver version is below 12.3. DynamicSliceFusionV2 capture requires runtime, driver, and build-time CUDA
-toolkit versions of at least 12.9. ROCm disables conditional/while graph capture,
-and oneAPI command buffer conversion is disabled. Enabling a category does not
-override these checks.
+Backend support differs. CUDA command buffer capture is disabled if either the
+known runtime or driver version is below 12.3. DynamicSliceFusionV2 capture
+requires runtime, driver, and build-time CUDA toolkit versions of at least 12.9.
+ROCm disables conditional/while graph capture, and oneAPI command buffer
+conversion is disabled. Enabling a category does not override these checks.
 
 Avoid copying obsolete flags from older tuning guides:
 
@@ -294,13 +293,14 @@ Avoid copying obsolete flags from older tuning guides:
 - `xla_gpu_enable_command_buffer_va_remapping` and `xla_gpu_graph_level` have been
   removed. Use the current capture and update-mode settings above.
 - Historical update modes such as `NEVER_UPDATE` and `CAPTURE_CMD_NEVER_UPDATE`
-  are not accepted in this revision. The current modes are `ALWAYS_UPDATE`,
+  are no longer accepted. The supported modes are `ALWAYS_UPDATE`,
   `SKIP_TEMP`, and `SKIP_PROFILED`; their semantics are not interchangeable with
   the old modes.
 - `xla_test_add_command_buffer_mode` is for XLA's test harness, not an application
   tuning setting.
 
-For implementation details, see the [flag definitions](../xla/debug_options_flags.cc),
-[option enums](../xla/xla.proto),
-[capture eligibility checks](../xla/backends/gpu/runtime/command_buffer_conversion_pass.cc),
-and [VMM allocation policy](../xla/service/gpu/gpu_executable_va_remap_allocator.cc).
+For implementation details, see the
+[flag definitions](https://github.com/openxla/xla/blob/main/xla/debug_options_flags.cc),
+[option enums](https://github.com/openxla/xla/blob/main/xla/xla.proto),
+[capture eligibility checks](https://github.com/openxla/xla/blob/main/xla/backends/gpu/runtime/command_buffer_conversion_pass.cc),
+and [VMM allocation policy](https://github.com/openxla/xla/blob/main/xla/service/gpu/gpu_executable_va_remap_allocator.cc).
