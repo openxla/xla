@@ -275,43 +275,69 @@ constexpr se::CudaComputeCapability kSupportedVersions[] = {
 stream_executor::SemanticVersion GetMinimumRequiredPtxVersion(
     se::CudaComputeCapability cc) {
   if (cc.major == 12) {
-    if (cc.minor >= 1) return {8, 8, 0};
+    if (cc.minor >= 1) {
+      return {8, 8, 0};
+    }
     return {8, 7, 0};
   }
   if (cc.major == 11) {
     return {9, 0, 0};
   }
   if (cc.major == 10) {
-    if (cc.minor >= 7) return {9, 4, 0};
-    if (cc.minor >= 3) return {8, 8, 0};
+    if (cc.minor >= 7) {
+      return {9, 4, 0};
+    }
+    if (cc.minor >= 3) {
+      return {8, 8, 0};
+    }
     return {8, 7, 0};
   }
   if (cc.major == 9) {
     return {7, 8, 0};
   }
   if (cc.major == 8) {
-    if (cc.minor >= 9) return {7, 8, 0};
-    if (cc.minor >= 7) return {7, 4, 0};
-    if (cc.minor >= 6) return {7, 1, 0};
+    if (cc.minor >= 9) {
+      return {7, 8, 0};
+    }
+    if (cc.minor >= 7) {
+      return {7, 4, 0};
+    }
+    if (cc.minor >= 6) {
+      return {7, 1, 0};
+    }
     return {7, 0, 0};
   }
   if (cc.major == 7) {
-    if (cc.minor >= 5) return {6, 3, 0};
-    if (cc.minor >= 2) return {6, 1, 0};
+    if (cc.minor >= 5) {
+      return {6, 3, 0};
+    }
+    if (cc.minor >= 2) {
+      return {6, 1, 0};
+    }
     return {6, 0, 0};
   }
   if (cc.major == 6) {
     return {5, 0, 0};
   }
   if (cc.major == 5) {
-    if (cc.minor >= 3) return {4, 2, 0};
-    if (cc.minor >= 2) return {4, 1, 0};
+    if (cc.minor >= 3) {
+      return {4, 2, 0};
+    }
+    if (cc.minor >= 2) {
+      return {4, 1, 0};
+    }
     return {4, 0, 0};
   }
   if (cc.major == 3) {
-    if (cc.minor >= 7) return {4, 1, 0};
-    if (cc.minor >= 5) return {3, 5, 0};
-    if (cc.minor >= 2) return {3, 2, 0};
+    if (cc.minor >= 7) {
+      return {4, 1, 0};
+    }
+    if (cc.minor >= 5) {
+      return {3, 5, 0};
+    }
+    if (cc.minor >= 2) {
+      return {3, 2, 0};
+    }
     return {3, 0, 0};
   }
   return {3, 0, 0};
