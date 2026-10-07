@@ -70,6 +70,7 @@ class FakeKernelThunk : public KernelThunk {
                     /*cluster_dim=*/se::ClusterDim(),
                     /*shmem_bytes=*/0,
                     /*tma_metadata=*/se::gpu::TmaMetadata(),
+                    /*devices_per_host=*/1,
                     /*zeroed_output_buffer_indices=*/std::vector<int64_t>{}) {}
 
  private:
@@ -461,7 +462,8 @@ TEST_F(CommandBufferCmdEmitterTest, ConvertsWhileThunkToCommand) {
 
   auto while_thunk = std::make_unique<WhileThunk>(
       NextThunkInfo("while"), pred_slice, std::move(cond_thunks),
-      std::move(body_thunks));
+      std::move(body_thunks), /*trip_count=*/std::nullopt,
+      /*devices_per_host=*/1);
   WhileThunk* while_ptr = while_thunk.get();
 
   ThunkSequence thunks;
@@ -499,7 +501,8 @@ TEST_F(CommandBufferCmdEmitterTest, ConvertsWhileThunkRepeatedly) {
 
   ThunkSequence thunks = ThunkSequence::Of<WhileThunk>(
       NextThunkInfo("while"), pred_slice, std::move(cond_thunks),
-      std::move(body_thunks));
+      std::move(body_thunks), /*trip_count=*/std::nullopt,
+      /*devices_per_host=*/1);
 
   auto collect_command_names = [](CommandExecutor& commands) {
     std::vector<std::string> command_names;

@@ -295,14 +295,14 @@ static absl::Status RunThunkPasses(
     const DebugOptions& debug_options, const se::DeviceDescription& device_info,
     SequentialThunk* root_thunk, HloModule* hlo_module,
     const std::vector<ShapedSlice>& module_output_slices,
-    ThunkPassBufferAllocator& allocator) {
+    ThunkPassBufferAllocator& allocator, int devices_per_host) {
   ThunkPassPipeline pipeline("thunk-passes");
   if (debug_options.xla_gpu_experimental_enable_checksum_tracing_on_thunks() ||
       debug_options.xla_gpu_experimental_thunk_buffer_debug_module_outputs()) {
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<ThunkBufferDebugPass> pass,
         ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum,
-                                     module_output_slices));
+                                     module_output_slices, devices_per_host));
     pipeline.AddPass(std::move(pass));
   }
   if (debug_options.xla_gpu_experimental_enable_buffer_saver_on_thunks() ||
@@ -310,7 +310,7 @@ static absl::Status RunThunkPasses(
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<ThunkBufferDebugPass> pass,
         ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kBufferSaver,
-                                     module_output_slices));
+                                     module_output_slices, devices_per_host));
     pipeline.AddPass(std::move(pass));
   }
   if ((debug_options.xla_gpu_detect_nan() !=
@@ -323,11 +323,11 @@ static absl::Status RunThunkPasses(
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<ThunkBufferDebugPass> pass,
         ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kFloatChecker,
-                                     module_output_slices));
+                                     module_output_slices, devices_per_host));
     pipeline.AddPass(std::move(pass));
   }
   pipeline.AddPass(std::make_unique<CommandBufferConversionPass>(
-      hlo_module ? hlo_module->name() : "Anonymous"));
+      hlo_module ? hlo_module->name() : "Anonymous", devices_per_host));
 
   ABSL_ASSIGN_OR_RETURN(bool changed,
                         pipeline.Run(&root_thunk->thunks(), debug_options,
@@ -426,9 +426,13 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
       std::vector<ShapedSlice> module_output_slices,
       GetModuleOutputSlices(params.program_shape, params.output_info,
                             params.allocations));
-  ABSL_RETURN_IF_ERROR(RunThunkPasses(
-      params.debug_options, params.device_description, seq_thunk.get(),
-      params.debug_module.get(), module_output_slices, allocator));
+  const int devices_per_host = params.gpu_topology.has_value()
+                                   ? params.gpu_topology->num_devices_per_host()
+                                   : 0;
+  ABSL_RETURN_IF_ERROR(
+      RunThunkPasses(params.debug_options, params.device_description,
+                     seq_thunk.get(), params.debug_module.get(),
+                     module_output_slices, allocator, devices_per_host));
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
@@ -798,9 +802,13 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
 
   {  // Prepare thunks for execution and collect requested GPU cliques.
     Thunk::PrepareParams prepare_params{
-        &collective_params,          &collective_clique_requests,
-        &collective_memory_requests, executor,
-        &buffer_allocations,         &execution_scoped_state};
+        &collective_params,
+        &collective_clique_requests,
+        &collective_memory_requests,
+        executor,
+        &buffer_allocations,
+        &execution_scoped_state,
+        run_options->run_options().custom_options()};
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     ABSL_RETURN_IF_ERROR(thunk_executor.Prepare(prepare_params));

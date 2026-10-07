@@ -77,6 +77,8 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_unified_allocator.h"
 #include "xla/stream_executor/cuda/cuda_version_parser.h"
 #include "xla/stream_executor/cuda/cudnn_api_wrappers.h"
+#include "xla/stream_executor/cuda/green_context.h"
+#include "xla/stream_executor/cuda/locality_domain.h"
 #include "xla/stream_executor/cuda/tma_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
@@ -985,7 +987,10 @@ absl::Status CudaExecutor::Init() {
     if (!is_vmm_supported) {
       return absl::InternalError(absl::StrFormat(
           "Device %d does not support CUDA Virtual Memory Management (VMM). "
-          "VMM is required for device memory allocation in XLA.",
+          "VMM is required for device memory allocation in XLA. "
+          "If it is expected that the VMM API is not available, use the "
+          "\"--xla_gpu_experimental_vmm_disabled\" flag. Note that this might "
+          "slow down some operations, especially cross-GPU collectives.",
           device_ordinal()));
     }
   }
@@ -1668,6 +1673,52 @@ absl::StatusOr<std::unique_ptr<CudaStream>> CudaExecutor::CreateStream(
   absl::MutexLock l(alive_gpu_streams_mu_);
   alive_gpu_streams_[stream->stream_handle()] = stream.get();
   return std::move(stream);
+}
+
+absl::StatusOr<std::unique_ptr<GreenContext>> CudaExecutor::CreateGreenContext(
+    int sm_count) {
+  std::unique_ptr<ActivateContext> activation = Activate();
+  return GreenContext::CreateWithSmCount(device_, sm_count);
+}
+
+absl::StatusOr<std::unique_ptr<Stream>>
+CudaExecutor::CreateStreamInGreenContext(
+    const GreenContext& green_context,
+    std::optional<std::variant<StreamPriority, int>> priority) {
+  ABSL_ASSIGN_OR_RETURN(
+      auto stream, CudaStream::Create(this, priority, CudaStreamType::kDefault,
+                                      &green_context));
+  absl::MutexLock l(alive_gpu_streams_mu_);
+  alive_gpu_streams_[stream->stream_handle()] = stream.get();
+  return std::move(stream);
+}
+
+absl::StatusOr<absl::Span<const std::unique_ptr<LocalityDomain>>>
+CudaExecutor::GetLocalityDomains() {
+  absl::MutexLock lock{locality_domains_mu_};
+  if (!locality_domains_initialized_) {
+    std::unique_ptr<ActivateContext> activation = Activate();
+    ABSL_ASSIGN_OR_RETURN(locality_domains_, CreateLocalityDomains(device_));
+    locality_domains_initialized_ = true;
+  }
+  return absl::MakeConstSpan(locality_domains_);
+}
+
+absl::StatusOr<std::unique_ptr<Stream>>
+CudaExecutor::CreateStreamInLocalityDomain(
+    int locality_domain_id,
+    std::optional<std::variant<StreamPriority, int>> priority) {
+  ABSL_ASSIGN_OR_RETURN(
+      absl::Span<const std::unique_ptr<LocalityDomain>> domains,
+      GetLocalityDomains());
+  if (locality_domain_id < 0 ||
+      locality_domain_id >= static_cast<int>(domains.size())) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Invalid locality domain id ", locality_domain_id,
+                     "; device has ", domains.size(), " locality domains"));
+  }
+  return CreateStreamInGreenContext(
+      domains[locality_domain_id]->green_context(), priority);
 }
 
 absl::StatusOr<std::unique_ptr<CommandBuffer>>

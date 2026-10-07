@@ -361,6 +361,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_dus_accumulator_zero_init_elimination(false);
   opts.set_xla_gpu_experimental_dynamic_slice_fusion_verify_offsets(false);
   opts.set_xla_gpu_experimental_enable_dynamic_slice_table_offsets(false);
+  opts.set_xla_gpu_experimental_enable_dynamic_slice_extended_offsets(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
   opts.set_xla_gpu_enable_nccl_user_buffers_in_default_space(false);
@@ -416,7 +417,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_same_shape_multi_output_fusion(false);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
-  opts.set_xla_gpu_experimental_gemm_fusion_v2(false);
+  opts.set_xla_gpu_experimental_gemm_fusion_v2(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
   opts.set_xla_gpu_experimental_enable_tiling_propagation(true);
   opts.set_xla_gpu_experimental_cost_model_gemm_tiling_default(false);
@@ -445,6 +446,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_fail_ptx_compilation_on_register_spilling(false);
   opts.set_xla_gpu_llvm_verification_level(0);
   opts.set_xla_gpu_target_config_filename("");
+  opts.set_xla_gpu_topology_filename("");
   opts.set_xla_gpu_enable_cub_radix_sort(true);
   opts.set_xla_gpu_enable_cudnn_layer_norm(false);
   opts.set_xla_gpu_threshold_for_windowed_einsum_mib(100000);
@@ -2383,6 +2385,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enables DynamicSliceAnnotator to represent non-linear DS/DUS offsets "
       "as a table with one entry per loop iteration."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_dynamic_slice_extended_offsets",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_dynamic_slice_extended_offsets),
+      debug_options
+          ->xla_gpu_experimental_enable_dynamic_slice_extended_offsets(),
+      "Enables divide, remainder, minimum, maximum, and clamp operations in "
+      "dynamic-slice fusion offset expressions."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_nccl_termination_timeout_seconds",
       int64_setter_for(
           &DebugOptions::set_xla_gpu_nccl_termination_timeout_seconds),
@@ -2897,6 +2908,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "device is "
       "ignored, and the proto is queried instead"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_topology_filename",
+      string_setter_for(&DebugOptions::set_xla_gpu_topology_filename),
+      debug_options->xla_gpu_topology_filename(),
+      "Filename for GpuTopologyProto or inline topology spec "
+      "([platform:]num_partitionsxnum_hosts_per_partitionxnum_devices_per_host"
+      "). Triggers deviceless compilation when target config is present."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_cub_radix_sort",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_cub_radix_sort),
       debug_options->xla_gpu_enable_cub_radix_sort(),
@@ -3355,8 +3373,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           debug_options->xla_gpu_experimental_use_collective_kernels()),
       "Experimental: comma-separated filter of collective ops that should use "
       "custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL. "
-      "Accepted values: ALL_REDUCE, ALL_GATHER, REDUCE_SCATTER "
-      "(case-insensitive; the "
+      "Accepted values: ALL_REDUCE, ALL_GATHER, REDUCE_SCATTER, "
+      "ALL_COLLECTIVES (case-insensitive; the "
       "COLLECTIVE_KERNEL_ prefix may be omitted). Supports +/- "
       "incremental modifiers (e.g. +ALL_REDUCE,-ALL_GATHER). The deprecated "
       "--xla_gpu_unsupported_use_all_reduce_one_shot_kernel flag also adds "
