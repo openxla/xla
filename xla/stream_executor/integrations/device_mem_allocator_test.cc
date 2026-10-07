@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <utility>
@@ -52,6 +53,9 @@ struct MemoryState {
   absl::Status allocate_status;
   absl::Status map_status;
   absl::Status access_status;
+  void* reservation_address = Address(0);
+  size_t reservation_granularity = 256;
+  size_t allocation_alignment = 256;
   size_t reserved_bytes = 0;
   size_t physical_live = 0;
   size_t next_handle = 0;
@@ -74,13 +78,15 @@ class FakeReservation : public MemoryReservation {
     state_.reservation_live = false;
   }
   DeviceAddressBase address() const override {
-    return DeviceAddressBase(Address(0), capacity_);
+    return DeviceAddressBase(state_.reservation_address, capacity_);
   }
-  size_t granularity() const override { return 256; }
+  size_t granularity() const override { return state_.reservation_granularity; }
 
  private:
   absl::Status Map(size_t offset, size_t allocation_offset, size_t size,
                    MemoryAllocation& allocation) override {
+    EXPECT_EQ(offset % granularity(), 0);
+    EXPECT_EQ(size % granularity(), 0);
     EXPECT_EQ(allocation_offset, 0);
     EXPECT_EQ(size, allocation.address().size());
     EXPECT_LE(offset + size, capacity_);
@@ -98,6 +104,8 @@ class FakeReservation : public MemoryReservation {
     return state_.access_status;
   }
   absl::Status UnMap(size_t offset, size_t size) override {
+    EXPECT_EQ(offset % granularity(), 0);
+    EXPECT_EQ(size % granularity(), 0);
     EXPECT_EQ(state_.mappings.erase(offset), 1);
     state_.unmapped_offsets.push_back(offset);
     return absl::OkStatus();
@@ -127,8 +135,10 @@ class ReservationExecutor : public MockStreamExecutor {
       return state.allocate_status;
     }
     ++state.physical_live;
+    const size_t alignment = state.allocation_alignment;
     return std::make_unique<GenericMemoryAllocation>(
-        reinterpret_cast<void*>(++state.next_handle), (size + 255) / 256 * 256,
+        reinterpret_cast<void*>(++state.next_handle),
+        (size + alignment - 1) / alignment * alignment,
         [this](void* handle, uint64_t size) {
           for (const auto& [offset, mapped_handle] : state.mappings) {
             EXPECT_NE(mapped_handle, reinterpret_cast<uintptr_t>(handle));
@@ -227,7 +237,7 @@ INSTANTIATE_TEST_SUITE_P(Growth, DeviceMemAllocatorFailureTest,
                          ::testing::Values(Failure::kPhysical, Failure::kMap,
                                            Failure::kAccess));
 
-TEST(DeviceMemAllocatorTest, BackendPaddingCannotExceedCapacity) {
+TEST(DeviceMemAllocatorTest, GranularityPaddingCannotExceedCapacity) {
   ReservationExecutor executor;
   EXPECT_CALL(executor, SynchronizeAllActivity()).Times(1);
   DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
@@ -244,6 +254,49 @@ TEST(DeviceMemAllocatorTest, BackendPaddingCannotExceedCapacity) {
   EXPECT_EQ(received, 0);
   EXPECT_EQ(allocator.Alloc(256, 0, &received), nullptr);
   EXPECT_EQ(received, 0);
+  EXPECT_THAT(executor.state.allocation_requests, ElementsAre(512, 512));
+}
+
+TEST(DeviceMemAllocatorTest, RoundsRequestsToReservationGranularity) {
+  ReservationExecutor executor;
+  DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
+  ASSERT_OK(allocator.ReserveMemory(1024));
+  size_t received = 0;
+  EXPECT_EQ(allocator.Alloc(256, 1, &received), Address(0));
+  EXPECT_EQ(received, 256);
+  EXPECT_EQ(allocator.Alloc(256, 257, &received), Address(256));
+  EXPECT_EQ(received, 512);
+  EXPECT_THAT(executor.state.allocation_requests, ElementsAre(256, 512));
+}
+
+TEST(DeviceMemAllocatorTest, RoundingOverflowDoesNotAllocatePhysicalMemory) {
+  ReservationExecutor executor;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(0);
+  DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
+  const size_t capacity = std::numeric_limits<size_t>::max();
+  ASSERT_OK(allocator.ReserveMemory(capacity));
+  size_t received = 1;
+  EXPECT_EQ(allocator.Alloc(256, capacity, &received), nullptr);
+  EXPECT_EQ(received, 0);
+  EXPECT_THAT(executor.state.allocation_requests, IsEmpty());
+  EXPECT_THAT(executor.state.mappings, IsEmpty());
+}
+
+TEST(DeviceMemAllocatorTest, LargerBackendAlignmentCannotExceedCapacity) {
+  ReservationExecutor executor;
+  executor.state.allocation_alignment = 512;
+  DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
+  ASSERT_OK(allocator.ReserveMemory(768));
+  size_t received = 0;
+  ASSERT_EQ(allocator.Alloc(256, 256, &received), Address(0));
+  EXPECT_EQ(received, 512);
+  // The request fits at the reservation's granularity, but the backend's
+  // additional padding cannot fit in the remaining 256 bytes.
+  EXPECT_EQ(allocator.Alloc(256, 256, &received), nullptr);
+  EXPECT_EQ(received, 0);
+  EXPECT_THAT(executor.state.allocation_requests, ElementsAre(256, 256));
+  EXPECT_EQ(executor.state.physical_live, 1);
+  EXPECT_THAT(executor.state.mapped_offsets, ElementsAre(0));
 }
 
 TEST(DeviceMemAllocatorTest, ReturnedSuffixCanBeMappedAgain) {
@@ -298,6 +351,33 @@ TEST(DeviceMemAllocatorTest, ReservationErrorsAreReported) {
   ASSERT_OK(allocator.ReserveMemory(1024));
   EXPECT_THAT(allocator.ReserveMemory(2048),
               StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(DeviceMemAllocatorTest, RejectsZeroReservationGranularity) {
+  ReservationExecutor executor;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(0);
+  DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
+  executor.state.reservation_granularity = 0;
+  EXPECT_THAT(allocator.ReserveMemory(1024),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_FALSE(allocator.SupportsCoalescing());
+  EXPECT_EQ(allocator.GetAllocationGranularity(), 1);
+  EXPECT_FALSE(executor.state.reservation_live);
+  executor.state.reservation_granularity = 256;
+  ASSERT_OK(allocator.ReserveMemory(1024));
+}
+
+TEST(DeviceMemAllocatorTest, RejectsNullReservationAddress) {
+  ReservationExecutor executor;
+  EXPECT_CALL(executor, SynchronizeAllActivity()).Times(0);
+  DeviceMemAllocator allocator(&executor, tsl::PlatformDeviceId(0));
+  executor.state.reservation_address = nullptr;
+  EXPECT_THAT(allocator.ReserveMemory(1024),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_FALSE(allocator.SupportsCoalescing());
+  EXPECT_FALSE(executor.state.reservation_live);
+  executor.state.reservation_address = Address(0);
+  ASSERT_OK(allocator.ReserveMemory(1024));
 }
 
 TEST(DeviceMemAllocatorTest, LegacyModeUsesExecutorAllocation) {

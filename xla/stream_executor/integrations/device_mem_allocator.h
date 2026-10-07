@@ -61,7 +61,9 @@ class DeviceMemAllocator : public tsl::SubAllocator {
 
   // Optional mode for a growing BFC arena. Reserve capacity bytes of VA, then
   // back a contiguous prefix on demand in Alloc. Existing mappings never move.
-  // Call before any Alloc; returns Unimplemented on unsupported backends.
+  // Call before any Alloc and before passing this suballocator to BFCAllocator,
+  // whose constructor caches SupportsCoalescing(). Returns Unimplemented on
+  // unsupported backends.
   // Calls to this suballocator must be externally serialized (as in BFC).
   absl::Status ReserveMemory(size_t capacity) {
     if (capacity == 0 || allocations_started_ || reservation_ != nullptr) {
@@ -70,6 +72,12 @@ class DeviceMemAllocator : public tsl::SubAllocator {
     }
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MemoryReservation> reservation,
                           stream_exec_->CreateMemoryReservation(capacity));
+    if (reservation->address().opaque() == nullptr ||
+        reservation->granularity() == 0) {
+      return absl::InternalError(
+          "Device VA reservation requires a non-null address and positive "
+          "granularity");
+    }
     if (reservation->address().size() < capacity) {
       return absl::InternalError(
           "Device VA reservation is smaller than capacity");
@@ -172,8 +180,20 @@ class DeviceMemAllocator : public tsl::SubAllocator {
  private:
   void* AllocReserved(size_t num_bytes, size_t* bytes_received) {
     *bytes_received = 0;
-    if (num_bytes == 0 || num_bytes > capacity_ - mapped_bytes_) {
+    const size_t available_bytes = capacity_ - mapped_bytes_;
+    if (num_bytes == 0 || num_bytes > available_bytes) {
       return nullptr;
+    }
+
+    const size_t granularity = reservation_->granularity();
+    const size_t remainder = num_bytes % granularity;
+    if (remainder != 0) {
+      const size_t padding = granularity - remainder;
+      // Check before adding so rounding cannot overflow or exceed capacity.
+      if (padding > available_bytes - num_bytes) {
+        return nullptr;
+      }
+      num_bytes += padding;
     }
 
     auto allocation = stream_exec_->CreatePhysicalMemoryAllocation(num_bytes);
@@ -182,7 +202,7 @@ class DeviceMemAllocator : public tsl::SubAllocator {
       return nullptr;
     }
     const size_t size = (*allocation)->address().size();
-    if (size < num_bytes || size > capacity_ - mapped_bytes_) {
+    if (size < num_bytes || size > available_bytes) {
       return nullptr;
     }
     auto mapping = reservation_->MapTo(mapped_bytes_, 0, size, **allocation);
