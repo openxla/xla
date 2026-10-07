@@ -16,7 +16,7 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
-#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/range_annotations.h"
 
 namespace tsl::profiler {
 ProfilerDomainHandle DefaultProfilerDomain() { return {}; }
