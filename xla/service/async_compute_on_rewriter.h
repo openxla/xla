@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_ASYNC_COLLECTIVE_CUSTOM_CALL_REWRITER_H_
-#define XLA_SERVICE_ASYNC_COLLECTIVE_CUSTOM_CALL_REWRITER_H_
+#ifndef XLA_SERVICE_ASYNC_COMPUTE_ON_REWRITER_H_
+#define XLA_SERVICE_ASYNC_COMPUTE_ON_REWRITER_H_
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -28,18 +29,27 @@ limitations under the License.
 
 namespace xla {
 
-// Convert fake async collective custom calls to async collective instructions.
-// The fake async collective custom calls are temporary workaround to unblock
-// the development of async collective operations. This pass should be removed
-// as soon as possible.
-class AsyncCollectiveCustomCallRewriter : public HloModulePass {
+class AsyncComputeOnHelper {
  public:
-  explicit AsyncCollectiveCustomCallRewriter(
-      bool use_legacy_collectives = false)
-      : use_legacy_collectives_(use_legacy_collectives) {}
+  virtual ~AsyncComputeOnHelper() = default;
+  virtual absl::Status AddBackendSpecializations(
+      HloInstruction* custom_call_start, HloInstruction* async_start) {
+    return absl::OkStatus();
+  }
+};
+
+// Rewrites compute-on-start and compute-on-done custom calls into async
+// instructions.
+class AsyncComputeOnRewriter : public HloModulePass {
+ public:
+  explicit AsyncComputeOnRewriter(
+      bool use_legacy_collectives = false,
+      AsyncComputeOnHelper* compute_on_helper = nullptr)
+      : use_legacy_collectives_(use_legacy_collectives),
+        compute_on_helper_(compute_on_helper) {}
 
   absl::string_view name() const override {
-    return "async-collective-custom-call-rewriter";
+    return "async-compute-on-rewriter";
   }
 
   using HloPassInterface::Run;
@@ -47,7 +57,7 @@ class AsyncCollectiveCustomCallRewriter : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
-  absl::StatusOr<bool> ProcessPair(
+  absl::StatusOr<bool> ProcessComputeOn(
       HloComputation* computation, HloInstruction* start_call,
       HloInstruction* done_call,
       absl::Span<const hlo_instruction_utils::async::AsyncTraceStep>
@@ -56,8 +66,9 @@ class AsyncCollectiveCustomCallRewriter : public HloModulePass {
 
  private:
   bool use_legacy_collectives_;
+  AsyncComputeOnHelper* compute_on_helper_;
 };
 
 }  // namespace xla
 
-#endif  // XLA_SERVICE_ASYNC_COLLECTIVE_CUSTOM_CALL_REWRITER_H_
+#endif  // XLA_SERVICE_ASYNC_COMPUTE_ON_REWRITER_H_
