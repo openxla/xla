@@ -1933,6 +1933,123 @@ ENTRY main {
   }
 }
 
+// The caller already uses the layout required by the all-gather. Stopping
+// propagation at the slice must preserve that layout on the loop parameter,
+// without introducing either a whole-array copy or a per-iteration slice copy.
+TEST_F(LayoutAssignmentTest, SliceOfLargeLoopCarriedParameterKeepsEntryLayout) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+cond {
+  p = (s32[], f32[32,64,8192], f32[32,1,16384]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(64)
+  ROOT lt = pred[] compare(i, limit), direction=LT
+}
+body {
+  p = (s32[], f32[32,64,8192], f32[32,1,16384]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[32,64,8192] get-tuple-element(p), index=1
+  zero = s32[] constant(0)
+  ds = f32[32,1,8192] dynamic-slice(w, zero, i, zero), dynamic_slice_sizes={32,1,8192}
+  ag = f32[32,1,16384] all-gather(ds), dimensions={2}, replica_groups={{0,1}}
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT r = (s32[], f32[32,64,8192], f32[32,1,16384]) tuple(next, w, ag)
+}
+ENTRY main {
+  w = f32[32,64,8192]{1,0,2} parameter(0)
+  zero = s32[] constant(0)
+  z = f32[] constant(0)
+  acc = f32[32,1,16384] broadcast(z), dimensions={}
+  init = (s32[], f32[32,64,8192], f32[32,1,16384]) tuple(zero, w, acc)
+  loop = (s32[], f32[32,64,8192], f32[32,1,16384]) while(init), condition=cond, body=body
+  ROOT out = f32[32,1,16384]{1,0,2} get-tuple-element(loop), index=2
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* loop = FindInstruction(module.get(), HloOpcode::kWhile);
+  ASSERT_THAT(loop, NotNull());
+  EXPECT_TRUE(
+      LayoutUtil::Equal(loop->shape().tuple_shapes(1).layout(),
+                        computation_layout.parameter_layout(0).layout()));
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+    }
+  }
+}
+
+// A direct caller can supply a leaf of a tuple parameter. Use that leaf's
+// entry constraint, including when it differs from the instruction's layout,
+// and leave AUTO constraints without a dimension order to the default policy.
+TEST_F(LayoutAssignmentTest, UnconstrainedLoopParameterUsesTupleEntryLayout) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+cond {
+  p = (s32[], f32[2,3]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(4)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+body {
+  p = (s32[], f32[2,3]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[2,3] get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT t = (s32[], f32[2,3]) tuple(next, w)
+}
+ENTRY main {
+  p = (s32[], (f32[2,3]{1,0}, s32[])) parameter(0)
+  nested = (f32[2,3], s32[]) get-tuple-element(p), index=1
+  w = f32[2,3] get-tuple-element(nested), index=0
+  zero = s32[] constant(0)
+  init = (s32[], f32[2,3]) tuple(zero, w)
+  loop = (s32[], f32[2,3]) while(init), condition=cond, body=body
+  ROOT r = f32[2,3]{0,1} get-tuple-element(loop), index=1
+})";
+  for (bool auto_layout : {false, true}) {
+    SCOPED_TRACE(auto_layout);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    Layout entry_layout;
+    if (auto_layout) {
+      entry_layout.set_memory_space(Layout::kHostMemorySpace);
+    } else {
+      entry_layout = LayoutUtil::MakeLayout({0, 1});
+    }
+    computation_layout.mutable_parameter_layout(0)->ResetLayout(entry_layout,
+                                                                {1, 0});
+    GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    const HloInstruction* loop =
+        FindInstruction(module.get(), HloOpcode::kWhile);
+    ASSERT_THAT(loop, NotNull());
+    EXPECT_TRUE(LayoutUtil::HasMinorToMajorSetInLayout(loop->shape()));
+    if (!auto_layout) {
+      EXPECT_TRUE(LayoutUtil::Equal(loop->shape().tuple_shapes(1).layout(),
+                                    entry_layout));
+      for (const HloComputation* computation : module->computations()) {
+        for (const HloInstruction* instruction : computation->instructions()) {
+          EXPECT_NE(instruction->opcode(), HloOpcode::kCopy)
+              << module->ToString();
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

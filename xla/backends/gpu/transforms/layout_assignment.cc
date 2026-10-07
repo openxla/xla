@@ -1233,10 +1233,10 @@ Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
   // A value carried through while loops that nothing inside them constrains
   // (for example a weight stack that is only ever sliced) would get the
   // default layout, and the caller then pays a copy of the whole array if it
-  // produces the value by transposing something whose layout is fixed. Loop
+  // produces the value in a fixed layout, possibly through a transpose. Loop
   // bodies are assigned before their callers, so follow the loop operands
-  // back to that producer and pick the layout that keeps the transpose a
-  // bitcast.
+  // back to that producer and preserve its layout, or pick the layout that
+  // keeps the transpose a bitcast.
   const HloInstruction* parameter = buffer.instruction();
   ShapeIndex index = buffer.index();
   for (int depth = 0; depth < 8 && parameter->opcode() == HloOpcode::kParameter;
@@ -1266,6 +1266,20 @@ Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
       break;
     }
     if (producer->opcode() != HloOpcode::kParameter) {
+      break;
+    }
+    if (producer->parent()->IsEntryComputation()) {
+      // The caller can pass an entry parameter directly, including a leaf of
+      // a tuple parameter. Its entry constraint is authoritative; the layout
+      // attached to the instruction may only be a hint.
+      const Shape& parameter_shape = ShapeUtil::GetSubshape(
+          saved_entry_computation_layout().parameter_shape(
+              producer->parameter_number()),
+          value->index());
+      if (LayoutUtil::HasMinorToMajorSetInLayout(parameter_shape) &&
+          ShapeUtil::Compatible(parameter_shape, buffer.shape())) {
+        return parameter_shape.layout();
+      }
       break;
     }
     // Carried in from an enclosing loop; keep following.
