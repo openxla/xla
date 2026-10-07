@@ -1099,15 +1099,19 @@ absl::Status BufferAssignment::AddAssignment(BufferAllocation* allocation,
 // Combines allocations of temporary buffers of the same color into one big
 // BufferAllocation.
 absl::Status BufferAssignment::CombineTempAllocations(
-    std::optional<BufferValue::Color> temp_buffer_color) {
+    std::optional<BufferValue::Color> temp_buffer_color,
+    const absl::flat_hash_set<BufferAllocation::Index>& keep_separate) {
   VLOG(1) << "CombineTempAllocations()";
 
   // Move all temp allocations into a single run at the end of the allocations
-  // vector.
+  // vector. Allocations that must stay separate are treated like non-temp
+  // allocations here. (This is the only place that refers to the original
+  // allocation indices, so it has to happen before anything gets re-indexed.)
   const auto first_temp_it =
       std::partition(allocations_.begin(), allocations_.end(),
-                     [](const BufferAllocation& allocation) {
-                       return !allocation.IsPreallocatedTempBuffer();
+                     [&keep_separate](const BufferAllocation& allocation) {
+                       return !allocation.IsPreallocatedTempBuffer() ||
+                              keep_separate.contains(allocation.index());
                      });
   // Stores the combined allocations.
   std::vector<BufferAllocation> combined_allocations;
@@ -1191,6 +1195,12 @@ absl::Status BufferAssignment::CombineTempAllocations(
   // Replace all existing temporary allocations with the new combined
   // allocations.
   allocations_.erase(first_temp_it, allocations_.end());
+  for (const BufferAllocation& allocation : allocations_) {
+    // Temp allocations that were kept separate still count as temp memory.
+    if (allocation.IsPreallocatedTempBuffer()) {
+      temp_allocation_total_size_ += allocation.size();
+    }
+  }
   for (BufferAllocation& combined : combined_allocations) {
     temp_allocation_total_size_ += combined.size();
     allocations_.push_back(std::move(combined));
@@ -2001,6 +2011,12 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
     return false;
   }
 
+  if (IsExclusiveGroupAllocation(*allocation)) {
+    // NOLINTNEXTLINE(clang-diagnostic-pre-c++20-compat)
+    VLOG(4) << "Can't assign: allocation is dedicated to an exclusive group";
+    return false;
+  }
+
   // Pre-compute and cache the live ranges for `hlo_buffer.values()`.
   // Although hash map lookups are O(1), performing them inside the nested loops
   // below results in O(N*M) lookups. Caching them in a contiguous vector
@@ -2157,6 +2173,13 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
     return true;
   }
 
+  ABSL_ASSIGN_OR_RETURN(
+      bool in_exclusive_group,
+      MaybeAssignExclusiveGroupBuffer(hlo_buffer, assignment));
+  if (in_exclusive_group) {
+    return true;
+  }
+
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->shape().IsTuple()) {
       ABSL_ASSIGN_OR_RETURN(
@@ -2170,6 +2193,106 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
   }
 
   return false;
+}
+
+absl::Status BufferAssigner::ComputeExclusiveGroups(
+    const HloAliasAnalysis& alias_analysis) {
+  exclusive_group_by_buffer_.clear();
+  if (!opts_.exclusive_group) {
+    return absl::OkStatus();
+  }
+  for (const HloBuffer& hlo_buffer : alias_analysis.buffers()) {
+    // All values of the buffer share storage, so they must agree on the group.
+    std::optional<std::string> group;
+    for (int i = 0; i < hlo_buffer.values().size(); ++i) {
+      std::optional<std::string> value_group =
+          opts_.exclusive_group(*hlo_buffer.values()[i]);
+      if (i == 0) {
+        group = std::move(value_group);
+      } else if (group != value_group) {
+        return InvalidArgument(
+            "Values of HloBuffer %s disagree on their exclusive group: %s has "
+            "group '%s' but %s has group '%s'",
+            hlo_buffer.ToString(), hlo_buffer.values()[0]->ToShortString(),
+            group.value_or("<none>"), hlo_buffer.values()[i]->ToShortString(),
+            value_group.value_or("<none>"));
+      }
+    }
+    if (group.has_value()) {
+      exclusive_group_by_buffer_.emplace(hlo_buffer.id(), *std::move(group));
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<bool> BufferAssigner::MaybeAssignExclusiveGroupBuffer(
+    const HloBuffer* hlo_buffer, BufferAssignment* assignment) {
+  auto group_it = exclusive_group_by_buffer_.find(hlo_buffer->id());
+  if (group_it == exclusive_group_by_buffer_.end()) {
+    return false;
+  }
+  const std::string& group = group_it->second;
+
+  const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
+  auto it = exclusive_group_allocation_indices_.find(group);
+  if (it == exclusive_group_allocation_indices_.end()) {
+    ABSL_ASSIGN_OR_RETURN(BufferAllocation * allocation,
+                          assignment->NewAllocation(*hlo_buffer, buffer_size));
+    exclusive_group_allocation_indices_.emplace(group, allocation->index());
+    exclusive_group_allocations_.insert(allocation->index());
+    // NOLINTNEXTLINE(clang-diagnostic-pre-c++20-compat)
+    VLOG(3) << "New allocation #" << allocation->index()
+            << " for exclusive group '" << group << "': " << *hlo_buffer;
+    return true;
+  }
+
+  BufferAllocation* allocation = assignment->GetMutableAllocation(it->second);
+  ABSL_ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer->color());
+  if (buffer_color != allocation->color()) {
+    return InvalidArgument(
+        "Buffer %s has color %d but its exclusive group '%s' has color %d",
+        hlo_buffer->ToString(), buffer_color, group, allocation->color());
+  }
+
+  // Members of a group all live at offset 0 of the same allocation, so they
+  // must not be live at the same time. Unlike regular allocation reuse, this
+  // is a hard error rather than a reason to pick another allocation, since
+  // the group is what the caller asked for.
+  const bool total_order_scheduled =
+      assignment->hlo_live_range().total_order_scheduled();
+  const auto& live_ranges = assignment->hlo_live_range().buffer_live_ranges();
+  // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
+  for (const auto& [assigned_value, _] : allocation->assigned_buffers()) {
+    const HloValue& assigned_buffer =
+        *CHECK_NOTNULL(dynamic_cast<const HloValue*>(assigned_value));
+    for (const HloValue* new_value : hlo_buffer->values()) {
+      bool interferes = false;
+      if (total_order_scheduled) {
+        interferes = LiveRangeInterferes(
+            new_value, live_ranges.at(new_value), &assigned_buffer,
+            live_ranges.at(&assigned_buffer), assignment);
+      } else {
+        interferes = assignment->hlo_ordering().MayInterfere(
+            assigned_buffer, *new_value, assignment->dataflow_analysis(),
+            alias_info_);
+      }
+      if (interferes) {
+        return InvalidArgument(
+            "Buffer %s and %s are in the same exclusive group '%s' but their "
+            "live ranges interfere",
+            new_value->ToShortString(), assigned_buffer.ToShortString(), group);
+      }
+    }
+  }
+
+  // The group allocation is sized for its largest member.
+  allocation->set_size(std::max(allocation->size(), buffer_size));
+  ABSL_RETURN_IF_ERROR(assignment->AddAssignment(allocation, *hlo_buffer,
+                                                 /*offset=*/0, buffer_size));
+  // NOLINTNEXTLINE(clang-diagnostic-pre-c++20-compat)
+  VLOG(3) << "Reusing allocation #" << allocation->index()
+          << " of exclusive group '" << group << "' for: " << *hlo_buffer;
+  return true;
 }
 
 bool BufferAssigner::DelayTemporaryBufferAssignment(
@@ -2546,6 +2669,7 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
   for (BufferAllocation& allocation : assignment->allocations_) {
     if (allocation.color() != buffer_color &&
         allocation.IsPreallocatedTempBuffer() &&
+        !IsExclusiveGroupAllocation(allocation) &&
         opts_.can_use_allocation(buffer_color, allocation.color())) {
       destinations.push_back(&allocation);
     }
@@ -3183,6 +3307,12 @@ BufferAssigner::CreateAssignment(
   XLA_VLOG_LINES(3,
                  assignment->alias_analysis().dataflow_analysis().ToString());
 
+  // Exclusive groups are computed once up front: assigning a buffer rewrites
+  // the memory space in the instruction layouts (see
+  // BufferAllocation::AddAssignment), so a callback that looks at the layout
+  // would give different answers in a fallback rerun.
+  ABSL_RETURN_IF_ERROR(ComputeExclusiveGroups(assignment->alias_analysis()));
+
   std::vector<const HloComputation*> thread_local_computations;
   std::vector<const HloComputation*> global_computations;
   ABSL_RETURN_IF_ERROR(GatherComputationsByAllocationType(
@@ -3312,6 +3442,11 @@ absl::Status BufferAssigner::RunAssignBuffers(
         sequential_algorithm,
     buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto::
         Value non_sequential_algorithm) {
+  // Allocation indices only make sense within one run; a fallback run starts
+  // from an empty BufferAssignment.
+  exclusive_group_allocation_indices_.clear();
+  exclusive_group_allocations_.clear();
+
   // First assign buffers for global computations. Temporary buffers for
   // sequential computations are collected in
   // 'buffers_to_assign_sequentially'.
@@ -3370,9 +3505,10 @@ absl::Status BufferAssigner::RunAssignBuffers(
   // subject to the buffer allocation size constraint. This can only be
   // performed after all buffers have been assigned, and after maybe_live_out
   // is marked, since it is used to determine whether an allocation contains
-  // temporary buffers or not.
-  ABSL_RETURN_IF_ERROR(
-      assignment->CombineTempAllocations(opts_.temp_buffer_color));
+  // temporary buffers or not. Allocations of exclusive groups stay separate,
+  // since that's the whole point of them.
+  ABSL_RETURN_IF_ERROR(assignment->CombineTempAllocations(
+      opts_.temp_buffer_color, exclusive_group_allocations_));
   return absl::OkStatus();
 }
 

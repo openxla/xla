@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -76,13 +77,16 @@ absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space) {
     case static_cast<int64_t>(MemorySpaceColor::kDefault):
     case static_cast<int64_t>(MemorySpaceColor::kCollective):
     case static_cast<int64_t>(MemorySpaceColor::kTempBuffer):
+    case static_cast<int64_t>(MemorySpaceColor::kCollectiveExclusive):
       return static_cast<MemorySpaceColor>(memory_space);
     default:
       return InvalidArgument(
           "Invalid memory space %d. "
-          "Valid values are %d (default), %d (collective), %d (temp).",
+          "Valid values are %d (default), %d (collective), %d (temp), %d "
+          "(collective exclusive).",
           memory_space, MemorySpaceColor::kDefault,
-          MemorySpaceColor::kCollective, MemorySpaceColor::kTempBuffer);
+          MemorySpaceColor::kCollective, MemorySpaceColor::kTempBuffer,
+          MemorySpaceColor::kCollectiveExclusive);
   }
 }
 
@@ -258,6 +262,20 @@ static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
 }
 
 namespace {
+
+// The color of the allocation backing a value in `memory_space`. Legacy value
+// 1 and kCollectiveExclusive both end up in collective memory; the exclusive
+// sharing of the latter is enforced through
+// `BufferAssigner::Options::exclusive_group` rather than through the color.
+BufferValue::Color AllocationColorForMemorySpace(int64_t memory_space) {
+  if (memory_space == 1 ||
+      memory_space ==
+          static_cast<int64_t>(MemorySpaceColor::kCollectiveExclusive)) {
+    return static_cast<BufferValue::Color>(MemorySpaceColor::kCollective);
+  }
+  return static_cast<BufferValue::Color>(memory_space);
+}
+
 // Determines the memory space color for the given HLO buffer
 absl::StatusOr<BufferValue::Color> DetermineBufferColor(
     const HloBuffer& buffer, const DebugOptions& option) {
@@ -271,15 +289,8 @@ absl::StatusOr<BufferValue::Color> DetermineBufferColor(
     // space from the layout.
     const HloPosition& defining_position = value->defining_position();
     if (defining_position.shape().has_layout()) {
-      BufferValue::Color memory_space =
-          defining_position.shape().layout().memory_space();
-      if (memory_space == 1) {
-        // Legacy value for collective memory space before
-        // Layout::kCollectiveMemorySpace (7) was introduced.
-        memory_space =
-            static_cast<BufferValue::Color>(MemorySpaceColor::kCollective);
-      }
-
+      BufferValue::Color memory_space = AllocationColorForMemorySpace(
+          defining_position.shape().layout().memory_space());
       if (memory_space != 0) {
         candidates.push_back(memory_space);
       }
@@ -290,7 +301,8 @@ absl::StatusOr<BufferValue::Color> DetermineBufferColor(
     ABSL_ASSIGN_OR_RETURN(MemorySpaceColor result_ms,
                           GetCustomCallResultMemorySpace(*value));
     if (result_ms != MemorySpaceColor::kDefault) {
-      candidates.push_back(static_cast<BufferValue::Color>(result_ms));
+      candidates.push_back(
+          AllocationColorForMemorySpace(static_cast<int64_t>(result_ms)));
     }
 
     // Check if any use of this alias is a custom call operand with a
@@ -299,7 +311,8 @@ absl::StatusOr<BufferValue::Color> DetermineBufferColor(
       ABSL_ASSIGN_OR_RETURN(MemorySpaceColor operand_ms,
                             GetCustomCallOperandMemorySpace(use));
       if (operand_ms != MemorySpaceColor::kDefault) {
-        candidates.push_back(static_cast<BufferValue::Color>(operand_ms));
+        candidates.push_back(
+            AllocationColorForMemorySpace(static_cast<int64_t>(operand_ms)));
       }
     }
 
@@ -362,4 +375,20 @@ BufferAssigner::Colorer CreateColorer(const DebugOptions& option) {
     return AssignColors(option, alias_analysis);
   };
 }
+
+std::optional<std::string> CollectiveExclusiveGroup(const HloValue& value) {
+  const HloInstruction* instr = value.defining_instruction();
+  if (instr->opcode() != HloOpcode::kCustomCall) {
+    return std::nullopt;
+  }
+  const Shape& shape = value.defining_position().shape();
+  if (!shape.has_layout() ||
+      shape.layout().memory_space() !=
+          static_cast<int64_t>(MemorySpaceColor::kCollectiveExclusive)) {
+    return std::nullopt;
+  }
+  return absl::StrCat(instr->custom_call_target(), "/",
+                      value.defining_index().ToString());
+}
+
 }  // namespace xla::gpu

@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_GPU_GPU_MEMORY_SPACE_ASSIGNMENT_H_
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -25,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/layout.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/hlo_value.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -50,6 +53,18 @@ enum class MemorySpaceColor {
   // xla_gpu_temp_buffer_use_separate_color is set). This improves cuda-graphs
   // performance. See more details in the corresponding flag description.
   kTempBuffer = 2,
+
+  // Collective memory (see kCollective) that buffer assignment only shares
+  // between values with the same exclusive group (see
+  // `CollectiveExclusiveGroup`), never with unrelated buffers. The resulting
+  // allocations are colored kCollective, so the runtime treats them like any
+  // other collective memory.
+  //
+  // This is meant for scratch buffers of custom calls that remote devices
+  // access outside of the custom call's own synchronization (e.g. signal
+  // flags): sharing such a buffer with an unrelated op would let that op
+  // observe or clobber remote writes.
+  kCollectiveExclusive = 8,
 };
 
 // Converts an integer to a MemorySpaceColor, returning an error if the value
@@ -73,8 +88,20 @@ bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
 //  - Custom call `operands_memory_spaces` / `results_memory_spaces` frontend
 //    attributes (e.g. emitted by Mosaic for multimem/symmetric buffers) →
 //    requested memory space
+//  - Values whose layout is in memory space kCollectiveExclusive → kCollective
+//    (their exclusive sharing is handled by `CollectiveExclusiveGroup`)
 //  - Everything else → kDefault
 BufferAssigner::Colorer CreateColorer(const DebugOptions& option);
+
+// The exclusive group of `value` for
+// `BufferAssigner::Options::exclusive_group`.
+//
+// Returns "<custom_call_target>/<result index>" if `value` is defined by a
+// custom call and its layout is in memory space kCollectiveExclusive, and
+// nullopt otherwise. Buffer assignment gives every group its own allocation
+// that is only shared between members of that group, i.e. between the same
+// scratch buffer of different instances of the same custom call.
+std::optional<std::string> CollectiveExclusiveGroup(const HloValue& value);
 
 }  // namespace xla::gpu
 
