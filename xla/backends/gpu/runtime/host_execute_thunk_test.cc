@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
@@ -571,11 +572,10 @@ TEST(HostExecuteStartThunkTest, ArgAndResultNonRegisteredHostMemory) {
 }
 
 TEST(HostExecuteStartThunkTest, TestErrorPropagationFromExecuteEvent) {
-#ifdef NDEBUG
-  GTEST_SKIP() << "Skipping test in optimized mode because XLA:CPU won't "
-                  "check for the alignment error.";
-  return;
-#endif
+  if constexpr (!tsl::kIsDebugBuild) {
+    GTEST_SKIP() << "Skipping test in optimized mode because XLA:CPU won't "
+                    "check for the alignment error.";
+  }
   se::StreamExecutor* stream_executor = GpuExecutor();
   ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
 

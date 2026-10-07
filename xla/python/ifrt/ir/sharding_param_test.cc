@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/sharding_param.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <limits>
 #include <vector>
 
 #include "absl/status/status_matchers.h"

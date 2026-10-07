@@ -70,6 +70,7 @@ class FakeKernelThunk : public KernelThunk {
                     /*cluster_dim=*/se::ClusterDim(),
                     /*shmem_bytes=*/0,
                     /*tma_metadata=*/se::gpu::TmaMetadata(),
+                    /*devices_per_host=*/1,
                     /*zeroed_output_buffer_indices=*/std::vector<int64_t>{}) {}
 
  private:
@@ -461,7 +462,8 @@ TEST_F(CommandBufferCmdEmitterTest, ConvertsWhileThunkToCommand) {
 
   auto while_thunk = std::make_unique<WhileThunk>(
       NextThunkInfo("while"), pred_slice, std::move(cond_thunks),
-      std::move(body_thunks));
+      std::move(body_thunks), /*trip_count=*/std::nullopt,
+      /*devices_per_host=*/1);
   WhileThunk* while_ptr = while_thunk.get();
 
   ThunkSequence thunks;
@@ -499,7 +501,8 @@ TEST_F(CommandBufferCmdEmitterTest, ConvertsWhileThunkRepeatedly) {
 
   ThunkSequence thunks = ThunkSequence::Of<WhileThunk>(
       NextThunkInfo("while"), pred_slice, std::move(cond_thunks),
-      std::move(body_thunks));
+      std::move(body_thunks), /*trip_count=*/std::nullopt,
+      /*devices_per_host=*/1);
 
   auto collect_command_names = [](CommandExecutor& commands) {
     std::vector<std::string> command_names;
@@ -949,12 +952,15 @@ TEST_F(AsyncCommandBufferCmdEmitterTest, PreservesFlattenedAsyncOrder) {
   ASSERT_OK_AND_ASSIGN(CommandExecutor commands,
                        ConvertToCommands(thunks, options_));
   EXPECT_EQ(commands.size(), 6);
-  EXPECT_TRUE(commands.execution_graph()->is_sequential());
+  EXPECT_FALSE(commands.execution_graph()->is_sequential());
   EXPECT_TRUE(HappensBefore(commands, "before", "async_a"));
+  EXPECT_TRUE(HappensBefore(commands, "before", "main_a"));
   EXPECT_TRUE(HappensBefore(commands, "async_a", "async_b"));
-  EXPECT_TRUE(HappensBefore(commands, "async_b", "main_a"));
   EXPECT_TRUE(HappensBefore(commands, "main_a", "main_b"));
+  EXPECT_TRUE(HappensBefore(commands, "async_b", "after"));
   EXPECT_TRUE(HappensBefore(commands, "main_b", "after"));
+  EXPECT_FALSE(HappensBefore(commands, "async_b", "main_a"));
+  EXPECT_FALSE(HappensBefore(commands, "main_b", "async_a"));
 }
 
 }  // namespace

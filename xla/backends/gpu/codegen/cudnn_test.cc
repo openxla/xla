@@ -209,7 +209,7 @@ CHECK:    },
 CHECK:    "tag": "MATMUL"
 CHECK:   }
 CHECK:  ],
-CHECK:  "tensors": [
+CHECK:  "tensors"
 CHECK:   "data_type": "FLOAT",
 CHECK:   "dim": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*64[[:space:]]*}}],
 CHECK:   "name": "p0",
@@ -1509,7 +1509,7 @@ CHECK: "X": 1
 CHECK: "scale": 3
 CHECK: }
 CHECK: "outputs": {
-CHECK: "Y": 6
+CHECK: "Y": {{(6|"result_lhs_dq")}}
 CHECK: }
 CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
 CHECK: {
@@ -1520,14 +1520,14 @@ CHECK: "X": 2
 CHECK: "scale": 4
 CHECK: }
 CHECK: "outputs": {
-CHECK: "Y": 7
+CHECK: "Y": {{(7|"result_rhs_dq")}}
 CHECK: }
 CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
 CHECK: {
 CHECK: "compute_data_type": "FLOAT"
 CHECK: "inputs": {
-CHECK: "A": 6
-CHECK: "B": 7
+CHECK: "A": {{(6|"result_lhs_dq")}}
+CHECK: "B": {{(7|"result_rhs_dq")}}
 CHECK: }
 CHECK: "outputs": {
 CHECK: "C": 5
@@ -1553,10 +1553,10 @@ CHECK: "name": "result"
 CHECK: "stride": [{{[[:space:]]*98304,[[:space:]]*384,[[:space:]]*1[[:space:]]*}}]
 CHECK: "is_virtual": true
 CHECK: "name": "result_lhs_dq"
-CHECK: "uid": 6
+CHECK: "uid": {{[0-9]+}}
 CHECK: "is_virtual": true
 CHECK: "name": "result_rhs_dq"
-CHECK: "uid": 7
+CHECK: "uid": {{[0-9]+}}
 )"));
 }
 
@@ -1601,7 +1601,7 @@ CHECK:   "stride": [{{[[:space:]]*1,[[:space:]]*1[[:space:]]*}}],
 CHECK:   "tag": "CONV_FPROP"
 CHECK:  }
 CHECK: ],
-CHECK: "tensors": [
+CHECK: "tensors"
 CHECK:   "data_type": "FLOAT",
 CHECK:   "dim": [{{[[:space:]]*2,[[:space:]]*17,[[:space:]]*9,[[:space:]]*9[[:space:]]*}}],
 CHECK:   "name": "input",

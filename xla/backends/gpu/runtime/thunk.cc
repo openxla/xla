@@ -234,8 +234,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_REPLICA_ID;
     case kRngSeed:
       return THUNK_KIND_RNG_SEED;
-    case kSelectK:
-      return THUNK_KIND_SELECT_K;
     case kSend:
       return THUNK_KIND_SEND;
     case kSequential:
@@ -335,8 +333,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kReplicaId;
     case THUNK_KIND_RNG_SEED:
       return kRngSeed;
-    case THUNK_KIND_SELECT_K:
-      return kSelectK;
     case THUNK_KIND_SEND:
       return kSend;
     case THUNK_KIND_SEQUENTIAL:
@@ -400,7 +396,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kReduceScatter);
     CASE(kReplicaId);
     CASE(kRngSeed);
-    CASE(kSelectK);
     CASE(kSend);
     CASE(kSequential);
     CASE(kTriangularSolve);

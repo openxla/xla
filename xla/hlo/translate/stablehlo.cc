@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/transforms/Passes.h"
 #include "stablehlo/transforms/optimization/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_module_importer.h"
 #include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
@@ -61,9 +62,9 @@ absl::Status StablehloToMhlo(mlir::ModuleOp module, bool run_canonicalizer) {
 
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
 
   // CHLO -> MHLO for high level ops (TopK, Erf, RaggedDot, etc.)

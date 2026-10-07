@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
+#include "tsl/platform/platform.h"
 #include "xla/layout_util.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -288,15 +289,15 @@ std::vector<llvm::Value*> ForLoopNest::EmitOperandArrayLoopNest(
       AddLoopsForShapeOnDimensions(shape, dimensions, name_suffix);
   // Verify every dimension except the 'dimension_to_skip' dimension was set in
   // the index.
-#ifndef NDEBUG
-  for (size_t dimension = 0; dimension < multi_index.size(); ++dimension) {
-    if (dimension == dimension_to_skip) {
-      DCHECK_EQ(nullptr, multi_index[dimension]);
-    } else {
-      DCHECK_NE(nullptr, multi_index[dimension]);
+  if constexpr (tsl::kIsDebugBuild) {
+    for (size_t dimension = 0; dimension < multi_index.size(); ++dimension) {
+      if (dimension == dimension_to_skip) {
+        DCHECK_EQ(nullptr, multi_index[dimension]);
+      } else {
+        DCHECK_NE(nullptr, multi_index[dimension]);
+      }
     }
   }
-#endif  // NDEBUG
   return multi_index;
 }
 
