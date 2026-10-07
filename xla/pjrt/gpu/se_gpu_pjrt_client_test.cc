@@ -108,13 +108,11 @@ limitations under the License.
 #elif TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #endif  // GOOGLE_CUDA
-#include "tsl/platform/casts.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/platform.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client_test_helper.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
+#include "xla/stream_executor/memory_reservation.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -129,6 +127,9 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/platform.h"
 namespace xla {
 namespace {
 
@@ -3070,6 +3071,61 @@ bool SharedSpatialPoolIsDefault(const DebugOptions& debug_options) {
          debug_options.xla_gpu_command_buffer_update_mode() ==
              DebugOptions::ALWAYS_UPDATE;
 }
+
+#if GOOGLE_CUDA
+TEST(StreamExecutorGpuClientTest, CrossMappingReceiveNotifiesFailure) {
+  ScopedXlaFlags flags("--xla_gpu_enable_allocator_spatial_partitioning=true");
+  ASSERT_OK_AND_ASSIGN(auto* platform, PlatformUtil::GetDefaultPlatform());
+  ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(auto reservation, executor->CreateMemoryReservation(1));
+  const int64_t initial_bytes =
+      RoundUpTo<int64_t>(8 << 20, reservation->granularity());
+  const int64_t cap_bytes = 2 * initial_bytes;
+  reservation.reset();
+  int64_t free_memory = 0;
+  int64_t total_memory = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
+
+  GpuClientOptions options = GetTestGpuClientOptions(1);
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.gpu_system_memory_size = initial_bytes;
+  // The byte of slack avoids rounding below the cap in the fraction's
+  // floating-point conversion. The allocator rounds down to a whole granule.
+  const double cap = static_cast<double>(cap_bytes + 1) / total_memory;
+  options.allocator_config.memory_fraction = FlexMemFraction{cap / 2, cap};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  struct ReceiveResult {
+    absl::Notification notified;
+    absl::Status status;
+  };
+  auto result = std::make_shared<ReceiveResult>();
+  // The nonempty buffer consumes the entire cap, so it must span the initial
+  // mapping and its extension. Rejection happens before fabric export and
+  // needs only one GPU. The whole batch must fail, including its empty buffer.
+  ASSERT_OK_AND_ASSIGN(
+      auto buffers, client->MakeCrossHostReceiveBuffers(
+                        {ShapeUtil::MakeShape(U8, {0}),
+                         ShapeUtil::MakeShape(U8, {cap_bytes})},
+                        client->addressable_devices()[0],
+                        [result](absl::StatusOr<PjRtCrossHostRecvState> state) {
+                          result->status = state.status();
+                          result->notified.Notify();
+                        }));
+  ASSERT_EQ(buffers.size(), 2);
+  ASSERT_TRUE(
+      result->notified.WaitForNotificationWithTimeout(absl::Seconds(10)))
+      << "Receive failed without notifying descriptor consumers";
+  EXPECT_THAT(result->status,
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("spanning physical allocations")));
+  for (const auto& buffer : buffers) {
+    EXPECT_THAT(buffer->GetReadyFuture().Await(),
+                StatusIs(absl::StatusCode::kUnimplemented,
+                         HasSubstr("spanning physical allocations")));
+  }
+}
+#endif  // GOOGLE_CUDA
 
 TEST(StreamExecutorGpuClientTest, SharedPoolGrowsByDefault) {
   const DebugOptions debug_options = GetDebugOptionsFromFlags();
