@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -46,7 +47,7 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
 
   ABSL_ASSIGN_OR_RETURN(CudaDeviceAllocator::Options options,
                         QueryDeviceAllocatorOptions(device));
-  return Create(executor, size, options);
+  return CreateWithDevice(executor, device, size, options);
 }
 
 absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
@@ -57,21 +58,35 @@ CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size,
   CUdevice device;
   ABSL_RETURN_IF_ERROR(
       cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
+  return CreateWithDevice(executor, device, size, options);
+}
 
-  CUmemAllocationProp props = BuildVmmAllocationProp(device, options);
+absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
+CudaMemoryReservation::CreateWithDevice(
+    StreamExecutor* executor, CUdevice device, uint64_t size,
+    const CudaDeviceAllocator::Options& options) {
+  if (!options.use_vmm) {
+    return absl::InvalidArgumentError(
+        "CudaMemoryReservation requires CUDA VMM, but options.use_vmm is "
+        "false");
+  }
 
-  size_t granularity = 0;
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
-      &granularity, &props, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
+  // The granularity query itself can be rejected for unsupported handle
+  // types; probe with the same fallback CudaDeviceAllocator uses.
+  ABSL_ASSIGN_OR_RETURN(VmmGranularityProbe probe,
+                        ProbeVmmGranularity(device, options));
 
-  uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
+  // Same effective alignment as CudaDeviceAllocator. The mapping granularity
+  // reported to callers stays the driver's value.
+  size_t alignment = std::max(options.alignment, probe.granularity);
+  uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, alignment);
 
   CUdeviceptr ptr;
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(
-      cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMemAddressReserve(&ptr, padded_size, alignment, 0, 0)));
 
   return std::unique_ptr<CudaMemoryReservation>(
-      new CudaMemoryReservation(executor, ptr, padded_size, granularity));
+      new CudaMemoryReservation(executor, ptr, padded_size, probe.granularity));
 }
 
 CudaMemoryReservation::CudaMemoryReservation(StreamExecutor* executor,

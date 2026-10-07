@@ -43,7 +43,10 @@ class CudaRawMemoryAllocation : public MemoryAllocation {
   // Same, but builds the allocation properties from `options` (normally the
   // executor's probed CudaDeviceAllocator::Options) so that handle types match
   // the executor's other VMM allocations, and falls back through simpler
-  // handle types the same way CudaDeviceAllocator does.
+  // handle types the same way CudaDeviceAllocator does. Like
+  // CudaDeviceAllocator, the size is padded to the larger of
+  // `options.alignment` and the mapping granularity. Fails with
+  // InvalidArgument when `options.use_vmm` is false.
   static absl::StatusOr<std::unique_ptr<CudaRawMemoryAllocation>> Create(
       StreamExecutor* executor, uint64_t size,
       const CudaDeviceAllocator::Options& options);
@@ -63,6 +66,12 @@ class CudaRawMemoryAllocation : public MemoryAllocation {
   explicit CudaRawMemoryAllocation(StreamExecutor* executor,
                                    CUmemGenericAllocationHandle handle,
                                    uint64_t size);
+
+  // Shared by both Create overloads. The caller has activated the context and
+  // resolved `device`.
+  static absl::StatusOr<std::unique_ptr<CudaRawMemoryAllocation>>
+  CreateWithDevice(StreamExecutor* executor, CUdevice device, uint64_t size,
+                   const CudaDeviceAllocator::Options& options);
 
   StreamExecutor* executor_;
   CUmemGenericAllocationHandle handle_;  // 0 means moved-from / released
