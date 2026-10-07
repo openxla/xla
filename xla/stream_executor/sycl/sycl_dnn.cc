@@ -131,7 +131,8 @@ OnednnSupport::ConvolveRunnerFromDesc(
   size_t workspace_size =
       std::visit([](const auto& pd) { return pd.scratchpad_desc().get_size(); },
                  primitive_desc.conv_pd);
-  return {std::make_unique<OnednnConvRunner>(std::move(primitive_desc), workspace_size)};
+  return {std::make_unique<OnednnConvRunner>(std::move(primitive_desc),
+                                             workspace_size)};
 }
 
 absl::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>>
@@ -159,8 +160,8 @@ OnednnSupport::FusedConvolveRunnerFromDesc(
   size_t workspace_size =
       std::visit([](const auto& pd) { return pd.scratchpad_desc().get_size(); },
                  primitive_desc.conv_pd);
-  return {
-      std::make_unique<OnednnFusedConvRunner>(std::move(primitive_desc), workspace_size)};
+  return {std::make_unique<OnednnFusedConvRunner>(std::move(primitive_desc),
+                                                  workspace_size)};
 }
 
 void initialize_onednn() {
