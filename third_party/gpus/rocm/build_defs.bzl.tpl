@@ -106,3 +106,32 @@ def rocm_lib_import(name, interface_library, data, deps):
         ],
         visibility = ["//visibility:public"],
     )
+
+def rocm_has_sysdeps():
+    """True if the ROCm distribution ships TheRock's lib/rocm_sysdeps."""
+    return %{rocm_has_sysdeps}
+
+def rocm_system_lib_import(name, sysdeps_library, host_lib):
+    """Imports a system library from TheRock's rocm_sysdeps, or the host one.
+
+    TheRock's libhsakmt.a expects its bundled copies, while classic ROCm's
+    libhsakmt.a was built against the host libraries.
+
+    Args:
+        name: Target name.
+        sysdeps_library: Path of the bundled library under lib/rocm_sysdeps/lib.
+        host_lib: Library name passed as -l<host_lib> on classic ROCm.
+    """
+    if rocm_has_sysdeps():
+        rocm_lib_import(
+            name = name,
+            interface_library = sysdeps_library,
+            data = [":system_libs_data"],
+            deps = [":system_libs"],
+        )
+    else:
+        cc_library(
+            name = name,
+            linkopts = ["-l" + host_lib],
+            visibility = ["//visibility:public"],
+        )

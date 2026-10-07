@@ -288,6 +288,7 @@ def _create_dummy_repository(repository_ctx):
             "%{cuda_or_rocm}": "if_true" if enable_cuda(repository_ctx) else "if_false",
             "%{rocm_gpu_architectures}": "[]",
             "%{rocm_version_number}": "0",
+            "%{rocm_has_sysdeps}": "False",
             "%{single_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_SINGLE_GPU_POOL, _DEFAULT_TF_ROCM_RBE_SINGLE_GPU_POOL),
             "%{multi_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_MULTI_GPU_POOL, _DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL),
         },
@@ -417,6 +418,12 @@ def _create_local_rocm_repository(repository_ctx):
     rocm_config = _setup_rocm_distro_dir(repository_ctx)
     rocm_version_number = int(rocm_config.rocm_version_number)
 
+    # TheRock distributions bundle system libraries (libdrm, libnuma, ...) under
+    # lib/rocm_sysdeps/lib; classic ROCm installs rely on the host copies.
+    rocm_has_sysdeps = repository_ctx.path(
+        "{}/lib/rocm_sysdeps/lib/libdrm.so".format(rocm_config.rocm_toolkit_path),
+    ).exists
+
     # Copy header and library files to execroot.
     # rocm_toolkit_path
     rocm_toolkit_path = _remove_root_dir(rocm_config.rocm_toolkit_path, "rocm")
@@ -435,6 +442,7 @@ def _create_local_rocm_repository(repository_ctx):
             "%{multi_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_MULTI_GPU_POOL, _DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL),
             "%{rocm_gpu_architectures}": str(rocm_config.amdgpu_targets),
             "%{rocm_version_number}": str(rocm_version_number),
+            "%{rocm_has_sysdeps}": str(rocm_has_sysdeps),
         },
     )
 

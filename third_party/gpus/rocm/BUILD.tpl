@@ -16,7 +16,7 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@config_rocm_hipcc//rocm:build_defs.bzl", "hipcc_config")
-load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_lib_import", "rocm_version_number")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_lib_import", "rocm_system_lib_import", "rocm_version_number")
 
 licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
@@ -544,30 +544,27 @@ cc_library(
     }),
 )
 
-# System libraries bundled by TheRock ROCm under lib/rocm_sysdeps/lib, exposed
-# as real link targets (not just runtime data) so consumers like MORI's
-# libhsakmt.a resolve drm/numa symbols against the ROCm-shipped copies instead
-# of the host's /usr/lib. Requires a TheRock layout (hermetic distribution or a
-# TheRock-based local ROCm); classic ROCm installs do not ship rocm_sysdeps.
-rocm_lib_import(
+# System libraries needed by consumers like MORI's libhsakmt.a (drm/numa
+# symbols), exposed as real link targets (not just runtime data). On TheRock
+# layouts (hermetic distribution or a TheRock-based local ROCm) they resolve to
+# the copies bundled under lib/rocm_sysdeps/lib. Classic ROCm installs do not
+# ship rocm_sysdeps, so they fall back to the host libraries (-ldrm, ...).
+rocm_system_lib_import(
     name = "drm",
-    data = [":system_libs_data"],
-    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
-    deps = [":system_libs"],
+    host_lib = "drm",
+    sysdeps_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
 )
 
-rocm_lib_import(
+rocm_system_lib_import(
     name = "drm_amdgpu",
-    data = [":system_libs_data"],
-    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
-    deps = [":system_libs"],
+    host_lib = "drm_amdgpu",
+    sysdeps_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
 )
 
-rocm_lib_import(
+rocm_system_lib_import(
     name = "numa",
-    data = [":system_libs_data"],
-    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
-    deps = [":system_libs"],
+    host_lib = "numa",
+    sysdeps_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
 )
 
 filegroup(
