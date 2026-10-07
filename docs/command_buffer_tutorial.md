@@ -286,18 +286,8 @@ requires runtime, driver, and build-time CUDA toolkit versions of at least 12.9.
 ROCm disables conditional/while graph capture, and oneAPI command buffer
 conversion is disabled. Enabling a category does not override these checks.
 
-Avoid copying obsolete flags from older tuning guides:
-
-- Use `xla_gpu_command_buffer_scheduling_mode` instead of the deprecated
-  `xla_gpu_graph_enable_concurrent_region`.
-- `xla_gpu_enable_command_buffer_va_remapping` and `xla_gpu_graph_level` have been
-  removed. Use the current capture and update-mode settings above.
-- Historical update modes such as `NEVER_UPDATE` and `CAPTURE_CMD_NEVER_UPDATE`
-  are no longer accepted. The supported modes are `ALWAYS_UPDATE`,
-  `SKIP_TEMP`, and `SKIP_PROFILED`; their semantics are not interchangeable with
-  the old modes.
-- `xla_test_add_command_buffer_mode` is for XLA's test harness, not an application
-  tuning setting.
+Use `xla_gpu_command_buffer_scheduling_mode` instead of the deprecated
+`xla_gpu_graph_enable_concurrent_region`.
 
 For implementation details, see the
 [flag definitions](https://github.com/openxla/xla/blob/main/xla/debug_options_flags.cc),
