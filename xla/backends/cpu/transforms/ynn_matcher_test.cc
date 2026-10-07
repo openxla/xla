@@ -230,6 +230,137 @@ TEST_F(YnnReduceTest, CopyDegenerateLayout) {
   )");
 }
 
+class YnnReduceFastMinMaxTest : public YnnReduceTest,
+                                public ::testing::WithParamInterface<bool> {
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = YnnReduceTest::GetDebugOptionsForTest();
+    debug_options.set_xla_cpu_enable_fast_min_max(GetParam());
+    return debug_options;
+  }
+};
+
+TEST_P(YnnReduceFastMinMaxTest, ReduceMaxFloat) {
+  const char* hlo_text = R"(
+  HloModule reduce_max
+
+  max {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT max = f32[] maximum(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = f32[512,512] parameter(0)
+    init = f32[] constant(-inf)
+    ROOT result = f32[512] reduce(input, init), dimensions={1}, to_apply=max
+  }
+  )";
+
+  if (GetParam()) {
+    MatchOptimizedHlo(hlo_text, R"(
+      CHECK: reduce
+      CHECK: ENTRY
+      CHECK: kind=kCustom
+      CHECK: "kind":"__ynn_fusion"
+    )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+      CHECK-NOT: "kind":"__ynn_fusion"
+    )");
+  }
+}
+
+TEST_P(YnnReduceFastMinMaxTest, ReduceMinFloat) {
+  const char* hlo_text = R"(
+  HloModule reduce_min
+
+  min {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT min = f32[] minimum(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = f32[512,512] parameter(0)
+    init = f32[] constant(inf)
+    ROOT result = f32[512] reduce(input, init), dimensions={1}, to_apply=min
+  }
+  )";
+
+  if (GetParam()) {
+    MatchOptimizedHlo(hlo_text, R"(
+      CHECK: reduce
+      CHECK: ENTRY
+      CHECK: kind=kCustom
+      CHECK: "kind":"__ynn_fusion"
+    )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+      CHECK-NOT: "kind":"__ynn_fusion"
+    )");
+  }
+}
+
+TEST_P(YnnReduceFastMinMaxTest, ReduceWindowMaxFloat) {
+  const char* hlo_text = R"(
+  HloModule reduce_window_max
+
+  max {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT max = f32[] maximum(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = f32[512,512] parameter(0)
+    init = f32[] constant(-inf)
+    ROOT rw = f32[256,256] reduce-window(input, init), window={size=2x2 stride=2x2}, to_apply=max
+  }
+  )";
+
+  if (GetParam()) {
+    MatchOptimizedHlo(hlo_text, R"(
+      CHECK: reduce-window
+      CHECK: ENTRY
+      CHECK: kind=kCustom
+      CHECK: "kind":"__ynn_fusion"
+    )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+      CHECK-NOT: "kind":"__ynn_fusion"
+    )");
+  }
+}
+
+TEST_P(YnnReduceFastMinMaxTest, ReduceMaxInt) {
+  const char* hlo_text = R"(
+  HloModule reduce_max_int
+
+  max {
+    lhs = s8[] parameter(0)
+    rhs = s8[] parameter(1)
+    ROOT max = s8[] maximum(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = s8[512,512] parameter(0)
+    init = s8[] constant(-128)
+    ROOT result = s8[512] reduce(input, init), dimensions={1}, to_apply=max
+  }
+  )";
+
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: reduce
+    CHECK: ENTRY
+    CHECK: kind=kCustom
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
+INSTANTIATE_TEST_SUITE_P(YnnReduceFastMinMaxTestSuite, YnnReduceFastMinMaxTest,
+                         ::testing::Bool());
+
 struct DotTestConfig {
   absl::string_view lhs_dtype;
   absl::string_view rhs_dtype;
