@@ -795,6 +795,13 @@ message DebugOptions {
   // preallocation.
   optional bool xla_gpu_enable_allocator_spatial_partitioning = 494;
 
+  // Overrides the client's memory fraction for the GPU BFC allocator. Uses the
+  // XLA_PYTHON_CLIENT_MEM_FRACTION grammar: "0.75" preallocates 75% of device
+  // memory and lets the shared spatial pool grow to all of it, "0.75-0.85"
+  // caps growth at 85%, and "0.75-0.75" is a fixed pool that never grows.
+  // Empty (the default) keeps the client's setting.
+  optional string xla_gpu_memory_fraction_policy = 555;
+
   optional bool xla_gpu_enable_analytical_latency_estimator = 255;
 
   // Enables NCCL Speed-of-Light (SoL) analytical cost model
@@ -1921,7 +1928,7 @@ message DebugOptions {
   // Enables Raft for stable TopK.
   optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
 
-  // Next id: 555
+  // Next id: 556
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
