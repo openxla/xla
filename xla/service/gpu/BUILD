@@ -2859,8 +2859,6 @@ cc_library(
         ":gpu_latency_hiding_scheduler",
         ":hlo_fusion_analysis",
         ":ir_emission_utils",
-        "//xla:layout",
-        "//xla:shape",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_proto_cc",

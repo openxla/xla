@@ -34,12 +34,14 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/decision.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
 #include "xla/side_effect_util.h"
@@ -166,6 +168,11 @@ std::vector<Candidate> FindCandidates(
 }
 
 Decision CanMove(const HloInstruction* instruction) {
+  if (instruction->opcode() == HloOpcode::kCustomCall &&
+      static_cast<const HloCustomCallInstruction*>(instruction)
+              ->custom_call_schedule() != CustomCallSchedule::SCHEDULE_NONE) {
+    return Decision::Forbid("custom call has an explicit scheduling policy");
+  }
   if (instruction->HasSideEffect() || instruction->IsAsynchronous() ||
       HloDataflowAnalysis::IsAsynchronousOperationStart(
           instruction->opcode()) ||
@@ -238,6 +245,8 @@ absl::StatusOr<bool> HloEarlyBufferRelease::RunImpl(
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                         HloAliasAnalysis::Run(module, alias_info_));
   HloSchedule& schedule = module->schedule();
+  ABSL_RETURN_IF_ERROR(schedule.Verify());
+  TF_RET_CHECK(schedule.is_computation_scheduled(module->entry_computation()));
   ABSL_ASSIGN_OR_RETURN(
       MemoryProfile global,
       GetMemoryProfile(schedule, *alias_analysis, module->entry_computation(),

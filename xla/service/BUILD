@@ -6298,6 +6298,7 @@ cc_library(
         ":buffer_value",
         ":decision",
         ":hlo_buffer",
+        ":hlo_proto_cc",
         ":hlo_value",
         "//xla:side_effect_util",
         "//xla:status_macros",

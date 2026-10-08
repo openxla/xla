@@ -41,10 +41,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -88,6 +84,10 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -843,11 +843,23 @@ absl::Status RunLatencyHidingSchedulerPasses(
                      : shape_size_in_bytes(shape);
         };
     HloEarlyBufferRelease::ScheduleCost schedule_cost =
-        [scheduling_context](
+        [scheduling_context, module,
+         pressure_state = std::shared_ptr<ModulePressureState>()](
             const HloComputation* computation,
-            absl::Span<const HloInstruction* const> instructions) {
+            absl::Span<const HloInstruction* const> instructions) mutable {
+          // Statistics also report memory, but this callback only consumes
+          // time. Reuse the original pressure state rather than recomputing it
+          // for every trial; the repair pass evaluates memory independently.
+          if (!pressure_state) {
+            pressure_state = std::make_shared<ModulePressureState>(
+                module, scheduling_context->GetAliasAnalysis().get(),
+                scheduling_context->GetShapeSizeBytes(),
+                scheduling_context->GetAsyncTracker()->IsTopDownScheduling());
+            pressure_state->InitializePressureStates();
+          }
           return LatencyHidingScheduler::LatencyHidingStatistics(
-                     computation, instructions, scheduling_context)
+                     computation, instructions, scheduling_context,
+                     pressure_state.get())
               .total_cycles;
         };
     pipeline.AddPass<HloEarlyBufferRelease>(alias_info, std::move(buffer_size),
