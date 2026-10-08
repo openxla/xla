@@ -2947,6 +2947,80 @@ TEST_P(FrontendAttributesMemorySpaceTest, LoopUsage) {
               absl_testing::IsOkAndHolds(true));
 }
 
+class FusionMemorySpaceCopyTest
+    : public GpuCompilerTest,
+      public ::testing::WithParamInterface<absl::string_view> {};
+
+TEST_P(FusionMemorySpaceCopyTest, OnlyDynamicSliceFusionRequiresCopies) {
+  constexpr absl::string_view kHloTemplate = R"(
+    HloModule test
+
+    fused {
+      p = f32[32]{0} parameter(0)
+      sliced = f32[16]{0} slice(p), slice={[0:16]}
+      ROOT output = f32[16]{0} $operation
+    }
+
+    ENTRY main {
+      p = f32[32]{0} parameter(0)
+      ROOT result = f32[16]{0} fusion(p), kind=$kind, calls=fused,
+        frontend_attributes={
+          operands_memory_spaces="{0:7}",
+          results_memory_spaces="{0:7}"
+        }
+    }
+  )";
+
+  const bool is_loop = GetParam() == "Loop";
+  const bool is_dynamic_slice = GetParam() == "DynamicSlice";
+  std::string hlo = absl::StrReplaceAll(
+      kHloTemplate,
+      {{"$kind", is_loop ? "kLoop" : "kCustom"},
+       {"$operation",
+        is_loop ? "negate(sliced)"
+                : "custom-call(sliced), "
+                  "custom_call_target=\"__xla_test_mock_custom_call_f32\", "
+                  "api_version=API_VERSION_TYPED_FFI"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* fusion = entry->root_instruction();
+  if (!is_loop) {
+    GpuBackendConfig backend_config;
+    FusionBackendConfig* fusion_config =
+        backend_config.mutable_fusion_backend_config();
+    fusion_config->set_kind("__custom_fusion");
+    fusion_config->mutable_custom_fusion_config()->set_name(
+        is_dynamic_slice ? "dynamic_slice_fusion" : "unrelated_fusion");
+    ASSERT_OK(fusion->set_backend_config(backend_config));
+  }
+
+  GpuAliasInfo alias_info(device_description());
+  ASSERT_OK_AND_ASSIGN(auto alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  std::vector<std::pair<HloInstruction*, ShapeIndex>> copies_to_add;
+  GpuCollectiveBufferAnalysis(
+      module.get(), *alias_analysis,
+      [&](HloInstruction* instruction, const ShapeIndex& index) {
+        copies_to_add.emplace_back(instruction, index);
+      });
+
+  if (is_dynamic_slice) {
+    EXPECT_THAT(
+        copies_to_add,
+        ::testing::UnorderedElementsAre(
+            std::make_pair(entry->parameter_instruction(0), ShapeIndex{}),
+            std::make_pair(fusion, ShapeIndex{})));
+  } else {
+    EXPECT_THAT(copies_to_add, IsEmpty());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(CollectiveBufferAnalysis, FusionMemorySpaceCopyTest,
+                         Values("Loop", "UnrelatedCustom", "DynamicSlice"),
+                         [](const TestParamInfo<absl::string_view>& info) {
+                           return std::string(info.param);
+                         });
+
 TEST_F(GpuCompilerTest,
        GpuCollectiveBufferAnalysisSkipsS1AliasedEntryParameterAndRoot) {
   constexpr absl::string_view kHloText = R"(
