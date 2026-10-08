@@ -94,7 +94,10 @@ class BufferAllocation {
         is_entry_computation_parameter_(false),
         is_parameter_aliased_with_output_(false),
         maybe_live_out_(false),
-        is_constant_(false) {}
+        is_constant_(false),
+        has_zero_fixed_offset_buffer_(false),
+        has_nonzero_fixed_offset_buffer_(false),
+        all_buffers_at_same_offset_(true) {}
 
   BufferAllocation(const BufferAllocation&) = default;
   BufferAllocation& operator=(const BufferAllocation&) = default;
@@ -393,6 +396,26 @@ class BufferAllocation {
 
   void set_constant(bool is_constant) { is_constant_ = is_constant; }
 
+  // Whether this allocation contains at least one buffer with a required fixed
+  // offset.
+  bool has_fixed_offset_buffer() const {
+    return has_zero_fixed_offset_buffer_ || has_nonzero_fixed_offset_buffer_;
+  }
+  bool has_zero_fixed_offset_buffer() const {
+    return has_zero_fixed_offset_buffer_;
+  }
+  bool has_nonzero_fixed_offset_buffer() const {
+    return has_nonzero_fixed_offset_buffer_;
+  }
+
+  // Whether all buffers currently assigned to this allocation share a single
+  // common byte offset (`common_offset()`). True when `assigned_buffers_` is
+  // empty.
+  bool all_buffers_at_same_offset() const {
+    return all_buffers_at_same_offset_;
+  }
+  int64_t common_offset() const { return common_offset_; }
+
  private:
   // Only BufferAssigner and BufferAssignment can modify BufferAllocation.
   friend class BufferAssigner;
@@ -401,6 +424,15 @@ class BufferAllocation {
   // Adds a LogicalBuffer to the set assigned to this buffer.
   absl::Status AddAssignment(const HloValue& buffer, int64_t offset,
                              int64_t size);
+
+  void RecordFixedOffsetAssignment(int64_t required_offset,
+                                   int64_t actual_offset) {
+    if (required_offset == 0 && actual_offset == 0) {
+      has_zero_fixed_offset_buffer_ = true;
+    } else {
+      has_nonzero_fixed_offset_buffer_ = true;
+    }
+  }
 
   void set_index(Index index) { index_ = index; }
   void set_size(int64_t size) { size_ = size; }
@@ -424,6 +456,10 @@ class BufferAllocation {
   // indicates the index (starting from 0) of the parameter.
   int64_t parameter_number_ = 0;
 
+  // Common byte offset of all assigned buffers when
+  // `all_buffers_at_same_offset_` is true.
+  int64_t common_offset_ = 0;
+
   // Whether this buffer needs to be thread-local.
   bool is_thread_local_ : 1;
 
@@ -446,6 +482,11 @@ class BufferAllocation {
 
   // See comment on the is_constant() accessor.
   bool is_constant_ : 1;
+
+  // Cached fixed-offset and common-offset state across assigned buffers.
+  bool has_zero_fixed_offset_buffer_ : 1;
+  bool has_nonzero_fixed_offset_buffer_ : 1;
+  bool all_buffers_at_same_offset_ : 1;
 
   // If this buffer is for an entry computation parameter, which subshape of the
   // parameter is it for?
@@ -526,6 +567,10 @@ class BufferAssignment {
       allocation.assigned_buffers_.clear();
       allocation.peak_buffers_.clear();
       allocation.cross_color_buffers_.clear();
+      allocation.common_offset_ = 0;
+      allocation.has_zero_fixed_offset_buffer_ = false;
+      allocation.has_nonzero_fixed_offset_buffer_ = false;
+      allocation.all_buffers_at_same_offset_ = true;
     }
     return std::move(allocations_);
   }
@@ -781,10 +826,7 @@ class BufferAssignment {
 
   // Combines allocations of temporary buffers into one big BufferAllocation.
   absl::Status CombineTempAllocations(
-      std::optional<BufferValue::Color> temp_buffer_color,
-      std::optional<std::function<std::optional<int64_t>(
-          const HloAliasAnalysis&, const HloInstruction*, const ShapeIndex&)>>
-          fixed_offset = std::nullopt);
+      std::optional<BufferValue::Color> temp_buffer_color);
 
   // Computes stats for the assignment, to be retrieved by GetStats.
   void ComputeSummaryStats();
@@ -1208,8 +1250,27 @@ class BufferAssigner {
   SplitBuffersByColor(
       const absl::flat_hash_set<const HloValue*>& buffers) const;
 
+  // Precomputes required fixed offsets for all HloBuffers in `alias_analysis`
+  // when `opts_.fixed_offset` is set. Validates that aliased HloValues in the
+  // same HloBuffer do not have conflicting fixed-offset requirements.
+  absl::Status PrecomputeFixedOffsets(const HloAliasAnalysis& alias_analysis);
+
+  std::optional<int64_t> GetRequiredFixedOffset(
+      const HloBuffer& hlo_buffer) const {
+    if (hlo_buffer.id() >= 0 &&
+        hlo_buffer.id() < fixed_offset_for_buffer_.size()) {
+      return fixed_offset_for_buffer_[hlo_buffer.id()];
+    }
+    return std::nullopt;
+  }
+
   const AliasInfo* alias_info_;
   Options opts_;
+
+  // Dense table of precomputed fixed offsets indexed by HloBuffer::Id.
+  // Populated once in CreateAssignment when opts_.fixed_offset is set; empty
+  // otherwise.
+  std::vector<std::optional<int64_t>> fixed_offset_for_buffer_;
 
   BufferAssigner(const BufferAssigner&) = delete;
   BufferAssigner& operator=(const BufferAssigner&) = delete;
