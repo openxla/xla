@@ -51,7 +51,11 @@ bool IsAsyncBarrierComputation(const HloComputation* computation) {
       });
 }
 
-std::unique_ptr<HloComputation> BuildWrapperComputation(
+// Given an computation that needs to run async but contains more instructions
+// than just parameters and a single root, builds a new computation that
+// contains only parameters and a single root which can be run async. The root
+// of the new computation just calls into the original input computation.
+std::unique_ptr<HloComputation> BuildAsyncWrapperComputation(
     HloComputation* computation) {
   HloComputation::Builder builder(
       absl::StrCat(computation->name(), ".async_wrapper"));
@@ -106,8 +110,8 @@ absl::StatusOr<bool> LegalizeAsyncComputations(
 
     // Build and add a new, single-instruction computation that wraps the
     // current computation.
-    HloComputation* wrapper =
-        module->AddEmbeddedComputation(BuildWrapperComputation(computation));
+    HloComputation* wrapper = module->AddEmbeddedComputation(
+        BuildAsyncWrapperComputation(computation));
 
     // Modify async callers to call into the wrapper.
     const auto callers = computation->caller_instructions();
