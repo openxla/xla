@@ -306,7 +306,8 @@ std::unique_ptr<AsyncStartThunk> WrapInAsyncStartThunk(
   Thunk::ThunkInfo thunk_info;
   thunk_info.thunk_id = ThunkId(next_id.fetch_add(1));
   return std::make_unique<AsyncStartThunk>(thunk_info, CommunicationStreamId(0),
-                                           std::move(sequence));
+                                           std::move(sequence),
+                                           /*devices_per_host=*/1);
 }
 
 std::unique_ptr<AsyncDoneThunk> CreateAllGatherDoneThunk(Thunk* start_thunk) {
@@ -772,7 +773,8 @@ TEST(CommandBufferConversionPassTest,
   Thunk::ThunkInfo thunk_info;
   thunk_info.thunk_id = ThunkId(999);
   thunks.push_back(std::make_unique<AsyncStartThunk>(
-      thunk_info, ComputationStreamId(1), std::move(nested_sequence)));
+      thunk_info, ComputationStreamId(1), std::move(nested_sequence),
+      /*devices_per_host=*/1));
   thunks.push_back(CreateAllGatherDoneThunk(thunks.back().get()));
 
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
@@ -810,7 +812,8 @@ TEST(CommandBufferConversionPassTest,
   ThunkSequence async_seq;
   async_seq.push_back(std::move(group_thunk));
   thunks.push_back(std::make_unique<AsyncStartThunk>(
-      start_info, CommunicationStreamId(0), std::move(async_seq)));
+      start_info, CommunicationStreamId(0), std::move(async_seq),
+      /*devices_per_host=*/1));
   thunks.push_back(CreateAllGatherDoneThunk(thunks.back().get()));
 
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
@@ -846,7 +849,8 @@ TEST(CommandBufferConversionPassTest,
   ThunkSequence async_seq;
   async_seq.push_back(std::move(group_thunk));
   thunks.push_back(std::make_unique<AsyncStartThunk>(
-      start_info, CommunicationStreamId(0), std::move(async_seq)));
+      start_info, CommunicationStreamId(0), std::move(async_seq),
+      /*devices_per_host=*/1));
   thunks.push_back(CreateAllGatherDoneThunk(thunks.back().get()));
 
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
@@ -1487,7 +1491,8 @@ TEST(CommandBufferConversionPassTest, ConvertAsyncStartDonePair) {
 
   // Create AsyncStartThunk with an empty nested sequence.
   auto start_thunk = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo(), ComputationStreamId(0), ThunkSequence{});
+      Thunk::ThunkInfo(), ComputationStreamId(0), ThunkSequence{},
+      /*devices_per_host=*/1);
   auto async_execution = start_thunk->async_execution();
   thunks.push_back(std::move(start_thunk));
 
@@ -1513,7 +1518,8 @@ TEST(CommandBufferConversionPassTest,
 
   // Create AsyncStartThunk with an empty nested sequence.
   auto start_thunk = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo(), ComputationStreamId(0), ThunkSequence{});
+      Thunk::ThunkInfo(), ComputationStreamId(0), ThunkSequence{},
+      /*devices_per_host=*/1);
   auto async_execution = start_thunk->async_execution();
   thunks.push_back(std::move(start_thunk));
 

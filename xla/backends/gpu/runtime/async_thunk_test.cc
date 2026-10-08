@@ -107,7 +107,8 @@ TEST(AsyncThunkTest, ConcurrentMemsets) {
     start_info.thunk_id = ThunkId(i + 1);
 
     thunks.Emplace<AsyncStartThunk>(std::move(start_info),
-                                    ComputationStreamId(i), std::move(nested));
+                                    ComputationStreamId(i), std::move(nested),
+                                    /*devices_per_host=*/1);
   }
 
   for (int i = 0; i < kNumChunks; ++i) {
@@ -171,14 +172,14 @@ TEST(AsyncThunkTest, MemcpyStreamDispatch) {
   h2d_info.profile_annotation = "h2d_start";
 
   ThunkSequence thunks;
-  thunks.Emplace<AsyncStartThunk>(d2h_info, kMemcpyD2HStreamId,
-                                  ThunkSequence{});
+  thunks.Emplace<AsyncStartThunk>(d2h_info, kMemcpyD2HStreamId, ThunkSequence{},
+                                  /*devices_per_host=*/1);
   auto* d2h_start = static_cast<AsyncStartThunk*>(thunks[0].get());
   thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(),
                                  d2h_start->async_execution());
 
-  thunks.Emplace<AsyncStartThunk>(h2d_info, kMemcpyH2DStreamId,
-                                  ThunkSequence{});
+  thunks.Emplace<AsyncStartThunk>(h2d_info, kMemcpyH2DStreamId, ThunkSequence{},
+                                  /*devices_per_host=*/1);
   auto* h2d_start = static_cast<AsyncStartThunk*>(thunks[2].get());
   thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(),
                                  h2d_start->async_execution());
@@ -211,9 +212,9 @@ TEST(AsyncThunkTest, MemcpyStreamNullReturnsError) {
   ASSERT_OK_AND_ASSIGN(auto main_stream, executor->CreateStream());
 
   AsyncStartThunk d2h_start(Thunk::ThunkInfo(), kMemcpyD2HStreamId,
-                            ThunkSequence{});
+                            ThunkSequence{}, /*devices_per_host=*/1);
   AsyncStartThunk h2d_start(Thunk::ThunkInfo(), kMemcpyH2DStreamId,
-                            ThunkSequence{});
+                            ThunkSequence{}, /*devices_per_host=*/1);
 
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations({}, 0, &allocator);
@@ -243,12 +244,12 @@ TEST(AsyncThunkTest, GpuExecutableFallsBackToMainStreamForMemcpyStreams) {
 
   ThunkSequence thunks;
   thunks.Emplace<AsyncStartThunk>(Thunk::ThunkInfo(), kMemcpyD2HStreamId,
-                                  ThunkSequence{});
+                                  ThunkSequence{}, /*devices_per_host=*/1);
   auto* d2h_start = static_cast<AsyncStartThunk*>(thunks[0].get());
   thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(),
                                  d2h_start->async_execution());
   thunks.Emplace<AsyncStartThunk>(Thunk::ThunkInfo(), kMemcpyH2DStreamId,
-                                  ThunkSequence{});
+                                  ThunkSequence{}, /*devices_per_host=*/1);
   auto* h2d_start = static_cast<AsyncStartThunk*>(thunks[2].get());
   thunks.Emplace<AsyncDoneThunk>(Thunk::ThunkInfo(),
                                  h2d_start->async_execution());
@@ -289,7 +290,7 @@ TEST(AsyncThunkTest, AsyncDoneRecordCommandBuffer) {
 
   // Create a paired start/done to obtain a valid AsyncExecution.
   AsyncStartThunk start(Thunk::ThunkInfo(), ComputationStreamId(0),
-                        ThunkSequence());
+                        ThunkSequence(), /*devices_per_host=*/1);
   AsyncDoneThunk done(Thunk::ThunkInfo(), start.async_execution());
 
   // Set up minimal execute params (not used by AsyncDoneThunk::Record()).
