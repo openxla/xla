@@ -128,8 +128,7 @@ struct OneDnnConvConfig {
 absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     const OneDnnConvPrimitiveDesc& pd,
     absl::Span<const DeviceAddressBase> operand_buffers,
-    DeviceAddressBase result_buffer, Stream* stream,
-    ScratchAllocator* scratch_allocator);
+    DeviceAddressBase result_buffer, Stream* stream);
 
 absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
     const OneDnnConvConfig& config, Stream* stream);

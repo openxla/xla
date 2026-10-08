@@ -449,8 +449,6 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
   ::sycl::queue* sycl_queue =
       absl::bit_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
   onednn_conv_primitive.engine = pd.engine;
-  onednn_conv_primitive.stream = dnnl::sycl_interop::make_stream(
-      onednn_conv_primitive.engine, *sycl_queue);
 
   const dnn::ConvolutionKind conv_kind = pd.kind;
   ABSL_ASSIGN_OR_RETURN(
@@ -469,8 +467,13 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
     return absl::InvalidArgumentError(
         "Fused convolution requires a side input buffer");
   }
-
+  if (pd.bias.has_value() && bias_data == nullptr) {
+    return absl::InvalidArgumentError(
+        "Fused convolution requires a bias buffer");
+  }
   try {
+    onednn_conv_primitive.stream = dnnl::sycl_interop::make_stream(
+        onednn_conv_primitive.engine, *sycl_queue);
     dnnl::memory src_memory = CreateDnnlMemory(
         pd.src_md, onednn_conv_primitive.engine, buffers.input_data);
     dnnl::memory filter_memory = CreateDnnlMemory(
