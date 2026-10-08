@@ -2306,6 +2306,7 @@ cc_library(
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_layout",
+        "//xla/service:decision",
         "//xla/service:hlo_value",
         "//xla/service:layout_assignment",
         "//xla/service:matmul_indexing_utils",

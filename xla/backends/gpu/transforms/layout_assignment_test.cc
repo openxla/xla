@@ -2050,6 +2050,156 @@ ENTRY main {
   }
 }
 
+// A layout preference can reach an iota through elementwise operations and a
+// transpose without requiring any conversion of the large array.
+TEST_F(LayoutAssignmentTest, SliceOfLargeFlexibleProducerKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+ENTRY main {
+  w = f32[4096,4096] iota(), iota_dimension=0
+  n = f32[4096,4096] negate(w)
+  t = f32[4096,4096] transpose(n), dimensions={1,0}
+  zero = s32[] constant(0)
+  ds = f32[512,4096] dynamic-slice(t, zero, zero), dynamic_slice_sizes={512,4096}
+  ROOT ag = f32[1024,4096]{1,0} all-gather(ds), dimensions={0}, replica_groups={{0,1}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  const HloInstruction* transpose =
+      FindInstruction(module.get(), HloOpcode::kTranspose);
+  ASSERT_THAT(transpose, NotNull());
+  EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(transpose->operand(0)->shape(),
+                                            transpose->shape(),
+                                            transpose->dimensions()))
+      << module->ToString();
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+  }
+}
+
+TEST_F(LayoutAssignmentTest, StaticSliceOfLargeBroadcastKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+ENTRY main {
+  p = f32[] parameter(0)
+  w = f32[4096,4096] broadcast(p), dimensions={}
+  s = f32[512,4096] slice(w), slice={[0:512], [0:4096]}
+  ROOT ag = f32[512,8192]{0,1} all-gather(s), dimensions={1}, replica_groups={{0,1}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+  }
+}
+
+// A freshly generated accumulator can adopt the update's layout directly.
+TEST_F(LayoutAssignmentTest, UpdateOfLargeBroadcastKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+ENTRY main {
+  update = f32[512,4096]{0,1} parameter(0)
+  zero = f32[] constant(0)
+  acc = f32[4096,4096] broadcast(zero), dimensions={}
+  idx = s32[] constant(0)
+  ROOT dus = f32[4096,4096] dynamic-update-slice(acc, update, idx, idx)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  computation_layout.mutable_result_layout()->Clear();
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_TRUE(LayoutUtil::Equal(
+      module->entry_computation()->root_instruction()->shape().layout(),
+      computation_layout.parameter_layout(0).layout()));
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+  }
+}
+
+// The transpose operand forwards a nested entry tuple leaf. Its provisional
+// layout must not hide the authoritative entry constraint (including AUTO).
+TEST_F(LayoutAssignmentTest,
+       UnconstrainedLoopTransposeUsesTupleEntryLayoutConstraint) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+cond {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(4)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+body {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[3,2] get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT t = (s32[], f32[3,2]) tuple(next, w)
+}
+ENTRY main {
+  p = (s32[], (f32[2,3]{1,0}, s32[])) parameter(0)
+  nested = (f32[2,3], s32[]) get-tuple-element(p), index=1
+  w = f32[2,3]{1,0} get-tuple-element(nested), index=0
+  t = f32[3,2] transpose(w), dimensions={1,0}
+  zero = s32[] constant(0)
+  init = (s32[], f32[3,2]) tuple(zero, t)
+  loop = (s32[], f32[3,2]) while(init), condition=cond, body=body
+  ROOT r = f32[3,2]{1,0} get-tuple-element(loop), index=1
+})";
+  for (bool auto_layout : {false, true}) {
+    SCOPED_TRACE(auto_layout);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    Layout entry_layout;
+    if (auto_layout) {
+      entry_layout.set_memory_space(Layout::kHostMemorySpace);
+    } else {
+      entry_layout = LayoutUtil::MakeLayout({0, 1});
+    }
+    computation_layout.mutable_parameter_layout(0)->ResetLayout(entry_layout,
+                                                                {1, 0});
+    GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    const HloInstruction* transpose =
+        FindInstruction(module.get(), HloOpcode::kTranspose);
+    ASSERT_THAT(transpose, NotNull());
+    EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(transpose->operand(0)->shape(),
+                                              transpose->shape(),
+                                              transpose->dimensions()))
+        << module->ToString();
+    for (const HloComputation* computation : module->computations()) {
+      for (const HloInstruction* instruction : computation->instructions()) {
+        EXPECT_NE(instruction->opcode(), HloOpcode::kCopy)
+            << module->ToString();
+      }
+    }
+  }
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

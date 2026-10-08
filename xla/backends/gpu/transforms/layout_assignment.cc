@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -1171,21 +1172,66 @@ bool IsSmallPieceOfLargeArray(const Shape& piece, const Shape& large) {
          large_bytes >= kSmallPieceMinRatio * ArrayBytes(piece);
 }
 
+// Recognize single-use producers that can generate any dimension order without
+// converting an existing array. Cutting propagation through these producers
+// would introduce a piece-sized copy without saving a large-array conversion.
+// Be conservative at shared values, computation boundaries, and operations
+// with backend layout requirements. Bound the walk to limit compilation work.
+Decision CanGenerateAnyLayout(const HloInstruction* instruction) {
+  std::vector<const HloInstruction*> worklist{instruction};
+  absl::flat_hash_set<const HloInstruction*> visited;
+  while (!worklist.empty()) {
+    const HloInstruction* producer = worklist.back();
+    worklist.pop_back();
+    if (!producer->shape().IsArray()) {
+      return Decision::Forbid("Non-array producer");
+    }
+    if (producer->shape().dimensions().size() <= 1) {
+      continue;  // There is only one dimension order.
+    }
+    if (!visited.insert(producer).second) {
+      continue;
+    }
+    if (visited.size() > 64 || producer->user_count() != 1 ||
+        producer->IsRoot()) {
+      return Decision::Forbid(
+          "Shared, externally constrained, or deep producer");
+    }
+    switch (producer->opcode()) {
+      case HloOpcode::kIota:
+        break;
+      case HloOpcode::kBroadcast:
+      case HloOpcode::kTranspose:
+        worklist.push_back(producer->operand(0));
+        break;
+      default:
+        if (!HloInstruction::IsOpElementwise(producer->opcode()) ||
+            producer->opcode() == HloOpcode::kBitcastConvert) {
+          return Decision::Forbid("Producer may require a layout conversion");
+        }
+        for (const HloInstruction* operand : producer->operands()) {
+          worklist.push_back(operand);
+        }
+    }
+  }
+  return Decision::Allow();
+}
+
 // Prefer the entry computation's parameter layout over the instruction's
 // existing layout, which is only a hint before layout assignment. An AUTO
 // layout, including one with only a memory space, has no dimension order to
-// use as a hint. The index selects an array leaf of a tuple parameter.
+// use as a hint. Resolve forwarded operands to their defining value first so
+// tuple leaves use their entry constraint rather than a provisional GTE layout.
 std::optional<Shape> ShapeWithLayoutHint(
-    const HloInstruction* instruction,
-    const ComputationLayout& entry_computation_layout,
-    ShapeIndexView index = {}) {
+    const HloValue& value, const ComputationLayout& entry_computation_layout) {
+  const HloInstruction* instruction = value.defining_instruction();
   const Shape* shape = &instruction->shape();
   if (instruction->opcode() == HloOpcode::kParameter &&
       instruction->parent()->IsEntryComputation()) {
     shape = &entry_computation_layout.parameter_shape(
         instruction->parameter_number());
   }
-  const Shape& subshape = ShapeUtil::GetSubshape(*shape, index);
+  const Shape& subshape = ShapeUtil::GetSubshape(*shape, value.index());
   if (subshape.IsArray() && LayoutUtil::HasMinorToMajorSetInLayout(subshape)) {
     return subshape;
   }
@@ -1208,7 +1254,8 @@ bool GpuLayoutAssignment::PreferCopyOfResultOverPropagation(
     return false;
   }
   return IsSmallPieceOfLargeArray(instruction->shape(),
-                                  instruction->operand(0)->shape());
+                                  instruction->operand(0)->shape()) &&
+         CanGenerateAnyLayout(instruction->operand(0)).IsForbidden();
 }
 
 bool GpuLayoutAssignment::PreferCopyOfOperandOverSiblingPropagation(
@@ -1219,7 +1266,8 @@ bool GpuLayoutAssignment::PreferCopyOfOperandOverSiblingPropagation(
     return false;
   }
   return IsSmallPieceOfLargeArray(user->operand(1)->shape(),
-                                  user->operand(0)->shape());
+                                  user->operand(0)->shape()) &&
+         CanGenerateAnyLayout(user->operand(0)).IsForbidden();
 }
 
 Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
@@ -1251,10 +1299,14 @@ Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
       if (!producer->parent()->IsEntryComputation()) {
         continue;  // Carried in from an enclosing loop; keep following.
       }
-      hint = ShapeWithLayoutHint(producer, saved_entry_computation_layout(),
-                                 value->index());
+      hint = ShapeWithLayoutHint(*value, saved_entry_computation_layout());
     } else if (producer->opcode() == HloOpcode::kTranspose) {
-      hint = ShapeWithLayoutHint(producer->operand(0),
+      const HloValueSet& operand_values =
+          dataflow_analysis().GetValueSet(producer->operand(0));
+      if (operand_values.values().size() != 1) {
+        break;
+      }
+      hint = ShapeWithLayoutHint(*operand_values.values().front(),
                                  saved_entry_computation_layout());
       if (hint.has_value()) {
         *hint = ShapeUtil::PermuteDimensions(producer->dimensions(), *hint);
