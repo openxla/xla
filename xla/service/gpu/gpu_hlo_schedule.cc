@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
@@ -74,6 +75,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_latency_estimator.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_early_buffer_release.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -831,6 +833,27 @@ absl::Status RunLatencyHidingSchedulerPasses(
   }
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));
+  if (options.xla_gpu_experimental_enable_early_buffer_release()) {
+    BufferValue::SizeFunction buffer_size =
+        [shape_size_in_bytes](const BufferValue& buffer) {
+          const Shape& shape = buffer.shape();
+          return shape.has_layout() && shape.layout().memory_space() ==
+                                           Layout::kHostMemorySpace
+                     ? int64_t{0}
+                     : shape_size_in_bytes(shape);
+        };
+    HloEarlyBufferRelease::ScheduleCost schedule_cost =
+        [scheduling_context](
+            const HloComputation* computation,
+            absl::Span<const HloInstruction* const> instructions) {
+          return LatencyHidingScheduler::LatencyHidingStatistics(
+                     computation, instructions, scheduling_context)
+              .total_cycles;
+        };
+    pipeline.AddPass<HloEarlyBufferRelease>(alias_info, std::move(buffer_size),
+                                            std::move(schedule_cost),
+                                            HloEarlyBufferRelease::Options{});
+  }
   pipeline.AddPass<SchedulingInstructionAnnotator>();
 
   return pipeline.Run(module).status();

@@ -362,6 +362,25 @@ xla_test(
 )
 
 xla_test(
+    name = "early_buffer_release_test",
+    srcs = ["early_buffer_release_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gpu_pjrt_codegen_test",
+        "//xla:error_spec",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:buffer_value",
+        "//xla/service:hlo_early_buffer_release",
+        "//xla/service/gpu:alias_info",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
     name = "gpu_copy_test",
     srcs = ["gpu_copy_test.cc"],
     backends = ["gpu"],
