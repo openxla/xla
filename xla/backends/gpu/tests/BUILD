@@ -1146,7 +1146,6 @@ cc_library(
         "//xla:literal",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/pjrt:pjrt_client",
@@ -1157,7 +1156,6 @@ cc_library(
         "//xla/service:device_assignment",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
-        "//xla/service:hlo_runner_pjrt",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
@@ -1172,7 +1170,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_for_library",
-        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:path",
     ] + if_google([
         # In OSS this dependency is added automatically for xla_test targets. See

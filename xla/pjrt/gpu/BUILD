@@ -264,7 +264,6 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
-        "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
         "//xla/backends/gpu/runtime:thunk_executor",

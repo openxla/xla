@@ -321,7 +321,7 @@ xla_test(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
-    ] + if_cuda(["//xla/tsl/cuda:nvml"]),
+    ],
 )
 
 tsl_pybind_extension(
