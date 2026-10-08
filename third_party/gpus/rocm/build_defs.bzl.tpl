@@ -86,8 +86,9 @@ def get_rbe_amdgpu_pool(is_single_gpu = False):
 
 def rocm_lib_import(name, interface_library, data, deps, is_system_lib = False):
     # System libs (libdrm/libnuma) are bundled under lib/rocm_sysdeps/lib on
-    # TheRock layouts; classic ROCm installs lack them, so link the host copy.
-    if is_system_lib and not %{rocm_has_sysdeps}:
+    # TheRock ROCm 7.10+ (version 71000); older installs (e.g. 7.2.4 = 70204)
+    # lack them, so link the host copy.
+    if is_system_lib and rocm_version_number() < 71000:
         cc_library(
             name = name,
             linkopts = ["-l" + name],
