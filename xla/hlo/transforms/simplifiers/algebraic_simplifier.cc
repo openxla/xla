@@ -9414,6 +9414,9 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
        reduce_window->to_apply()->root_instruction()->opcode() ==
            HloOpcode::kTuple)) {
     std::vector<HloInstruction*> maps;
+    std::vector<HloInstruction*> map_operands(init_values.begin(),
+                                              init_values.end());
+    map_operands.insert(map_operands.end(), inputs.begin(), inputs.end());
     for (int64_t i = 0; i < input_count; ++i) {
       TF_RET_CHECK(ShapeUtil::IsScalar(*input_shapes[i]));
       TF_RET_CHECK(ShapeUtil::IsScalar(*output_shapes[i]));
@@ -9428,7 +9431,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
       } else {
         map_computation_root = reduce_window->to_apply()->root_instruction();
       }
-      maps.push_back(inputs[i]);
+      auto* map_computation = computation_->parent()->AddEmbeddedComputation(
+          reduce_window->to_apply()->CloneWithReplacements(
+              &replacements, {}, nullptr, "clone", map_computation_root));
+      maps.push_back(reduce_window->AddInstruction(HloInstruction::CreateMap(
+          *output_shapes[i], map_operands, map_computation)));
     }
     return replace_with_span(maps);
   }
