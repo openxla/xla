@@ -24,14 +24,13 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/hlo_early_buffer_release.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
 
 namespace xla::gpu {
 namespace {
@@ -77,7 +76,7 @@ ENTRY main {
 })";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(hlo));
-  GpuAliasInfo alias_info;
+  GpuAliasInfo alias_info(device_description());
   HloEarlyBufferRelease::Options options;
   options.min_buffer_bytes = 1;
   options.max_iterations = 1;

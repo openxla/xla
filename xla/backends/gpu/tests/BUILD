@@ -374,7 +374,7 @@ xla_test(
         "//xla/service:buffer_value",
         "//xla/service:hlo_early_buffer_release",
         "//xla/service/gpu:alias_info",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_interpreter_reference_mixin",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
