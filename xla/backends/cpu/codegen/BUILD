@@ -581,13 +581,47 @@ cc_library(
     hdrs = ["aot_compiled_function_library.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":builtin_fp16",
+        ":builtin_pow",
         "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "aot_object_loader",
+    hdrs = ["aot_compiled_function_library.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":aot_compiled_function_library",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "lite_object_loader",
+    hdrs = ["aot_compiled_function_library.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":aot_compiled_function_library",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -695,6 +729,9 @@ xla_cc_test(
     name = "object_loader_test",
     srcs = ["object_loader_test.cc"],
     deps = [
+        ":aot_compiled_function_library",
+        ":aot_object_loader",
+        ":builtin_definition_generator",
         ":execution_engine",
         ":ir_compiler",
         ":jit_compiler",

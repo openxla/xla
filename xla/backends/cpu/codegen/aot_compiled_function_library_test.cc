@@ -64,6 +64,20 @@ TEST(AotCompiledFunctionLibraryTest, ResolveNonExistentFunction) {
       function_library->ResolveFunction<decltype(add)>(function_ptr_name).ok());
 }
 
+TEST(AotObjectLoaderTest, EmptyObjectFilesReturnsEmptyFunctionLibrary) {
+  AotObjectLoader loader;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<FunctionLibrary> lib,
+                          std::move(loader).Load({}));
+  EXPECT_FALSE(lib->ResolveFunction<decltype(add)>("Add").ok());
+}
+
+TEST(AotObjectLoaderTest, RejectsEmptyOrInvalidElfContents) {
+  AotObjectLoader loader;
+  EXPECT_FALSE(loader.AddObjFile("", "empty.o").ok());
+  EXPECT_TRUE(loader.AddObjFile("not_an_elf_header", "bad.o").ok());
+  EXPECT_FALSE(std::move(loader).Load({}).ok());
+}
+
 }  // namespace
 
 }  // namespace xla::cpu

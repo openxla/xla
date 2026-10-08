@@ -21,24 +21,30 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/Target/TargetOptions.h"
 #include "xla/backends/cpu/runtime/function_library.h"
-#include "xla/backends/cpu/target_machine_options.h"
-#include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/compiler.h"
 #include "xla/service/cpu/executable.pb.h"
-#include "xla/service/executable.h"
-#include "xla/service/hlo_module_config.h"
+
+namespace xla {
+class CompiledModule;
+class Executable;
+class HloModule;
+}  // namespace xla
 
 namespace xla::cpu {
 
-llvm::TargetOptions CompilerTargetOptions(const HloModuleConfig& module_config);
+class TargetMachineOptions;
 
 absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
     const std::vector<FunctionLibrary::Symbol>& compiled_symbols,
     absl::Span<const ObjFileProto> obj_files, const HloModule* hlo_module,
     const TargetMachineOptions& target_machine_options,
+    absl::string_view data_layout_str);
+
+absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
+    const std::vector<FunctionLibrary::Symbol>& compiled_symbols,
+    absl::Span<const ObjFileProto> obj_files,
     absl::string_view data_layout_str);
 
 absl::StatusOr<std::vector<FunctionLibrary::Symbol>>
@@ -47,6 +53,9 @@ GetCompiledSymbolsFromProto(
 
 class CpuAotLoader {
  public:
+  static absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
+      const xla::cpu::CompilationResultProto& aot_result_proto);
+
   static absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
       const std::string& serialized_aot_result);
 

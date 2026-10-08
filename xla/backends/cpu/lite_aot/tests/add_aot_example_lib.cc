@@ -26,6 +26,7 @@ limitations under the License.
 #include "tsl/platform/platform.h"
 #include "xla/backends/cpu/lite_aot/xla_aot_function.h"
 #include "xla/service/cpu/executable.pb.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {

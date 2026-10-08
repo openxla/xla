@@ -51,11 +51,13 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/executable_run_options.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/executable.h"
@@ -121,6 +123,43 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
   return executable;
 }
 
+absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
+    std::unique_ptr<FunctionLibrary> function_library,
+    std::vector<BufferAllocation> allocations,
+    ShapeTree<BufferAllocation::Index> result_allocation_indices,
+    BufferAssignmentProto buffer_assignment_proto,
+    std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
+    std::vector<ConstantAllocation> constants,
+    TargetMachineOptions target_machine_options, std::string data_layout) {
+  VLOG(2) << "Create CpuExecutable from AOT allocations; module="
+          << hlo_module->name() << ", constants=" << constants.size();
+
+  std::unique_ptr<CpuExecutable> executable(new CpuExecutable(
+      std::move(hlo_module), std::move(allocations),
+      std::move(result_allocation_indices), std::move(buffer_assignment_proto),
+      std::move(target_machine_options), std::move(data_layout)));
+  executable->function_library_ = std::move(function_library);
+
+  ThunkExecutor::Options thunk_executor_options;
+  thunk_executor_options.is_nested_executor = false;
+  ABSL_ASSIGN_OR_RETURN(
+      executable->thunks_,
+      ThunkExecutor::Create(std::move(thunks), thunk_executor_options));
+
+  executable->thunks_->thunk_sequence().ForEach([&](const Thunk& thunk) {
+    executable->has_ynn_fusions_ |= thunk.kind() == Thunk::Kind::kYnnFusion;
+  });
+
+  for (auto& constant : constants) {
+    if (executable->constants_.size() <= constant.index) {
+      executable->constants_.resize(constant.index + 1);
+    }
+    executable->constants_[constant.index] = std::move(constant);
+  }
+
+  return executable;
+}
+
 CpuExecutable::CpuExecutable(std::unique_ptr<HloModule> hlo_module,
                              std::unique_ptr<BufferAssignment> assignment,
                              TargetMachineOptions target_machine_options,
@@ -148,10 +187,51 @@ CpuExecutable::CpuExecutable(std::unique_ptr<HloModule> hlo_module,
   }
 }
 
+CpuExecutable::CpuExecutable(
+    std::unique_ptr<HloModule> hlo_module,
+    std::vector<BufferAllocation> allocations,
+    ShapeTree<BufferAllocation::Index> result_allocation_indices,
+    BufferAssignmentProto buffer_assignment_proto,
+    TargetMachineOptions target_machine_options, std::string data_layout)
+    : Executable(std::move(hlo_module)),
+      owned_allocations_(std::move(allocations)),
+      result_allocation_indices_(std::move(result_allocation_indices)),
+      buffer_assignment_proto_(std::move(buffer_assignment_proto)),
+      target_machine_options_(std::move(target_machine_options)),
+      data_layout_(std::move(data_layout)) {
+  if (has_module() && buffer_assignment_proto_.has_value()) {
+    XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
+                                               *buffer_assignment_proto_);
+  }
+
+  alloc_ptrs_.reserve(owned_allocations_.size());
+  for (const BufferAllocation& alloc : owned_allocations_) {
+    alloc_ptrs_.push_back(&alloc);
+  }
+
+  if (has_module()) {
+    *shared_module()->metadata() = HloModuleMetadata(tsl::Env::Default());
+  }
+}
+
 CpuExecutable::~CpuExecutable() {
   if (has_module()) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());
   }
+}
+
+const BufferAssignment& CpuExecutable::buffer_assignment() const {
+  if (!assignment_ && buffer_assignment_proto_.has_value() && has_module()) {
+    AliasInfo alias_info;
+    auto buffer_size_bytes = [](const BufferValue& buffer) {
+      return CpuExecutable::ShapeSizeBytes(buffer.shape());
+    };
+    assignment_ =
+        BufferAssignment::FromProto(*buffer_assignment_proto_, &module(),
+                                    buffer_size_bytes, &alias_info)
+            .value();
+  }
+  return *assignment_;
 }
 
 static absl::StatusOr<MaybeOwningDeviceAddress> MemoryForAllocation(
@@ -200,19 +280,17 @@ absl::StatusOr<std::vector<MaybeOwningDeviceAddress>>
 CpuExecutable::CreateBufferTable(se::DeviceAddressAllocator* memory_allocator,
                                  int device_ordinal,
                                  absl::Span<ExecutionInput const> arguments) {
-  std::vector<MaybeOwningDeviceAddress> buffers(
-      assignment_->Allocations().size());
-  VLOG(3) << "Allocating " << assignment_->Allocations().size()
-          << " allocations for module " << module().name();
-  for (BufferAllocation::Index i = 0; i < assignment_->Allocations().size();
-       ++i) {
-    const BufferAllocation& allocation = assignment_->GetAllocation(i);
+  std::vector<MaybeOwningDeviceAddress> buffers(alloc_ptrs_.size());
+  VLOG(3) << "Allocating " << alloc_ptrs_.size() << " allocations for module "
+          << module().name();
+  for (BufferAllocation::Index i = 0; i < alloc_ptrs_.size(); ++i) {
+    const BufferAllocation& allocation = *alloc_ptrs_[i];
     ABSL_ASSIGN_OR_RETURN(
         buffers[i], MemoryForAllocation(allocation, arguments, constants_,
                                         memory_allocator, device_ordinal));
   }
 
-  if (VLOG_IS_ON(3)) {
+  if (VLOG_IS_ON(3) && assignment_) {
     ABSL_ASSIGN_OR_RETURN(const BufferAllocation::Slice result_slice,
                           assignment_->GetUniqueTopLevelOutputSlice());
     VLOG(3) << "result index: " << result_slice.index();
@@ -332,19 +410,24 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
   for (auto& p : result.MutableResult()->buffers()) {
     const ShapeIndex& index = p.first;
     se::DeviceAddressBase& result_buffer = p.second;
-    const HloValueSet& sources = this->GetRootValueSet().element(index);
-    // The points to set is unambiguous so the set should be a
-    // singleton.
-    CHECK_EQ(1, sources.values().size());
-    const HloValue* value_source = sources.values()[0];
-    HloInstruction* src = value_source->instruction();
+    BufferAllocation::Index buffer_index = -1;
+    if (result_allocation_indices_.has_value()) {
+      buffer_index = result_allocation_indices_->element(index);
+    } else {
+      const HloValueSet& sources = this->GetRootValueSet().element(index);
+      // The points to set is unambiguous so the set should be a
+      // singleton.
+      CHECK_EQ(1, sources.values().size());
+      const HloValue* value_source = sources.values()[0];
+      HloInstruction* src = value_source->instruction();
 
-    // The source for this result buffer can be a nested buffer such as
-    // a tuple element.
-    ABSL_ASSIGN_OR_RETURN(
-        const BufferAllocation::Slice slice,
-        this->assignment_->GetUniqueSlice(src, value_source->index()));
-    const BufferAllocation::Index buffer_index = slice.index();
+      // The source for this result buffer can be a nested buffer such as
+      // a tuple element.
+      ABSL_ASSIGN_OR_RETURN(
+          const BufferAllocation::Slice slice,
+          this->assignment_->GetUniqueSlice(src, value_source->index()));
+      buffer_index = slice.index();
+    }
 
     // TODO(cheshire): duplication with other backends.
     std::optional<HloInputOutputAliasConfig::Alias> alias =
@@ -421,7 +504,8 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::ExecuteAsyncOnStream(
                                         {{"module_name", module_name_}});
   });
 
-  if (GetRootValueSet().IsAmbiguous()) {
+  if (!result_allocation_indices_.has_value() &&
+      GetRootValueSet().IsAmbiguous()) {
     return Unimplemented("Points-to set of root instruction is ambiguous");
   }
 
@@ -511,7 +595,9 @@ void CpuExecutable::Finalize() {
   if (has_module()) {
     shared_module()->Finalize();
   }
-  assignment_->Finalize();
+  if (assignment_) {
+    assignment_->Finalize();
+  }
 }
 
 }  // namespace cpu

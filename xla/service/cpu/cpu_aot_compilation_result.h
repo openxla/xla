@@ -162,14 +162,7 @@ class CpuAotCompilationResult : public CompiledModule {
 
   static absl::StatusOr<std::unique_ptr<CpuAotCompilationResult>> FromProto(
       CompilationResultProto proto,
-      std::unique_ptr<FunctionLibrary> function_library) {
-    ABSL_ASSIGN_OR_RETURN(
-        std::unique_ptr<HloModule> module,
-        HloModule::CreateFromProtoWithConfig(proto.hlo_module()));
-
-    return std::unique_ptr<CpuAotCompilationResult>(new CpuAotCompilationResult(
-        proto, std::move(module), std::move(function_library)));
-  }
+      std::unique_ptr<FunctionLibrary> function_library);
 
   static absl::StatusOr<std::unique_ptr<CpuAotCompilationResult>> FromString(
       const std::string& serialized,
@@ -195,9 +188,13 @@ class CpuAotCompilationResult : public CompiledModule {
 
   explicit CpuAotCompilationResult(
       CompilationResultProto proto, std::unique_ptr<HloModule> module,
+      std::optional<size_t> temp_allocation_index,
+      std::vector<BufferAllocationInfo> buffer_allocation_infos,
       std::unique_ptr<FunctionLibrary> function_library)
       : proto_(std::move(proto)),
         module_(std::move(module)),
+        temp_allocation_index_(temp_allocation_index),
+        buffer_allocation_infos_(std::move(buffer_allocation_infos)),
         function_library_(std::move(function_library)) {}
 
   CompilationResultProto proto_;

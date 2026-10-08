@@ -34,22 +34,23 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
-#include "xla/literal.h"
 #include "xla/service/cpu/executable.pb.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
 namespace {
 
-struct ExecutableAndSupportingLiterals {
+struct ExecutableAndSupportingBuffers {
   std::unique_ptr<NanoRtExecutable> nanort_executable;
-  std::vector<Literal> results_literals;
-  Literal temp_literal;
+  std::vector<XlaAotFunction::AlignedBuffer> results_buffers;
+  XlaAotFunction::AlignedBuffer temp_buffer;
 };
 
 absl::StatusOr<ProgramShape> GetProgramShape(
@@ -62,8 +63,8 @@ absl::StatusOr<ProgramShape> GetProgramShape(
   return maybe_nanort_program_shape.value();
 }
 
-absl::StatusOr<ExecutableAndSupportingLiterals>
-CreateExecutableAndSupportingLiterals(
+absl::StatusOr<ExecutableAndSupportingBuffers>
+CreateExecutableAndSupportingBuffers(
     const CompilationResultProto& compilation_result) {
   ABSL_ASSIGN_OR_RETURN(
       ProgramShape program_shape,
@@ -74,34 +75,28 @@ CreateExecutableAndSupportingLiterals(
       std::unique_ptr<NanoRtExecutable> nanort_executable,
       NanoRtExecutable::Create(compilation_result, program_shape));
 
-  std::vector<Literal> results_literals;
+  std::vector<XlaAotFunction::AlignedBuffer> results_buffers;
 
   ABSL_ASSIGN_OR_RETURN(auto nanort_program_shape,
                         GetProgramShape(*nanort_executable));
   if (nanort_program_shape.result().IsTuple()) {
     auto tuple_shapes = nanort_program_shape.result().tuple_shapes();
-    results_literals.reserve(tuple_shapes.size());
+    results_buffers.reserve(tuple_shapes.size());
     for (const Shape& shape : tuple_shapes) {
-      ABSL_ASSIGN_OR_RETURN(results_literals.emplace_back(),
-                            Literal::Make(shape, /*allocate_arrays=*/true));
+      results_buffers.emplace_back(
+          static_cast<size_t>(ShapeUtil::ByteSizeOf(shape)));
     }
-
   } else {
-    ABSL_ASSIGN_OR_RETURN(results_literals.emplace_back(),
-                          Literal::Make(nanort_program_shape.result(),
-                                        /*allocate_arrays=*/true));
+    results_buffers.emplace_back(static_cast<size_t>(
+        ShapeUtil::ByteSizeOf(nanort_program_shape.result())));
   }
 
-  ABSL_ASSIGN_OR_RETURN(
-      Literal temp_literal,
-      Literal::Make(
-          ShapeUtil::MakeShape(U8, {static_cast<int64_t>(
-                                       nanort_executable->temp_buffer_size())}),
-          /*allocate_arrays=*/true));
+  XlaAotFunction::AlignedBuffer temp_buffer(
+      nanort_executable->temp_buffer_size());
 
-  return ExecutableAndSupportingLiterals{std::move(nanort_executable),
-                                         std::move(results_literals),
-                                         std::move(temp_literal)};
+  return ExecutableAndSupportingBuffers{std::move(nanort_executable),
+                                        std::move(results_buffers),
+                                        std::move(temp_buffer)};
 }
 
 bool AreStringsInVectorUnique(const std::vector<std::string>& strings) {
@@ -124,12 +119,12 @@ absl::StatusOr<std::unique_ptr<XlaAotFunction>> XlaAotFunction::Create(
   }
 
   ABSL_ASSIGN_OR_RETURN(
-      auto executable_and_supporting_literals,
-      CreateExecutableAndSupportingLiterals(compilation_result));
+      auto executable_and_supporting_buffers,
+      CreateExecutableAndSupportingBuffers(compilation_result));
 
   ABSL_ASSIGN_OR_RETURN(
       auto program_shape,
-      GetProgramShape(*executable_and_supporting_literals.nanort_executable));
+      GetProgramShape(*executable_and_supporting_buffers.nanort_executable));
 
   if (program_shape.parameters_size() != arg_names.size()) {
     return absl::InvalidArgumentError(
@@ -140,64 +135,83 @@ absl::StatusOr<std::unique_ptr<XlaAotFunction>> XlaAotFunction::Create(
                      " arguments. Program shape: ", program_shape.ToString()));
   }
 
-  if (executable_and_supporting_literals.results_literals.size() !=
+  if (executable_and_supporting_buffers.results_buffers.size() !=
       result_names.size()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Result names size does not match the number "
         "of results in the program shape. Got ",
         result_names.size(), " result names but program shape has ",
-        executable_and_supporting_literals.results_literals.size(),
+        executable_and_supporting_buffers.results_buffers.size(),
         " results. Program shape: ", program_shape.ToString()));
   }
 
   return absl::WrapUnique(new XlaAotFunction(
-      std::move(executable_and_supporting_literals.nanort_executable),
-      std::move(executable_and_supporting_literals.results_literals),
-      std::move(executable_and_supporting_literals.temp_literal),
+      std::move(executable_and_supporting_buffers.nanort_executable),
+      std::move(executable_and_supporting_buffers.results_buffers),
+      std::move(executable_and_supporting_buffers.temp_buffer),
       std::move(arg_names), std::move(result_names)));
 }
 
 absl::StatusOr<std::unique_ptr<XlaAotFunction>> XlaAotFunction::Create(
     const CompilationResultProto& compilation_result) {
   ABSL_ASSIGN_OR_RETURN(
-      auto executable_and_supporting_literals,
-      CreateExecutableAndSupportingLiterals(compilation_result));
+      auto executable_and_supporting_buffers,
+      CreateExecutableAndSupportingBuffers(compilation_result));
 
-  auto& nanort_executable =
-      executable_and_supporting_literals.nanort_executable;
-  auto& results_literals = executable_and_supporting_literals.results_literals;
-  auto& temp_literal = executable_and_supporting_literals.temp_literal;
+  auto& nanort_executable = executable_and_supporting_buffers.nanort_executable;
+  auto& results_buffers = executable_and_supporting_buffers.results_buffers;
+  auto& temp_buffer = executable_and_supporting_buffers.temp_buffer;
 
-  auto hlo_module = nanort_executable->executable()->shared_module();
-
-  if (!hlo_module) {
+  const HloModuleProto& hlo_module_proto =
+      compilation_result.hlo_module().hlo_module();
+  const HloComputationProto* entry_computation = nullptr;
+  for (const HloComputationProto& computation :
+       hlo_module_proto.computations()) {
+    if (computation.id() == hlo_module_proto.entry_computation_id()) {
+      entry_computation = &computation;
+      break;
+    }
+  }
+  if (entry_computation == nullptr &&
+      !hlo_module_proto.computations().empty()) {
+    entry_computation = &hlo_module_proto.computations(
+        hlo_module_proto.computations_size() - 1);
+  }
+  if (entry_computation == nullptr) {
     return absl::InternalError(
-        "Cannot infer argument and result names because HLO module is null.");
+        "Cannot infer argument and result names because HLO module has no "
+        "entry computation.");
   }
 
-  std::vector<std::string> arg_names;
-  arg_names.reserve(
-      hlo_module->entry_computation()->parameter_instructions().size());
-  for (const auto& instr :
-       hlo_module->entry_computation()->parameter_instructions()) {
-    arg_names.push_back(std::string(instr->name()));
-  }
-  std::vector<std::string> result_names;
   ABSL_ASSIGN_OR_RETURN(auto program_shape,
                         GetProgramShape(*nanort_executable));
+  std::vector<std::string> arg_names(program_shape.parameters_size());
+  absl::string_view root_name;
+  for (const HloInstructionProto& instr : entry_computation->instructions()) {
+    if (instr.opcode() == "parameter" && instr.parameter_number() >= 0 &&
+        instr.parameter_number() < static_cast<int64_t>(arg_names.size())) {
+      arg_names[instr.parameter_number()] = instr.name();
+    }
+    if (instr.id() == entry_computation->root_id()) {
+      root_name = instr.name();
+    }
+  }
+  if (root_name.empty() && !entry_computation->instructions().empty()) {
+    root_name = entry_computation
+                    ->instructions(entry_computation->instructions_size() - 1)
+                    .name();
+  }
+
+  std::vector<std::string> result_names;
   if (program_shape.result().IsTuple()) {
     auto tuple_shapes = program_shape.result().tuple_shapes();
-    absl::string_view root_name =
-        hlo_module->entry_computation()->root_instruction()->name();
-
     result_names.reserve(tuple_shapes.size());
     for (int index = 0; index < tuple_shapes.size(); ++index) {
       result_names.push_back(absl::StrCat(root_name, "_", index));
     }
 
   } else {
-    result_names.push_back(std::string(
-        hlo_module->entry_computation()->root_instruction()->name()));
+    result_names.push_back(std::string(root_name));
   }
 
   CHECK(AreStringsInVectorUnique(arg_names))
@@ -207,23 +221,22 @@ absl::StatusOr<std::unique_ptr<XlaAotFunction>> XlaAotFunction::Create(
       << absl::StrJoin(result_names, ",");
 
   return absl::WrapUnique(new XlaAotFunction(
-      std::move(nanort_executable), std::move(results_literals),
-      std::move(temp_literal), std::move(arg_names), std::move(result_names)));
+      std::move(nanort_executable), std::move(results_buffers),
+      std::move(temp_buffer), std::move(arg_names), std::move(result_names)));
 }
 
 XlaAotFunction::XlaAotFunction(std::unique_ptr<NanoRtExecutable> executable,
-                               std::vector<Literal> results_literals,
-                               Literal temp_literal,
+                               std::vector<AlignedBuffer> results_buffers,
+                               AlignedBuffer temp_buffer,
                                std::vector<std::string> argument_names,
                                std::vector<std::string> result_names)
     : executable_(std::move(executable)),
-      results_literals_(std::move(results_literals)),
-      temp_literal_(std::move(temp_literal)) {
+      results_buffers_(std::move(results_buffers)),
+      temp_buffer_(std::move(temp_buffer)) {
   VLOG(2) << "Creating XlaAotFunction with " << argument_names.size()
           << " arguments and " << result_names.size() << " results.";
   VLOG(5) << "Argument names: " << absl::StrJoin(argument_names, ",");
   VLOG(5) << "Result names: " << absl::StrJoin(result_names, ",");
-  // We don't back this with literals as users should set it themselves.
   auto program_shape = executable_->program_shape().value();
   arguments_.reserve(program_shape.parameters_size());
   for (size_t i = 0; i < program_shape.parameters_size(); ++i) {
@@ -233,17 +246,17 @@ XlaAotFunction::XlaAotFunction(std::unique_ptr<NanoRtExecutable> executable,
     name_to_argument_index_[argument_names[i]] = i;
   }
 
-  results_.reserve(results_literals_.size());
-  for (size_t i = 0; i < results_literals_.size(); ++i) {
-    auto& result_literal = results_literals_[i];
-    results_.emplace_back(result_literal.untyped_data(),
-                          result_literal.size_bytes());
+  results_.reserve(results_buffers_.size());
+  for (size_t i = 0; i < results_buffers_.size(); ++i) {
+    auto& result_buffer = results_buffers_[i];
+    results_.emplace_back(result_buffer.untyped_data(),
+                          result_buffer.size_bytes());
     name_to_result_index_[result_names[i]] = i;
   }
 
   temp_ = NanoRtExecutable::PreallocatedTemp(
-      static_cast<std::byte*>(temp_literal_.untyped_data()),
-      temp_literal_.size_bytes());
+      static_cast<std::byte*>(temp_buffer_.untyped_data()),
+      temp_buffer_.size_bytes());
 }
 
 absl::Status XlaAotFunction::Execute() {

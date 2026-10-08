@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
+#include "xla/backends/cpu/runtime/ynnpack/ynn_threadpool.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/stream_executor/device_address.h"
@@ -284,9 +285,12 @@ YnnFusionThunk::BufferUses YnnFusionThunk::buffer_uses() const {
   return buffer_uses;
 }
 
-const YnnThreadpool& GetYnnThreadpool(const Thunk::ExecuteParams& params) {
-  static absl::NoDestructor<YnnThreadpool> no_threadpool(nullptr);
-  return params.ynn_params ? params.ynn_params->threadpool : *no_threadpool;
+absl::StatusOr<YnnThreadpool> ResolveYnnThreadpool(
+    bool use_threadpool, const Thunk::ExecuteParams& params) {
+  if (use_threadpool && params.intra_op_threadpool != nullptr) {
+    return CreateYnnThreadpool(params.intra_op_threadpool);
+  }
+  return YnnThreadpool(nullptr);
 }
 
 tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
@@ -334,22 +338,12 @@ tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
 
   DCHECK(builder_ || capturing_builder_) << "One of the builders must be set.";
 
-  auto invoke = [&](typename YnnExecutablePool::BorrowedObject executable) {
-    auto executed = executable->Invoke(
-        GetYnnThreadpool(params), absl::MakeSpan(arguments_buffers),
-        absl::MakeSpan(results_buffers), [&](size_t id) {
-          return absl::c_linear_search(captured_arguments_ids_, id);
-        });
-
-    // Do not return executable to the pool until the execution is done.
-    executed.AndThen([executable = std::move(executable)] {});
-    return executed;
-  };
+  ABSL_ASSIGN_OR_RETURN(YnnThreadpool threadpool,
+                        ResolveYnnThreadpool(options_.use_threadpool, params));
 
   // Borrow YnnExecutable from the pool.
-  ABSL_ASSIGN_OR_RETURN(auto executable,
-                        ynn_executable_pool_.GetOrCreate(
-                            GetYnnThreadpool(params), arguments_buffers));
+  ABSL_ASSIGN_OR_RETURN(auto executable, ynn_executable_pool_.GetOrCreate(
+                                             threadpool, arguments_buffers));
 
   int concurrency = concurrency_.load(std::memory_order_acquire);
   if (concurrency == 0) {
@@ -365,19 +359,33 @@ tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
     VLOG(3) << absl::StreamFormat("  concurrency=%d", concurrency);
   }
 
+  auto invoke = [&](typename YnnExecutablePool::BorrowedObject executable,
+                    YnnThreadpool threadpool) {
+    auto executed = executable->Invoke(
+        threadpool, absl::MakeSpan(arguments_buffers),
+        absl::MakeSpan(results_buffers), [&](size_t id) {
+          return absl::c_linear_search(captured_arguments_ids_, id);
+        });
+
+    // Do not return executable to the pool until the execution is done.
+    executed.AndThen([executable = std::move(executable),
+                      threadpool = std::move(threadpool)] {});
+    return executed;
+  };
+
   // TODO(b/476281894): If there is no concurrency, we should execute this
   // asynchronously and return the future value immediately.
 
   // If YNN graph doesn't capture any of the arguments by value, we can execute
   // XnnExecutable immediately.
   if (captured_arguments_ids_.empty()) {
-    return invoke(std::move(executable));
+    return invoke(std::move(executable), std::move(threadpool));
   }
 
   // Otherwise reset YnnExecutable to capture new arguments buffers.
-  ABSL_RETURN_IF_ERROR(UpdateYnnExecutable(GetYnnThreadpool(params),
-                                           *executable, arguments_buffers));
-  return invoke(std::move(executable));
+  ABSL_RETURN_IF_ERROR(
+      UpdateYnnExecutable(threadpool, *executable, arguments_buffers));
+  return invoke(std::move(executable), std::move(threadpool));
 }
 
 }  // namespace xla::cpu
