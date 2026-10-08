@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/tools/hlo_dump/hlo_dump_utils.h"
 #include "xla/tools/hlo_isolation/hlo_inf_nan_intent_analyzer.h"
+#include "xla/tools/hlo_isolation/hlo_isolation.pb.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
