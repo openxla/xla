@@ -15356,5 +15356,31 @@ TEST_F(AlgebraicSimplifierTest, CanonicalizesMultiDimShuffleRotate) {
   EXPECT_EQ(shuffle->rotate().shifts(1), 3);
 }
 
+TEST_F(AlgebraicSimplifierTest, ScalarReduceWindowAppliesReducerAndInit) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+
+    sub {
+      lhs = s32[] parameter(0)
+      rhs = s32[] parameter(1)
+      ROOT diff = s32[] subtract(lhs, rhs)
+    }
+
+    ENTRY main {
+      input = s32[] parameter(0)
+      init = s32[] constant(10)
+      ROOT rw = s32[] reduce-window(input, init), window={}, to_apply=sub
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(m.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  ASSERT_THAT(root, GmockMatch(m::Map(m::ConstantScalar(10), m::Parameter(0))));
+  EXPECT_THAT(root->to_apply()->root_instruction(),
+              GmockMatch(m::Subtract(m::Parameter(0), m::Parameter(1))));
+}
+
 }  // namespace
 }  // namespace xla
