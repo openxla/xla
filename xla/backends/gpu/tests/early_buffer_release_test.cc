@@ -79,7 +79,6 @@ ENTRY main {
   GpuAliasInfo alias_info(device_description());
   HloEarlyBufferRelease::Options options;
   options.min_buffer_bytes = 1;
-  options.max_iterations = 1;
   HloEarlyBufferRelease pass(
       &alias_info,
       [](const BufferValue& buffer) {
