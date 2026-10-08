@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/model/combined_gpu_performance_model.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -79,6 +80,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -316,19 +318,32 @@ class PriorityFusionQueue {
 
   absl::StatusOr<std::vector<Priority>> ComputePriorities(
       const std::vector<HloInstruction*>& instructions) {
-    auto schedule_or_run = [this](std::function<void()> fn) {
-      if (thread_pool_) {
-        thread_pool_->Schedule(std::move(fn));
-      } else {
-        fn();
+    if (instructions.empty()) {
+      return std::vector<Priority>{};
+    }
+    // Fast-path single-instruction updates (the common case during incremental
+    // `UpdatePriorities()` after fusing a producer into a single consumer) and
+    // single-threaded runs inline on the calling thread. This avoids
+    // constructing an `absl::BlockingCounter`, scheduling a thread-pool task,
+    // and paying cross-thread wakeup latency for a single instruction.
+    if (instructions.size() == 1 || thread_pool_ == nullptr) {
+      std::vector<Priority> priorities;
+      priorities.reserve(instructions.size());
+      for (HloInstruction* instruction : instructions) {
+        ABSL_ASSIGN_OR_RETURN(
+            Priority priority,
+            CalculateProducerPriorityAsync(instruction).Await());
+        priorities.push_back(priority);
       }
-    };
+      return priorities;
+    }
+
     absl::BlockingCounter counter(instructions.size());
     std::vector<absl::StatusOr<Priority>> priorities_or_status(
         instructions.size());
 
     for (size_t i = 0; i < instructions.size(); ++i) {
-      schedule_or_run([&, i] {
+      thread_pool_->Schedule([&, i] {
         CalculateProducerPriorityAsync(instructions[i])
             .OnReady([&priorities_or_status, &counter,
                       i](const absl::StatusOr<Priority>& priority) {
@@ -403,19 +418,39 @@ class PriorityFusionQueue {
 
   // Update priorities of all affected ops.
   absl::Status UpdatePriorities() {
-    // Revisit costs of all updated ops. It's important to update cost analysis
-    // before recalculating priorities.
-    for (auto instruction : to_update_priority_) {
+    // Revisit HLO cost analysis and refresh standalone performance model cache
+    // entries only for newly created or modified fusions (`updated_fusions_`),
+    // rather than all instructions in `to_update_priority_`:
+    //
+    // 1. `to_update_priority_` contains both `updated_fusions_` and their
+    //    unmodified fusible operands (whose priorities must be recomputed
+    //    because their consumer set changed).
+    // 2. `GpuHloCostAnalysis::RevisitInstruction` computes intrinsic properties
+    //    of an instruction (FLOPs, bytes accessed, operand/output utilization,
+    //    and for fusions, traverses the fused subcomputation). None of these
+    //    depend on the instruction's users/consumers, so revisiting unmodified
+    //    operands (which are often large fusions themselves) would redundantly
+    //    re-traverse their fused computations at every downstream fusion step.
+    // 3. `UpdatePerformanceModelCache` populates the standalone (unfused)
+    //    runtime entry in
+    //    `GpuPerformanceModelCache::instruction_runtime_data_`.
+    //    `InvalidateCaches(consumer)` invalidates producer-consumer fusion pair
+    //    entries (`fusion_runtime_data_`) for the consumer's operands while
+    //    preserving the operands' standalone runtime cache entries.
+    //
+    // Iterate in deterministic instruction-ID order via `tsl::SortedRange`.
+    for (HloInstruction* instruction : tsl::SortedRange(updated_fusions_)) {
       ABSL_RETURN_IF_ERROR(cost_analysis_->RevisitInstruction(instruction));
-    }
-    for (auto producer : to_update_priority_) {
-      ABSL_RETURN_IF_ERROR(UpdatePerformanceModelCache(producer));
+      ABSL_RETURN_IF_ERROR(UpdatePerformanceModelCache(instruction));
     }
 
-    ABSL_RETURN_IF_ERROR(ComputeAndSetPriorities(std::vector<HloInstruction*>{
-        to_update_priority_.begin(), to_update_priority_.end()}));
+    if (!to_update_priority_.empty()) {
+      ABSL_RETURN_IF_ERROR(ComputeAndSetPriorities(std::vector<HloInstruction*>{
+          to_update_priority_.begin(), to_update_priority_.end()}));
+    }
 
     to_update_priority_.clear();
+    updated_fusions_.clear();
     operands_to_new_consumers_.clear();
     operands_to_removed_consumers_runtimes_.clear();
     return absl::OkStatus();
@@ -566,6 +601,9 @@ class PriorityFusionQueue {
         continue;
       }
 
+      // `operand` itself was not modified, so only its priority (which depends
+      // on its consumers) needs to be recomputed; it is not added to
+      // `updated_fusions_`.
       to_update_priority_.insert(operand);
       // Update the consumers of this operand that we care about,
       // so we can do incremental update of the operand.
@@ -583,12 +621,19 @@ class PriorityFusionQueue {
     // the priorities of the other consumers of `producer` with which we did not
     // fuse. For now, as we only allow multi-output fusion if there is just a
     // single fusible consumer, this is not needed.
+    //
+    // `fusion` is newly created or had `original_producer` fused into its
+    // computation, so both its cost analysis / standalone performance model
+    // cache (`updated_fusions_`) and its producer priority
+    // (`to_update_priority_`) must be updated.
     to_update_priority_.insert(fusion);
+    updated_fusions_.insert(fusion);
   }
 
   // Removes data for the instruction.
   void RemoveInstruction(HloInstruction* instruction) {
     to_update_priority_.erase(instruction);
+    updated_fusions_.erase(instruction);
 
     auto reverse_it = reverse_map_.find(instruction);
     if (reverse_it == reverse_map_.end()) {
@@ -655,9 +700,24 @@ class PriorityFusionQueue {
       return -absl::InfiniteDuration();
     }
 
-    return CanFuseWithAllNonBitcastUsersAsync(producer).Map(
-        [this, producer](
-            const FusionDecision& fusion_decision) -> tsl::Future<Priority> {
+    tsl::Future<FusionDecision> can_fuse_future =
+        CanFuseWithAllNonBitcastUsersAsync(producer);
+    // When all user fusibility checks complete synchronously (the common case
+    // when Triton tiling search is not needed or hits the cache), evaluate the
+    // priority inline to avoid allocating an async `.Map()` continuation.
+    if (can_fuse_future.IsKnownReady()) {
+      FusionDecision fusion_decision =
+          AwaitFusionDecision(std::move(can_fuse_future));
+      if (!fusion_decision) {
+        return CalculatePriorityForIneligibleProducerAsync(producer,
+                                                           fusion_decision);
+      }
+      return CalculatePriorityForFusibleProducer(producer);
+    }
+
+    return std::move(can_fuse_future)
+        .Map([this, producer](const FusionDecision& fusion_decision)
+                 -> tsl::Future<Priority> {
           if (!fusion_decision) {
             return CalculatePriorityForIneligibleProducerAsync(producer,
                                                                fusion_decision);
@@ -672,39 +732,65 @@ class PriorityFusionQueue {
   [[nodiscard]] tsl::Future<Priority>
   CalculatePriorityForIneligibleProducerAsync(
       HloInstruction* producer, const FusionDecision& fusion_decision) {
-    // If we cannot fuse `producer` into all non-bitcast consumers, try
-    // Triton multi-output fusion next.
-    return FindPossibleConsumersForTritonMultiOutputFusionAsync(producer).Map(
+    auto handle_possible_consumers =
         [this, producer, fusion_decision](
             const std::vector<HloInstruction*>& possible_consumers)
-            -> absl::StatusOr<Priority> {
-          if (CanFuseTritonMultiOutputWithSingleUser(producer,
-                                                     possible_consumers)) {
-            ABSL_ASSIGN_OR_RETURN(
-                CombinedGpuPerformanceModel::RunTimes run_times,
-                combined_gpu_performance_model_.EstimateRunTimes(
-                    producer, cost_analysis_.get(),
-                    /*fused_consumers=*/possible_consumers));
-            absl::MutexLock lock(preferred_consumer_mutex_);
-            preferred_consumer_[producer] = possible_consumers[0];
-            return run_times.time_unfused - run_times.time_fused;
-          }
-          // Don't fuse if we can't fuse in all users.
-          if (fusion_process_dump_) {
-            absl::MutexLock lock(fusion_process_dump_mutex_);
-            auto* step = fusion_process_dump_->add_fusion_steps()
-                             ->mutable_producer_ineligible();
-            step->set_producer_name(producer->name());
-            step->set_reason(fusion_decision.Explain());
-          }
-          if (dump_fusion_visualization_) {
-            RegisterFusionState(*computation_,
-                                absl::StrCat("Ineligible |", producer->name(),
-                                             "|: ", fusion_decision.Explain()),
-                                *producer);
-          }
-          return -absl::InfiniteDuration();
-        });
+        -> absl::StatusOr<Priority> {
+      if (CanFuseTritonMultiOutputWithSingleUser(producer,
+                                                 possible_consumers)) {
+        ABSL_ASSIGN_OR_RETURN(CombinedGpuPerformanceModel::RunTimes run_times,
+                              combined_gpu_performance_model_.EstimateRunTimes(
+                                  producer, cost_analysis_.get(),
+                                  /*fused_consumers=*/possible_consumers));
+        absl::MutexLock lock(preferred_consumer_mutex_);
+        preferred_consumer_[producer] = possible_consumers[0];
+        return run_times.time_unfused - run_times.time_fused;
+      }
+      // Don't fuse if we can't fuse in all users.
+      if (fusion_process_dump_) {
+        absl::MutexLock lock(fusion_process_dump_mutex_);
+        auto* step = fusion_process_dump_->add_fusion_steps()
+                         ->mutable_producer_ineligible();
+        step->set_producer_name(producer->name());
+        step->set_reason(fusion_decision.Explain());
+      }
+      if (dump_fusion_visualization_) {
+        RegisterFusionState(*computation_,
+                            absl::StrCat("Ineligible |", producer->name(),
+                                         "|: ", fusion_decision.Explain()),
+                            *producer);
+      }
+      return -absl::InfiniteDuration();
+    };
+
+    // Fast-path when Triton multi-output fusion is disabled (the default) or
+    // when `producer` is the computation root: skip constructing candidate
+    // futures in `FindPossibleConsumersForTritonMultiOutputFusionAsync` and
+    // record the ineligible producer directly.
+    bool triton_multi_output_fusion_enabled =
+        producer->GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_unsupported_enable_triton_multi_output_fusion();
+    if (!triton_multi_output_fusion_enabled ||
+        producer == producer->parent()->root_instruction()) {
+      return handle_possible_consumers({});
+    }
+
+    // If we cannot fuse `producer` into all non-bitcast consumers, try
+    // Triton multi-output fusion next.
+    tsl::Future<std::vector<HloInstruction*>> possible_consumers_future =
+        FindPossibleConsumersForTritonMultiOutputFusionAsync(producer);
+    if (possible_consumers_future.IsKnownReady()) {
+      const absl::StatusOr<std::vector<HloInstruction*>>& possible_consumers =
+          possible_consumers_future.Await();
+      if (!possible_consumers.ok()) {
+        return possible_consumers.status();
+      }
+      return handle_possible_consumers(*possible_consumers);
+    }
+    return std::move(possible_consumers_future)
+        .Map(std::move(handle_possible_consumers));
   }
 
   // Computes the priority of a producer that can be fused into all of its
@@ -854,15 +940,17 @@ class PriorityFusionQueue {
       return FusionDecision::Forbid("the consumer is not fusible");
     }
 
-    if (ContainsScan(*producer, &fusion_info_cache_)) {
-      return FusionDecision::Forbid(
-          "epilogue fusion for scan is not supported");
-    }
-
+    // Check O(1) Triton eligibility flags before querying `ContainsScan` (which
+    // may lock and lookup in `fusion_info_cache_`).
     if (!(IsGenericTritonFusion(*producer) ||
           IsGenericTritonFusion(*consumer) ||
           triton_heroless_fusion_enabled_)) {
       return FusionDecision::Forbid("triton heroless fusion is not enabled");
+    }
+
+    if (ContainsScan(*producer, &fusion_info_cache_)) {
+      return FusionDecision::Forbid(
+          "epilogue fusion for scan is not supported");
     }
 
     if (auto fusion_decision = IsTritonSupported(*producer); !fusion_decision) {
@@ -882,33 +970,48 @@ class PriorityFusionQueue {
       return fits_budget;
     }
 
-    return GetTiledRunTimeDataCachedAsync(producer, consumer,
-                                          use_multi_output_fusion)
-        .Map([this, producer, consumer](
-                 const TiledRunTimeDataOrError& tiled_run_time_data_or_error)
-                 -> FusionDecision {
-          if (const auto* fusion_decision =
-                  std::get_if<FusionDecision>(&tiled_run_time_data_or_error)) {
-            return *fusion_decision;
-          }
+    auto map_tiled_run_time_data =
+        [this, producer,
+         consumer](const TiledRunTimeDataOrError& tiled_run_time_data_or_error)
+        -> FusionDecision {
+      if (const auto* fusion_decision =
+              std::get_if<FusionDecision>(&tiled_run_time_data_or_error)) {
+        return *fusion_decision;
+      }
 
-          const TiledRunTimeData& tiled_run_time_data =
-              std::get<TiledRunTimeData>(tiled_run_time_data_or_error);
+      const TiledRunTimeData& tiled_run_time_data =
+          std::get<TiledRunTimeData>(tiled_run_time_data_or_error);
 
-          // This is our way to pass the runtime estimate to the
-          // CalculatePriorities() function.
-          // This is somewhat brittle as we currently don't distinguish between
-          // ProducerConsumer fusion where we allow multi-output fusions to be
-          // formed, and ProducerConsumer fusion where we don't allow it. Same
-          // for the `block_level_parameters_cache_` down below. Currently we
-          // only try out multi-output fusion if we cannot fuse into all
-          // consumers, and it is tried last, so the final cached value should
-          // be what we want.
-          combined_gpu_performance_model_.GetCache().Set(
-              *producer, *consumer, tiled_run_time_data.runtime_data.exec_time);
+      // This is our way to pass the runtime estimate to the
+      // CalculatePriorities() function.
+      // This is somewhat brittle as we currently don't distinguish between
+      // ProducerConsumer fusion where we allow multi-output fusions to be
+      // formed, and ProducerConsumer fusion where we don't allow it. Same
+      // for the `block_level_parameters_cache_` down below. Currently we
+      // only try out multi-output fusion if we cannot fuse into all
+      // consumers, and it is tried last, so the final cached value should
+      // be what we want.
+      combined_gpu_performance_model_.GetCache().Set(
+          *producer, *consumer, tiled_run_time_data.runtime_data.exec_time);
 
-          return FusionDecision::Allow();
-        });
+      return FusionDecision::Allow();
+    };
+
+    tsl::Future<TiledRunTimeDataOrError> tiled_run_time_data_future =
+        GetTiledRunTimeDataCachedAsync(producer, consumer,
+                                       use_multi_output_fusion);
+    // If tiling data was already cached or computed synchronously inline,
+    // transform the result directly without scheduling a `.Map()` callback.
+    if (tiled_run_time_data_future.IsKnownReady()) {
+      const absl::StatusOr<TiledRunTimeDataOrError>& result =
+          tiled_run_time_data_future.Await();
+      if (!result.ok()) {
+        return FusionDecision::Forbid(result.status().message());
+      }
+      return map_tiled_run_time_data(*result);
+    }
+    return std::move(tiled_run_time_data_future)
+        .Map(std::move(map_tiled_run_time_data));
   }
 
   [[nodiscard]] tsl::Future<FusionDecision> CanFuseAsync(
@@ -930,6 +1033,45 @@ class PriorityFusionQueue {
       return FusionDecision::Forbid("the consumer is not fusible");
     }
 
+    // Fast-path standard native-emitter pairs: when neither instruction is a
+    // generic Triton fusion and heroless Triton fusion is disabled, skip
+    // `CanFuseTritonAsync` completely and evaluate `CanFuseWithNativeEmitter`
+    // synchronously without constructing intermediate `tsl::Future` objects.
+    if (!IsGenericTritonFusion(*producer) &&
+        !IsGenericTritonFusion(*consumer) && !triton_heroless_fusion_enabled_) {
+      if (dump_fusion_visualization_) {
+        RegisterFusionState(
+            *computation_,
+            absl::StrCat("Cannot fuse producer |", producer->name(),
+                         "| with consumer |", consumer->name(),
+                         "| using Triton (will try fallback): triton heroless "
+                         "fusion is not enabled"),
+            *consumer, producer);
+      }
+      return CanFuseWithNativeEmitter(producer, consumer);
+    }
+
+    auto handle_triton_decision =
+        [this, producer,
+         consumer](const FusionDecision& can_fuse_triton) -> FusionDecision {
+      if (IsGenericTritonFusion(*producer) ||
+          IsGenericTritonFusion(*consumer) || can_fuse_triton) {
+        return can_fuse_triton;
+      }
+
+      if (dump_fusion_visualization_) {
+        RegisterFusionState(
+            *computation_,
+            absl::StrCat("Cannot fuse producer |", producer->name(),
+                         "| with consumer |", consumer->name(),
+                         "| using Triton (will try fallback): ",
+                         can_fuse_triton.Explain()),
+            *consumer, producer);
+      }
+
+      return CanFuseWithNativeEmitter(producer, consumer);
+    };
+
     // Fusing with Triton is our preferred choice. If the producer-consumer
     // fusion is supported by Triton and all necessary flags are enabled, the
     // result will be a Triton fusion. If either `producer` or `consumer` is
@@ -937,26 +1079,14 @@ class PriorityFusionQueue {
     // Triton fusion.
     //
     // Otherwise, we'll check if the fusion is supported by the emitter.
-    return CanFuseTritonAsync(producer, consumer)
-        .Map([this, producer, consumer](
-                 const FusionDecision& can_fuse_triton) -> FusionDecision {
-          if (IsGenericTritonFusion(*producer) ||
-              IsGenericTritonFusion(*consumer) || can_fuse_triton) {
-            return can_fuse_triton;
-          }
-
-          if (dump_fusion_visualization_) {
-            RegisterFusionState(
-                *computation_,
-                absl::StrCat("Cannot fuse producer |", producer->name(),
-                             "| with consumer |", consumer->name(),
-                             "| using Triton (will try fallback): ",
-                             can_fuse_triton.Explain()),
-                *consumer, producer);
-          }
-
-          return CanFuseWithNativeEmitter(producer, consumer);
-        });
+    tsl::Future<FusionDecision> can_fuse_triton_future =
+        CanFuseTritonAsync(producer, consumer);
+    if (can_fuse_triton_future.IsKnownReady()) {
+      return handle_triton_decision(
+          AwaitFusionDecision(std::move(can_fuse_triton_future)));
+    }
+    return std::move(can_fuse_triton_future)
+        .Map(std::move(handle_triton_decision));
   }
 
   // Checks whether `producer` can be fused into `consumer` using native
@@ -976,25 +1106,12 @@ class PriorityFusionQueue {
     }
 
     // Avoid fusing reduce into reduce. Our cost model doesn't currently
-    // understand this case due to a lack of tiling analysis.
+    // understand this case due to a lack of tiling analysis. Query
+    // `fusion_info_cache_` to avoid repeatedly traversing the producer and
+    // consumer fusion computations on every candidate pair.
     // TODO(b/312200883): Remove this.
-    auto contains_significant_reduce = [&](const HloInstruction* instr) {
-      auto fusion = HloFusionAdaptor::ForInstruction(instr);
-      return HloAnyOf(*fusion, [](auto node) {
-        if (!(node.opcode() == HloOpcode::kReduce && node.shape().IsArray())) {
-          return false;
-        }
-
-        int64_t reduction_size =
-            ShapeUtil::ElementsIn(node.instruction().operand(0)->shape()) /
-            ShapeUtil::ElementsIn(node.shape());
-
-        // Small reductions are emitted using the elemental emitter anyway.
-        return reduction_size >= 16;
-      });
-    };
-    if (contains_significant_reduce(producer) &&
-        contains_significant_reduce(consumer)) {
+    if (ContainsSignificantReduce(*producer, &fusion_info_cache_) &&
+        ContainsSignificantReduce(*consumer, &fusion_info_cache_)) {
       return FusionDecision::Forbid(
           "both the producer and the consumer contain a reduce");
     }
@@ -1041,28 +1158,39 @@ class PriorityFusionQueue {
       HloInstruction* producer, HloInstruction* consumer) {
     {
       absl::MutexLock lock(can_fuse_cache_mutex_);
-      auto& producer_cache = can_fuse_cache_[producer];
-
-      auto it = producer_cache.find(consumer);
-      if (it != producer_cache.end()) {
-        return it->second;
+      // Use `find(producer)` rather than `operator[]` on cache lookup so a
+      // cache miss does not default-construct an empty inner `flat_hash_map`.
+      auto producer_it = can_fuse_cache_.find(producer);
+      if (producer_it != can_fuse_cache_.end()) {
+        auto it = producer_it->second.find(consumer);
+        if (it != producer_it->second.end()) {
+          return it->second;
+        }
       }
     }
-    return CanFuseAsync(producer, consumer)
-        .Map([this, producer, consumer](
-                 const FusionDecision& fusion_decision) -> FusionDecision {
-          // The lock is required, because writing to a flat_hash_map is not
-          // thread-safe even for different keys. We never call this computation
-          // concurrently for the same producer, so it's guaranteed that we
-          // don't override any value.
-          {
-            absl::MutexLock lock(can_fuse_cache_mutex_);
-            can_fuse_cache_[producer].insert_or_assign(consumer,
-                                                       fusion_decision);
-          }
+    auto cache_decision =
+        [this, producer,
+         consumer](const FusionDecision& fusion_decision) -> FusionDecision {
+      // The lock is required, because writing to a flat_hash_map is not
+      // thread-safe even for different keys. We never call this computation
+      // concurrently for the same producer, so it's guaranteed that we
+      // don't override any value.
+      {
+        absl::MutexLock lock(can_fuse_cache_mutex_);
+        can_fuse_cache_[producer].insert_or_assign(consumer, fusion_decision);
+      }
 
-          return fusion_decision;
-        });
+      return fusion_decision;
+    };
+    tsl::Future<FusionDecision> decision_future =
+        CanFuseAsync(producer, consumer);
+    // If `CanFuseAsync` resolved synchronously (e.g. native emitter path or
+    // cached Triton decision), update `can_fuse_cache_` inline without
+    // allocating a `.Map()` continuation.
+    if (decision_future.IsKnownReady()) {
+      return cache_decision(AwaitFusionDecision(std::move(decision_future)));
+    }
+    return std::move(decision_future).Map(std::move(cache_decision));
   }
 
   // Checks whether any operand of `consumer` is reachable from `producer`
@@ -1254,6 +1382,10 @@ class PriorityFusionQueue {
   // avoid recomputing priorities multiple times before we dequeue a new
   // producer.
   absl::flat_hash_set<HloInstruction*> to_update_priority_;
+  // The subset of `to_update_priority_` consisting of newly created or modified
+  // fusion instructions whose HLO cost analysis and standalone performance
+  // model cache entries need to be updated before recomputing priorities.
+  absl::flat_hash_set<HloInstruction*> updated_fusions_;
   absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>
       operands_to_new_consumers_;
   absl::flat_hash_map<HloInstruction*, GpuPerformanceModel::RunTimes>
