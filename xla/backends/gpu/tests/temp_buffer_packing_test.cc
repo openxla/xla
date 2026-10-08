@@ -58,6 +58,11 @@ reduce_320 {
   zero = f32[] constant(0)
   ROOT r = f32[] reduce(p, zero), dimensions={0}, to_apply=add
 }
+reduce_d {
+  p = f32[320]{0} parameter(0)
+  zero = f32[] constant(0)
+  ROOT r = f32[] reduce(p, zero), dimensions={0}, to_apply=add
+}
 reduce_256 {
   p = f32[256]{0} parameter(0)
   zero = f32[] constant(0)
@@ -86,7 +91,7 @@ ENTRY main {
   use_b = f32[] fusion(b), kind=kInput, calls=reduce_256
   d = f32[320]{0} fusion(use_b), kind=kLoop, calls=broadcast_d
   use_a = f32[] fusion(a), kind=kInput, calls=reduce_192
-  use_d = f32[] fusion(d), kind=kInput, calls=reduce_320
+  use_d = f32[] fusion(d), kind=kInput, calls=reduce_d
   ROOT result = (f32[], f32[]) tuple(use_a, use_d)
 }
 )";
