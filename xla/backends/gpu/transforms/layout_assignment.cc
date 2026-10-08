@@ -1158,22 +1158,18 @@ namespace {
 constexpr int64_t kSmallPieceMinRatio = 8;
 constexpr int64_t kSmallPieceMinLargeBytes = int64_t{64} << 20;
 
-int64_t ArrayBytes(const Shape& shape) {
-  return ShapeUtil::ElementsIn(shape) *
-         ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type());
-}
-
 bool IsSmallPieceOfLargeArray(const Shape& piece, const Shape& large) {
   if (!piece.IsArray() || !large.IsArray()) {
     return false;
   }
-  const int64_t large_bytes = ArrayBytes(large);
+  const int64_t large_bytes = ShapeUtil::ByteSizeOfElements(large);
   return large_bytes >= kSmallPieceMinLargeBytes &&
-         large_bytes >= kSmallPieceMinRatio * ArrayBytes(piece);
+         large_bytes >=
+             kSmallPieceMinRatio * ShapeUtil::ByteSizeOfElements(piece);
 }
 
-// Recognize single-use producers that can generate any dimension order without
-// converting an existing array. Cutting propagation through these producers
+// Recognize single-use producers that can supply any dimension order without
+// a runtime layout conversion. Cutting propagation through these producers
 // would introduce a piece-sized copy without saving a large-array conversion.
 // Be conservative at shared values, computation boundaries, and operations
 // with backend layout requirements. Bound the walk to limit compilation work.
@@ -1198,6 +1194,8 @@ Decision CanGenerateAnyLayout(const HloInstruction* instruction) {
           "Shared, externally constrained, or deep producer");
     }
     switch (producer->opcode()) {
+      // Layout assignment can relayout constants at compile time.
+      case HloOpcode::kConstant:
       case HloOpcode::kIota:
         break;
       case HloOpcode::kBroadcast:

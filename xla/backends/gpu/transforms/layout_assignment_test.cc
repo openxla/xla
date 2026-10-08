@@ -2262,6 +2262,99 @@ ENTRY main {
   }
 }
 
+// A constant can be relaid out at compile time, so the slice does not need a
+// runtime layout conversion even when the constant exceeds the size threshold.
+TEST_F(LayoutAssignmentTest, SliceOfLargeConstantKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+ENTRY main {
+  w = f32[4096,4096]{1,0} constant({...})
+  index = s32[] parameter(0)
+  zero = s32[] constant(0)
+  piece = f32[512,4096] dynamic-slice(w, index, zero), dynamic_slice_sizes={512,4096}
+  ROOT ag = f32[512,8192]{0,1} all-gather(piece), dimensions={1}, replica_groups={{0,1}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  const HloInstruction* constant = FindInstruction(module.get(), "w");
+  ASSERT_THAT(constant, NotNull());
+  EXPECT_TRUE(LayoutUtil::Equal(constant->shape().layout(),
+                                LayoutUtil::MakeLayout({0, 1})))
+      << module->ToString();
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+  }
+}
+
+// Count packed storage bytes: the first input is 32 MiB and the second is
+// exactly 64 MiB. Both slices contain one eighth of the input's elements.
+TEST_F(LayoutAssignmentTest, PackedSliceUsesStorageSizeThreshold) {
+  struct TestCase {
+    absl::string_view hlo;
+    int64_t expected_large_copies;
+    int64_t expected_slice_copies;
+  };
+  const TestCase test_cases[] = {
+      {R"(
+HloModule m, replica_count=2
+ENTRY main {
+  w = u4[8192,8192]{1,0:E(4)} parameter(0)
+  index = s32[] parameter(1)
+  zero = s32[] constant(0)
+  piece = u4[1024,8192]{1,0:E(4)} dynamic-slice(w, index, zero), dynamic_slice_sizes={1024,8192}
+  ROOT ag = u4[1024,16384]{0,1:E(4)} all-gather(piece), dimensions={1}, replica_groups={{0,1}}
+})",
+       1, 0},
+      {R"(
+HloModule m, replica_count=2
+ENTRY main {
+  w = u4[16384,8192]{1,0:E(4)} parameter(0)
+  index = s32[] parameter(1)
+  zero = s32[] constant(0)
+  piece = u4[2048,8192]{1,0:E(4)} dynamic-slice(w, index, zero), dynamic_slice_sizes={2048,8192}
+  ROOT ag = u4[2048,16384]{0,1:E(4)} all-gather(piece), dimensions={1}, replica_groups={{0,1}}
+})",
+       0, 1},
+  };
+  for (const auto& test_case : test_cases) {
+    SCOPED_TRACE(test_case.hlo);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(test_case.hlo));
+    ComputationLayout computation_layout(
+        module->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    const HloInstruction* parameter =
+        module->entry_computation()->parameter_instruction(0);
+    int64_t large_copies = 0;
+    int64_t slice_copies = 0;
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() != HloOpcode::kCopy) {
+        continue;
+      }
+      if (ShapeUtil::Compatible(instruction->shape(), parameter->shape())) {
+        ++large_copies;
+      } else {
+        ++slice_copies;
+      }
+    }
+    EXPECT_EQ(large_copies, test_case.expected_large_copies)
+        << module->ToString();
+    EXPECT_EQ(slice_copies, test_case.expected_slice_copies)
+        << module->ToString();
+  }
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
