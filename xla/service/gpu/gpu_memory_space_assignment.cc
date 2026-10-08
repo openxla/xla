@@ -150,11 +150,12 @@ bool IsNcclSymmetricOrUserBuffersEnabledForInstruction(
          IsNcclSymmetricBuffersEnabledForCollective(inst, option);
 }
 
-// Returns the memory space requested for the given custom call use, or
+// Returns the memory space requested for the given operand use, or
 // MemorySpaceColor::kDefault if none is specified.
-static absl::StatusOr<MemorySpaceColor> GetCustomCallOperandMemorySpace(
+static absl::StatusOr<MemorySpaceColor> GetOperandMemorySpace(
     const HloUse& use) {
-  if (use.instruction->opcode() != HloOpcode::kCustomCall ||
+  if ((use.instruction->opcode() != HloOpcode::kCustomCall &&
+       use.instruction->opcode() != HloOpcode::kFusion) ||
       !use.operand_index.empty()) {
     return MemorySpaceColor::kDefault;
   }
@@ -175,12 +176,13 @@ static absl::StatusOr<MemorySpaceColor> GetCustomCallOperandMemorySpace(
   return MemorySpaceColor::kDefault;
 }
 
-// Returns the memory space requested for a custom call result value, or
+// Returns the memory space requested for an instruction result value, or
 // MemorySpaceColor::kDefault if none is specified.
-static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
+static absl::StatusOr<MemorySpaceColor> GetResultMemorySpace(
     const HloValue& value) {
   const HloInstruction* instr = value.instruction();
-  if (instr->opcode() != HloOpcode::kCustomCall) {
+  if (instr->opcode() != HloOpcode::kCustomCall &&
+      instr->opcode() != HloOpcode::kFusion) {
     return MemorySpaceColor::kDefault;
   }
 
@@ -224,9 +226,8 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& option) {
     return true;
   }
 
-  // Check custom calls with operands_memory_spaces attribute.
-  absl::StatusOr<MemorySpaceColor> operand_ms =
-      GetCustomCallOperandMemorySpace(use);
+  // Check custom calls and fusions with operands_memory_spaces attributes.
+  absl::StatusOr<MemorySpaceColor> operand_ms = GetOperandMemorySpace(use);
   return operand_ms.ok() && *operand_ms == MemorySpaceColor::kCollective;
 }
 
@@ -253,9 +254,8 @@ bool RequiresCollectiveOutput(const HloValue& value,
     return true;
   }
 
-  // Check custom calls with results_memory_spaces attribute.
-  absl::StatusOr<MemorySpaceColor> result_ms =
-      GetCustomCallResultMemorySpace(value);
+  // Check custom calls and fusions with results_memory_spaces attributes.
+  absl::StatusOr<MemorySpaceColor> result_ms = GetResultMemorySpace(value);
   return result_ms.ok() && *result_ms == MemorySpaceColor::kCollective;
 }
 
@@ -303,19 +303,17 @@ absl::StatusOr<BufferValue::Color> DetermineBufferColor(
       }
     }
 
-    // Check if this value is a custom call result with a requested memory
-    // space.
+    // Check if this value has a requested result memory space.
     ABSL_ASSIGN_OR_RETURN(MemorySpaceColor result_ms,
-                          GetCustomCallResultMemorySpace(*value));
+                          GetResultMemorySpace(*value));
     if (result_ms != MemorySpaceColor::kDefault) {
       candidates.push_back(static_cast<BufferValue::Color>(result_ms));
     }
 
-    // Check if any use of this alias is a custom call operand with a
-    // requested memory space.
+    // Check if any use of this alias has a requested operand memory space.
     for (const HloUse& use : value->GetUses()) {
       ABSL_ASSIGN_OR_RETURN(MemorySpaceColor operand_ms,
-                            GetCustomCallOperandMemorySpace(use));
+                            GetOperandMemorySpace(use));
       if (operand_ms != MemorySpaceColor::kDefault) {
         candidates.push_back(static_cast<BufferValue::Color>(operand_ms));
       }
