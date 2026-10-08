@@ -6299,7 +6299,7 @@ absl::Status AlgebraicSimplifierVisitor::HandlePower(HloInstruction* power) {
   }
 
   VLOG(10) << "trying transform [pow(A, -1) => 1/A]: " << power->ToString();
-  if (IsAll(rhs, -1)) {
+  if (!ShapeUtil::ElementIsIntegral(power->shape()) && IsAll(rhs, -1)) {
     return ReplaceWithNewInstruction(
         power, HloInstruction::CreateBinary(power->shape(), HloOpcode::kDivide,
                                             MakeScalarLike(lhs, 1), lhs));
