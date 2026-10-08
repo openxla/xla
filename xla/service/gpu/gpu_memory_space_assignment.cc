@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape_util.h"
@@ -118,6 +119,11 @@ ParseIndexMemorySpacePairs(absl::string_view str) {
   return result;
 }
 
+bool SupportsMemorySpaceAnnotations(const HloInstruction* inst) {
+  return inst->opcode() == HloOpcode::kCustomCall ||
+         GetCustomFusionConfigName(inst) == kDynamicSliceFusionConfigName;
+}
+
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
 // buffers registered with the collective runtime ahead of time.
@@ -154,8 +160,7 @@ bool IsNcclSymmetricOrUserBuffersEnabledForInstruction(
 // MemorySpaceColor::kDefault if none is specified.
 static absl::StatusOr<MemorySpaceColor> GetOperandMemorySpace(
     const HloUse& use) {
-  if ((use.instruction->opcode() != HloOpcode::kCustomCall &&
-       use.instruction->opcode() != HloOpcode::kFusion) ||
+  if (!SupportsMemorySpaceAnnotations(use.instruction) ||
       !use.operand_index.empty()) {
     return MemorySpaceColor::kDefault;
   }
@@ -181,8 +186,7 @@ static absl::StatusOr<MemorySpaceColor> GetOperandMemorySpace(
 static absl::StatusOr<MemorySpaceColor> GetResultMemorySpace(
     const HloValue& value) {
   const HloInstruction* instr = value.instruction();
-  if (instr->opcode() != HloOpcode::kCustomCall &&
-      instr->opcode() != HloOpcode::kFusion) {
+  if (!SupportsMemorySpaceAnnotations(instr)) {
     return MemorySpaceColor::kDefault;
   }
 
@@ -226,7 +230,7 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& option) {
     return true;
   }
 
-  // Check custom calls and fusions with operands_memory_spaces attributes.
+  // Check custom calls and dynamic-slice fusions with memory-space annotations.
   absl::StatusOr<MemorySpaceColor> operand_ms = GetOperandMemorySpace(use);
   return operand_ms.ok() && *operand_ms == MemorySpaceColor::kCollective;
 }
@@ -254,7 +258,7 @@ bool RequiresCollectiveOutput(const HloValue& value,
     return true;
   }
 
-  // Check custom calls and fusions with results_memory_spaces attributes.
+  // Check custom calls and dynamic-slice fusions with memory-space annotations.
   absl::StatusOr<MemorySpaceColor> result_ms = GetResultMemorySpace(value);
   return result_ms.ok() && *result_ms == MemorySpaceColor::kCollective;
 }

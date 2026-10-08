@@ -114,6 +114,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":backend_configs_cc",
+        ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_proto_cc",
