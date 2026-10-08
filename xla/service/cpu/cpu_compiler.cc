@@ -276,6 +276,12 @@ using tsl::profiler::TraceMeEncode;
 // A module identifier (prefix) for emitted LLVM modules.
 static constexpr absl::string_view kXlaModuleIdentifier = "__compute_module";
 
+llvm::TargetOptions CompilerTargetOptions(
+    const HloModuleConfig& module_config) {
+  llvm::TargetOptions target_options;
+  return target_options;
+}
+
 // Returns a global (per-process) thread pool for XLA CPU compilation tasks.
 static tsl::thread::ThreadPool* GetCompilationThreadPool() {
   // LLVM compilation has a lot of memory-bound pointer chasing and not

@@ -16,11 +16,15 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_LITE_AOT_XLA_AOT_FUNCTION_H_
 #define XLA_BACKENDS_CPU_LITE_AOT_XLA_AOT_FUNCTION_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -28,10 +32,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
-#include "xla/literal.h"
 #include "xla/service/cpu/executable.pb.h"
-#include "xla/service/executable.h"
 
 namespace xla::cpu {
 
@@ -49,6 +52,44 @@ namespace xla::cpu {
 
 class XlaAotFunction {
  public:
+  class AlignedBuffer {
+   public:
+    AlignedBuffer() = default;
+    explicit AlignedBuffer(size_t size) : size_(size) {
+      size_t alloc_size = std::max<size_t>(size, 1);
+      data_ = static_cast<std::byte*>(
+          ::operator new(alloc_size, std::align_val_t{Align()}));
+      std::memset(data_, 0, alloc_size);
+    }
+    ~AlignedBuffer() {
+      if (data_ != nullptr) {
+        ::operator delete(data_, std::align_val_t{Align()});
+      }
+    }
+    AlignedBuffer(const AlignedBuffer&) = delete;
+    AlignedBuffer& operator=(const AlignedBuffer&) = delete;
+    AlignedBuffer(AlignedBuffer&& other) noexcept
+        : data_(std::exchange(other.data_, nullptr)),
+          size_(std::exchange(other.size_, 0)) {}
+    AlignedBuffer& operator=(AlignedBuffer&& other) noexcept {
+      if (this != &other) {
+        if (data_ != nullptr) {
+          ::operator delete(data_, std::align_val_t{Align()});
+        }
+        data_ = std::exchange(other.data_, nullptr);
+        size_ = std::exchange(other.size_, 0);
+      }
+      return *this;
+    }
+
+    void* untyped_data() const { return data_; }
+    size_t size_bytes() const { return size_; }
+
+   private:
+    std::byte* data_ = nullptr;
+    size_t size_ = 0;
+  };
+
   // Creates an XlaAotFunction object from a CompilationResultProto.
   // It infers the argument and result names from the HLO module in the
   // produced executable.
@@ -135,8 +176,8 @@ class XlaAotFunction {
 
  protected:
   explicit XlaAotFunction(std::unique_ptr<NanoRtExecutable> executable,
-                          std::vector<Literal> results_literals,
-                          Literal temp_literal,
+                          std::vector<AlignedBuffer> results_buffers,
+                          AlignedBuffer temp_buffer,
                           std::vector<std::string> argument_names,
                           std::vector<std::string> result_names);
 
@@ -144,7 +185,6 @@ class XlaAotFunction {
   std::unique_ptr<NanoRtExecutable> executable_;
 
   // Used for the blocking invocation to Execute.
-  // TODO(basioli): Consider allocating Literals for users.
   absl::flat_hash_map<std::string, int64_t> name_to_argument_index_;
   std::vector<NanoRtExecutable::Argument> arguments_;
   // Memorize argument sizes
@@ -152,10 +192,10 @@ class XlaAotFunction {
 
   absl::flat_hash_map<std::string, int64_t> name_to_result_index_;
   std::vector<NanoRtExecutable::Result> results_;
-  std::vector<Literal> results_literals_;
+  std::vector<AlignedBuffer> results_buffers_;
 
   NanoRtExecutable::PreallocatedTemp temp_;
-  Literal temp_literal_;
+  AlignedBuffer temp_buffer_;
 };
 
 }  // namespace xla::cpu
