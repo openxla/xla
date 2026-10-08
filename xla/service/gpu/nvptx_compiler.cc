@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -42,9 +43,6 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/conv_fp8_fallback.h"
@@ -113,6 +111,9 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -422,15 +423,17 @@ absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
   });
   const se::DeviceDescription& gpu_device_info =
       gpu_target_config.device_description;
+  // Stream-annotated calls are wrapped into async computations on the parallel
+  // execution thread, and their cuDNN graphs must be compiled as well.
+  const absl::flat_hash_set<absl::string_view> execution_threads = {
+      HloInstruction::kMainExecutionThread,
+      HloInstruction::kParallelExecutionThread};
   CuDnnFusionCompiler fusion_compiler(dnn_support, gpu_device_info,
                                       *dnn_compiled_graphs);
-  ABSL_RETURN_IF_ERROR(
-      fusion_compiler.Run(module, {HloInstruction::kMainExecutionThread})
-          .status());
+  ABSL_RETURN_IF_ERROR(fusion_compiler.Run(module, execution_threads).status());
   CuDnnCustomCallCompiler call_compiler(dnn_support, gpu_device_info,
                                         *dnn_compiled_graphs);
-  return call_compiler.Run(module, {HloInstruction::kMainExecutionThread})
-      .status();
+  return call_compiler.Run(module, execution_threads).status();
 }
 
 namespace {
