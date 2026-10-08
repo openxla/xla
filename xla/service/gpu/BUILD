@@ -1714,6 +1714,7 @@ cc_library(
         "//xla/backends/gpu/transforms:multi_output_fusion",
         "//xla/backends/gpu/transforms:priority_fusion",
         "//xla/backends/gpu/transforms:ragged_dot_fusion_rewriter",
+        "//xla/backends/gpu/transforms:recompute_reduction_exponentials",
         "//xla/backends/gpu/transforms:sort_iota_fusion",
         "//xla/backends/gpu/transforms:variadic_op_splitter",
         "//xla/hlo/ir:hlo",
