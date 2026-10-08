@@ -162,6 +162,93 @@ TEST_F(AsyncComputationUtilsTest, RedirectsImplicitUpdateAndDoneCallees) {
   EXPECT_OK(verifier().Run(module.get()).status());
 }
 
+TEST_F(AsyncComputationUtilsTest,
+       RedirectsLoopCrossingExplicitUpdateAndDoneCallees) {
+  constexpr char hlo[] = R"(
+HloModule test
+fn {
+  p = f32[2,3]{0,1} parameter(0)
+  input_copy = f32[2,3]{1,0} copy(p)
+  ROOT op = f32[2,3]{0,1} custom-call(input_copy), custom_call_target="test",
+    operand_layout_constraints={f32[2,3]{1,0}}
+}
+body {
+  curr_state = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) parameter(0)
+  i = s32[] get-tuple-element(curr_state), index=0
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  prev_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) get-tuple-element(curr_state), index=1
+  prev_update = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-update(prev_start), calls=fn
+  prev_done = f32[2,3]{0,1} async-done(prev_update)
+  next_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-start(prev_done), calls=fn
+  ROOT next_state = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) tuple(next_i, next_start)
+}
+cond {
+  param = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(1)
+  ROOT cond = pred[] compare(i, limit), direction=LT
+}
+ENTRY main {
+  p = f32[2,3]{0,1} parameter(0)
+  c0 = s32[] constant(0)
+  first_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-start(p), calls=fn
+  init_state = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) tuple(c0, first_start)
+  loop = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) while(init_state), condition=cond, body=body
+  final_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) get-tuple-element(loop), index=1
+  ROOT final_done = f32[2,3]{0,1} async-done(final_start), calls=fn
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* first_start = entry->GetInstructionWithName("first_start");
+  HloInstruction* final_done = entry->GetInstructionWithName("final_done");
+
+  HloComputation* body = module->GetComputationWithName("body");
+  HloInstruction* prev_update = body->GetInstructionWithName("prev_update");
+  HloInstruction* prev_done = body->GetInstructionWithName("prev_done");
+  HloInstruction* next_start = body->GetInstructionWithName("next_start");
+
+  HloComputation* fn = module->GetComputationWithName("fn");
+  EXPECT_FALSE(fn->CanExpandIntoSingleInstruction());
+
+  // These consumers receive loop-carried state and store explicit callees.
+  for (HloInstruction* instr : {prev_update, final_done}) {
+    EXPECT_THAT(instr->called_computations(), ElementsAre(fn));
+    EXPECT_EQ(instr->async_wrapped_computation(), fn);
+  }
+
+  // prev_done inherits its callee from prev_update.
+  EXPECT_TRUE(prev_done->called_computations().empty());
+  EXPECT_EQ(prev_done->async_wrapped_computation(), fn);
+  EXPECT_EQ(first_start->async_wrapped_computation(), fn);
+  EXPECT_EQ(next_start->async_wrapped_computation(), fn);
+
+  // Legalize the HLO.
+  EXPECT_THAT(LegalizeAsyncComputations(module.get()), IsOkAndHolds(true));
+
+  // We insert a wrapper for fn.
+  HloComputation* wrapper = first_start->async_wrapped_computation();
+  EXPECT_NE(wrapper, fn);
+  EXPECT_TRUE(wrapper->CanExpandIntoSingleInstruction());
+
+  // next_start calls into wrapper.
+  EXPECT_EQ(next_start->async_wrapped_computation(), wrapper);
+
+  // Legalization must rewrite stored callees, not just the starts' references.
+  for (HloInstruction* instr : {prev_update, final_done}) {
+    EXPECT_THAT(instr->called_computations(), ElementsAre(wrapper));
+    EXPECT_EQ(instr->async_wrapped_computation(), wrapper);
+  }
+
+  // prev_done continues to inherit its callee from prev_update.
+  EXPECT_TRUE(prev_done->called_computations().empty());
+  EXPECT_EQ(prev_done->async_wrapped_computation(), wrapper);
+
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
 TEST_F(AsyncComputationUtilsTest, SharesWrapperBetweenAsyncCallers) {
   constexpr char hlo[] = R"(
 HloModule test
@@ -362,6 +449,177 @@ ENTRY main {
   // Legalization leaves this already-permitted body unchanged.
   EXPECT_THAT(LegalizeAsyncComputations(module.get()), IsOkAndHolds(false));
   EXPECT_EQ(module->ToString(), before);
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(AsyncComputationUtilsTest,
+       LeavesCollectivesGroupWithMultipleCallersAlone) {
+  constexpr char hlo[] = R"(
+HloModule test
+body {
+  p = f32[2,3]{1,0} parameter(0)
+  input_copy = f32[2,3]{0,1} copy(p)
+  ROOT op = f32[2,3]{0,1} custom-call(input_copy), custom_call_target="test",
+    operand_layout_constraints={f32[2,3]{0,1}}
+}
+ENTRY main {
+  p0 = f32[2,3]{1,0} parameter(0)
+  start_1 = ((f32[2,3]{1,0}), f32[2,3]{0,1}, s32[]) async-start(p0), calls=body, frontend_attributes={_collectives_group=""}
+  start_2 = ((f32[2,3]{1,0}), f32[2,3]{0,1}, s32[]) async-start(p0), calls=body, frontend_attributes={_collectives_group=""}
+  done_1 = f32[2,3]{0,1} async-done(start_1)
+  done_2 = f32[2,3]{0,1} async-done(start_2)
+  ROOT out = (f32[2,3]{0,1},f32[2,3]{0,1}) tuple(done_1, done_2)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  // The collective-group marker exempts this body from the restriction.
+  EXPECT_FALSE(AsyncComputationRequiresSingleInstruction(
+      *module->GetComputationWithName("body")));
+  const std::string before = module->ToString();
+
+  // Legalization leaves this already-permitted body unchanged.
+  EXPECT_THAT(LegalizeAsyncComputations(module.get()), IsOkAndHolds(false));
+  EXPECT_EQ(module->ToString(), before);
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(AsyncComputationUtilsTest,
+       LeavesComputationWithOneSyncCallerOneCollectivesGroupAsyncCallerAlone) {
+  constexpr char hlo[] = R"(
+HloModule test
+body {
+  p = f32[2,3]{1,0} parameter(0)
+  input_copy = f32[2,3]{0,1} copy(p)
+  ROOT op = f32[2,3]{0,1} custom-call(input_copy), custom_call_target="test",
+    operand_layout_constraints={f32[2,3]{0,1}}
+}
+ENTRY main {
+  p0 = f32[2,3]{1,0} parameter(0)
+  start = ((f32[2,3]{1,0}), f32[2,3]{0,1}, s32[]) async-start(p0), calls=body, frontend_attributes={_collectives_group=""}
+  ROOT done = f32[2,3]{0,1} async-done(start)
+}
+)";
+
+  // The parser rejects HLO where an async computation has both async and sync
+  // callers. Insert a sync caller after parsing.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  HloComputation* entry = module->entry_computation();
+  HloComputation* body = module->GetComputationWithName("body");
+  entry->AddInstruction(
+      HloInstruction::CreateCall(body->root_instruction()->shape(),
+                                 {entry->parameter_instruction(0)}, body),
+      "val");
+
+  // There is no caller which is async and does not have a collectives group
+  // annotation, so `body` does not need to be outlined.
+  EXPECT_FALSE(AsyncComputationRequiresSingleInstruction(
+      *module->GetComputationWithName("body")));
+  const std::string before = module->ToString();
+
+  // Legalization leaves this already-permitted body unchanged.
+  EXPECT_THAT(LegalizeAsyncComputations(module.get()), IsOkAndHolds(false));
+  EXPECT_EQ(module->ToString(), before);
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(AsyncComputationUtilsTest,
+       OutlinesComputationWithOneAsyncCallerAndOneAsyncCollectivesGroupCaller) {
+  constexpr char hlo[] = R"(
+HloModule test
+body {
+  p = f32[2,3]{1,0} parameter(0)
+  input_copy = f32[2,3]{0,1} copy(p)
+  ROOT op = f32[2,3]{0,1} custom-call(input_copy), custom_call_target="test",
+    operand_layout_constraints={f32[2,3]{0,1}}
+}
+ENTRY main {
+  p0 = f32[2,3]{1,0} parameter(0)
+  start_1 = ((f32[2,3]{1,0}), f32[2,3]{0,1}, s32[]) async-start(p0), calls=body
+  start_2 = ((f32[2,3]{1,0}), f32[2,3]{0,1}, s32[]) async-start(p0), calls=body, frontend_attributes={_collectives_group=""}
+  done_1 = f32[2,3]{0,1} async-done(start_1)
+  done_2 = f32[2,3]{0,1} async-done(start_2)
+  ROOT out = (f32[2,3]{0,1},f32[2,3]{0,1}) tuple(done_1, done_2)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  HloInstruction* start_1 =
+      module->entry_computation()->GetInstructionWithName("start_1");
+  HloInstruction* start_2 =
+      module->entry_computation()->GetInstructionWithName("start_2");
+  HloComputation* body = module->GetComputationWithName("body");
+
+  ASSERT_EQ(start_1->called_computations().size(), 1);
+  ASSERT_EQ(start_1->called_computations()[0], body);
+  ASSERT_EQ(start_2->called_computations().size(), 1);
+  ASSERT_EQ(start_2->called_computations()[0], body);
+
+  // start_1 has no collectives group annotation so outlining is required.
+  EXPECT_TRUE(AsyncComputationRequiresSingleInstruction(
+      *module->GetComputationWithName("body")));
+
+  // Legalization makes start_2 call a wrapper but leaves start_2 alone.
+  EXPECT_THAT(LegalizeAsyncComputations(module.get()), IsOkAndHolds(true));
+  EXPECT_NE(start_1->called_computations()[0], body);
+  EXPECT_TRUE(
+      start_1->called_computations()[0]->CanExpandIntoSingleInstruction());
+  EXPECT_EQ(start_2->called_computations()[0], body);
+
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(AsyncComputationUtilsTest,
+       ResolvesCollectiveGroupAnnotationViaAsyncStartForLoopCarriedFuture) {
+  constexpr char hlo[] = R"(
+HloModule test
+fn {
+  p = f32[2,3]{0,1} parameter(0)
+  input_copy = f32[2,3]{1,0} copy(p)
+  ROOT op = f32[2,3]{0,1} custom-call(input_copy), custom_call_target="test",
+    operand_layout_constraints={f32[2,3]{1,0}}
+}
+body {
+  curr_state = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) parameter(0)
+  i = s32[] get-tuple-element(curr_state), index=0
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  prev_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) get-tuple-element(curr_state), index=1
+  prev_update = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-update(prev_start), calls=fn
+  prev_done = f32[2,3]{0,1} async-done(prev_update)
+  next_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-start(prev_done), calls=fn, frontend_attributes={_collectives_group=""}
+  ROOT next_state = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) tuple(next_i, next_start)
+}
+cond {
+  param = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(1)
+  ROOT cond = pred[] compare(i, limit), direction=LT
+}
+ENTRY main {
+  p = f32[2,3]{0,1} parameter(0)
+  c0 = s32[] constant(0)
+  first_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) async-start(p), calls=fn, frontend_attributes={_collectives_group=""}
+  init_state = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) tuple(c0, first_start)
+  loop = (s32[], ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[])) while(init_state), condition=cond, body=body
+  final_start = ((f32[2,3]{0,1}), f32[2,3]{0,1}, s32[]) get-tuple-element(loop), index=1
+  ROOT final_done = f32[2,3]{0,1} async-done(final_start), calls=fn
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  HloComputation* fn = module->GetComputationWithName("fn");
+  ASSERT_FALSE(fn->CanExpandIntoSingleInstruction());
+
+  // HLO is already legal since all async-starts have collective group
+  // annotations.
+  EXPECT_FALSE(AsyncComputationRequiresSingleInstruction(*fn));
+  const std::string before = module->ToString();
+
+  // No caller needs a wrapper, including the explicit update/done callers.
+  EXPECT_THAT(LegalizeAsyncComputations(module.get()), IsOkAndHolds(false));
+  EXPECT_EQ(module->ToString(), before);
+
   EXPECT_OK(verifier().Run(module.get()).status());
 }
 

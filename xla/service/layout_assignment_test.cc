@@ -3687,8 +3687,10 @@ ENTRY %main (x: f32[256,3,1], y: f32[256,3,1,3]) -> f32[256,3,1,4] {
   ExpectLayoutIs(concat->shape(), {3, 2, 1, 0});
   ExpectLayoutIs(concat->operand(0)->shape(), {3, 2, 1, 0});
   ExpectLayoutIs(concat->operand(1)->shape(), {3, 2, 1, 0});
-  TEST_F(LayoutAssignmentTest, LegalizesInputCopiesInAsyncComputation) {
-    const char* hlo = R"(
+}
+
+TEST_F(LayoutAssignmentTest, LegalizesInputCopiesInAsyncComputation) {
+  const char* hlo = R"(
 HloModule test, entry_computation_layout={(f32[2,3]{1,0})->f32[2,3]{1,0}}
 body {
   p = f32[2,3]{1,0} parameter(0)
@@ -3703,32 +3705,31 @@ ENTRY main {
   ROOT add = f32[2,3]{1,0} add(done, c)
 }
 )";
-    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-    HloComputation* body = module->GetComputationWithName("body");
-    HloInstruction* op = body->root_instruction();
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* body = module->GetComputationWithName("body");
+  HloInstruction* op = body->root_instruction();
 
-    LayoutAssignment assignment(module->mutable_entry_computation_layout());
-    ASSERT_OK(assignment.Run(module.get()).status());
+  LayoutAssignment assignment(module->mutable_entry_computation_layout());
+  ASSERT_OK(assignment.Run(module.get()).status());
 
-    // Copy is inserted inside body.
-    ASSERT_EQ(op->operand(0)->opcode(), HloOpcode::kCopy);
+  // Copy is inserted inside body.
+  ASSERT_EQ(op->operand(0)->opcode(), HloOpcode::kCopy);
 
-    // start calls into an appropriate async wrapper.
-    HloInstruction* start =
-        FindInstruction(module.get(), HloOpcode::kAsyncStart);
-    ASSERT_NE(start, nullptr);
-    ASSERT_EQ(start->async_wrapped_instruction()->opcode(), HloOpcode::kCall);
-    EXPECT_EQ(start->async_wrapped_instruction()->to_apply(), body);
-    EXPECT_TRUE(
-        start->async_wrapped_computation()->CanExpandIntoSingleInstruction());
+  // start calls into an appropriate async wrapper.
+  HloInstruction* start = FindInstruction(module.get(), HloOpcode::kAsyncStart);
+  ASSERT_NE(start, nullptr);
+  ASSERT_EQ(start->async_wrapped_instruction()->opcode(), HloOpcode::kCall);
+  EXPECT_EQ(start->async_wrapped_instruction()->to_apply(), body);
+  EXPECT_TRUE(
+      start->async_wrapped_computation()->CanExpandIntoSingleInstruction());
 
-    HloVerifier verifier(/*layout_sensitive=*/true,
-                         /*allow_mixed_precision=*/false);
-    ASSERT_OK(verifier.Run(module.get()).status());
-  }
+  HloVerifier verifier(/*layout_sensitive=*/true,
+                       /*allow_mixed_precision=*/false);
+  ASSERT_OK(verifier.Run(module.get()).status());
+}
 
-  TEST_F(LayoutAssignmentTest, LegalizesResultCopiesInAsyncComputation) {
-    const char* hlo = R"(
+TEST_F(LayoutAssignmentTest, LegalizesResultCopiesInAsyncComputation) {
+  const char* hlo = R"(
 HloModule test, entry_computation_layout={(f32[2,3]{1,0})->f32[2,3]{1,0}}
 body {
   p = f32[2,3]{1,0} parameter(0)
@@ -3741,28 +3742,27 @@ ENTRY main {
   ROOT done = f32[2,3]{0,1} async-done(start)
 }
 )";
-    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-    HloComputation* body = module->GetComputationWithName("body");
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* body = module->GetComputationWithName("body");
 
-    LayoutAssignment assignment(module->mutable_entry_computation_layout());
-    ASSERT_OK(assignment.Run(module.get()).status());
+  LayoutAssignment assignment(module->mutable_entry_computation_layout());
+  ASSERT_OK(assignment.Run(module.get()).status());
 
-    // Copy is inserted inside body.
-    ASSERT_EQ(body->root_instruction()->opcode(), HloOpcode::kCopy);
+  // Copy is inserted inside body.
+  ASSERT_EQ(body->root_instruction()->opcode(), HloOpcode::kCopy);
 
-    // start calls into an appropriate async wrapper.
-    HloInstruction* start =
-        FindInstruction(module.get(), HloOpcode::kAsyncStart);
-    ASSERT_NE(start, nullptr);
-    ASSERT_EQ(start->async_wrapped_instruction()->opcode(), HloOpcode::kCall);
-    EXPECT_EQ(start->async_wrapped_instruction()->to_apply(), body);
-    EXPECT_TRUE(
-        start->async_wrapped_computation()->CanExpandIntoSingleInstruction());
+  // start calls into an appropriate async wrapper.
+  HloInstruction* start = FindInstruction(module.get(), HloOpcode::kAsyncStart);
+  ASSERT_NE(start, nullptr);
+  ASSERT_EQ(start->async_wrapped_instruction()->opcode(), HloOpcode::kCall);
+  EXPECT_EQ(start->async_wrapped_instruction()->to_apply(), body);
+  EXPECT_TRUE(
+      start->async_wrapped_computation()->CanExpandIntoSingleInstruction());
 
-    HloVerifier verifier(/*layout_sensitive=*/true,
-                         /*allow_mixed_precision=*/false);
-    EXPECT_OK(verifier.Run(module.get()).status());
-  }
+  HloVerifier verifier(/*layout_sensitive=*/true,
+                       /*allow_mixed_precision=*/false);
+  EXPECT_OK(verifier.Run(module.get()).status());
+}
 
 class NegotiatingLayoutAssignment : public LayoutAssignment {
  public:

@@ -32,16 +32,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-bool IsCollectivesGroupComputation(const HloComputation* computation) {
-  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
-  if (!maybe_caller.has_value()) {
-    return false;
-  }
-  return (*maybe_caller)
-      ->get_frontend_attribute(kCollectiveGroupMarkerAttr)
-      .has_value();
-}
-
 bool IsAsyncBarrierComputation(const HloComputation* computation) {
   return absl::c_all_of(
       computation->instructions(),
@@ -83,15 +73,36 @@ std::unique_ptr<HloComputation> BuildAsyncWrapperComputation(
   return wrapper;
 }
 
+bool CallRequiresSingleInstruction(const HloInstruction* caller,
+                                   const HloComputation* computation) {
+  if (!caller->IsAsynchronous() ||
+      computation->execution_thread() != HloInstruction::kMainExecutionThread ||
+      IsAsyncBarrierComputation(computation)) {
+    return false;
+  }
+
+  // The call is treated as a collective group if it is an async computation
+  // whose async-start had the collective group annotation, or if it itself has
+  // a collective group annotation.
+  HloInstruction* async_chain_start = caller->async_chain_start();
+  bool call_is_collective_group =
+      (async_chain_start != nullptr &&
+       async_chain_start->get_frontend_attribute(kCollectiveGroupMarkerAttr)
+           .has_value()) ||
+      caller->get_frontend_attribute(kCollectiveGroupMarkerAttr).has_value();
+
+  return !call_is_collective_group;
+}
+
 }  // namespace
 
 bool AsyncComputationRequiresSingleInstruction(
     const HloComputation& computation) {
-  return computation.IsAsyncComputation() &&
-         computation.execution_thread() ==
-             HloInstruction::kMainExecutionThread &&
-         !IsCollectivesGroupComputation(&computation) &&
-         !IsAsyncBarrierComputation(&computation);
+  return absl::c_any_of(computation.caller_instructions(),
+                        [&computation](const HloInstruction* caller) {
+                          return CallRequiresSingleInstruction(caller,
+                                                               &computation);
+                        });
 }
 
 absl::StatusOr<bool> LegalizeAsyncComputations(
@@ -113,10 +124,11 @@ absl::StatusOr<bool> LegalizeAsyncComputations(
     HloComputation* wrapper = module->AddEmbeddedComputation(
         BuildAsyncWrapperComputation(computation));
 
-    // Modify async callers to call into the wrapper.
+    // Modify async callers without collective group annotations to call into
+    // the wrapper.
     const auto callers = computation->caller_instructions();
     for (HloInstruction* caller : callers) {
-      if (caller->IsAsynchronous()) {
+      if (CallRequiresSingleInstruction(caller, computation)) {
         caller->ReplaceCalledComputations([&](HloComputation* callee) {
           return callee == computation ? wrapper : callee;
         });
