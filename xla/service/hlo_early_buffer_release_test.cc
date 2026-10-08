@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/hlo_early_buffer_release.h"
 
 #include <cstdint>
-#include <memory>
 #include <string>
 
 #include <gmock/gmock.h>
@@ -149,7 +148,7 @@ TEST_F(HloEarlyBufferReleaseTest, RejectsEstimatedSlowdown) {
                    : 1.0;
       },
       Options());
-  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  ASSERT_OK(pass.Run(module.get()).status());
   EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
   EXPECT_OK(module->schedule().Verify());
 }
@@ -161,7 +160,7 @@ TEST_F(HloEarlyBufferReleaseTest, PreservesControlDependencies) {
   ASSERT_OK(
       computation->GetInstructionWithName("middle")->AddControlDependencyTo(
           computation->GetInstructionWithName("dweights")));
-  ASSERT_OK_AND_ASSIGN(bool changed, RunRelease(module.get(), Options()));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
   EXPECT_LT(Pos(module.get(), "middle"), Pos(module.get(), "dweights"));
   EXPECT_OK(module->schedule().Verify());
 }
@@ -231,7 +230,7 @@ TEST_F(HloEarlyBufferReleaseTest, RejectsNewTransientPeak) {
               "ROOT out = (f32[4,64,128]");
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   ASSERT_OK_AND_ASSIGN(int64_t before, Peak(module.get()));
-  ASSERT_OK_AND_ASSIGN(bool changed, RunRelease(module.get(), Options()));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
   EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
   ASSERT_OK_AND_ASSIGN(int64_t after, Peak(module.get()));
   EXPECT_LE(after, before);
@@ -245,7 +244,7 @@ TEST_F(HloEarlyBufferReleaseTest, DoesNotTreatLiveOutAsReleasable) {
               "  ROOT out = (f32[4,128], f32[], f32[64,128]) tuple(dweights, "
               "result, dlogits)");
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_OK_AND_ASSIGN(bool changed, RunRelease(module.get(), Options()));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
   EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
   EXPECT_OK(module->schedule().Verify());
 }
@@ -256,7 +255,7 @@ TEST_F(HloEarlyBufferReleaseTest, DoesNotTreatParameterAliasAsReleasable) {
   hlo.replace(hlo.find(definition), definition.size(),
               "dlogits = f32[64,128] bitcast(p)");
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_OK_AND_ASSIGN(bool changed, RunRelease(module.get(), Options()));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
   EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
   EXPECT_OK(module->schedule().Verify());
 }
@@ -274,7 +273,7 @@ TEST_F(HloEarlyBufferReleaseTest, KeepsAsyncConsumersInPlace) {
               "  ROOT out = (f32[4,128], f32[], f32[64,128]) tuple(dweights, "
               "result, done)");
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_OK_AND_ASSIGN(bool changed, RunRelease(module.get(), Options()));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
   EXPECT_GT(Pos(module.get(), "start"), Pos(module.get(), "middle"));
   EXPECT_GT(Pos(module.get(), "done"), Pos(module.get(), "start"));
   EXPECT_OK(module->schedule().Verify());
