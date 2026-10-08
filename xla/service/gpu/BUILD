@@ -1721,7 +1721,6 @@ cc_library(
     deps = [
         ":alias_info",
         ":mlir_context_pool",
-        "//xla:shape",
         "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:conv_canonicalizer",
