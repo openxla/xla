@@ -9666,15 +9666,6 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
       return absl::OkStatus();
     }
 
-    // In case the source operand is not a scalar, we reshape it to a scalar
-    // before we attempt to broadcast it.
-    if (!ShapeUtil::IsScalar(val_const->shape())) {
-      TF_RET_CHECK(ShapeUtil::IsEffectiveScalar(val_const->shape()));
-      val_const = reduce_window->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeScalarShape(val_const->shape().element_type()),
-          val_const));
-    }
-
     int64_t reduction_dim = -1;
     bool valid_pattern = true;
 
@@ -9710,13 +9701,23 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
     }
 
     if (valid_pattern && reduction_dim != -1) {
-      if (val_const->shape().element_type() !=
-          reduce_window->shape().element_type()) {
-        ABSL_ASSIGN_OR_RETURN(Literal dest_literal,
-                              val_const->literal().Convert(
-                                  reduce_window->shape().element_type()));
+      TF_RET_CHECK(ShapeUtil::IsEffectiveScalar(val_const->shape()));
+      absl::InlinedVector<PrimitiveType, 4> convert_types;
+      for (const HloInstruction* i = operand; i != val_const;
+           i = i->operand(0)) {
+        if (i->opcode() == HloOpcode::kConvert) {
+          convert_types.push_back(i->shape().element_type());
+        }
+      }
+      if (!ShapeUtil::IsScalar(val_const->shape()) || !convert_types.empty()) {
+        Literal scalar =
+            LiteralUtil::GetFirstScalarLiteral(val_const->literal());
+        for (auto it = convert_types.rbegin(); it != convert_types.rend();
+             ++it) {
+          ABSL_ASSIGN_OR_RETURN(scalar, scalar.Convert(*it));
+        }
         val_const = reduce_window->AddInstruction(
-            HloInstruction::CreateConstant(std::move(dest_literal)));
+            HloInstruction::CreateConstant(std::move(scalar)));
       }
 
       // Create iota for the reduction dimension.
