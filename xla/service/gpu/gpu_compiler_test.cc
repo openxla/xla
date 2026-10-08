@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/device_assignment.h"
@@ -2825,6 +2826,78 @@ INSTANTIATE_TEST_SUITE_P(DynamicSliceFusion, DynamicSliceFusionMemorySpaceTest,
                            return info.param ? "DynamicUpdateSlice"
                                              : "DirectResult";
                          });
+
+TEST_F(GpuCompilerTest, DynamicSliceFusionPreservesSymmetricResultAlias) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+
+    ENTRY main {
+      input = f32[128]{0} parameter(0)
+      weights = f32[256]{0} parameter(1)
+      weight_slice = f32[128]{0} slice(weights), slice={[128:256]}
+      ROOT call = f32[128]{0} custom-call(input, weight_slice),
+        custom_call_target="__xla_test_sliced_custom_call",
+        api_version=API_VERSION_TYPED_FFI,
+        output_to_operand_aliasing={{}: (0, {})},
+        frontend_attributes={results_memory_spaces="{0:7}"}
+    }
+  )";
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo, config));
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
+  ASSERT_OK_AND_ASSIGN(
+      auto optimized_module,
+      compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                               compile_options));
+  ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      compiler()->RunBackend(std::move(optimized_module), /*executor=*/nullptr,
+                             compile_options));
+  const auto* gpu_executable =
+      absl::down_cast<GpuExecutable*>(executable.get());
+  const HloComputation* entry = gpu_executable->module().entry_computation();
+  const HloInstruction* result = entry->root_instruction();
+  ASSERT_EQ(result->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(result->shape().layout().memory_space(), 0);
+
+  const HloInstruction* fusion = result->operand(0);
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  ASSERT_OK_AND_ASSIGN(auto backend_config,
+                       fusion->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(
+      backend_config.fusion_backend_config().custom_fusion_config().name(),
+      "dynamic_slice_fusion");
+  EXPECT_EQ(fusion->shape().layout().memory_space(),
+            Layout::kCollectiveMemorySpace);
+
+  ASSERT_EQ(fusion->operand_count(), 2);
+  const HloInstruction* input = fusion->operand(1);
+  ASSERT_EQ(input->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(input->operand(0), entry->parameter_instruction(0));
+  EXPECT_EQ(input->operand(0)->shape().layout().memory_space(), 0);
+  EXPECT_EQ(input->shape().layout().memory_space(),
+            Layout::kCollectiveMemorySpace);
+  EXPECT_EQ(fusion->operand(0), entry->parameter_instruction(1));
+  EXPECT_EQ(fusion->operand(0)->shape().layout().memory_space(), 0);
+
+  // The inner custom call's alias must survive even though only its result
+  // requests collective memory and the fusion has no explicit alias
+  // declaration.
+  EXPECT_THAT(fusion->output_operand_aliasing(), IsEmpty());
+  ASSERT_OK_AND_ASSIGN(
+      auto assignment,
+      BufferAssignment::FromProto(
+          gpu_executable->buffer_assignment_proto(), &gpu_executable->module(),
+          compiler()->BufferSizeBytesFunction(), gpu_executable->alias_info()));
+  ASSERT_OK_AND_ASSIGN(auto result_slice,
+                       assignment->GetUniqueSlice(fusion, {}));
+  ASSERT_OK_AND_ASSIGN(auto input_slice, assignment->GetUniqueSlice(input, {}));
+  EXPECT_EQ(result_slice, input_slice);
+  EXPECT_EQ(result_slice.allocation()->color(), Layout::kCollectiveMemorySpace);
+}
 
 class FrontendAttributesMemorySpaceTest
     : public GpuCompilerTest,
