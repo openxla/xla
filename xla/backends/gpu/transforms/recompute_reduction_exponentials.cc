@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/recompute_reduction_exponentials.h"
 
 #include <cstdint>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
@@ -117,6 +118,7 @@ absl::StatusOr<bool> RecomputeReductionExponentials::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
+  std::vector<HloComputation*> changed_consumers;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* producer : computation->MakeInstructionPostOrder()) {
@@ -176,13 +178,24 @@ absl::StatusOr<bool> RecomputeReductionExponentials::RunImpl(
         HloInstruction* recomputed = body->AddInstruction(
             exponential->CloneWithNewOperands(exponential->shape(), {input}));
         ABSL_RETURN_IF_ERROR(parameter->ReplaceAllUsesWith(recomputed));
-        ABSL_RETURN_IF_ERROR(
-            body->RemoveUnusedParametersFromFusedComputation());
+        changed_consumers.push_back(body);
         changed = true;
       }
     }
   }
   if (changed) {
+    // Removing a parameter also removes its fusion operand and may delete the
+    // now-dead GTE. Defer this until we finish traversing the outer
+    // instructions.
+    for (HloComputation* body : changed_consumers) {
+      for (int64_t i = body->num_parameters() - 1; i >= 0; --i) {
+        HloInstruction* parameter = body->parameter_instruction(i);
+        if (parameter->IsDead()) {
+          ABSL_RETURN_IF_ERROR(
+              body->RemoveInstructionAndUnusedOperands(parameter));
+        }
+      }
+    }
     // Remove dead GTEs and the producer's unused tuple output. The exponential
     // stays inside the reduction; its partial-sum graph is unchanged.
     ABSL_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
