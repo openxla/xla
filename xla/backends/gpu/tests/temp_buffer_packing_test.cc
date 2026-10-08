@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
-
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
