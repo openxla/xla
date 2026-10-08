@@ -2820,15 +2820,25 @@ TEST_P(DynamicSliceFusionMemorySpaceTest, PreservesSymmetricMemory) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(DynamicSliceFusion, DynamicSliceFusionMemorySpaceTest,
-                         Values(false, true),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return info.param ? "DynamicUpdateSlice"
-                                             : "DirectResult";
-                         });
+TEST_P(DynamicSliceFusionMemorySpaceTest, PreservesSymmetricResultAlias) {
+  constexpr absl::string_view kMatchingSliceHlo = R"(
+    HloModule test
 
-TEST_F(GpuCompilerTest, DynamicSliceFusionPreservesSymmetricResultAlias) {
-  constexpr absl::string_view kHlo = R"(
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      weights = f32[128]{0} parameter(1)
+      offset = s32[] constant(128)
+      input_slice = f32[128]{0} dynamic-slice(input, offset),
+        dynamic_slice_sizes={128}
+      call = f32[128]{0} custom-call(input_slice, weights),
+        custom_call_target="__xla_test_sliced_custom_call",
+        api_version=API_VERSION_TYPED_FFI,
+        output_to_operand_aliasing={{}: (0, {})},
+        frontend_attributes={results_memory_spaces="{0:7}"}
+      ROOT result = f32[256]{0} dynamic-update-slice(input, call, offset)
+    }
+  )";
+  constexpr absl::string_view kDirectHlo = R"(
     HloModule test
 
     ENTRY main {
@@ -2842,9 +2852,12 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionPreservesSymmetricResultAlias) {
         frontend_attributes={results_memory_spaces="{0:7}"}
     }
   )";
+  const bool update_slice = GetParam();
   HloModuleConfig config = GetModuleConfigForTest();
   config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo, config));
+  ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(
+                       update_slice ? kMatchingSliceHlo : kDirectHlo, config));
   Compiler::CompileOptions compile_options;
   compile_options.gpu_topology =
       GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
@@ -2874,14 +2887,24 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionPreservesSymmetricResultAlias) {
             Layout::kCollectiveMemorySpace);
 
   ASSERT_EQ(fusion->operand_count(), 2);
-  const HloInstruction* input = fusion->operand(1);
+  const HloInstruction* input = fusion->operand(update_slice ? 0 : 1);
   ASSERT_EQ(input->opcode(), HloOpcode::kCopy);
   EXPECT_EQ(input->operand(0), entry->parameter_instruction(0));
   EXPECT_EQ(input->operand(0)->shape().layout().memory_space(), 0);
   EXPECT_EQ(input->shape().layout().memory_space(),
             Layout::kCollectiveMemorySpace);
-  EXPECT_EQ(fusion->operand(0), entry->parameter_instruction(1));
-  EXPECT_EQ(fusion->operand(0)->shape().layout().memory_space(), 0);
+  const HloInstruction* weights = fusion->operand(update_slice ? 1 : 0);
+  EXPECT_EQ(weights, entry->parameter_instruction(1));
+  EXPECT_EQ(weights->shape().layout().memory_space(), 0);
+
+  if (update_slice) {
+    const HloInstruction* update = fusion->fused_expression_root();
+    ASSERT_EQ(update->opcode(), HloOpcode::kDynamicUpdateSlice);
+    const HloInstruction* call = update->operand(1);
+    ASSERT_EQ(call->opcode(), HloOpcode::kCustomCall);
+    EXPECT_TRUE(call->operand(0)->opcode() == HloOpcode::kSlice ||
+                call->operand(0)->opcode() == HloOpcode::kDynamicSlice);
+  }
 
   // The inner custom call's alias must survive even though only its result
   // requests collective memory and the fusion has no explicit alias
@@ -2898,6 +2921,13 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionPreservesSymmetricResultAlias) {
   EXPECT_EQ(result_slice, input_slice);
   EXPECT_EQ(result_slice.allocation()->color(), Layout::kCollectiveMemorySpace);
 }
+
+INSTANTIATE_TEST_SUITE_P(DynamicSliceFusion, DynamicSliceFusionMemorySpaceTest,
+                         Values(false, true),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "DynamicUpdateSlice"
+                                             : "DirectResult";
+                         });
 
 class FrontendAttributesMemorySpaceTest
     : public GpuCompilerTest,

@@ -685,30 +685,69 @@ std::unique_ptr<HloComputation> CreateFusionBody(
   return builder.Build();
 }
 
-bool PreservesCustomCallAliases(const HloComputation* body,
-                                absl::Span<const SlicedResult> sliced_results) {
+absl::StatusOr<bool> PreservesCustomCallAliases(const HloComputation* body) {
   const HloInstruction* hero = DynamicSliceFusion::FindHero(body);
   if (hero == nullptr || hero->opcode() != HloOpcode::kCustomCall) {
     return true;
   }
   const auto* call = Cast<HloCustomCallInstruction>(hero);
+  if (call->output_to_operand_aliasing().empty()) {
+    return true;
+  }
+
+  // The runtime uses these configs for addressing. Offset expressions are
+  // optional because the candidate body is not attached to a module yet.
+  constexpr auto kOffsetResolution =
+      DynamicSliceFusion::OffsetResolution::kOptional;
+  std::vector<DynamicSliceFusion::Parameter> parameters;
+  parameters.reserve(call->operand_count());
+  for (const HloInstruction* operand : call->operands()) {
+    ABSL_ASSIGN_OR_RETURN(auto parameter, DynamicSliceFusion::ResolveParameter(
+                                              operand, kOffsetResolution));
+    parameters.push_back(std::move(parameter));
+  }
+  ABSL_ASSIGN_OR_RETURN(auto results, DynamicSliceFusion::ResolveResults(
+                                          call, kOffsetResolution));
+
   for (const auto& [result_index, operand_index] :
        call->output_to_operand_aliasing()) {
-    // Alias analysis infers direct aliases through fusion parameters and
-    // bitcasts. Capturing a slice or DUS on this path changes the buffer or
-    // offset passed to the call and can break its in-place contract.
-    const HloInstruction* operand = call->operand(operand_index.first);
-    while (operand->opcode() == HloOpcode::kBitcast) {
-      operand = operand->operand(0);
-    }
-    if (operand->opcode() != HloOpcode::kParameter) {
+    const auto& parameter = parameters[operand_index.first];
+    int64_t result_number = result_index.empty() ? 0 : result_index[0];
+    const auto& result = results[result_number];
+
+    // Other accesses to the backing buffer may overlap the in-place update.
+    // Copy insertion cannot separate them behind a single fusion parameter.
+    if (absl::c_count_if(parameters,
+                         [&](const auto& other) {
+                           return other.parameter_number ==
+                                  parameter.parameter_number;
+                         }) != 1 ||
+        absl::c_any_of(results, [&](const auto& other) {
+          return other.result_number != result_number &&
+                 other.parameter_number == parameter.parameter_number;
+        })) {
       return false;
     }
-    int64_t result_number = result_index.empty() ? 0 : result_index[0];
-    if (absl::c_any_of(sliced_results, [&](const SlicedResult& result) {
-          return result.result_number == result_number &&
-                 result.update_slice != nullptr;
-        })) {
+
+    if (!result.parameter_number.has_value()) {
+      // Alias analysis infers the direct alias through the fusion body.
+      if (parameter.slice_config.has_value()) {
+        return false;
+      }
+      continue;
+    }
+
+    // DUS aliases the outer result with its destination. Matching backing
+    // parameters, configs and byte sizes also give the inner call identical
+    // input/output pointers, including the runtime's offset clamping.
+    if (parameter.parameter_number != *result.parameter_number ||
+        !parameter.slice_config.has_value() ||
+        !result.update_config.has_value() ||
+        !(*parameter.slice_config == *result.update_config) ||
+        ShapeUtil::ByteSizeOfElements(parameter.parameter_shape) !=
+            ShapeUtil::ByteSizeOfElements(result.result_shape) ||
+        ShapeUtil::ByteSizeOfElements(parameter.slice_shape) !=
+            ShapeUtil::ByteSizeOfElements(result.update_shape)) {
       return false;
     }
   }
@@ -829,7 +868,9 @@ absl::StatusOr<bool> RewriteHero(
 
   std::unique_ptr<HloComputation> body =
       CreateFusionBody(*plan, sliced_results, hero);
-  if (!PreservesCustomCallAliases(body.get(), sliced_results)) {
+  ABSL_ASSIGN_OR_RETURN(bool preserves_aliases,
+                        PreservesCustomCallAliases(body.get()));
+  if (!preserves_aliases) {
     return false;
   }
   ABSL_ASSIGN_OR_RETURN(auto memory_spaces,
