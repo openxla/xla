@@ -1049,6 +1049,9 @@ xla_test(
     # TODO(b/372714955): Fix the memory leak!
     args = if_google(["--heap_check="]),
     backends = ["gpu"],
+    env = {
+        "ROCPROFILER_QUEUE_INTERPOSITION": "0",  # Disable queue interposition strategy prone to deadlocking
+    },
     deps = [
         ":hlo_op_profiler_lib",
         "//xla:xla_data_proto_cc",
