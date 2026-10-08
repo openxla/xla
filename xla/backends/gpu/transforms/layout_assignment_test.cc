@@ -2200,6 +2200,68 @@ ENTRY main {
   }
 }
 
+// The inner loop must inherit the entry layout through the outer loop and
+// transpose, rather than using the outer parameter's provisional layout.
+TEST_F(LayoutAssignmentTest, TransposeBetweenLoopsKeepsEntryLayout) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+inner_cond {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(4)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+inner_body {
+  p = (s32[], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[3,2] get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT r = (s32[], f32[3,2]) tuple(next, w)
+}
+outer_cond {
+  p = (s32[], f32[2,3], f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(4)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+outer_body {
+  p = (s32[], f32[2,3]{1,0}, f32[3,2]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[2,3] get-tuple-element(p), index=1
+  t = f32[3,2] transpose(w), dimensions={1,0}
+  zero = s32[] constant(0)
+  init = (s32[], f32[3,2]) tuple(zero, t)
+  inner = (s32[], f32[3,2]) while(init), condition=inner_cond, body=inner_body
+  out = f32[3,2] get-tuple-element(inner), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT r = (s32[], f32[2,3], f32[3,2]) tuple(next, w, out)
+}
+ENTRY main {
+  w = f32[2,3]{0,1} parameter(0)
+  zero = s32[] constant(0)
+  z = f32[] constant(0)
+  acc = f32[3,2] broadcast(z), dimensions={}
+  init = (s32[], f32[2,3], f32[3,2]) tuple(zero, w, acc)
+  loop = (s32[], f32[2,3], f32[3,2]) while(init), condition=outer_cond, body=outer_body
+  ROOT out = f32[3,2]{1,0} get-tuple-element(loop), index=2
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+    }
+  }
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

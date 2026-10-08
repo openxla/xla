@@ -1217,25 +1217,61 @@ Decision CanGenerateAnyLayout(const HloInstruction* instruction) {
   return Decision::Allow();
 }
 
-// Prefer the entry computation's parameter layout over the instruction's
-// existing layout, which is only a hint before layout assignment. An AUTO
-// layout, including one with only a memory space, has no dimension order to
-// use as a hint. Resolve forwarded operands to their defining value first so
-// tuple leaves use their entry constraint rather than a provisional GTE layout.
+// Resolve forwarded values and alternating loop/transpose chains before using
+// a layout hint. Entry constraints take precedence over provisional HLO shapes.
 std::optional<Shape> ShapeWithLayoutHint(
-    const HloValue& value, const ComputationLayout& entry_computation_layout) {
-  const HloInstruction* instruction = value.defining_instruction();
-  const Shape* shape = &instruction->shape();
-  if (instruction->opcode() == HloOpcode::kParameter &&
-      instruction->parent()->IsEntryComputation()) {
-    shape = &entry_computation_layout.parameter_shape(
-        instruction->parameter_number());
+    const HloValue& buffer, const HloDataflowAnalysis& dataflow,
+    const ComputationLayout& entry_computation_layout) {
+  const HloValue* value = &buffer;
+  absl::flat_hash_set<const HloValue*> visited;
+  std::vector<const HloInstruction*> transposes;
+  const Shape* shape = nullptr;
+  while (true) {
+    if (!visited.insert(value).second) {
+      return std::nullopt;
+    }
+    const HloInstruction* producer = value->defining_instruction();
+    const HloInstruction* source;
+    ShapeIndex index;
+    if (producer->opcode() == HloOpcode::kParameter) {
+      if (producer->parent()->IsEntryComputation()) {
+        shape =
+            &ShapeUtil::GetSubshape(entry_computation_layout.parameter_shape(
+                                        producer->parameter_number()),
+                                    value->index());
+        break;
+      }
+      const auto callers =
+          producer->parent()->caller_instructions(HloOpcode::kWhile);
+      if (callers.size() != 1) {
+        return std::nullopt;
+      }
+      source = callers[0]->operand(0);
+      index = value->index();
+    } else if (producer->opcode() == HloOpcode::kTranspose) {
+      transposes.push_back(producer);
+      source = producer->operand(0);
+    } else {
+      if (transposes.empty()) {
+        return std::nullopt;
+      }
+      shape = &value->shape();
+      break;
+    }
+    const HloValueSet& values = dataflow.GetValueSet(source, index);
+    if (values.values().size() != 1) {
+      return std::nullopt;
+    }
+    value = values.values().front();
   }
-  const Shape& subshape = ShapeUtil::GetSubshape(*shape, value.index());
-  if (subshape.IsArray() && LayoutUtil::HasMinorToMajorSetInLayout(subshape)) {
-    return subshape;
+  if (!shape->IsArray() || !LayoutUtil::HasMinorToMajorSetInLayout(*shape)) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  Shape hint = *shape;
+  for (auto it = transposes.rbegin(); it != transposes.rend(); ++it) {
+    hint = ShapeUtil::PermuteDimensions((*it)->dimensions(), hint);
+  }
+  return hint;
 }
 
 }  // namespace
@@ -1271,51 +1307,13 @@ bool GpuLayoutAssignment::PreferCopyOfOperandOverSiblingPropagation(
 }
 
 Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
-  // A value carried through while loops that nothing inside them constrains
-  // (for example a weight stack that is only ever sliced) would get the
-  // default layout, and the caller then pays a copy of the whole array if it
-  // produces the value in a fixed layout, possibly through a transpose. Loop
-  // bodies are assigned before their callers, so follow the loop operands
-  // back to that producer and preserve its layout, or pick the layout that
-  // keeps the transpose a bitcast.
-  const HloValue* value = &buffer;
-  for (int depth = 0;
-       depth < 8 && value->instruction()->opcode() == HloOpcode::kParameter;
-       ++depth) {
-    const auto callers =
-        value->instruction()->parent()->caller_instructions(HloOpcode::kWhile);
-    if (callers.size() != 1) {
-      break;
-    }
-    const HloValueSet& values =
-        dataflow_analysis().GetValueSet(callers[0]->operand(0), value->index());
-    if (values.values().size() != 1) {
-      break;
-    }
-    value = values.values().front();
-    const HloInstruction* producer = value->defining_instruction();
-    std::optional<Shape> hint;
-    if (producer->opcode() == HloOpcode::kParameter) {
-      if (!producer->parent()->IsEntryComputation()) {
-        continue;  // Carried in from an enclosing loop; keep following.
-      }
-      hint = ShapeWithLayoutHint(*value, saved_entry_computation_layout());
-    } else if (producer->opcode() == HloOpcode::kTranspose) {
-      const HloValueSet& operand_values =
-          dataflow_analysis().GetValueSet(producer->operand(0));
-      if (operand_values.values().size() != 1) {
-        break;
-      }
-      hint = ShapeWithLayoutHint(*operand_values.values().front(),
-                                 saved_entry_computation_layout());
-      if (hint.has_value()) {
-        *hint = ShapeUtil::PermuteDimensions(producer->dimensions(), *hint);
-      }
-    }
+  if (buffer.instruction()->opcode() == HloOpcode::kParameter &&
+      !buffer.instruction()->parent()->IsEntryComputation()) {
+    std::optional<Shape> hint = ShapeWithLayoutHint(
+        buffer, dataflow_analysis(), saved_entry_computation_layout());
     if (hint.has_value() && ShapeUtil::Compatible(*hint, buffer.shape())) {
       return hint->layout();
     }
-    break;
   }
   return LayoutAssignment::GetUnconstrainedLayout(buffer);
 }
