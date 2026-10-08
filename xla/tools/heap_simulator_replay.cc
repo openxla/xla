@@ -60,21 +60,6 @@ absl::Status Replay(const std::string& path, int64_t alignment) {
   if (allocation == nullptr) {
     return absl::InvalidArgumentError("No ordinary temporary allocation found");
   }
-  const HeapSimulatorTrace* trace = nullptr;
-  for (const HeapSimulatorTrace& candidate :
-       assignment.heap_simulator_traces()) {
-    if (candidate.buffer_allocation_index() == allocation->index()) {
-      if (trace != nullptr) {
-        return absl::InvalidArgumentError(
-            "Expected one trace; combined per-computation heaps are "
-            "unsupported");
-      }
-      trace = &candidate;
-    }
-  }
-  if (trace == nullptr) {
-    return absl::InvalidArgumentError("Allocation has no heap simulator trace");
-  }
 
   // Only stable IDs are used by the placement algorithms. A scalar placeholder
   // avoids constructing the module or materializing large constants. Sizes
@@ -92,6 +77,31 @@ absl::Status Replay(const std::string& path, int64_t alignment) {
     values[id] =
         std::make_unique<HloValue>(id, instruction.get(), ShapeIndex{});
     sizes[id] = assigned.size();
+  }
+  // Match buffer IDs instead of buffer_allocation_index: older dumps can
+  // retain the index from before CombineTempAllocations renumbered allocations.
+  // Validate complete membership below, rejecting combined/constrained heaps.
+  const HeapSimulatorTrace* trace = nullptr;
+  for (const HeapSimulatorTrace& candidate :
+       assignment.heap_simulator_traces()) {
+    bool contains_buffer = false;
+    for (const HeapSimulatorTrace::Event& event : candidate.events()) {
+      if (values.find(event.buffer_id()) != values.end()) {
+        contains_buffer = true;
+        break;
+      }
+    }
+    if (!contains_buffer) {
+      continue;
+    }
+    if (trace != nullptr) {
+      return absl::InvalidArgumentError(
+          "Expected one trace; combined per-computation heaps are unsupported");
+    }
+    trace = &candidate;
+  }
+  if (trace == nullptr) {
+    return absl::InvalidArgumentError("Allocation has no heap simulator trace");
   }
   std::set<int64_t> seen;
   std::set<int64_t> live;
