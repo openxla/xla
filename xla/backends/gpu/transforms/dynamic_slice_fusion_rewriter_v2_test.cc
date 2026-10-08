@@ -15,14 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter_v2.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/match.h"
@@ -886,6 +886,146 @@ TEST_F(DynamicSliceFusionRewriterV2Test, MixedSlicedAndUnslicedOperands) {
   };
 
   RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected, fusion_checks);
+}
+
+//===----------------------------------------------------------------------===//
+// Memory-space annotations
+//===----------------------------------------------------------------------===//
+
+TEST_F(DynamicSliceFusionRewriterV2Test, RemapsAndMergesOperandMemorySpaces) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      weights = f32[2,8,8]{2,1,0:S(1)} parameter(0)
+      input = f32[8,8]{1,0} parameter(1)
+      slice = f32[1,8,8]{2,1,0} slice(weights), slice={[1:2],[0:8],[0:8]}
+      view = f32[8,8]{1,0} bitcast(slice)
+      ROOT call = f32[8,8]{1,0} custom-call(input, view, view),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:1,1:7,2:7}"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->operand_count(), 2);
+  EXPECT_EQ(fusion->operand(0)->name(), "weights");
+  EXPECT_EQ(fusion->operand(1)->name(), "input");
+  EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+            "{0:7,1:7}");
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[8,8]{1,0} parameter(0)
+      destination = f32[4,8,8]{2,1,0} parameter(1)
+      zero = s32[] constant(0)
+      call = (f32[8,8]{1,0}, f32[8,8]{1,0}) custom-call(input),
+        custom_call_target="fake_target",
+        frontend_attributes={results_memory_spaces="{0:2,1:7}"}
+      first = f32[8,8]{1,0} get-tuple-element(call), index=0
+      second = f32[8,8]{1,0} get-tuple-element(call), index=1
+      view = f32[1,8,8]{2,1,0} bitcast(second)
+      update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, view, zero, zero, zero)
+      ROOT result = (f32[8,8]{1,0}, f32[4,8,8]{2,1,0}) tuple(first, update)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction()->operand(0)->operand(0);
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->operand(1)->name(), "destination");
+  EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"), "{1:7}");
+  EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"),
+            "{0:2,1:7}");
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       ConflictingMemorySpacesPreserveOperands) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[2,8,8]{2,1,0} parameter(0)
+      first = f32[1,8,8]{2,1,0} slice(input), slice={[0:1],[0:8],[0:8]}
+      second = f32[1,8,8]{2,1,0} slice(input), slice={[1:2],[0:8],[0:8]}
+      tuple = (f32[1,8,8]{2,1,0}, f32[1,8,8]{2,1,0}) tuple(first, second)
+      barrier = (f32[1,8,8]{2,1,0}, f32[1,8,8]{2,1,0}) opt-barrier(tuple)
+      left = f32[1,8,8]{2,1,0} get-tuple-element(barrier), index=0
+      right = f32[1,8,8]{2,1,0} get-tuple-element(barrier), index=1
+      ROOT call = f32[8,8]{1,0} custom-call(left, right),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:7,1:2}"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const std::string original = module->ToString();
+  DynamicSliceFusionRewriterV2 rewriter(platform_id(),
+                                        DefaultOptions(OptLevel::kO2));
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), original);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       ConflictingBackingMemorySpaceNotFused) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[2,8,8]{2,1,0:S(2)} parameter(0)
+      slice = f32[1,8,8]{2,1,0} slice(input), slice={[0:1],[0:8],[0:8]}
+      ROOT call = f32[8,8]{1,0} custom-call(slice),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:7}"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kCustomCall);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test, MemorySpacesWithExtendedOffsets) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[4,8,8]{2,1,0} parameter(0)
+      destination = f32[4,8,8]{2,1,0} parameter(1)
+      zero = s32[] constant(0)
+      one = s32[] constant(1)
+      offset = s32[] minimum(zero, one)
+      slice = f32[1,8,8]{2,1,0} dynamic-slice(input, offset, zero, zero),
+        dynamic_slice_sizes={1,8,8}
+      call = f32[1,8,8]{2,1,0} custom-call(slice),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
+      ROOT update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, call, offset, zero, zero)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_enable_dynamic_slice_extended_offsets(true);
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+            "{0:7,1:7}");
+  EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"), "{0:7}");
+  const HloInstruction* hero =
+      DynamicSliceFusion::FindHero(fusion->fused_instructions_computation());
+  EXPECT_OK(DynamicSliceFusion::ResolveParameters(hero).status());
+  EXPECT_OK(DynamicSliceFusion::ResolveResults(hero).status());
 }
 
 //===----------------------------------------------------------------------===//
