@@ -167,10 +167,17 @@ std::vector<Candidate> FindCandidates(
   return candidates;
 }
 
-Decision CanMove(const HloInstruction* instruction) {
+Decision HasFlexibleScheduling(const HloInstruction* instruction) {
   if (instruction->opcode() == HloOpcode::kCustomCall &&
       static_cast<const HloCustomCallInstruction*>(instruction)
               ->custom_call_schedule() != CustomCallSchedule::SCHEDULE_NONE) {
+    return Decision::Forbid("custom call has an explicit scheduling policy");
+  }
+  return Decision::Allow();
+}
+
+Decision CanMove(const HloInstruction* instruction) {
+  if (HasFlexibleScheduling(instruction).IsForbidden()) {
     return Decision::Forbid("custom call has an explicit scheduling policy");
   }
   if (instruction->HasSideEffect() || instruction->IsAsynchronous() ||
@@ -292,6 +299,22 @@ absl::StatusOr<bool> HloEarlyBufferRelease::RunImpl(
                   .IsForbidden() ||
               group.empty())
             break;
+          // Do not delay an explicitly early custom call or advance work past
+          // an explicitly late one by inserting a group across its boundary.
+          int64_t last_position = candidate.insertion_position;
+          for (HloInstruction* instruction : group) {
+            last_position = std::max(last_position, positions.at(instruction));
+          }
+          bool crosses_policy = false;
+          for (int64_t i = candidate.insertion_position; i < last_position;
+               ++i) {
+            if (HasFlexibleScheduling(original.instructions()[i])
+                    .IsForbidden()) {
+              crosses_policy = true;
+              break;
+            }
+          }
+          if (crosses_policy) break;
           ++evaluated;
           HloInstructionSequence proposed =
               MoveGroup(original, group, candidate.insertion_position);

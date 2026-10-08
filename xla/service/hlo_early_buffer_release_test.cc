@@ -279,6 +279,46 @@ TEST_F(HloEarlyBufferReleaseTest, KeepsAsyncConsumersInPlace) {
   EXPECT_OK(module->schedule().Verify());
 }
 
+TEST_F(HloEarlyBufferReleaseTest, DoesNotCrossExplicitlyEarlyCustomCall) {
+  std::string hlo(kSplitConsumers);
+  const std::string original = "middle = f32[64,4,32] tanh(expand)";
+  hlo.replace(hlo.find(original), original.size(),
+              "middle = f32[64,4,32] custom-call(expand), "
+              "custom_call_target=\"test_middle\", schedule=SCHEDULE_EARLIEST");
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
+  EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(HloEarlyBufferReleaseTest, DoesNotHoistExplicitlyLateCustomCall) {
+  std::string hlo(kSplitConsumers);
+  const std::string original =
+      "dweights = f32[4,128] dot(h, dlogits), lhs_contracting_dims={0}, "
+      "rhs_contracting_dims={0}";
+  hlo.replace(hlo.find(original), original.size(),
+              "dweights = f32[4,128] custom-call(h, dlogits), "
+              "custom_call_target=\"test_gemm\", schedule=SCHEDULE_LATEST");
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK(RunRelease(module.get(), Options()).status());
+  EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(HloEarlyBufferReleaseTest, BoundsPrerequisiteClosure) {
+  std::string hlo(kSplitConsumers);
+  const std::string original = "  dweights = f32[4,128] dot(h, dlogits)";
+  hlo.replace(hlo.find(original), original.size(),
+              "  extra = f32[64,4] negate(h)\n"
+              "  dweights = f32[4,128] dot(extra, dlogits)");
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  auto options = Options();
+  options.max_group_size = 1;
+  ASSERT_OK(RunRelease(module.get(), options).status());
+  EXPECT_GT(Pos(module.get(), "dweights"), Pos(module.get(), "middle"));
+  EXPECT_OK(module->schedule().Verify());
+}
+
 TEST_F(HloEarlyBufferReleaseTest, RequiresScheduledModule) {
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(kSplitConsumers));
