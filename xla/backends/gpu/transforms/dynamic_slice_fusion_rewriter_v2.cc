@@ -685,6 +685,36 @@ std::unique_ptr<HloComputation> CreateFusionBody(
   return builder.Build();
 }
 
+bool PreservesCustomCallAliases(const HloComputation* body,
+                                absl::Span<const SlicedResult> sliced_results) {
+  const HloInstruction* hero = DynamicSliceFusion::FindHero(body);
+  if (hero == nullptr || hero->opcode() != HloOpcode::kCustomCall) {
+    return true;
+  }
+  const auto* call = Cast<HloCustomCallInstruction>(hero);
+  for (const auto& [result_index, operand_index] :
+       call->output_to_operand_aliasing()) {
+    // Alias analysis infers direct aliases through fusion parameters and
+    // bitcasts. Capturing a slice or DUS on this path changes the buffer or
+    // offset passed to the call and can break its in-place contract.
+    const HloInstruction* operand = call->operand(operand_index.first);
+    while (operand->opcode() == HloOpcode::kBitcast) {
+      operand = operand->operand(0);
+    }
+    if (operand->opcode() != HloOpcode::kParameter) {
+      return false;
+    }
+    int64_t result_number = result_index.empty() ? 0 : result_index[0];
+    if (absl::c_any_of(sliced_results, [&](const SlicedResult& result) {
+          return result.result_number == result_number &&
+                 result.update_slice != nullptr;
+        })) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Constraints belong to the buffers visible to allocation, not just the cloned
 // call. Slices share their source allocation; DUS results share their
 // destination. A conflicting merge requires keeping the original, separately
@@ -799,6 +829,9 @@ absl::StatusOr<bool> RewriteHero(
 
   std::unique_ptr<HloComputation> body =
       CreateFusionBody(*plan, sliced_results, hero);
+  if (!PreservesCustomCallAliases(body.get(), sliced_results)) {
+    return false;
+  }
   ABSL_ASSIGN_OR_RETURN(auto memory_spaces,
                         FusionMemorySpaces(hero, body.get()));
   if (!memory_spaces.has_value()) {
