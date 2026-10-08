@@ -369,7 +369,7 @@ xla_test(
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
         "//xla:xla_proto_cc",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_interpreter_reference_mixin",
         "@com_google_googletest//:gtest_main",
     ],
 )
