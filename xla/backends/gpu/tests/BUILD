@@ -369,14 +369,18 @@ xla_test(
         ":gpu_pjrt_codegen_test",
         "//xla:error_spec",
         "//xla:shape_util",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:buffer_value",
         "//xla/service:hlo_early_buffer_release",
+        "//xla/service:hlo_module_config",
         "//xla/service/gpu:alias_info",
+        "//xla/service/gpu:gpu_hlo_schedule",
         "//xla/tests:hlo_interpreter_reference_mixin",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
     ],
 )
 

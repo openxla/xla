@@ -857,6 +857,12 @@ absl::Status RunLatencyHidingSchedulerPasses(
                 scheduling_context->GetAsyncTracker()->IsTopDownScheduling());
             pressure_state->InitializePressureStates();
           }
+          // Embedded computations (e.g. reducers inside fusions) can have a
+          // schedule without a device-level pressure state. They cannot be
+          // evaluated by LatencyHidingStatistics.
+          if (!pressure_state->ComputationIsMemoryTracked(computation)) {
+            return std::numeric_limits<double>::infinity();
+          }
           return LatencyHidingScheduler::LatencyHidingStatistics(
                      computation, instructions, scheduling_context,
                      pressure_state.get())

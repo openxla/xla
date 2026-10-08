@@ -20,6 +20,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/types/span.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -28,14 +29,52 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/hlo_early_buffer_release.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
 
 using EarlyBufferReleaseTest = HloInterpreterReferenceMixin<GpuPjRtCodegenTest>;
+
+TEST_F(EarlyBufferReleaseTest, SkipsEmbeddedComputationWithoutPressureState) {
+  const char* hlo = R"(
+HloModule embedded_reducer
+sum {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT out = f32[] add(a, b)
+}
+fused {
+  p = f32[64]{0} parameter(0)
+  zero = f32[] constant(0)
+  ROOT out = f32[] reduce(p, zero), dimensions={0}, to_apply=sum
+}
+ENTRY main {
+  p = f32[64]{0} parameter(0)
+  ROOT out = f32[] fusion(p), kind=kLoop, calls=fused
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
+  DebugOptions& options = module->mutable_config().mutable_debug_options();
+  options.set_xla_gpu_enable_latency_hiding_scheduler(true);
+  options.set_xla_gpu_experimental_enable_early_buffer_release(true);
+  GpuAliasInfo alias_info(device_description());
+  mlir::MLIRContext context;
+  ASSERT_OK(ScheduleGpuModule(module.get(), /*pointer_size=*/8,
+                              device_description(), &context, &alias_info)
+                .status());
+  EXPECT_TRUE(module->has_schedule());
+  EXPECT_TRUE(module->schedule().is_computation_scheduled(
+      module->GetComputationWithName("sum")));
+  EXPECT_OK(module->schedule().Verify());
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-5, 1e-5}));
+}
 
 TEST_F(EarlyBufferReleaseTest, MovedConsumerPreservesResults) {
   const char* hlo = R"(

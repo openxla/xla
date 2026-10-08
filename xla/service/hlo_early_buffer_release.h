@@ -50,6 +50,7 @@ class HloEarlyBufferRelease : public HloModulePass {
   // Estimate elapsed time, including stalls, in consistent units. A backend
   // should provide its scheduling cost model, not the sum of instruction costs
   // (which is invariant under reordering).
+  // A non-finite original cost leaves the computation unchanged.
   using ScheduleCost = std::function<double(
       const HloComputation*, absl::Span<const HloInstruction* const>)>;
 
