@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_constants.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -108,6 +109,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/cudnn_custom_call_converter.h"
+#include "xla/backends/gpu/transforms/custom_call_scratch_assigner.h"
 #include "xla/backends/gpu/transforms/deviceless_estimate_cub_sort_scratch_size.h"
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/transforms/dot_dimension_sorter.h"
@@ -2242,6 +2244,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     }
     pipeline.AddPass<EstimateCubScanScratchSize>(
         gpu_target_config.platform_name);
+    // Let native custom calls ask for scratch buffers.
+    pipeline.AddPass<CustomCallScratchAssigner>(&gpu_topology, mlir_context);
     ABSL_RETURN_IF_ERROR(
         pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
             .status());
@@ -2472,12 +2476,25 @@ bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
   // Determine the logical result index. If the custom call returns a tuple,
   // we look at the top-level index (e.g., element 0 or 1 of the tuple).
   int64_t result_index = 0;
-  if (def->shape().IsTuple()) {
-    if (value->defining_index().empty()) {
-      // The buffer for the tuple pointer array itself is not S1.
+  bool is_tuple = def->shape().IsTuple();
+  ShapeIndexView idx = value->defining_index();
+
+  if (def->get_frontend_attribute(kNativeCustomCallNumScratchBuffersAttr)
+          .has_value()) {
+    if (idx.empty() || idx[0] != 0) {
       return false;
     }
-    result_index = value->defining_index()[0];
+    idx.remove_prefix(1);
+    is_tuple = def->shape().tuple_shapes(0).IsTuple();
+  }
+
+  if (is_tuple) {
+    if (idx.size() != 1) {
+      return false;
+    }
+    result_index = idx[0];
+  } else if (!idx.empty()) {
+    return false;
   }
 
   for (auto [index, memory_space] : *pairs) {

@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_constants.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/layout.h"
 #include "xla/service/buffer_assignment.h"
