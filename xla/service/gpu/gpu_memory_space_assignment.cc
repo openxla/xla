@@ -183,11 +183,12 @@ bool HasSymmetricMemoryInstruction(const HloValue& input_alias) {
   return RequiresCollectiveSymmetricMemorySpace(input_alias.instruction());
 }
 
-// Returns the memory space requested for the given custom call use, or
+// Returns the memory space requested for the given operand use, or
 // MemorySpaceColor::kDefault if none is specified.
-static absl::StatusOr<MemorySpaceColor> GetCustomCallOperandMemorySpace(
+static absl::StatusOr<MemorySpaceColor> GetOperandMemorySpace(
     const HloUse& use) {
-  if (use.instruction->opcode() != HloOpcode::kCustomCall ||
+  if ((use.instruction->opcode() != HloOpcode::kCustomCall &&
+       use.instruction->opcode() != HloOpcode::kFusion) ||
       !use.operand_index.empty()) {
     return MemorySpaceColor::kDefault;
   }
@@ -231,12 +232,13 @@ bool IsRaggedAllToAllCollectiveOperandOrResult(const HloValue& value) {
   return false;
 }
 
-// Returns the memory space requested for a custom call result value, or
+// Returns the memory space requested for an instruction result value, or
 // MemorySpaceColor::kDefault if none is specified.
-static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
+static absl::StatusOr<MemorySpaceColor> GetResultMemorySpace(
     const HloValue& value) {
   const HloInstruction* instr = value.instruction();
-  if (instr->opcode() != HloOpcode::kCustomCall) {
+  if (instr->opcode() != HloOpcode::kCustomCall &&
+      instr->opcode() != HloOpcode::kFusion) {
     return MemorySpaceColor::kDefault;
   }
 
@@ -285,19 +287,17 @@ absl::StatusOr<BufferValue::Color> DetermineBufferColor(
       }
     }
 
-    // Check if this value is a custom call result with a requested memory
-    // space.
+    // Check if this value has a requested result memory space.
     ABSL_ASSIGN_OR_RETURN(MemorySpaceColor result_ms,
-                          GetCustomCallResultMemorySpace(*value));
+                          GetResultMemorySpace(*value));
     if (result_ms != MemorySpaceColor::kDefault) {
       candidates.push_back(static_cast<BufferValue::Color>(result_ms));
     }
 
-    // Check if any use of this alias is a custom call operand with a
-    // requested memory space.
+    // Check if any use of this alias has a requested operand memory space.
     for (const HloUse& use : value->GetUses()) {
       ABSL_ASSIGN_OR_RETURN(MemorySpaceColor operand_ms,
-                            GetCustomCallOperandMemorySpace(use));
+                            GetOperandMemorySpace(use));
       if (operand_ms != MemorySpaceColor::kDefault) {
         candidates.push_back(static_cast<BufferValue::Color>(operand_ms));
       }

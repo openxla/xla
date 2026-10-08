@@ -2433,7 +2433,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
 namespace {
 
 bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
-  if (use.instruction->opcode() != HloOpcode::kCustomCall) {
+  if (use.instruction->opcode() != HloOpcode::kCustomCall &&
+      use.instruction->opcode() != HloOpcode::kFusion) {
     return false;
   }
   auto attr =
@@ -2456,7 +2457,8 @@ bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
 
 bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
   const HloInstruction* def = value->defining_instruction();
-  if (def->opcode() != HloOpcode::kCustomCall) {
+  if (def->opcode() != HloOpcode::kCustomCall &&
+      def->opcode() != HloOpcode::kFusion) {
     return false;
   }
 
@@ -2470,7 +2472,7 @@ bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
     return false;
   }
 
-  // Determine the logical result index. If the custom call returns a tuple,
+  // Determine the logical result index. If the instruction returns a tuple,
   // we look at the top-level index (e.g., element 0 or 1 of the tuple).
   int64_t result_index = 0;
   if (def->shape().IsTuple()) {
@@ -2515,7 +2517,7 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
     return true;
   }
 
-  // Check custom calls with operands_memory_spaces attribute
+  // Check custom calls and fusions with operands_memory_spaces attributes.
   if (UsesCollectiveMemorySpaceFrontendAttr(use)) {
     return true;
   }
@@ -2546,7 +2548,7 @@ bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
     return true;
   }
 
-  // Check custom calls with results_memory_spaces attribute
+  // Check custom calls and fusions with results_memory_spaces attributes.
   if (DefinesCollectiveMemorySpaceFrontendAttr(value)) {
     return true;
   }

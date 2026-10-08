@@ -226,7 +226,8 @@ struct DynamicSliceFusion {
     kRequired,
 
     // Offsets that are not representable as Offset::Expr are left empty. Use
-    // only for dynamic-slice copy fusions (see dynamic_slice_copy.h): a DS/DUS
+    // for analyses needing only buffer mappings or for dynamic-slice copy
+    // fusions (see dynamic_slice_copy.h): a DS/DUS
     // copy is emitted as a single copy thunk addressed only by the
     // DynamicSliceConfig, so offset expressions are needed only for offset
     // verification, which is skipped. Not safe for fusions where the runtime

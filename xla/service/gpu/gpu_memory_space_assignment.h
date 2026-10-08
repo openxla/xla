@@ -29,8 +29,8 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// Frontend attribute names for specifying memory spaces on custom call
-// operands and results. The format is {index:memory_space,...}, e.g.
+// Frontend attribute names for specifying memory spaces on custom call and
+// fusion operands and results. The format is {index:memory_space,...}, e.g.
 // "{0:1,2:1}" means operand/result 0 and 2 should be in memory space 1.
 inline constexpr absl::string_view kOperandsMemorySpacesAttr =
     "operands_memory_spaces";
@@ -70,8 +70,8 @@ bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
 // Creates a buffer colorer that assigns memory space colors to HLO values
 // during buffer assignment. It handles:
 //  - Collective operations (all-reduce, all-gather, etc.) → kCollective
-//  - Custom call `operands_memory_spaces` / `results_memory_spaces` frontend
-//    attributes (e.g. emitted by Mosaic for multimem/symmetric buffers) →
+//  - Custom call and fusion `operands_memory_spaces` / `results_memory_spaces`
+//    frontend attributes (e.g. for multimem/symmetric buffers) →
 //    requested memory space
 //  - Everything else → kDefault
 BufferAssigner::Colorer CreateColorer(const DebugOptions& option);

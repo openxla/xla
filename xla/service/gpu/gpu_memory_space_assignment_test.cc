@@ -15,16 +15,16 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -629,6 +629,75 @@ TEST_F(GpuMemorySpaceAssignmentTest, CustomCallTupleResultMemorySpace) {
       }
     }
   }
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest, FusionOperandAndResultMemorySpaces) {
+  constexpr absl::string_view kHloModule = R"(
+    HloModule m
+
+    fused {
+      p0 = f32[1024]{0} parameter(0)
+      p1 = f32[1024]{0} parameter(1)
+      ROOT call = f32[1024]{0} custom-call(p0, p1),
+        custom_call_target="my_custom_call"
+    }
+
+    ENTRY main {
+      input = f32[1024]{0} parameter(0)
+      weights = f32[1024]{0} parameter(1)
+      ROOT fusion = f32[1024]{0} fusion(input, weights), kind=kCustom, calls=fused,
+        frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloModule));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(auto alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  ASSERT_OK(CreateColorer(module->config().debug_options())(
+      alias_analysis.get(), ordering));
+
+  EXPECT_EQ(FindColorByName(*alias_analysis, "input"),
+            static_cast<int>(MemorySpaceColor::kCollective));
+  EXPECT_EQ(FindColorByName(*alias_analysis, "weights"),
+            static_cast<int>(MemorySpaceColor::kDefault));
+  EXPECT_EQ(FindColorByName(*alias_analysis, "fusion"),
+            static_cast<int>(MemorySpaceColor::kCollective));
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest, FusionTupleResultMemorySpaces) {
+  constexpr absl::string_view kHloModule = R"(
+    HloModule m
+
+    fused {
+      ROOT call = (f32[1024]{0}, f32[512]{0}) custom-call(),
+        custom_call_target="my_custom_call"
+    }
+
+    ENTRY main {
+      ROOT fusion = (f32[1024]{0}, f32[512]{0}) fusion(), kind=kCustom, calls=fused,
+        frontend_attributes={results_memory_spaces="{1:7}"}
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloModule));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(auto alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  ASSERT_OK(CreateColorer(module->config().debug_options())(
+      alias_analysis.get(), ordering));
+
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  const auto& dataflow = alias_analysis->dataflow_analysis();
+  EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {}).color(),
+            static_cast<int>(MemorySpaceColor::kDefault));
+  EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {0}).color(),
+            static_cast<int>(MemorySpaceColor::kDefault));
+  EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {1}).color(),
+            static_cast<int>(MemorySpaceColor::kCollective));
 }
 
 class GpuMosaicCollectiveMemorySpaceAssignmentTest
