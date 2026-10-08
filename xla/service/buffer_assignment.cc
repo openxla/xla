@@ -2762,6 +2762,19 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     }
     using HeapType = GlobalDecreasingSizeBestFitHeap<HloValue>;
 
+    // Optimize only the default color: changing a collective heap could change
+    // how much space a later color reuses in it, increasing the final total.
+    if (opts_.enable_heap_simulator_packing_search &&
+        color == LogicalBuffer::Color(0) &&
+        assignment->multiheap_size_constraint_per_heap() == UINT64_MAX &&
+        (buffer_assignment_algorithm ==
+             buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT ||
+         buffer_assignment_algorithm ==
+             buffer_assignment::BufferAssignmentAlgorithmProto::
+                 BEST_OF_SPATIAL_TEMPORAL)) {
+      return CreateHeapWithPackingSearch(alignment);
+    }
+
     auto build_algorithm =
         [alignment, assignment](
             buffer_assignment::BufferAssignmentAlgorithmProto::Value algo)

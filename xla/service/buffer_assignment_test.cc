@@ -497,6 +497,55 @@ static bool BuffersDistinct(const std::vector<const HloInstruction*>& a,
 }
 
 // Tests a computation consisting of a single scalar constant node.
+TEST_F(BufferAssignmentTest, PackingSearchPreservesScheduleAndReducesHeap) {
+  constexpr absl::string_view hlo = R"(
+HloModule packing, is_scheduled=true
+
+ENTRY main {
+  b = f32[4] custom-call(), custom_call_target="b", custom_call_has_side_effect=true
+  c = f32[5] custom-call(), custom_call_target="c", custom_call_has_side_effect=true
+  use_c = () custom-call(c), custom_call_target="consume", custom_call_has_side_effect=true
+  a = f32[3] custom-call(), custom_call_target="a", custom_call_has_side_effect=true
+  use_b = () custom-call(b), custom_call_target="consume", custom_call_has_side_effect=true
+  d = f32[5] custom-call(), custom_call_target="d", custom_call_has_side_effect=true
+  use_a = () custom-call(a), custom_call_target="consume", custom_call_has_side_effect=true
+  use_d = () custom-call(d), custom_call_target="consume", custom_call_has_side_effect=true
+  ROOT result = () tuple()
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
+  const std::string original_module = module->ToString();
+  std::unique_ptr<BufferAssignment> baseline =
+      RunBufferAssignmentWithSequentialOrdering(module.get());
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.enable_heap_simulator_packing_search = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> packed,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+  EXPECT_EQ(module->ToString(), original_module);
+  EXPECT_EQ(baseline->temp_allocation_total_size(), 48);
+  EXPECT_EQ(packed->temp_allocation_total_size(), 36);
+  std::vector<std::string> baseline_traces;
+  std::vector<std::string> packed_traces;
+  for (const BufferAllocation& allocation : baseline->Allocations()) {
+    for (const HeapSimulatorTrace& trace : allocation.HeapTraces()) {
+      baseline_traces.push_back(trace.SerializeAsString());
+    }
+  }
+  for (const BufferAllocation& allocation : packed->Allocations()) {
+    for (const HeapSimulatorTrace& trace : allocation.HeapTraces()) {
+      packed_traces.push_back(trace.SerializeAsString());
+    }
+  }
+  EXPECT_EQ(packed_traces, baseline_traces);
+}
+
 TEST_F(BufferAssignmentTest, ScalarConstant) {
   auto builder = HloComputation::Builder(TestName());
   auto const0 = builder.AddInstruction(

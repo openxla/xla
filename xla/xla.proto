@@ -1931,7 +1931,12 @@ message DebugOptions {
   // Enables Raft for stable TopK.
   optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
 
-  // Next id: 556
+  // Tries additional deterministic placements of ordinary temporary buffers
+  // without changing their lifetimes or the schedule. May increase compilation
+  // time. Keeps the existing placement when no smaller heap is found.
+  optional bool xla_gpu_enable_heap_simulator_packing_search = 556;
+
+  // Next id: 557
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

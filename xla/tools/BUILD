@@ -69,6 +69,23 @@ filegroup(
 #===------------------------------------------------------------------------===#
 
 xla_cc_binary(
+    name = "heap_simulator_replay",
+    srcs = ["heap_simulator_replay.cc"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service:hlo_value",
+        "//xla/service/heap_simulator:heap_simulator",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_binary(
     name = "hlo-extractor",
     testonly = True,
     deps = [":hlo_extractor_main"],

@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/numeric/bits.h"
+#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
@@ -681,8 +682,11 @@ template <typename BufferType>
 GlobalDecreasingSizeBestFitHeap<BufferType>::GlobalDecreasingSizeBestFitHeap(
     int64_t alignment, PackingStrategy packing_strategy,
     BufferIntervalCompare buffer_interval_compare,
-    SliceTimePermutationIterator::Ty slice_time_permutation_iterator_type)
+    SliceTimePermutationIterator::Ty slice_time_permutation_iterator_type,
+    ChunkPlacement chunk_placement)
     : alignment_(alignment),
+      sort_by_area_(packing_strategy == kSpatialTemporal),
+      chunk_placement_(chunk_placement),
       slice_time_permutation_iteration_type_(
           slice_time_permutation_iterator_type) {
   CHECK_GT(alignment, 0) << "Alignment (" << alignment << ") must be positive.";
@@ -691,6 +695,20 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::GlobalDecreasingSizeBestFitHeap(
     CHECK(buffer_interval_compare == nullptr);
   } else if (packing_strategy == kSpatial) {
     buffer_interval_compare_ = GetSpatialBufferIntervalCompare();
+    CHECK(buffer_interval_compare == nullptr);
+  } else if (packing_strategy == kSpatialTemporal) {
+    buffer_interval_compare_ = [](const BufferInterval& lhs,
+                                  const BufferInterval& rhs) {
+      // A large buffer times a long schedule can overflow int64_t.
+      const absl::uint128 lhs_area =
+          absl::uint128(lhs.colocation_size) * lhs.colocation_live_duration;
+      const absl::uint128 rhs_area =
+          absl::uint128(rhs.colocation_size) * rhs.colocation_live_duration;
+      if (lhs_area != rhs_area) {
+        return lhs_area > rhs_area;
+      }
+      return *lhs.buffer < *rhs.buffer;
+    };
     CHECK(buffer_interval_compare == nullptr);
   } else if (packing_strategy == kFastMerge) {
     buffer_interval_compare_ = GetColocationStartTimeBufferIntervalCompare();
@@ -2532,6 +2550,11 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::GetSortedBufferIntervals() const {
   for (BufferInterval& interval : sorted_buffer_intervals) {
     interval.min_colocation_start_time = interval.start;
     interval.max_colocation_end_time = interval.end;
+    std::vector<std::pair<int64_t, int64_t>> live_intervals;
+    if (sort_by_area_) {
+      interval.colocation_size = interval.size;
+      live_intervals.emplace_back(interval.start, interval.end);
+    }
     // TODO(vedernikova): Optimize this using a Union-Find algorithm updated
     // during ShareWith() to incrementally track min/max times and sizes.
     // Using a sorted container in the following cycle instead of the hash set
@@ -2545,6 +2568,23 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::GetSortedBufferIntervals() const {
           interval.min_colocation_start_time, colocated_interval.start);
       interval.max_colocation_end_time =
           std::max(interval.max_colocation_end_time, colocated_interval.end);
+      if (sort_by_area_) {
+        interval.colocation_size =
+            std::max(interval.colocation_size, colocated_interval.size);
+        live_intervals.emplace_back(colocated_interval.start,
+                                    colocated_interval.end);
+      }
+    }
+    if (sort_by_area_) {
+      // Keep gaps between aliases available for reuse, and count overlapping
+      // aliases once. The interval tree uses inclusive temporal endpoints.
+      absl::c_sort(live_intervals);
+      int64_t previous_end = -1;
+      for (const auto& [start, end] : live_intervals) {
+        interval.colocation_live_duration +=
+            std::max(int64_t{0}, end - std::max(start - 1, previous_end));
+        previous_end = std::max(previous_end, end);
+      }
     }
   }
 
@@ -2754,6 +2794,9 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::FindUnslicedChunkCandidates(
       if (free_chunk.second - max_colocation_size < aligned_start) {
         continue;
       }
+      if (chunk_placement_ == ChunkPlacement::kLowestOffset) {
+        return aligned_start;
+      }
       int64_t size = free_chunk.second - free_chunk.first;
       // Note: best_offset < 0 must be checked explicitly because the final
       // free chunk extends to INT64_MAX, so its size can equal the best_size
@@ -2890,6 +2933,7 @@ ConstrainedGlobalDecreasingSizeBestFitHeap::Finish() {
   switch (packing_strategy_) {
     case kSpatial:
     case kTemporal:
+    case kSpatialTemporal:
     case kCustom:
     case kPhaseWindow:
     case kPhaseWindowEnd:
@@ -3173,6 +3217,8 @@ ChooseBestHeapAlgorithm<BufferType>::Finish() {
   int min_size_index = -1;
   for (int i = 0; i < algorithms_.size(); ++i) {
     ABSL_ASSIGN_OR_RETURN(results[i], algorithms_[i]->Finish());
+    VLOG(1) << "Heap placement candidate " << i << ": " << results[i].heap_size
+            << " bytes";
     if (results[i].heap_size < min_size) {
       min_size = results[i].heap_size;
       min_size_index = i;
@@ -3181,6 +3227,25 @@ ChooseBestHeapAlgorithm<BufferType>::Finish() {
 
   DCHECK_GE(min_size_index, 0);
   return results[min_size_index];
+}
+
+std::unique_ptr<HeapAlgorithm<HloValue>> CreateHeapWithPackingSearch(
+    int64_t alignment) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  auto algorithms =
+      std::make_unique<std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
+  for (Heap::ChunkPlacement placement :
+       {Heap::ChunkPlacement::kBestFit, Heap::ChunkPlacement::kLowestOffset}) {
+    for (Heap::PackingStrategy strategy :
+         {Heap::kSpatial, Heap::kTemporal, Heap::kSpatialTemporal}) {
+      algorithms->push_back(
+          std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+              std::numeric_limits<uint64_t>::max(), alignment, strategy,
+              nullptr, placement));
+    }
+  }
+  return std::make_unique<ChooseBestHeapAlgorithm<HloValue>>(
+      std::move(algorithms));
 }
 
 BreadthFirstMidpointIterator::BreadthFirstMidpointIterator(int start, int end)
