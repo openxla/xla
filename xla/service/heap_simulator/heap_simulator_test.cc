@@ -1198,7 +1198,46 @@ TEST_F(HeapPackingSearchTest, Empty) {
   EXPECT_TRUE(result.heap_results[0].chunk_map.empty());
 }
 
-TEST_F(HeapPackingSearchTest, LowestOffsetPreservesLargerHole) {
+TEST_F(HeapPackingSearchTest, OverlappingAliasesAreCountedOnceForOrdering) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  Heap heap(1, Heap::kSpatialTemporal);
+  heap.Alloc(buffer_a_, 4);
+  heap.Alloc(buffer_b_, 7);
+  heap.ShareWith(buffer_c_, buffer_a_, 4);
+  heap.Free(buffer_a_, 4);
+  heap.Free(buffer_b_, 7);
+  heap.Free(buffer_c_, 4);
+  // The A/C union has area 4 * 6 = 24; B has area 7 * 4 = 28.
+  // Summing the two alias lifetimes would incorrectly give A/C area 32.
+  ASSERT_OK_AND_ASSIGN(const auto result, heap.Finish());
+  const auto& chunks = result.heap_results[0].chunk_map;
+  EXPECT_EQ(chunks.at(buffer_b_).offset, 0);
+  EXPECT_EQ(chunks.at(buffer_a_).offset, 7);
+  EXPECT_EQ(chunks.at(buffer_a_), chunks.at(buffer_c_));
+  EXPECT_EQ(result.heap_size, 11);
+}
+
+TEST_F(HeapPackingSearchTest, AreaComparisonDoesNotOverflowInt64) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  Heap heap(1, Heap::kSpatialTemporal);
+  const int64_t size = int64_t{1} << 60;
+  heap.Alloc(buffer_a_, size);
+  heap.Alloc(buffer_b_, size);
+  heap.Alloc(buffer_c_, 1);
+  heap.Free(buffer_c_, 1);
+  heap.Alloc(buffer_d_, 1);
+  heap.Free(buffer_d_, 1);
+  heap.Free(buffer_b_, size);
+  heap.Alloc(buffer_e_, 1);
+  heap.Free(buffer_e_, 1);
+  heap.Free(buffer_a_, size);
+  // A's area is 10 * 2^60, exceeding int64_t; B's area is 6 * 2^60.
+  ASSERT_OK_AND_ASSIGN(const auto result, heap.Finish());
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_a_).offset, 0);
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_b_).offset, size);
+}
+
+TEST_F(HeapPackingSearchTest, LowestOffsetCanImproveBestFit) {
   using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
   Heap best_fit(1, Heap::kSpatial);
   Heap lowest_offset(1, Heap::kSpatial, nullptr,
