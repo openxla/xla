@@ -84,7 +84,16 @@ def rocm_library(copts = [], deps = [], **kwargs):
 def get_rbe_amdgpu_pool(is_single_gpu = False):
     return "%{single_gpu_rbe_pool}" if is_single_gpu else "%{multi_gpu_rbe_pool}"
 
-def rocm_lib_import(name, interface_library, data, deps):
+def rocm_lib_import(name, interface_library, data, deps, is_system_lib = False):
+    # System libs (libdrm/libnuma) are bundled under lib/rocm_sysdeps/lib on
+    # TheRock layouts; classic ROCm installs lack them, so link the host copy.
+    if is_system_lib and not %{rocm_has_sysdeps}:
+        cc_library(
+            name = name,
+            linkopts = ["-l" + name],
+            visibility = ["//visibility:public"],
+        )
+        return
     cc_import(
         name = name + "_interface",
         shared_library = interface_library,
@@ -106,32 +115,3 @@ def rocm_lib_import(name, interface_library, data, deps):
         ],
         visibility = ["//visibility:public"],
     )
-
-def rocm_has_sysdeps():
-    """True if the ROCm distribution ships TheRock's lib/rocm_sysdeps."""
-    return %{rocm_has_sysdeps}
-
-def rocm_system_lib_import(name, sysdeps_library, host_lib):
-    """Imports a system library from TheRock's rocm_sysdeps, or the host one.
-
-    TheRock's libhsakmt.a expects its bundled copies, while classic ROCm's
-    libhsakmt.a was built against the host libraries.
-
-    Args:
-        name: Target name.
-        sysdeps_library: Path of the bundled library under lib/rocm_sysdeps/lib.
-        host_lib: Library name passed as -l<host_lib> on classic ROCm.
-    """
-    if rocm_has_sysdeps():
-        rocm_lib_import(
-            name = name,
-            interface_library = sysdeps_library,
-            data = [":system_libs_data"],
-            deps = [":system_libs"],
-        )
-    else:
-        cc_library(
-            name = name,
-            linkopts = ["-l" + host_lib],
-            visibility = ["//visibility:public"],
-        )

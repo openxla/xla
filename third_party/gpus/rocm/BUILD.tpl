@@ -16,7 +16,7 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@config_rocm_hipcc//rocm:build_defs.bzl", "hipcc_config")
-load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_lib_import", "rocm_system_lib_import", "rocm_version_number")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_lib_import", "rocm_version_number")
 
 licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
@@ -549,22 +549,28 @@ cc_library(
 # layouts (hermetic distribution or a TheRock-based local ROCm) they resolve to
 # the copies bundled under lib/rocm_sysdeps/lib. Classic ROCm installs do not
 # ship rocm_sysdeps, so they fall back to the host libraries (-ldrm, ...).
-rocm_system_lib_import(
+rocm_lib_import(
     name = "drm",
-    host_lib = "drm",
-    sysdeps_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
+    data = [":system_libs_data"],
+    deps = [":system_libs"],
+    is_system_lib = True,
 )
 
-rocm_system_lib_import(
+rocm_lib_import(
     name = "drm_amdgpu",
-    host_lib = "drm_amdgpu",
-    sysdeps_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
+    data = [":system_libs_data"],
+    deps = [":system_libs"],
+    is_system_lib = True,
 )
 
-rocm_system_lib_import(
+rocm_lib_import(
     name = "numa",
-    host_lib = "numa",
-    sysdeps_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
+    data = [":system_libs_data"],
+    deps = [":system_libs"],
+    is_system_lib = True,
 )
 
 filegroup(

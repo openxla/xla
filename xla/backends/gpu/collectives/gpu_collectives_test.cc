@@ -699,6 +699,10 @@ TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
     GTEST_SKIP() << "Test requires at least 4 GPUs";
   }
 
+  // MORI's CCO backend requires the SDMA copy path. Enable it unless the
+  // environment already overrides it, before MORI is resolved/initialized.
+  tsl::setenv("MORI_ENABLE_SDMA", "1", /*overwrite=*/0);
+
   auto* mori = xla::gpu::GpuCollectives::Resolve("ROCM", "mori");
   ASSERT_NE(mori, nullptr);
   ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
