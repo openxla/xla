@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/decision.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_buffer.h"
@@ -77,12 +78,16 @@ absl::StatusOr<MemoryProfile> GetMemoryProfile(
     int64_t bytes = 0;
     for (const HloValue* value : buffer.values()) {
       auto it = live_range->buffer_live_ranges().find(value);
-      if (it == live_range->buffer_live_ranges().end()) continue;
+      if (it == live_range->buffer_live_ranges().end()) {
+        continue;
+      }
       start = std::min(start, it->second.start);
       end = std::max(end, it->second.end);
       bytes = std::max(bytes, size_function(*value));
     }
-    if (end < 0 || bytes == 0) continue;
+    if (end < 0 || bytes == 0) {
+      continue;
+    }
     TF_RET_CHECK(start >= 0 && end + 1 < events.size());
     events[start] += bytes;
     events[end + 1] -= bytes;
@@ -122,7 +127,9 @@ std::vector<Candidate> FindCandidates(
     const BufferValue::SizeFunction& size_function, int64_t min_buffer_bytes) {
   std::vector<Candidate> candidates;
   for (const HloBuffer& buffer : alias_analysis.buffers()) {
-    if (buffer.values().size() != 1) continue;
+    if (buffer.values().size() != 1) {
+      continue;
+    }
     const HloValue* value = buffer.values().front();
     const HloInstruction* definition = value->defining_instruction();
     if (definition->parent() != computation ||
@@ -133,7 +140,9 @@ std::vector<Candidate> FindCandidates(
       continue;
     }
     int64_t bytes = size_function(*value);
-    if (bytes < min_buffer_bytes) continue;
+    if (bytes < min_buffer_bytes) {
+      continue;
+    }
     absl::flat_hash_set<HloInstruction*> seen;
     std::vector<HloInstruction*> users;
     bool local = true;
@@ -142,9 +151,13 @@ std::vector<Candidate> FindCandidates(
         local = false;
         break;
       }
-      if (seen.insert(use.instruction).second) users.push_back(use.instruction);
+      if (seen.insert(use.instruction).second) {
+        users.push_back(use.instruction);
+      }
     }
-    if (!local || users.empty()) continue;
+    if (!local || users.empty()) {
+      continue;
+    }
     std::sort(users.begin(), users.end(),
               [&](const HloInstruction* a, const HloInstruction* b) {
                 return positions.at(a) < positions.at(b);
@@ -154,14 +167,18 @@ std::vector<Candidate> FindCandidates(
     int64_t insertion = users.size() == 1 ? positions.at(definition) + 1
                                           : positions.at(users.front()) + 1;
     int64_t last_use = positions.at(users.back());
-    if (last_use <= insertion) continue;
+    if (last_use <= insertion) {
+      continue;
+    }
     candidates.push_back(
         {&buffer, std::move(users), insertion,
          static_cast<long double>(bytes) * (last_use - insertion)});
   }
   std::sort(candidates.begin(), candidates.end(),
             [](const Candidate& a, const Candidate& b) {
-              if (a.priority != b.priority) return a.priority > b.priority;
+              if (a.priority != b.priority) {
+                return a.priority > b.priority;
+              }
               return a.buffer->id() < b.buffer->id();
             });
   return candidates;
@@ -203,8 +220,9 @@ Decision CollectGroup(const Candidate& candidate, const Positions& positions,
     HloInstruction* instruction = pending.back();
     pending.pop_back();
     if (positions.at(instruction) < candidate.insertion_position ||
-        group.contains(instruction))
+        group.contains(instruction)) {
       continue;
+    }
     if (CanMove(instruction).IsForbidden() || group.size() >= max_group_size) {
       return Decision::Forbid("consumer closure cannot be moved within budget");
     }
@@ -225,7 +243,9 @@ HloInstructionSequence MoveGroup(
     if (i == insertion) {
       // The original topological order also orders the prerequisite closure.
       for (HloInstruction* instruction : sequence.instructions()) {
-        if (group.contains(instruction)) result.push_back(instruction);
+        if (group.contains(instruction)) {
+          result.push_back(instruction);
+        }
       }
     }
     if (!group.contains(sequence.instructions()[i])) {
@@ -262,20 +282,26 @@ absl::StatusOr<bool> HloEarlyBufferRelease::RunImpl(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     if (!schedule.is_computation_scheduled(computation) ||
-        computation->IsAsyncComputation())
+        computation->IsAsyncComputation()) {
       continue;
+    }
     // A schedule repair must not split or insert work into an annotated group.
     // Supporting these groups requires treating each group as an atomic unit.
     bool annotated = false;
     for (const HloInstruction* instruction : computation->instructions()) {
       if (instruction->frontend_attributes().map().contains(
-              kXlaSchedulingGroupIdAttr))
+              kXlaSchedulingGroupIdAttr)) {
         annotated = true;
+      }
     }
-    if (annotated) continue;
+    if (annotated) {
+      continue;
+    }
     const double original_cost = schedule_cost_(
         computation, schedule.sequence(computation).instructions());
-    if (!std::isfinite(original_cost) || original_cost < 0) continue;
+    if (!std::isfinite(original_cost) || original_cost < 0) {
+      continue;
+    }
     ABSL_ASSIGN_OR_RETURN(MemoryProfile current,
                           GetMemoryProfile(schedule, *alias_analysis,
                                            computation, size_function_));
@@ -297,8 +323,9 @@ absl::StatusOr<bool> HloEarlyBufferRelease::RunImpl(
         while (evaluated < options_.max_candidates) {
           if (CollectGroup(expanded, positions, options_.max_group_size, group)
                   .IsForbidden() ||
-              group.empty())
+              group.empty()) {
             break;
+          }
           // Do not delay an explicitly early custom call or advance work past
           // an explicitly late one by inserting a group across its boundary.
           int64_t last_position = candidate.insertion_position;
@@ -314,14 +341,17 @@ absl::StatusOr<bool> HloEarlyBufferRelease::RunImpl(
               break;
             }
           }
-          if (crosses_policy) break;
+          if (crosses_policy) {
+            break;
+          }
           ++evaluated;
           HloInstructionSequence proposed =
               MoveGroup(original, group, candidate.insertion_position);
           double cost = schedule_cost_(computation, proposed.instructions());
           if (!std::isfinite(cost) || cost < 0 ||
-              cost > original_cost * (1 + options_.max_relative_slowdown))
+              cost > original_cost * (1 + options_.max_relative_slowdown)) {
             break;
+          }
           // Analyze a separate schedule so failed/rejected proposals never
           // leave the module with a tentative order.
           HloSchedule trial = schedule;
@@ -363,12 +393,18 @@ absl::StatusOr<bool> HloEarlyBufferRelease::RunImpl(
               }
             }
           }
-          if (next == nullptr) break;
+          if (next == nullptr) {
+            break;
+          }
           expanded.users.push_back(next);
         }
-        if (accepted || evaluated >= options_.max_candidates) break;
+        if (accepted || evaluated >= options_.max_candidates) {
+          break;
+        }
       }
-      if (!accepted) break;
+      if (!accepted) {
+        break;
+      }
     }
   }
   ABSL_RETURN_IF_ERROR(schedule.Verify());

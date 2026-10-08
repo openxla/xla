@@ -72,7 +72,9 @@ int64_t Bytes(const BufferValue& value) {
 int64_t Position(absl::Span<const HloInstruction* const> sequence,
                  absl::string_view name) {
   for (int64_t i = 0; i < sequence.size(); ++i) {
-    if (sequence[i]->name() == name) return i;
+    if (sequence[i]->name() == name) {
+      return i;
+    }
   }
   return -1;
 }
@@ -99,7 +101,9 @@ class HloEarlyBufferReleaseTest : public HloHardwareIndependentTestBase {
 
   absl::StatusOr<int64_t> Peak(HloModule* module) {
     auto alias_analysis = HloAliasAnalysis::Run(module, &alias_info_);
-    if (!alias_analysis.ok()) return alias_analysis.status();
+    if (!alias_analysis.ok()) {
+      return alias_analysis.status();
+    }
     BufferValue::SizeFunction size = Bytes;
     return HeapSimulator::MinimumMemoryForModule(
         module->schedule(), **alias_analysis, &alias_info_, &size);
