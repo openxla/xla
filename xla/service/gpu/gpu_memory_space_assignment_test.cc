@@ -631,7 +631,8 @@ TEST_F(GpuMemorySpaceAssignmentTest, CustomCallTupleResultMemorySpace) {
   }
 }
 
-TEST_F(GpuMemorySpaceAssignmentTest, FusionOperandAndResultMemorySpaces) {
+TEST_F(GpuMemorySpaceAssignmentTest,
+       DynamicSliceFusionOperandAndResultMemorySpaces) {
   constexpr absl::string_view kHloModule = R"(
     HloModule m
 
@@ -646,6 +647,7 @@ TEST_F(GpuMemorySpaceAssignmentTest, FusionOperandAndResultMemorySpaces) {
       input = f32[1024]{0} parameter(0)
       weights = f32[1024]{0} parameter(1)
       ROOT fusion = f32[1024]{0} fusion(input, weights), kind=kCustom, calls=fused,
+        backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_slice_fusion"}}},
         frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
     }
   )";
@@ -666,7 +668,8 @@ TEST_F(GpuMemorySpaceAssignmentTest, FusionOperandAndResultMemorySpaces) {
             static_cast<int>(MemorySpaceColor::kCollective));
 }
 
-TEST_F(GpuMemorySpaceAssignmentTest, FusionTupleResultMemorySpaces) {
+TEST_F(GpuMemorySpaceAssignmentTest,
+       DynamicSliceFusionTupleResultMemorySpaces) {
   constexpr absl::string_view kHloModule = R"(
     HloModule m
 
@@ -677,6 +680,7 @@ TEST_F(GpuMemorySpaceAssignmentTest, FusionTupleResultMemorySpaces) {
 
     ENTRY main {
       ROOT fusion = (f32[1024]{0}, f32[512]{0}) fusion(), kind=kCustom, calls=fused,
+        backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_slice_fusion"}}},
         frontend_attributes={results_memory_spaces="{1:7}"}
     }
   )";
@@ -698,6 +702,45 @@ TEST_F(GpuMemorySpaceAssignmentTest, FusionTupleResultMemorySpaces) {
             static_cast<int>(MemorySpaceColor::kDefault));
   EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {1}).color(),
             static_cast<int>(MemorySpaceColor::kCollective));
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest, UnrelatedFusionMemorySpacesIgnored) {
+  constexpr absl::string_view kFusionConfigs[] = {
+      "kind=kLoop",
+      "kind=kCustom",
+      R"(kind=kCustom, backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"unrelated_fusion"}}})",
+  };
+  for (absl::string_view fusion_config : kFusionConfigs) {
+    SCOPED_TRACE(fusion_config);
+    std::string hlo = absl::StrCat(R"(
+      HloModule m
+
+      fused {
+        p = f32[1024]{0} parameter(0)
+        ROOT neg = f32[1024]{0} negate(p)
+      }
+
+      ENTRY main {
+        input = f32[1024]{0} parameter(0)
+        ROOT fusion = f32[1024]{0} fusion(input), calls=fused,
+    )",
+                                   fusion_config, R"(,
+          frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
+      }
+    )");
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    AliasInfo alias_info;
+    ASSERT_OK_AND_ASSIGN(auto alias_analysis,
+                         HloAliasAnalysis::Run(module.get(), &alias_info));
+    DependencyHloOrdering ordering(module.get());
+    ASSERT_OK(CreateColorer(module->config().debug_options())(
+        alias_analysis.get(), ordering));
+
+    EXPECT_EQ(FindColorByName(*alias_analysis, "input"),
+              static_cast<int>(MemorySpaceColor::kDefault));
+    EXPECT_EQ(FindColorByName(*alias_analysis, "fusion"),
+              static_cast<int>(MemorySpaceColor::kDefault));
+  }
 }
 
 class GpuMosaicCollectiveMemorySpaceAssignmentTest

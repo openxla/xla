@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape_util.h"
@@ -118,6 +119,11 @@ ParseIndexMemorySpacePairs(absl::string_view str) {
   return result;
 }
 
+bool SupportsMemorySpaceAnnotations(const HloInstruction* inst) {
+  return inst->opcode() == HloOpcode::kCustomCall ||
+         GetCustomFusionConfigName(inst) == kDynamicSliceFusionConfigName;
+}
+
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
 // buffers registered with the collective runtime ahead of time.
@@ -187,8 +193,7 @@ bool HasSymmetricMemoryInstruction(const HloValue& input_alias) {
 // MemorySpaceColor::kDefault if none is specified.
 static absl::StatusOr<MemorySpaceColor> GetOperandMemorySpace(
     const HloUse& use) {
-  if ((use.instruction->opcode() != HloOpcode::kCustomCall &&
-       use.instruction->opcode() != HloOpcode::kFusion) ||
+  if (!SupportsMemorySpaceAnnotations(use.instruction) ||
       !use.operand_index.empty()) {
     return MemorySpaceColor::kDefault;
   }
@@ -237,8 +242,7 @@ bool IsRaggedAllToAllCollectiveOperandOrResult(const HloValue& value) {
 static absl::StatusOr<MemorySpaceColor> GetResultMemorySpace(
     const HloValue& value) {
   const HloInstruction* instr = value.instruction();
-  if (instr->opcode() != HloOpcode::kCustomCall &&
-      instr->opcode() != HloOpcode::kFusion) {
+  if (!SupportsMemorySpaceAnnotations(instr)) {
     return MemorySpaceColor::kDefault;
   }
 

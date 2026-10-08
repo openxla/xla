@@ -30,8 +30,9 @@ limitations under the License.
 namespace xla::gpu {
 
 // Frontend attribute names for specifying memory spaces on custom call and
-// fusion operands and results. The format is {index:memory_space,...}, e.g.
-// "{0:1,2:1}" means operand/result 0 and 2 should be in memory space 1.
+// dynamic-slice fusion operands and results. The format is
+// {index:memory_space,...}, e.g. "{0:1,2:1}" means operand/result 0 and 2
+// should be in memory space 1.
 inline constexpr absl::string_view kOperandsMemorySpacesAttr =
     "operands_memory_spaces";
 inline constexpr absl::string_view kResultsMemorySpacesAttr =
@@ -62,6 +63,10 @@ absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space);
 absl::StatusOr<std::vector<std::pair<int64_t, MemorySpaceColor>>>
 ParseIndexMemorySpacePairs(absl::string_view str);
 
+// Only the dynamic-slice rewriter remaps these index-based annotations when
+// forming a fusion. Other fusion kinds must not consume inherited annotations.
+bool SupportsMemorySpaceAnnotations(const HloInstruction* inst);
+
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
 // buffers registered with the collective runtime ahead of time.
@@ -70,8 +75,8 @@ bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
 // Creates a buffer colorer that assigns memory space colors to HLO values
 // during buffer assignment. It handles:
 //  - Collective operations (all-reduce, all-gather, etc.) → kCollective
-//  - Custom call and fusion `operands_memory_spaces` / `results_memory_spaces`
-//    frontend attributes (e.g. for multimem/symmetric buffers) →
+//  - Custom call and dynamic-slice fusion `operands_memory_spaces` /
+//    `results_memory_spaces` frontend attributes (e.g. for symmetric buffers) →
 //    requested memory space
 //  - Everything else → kDefault
 BufferAssigner::Colorer CreateColorer(const DebugOptions& option);

@@ -2433,8 +2433,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
 namespace {
 
 bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
-  if (use.instruction->opcode() != HloOpcode::kCustomCall &&
-      use.instruction->opcode() != HloOpcode::kFusion) {
+  if (!SupportsMemorySpaceAnnotations(use.instruction)) {
     return false;
   }
   auto attr =
@@ -2457,8 +2456,7 @@ bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
 
 bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
   const HloInstruction* def = value->defining_instruction();
-  if (def->opcode() != HloOpcode::kCustomCall &&
-      def->opcode() != HloOpcode::kFusion) {
+  if (!SupportsMemorySpaceAnnotations(def)) {
     return false;
   }
 
@@ -2517,7 +2515,7 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
     return true;
   }
 
-  // Check custom calls and fusions with operands_memory_spaces attributes.
+  // Check custom calls and dynamic-slice fusions with memory-space annotations.
   if (UsesCollectiveMemorySpaceFrontendAttr(use)) {
     return true;
   }
@@ -2548,7 +2546,7 @@ bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
     return true;
   }
 
-  // Check custom calls and fusions with results_memory_spaces attributes.
+  // Check custom calls and dynamic-slice fusions with memory-space annotations.
   if (DefinesCollectiveMemorySpaceFrontendAttr(value)) {
     return true;
   }
