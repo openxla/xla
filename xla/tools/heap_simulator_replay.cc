@@ -24,6 +24,7 @@ limitations under the License.
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
+#include <ios>
 #include <map>
 #include <memory>
 #include <ostream>
