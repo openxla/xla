@@ -13,37 +13,39 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Replays the largest ordinary temporary allocation in an HloProto produced by
-// --xla_dump_hlo_as_proto=true. Does not compile or reschedule the HLO.
-// Usage: heap_simulator_replay module.hlo.pb [alignment_bytes]
+// Replays the traced heap in the largest ordinary temporary allocation in an
+// HloProto produced by --xla_dump_hlo_as_proto=true. An appended untraced
+// suffix (e.g. tuple buffers) is reported separately. Does not compile or
+// reschedule. Usage: heap_simulator_replay module.hlo.pb [alignment_bytes]
 
+#include "xla/tools/heap_simulator_replay.h"
+
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
-#include <iostream>
 #include <map>
 #include <memory>
+#include <ostream>
 #include <ratio>
 #include <set>
-#include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
-#include "absl/strings/numbers.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
-namespace {
 
-absl::Status Replay(const std::string& path, int64_t alignment) {
-  HloProto proto;
-  ABSL_RETURN_IF_ERROR(tsl::ReadBinaryProto(tsl::Env::Default(), path, &proto));
+absl::Status ReplayHeapSimulator(const HloProto& proto, int64_t alignment,
+                                 std::ostream& output) {
+  if (alignment <= 0) {
+    return absl::InvalidArgumentError("Alignment must be positive");
+  }
   const BufferAssignmentProto& assignment = proto.buffer_assignment();
   const BufferAllocationProto* allocation = nullptr;
   for (const BufferAllocationProto& candidate :
@@ -68,15 +70,22 @@ absl::Status Replay(const std::string& path, int64_t alignment) {
       0, ShapeUtil::MakeShape(U8, {}), "replay");
   std::map<int64_t, std::unique_ptr<HloValue>> values;
   std::map<int64_t, int64_t> sizes;
+  std::map<int64_t, int64_t> offsets;
   for (const BufferAllocationProto::Assigned& assigned :
        allocation->assigned()) {
-    if (assigned.size() < 0) {
-      return absl::InvalidArgumentError("Negative buffer size");
+    if (assigned.size() < 0 || assigned.offset() < 0 ||
+        assigned.offset() > allocation->size() ||
+        assigned.size() > allocation->size() - assigned.offset()) {
+      return absl::InvalidArgumentError("Buffer outside allocation");
     }
     const int64_t id = assigned.logical_buffer_id();
+    if (values.find(id) != values.end()) {
+      return absl::InvalidArgumentError("Duplicate assigned buffer");
+    }
     values[id] =
         std::make_unique<HloValue>(id, instruction.get(), ShapeIndex{});
     sizes[id] = assigned.size();
+    offsets[id] = assigned.offset();
   }
   // Match buffer IDs instead of buffer_allocation_index: older dumps can
   // retain the index from before CombineTempAllocations renumbered allocations.
@@ -131,17 +140,33 @@ absl::Status Replay(const std::string& path, int64_t alignment) {
       live.insert(id);
     }
   }
-  if (!live.empty() || seen.size() != values.size()) {
-    return absl::InvalidArgumentError(
-        "Trace does not cover the full allocation");
+  if (!live.empty()) {
+    return absl::InvalidArgumentError("Trace leaves live buffers");
+  }
+  int64_t traced_end = 0;
+  for (int64_t id : seen) {
+    traced_end = std::max(traced_end, offsets.at(id) + sizes.at(id));
+  }
+  // CombineTempAllocations can append allocations not handled by the heap
+  // simulator, such as tuple buffers. Replay only the traced heap; do not
+  // invent lifetimes for those buffers or include them in candidate sizes.
+  for (const auto& [id, offset] : offsets) {
+    if (seen.find(id) == seen.end() && sizes.at(id) > 0 &&
+        offset < traced_end) {
+      return absl::InvalidArgumentError(
+          "Untraced buffers overlap the traced heap; unsupported allocation");
+    }
   }
 
-  std::cout << "allocation=" << allocation->index()
-            << " recorded_bytes=" << allocation->size()
-            << " buffers=" << values.size() << " alignment=" << alignment
-            << '\n';
-  std::cout
-      << "| Order            | Placement     | Arena (bytes) | Time (ms) |\n"
+  output << "allocation=" << allocation->index()
+         << " recorded_bytes=" << allocation->size()
+         << " recorded_trace_bytes=" << traced_end
+         << " untraced_suffix_bytes=" << allocation->size() - traced_end
+         << " traced_buffers=" << seen.size()
+         << " assigned_buffers=" << values.size() << " alignment=" << alignment
+         << '\n';
+  output
+      << "| Order            | Placement     | Trace (bytes) | Time (ms) |\n"
          "| ---------------- | ------------- | ------------- | --------- |\n";
   using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
   for (Heap::ChunkPlacement placement :
@@ -180,30 +205,13 @@ absl::Status Replay(const std::string& path, int64_t alignment) {
       const char* policy = placement == Heap::ChunkPlacement::kBestFit
                                ? "best fit"
                                : "lowest offset";
-      std::cout << "| " << std::left << std::setw(16) << order << " | "
-                << std::setw(13) << policy << " | " << std::right
-                << std::setw(13) << result.heap_size << " | " << std::setw(9)
-                << std::fixed << std::setprecision(2) << milliseconds << " |\n";
+      output << "| " << std::left << std::setw(16) << order << " | "
+             << std::setw(13) << policy << " | " << std::right << std::setw(13)
+             << result.heap_size << " | " << std::setw(9) << std::fixed
+             << std::setprecision(2) << milliseconds << " |\n";
     }
   }
   return absl::OkStatus();
 }
 
-}  // namespace
 }  // namespace xla
-
-int main(int argc, char** argv) {
-  int64_t alignment = 256;
-  if (argc < 2 || argc > 3 ||
-      (argc == 3 && !absl::SimpleAtoi(argv[2], &alignment)) || alignment <= 0) {
-    std::cerr
-        << "Usage: heap_simulator_replay module.hlo.pb [alignment_bytes]\n";
-    return 1;
-  }
-  const absl::Status status = xla::Replay(argv[1], alignment);
-  if (!status.ok()) {
-    std::cerr << status << '\n';
-    return 1;
-  }
-  return 0;
-}
