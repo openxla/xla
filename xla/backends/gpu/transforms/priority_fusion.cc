@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/model/combined_gpu_performance_model.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -79,6 +80,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -403,19 +405,37 @@ class PriorityFusionQueue {
 
   // Update priorities of all affected ops.
   absl::Status UpdatePriorities() {
-    // Revisit costs of all updated ops. It's important to update cost analysis
-    // before recalculating priorities.
-    for (auto instruction : to_update_priority_) {
+    // Revisit HLO cost analysis and refresh standalone performance model cache
+    // entries only for newly created or modified fusions (`updated_fusions_`),
+    // rather than all instructions in `to_update_priority_`:
+    //
+    // 1. `to_update_priority_` contains both `updated_fusions_` and their
+    //    unmodified fusible operands (whose priorities must be recomputed
+    //    because their consumer set changed).
+    // 2. `GpuHloCostAnalysis::RevisitInstruction` computes intrinsic properties
+    //    of an instruction (FLOPs, bytes accessed, operand/output utilization,
+    //    and for fusions, traverses the fused subcomputation). None of these
+    //    depend on the instruction's users/consumers, so revisiting unmodified
+    //    operands (which are often large fusions themselves) would redundantly
+    //    re-traverse their fused computations at every downstream fusion step.
+    // 3. `UpdatePerformanceModelCache` populates the standalone (unfused)
+    //    runtime entry in
+    //    `GpuPerformanceModelCache::instruction_runtime_data_`.
+    //    `InvalidateCaches(consumer)` invalidates producer-consumer fusion pair
+    //    entries (`fusion_runtime_data_`) for the consumer's operands while
+    //    preserving the operands' standalone runtime cache entries.
+    //
+    // Iterate in deterministic instruction-ID order via `tsl::SortedRange`.
+    for (HloInstruction* instruction : tsl::SortedRange(updated_fusions_)) {
       ABSL_RETURN_IF_ERROR(cost_analysis_->RevisitInstruction(instruction));
-    }
-    for (auto producer : to_update_priority_) {
-      ABSL_RETURN_IF_ERROR(UpdatePerformanceModelCache(producer));
+      ABSL_RETURN_IF_ERROR(UpdatePerformanceModelCache(instruction));
     }
 
     ABSL_RETURN_IF_ERROR(ComputeAndSetPriorities(std::vector<HloInstruction*>{
         to_update_priority_.begin(), to_update_priority_.end()}));
 
     to_update_priority_.clear();
+    updated_fusions_.clear();
     operands_to_new_consumers_.clear();
     operands_to_removed_consumers_runtimes_.clear();
     return absl::OkStatus();
@@ -566,6 +586,9 @@ class PriorityFusionQueue {
         continue;
       }
 
+      // `operand` itself was not modified, so only its priority (which depends
+      // on its consumers) needs to be recomputed; it is not added to
+      // `updated_fusions_`.
       to_update_priority_.insert(operand);
       // Update the consumers of this operand that we care about,
       // so we can do incremental update of the operand.
@@ -583,12 +606,19 @@ class PriorityFusionQueue {
     // the priorities of the other consumers of `producer` with which we did not
     // fuse. For now, as we only allow multi-output fusion if there is just a
     // single fusible consumer, this is not needed.
+    //
+    // `fusion` is newly created or had `original_producer` fused into its
+    // computation, so both its cost analysis / standalone performance model
+    // cache (`updated_fusions_`) and its producer priority
+    // (`to_update_priority_`) must be updated.
     to_update_priority_.insert(fusion);
+    updated_fusions_.insert(fusion);
   }
 
   // Removes data for the instruction.
   void RemoveInstruction(HloInstruction* instruction) {
     to_update_priority_.erase(instruction);
+    updated_fusions_.erase(instruction);
 
     auto reverse_it = reverse_map_.find(instruction);
     if (reverse_it == reverse_map_.end()) {
@@ -976,25 +1006,12 @@ class PriorityFusionQueue {
     }
 
     // Avoid fusing reduce into reduce. Our cost model doesn't currently
-    // understand this case due to a lack of tiling analysis.
+    // understand this case due to a lack of tiling analysis. Query
+    // `fusion_info_cache_` to avoid repeatedly traversing the producer and
+    // consumer fusion computations on every candidate pair.
     // TODO(b/312200883): Remove this.
-    auto contains_significant_reduce = [&](const HloInstruction* instr) {
-      auto fusion = HloFusionAdaptor::ForInstruction(instr);
-      return HloAnyOf(*fusion, [](auto node) {
-        if (!(node.opcode() == HloOpcode::kReduce && node.shape().IsArray())) {
-          return false;
-        }
-
-        int64_t reduction_size =
-            ShapeUtil::ElementsIn(node.instruction().operand(0)->shape()) /
-            ShapeUtil::ElementsIn(node.shape());
-
-        // Small reductions are emitted using the elemental emitter anyway.
-        return reduction_size >= 16;
-      });
-    };
-    if (contains_significant_reduce(producer) &&
-        contains_significant_reduce(consumer)) {
+    if (ContainsSignificantReduce(*producer, &fusion_info_cache_) &&
+        ContainsSignificantReduce(*consumer, &fusion_info_cache_)) {
       return FusionDecision::Forbid(
           "both the producer and the consumer contain a reduce");
     }
@@ -1254,6 +1271,10 @@ class PriorityFusionQueue {
   // avoid recomputing priorities multiple times before we dequeue a new
   // producer.
   absl::flat_hash_set<HloInstruction*> to_update_priority_;
+  // The subset of `to_update_priority_` consisting of newly created or modified
+  // fusion instructions whose HLO cost analysis and standalone performance
+  // model cache entries need to be updated before recomputing priorities.
+  absl::flat_hash_set<HloInstruction*> updated_fusions_;
   absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>
       operands_to_new_consumers_;
   absl::flat_hash_map<HloInstruction*, GpuPerformanceModel::RunTimes>
