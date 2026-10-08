@@ -12,7 +12,7 @@ fusion {
   p1 = f32[256,64] parameter(1)
   ROOT dot = f32[128,64] dot(p0, p1),
    lhs_contracting_dims={1}, rhs_contracting_dims={0},
-   backend_config={sizes:[32]}
+   algorithm=dot_f32_f32_f32, backend_config={sizes:[32]}
 }
 
 // NEW-VECTOR: wrapped_fusion
