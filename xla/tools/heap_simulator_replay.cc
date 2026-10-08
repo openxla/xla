@@ -23,6 +23,7 @@ limitations under the License.
 #include <iostream>
 #include <map>
 #include <memory>
+#include <ratio>
 #include <set>
 #include <string>
 
