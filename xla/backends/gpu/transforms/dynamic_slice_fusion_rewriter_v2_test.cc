@@ -1003,18 +1003,21 @@ TEST_F(DynamicSliceFusionRewriterV2Test, MemorySpacesWithExtendedOffsets) {
       one = s32[] constant(1)
       offset = s32[] minimum(zero, one)
       slice = f32[1,8,8]{2,1,0} dynamic-slice(input, offset, zero, zero),
-        dynamic_slice_sizes={1,8,8}
+        dynamic_slice_sizes={1,8,8},
+        backend_config={"dynamic_slice_config":{"linear":{"byte_offset":"0","byte_stride":"0"}}}
       call = f32[1,8,8]{2,1,0} custom-call(slice),
         custom_call_target="fake_target",
         frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
-      ROOT update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, call, offset, zero, zero)
+      ROOT update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, call, offset, zero, zero),
+        backend_config={"dynamic_slice_config":{"linear":{"byte_offset":"0","byte_stride":"0"}}}
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_enable_dynamic_slice_extended_offsets(true);
-  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   ASSERT_TRUE(changed);
   const HloInstruction* fusion =
       module->entry_computation()->root_instruction();
