@@ -168,7 +168,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
 #include "xla/stream_executor/rocm/rocm_device_address_vmm_allocator.h"
 #endif
 
