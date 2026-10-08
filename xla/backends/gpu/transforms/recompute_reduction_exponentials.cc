@@ -44,8 +44,12 @@ class ExistingExpression {
 
   HloInstruction* Find(const HloInstruction* instruction) {
     auto [it, inserted] = matches_.try_emplace(instruction, nullptr);
-    if (!inserted) return it->second;
-    if (instruction->HasControlDependencies()) return nullptr;
+    if (!inserted) {
+      return it->second;
+    }
+    if (instruction->HasControlDependencies()) {
+      return nullptr;
+    }
     if (instruction->opcode() == HloOpcode::kParameter) {
       const HloInstruction* operand =
           producer_->operand(instruction->parameter_number());
@@ -63,7 +67,9 @@ class ExistingExpression {
       return nullptr;
     }
     for (const HloInstruction* operand : instruction->operands()) {
-      if (Find(operand) == nullptr) return nullptr;
+      if (Find(operand) == nullptr) {
+        return nullptr;
+      }
     }
     for (HloInstruction* candidate :
          consumer_->fused_instructions_computation()->instructions()) {
@@ -97,7 +103,9 @@ HloInstruction* ElementwiseOutput(HloInstruction* instruction) {
     if (user == root && user->opcode() == HloOpcode::kTuple) {
       return instruction;
     }
-    if (!user->IsElementwise()) return nullptr;
+    if (!user->IsElementwise()) {
+      return nullptr;
+    }
     instruction = user;
   }
   return instruction;
@@ -155,10 +163,14 @@ absl::StatusOr<bool> RecomputeReductionExponentials::RunImpl(
         }
         HloInstruction* parameter =
             consumer->fused_parameter(consumer->operand_index(gte));
-        if (ElementwiseOutput(parameter) == nullptr) continue;
+        if (ElementwiseOutput(parameter) == nullptr) {
+          continue;
+        }
         HloInstruction* input = ExistingExpression(producer, consumer)
                                     .Find(exponential->operand(0));
-        if (input == nullptr) continue;
+        if (input == nullptr) {
+          continue;
+        }
 
         HloComputation* body = consumer->fused_instructions_computation();
         HloInstruction* recomputed = body->AddInstruction(
@@ -172,7 +184,7 @@ absl::StatusOr<bool> RecomputeReductionExponentials::RunImpl(
   }
   if (changed) {
     // Remove dead GTEs and the producer's unused tuple output. The exponential
-    // stays inside the reduction; its partial sums and reduction order survive.
+    // stays inside the reduction; its partial-sum graph is unchanged.
     ABSL_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
   }
   return changed;
