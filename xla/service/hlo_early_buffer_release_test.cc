@@ -209,7 +209,20 @@ TEST_F(HloEarlyBufferReleaseTest, LooksThroughExpandingConversion) {
               "  wide = f64[64,128] convert(dlogits)\n"
               "  narrow = f32[64,128] convert(wide)\n"
               "  dweights = f32[4,128] dot(h, narrow)");
+  // Keep the unrelated branch result live. Otherwise, moving its reduction
+  // first is a larger peak-memory improvement that removes the incentive to
+  // move the conversions across that branch.
+  const std::string reduction =
+      "  result = f32[] reduce(middle, zero), dimensions={0,1,2}, "
+      "to_apply=sum\n";
+  hlo.erase(hlo.find(reduction), reduction.size());
+  const std::string root =
+      "  ROOT out = (f32[4,128], f32[]) tuple(dweights, result)";
+  hlo.replace(
+      hlo.find(root), root.size(),
+      "  ROOT out = (f32[4,128], f32[64,4,32]) tuple(dweights, middle)");
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(int64_t before, Peak(module.get()));
   auto options = Options();
   options.max_iterations = 4;
   ASSERT_OK_AND_ASSIGN(bool changed, RunRelease(module.get(), options));
@@ -217,6 +230,8 @@ TEST_F(HloEarlyBufferReleaseTest, LooksThroughExpandingConversion) {
   EXPECT_LT(Pos(module.get(), "dweights"), Pos(module.get(), "expand"));
   EXPECT_LT(Pos(module.get(), "wide"), Pos(module.get(), "narrow"));
   EXPECT_OK(module->schedule().Verify());
+  ASSERT_OK_AND_ASSIGN(int64_t after, Peak(module.get()));
+  EXPECT_LT(after, before);
 }
 
 TEST_F(HloEarlyBufferReleaseTest, RejectsNewTransientPeak) {
