@@ -1707,6 +1707,7 @@ cc_library(
     deps = [
         ":alias_info",
         ":mlir_context_pool",
+        "//xla:shape",
         "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:conv_canonicalizer",
@@ -1718,7 +1719,6 @@ cc_library(
         "//xla/backends/gpu/transforms:sort_iota_fusion",
         "//xla/backends/gpu/transforms:variadic_op_splitter",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms/simplifiers:hlo_constant_folding",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -1728,11 +1728,9 @@ cc_library(
         "//xla/service:hlo_verifier",
         "//xla/service:layout_assignment",
         "//xla/service/gpu/model:gpu_hlo_cost_analysis",
-        "//xla/service/gpu/model:gpu_indexing_performance_model",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:env",
     ],
 )
 
