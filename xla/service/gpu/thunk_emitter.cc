@@ -1566,10 +1566,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKCustomCall(
 
   TF_RET_CHECK(k <= 16) << "CustomCall TopK requires k <= 16";
   // Load TopK custom kernel.
-  ABSL_ASSIGN_OR_RETURN(
-      CustomKernel kernel,
-      kernel::topk::GetTopKKernel("topk", dtype, n, k, batch_size,
-                                  platform_name(), wavefront_size));
+  ABSL_ASSIGN_OR_RETURN(CustomKernel kernel,
+                        kernel::topk::GetTopKKernel(
+                            "topk", dtype, n, k, batch_size, platform_name(),
+                            wavefront_size, kernel::topk::Order::kTotal));
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
