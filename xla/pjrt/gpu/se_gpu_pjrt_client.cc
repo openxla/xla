@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -2011,12 +2012,6 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
         });
   }
 
-  static const bool xla_gpu_require_exclusive_lock =
-      xla::GetDebugOptionsFromFlags().xla_gpu_require_exclusive_lock();
-  if (xla_gpu_require_exclusive_lock) {
-    gpu_run_options->set_requires_exclusive_lock_on_gpu();
-  }
-
   std::shared_ptr<KeyValueStoreInterface> kv_store = options.kv_store;
   if (options.enable_mock_nccl) {
     kv_store = std::make_shared<InMemoryKeyValueStore>();
@@ -2025,6 +2020,55 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   if (kv_store == nullptr) {
     kv_store = std::make_shared<InMemoryKeyValueStore>();
   }
+
+  static constexpr absl::string_view kFatalGpuErrorKey = "gpu_fatal_error";
+  auto already_fired = std::make_shared<std::atomic<bool>>(false);
+  gpu_run_options->set_device_error_callback(
+      [kv_store, already_fired, user_cb = options.device_error_callback,
+       node_id = options.node_id, num_nodes = options.num_nodes](
+          int device_ordinal, const absl::Status& status) {
+        if (already_fired->exchange(true)) {
+          return;
+        }
+        LOG(ERROR) << absl::StreamFormat(
+            "Aborting local GPU collectives after fatal device error on "
+            "node %d device %d: %v",
+            node_id, device_ordinal, status);
+        if (absl::Status s = gpu::AbortAllCliques(); !s.ok()) {
+          LOG(WARNING) << "Failed to abort GPU cliques: " << s;
+        }
+        if (num_nodes > 1 && kv_store != nullptr) {
+          absl::Status set_status = kv_store->Set(
+              kFatalGpuErrorKey,
+              absl::StrFormat("Fatal GPU device error on node %d device %d: %v",
+                              node_id, device_ordinal, status));
+          if (!set_status.ok()) {
+            LOG(WARNING) << "Failed to broadcast GPU error via kv_store: "
+                         << set_status;
+          }
+        }
+        if (user_cb != nullptr && *user_cb) {
+          (*user_cb)(status);
+        }
+      });
+
+  static const bool xla_gpu_require_exclusive_lock =
+      xla::GetDebugOptionsFromFlags().xla_gpu_require_exclusive_lock();
+  if (xla_gpu_require_exclusive_lock) {
+    gpu_run_options->set_requires_exclusive_lock_on_gpu();
+  }
+
+  // Clear any stale fatal GPU error key left over from a prior incarnation
+  // before entering the topology exchange barrier. Because ExchangeTopologies
+  // inside BuildDistributedDevices is a full barrier across all nodes, no peer
+  // can finish client initialization and Set a fresh error until every node has
+  // completed this Delete. Note: AsyncGet below is a single-shot subscription,
+  // so peers that do not restart alongside a restarting node will not re-arm
+  // their subscription after the first fatal error.
+  if (options.num_nodes > 1 && kv_store != nullptr) {
+    kv_store->Delete(kFatalGpuErrorKey).IgnoreError();
+  }
+
   ABSL_ASSIGN_OR_RETURN(
       PjRtDevicesAndTopology devices_and_topology,
       BuildDistributedDevices(
@@ -2032,6 +2076,26 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
           options.num_nodes, gpu_run_options.get(), kv_store,
           options.enable_mock_nccl, options.mock_gpu_topology,
           options.partition_index, options.verify_topology_fingerprint));
+
+  if (options.num_nodes > 1 && kv_store != nullptr) {
+    kv_store->AsyncGet(
+        kFatalGpuErrorKey, [already_fired, node_id = options.node_id](
+                               const absl::StatusOr<std::string>& status) {
+          if (!status.ok()) {
+            return;
+          }
+          if (already_fired->exchange(true)) {
+            return;
+          }
+          LOG(ERROR) << "Node " << node_id
+                     << " aborting local GPU collectives due to remote "
+                        "error: "
+                     << *status;
+          if (absl::Status s = gpu::AbortAllCliques(); !s.ok()) {
+            LOG(WARNING) << "Failed to abort GPU cliques: " << s;
+          }
+        });
+  }
 
   se::StreamExecutor* first_executor =
       GetFirstExecutor(devices_and_topology.local_device_states);

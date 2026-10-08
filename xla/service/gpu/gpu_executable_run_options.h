@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_GPU_EXECUTABLE_RUN_OPTIONS_H_
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -124,6 +125,16 @@ class GpuExecutableRunOptions {
   // timeout handlers are not set.
   std::vector<ExecutionTimeoutHandler> execution_timeout_handlers() const;
 
+  // Callback invoked when an asynchronous device stream error is detected.
+  // May be invoked after the run options are destroyed; capture only owning
+  // pointers or values.
+  using DeviceErrorCallback = absl::AnyInvocable<void(
+      int device_ordinal, const absl::Status& status) const>;
+
+  GpuExecutableRunOptions& set_device_error_callback(
+      DeviceErrorCallback callback);
+  std::shared_ptr<const DeviceErrorCallback> device_error_callback() const;
+
  private:
   bool requires_exclusive_lock_on_gpu_ = false;
   bool enable_mock_collectives_ = false;
@@ -134,6 +145,7 @@ class GpuExecutableRunOptions {
       incarnations_;
   std::function<std::vector<ExecutionTimeoutHandler>()>
       execution_timeout_handlers_;
+  std::shared_ptr<const DeviceErrorCallback> device_error_callback_;
 };
 
 }  // namespace xla::gpu
