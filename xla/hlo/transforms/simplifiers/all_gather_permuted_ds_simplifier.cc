@@ -15,10 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/all_gather_permuted_ds_simplifier.h"
 
-#include <algorithm>
-#include <cstdint>
 #include <optional>
-#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"

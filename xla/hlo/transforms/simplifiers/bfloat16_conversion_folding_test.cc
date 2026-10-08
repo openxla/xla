@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/bfloat16_conversion_folding.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 #include "absl/status/statusor.h"

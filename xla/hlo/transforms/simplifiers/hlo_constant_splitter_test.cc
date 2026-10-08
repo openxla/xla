@@ -14,6 +14,8 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/hlo_constant_splitter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
 #include "tsl/platform/statusor.h"
