@@ -63,9 +63,18 @@ absl::StatusOr<std::unique_ptr<tsl::BFCAllocator>> GetGpuHostAllocator(
 // heuristic, for both owned-hole reuse and central-gap carves.
 // Equal-size holes prefer lower addresses for collective memory and higher
 // addresses for default memory.
+//
+// memory_fraction decides how the pool may use device memory (see
+// MemFraction). A FlexMemFraction only takes effect for spatial device-memory
+// pools: the initial allocation given by its start (or gpu_system_memory_size)
+// is mapped up front and default-only backing is added on demand, up to
+// cap * total device memory rounded down to the mapping granularity. CUDA
+// reserves the cap in VA and extends the mapped prefix without moving it. The
+// initial allocation must fit under the cap, otherwise InvalidArgument is
+// returned. Non-spatial and unified-memory pools use only the start fraction.
 absl::StatusOr<std::shared_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
-    se::StreamExecutor* executor, double memory_fraction, bool preallocate,
-    std::optional<int64_t> gpu_system_memory_size,
+    se::StreamExecutor* executor, const MemFraction& memory_fraction,
+    bool preallocate, std::optional<int64_t> gpu_system_memory_size,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_alloc_visitors,
     const std::vector<tsl::SubAllocator::Visitor>& sub_allocator_free_visitors,
     bool enable_spatial_partitioning = false);

@@ -15,21 +15,21 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -67,6 +67,32 @@ TEST_F(CudaRawMemoryAllocationTest, AddressReflectsHandle) {
   EXPECT_EQ(
       alloc->address().opaque(),
       reinterpret_cast<void*>(static_cast<uintptr_t>(alloc->GetHandle())));
+  EXPECT_GE(alloc->address().size(), kTestSize);
+}
+
+// Verifies that callers can supply allocator options instead of probing them.
+TEST_F(CudaRawMemoryAllocationTest, CreateWithExplicitOptions) {
+  CudaDeviceAllocator::Options options;
+  options.enable_posix_fd_handle = false;
+  options.enable_fabric_handle = false;
+  ASSERT_OK_AND_ASSIGN(auto alloc, CudaRawMemoryAllocation::Create(
+                                       executor_, kTestSize, options));
+
+  EXPECT_NE(alloc->GetHandle(), 0u);
+  EXPECT_GE(alloc->address().size(), kTestSize);
+}
+
+// Requesting exportable handle types must succeed on every machine: either
+// the driver supports them, or Create falls back to simpler handle types.
+TEST_F(CudaRawMemoryAllocationTest,
+       ExportableHandleTypesFallBackWhenUnsupported) {
+  CudaDeviceAllocator::Options options;
+  options.enable_posix_fd_handle = true;
+  options.enable_fabric_handle = true;
+  ASSERT_OK_AND_ASSIGN(auto alloc, CudaRawMemoryAllocation::Create(
+                                       executor_, kTestSize, options));
+
+  EXPECT_NE(alloc->GetHandle(), 0u);
   EXPECT_GE(alloc->address().size(), kTestSize);
 }
 

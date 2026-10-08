@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "tsl/platform/numa.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/allocator_stats.h"
 #include "xla/stream_executor/blas.h"
@@ -45,12 +44,14 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_reservation.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/tensor_map.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "tsl/platform/numa.h"
 
 // TODO(ezhulenev): Remove this once transitive dependencies are fixed.
 #include "xla/stream_executor/device_memory.h"
@@ -117,6 +118,21 @@ class StreamExecutor {
   virtual absl::StatusOr<std::unique_ptr<MemoryAllocator>>
   CreateMemoryAllocator(MemorySpace memory_space) {
     return absl::UnimplementedError("Not Implemented");
+  }
+
+  // Reserves device virtual address space without allocating physical memory.
+  // Backends implementing this must also support
+  // CreatePhysicalMemoryAllocation.
+  virtual absl::StatusOr<std::unique_ptr<MemoryReservation>>
+  CreateMemoryReservation(uint64_t size) {
+    return absl::UnimplementedError("Device VA reservation is not supported");
+  }
+
+  // Allocates physical device memory without mapping it to a virtual address.
+  // The returned size may be rounded up to the backend's mapping granularity.
+  virtual absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+  CreatePhysicalMemoryAllocation(uint64_t size) {
+    return absl::UnimplementedError("Physical allocation is not supported");
   }
 
   // Obtains metadata about the underlying device.

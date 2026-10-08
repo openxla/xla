@@ -108,6 +108,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
           {"allocator", PJRT_NamedValue_Type::PJRT_NamedValue_kString},
           {"memory_fraction", PJRT_NamedValue_Type::PJRT_NamedValue_kFloat},
           {"preallocate", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
+          {"memory_fraction_policy",
+           PJRT_NamedValue_Type::PJRT_NamedValue_kString},
           {"collective_memory_size",
            PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
           {"visible_devices", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64List},
@@ -158,7 +160,9 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   }
   if (auto it = create_options.find("memory_fraction");
       it != create_options.end()) {
-    allocator_config.memory_fraction = std::get<float>(it->second);
+    // A bare fraction: preallocate it and let the shared pool grow.
+    allocator_config.memory_fraction =
+        xla::MemFractionFromFraction(std::get<float>(it->second));
   }
   if (auto it = create_options.find("preallocate");
       it != create_options.end()) {
@@ -167,6 +171,17 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   if (auto it = create_options.find("collective_memory_size");
       it != create_options.end()) {
     allocator_config.collective_memory_size = std::get<int64_t>(it->second);
+  }
+  if (auto it = create_options.find("memory_fraction_policy");
+      it != create_options.end()) {
+    // Full grammar ("0.75", "0.75-0.85", "0.75-0.75"); wins over the float.
+    absl::StatusOr<xla::MemFraction> fraction =
+        xla::ParseMemFraction(std::get<std::string>(it->second));
+    if (!fraction.ok()) {
+      return StatusToPjRtError(absl::InvalidArgumentError(absl::StrFormat(
+          "memory_fraction_policy: %s", fraction.status().message())));
+    }
+    allocator_config.memory_fraction = *fraction;
   }
   std::optional<std::set<int>> visible_devices;
   if (auto it = create_options.find("visible_devices");
