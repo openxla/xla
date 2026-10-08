@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_compiler.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -30,6 +27,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
 #include "absl/log/check.h"
@@ -46,7 +45,6 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
-#include "tsl/platform/regexp.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"
@@ -71,6 +69,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -107,6 +106,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -2736,6 +2736,94 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test_mock_custom_call_f32",
                              /*prepare=*/nullptr,
                              /*initialize=*/nullptr,
                              /*execute=*/kMockCustomCallExecuteF32,
+                         });
+
+XLA_FFI_DEFINE_HANDLER(
+    kMockSlicedCustomCallExecute,
+    [](ffi::AnyBuffer, ffi::AnyBuffer, ffi::Result<ffi::AnyBuffer>) {
+      return absl::OkStatus();
+    },
+    ffi::Ffi::Bind()
+        .Arg<ffi::AnyBuffer>()
+        .Arg<ffi::AnyBuffer>()
+        .Ret<ffi::AnyBuffer>());
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test_sliced_custom_call",
+                         "gpu", kMockSlicedCustomCallExecute);
+
+class DynamicSliceFusionMemorySpaceTest
+    : public GpuCompilerTest,
+      public ::testing::WithParamInterface<bool> {};
+
+TEST_P(DynamicSliceFusionMemorySpaceTest, PreservesSymmetricMemory) {
+  constexpr absl::string_view kHloTemplate = R"(
+    HloModule test
+
+    ENTRY main {
+      input = f32[128]{0} parameter(0)
+      weights = f32[256]{0} parameter(1)
+      destination = f32[256]{0} parameter(2)
+      offset = s32[] constant(128)
+      weight_slice = f32[128]{0} slice(weights), slice={[128:256]}
+      call = f32[128]{0} custom-call(input, weight_slice),
+        custom_call_target="__xla_test_sliced_custom_call",
+        api_version=API_VERSION_TYPED_FFI,
+        frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
+      $root
+    }
+  )";
+
+  const bool update_slice = GetParam();
+  std::string hlo = absl::StrReplaceAll(
+      kHloTemplate,
+      {{"$root", update_slice
+                     ? "ROOT result = f32[256]{0} dynamic-update-slice("
+                       "destination, call, offset)"
+                     : "ROOT result = f32[128]{0} copy(call)"}});
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
+  ASSERT_OK_AND_ASSIGN(auto compiled,
+                       GetOptimizedModuleForExecutable(hlo, config));
+  const HloComputation* entry = compiled.first->entry_computation();
+  const HloInstruction* result = entry->root_instruction();
+  ASSERT_EQ(result->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(result->shape().layout().memory_space(), 0);
+
+  const HloInstruction* fusion = result->operand(0);
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  ASSERT_OK_AND_ASSIGN(auto backend_config,
+                       fusion->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(
+      backend_config.fusion_backend_config().custom_fusion_config().name(),
+      "dynamic_slice_fusion");
+  EXPECT_EQ(fusion->shape().layout().memory_space(),
+            Layout::kCollectiveMemorySpace);
+
+  // The unsliced symmetric input needs an isolation copy even though the
+  // ordinary weight slice is what enables fusion.
+  ASSERT_EQ(fusion->operand_count(), update_slice ? 3 : 2);
+  const HloInstruction* input = fusion->operand(1);
+  ASSERT_EQ(input->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(input->operand(0), entry->parameter_instruction(0));
+  EXPECT_EQ(input->shape().layout().memory_space(),
+            Layout::kCollectiveMemorySpace);
+  EXPECT_EQ(fusion->operand(0), entry->parameter_instruction(1));
+  EXPECT_EQ(fusion->operand(0)->shape().layout().memory_space(), 0);
+
+  if (update_slice) {
+    const HloInstruction* destination = fusion->operand(2);
+    ASSERT_EQ(destination->opcode(), HloOpcode::kCopy);
+    EXPECT_EQ(destination->operand(0), entry->parameter_instruction(2));
+    EXPECT_EQ(destination->shape().layout().memory_space(),
+              Layout::kCollectiveMemorySpace);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(DynamicSliceFusion, DynamicSliceFusionMemorySpaceTest,
+                         Values(false, true),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "DynamicUpdateSlice"
+                                             : "DirectResult";
                          });
 
 class FrontendAttributesMemorySpaceTest
