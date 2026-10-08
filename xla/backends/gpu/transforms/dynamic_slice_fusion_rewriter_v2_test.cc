@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_annotator.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
@@ -990,6 +991,106 @@ TEST_F(DynamicSliceFusionRewriterV2Test, AliasedTupleResultUpdateNotFused) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const std::string original = module->ToString();
+  DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), original);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test, AliasedSliceUpdateRequiresSameRegion) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[4,8,8]{2,1,0} parameter(0)
+      other = f32[4,8,8]{2,1,0} parameter(1)
+      zero = s32[] constant(0)
+      offset = s32[] constant($offset)
+      slice = f32[1,8,8]{2,1,0} slice(input), slice={[1:2],[0:8],[0:8]}
+      view = f32[8,8]{1,0} bitcast(slice)
+      call = (f32[8,8]{1,0}, f32[8,8]{1,0}) custom-call(view),
+        custom_call_target="fake_target", output_to_operand_aliasing={{1}: (0, {})},
+        frontend_attributes={results_memory_spaces="{1:7}"}
+      first = f32[8,8]{1,0} get-tuple-element(call), index=0
+      second = f32[8,8]{1,0} get-tuple-element(call), index=1
+      update_view = f32[1,8,8]{2,1,0} bitcast(second)
+      update = f32[4,8,8]{2,1,0} dynamic-update-slice($destination, update_view, offset, zero, zero)
+      ROOT result = (f32[8,8]{1,0}, f32[4,8,8]{2,1,0}) tuple(first, update)
+    }
+  )";
+  for (absl::string_view destination : {"input", "other"}) {
+    for (absl::string_view offset : {"1", "2"}) {
+      SCOPED_TRACE(destination);
+      SCOPED_TRACE(offset);
+      std::string hlo = absl::StrReplaceAll(
+          kHlo, {{"$destination", destination}, {"$offset", offset}});
+      ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+      ASSERT_OK(DynamicSliceAnnotator().Run(module.get()).status());
+      const std::string original = module->ToString();
+      DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+      ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+      if (destination != "input" || offset != "1") {
+        EXPECT_FALSE(changed);
+        EXPECT_EQ(module->ToString(), original);
+        continue;
+      }
+      ASSERT_TRUE(changed);
+      const HloInstruction* fusion =
+          module->entry_computation()->root_instruction()->operand(0)->operand(
+              0);
+      ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+      EXPECT_EQ(fusion->operand_count(), 1);
+      EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+                "{0:7}");
+      EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"),
+                "{1:7}");
+    }
+  }
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       AliasedSliceUpdateWithOtherReadNotFused) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      offset = s32[] constant(64)
+      slice = f32[128]{0} slice(input), slice={[64:192]}
+      other = f32[128]{0} slice(input), slice={[0:128]}
+      call = f32[128]{0} custom-call(slice, other),
+        custom_call_target="fake_target", output_to_operand_aliasing={{}: (0, {})}
+      ROOT update = f32[256]{0} dynamic-update-slice(input, call, offset)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK(DynamicSliceAnnotator().Run(module.get()).status());
+  const std::string original = module->ToString();
+  DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), original);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       AliasedSliceUpdateWithOtherWriteNotFused) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      zero = s32[] constant(0)
+      offset = s32[] constant(64)
+      slice = f32[128]{0} slice(input), slice={[64:192]}
+      call = (f32[128]{0}, f32[128]{0}) custom-call(slice),
+        custom_call_target="fake_target", output_to_operand_aliasing={{0}: (0, {})}
+      first = f32[128]{0} get-tuple-element(call), index=0
+      second = f32[128]{0} get-tuple-element(call), index=1
+      update = f32[256]{0} dynamic-update-slice(input, first, offset)
+      other = f32[256]{0} dynamic-update-slice(input, second, zero)
+      ROOT result = (f32[256]{0}, f32[256]{0}) tuple(update, other)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK(DynamicSliceAnnotator().Run(module.get()).status());
   const std::string original = module->ToString();
   DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
