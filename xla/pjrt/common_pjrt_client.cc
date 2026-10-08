@@ -3549,6 +3549,15 @@ CommonPjRtLoadedExecutable::Execute(
     int failed = 0;
     absl::Status first_failure_status;
     const bool profiling_requested = options.execution_profile != nullptr;
+    // A synchronous execution finishes before Execute returns, so that nothing
+    // can be queued behind it while its host callbacks run. PjRt-IFRT runs
+    // every program with host callbacks this way, but only the CPU runtime
+    // honors it. A dispatch from inside a host callback does not wait: it may
+    // be queued behind the program running the callback, because collectives
+    // launch one at a time.
+    const bool wait_for_completion =
+        options.execution_mode == ExecuteOptions::ExecutionMode::kSynchronous &&
+        IsCpuId(client()->platform_id()) && !ThisThreadIsInsideHostCallback();
     std::vector<ExecutionProfile> device_execution_profiles;
     if (profiling_requested) {
       device_execution_profiles.resize(num_addressable_devices,
@@ -3626,9 +3635,9 @@ CommonPjRtLoadedExecutable::Execute(
           }
 
           // Phase 2: Launch. It cannot fail.
-          results[i] =
-              ExecuteLaunch(*launch_args, returned_futures.has_value() ||
-                                              profiling_requested);
+          results[i] = ExecuteLaunch(
+              *launch_args, returned_futures.has_value() ||
+                                profiling_requested || wait_for_completion);
 
           absl::MutexLock lock(mu);
           --launching;
@@ -3661,6 +3670,14 @@ CommonPjRtLoadedExecutable::Execute(
       // Return the profile from device 0 because current API supports only a
       // single profile.
       *options.execution_profile = std::move(device_execution_profiles.front());
+    }
+    if (wait_for_completion) {
+      for (const auto& result : results) {
+        // Errors still reach the caller through the outputs.
+        if (result.ok() && result->future.has_value()) {
+          tsl::BlockUntilReady(result->future->async_value());
+        }
+      }
     }
   }
   VLOG(3) << "Replicated execution complete.";
