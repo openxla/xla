@@ -15,13 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/layout_assignment.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -1648,7 +1648,7 @@ ENTRY main {
 // array that is consumed in the default layout afterwards. Without the size
 // rule the accumulator takes the gradient's layout and is copied in full at
 // the end; with it the per-layer update is copied instead.
-TEST_F(LayoutAssignmentTest, UpdateOfLargeAccumulatorCopiesTheUpdate) {
+TEST_F(LayoutAssignmentTest, UpdateCopyAccountsForLoopReuse) {
   constexpr absl::string_view kHlo = R"(
 HloModule m, replica_count=2
 
@@ -1684,45 +1684,54 @@ ENTRY main {
   base = bf16[32,64,448,1024]{3,2,1,0} parameter(0)
   x0 = bf16[896,32,1024]{2,1,0} parameter(1)
   zero = s32[] constant(0)
-  zero_bf16 = bf16[] constant(0)
-  acc0 = bf16[32,64,448,1024] broadcast(zero_bf16), dimensions={}
-  init = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) tuple(zero, acc0, x0)
+  init = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) tuple(zero, base, x0)
   loop = (s32[], bf16[32,64,448,1024], bf16[896,32,1024]) while(init), condition=cond, body=body
-  acc = bf16[32,64,448,1024] get-tuple-element(loop), index=1
-  ROOT out = bf16[32,64,448,1024]{3,2,1,0} add(acc, base)
+  ROOT out = bf16[32,64,448,1024]{3,2,1,0} get-tuple-element(loop), index=1
 })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                       ParseAndReturnVerifiedModule(kHlo));
-  ComputationLayout computation_layout(
-      m->entry_computation()->ComputeProgramShape(), /*ignore_layouts=*/false);
-  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
-                                        default_device_description_);
-  EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  for (int64_t trip_count : {4, 128}) {
+    SCOPED_TRACE(trip_count);
+    std::string hlo(kHlo);
+    hlo.replace(hlo.find("constant(4)"), std::string("constant(4)").size(),
+                "constant(" + std::to_string(trip_count) + ")");
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(hlo));
+    ComputationLayout computation_layout(
+        m->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                          default_device_description_);
+    EXPECT_THAT(layout_assignment.Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
 
-  const HloInstruction* base = m->entry_computation()->parameter_instruction(0);
-  const HloInstruction* dus =
-      FindInstruction(m.get(), HloOpcode::kDynamicUpdateSlice);
-  ASSERT_THAT(dus, NotNull());
-  EXPECT_TRUE(LayoutUtil::Equal(dus->shape().layout(), base->shape().layout()));
-  EXPECT_TRUE(LayoutUtil::Equal(dus->operand(1)->shape().layout(),
-                                dus->shape().layout()));
-  int64_t update_copies = 0, large_copies = 0;
-  for (const HloComputation* computation : m->computations()) {
-    for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() != HloOpcode::kCopy) {
-        continue;
-      }
-      if (ShapeUtil::ElementsIn(instr->shape()) ==
-          ShapeUtil::ElementsIn(base->shape())) {
-        ++large_copies;
-      } else if (ShapeUtil::ElementsIn(instr->shape()) ==
-                 ShapeUtil::ElementsIn(dus->operand(1)->shape())) {
-        ++update_copies;
+    const HloInstruction* base =
+        m->entry_computation()->parameter_instruction(0);
+    const HloInstruction* dus =
+        FindInstruction(m.get(), HloOpcode::kDynamicUpdateSlice);
+    ASSERT_THAT(dus, NotNull());
+    EXPECT_EQ(LayoutUtil::Equal(dus->shape().layout(), base->shape().layout()),
+              trip_count == 4);
+    EXPECT_TRUE(LayoutUtil::Equal(dus->operand(1)->shape().layout(),
+                                  dus->shape().layout()));
+    int64_t update_copies = 0, large_copies = 0;
+    for (const HloComputation* computation : m->computations()) {
+      for (const HloInstruction* instr : computation->instructions()) {
+        if (instr->opcode() != HloOpcode::kCopy) {
+          continue;
+        }
+        if (ShapeUtil::ElementsIn(instr->shape()) ==
+            ShapeUtil::ElementsIn(base->shape())) {
+          ++large_copies;
+        } else if (ShapeUtil::ElementsIn(instr->shape()) ==
+                   ShapeUtil::ElementsIn(dus->operand(1)->shape())) {
+          ++update_copies;
+        }
       }
     }
+    // The old policy converts the fixed input and the result at the loop
+    // boundaries, avoiding any per-iteration conversion of the update.
+    EXPECT_EQ(large_copies, trip_count == 4 ? 0 : 2) << m->ToString();
+    EXPECT_EQ(update_copies, trip_count == 4 ? 1 : 0) << m->ToString();
   }
-  EXPECT_EQ(large_copies, 0);
-  EXPECT_GE(update_copies, 1);
 }
 
 // Nested loops as in scanned layers under gradient accumulation: the weights
@@ -1731,99 +1740,115 @@ ENTRY main {
 // the loops constrains the layout, so an unconstrained loop parameter must
 // still pick the layout that keeps the entry transpose a bitcast rather than
 // the default, which would materialize it.
-TEST_F(LayoutAssignmentTest, UnconstrainedLoopParameterKeepsCallerBitcast) {
+TEST_F(LayoutAssignmentTest, NestedSliceCopyAccountsForLoopReuse) {
   constexpr absl::string_view kHlo = R"(
 HloModule m, replica_count=2
 
 layer_cond {
-  p = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) parameter(0)
+  p = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
-  limit = s32[] constant(14)
+  limit = s32[] constant(4)
   ROOT lt = pred[] compare(i, limit), direction=LT
 }
 
 layer_body {
-  p = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) parameter(0)
+  p = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) parameter(0)
   i = s32[] get-tuple-element(p), index=0
-  wt = bf16[14,32,448,1024] get-tuple-element(p), index=1
+  wt = bf16[64,32,448,1024] get-tuple-element(p), index=1
   zero = s32[] constant(0)
   ds = bf16[1,32,448,1024] dynamic-slice(wt, i, zero, zero, zero), dynamic_slice_sizes={1,32,448,1024}
   t = bf16[448,1,32,1024] transpose(ds), dimensions={2,0,1,3}
   ag = bf16[896,1,32,1024] all-gather(t), dimensions={0}, replica_groups={{0,1}}
   one = s32[] constant(1)
   next = s32[] add(i, one)
-  ROOT r = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) tuple(next, wt, ag)
+  ROOT r = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) tuple(next, wt, ag)
 }
 
 step_cond {
-  p = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) parameter(0)
+  p = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) parameter(0)
   j = s32[] get-tuple-element(p), index=0
-  limit = s32[] constant(3)
+  limit = s32[] constant(2)
   ROOT lt = pred[] compare(j, limit), direction=LT
 }
 
 step_body {
-  p = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) parameter(0)
+  p = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) parameter(0)
   j = s32[] get-tuple-element(p), index=0
-  wt = bf16[14,32,448,1024] get-tuple-element(p), index=1
+  wt = bf16[64,32,448,1024] get-tuple-element(p), index=1
   acc = bf16[896,1,32,1024] get-tuple-element(p), index=2
   zero = s32[] constant(0)
-  init = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) tuple(zero, wt, acc)
-  layers = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) while(init), condition=layer_cond, body=layer_body
+  init = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) tuple(zero, wt, acc)
+  layers = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) while(init), condition=layer_cond, body=layer_body
   out = bf16[896,1,32,1024] get-tuple-element(layers), index=2
   one = s32[] constant(1)
   next = s32[] add(j, one)
-  ROOT r = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) tuple(next, wt, out)
+  ROOT r = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) tuple(next, wt, out)
 }
 
 ENTRY main {
-  w = bf16[32,14,448,1024]{3,2,1,0} parameter(0)
-  wt = bf16[14,32,448,1024] transpose(w), dimensions={1,0,2,3}
+  w = bf16[32,64,448,1024]{3,2,1,0} parameter(0)
+  wt = bf16[64,32,448,1024] transpose(w), dimensions={1,0,2,3}
   zero = s32[] constant(0)
   zero_bf16 = bf16[] constant(0)
   init_acc = bf16[896,1,32,1024] broadcast(zero_bf16), dimensions={}
-  init = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) tuple(zero, wt, init_acc)
-  loop = (s32[], bf16[14,32,448,1024], bf16[896,1,32,1024]) while(init), condition=step_cond, body=step_body
+  init = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) tuple(zero, wt, init_acc)
+  loop = (s32[], bf16[64,32,448,1024], bf16[896,1,32,1024]) while(init), condition=step_cond, body=step_body
   ROOT out = bf16[896,1,32,1024]{3,2,1,0} get-tuple-element(loop), index=2
 })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                       ParseAndReturnVerifiedModule(kHlo));
-  ComputationLayout computation_layout(
-      m->entry_computation()->ComputeProgramShape(), /*ignore_layouts=*/false);
-  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
-                                        default_device_description_);
-  EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  // Four inner iterations times two outer iterations fit the budget; three
+  // outer iterations do not. Checking either loop in isolation is insufficient.
+  for (int64_t outer_trip_count : {2, 3}) {
+    SCOPED_TRACE(outer_trip_count);
+    std::string hlo(kHlo);
+    hlo.replace(hlo.find("constant(2)"), std::string("constant(2)").size(),
+                "constant(" + std::to_string(outer_trip_count) + ")");
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                         ParseAndReturnVerifiedModule(hlo));
+    ComputationLayout computation_layout(
+        m->entry_computation()->ComputeProgramShape(),
+        /*ignore_layouts=*/false);
+    GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                          default_device_description_);
+    EXPECT_THAT(layout_assignment.Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
 
-  const HloInstruction* w = m->entry_computation()->parameter_instruction(0);
-  const HloInstruction* wt = nullptr;
-  for (const HloInstruction* instr : m->entry_computation()->instructions()) {
-    if (instr->opcode() == HloOpcode::kTranspose) {
-      wt = instr;
-    }
-  }
-  ASSERT_THAT(wt, NotNull());
-  EXPECT_TRUE(
-      ShapeUtil::TransposeIsBitcast(w->shape(), wt->shape(), wt->dimensions()));
-  const HloInstruction* ds = FindInstruction(m.get(), HloOpcode::kDynamicSlice);
-  ASSERT_THAT(ds, NotNull());
-  EXPECT_TRUE(LayoutUtil::Equal(ds->shape().layout(), wt->shape().layout()));
-  int64_t slice_copies = 0, large_copies = 0;
-  for (const HloComputation* computation : m->computations()) {
-    for (const HloInstruction* instr : computation->instructions()) {
-      if (instr->opcode() != HloOpcode::kCopy) {
-        continue;
-      }
-      if (ShapeUtil::ElementsIn(instr->shape()) ==
-          ShapeUtil::ElementsIn(ds->shape())) {
-        ++slice_copies;
-      } else if (ShapeUtil::ElementsIn(instr->shape()) ==
-                 ShapeUtil::ElementsIn(w->shape())) {
-        ++large_copies;
+    const HloInstruction* w = m->entry_computation()->parameter_instruction(0);
+    const HloInstruction* wt = nullptr;
+    for (const HloInstruction* instr : m->entry_computation()->instructions()) {
+      if (instr->opcode() == HloOpcode::kTranspose) {
+        wt = instr;
       }
     }
+    ASSERT_THAT(wt, NotNull());
+    if (outer_trip_count == 2) {
+      EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(w->shape(), wt->shape(),
+                                                wt->dimensions()));
+    }
+    const HloInstruction* ds =
+        FindInstruction(m.get(), HloOpcode::kDynamicSlice);
+    ASSERT_THAT(ds, NotNull());
+    if (outer_trip_count == 2) {
+      EXPECT_TRUE(
+          LayoutUtil::Equal(ds->shape().layout(), wt->shape().layout()));
+    }
+    int64_t slice_copies = 0, large_copies = 0;
+    for (const HloComputation* computation : m->computations()) {
+      for (const HloInstruction* instr : computation->instructions()) {
+        if (instr->opcode() != HloOpcode::kCopy) {
+          continue;
+        }
+        if (ShapeUtil::ElementsIn(instr->shape()) ==
+            ShapeUtil::ElementsIn(ds->shape())) {
+          ++slice_copies;
+        } else if (ShapeUtil::ElementsIn(instr->shape()) ==
+                   ShapeUtil::ElementsIn(w->shape())) {
+          ++large_copies;
+        }
+      }
+    }
+    EXPECT_EQ(slice_copies, outer_trip_count == 2 ? 1 : 0) << m->ToString();
+    EXPECT_EQ(large_copies, outer_trip_count == 2 ? 0 : 1) << m->ToString();
   }
-  EXPECT_EQ(slice_copies, 1);
-  EXPECT_EQ(large_copies, 0);
 }
 
 // Entry constraints can differ from the layouts attached to HLO instructions.
@@ -1965,23 +1990,41 @@ ENTRY main {
   loop = (s32[], f32[32,64,8192], f32[32,1,16384]) while(init), condition=cond, body=body
   ROOT out = f32[32,1,16384]{1,0,2} get-tuple-element(loop), index=2
 })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(kHlo));
-  ComputationLayout computation_layout(
-      module->entry_computation()->ComputeProgramShape(),
-      /*ignore_layouts=*/false);
-  GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
-                           default_device_description_);
-  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  for (bool negate_input : {false, true}) {
+    for (int64_t trip_count : {1, 64}) {
+      SCOPED_TRACE(negate_input);
+      SCOPED_TRACE(trip_count);
+      std::string hlo(kHlo);
+      hlo.replace(hlo.find("constant(64)"), std::string("constant(64)").size(),
+                  "constant(" + std::to_string(trip_count) + ")");
+      if (negate_input) {
+        constexpr absl::string_view kParameter =
+            "w = f32[32,64,8192]{1,0,2} parameter(0)";
+        hlo.replace(hlo.find(kParameter), kParameter.size(),
+                    "w0 = f32[32,64,8192]{1,0,2} parameter(0)\n"
+                    "  w = f32[32,64,8192] negate(w0)");
+      }
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                           ParseAndReturnVerifiedModule(hlo));
+      ComputationLayout computation_layout(
+          module->entry_computation()->ComputeProgramShape(),
+          /*ignore_layouts=*/false);
+      GpuLayoutAssignment pass(&computation_layout, default_gpu_cc_,
+                               default_device_description_);
+      ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
 
-  const HloInstruction* loop = FindInstruction(module.get(), HloOpcode::kWhile);
-  ASSERT_THAT(loop, NotNull());
-  EXPECT_TRUE(
-      LayoutUtil::Equal(loop->shape().tuple_shapes(1).layout(),
-                        computation_layout.parameter_layout(0).layout()));
-  for (const HloComputation* computation : module->computations()) {
-    for (const HloInstruction* instruction : computation->instructions()) {
-      EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+      const HloInstruction* loop =
+          FindInstruction(module.get(), HloOpcode::kWhile);
+      ASSERT_THAT(loop, NotNull());
+      EXPECT_TRUE(
+          LayoutUtil::Equal(loop->shape().tuple_shapes(1).layout(),
+                            computation_layout.parameter_layout(0).layout()));
+      for (const HloComputation* computation : module->computations()) {
+        for (const HloInstruction* instruction : computation->instructions()) {
+          EXPECT_NE(instruction->opcode(), HloOpcode::kCopy)
+              << module->ToString();
+        }
+      }
     }
   }
 }
@@ -2352,6 +2395,218 @@ ENTRY main {
         << module->ToString();
     EXPECT_EQ(slice_copies, test_case.expected_slice_copies)
         << module->ToString();
+  }
+}
+
+TEST_F(LayoutAssignmentTest, SliceOfAutoInputKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+ENTRY main {
+  w = f32[4096,4096]{1,0} parameter(0)
+  index = s32[] parameter(1)
+  zero = s32[] constant(0)
+  piece = f32[512,4096] dynamic-slice(w, index, zero), dynamic_slice_sizes={512,4096}
+  ROOT ag = f32[512,8192]{0,1} all-gather(piece), dimensions={1}, replica_groups={{0,1}}
+})";
+  for (bool memory_space_only : {false, true}) {
+    SCOPED_TRACE(memory_space_only);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    ComputationLayout layout(module->entry_computation()->ComputeProgramShape(),
+                             /*ignore_layouts=*/false);
+    layout.mutable_parameter_layout(0)->Clear();
+    if (memory_space_only) {
+      Layout auto_layout;
+      auto_layout.set_memory_space(Layout::kDefaultMemorySpace);
+      layout.mutable_parameter_layout(0)->ResetLayout(auto_layout);
+    }
+    GpuLayoutAssignment pass(&layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+    }
+  }
+}
+
+TEST_F(LayoutAssignmentTest, SlicesOfSharedSourceKeepPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+ENTRY main {
+  w = f32[4096,4096] iota(), iota_dimension=0
+  piece0 = f32[512,4096] slice(w), slice={[0:512], [0:4096]}
+  piece1 = f32[512,4096] slice(w), slice={[512:1024], [0:4096]}
+  ag0 = f32[512,8192]{0,1} all-gather(piece0), dimensions={1}, replica_groups={{0,1}}
+  ag1 = f32[512,8192]{0,1} all-gather(piece1), dimensions={1}, replica_groups={{0,1}}
+  ROOT r = (f32[512,8192]{0,1}, f32[512,8192]{0,1}) tuple(ag0, ag1)
+})";
+  for (bool fixed_input : {false, true}) {
+    SCOPED_TRACE(fixed_input);
+    std::string hlo(kHlo);
+    if (fixed_input) {
+      hlo.replace(hlo.find("iota(), iota_dimension=0"),
+                  std::string("iota(), iota_dimension=0").size(),
+                  "parameter(0)");
+    }
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    ComputationLayout layout(module->entry_computation()->ComputeProgramShape(),
+                             /*ignore_layouts=*/false);
+    GpuLayoutAssignment pass(&layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    int64_t large_copies = 0;
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() == HloOpcode::kCopy) {
+        EXPECT_EQ(ShapeUtil::ByteSizeOfElements(instruction->shape()),
+                  int64_t{64} << 20)
+            << module->ToString();
+        ++large_copies;
+      }
+    }
+    EXPECT_EQ(large_copies, fixed_input ? 2 : 0) << module->ToString();
+  }
+}
+
+// One 8 MiB copy has the required advantage over a 64 MiB conversion.
+// Reusing the slice 128 times would instead copy 1 GiB. Unknown bounds also
+// retain the previous policy; a per-iteration size comparison is insufficient.
+TEST_F(LayoutAssignmentTest, SliceCopyAccountsForLoopReuse) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+cond {
+  p = (s32[], f32[4096,4096], f32[512,8192], s32[]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(128)
+  ROOT lt = pred[] compare(i, limit), direction=LT
+}
+body {
+  p = (s32[], f32[4096,4096], f32[512,8192], s32[]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[4096,4096] get-tuple-element(p), index=1
+  eight = s32[] constant(8)
+  block = s32[] remainder(i, eight)
+  block_size = s32[] constant(512)
+  index = s32[] multiply(block, block_size)
+  zero = s32[] constant(0)
+  piece = f32[512,4096] dynamic-slice(w, index, zero), dynamic_slice_sizes={512,4096}
+  ag = f32[512,8192]{0,1} all-gather(piece), dimensions={1}, replica_groups={{0,1}}
+  bound = s32[] get-tuple-element(p), index=3
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT result = (s32[], f32[4096,4096], f32[512,8192], s32[]) tuple(next, w, ag, bound)
+}
+ENTRY main {
+  w = f32[4096,4096]{1,0} parameter(0)
+  bound = s32[] parameter(1)
+  zero = s32[] constant(0)
+  value = f32[] constant(0)
+  init_ag = f32[512,8192] broadcast(value), dimensions={}
+  init = (s32[], f32[4096,4096], f32[512,8192], s32[]) tuple(zero, w, init_ag, bound)
+  loop = (s32[], f32[4096,4096], f32[512,8192], s32[]) while(init), condition=cond, body=body
+  ROOT out = f32[512,8192]{0,1} get-tuple-element(loop), index=2
+})";
+  for (int64_t trip_count : {1, 2, 128, -1}) {
+    SCOPED_TRACE(trip_count);
+    std::string hlo(kHlo);
+    hlo.replace(hlo.find("constant(128)"), std::string("constant(128)").size(),
+                trip_count < 0
+                    ? "get-tuple-element(p), index=3"
+                    : "constant(" + std::to_string(trip_count) + ")");
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    ComputationLayout layout(module->entry_computation()->ComputeProgramShape(),
+                             /*ignore_layouts=*/false);
+    GpuLayoutAssignment pass(&layout, default_gpu_cc_,
+                             default_device_description_);
+    ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+    int64_t large_copies = 0;
+    int64_t slice_copies = 0;
+    for (const HloComputation* computation : module->computations()) {
+      for (const HloInstruction* instruction : computation->instructions()) {
+        if (instruction->opcode() != HloOpcode::kCopy) {
+          continue;
+        }
+        const int64_t bytes =
+            ShapeUtil::ByteSizeOfElements(instruction->shape());
+        large_copies += bytes == (int64_t{64} << 20);
+        slice_copies += bytes == (int64_t{8} << 20);
+      }
+    }
+    EXPECT_EQ(large_copies, trip_count == 1 ? 0 : 1) << module->ToString();
+    EXPECT_EQ(slice_copies, trip_count == 1 ? 1 : 0) << module->ToString();
+  }
+}
+
+TEST_F(LayoutAssignmentTest, SliceOfAutoTupleInputInLoopKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+cond {
+  p = (s32[], f32[4096,4096], f32[512,8192]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(1)
+  ROOT lt = pred[] compare(i, limit), direction=LT
+}
+body {
+  p = (s32[], f32[4096,4096], f32[512,8192]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  w = f32[4096,4096] get-tuple-element(p), index=1
+  zero = s32[] constant(0)
+  piece = f32[512,4096] dynamic-slice(w, i, zero), dynamic_slice_sizes={512,4096}
+  ag = f32[512,8192]{0,1} all-gather(piece), dimensions={1}, replica_groups={{0,1}}
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  ROOT result = (s32[], f32[4096,4096], f32[512,8192]) tuple(next, w, ag)
+}
+ENTRY main {
+  args = (f32[4096,4096]{1,0}, s32[]) parameter(0)
+  w = f32[4096,4096] get-tuple-element(args), index=0
+  zero = s32[] constant(0)
+  value = f32[] constant(0)
+  init_ag = f32[512,8192] broadcast(value), dimensions={}
+  init = (s32[], f32[4096,4096], f32[512,8192]) tuple(zero, w, init_ag)
+  loop = (s32[], f32[4096,4096], f32[512,8192]) while(init), condition=cond, body=body
+  ROOT out = f32[512,8192]{0,1} get-tuple-element(loop), index=2
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout layout(module->entry_computation()->ComputeProgramShape(),
+                           /*ignore_layouts=*/false);
+  layout.mutable_parameter_layout(0)->Clear();
+  GpuLayoutAssignment pass(&layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
+    }
+  }
+}
+
+TEST_F(LayoutAssignmentTest, UpdateOfAutoInputKeepsPropagation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, replica_count=2
+ENTRY main {
+  base = f32[4096,4096]{1,0} parameter(0)
+  x = f32[512,2048]{0,1} parameter(1)
+  update = f32[512,4096] all-gather(x), dimensions={1}, replica_groups={{0,1}}
+  zero = s32[] constant(0)
+  ROOT out = f32[4096,4096]{1,0} dynamic-update-slice(base, update, zero, zero)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ComputationLayout layout(module->entry_computation()->ComputeProgramShape(),
+                           /*ignore_layouts=*/false);
+  layout.mutable_parameter_layout(0)->Clear();
+  layout.mutable_result_layout()->Clear();
+  GpuLayoutAssignment pass(&layout, default_gpu_cc_,
+                           default_device_description_);
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    EXPECT_NE(instruction->opcode(), HloOpcode::kCopy) << module->ToString();
   }
 }
 

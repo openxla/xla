@@ -2304,6 +2304,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_layout",
         "//xla/service:decision",
