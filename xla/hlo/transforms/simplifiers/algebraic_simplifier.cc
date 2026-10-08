@@ -6689,9 +6689,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleRemainder(
     // this.  But that's OK for our purposes here.)
     int64_t iota_upper_bound = iota->shape().dimensions(
         Cast<HloIotaInstruction>(iota)->iota_dimension());
-    std::optional<int64_t> divisor_val = divisor->literal().GetIntegralAsS64(
-        std::vector<int64_t>(0, divisor->shape().dimensions().size()));
-    if (divisor_val && *divisor_val >= iota_upper_bound) {
+    std::optional<int64_t> divisor_val = divisor->literal().GetFirstInteger();
+    if (divisor_val && *divisor_val > 0 && *divisor_val >= iota_upper_bound &&
+        (iota_upper_bound == 0 ||
+         primitive_util::FitsInIntegralType(iota_upper_bound - 1,
+                                            iota->shape().element_type()))) {
       return ReplaceInstruction(remainder, iota);
     }
   }
@@ -6717,12 +6719,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleRemainder(
     // smaller.
     int64_t iota_upper_bound = iota->shape().dimensions(
         Cast<HloIotaInstruction>(iota)->iota_dimension());
-    std::optional<int64_t> divisor_val = divisor->literal().GetIntegralAsS64(
-        std::vector<int64_t>(0, divisor->shape().dimensions().size()));
-    if (divisor_val) {
+    std::optional<int64_t> divisor_val = divisor->literal().GetFirstInteger();
+    if (divisor_val && *divisor_val > 0 && iota_upper_bound > 0 &&
+        primitive_util::FitsInIntegralType(iota_upper_bound - 1,
+                                           iota->shape().element_type())) {
       // Check whether divisor_val + iota_upper_bound - 1 overflows.
       std::optional<int64_t> max_val =
-          OverflowSafeAdd(*divisor_val, iota_upper_bound);
+          OverflowSafeAdd(*divisor_val, iota_upper_bound - 1);
       if (max_val.has_value() && primitive_util::FitsInIntegralType(
                                      *max_val, iota->shape().element_type())) {
         return ReplaceWithNewInstruction(
