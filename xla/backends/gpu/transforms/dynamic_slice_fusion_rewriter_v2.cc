@@ -842,6 +842,14 @@ absl::StatusOr<std::optional<FrontendAttributes>> FusionMemorySpaces(
   return attributes;
 }
 
+void ReplaceMemorySpaceAttributes(HloInstruction* instruction,
+                                  FrontendAttributes memory_spaces) {
+  // Even an empty remap must discard inherited memory-space indices.
+  instruction->erase_frontend_attribute(kOperandsMemorySpacesAttr);
+  instruction->erase_frontend_attribute(kResultsMemorySpacesAttr);
+  instruction->add_frontend_attributes(std::move(memory_spaces));
+}
+
 absl::Status SetDynamicSliceFusionBackendConfig(HloInstruction* fusion) {
   GpuBackendConfig gpu_config;
   FusionBackendConfig& backend_config =
@@ -933,12 +941,8 @@ absl::StatusOr<bool> RewriteHero(
     ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
   }
 
-  // ReplaceInstruction inherits frontend attributes only when the new map is
-  // empty. Preserve that inheritance before replacing maps with remapped
-  // indices.
-  fusion->erase_frontend_attribute(kOperandsMemorySpacesAttr);
-  fusion->erase_frontend_attribute(kResultsMemorySpacesAttr);
-  fusion->add_frontend_attributes(std::move(*memory_spaces));
+  // Preserve attribute inheritance by applying the remap after replacement.
+  ReplaceMemorySpaceAttributes(fusion, std::move(*memory_spaces));
 
   return true;
 }
