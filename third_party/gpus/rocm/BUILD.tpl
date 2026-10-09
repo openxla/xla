@@ -521,6 +521,7 @@ filegroup(
         exclude = [
             "%{rocm_root}/lib/rocm_sysdeps/share/terminfo/**",
         ],
+        allow_empty = True,
     ),
 )
 
@@ -546,31 +547,45 @@ cc_library(
 
 # System libraries needed by consumers like MORI's libhsakmt.a (drm/numa
 # symbols), exposed as real link targets (not just runtime data). On TheRock
-# layouts (hermetic distribution or a TheRock-based local ROCm) they resolve to
-# the copies bundled under lib/rocm_sysdeps/lib. Classic ROCm installs do not
-# ship rocm_sysdeps, so they fall back to the host libraries (-ldrm, ...).
-rocm_lib_import(
+# 7.10+ they resolve to the copies bundled under lib/rocm_sysdeps/lib. Classic
+# ROCm 7.2.x does not ship rocm_sysdeps, so those installs also pass -ldrm etc.
+# to the host linker.
+_USE_HOST_SYSDEPS = rocm_version_number() < 71000
+
+cc_library(
     name = "drm",
-    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
+    srcs = glob(
+        ["%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so"],
+        allow_empty = True,
+    ),
     data = [":system_libs_data"],
+    linkopts = ["-ldrm"] if _USE_HOST_SYSDEPS else [],
     deps = [":system_libs"],
-    is_system_lib = True,
+    visibility = ["//visibility:public"],
 )
 
-rocm_lib_import(
+cc_library(
     name = "drm_amdgpu",
-    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
+    srcs = glob(
+        ["%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so"],
+        allow_empty = True,
+    ),
     data = [":system_libs_data"],
+    linkopts = ["-ldrm_amdgpu"] if _USE_HOST_SYSDEPS else [],
     deps = [":system_libs"],
-    is_system_lib = True,
+    visibility = ["//visibility:public"],
 )
 
-rocm_lib_import(
+cc_library(
     name = "numa",
-    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
+    srcs = glob(
+        ["%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so"],
+        allow_empty = True,
+    ),
     data = [":system_libs_data"],
+    linkopts = ["-lnuma"] if _USE_HOST_SYSDEPS else [],
     deps = [":system_libs"],
-    is_system_lib = True,
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
