@@ -47,8 +47,10 @@ namespace stream_executor::gpu {
 //     Zero-initialized memory correctly sets up the wait condition for the
 //     first barrier launch.
 struct MultiGpuBarrierKernel {
-  // Maximum number of peers supported by the barrier.
-  // Can be extended to support larger GPU clusters in the future.
+  // Maximum number of peers supported by the barrier. This is a compile-time
+  // constant because KernelType passes std::array<void*, kMaxPeers> by value,
+  // and signal buffer allocations in multi_gpu_barrier.cc and
+  // ragged_all_to_all_thunk.cc are sized to kMaxPeers * sizeof(uint32_t).
   static constexpr int64_t kMaxPeers = 128;
 
   using KernelType =

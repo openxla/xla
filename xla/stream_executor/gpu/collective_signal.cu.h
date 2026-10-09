@@ -48,9 +48,8 @@ __device__ void WaitSignalFlag(uint32_t* addr, uint32_t expected);
 // serializing each put/wait pair.
 template <PlatformType T, int64_t MaxPeers>
 __device__ __forceinline__ void SyncRemoteBlocks(
-    // Use raw pointer with __restrict__ directly here
-    std::array<uint32_t* __restrict__, MaxPeers> signal_pad_ptrs, int64_t rank,
-    int64_t num_ranks, uint32_t signal_value) {
+    const std::array<uint32_t* __restrict__, MaxPeers>& signal_pad_ptrs,
+    int64_t rank, int64_t num_ranks, uint32_t signal_value) {
   for (int64_t target_rank = threadIdx.x; target_rank < num_ranks;
        target_rank += blockDim.x) {
     PutSignalFlag<T>(
