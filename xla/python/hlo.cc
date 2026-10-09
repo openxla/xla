@@ -30,8 +30,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "dlpack/dlpack.h"
 #include "mlir/Support/LLVM.h"
+#include "dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
 #include "nanobind/stl/optional.h"     // IWYU pragma: keep
@@ -39,7 +39,6 @@ limitations under the License.
 #include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"       // IWYU pragma: keep
-#include "tsl/platform/protobuf.h"
 #include "xla/array.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -71,6 +70,7 @@ limitations under the License.
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace nb = nanobind;
 
@@ -882,6 +882,12 @@ NB_MODULE(_hlo, m) {
   nb::class_<ComputationWrapper> hlo_computation_class(m, "HloComputation");
   hlo_computation_class.def_prop_ro("name", &ComputationWrapper::name)
       .def("render_html", &ComputationWrapper::render_html)
+      .def("root_instruction",
+           [](const std::shared_ptr<ComputationWrapper> c)
+               -> std::shared_ptr<InstructionWrapper> {
+             return std::make_shared<InstructionWrapper>(
+                 c->comp()->root_instruction(), c->module());
+           })
       .def("instructions",
            [](const std::shared_ptr<ComputationWrapper> c)
                -> std::vector<std::shared_ptr<InstructionWrapper>> {
