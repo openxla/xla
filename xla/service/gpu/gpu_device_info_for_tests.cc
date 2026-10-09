@@ -42,7 +42,8 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::RTXA6000DeviceInfo(
   b.set_block_dim_limit_y(65535);
   b.set_block_dim_limit_z(65535);
   b.set_memory_bandwidth(768'096'000'000);
-  b.set_l2_cache_size(6 * 1024 * 1024);
+  b.set_data_caches(
+      {{/*level=*/2, /*size_bytes=*/6 * 1024 * 1024, /*num_instances=*/1}});
   b.set_clock_rate_ghz(1.410);
   b.set_device_memory_size(51'050'250'240);
   b.set_registers_per_core_limit(65536);
@@ -68,7 +69,8 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::A100SXMDeviceInfo(
   b.set_block_dim_limit_y(65535);
   b.set_block_dim_limit_z(65535);
   b.set_memory_bandwidth(2'039'040'000'000);
-  b.set_l2_cache_size(40 * 1024 * 1024);
+  b.set_data_caches(
+      {{/*level=*/2, /*size_bytes=*/40 * 1024 * 1024, /*num_instances=*/1}});
   b.set_clock_rate_ghz(1.41);
   b.set_device_memory_size(85'100'068'864);
   b.set_registers_per_core_limit(65536);
@@ -99,7 +101,8 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::H100SXMDeviceInfo(
   b.set_block_dim_limit_y(65535);
   b.set_block_dim_limit_z(65535);
   b.set_memory_bandwidth(3'352'320'000'000);
-  b.set_l2_cache_size(50 * 1024 * 1024);
+  b.set_data_caches(
+      {{/*level=*/2, /*size_bytes=*/50 * 1024 * 1024, /*num_instances=*/1}});
   b.set_clock_rate_ghz(1.98);
   b.set_device_memory_size(84'978'434'048);
   b.set_registers_per_core_limit(65536);
@@ -131,7 +134,8 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::B200SXMDeviceInfo(
   b.set_block_dim_limit_y(65535);
   b.set_block_dim_limit_z(65535);
   b.set_memory_bandwidth(8'796'093'022'208);
-  b.set_l2_cache_size(126 * 1024 * 1024);
+  b.set_data_caches(
+      {{/*level=*/2, /*size_bytes=*/126 * 1024 * 1024, /*num_instances=*/1}});
   b.set_clock_rate_ghz(1.965);
   b.set_device_memory_size(193'273'528'320);
   b.set_registers_per_core_limit(65536);
@@ -194,7 +198,10 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::AMDMI210DeviceInfo() {
   b.set_block_dim_limit_y(65536);
   b.set_block_dim_limit_z(65536);
   b.set_memory_bandwidth(1'638'400'000'000);
-  b.set_l2_cache_size(8 * 1024 * 1024);
+  b.set_data_caches({{/*level=*/1, /*size_bytes=*/16 * 1024,
+                      /*num_instances=*/104},
+                     {/*level=*/2, /*size_bytes=*/8 * 1024 * 1024,
+                      /*num_instances=*/1}});
   b.set_clock_rate_ghz(1.7);
   b.set_device_memory_size(67'628'957'696);
   b.set_registers_per_core_limit(131072);
@@ -223,7 +230,12 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::AMDMI300DeviceInfo() {
   b.set_block_dim_limit_y(65536);
   b.set_block_dim_limit_z(65536);
   b.set_memory_bandwidth(5'300'000'000'000);
-  b.set_l2_cache_size(4 * 1024 * 1024);
+  b.set_data_caches({{/*level=*/1, /*size_bytes=*/32 * 1024,
+                      /*num_instances=*/304},
+                     {/*level=*/2, /*size_bytes=*/4 * 1024 * 1024,
+                      /*num_instances=*/8},
+                     {/*level=*/3, /*size_bytes=*/256 * 1024 * 1024,
+                      /*num_instances=*/1}});
   b.set_clock_rate_ghz(2.1);
   b.set_device_memory_size(int64_t{192} * 1024 * 1024 * 1024);
   b.set_registers_per_core_limit(131072);
@@ -253,7 +265,12 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::AMDMI350DeviceInfo() {
   b.set_block_dim_limit_z(65536);
   // Keep in sync with GetRocmMemoryBandwidth in rocm_memory_bandwidth.cc.
   b.set_memory_bandwidth(7'782'000'000'000);
-  b.set_l2_cache_size(4 * 1024 * 1024);
+  b.set_data_caches({{/*level=*/1, /*size_bytes=*/32 * 1024,
+                      /*num_instances=*/256},
+                     {/*level=*/2, /*size_bytes=*/4 * 1024 * 1024,
+                      /*num_instances=*/8},
+                     {/*level=*/3, /*size_bytes=*/256 * 1024 * 1024,
+                      /*num_instances=*/1}});
   b.set_clock_rate_ghz(2.2);
   b.set_device_memory_size(270'566'162'432);
   b.set_registers_per_core_limit(131072);
@@ -282,7 +299,14 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::AMDRX7900DeviceInfo() {
   b.set_block_dim_limit_y(2'147'483'647);
   b.set_block_dim_limit_z(2'147'483'647);
   b.set_memory_bandwidth(960'000'000'000);
-  b.set_l2_cache_size(6 * 1024 * 1024);
+  b.set_data_caches({{/*level=*/1, /*size_bytes=*/32 * 1024,
+                      /*num_instances=*/96},
+                     {/*level=*/1, /*size_bytes=*/256 * 1024,
+                      /*num_instances=*/12},
+                     {/*level=*/2, /*size_bytes=*/6 * 1024 * 1024,
+                      /*num_instances=*/1},
+                     {/*level=*/3, /*size_bytes=*/96 * 1024 * 1024,
+                      /*num_instances=*/1}});
   b.set_clock_rate_ghz(2.5);
   b.set_device_memory_size(24'000'000'000);
   b.set_runtime_version(stream_executor::SemanticVersion{7, 1, 0});

@@ -16,7 +16,10 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
@@ -37,6 +40,15 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace stream_executor {
+namespace {
+
+// The data_caches() order: by level, then by decreasing num_instances.
+bool MorePrivateFirst(const DataCacheInfo& a, const DataCacheInfo& b) {
+  return a.level != b.level ? a.level < b.level
+                            : a.num_instances > b.num_instances;
+}
+
+}  // namespace
 
 ExecutionUnitDescriptionProto ExecutionUnitDescription::ToProto() const {
   ExecutionUnitDescriptionProto proto;
@@ -92,7 +104,17 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
       proto.registers_per_block_limit();
   device_description.device_memory_size_ = proto.device_memory_size();
   device_description.device_address_bits_ = proto.device_address_bits();
-  device_description.l2_cache_size_ = proto.l2_cache_size();
+  std::vector<DataCacheInfo> data_caches;
+  for (const DataCacheInfoProto& cache : proto.data_caches()) {
+    if (cache.level() < 1 || cache.size_bytes() < 0 ||
+        cache.num_instances() < 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Invalid data cache: level ", cache.level(), ", size ",
+          cache.size_bytes(), ", instances ", cache.num_instances()));
+    }
+    data_caches.push_back(DataCacheInfo::FromProto(cache));
+  }
+  device_description.set_data_caches(std::move(data_caches));
   device_description.memory_bandwidth_ = proto.memory_bandwidth();
   device_description.pcie_bandwidth_ = proto.pcie_bandwidth();
   device_description.mem_clock_ghz_ = proto.mem_clock_ghz();
@@ -215,7 +237,9 @@ GpuDeviceInfoProto DeviceDescription::ToProto() const {
   proto.set_memory_bandwidth(memory_bandwidth_);
   proto.set_pcie_bandwidth(pcie_bandwidth_);
   proto.set_mem_clock_ghz(mem_clock_ghz_);
-  proto.set_l2_cache_size(l2_cache_size_);
+  for (const DataCacheInfo& cache : data_caches_) {
+    *proto.add_data_caches() = cache.ToProto();
+  }
   proto.set_clock_rate_ghz(clock_rate_ghz_);
   proto.set_device_memory_size(device_memory_size_);
   proto.set_device_address_bits(device_address_bits_);
@@ -333,7 +357,7 @@ bool DeviceDescription::EqualsTo(
          registers_per_core_limit_ == other.registers_per_core_limit_ &&
          registers_per_block_limit_ == other.registers_per_block_limit_ &&
          device_address_bits_ == other.device_address_bits_ &&
-         l2_cache_size_ == other.l2_cache_size_ &&
+         data_caches_ == other.data_caches_ &&
          memory_bandwidth_ == other.memory_bandwidth_ &&
          pcie_bandwidth_ == other.pcie_bandwidth_ &&
          mem_clock_ghz_ == other.mem_clock_ghz_ &&
@@ -352,6 +376,47 @@ bool DeviceDescription::EqualsTo(
              other.confidential_computing_enabled_ &&
          interconnect_info_.active_links ==
              other.interconnect_info_.active_links;
+}
+
+void DeviceDescription::set_data_caches(std::vector<DataCacheInfo> value) {
+  absl::c_stable_sort(value, MorePrivateFirst);
+  data_caches_ = std::move(value);
+}
+
+std::optional<DataCacheInfo> DeviceDescription::data_cache(int level) const {
+  for (const DataCacheInfo& cache : data_caches_) {
+    if (cache.level == level) {
+      return cache;
+    }
+  }
+  return std::nullopt;
+}
+
+int64_t DeviceDescription::l1_cache_size_per_SM() const {
+  std::optional<DataCacheInfo> l1 = data_cache(1);
+  return l1.has_value() ? l1->size_bytes
+                        : DefaultL1CacheSizePerCore(gpu_compute_capability_);
+}
+
+int64_t DeviceDescription::DefaultL1CacheSizePerCore(
+    const GpuComputeCapability& cc) {
+  if (auto* capability = cc.rocm_compute_capability()) {
+    // MI100 and MI200 has 16KB L1 cache per CU.
+    if (capability->gfx9_mi100() || capability->gfx9_mi200()) {
+      return 16 * 1024;
+    }
+    // MI300 has 32KB L1 cache per CU.
+    if (capability->gfx9_mi300_series()) {
+      return 32 * 1024;
+    }
+  }
+  // Default return for other GPUs (e.g., RTX A6000).
+  return 2 * 1024;
+}
+
+int64_t DeviceDescription::l2_cache_size() const {
+  std::optional<DataCacheInfo> l2 = data_cache(2);
+  return l2.has_value() ? l2->size_bytes : kUninitialized<int64_t>;
 }
 
 const GpuComputeCapability& DeviceDescription::gpu_compute_capability() const {
