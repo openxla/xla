@@ -130,6 +130,9 @@ class CopyInsertionTest : public HloHardwareIndependentTestBase {
 
   const Shape scalar_shape_ = ShapeUtil::MakeShape(F32, {});
   AliasInfo alias_info_;
+  CopyInsertion view_copy_insertion_{
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/5};
 };
 
 TEST_F(CopyInsertionTest, SingleParameter) {
@@ -4112,6 +4115,11 @@ ENTRY entry {
   constexpr absl::string_view kReaderBeforeProducer =
       "reader = f32[1,8] negate(view)\n"
       "  new_stack = f32[4,8] add(stack, ones)";
+  constexpr absl::string_view kWindowReaderAfterProducer = R"(
+  writer = (f32[1,8]{1,0:S(5)}, f32[1,8]) custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{0}: (0, {})}
+  window = f32[1,8]{1,0:S(5)} get-tuple-element(writer), index=0
+  new_stack = f32[4,8] add(stack, ones)
+  reader = f32[1,8] negate(window))";
   auto root_copy_survives =
       [&](absl::string_view order,
           std::optional<int64_t> view_color) -> absl::StatusOr<bool> {
@@ -4132,13 +4140,14 @@ ENTRY entry {
               absl_testing::IsOkAndHolds(false));
   EXPECT_THAT(root_copy_survives(kReaderBeforeProducer, kViewColor),
               absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(root_copy_survives(kWindowReaderAfterProducer, kViewColor),
+              absl_testing::IsOkAndHolds(true));
 }
 
 // A view colored user that writes through the view (an in place op aliasing
 // its output onto the view operand) is a reader at its own position, not a
-// forwarder: the copies copy insertion places around it are elided exactly
-// as without a view color, and the in place writer lands in the viewed
-// buffer.
+// forwarder, so `view_copy` is elided with or without a view color. With one,
+// `dus` also reads `base` through the written window, so `base_copy` stays.
 TEST_F(CopyInsertionTest, ViewWriterIsNotForwardedAsAView) {
   constexpr int64_t kViewColor = 5;
   constexpr absl::string_view kHlo = R"(
@@ -4165,7 +4174,7 @@ ENTRY entry {
                                  /*should_skip_removal=*/nullptr, view_color);
     ASSERT_OK(copy_insertion.RemoveUnnecessaryCopies(module.get()));
     const HloInstruction* dus = module->entry_computation()->root_instruction();
-    EXPECT_EQ(dus->operand(0)->name(), "base")
+    EXPECT_EQ(dus->operand(0)->name(), view_color ? "base_copy" : "base")
         << "view color " << view_color.value_or(-1) << ":\n"
         << module->ToString();
     EXPECT_EQ(dus->operand(1)->operand(0)->name(), "view")
@@ -4225,6 +4234,292 @@ ENTRY entry {
   for (absl::string_view reader : {"reader, operand 0", "other, operand 0"}) {
     EXPECT_EQ(count(stack_uses, reader), 1) << stack_uses;
     EXPECT_EQ(count(view_uses, reader), 1) << view_uses;
+  }
+}
+
+// The view and any write back, both reached through bitcasts, share a copy of
+// the viewed buffer, even when the writer claims disjoint regions. It stays
+// unless data orders `reader` first.
+TEST_F(CopyInsertionTest, ViewWriteTakesACopyOfTheViewedBuffer) {
+  constexpr absl::string_view kHloTemplate = R"(
+HloModule view_write
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  base = f32[4,8] negate(p0)
+  c0 = s32[] constant(0)
+  reader = f32[4,8] exponential(base)
+  update = f32[1,8] slice(reader), slice={[0:1], [0:8]}
+  late = s32[] negate(c0), control-predecessors={reader}
+  view = f32[1,8]{1,0:S(5)} custom-call($2), custom_call_target="view"
+  row = f32[8]{0:S(5)} bitcast(view)
+  writer = (f32[8]{0:S(5)}, f32[1,8]) custom-call(row, $0), custom_call_target="write_through_view", output_to_operand_aliasing={{0}: (0, {})}, frontend_attributes={xla_disjoint_read_write_regions="true"}
+  window = f32[8]{0:S(5)} get-tuple-element(writer), index=0
+  $1
+}
+)";
+  constexpr absl::string_view kWriteBack =
+      "rows = f32[1,8]{1,0:S(5)} bitcast(window)\n"
+      "  dus = f32[4,8] dynamic-update-slice(base, rows, c0, c0)\n"
+      "  ROOT t = (f32[4,8], f32[4,8]) tuple(dus, reader)";
+  constexpr absl::string_view kNoWriteBack =
+      "out = f32[8] negate(window)\n"
+      "  ROOT t = (f32[8], f32[4,8]) tuple(out, reader)";
+  struct Case {
+    absl::string_view operands, tail, viewed;
+    bool copy_survives;
+  };
+  for (const Case& c : {Case{"update, base", kNoWriteBack, "base", true},
+                        // A read only input keeps its bytes for the caller.
+                        Case{"update", kNoWriteBack, "p0", true},
+                        Case{"late", kWriteBack, "base", true},
+                        Case{"update", kWriteBack, "base", false}}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(absl::Substitute(
+                             kHloTemplate, c.operands, c.tail, c.viewed)));
+    ASSERT_OK(view_copy_insertion_.Run(module.get()).status());
+    const HloInstruction* view = FindInstruction(module.get(), "view");
+    EXPECT_EQ(view->operand(0)->opcode() == HloOpcode::kCopy, c.copy_survives)
+        << module->ToString();
+    if (const HloInstruction* dus = FindInstruction(module.get(), "dus")) {
+      EXPECT_EQ(dus->operand(0), view->operand(0)) << module->ToString();
+    }
+  }
+}
+
+// Eliding `base_copy` needs each side's reads before the other side's view
+// writes, pinned after scheduling; its writer passes to `base`, so `z` stays.
+TEST_F(CopyInsertionTest, ViewWriteOrdersTheReadsOfTheOtherSide) {
+  constexpr absl::string_view kHloTemplate = R"(
+HloModule view_write_order, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  base = f32[4,8] negate(p0)
+  base_copy = f32[4,8] copy(base)
+  $0
+  view = f32[1,8]{1,0:S(5)} custom-call($2), custom_call_target="view"
+  writer = f32[1,8]{1,0:S(5)} custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{}: (0, {})}
+  $1
+  window = f32[1,8] negate(writer)
+  ROOT t = (f32[1,8], f32[4,8]) tuple(window, reader)
+}
+)";
+  constexpr absl::string_view kReadsBase =
+      "reader = f32[4,8] exponential(base)";
+  constexpr absl::string_view kReadsCopy =
+      "reader = f32[4,8] exponential(base_copy)";
+  struct Case {
+    absl::string_view before, after, viewed, view_reads;
+    bool copy_survives;
+  };
+  for (const Case& c :
+       {Case{"", kReadsBase, "base_copy", "base_copy", true},
+        Case{kReadsBase, "", "base_copy", "base", false},
+        Case{"", kReadsCopy, "base", "base", true},
+        Case{kReadsCopy, "", "base", "base", false},
+        Case{"z = f32[4,8] copy(base)", "reader = f32[4,8] exponential(z)",
+             "base_copy", "base", true}}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(absl::Substitute(
+                             kHloTemplate, c.before, c.after, c.viewed)));
+    ASSERT_OK(view_copy_insertion_.RemoveUnnecessaryCopies(
+        module.get(), /*execution_threads=*/{},
+        /*insert_post_scheduling_control_dependencies=*/true));
+    const HloInstruction* reader = FindInstruction(module.get(), "reader");
+    const HloInstruction* writer = FindInstruction(module.get(), "writer");
+    EXPECT_EQ(writer->operand(0)->operand(0)->name(), c.view_reads)
+        << module->ToString();
+    EXPECT_EQ(reader->operand(0) != writer->operand(0)->operand(0),
+              c.copy_survives)
+        << module->ToString();
+    EXPECT_EQ(absl::c_linear_search(writer->control_predecessors(), reader),
+              !c.copy_survives)
+        << module->ToString();
+  }
+}
+
+// The conditional's use of `base` and the other branch's read never run with
+// the view write, so its copy goes unless `after` reads `base`: before
+// scheduling only data edges order it, not its control edge to `c`.
+TEST_F(CopyInsertionTest, ViewWriteInABranchIsOrderedAsAValueDefinition) {
+  constexpr absl::string_view kHloTemplate = R"(
+HloModule view_write_in_branch
+
+writes {
+  written = f32[4,8] parameter(0)
+  view = f32[1,8]{1,0:S(5)} custom-call(written), custom_call_target="view"
+  window = f32[1,8]{1,0:S(5)} custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{}: (0, {})}
+  ROOT out = f32[1,8] negate(window)
+}
+
+reads {
+  read = f32[4,8] parameter(0)
+  ROOT row = f32[1,8] slice(read), slice={[0:1], [0:8]}
+}
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  p1 = pred[] parameter(1)
+  base = f32[4,8] negate(p0)
+  after = f32[4,8] exponential($0)
+  c = f32[1,8] conditional(p1, base, base), true_computation=writes, false_computation=reads, control-predecessors={after}
+  ROOT r = (f32[1,8], f32[4,8]) tuple(c, after)
+}
+)";
+  for (bool read_after : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(absl::Substitute(
+                             kHloTemplate, read_after ? "base" : "p0")));
+    ASSERT_OK(view_copy_insertion_.Run(module.get()).status());
+    EXPECT_EQ(FindInstruction(module.get(), "view")->operand(0)->opcode(),
+              read_after ? HloOpcode::kCopy : HloOpcode::kParameter);
+  }
+}
+
+// Nor may the write land in `base`, which the entry returns: no use orders the
+// caller's read of it after `c`.
+TEST_F(CopyInsertionTest, ViewWriteInABranchKeepsTheCopyOfAnEnclosingRoot) {
+  constexpr absl::string_view kHlo = R"(
+HloModule view_write_enclosing_root
+
+writes {
+  w = f32[4,8] parameter(0)
+  view = f32[1,8]{1,0:S(5)} custom-call(w), custom_call_target="view"
+  window = f32[1,8]{1,0:S(5)} custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{}: (0, {})}
+  ROOT out = f32[1,8] negate(window)
+}
+
+reads {
+  r = f32[4,8] parameter(0)
+  ROOT row = f32[1,8] slice(r), slice={[0:1], [0:8]}
+}
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  p1 = pred[] parameter(1)
+  ROOT base = f32[4,8] negate(p0)
+  c = f32[1,8] conditional(p1, base, base), true_computation=writes, false_computation=reads
+  tok = token[] after-all()
+  of = token[] outfeed(c, tok), outfeed_shape=f32[1,8]
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK(view_copy_insertion_.Run(module.get()).status());
+  EXPECT_EQ(FindInstruction(module.get(), "view")->operand(0)->opcode(),
+            HloOpcode::kCopy)
+      << module->ToString();
+}
+
+// A write in the condition would reach the body. With `n` as the next state it
+// lands in the loop state, which the body reads through its own phi; with `eb`
+// it lands in `base`, which the body reads after the condition.
+TEST_F(CopyInsertionTest, ViewWriteInAWhileConditionKeepsItsCopy) {
+  constexpr absl::string_view kHloTemplate = R"(
+HloModule view_write_in_condition
+
+cond {
+  sc = (f32[4,8], f32[4,8]) parameter(0)
+  ec = f32[4,8] get-tuple-element(sc), index=0
+  view = f32[1,8]{1,0:S(5)} custom-call(ec), custom_call_target="view"
+  window = f32[1,8]{1,0:S(5)} custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{}: (0, {})}
+  ROOT go = pred[] custom-call(window), custom_call_target="predicate"
+}
+
+body {
+  sb = (f32[4,8], f32[4,8]) parameter(0)
+  eb = f32[4,8] get-tuple-element(sb), index=0
+  n = f32[4,8] negate(eb)
+  ROOT t = (f32[4,8], f32[4,8]) tuple($0, n)
+}
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  base = f32[4,8] negate(p0)
+  init = (f32[4,8], f32[4,8]) tuple(base, p0)
+  w = (f32[4,8], f32[4,8]) while(init), condition=cond, body=body
+  g = f32[4,8] get-tuple-element(w), index=1
+  ROOT r = f32[4,8] negate(g)
+}
+)";
+  for (absl::string_view next : {"n", "eb"}) {
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(absl::Substitute(kHloTemplate, next)));
+    ASSERT_OK(view_copy_insertion_.Run(module.get()).status());
+    EXPECT_EQ(FindInstruction(module.get(), "view")->operand(0)->opcode(),
+              HloOpcode::kCopy)
+        << module->ToString();
+  }
+}
+
+// `c` puts `base` and `cw` in one buffer, so eliding `cw` only moves its uses;
+// the orders its view write relies on are still pinned, at `c` for `pre`.
+TEST_F(CopyInsertionTest, ViewWriteInOneBufferIsPinned) {
+  constexpr absl::string_view kHlo = R"(
+HloModule view_write_one_buffer, is_scheduled=true
+
+reads {
+  pr = f32[4,8] parameter(0)
+  ROOT y = f32[4,8] custom-call(pr), custom_call_target="write", output_to_operand_aliasing={{}: (0, {})}
+}
+
+writes {
+  pw = f32[4,8] parameter(0)
+  r = f32[4,8] exponential(pw)
+  cw = f32[4,8] copy(pw)
+  view = f32[1,8]{1,0:S(5)} custom-call(cw), custom_call_target="view"
+  window = f32[1,8]{1,0:S(5)} custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{}: (0, {})}
+  c0 = s32[] constant(0)
+  ROOT dus = f32[4,8] dynamic-update-slice(cw, window, c0, c0)
+}
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  p1 = pred[] parameter(1)
+  base = f32[4,8] negate(p0)
+  pre = f32[4,8] exponential(base)
+  c = f32[4,8] conditional(p1, base, base), true_computation=reads, false_computation=writes
+  ROOT t = (f32[4,8], f32[4,8]) tuple(c, pre)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK(view_copy_insertion_.RemoveUnnecessaryCopies(
+      module.get(), /*execution_threads=*/{},
+      /*insert_post_scheduling_control_dependencies=*/true));
+  EXPECT_THAT(FindInstruction(module.get(), "window")->control_predecessors(),
+              ::testing::Contains(FindInstruction(module.get(), "r")))
+      << module->ToString();
+  EXPECT_THAT(FindInstruction(module.get(), "c")->control_predecessors(),
+              ::testing::Contains(FindInstruction(module.get(), "pre")))
+      << module->ToString();
+}
+
+// A write through a view may not land in a root, which no use orders it
+// against: in `y` through its copy `x`, or in `c`, a root copy of `x`.
+TEST_F(CopyInsertionTest, ViewWriteKeepsCopiesOfRoots) {
+  constexpr absl::string_view kHloTemplate = R"(
+HloModule view_write_root, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[4,8] parameter(0)
+  $0
+  view = f32[1,8]{1,0:S(5)} custom-call(x), custom_call_target="view"
+  writer = f32[1,8]{1,0:S(5)} custom-call(view), custom_call_target="write_through_view", output_to_operand_aliasing={{}: (0, {})}
+}
+)";
+  for (absl::string_view values :
+       {"ROOT y = f32[4,8] negate(p0)\n  x = f32[4,8] copy(y)",
+        "x = f32[4,8] negate(p0)\n  ROOT c = f32[4,8] copy(x)"}) {
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(absl::Substitute(kHloTemplate, values)));
+    ASSERT_OK(view_copy_insertion_.RemoveUnnecessaryCopies(module.get()));
+    EXPECT_NE(FindInstruction(module.get(), "view")->operand(0),
+              module->entry_computation()->root_instruction())
+        << module->ToString();
   }
 }
 
