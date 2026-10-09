@@ -164,6 +164,7 @@ jobs:
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
+            --test_env=ROCPROFILER_LOG_LEVEL=info --test_output=streamed \
             --build_event_json_file=xla_single_gpu_build_events.json \
             -- \
             //xla/service/gpu/model:hlo_op_profiler_test
