@@ -20,14 +20,18 @@ limitations under the License.
 
 #include "absl/status/status_macros.h"
 #include "absl/time/time.h"
+#include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/model/combined_gpu_performance_model.h"
+#include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
-#include "xla/service/gpu/model/gpu_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 
@@ -42,13 +46,22 @@ absl::StatusOr<RecomputationEstimate> EstimateRecomputationRegion(
                               device);
   ABSL_RETURN_IF_ERROR(module.entry_computation()->Accept(&analysis));
   // Fresh caches: before/after graphs must never share instruction estimates.
-  GpuPerformanceModelOwning model(device);
+  mlir::MLIRContext context;
+  context.disableMultithreading();
+  RegisterSymbolicExprStorage(&context);
+  HloFusionAnalysisCache fusion_cache(device);
+  const auto& debug = module.config().debug_options();
+  CombinedGpuPerformanceModel model(
+      device, fusion_cache, context,
+      [](const Shape& shape) { return ShapeUtil::ByteSizeOf(shape, 8); },
+      debug.xla_gpu_experimental_enable_tiling_propagation(),
+      debug.xla_gpu_experimental_enable_same_shape_multi_output_fusion());
   RecomputationEstimate total;
   for (HloInstruction* instruction :
        module.entry_computation()->instructions()) {
     if (instruction->opcode() != HloOpcode::kFusion) continue;
-    auto estimate =
-        model.Get().EstimateRunTimeForInstruction(instruction, &analysis);
+    ABSL_ASSIGN_OR_RETURN(auto estimate, model.EstimateRunTimeForInstruction(
+                                             instruction, &analysis));
     total.duration_ns += absl::ToDoubleNanoseconds(
         estimate.exec_time + GpuPerformanceModelBase::kKernelLaunchOverhead);
     total.compute_ns += absl::ToDoubleNanoseconds(estimate.compute_time);
