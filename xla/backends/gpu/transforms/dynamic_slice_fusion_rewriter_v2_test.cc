@@ -25,6 +25,8 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -48,6 +50,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
@@ -1207,7 +1210,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
-       OutOfBoundsMemorySpaceIndicesPreserveOperands) {
+       OutOfBoundsMemorySpaceIndicesAreRejected) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
     ENTRY main {
@@ -1229,12 +1232,10 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
       std::string hlo = absl::StrReplaceAll(
           kHlo, {{"$attribute", attribute}, {"$index", index}});
       ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-      const std::string original = module->ToString();
       DynamicSliceFusionRewriterV2 rewriter(platform_id(),
                                             DefaultOptions(OptLevel::kO2));
-      ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
-      EXPECT_FALSE(changed);
-      EXPECT_EQ(module->ToString(), original);
+      EXPECT_THAT(rewriter.Run(module.get()).status(),
+                  StatusIs(absl::StatusCode::kInvalidArgument));
     }
   }
 }
