@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -203,6 +205,31 @@ TEST(CoordinationService, TestTaskHeartbeatTimeout) {
   EXPECT_THAT(service->RecordHeartbeat(0, tasks.incarnations[0]),
               StatusIs(absl::StatusCode::kAborted));
   EXPECT_THAT(service->RecordHeartbeat(1, tasks.incarnations[1]),
+              StatusIs(absl::StatusCode::kAborted));
+}
+
+std::atomic<int64_t> fake_steady_ns{0};
+
+std::chrono::steady_clock::time_point FakeSteadyNow() {
+  return std::chrono::steady_clock::time_point(
+      std::chrono::nanoseconds(fake_steady_ns.load()));
+}
+
+TEST(CoordinationService, HeartbeatTimeoutFollowsSteadyClock) {
+  CoordinationService::Config config = DefaultConfig(1);
+  CoordinationService service(tsl::Env::Default(), config, FakeSteadyNow);
+  Tasks tasks = RegisterTasks(config, service);
+
+  // Real time passes but the steady clock does not: the task stays healthy.
+  tsl::Env::Default()->SleepForMicroseconds(
+      absl::ToInt64Microseconds(2 * kHeartbeatTimeout));
+  EXPECT_THAT(service.RecordHeartbeat(0, tasks.incarnations[0]), IsOk());
+
+  // The steady clock moves past the timeout: the task is stale.
+  fake_steady_ns += absl::ToInt64Nanoseconds(2 * kHeartbeatTimeout);
+  tsl::Env::Default()->SleepForMicroseconds(
+      absl::ToInt64Microseconds(2 * kHeartbeatTimeout));
+  EXPECT_THAT(service.RecordHeartbeat(0, tasks.incarnations[0]),
               StatusIs(absl::StatusCode::kAborted));
 }
 

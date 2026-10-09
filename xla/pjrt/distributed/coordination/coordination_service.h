@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_DISTRIBUTED_COORDINATION_COORDINATION_SERVICE_H_
 #define XLA_PJRT_DISTRIBUTED_COORDINATION_COORDINATION_SERVICE_H_
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -103,7 +104,12 @@ class CoordinationService {
       std::function<void(const absl::Status&, const std::vector<TaskId>&,
                          const std::vector<IncarnationId> incarnations)>;
 
-  CoordinationService(tsl::Env* env, const Config& config);
+  // Measures heartbeat staleness; steady so wall-clock jumps are ignored.
+  using SteadyClock = std::chrono::steady_clock::time_point (*)();
+
+  CoordinationService(
+      tsl::Env* env, const Config& config,
+      SteadyClock steady_clock = std::chrono::steady_clock::now);
 
   ~CoordinationService() {
     absl::MutexLock lock(state_mu_);
@@ -469,7 +475,8 @@ class CoordinationService {
     // When task state becomes ERROR, propagate this status to other CONNECTED
     // tasks in the cluster.
 
-    explicit TaskState(TaskId task_id) : task_id_(task_id) {}
+    TaskState(TaskId task_id, SteadyClock steady_clock)
+        : task_id_(task_id), steady_clock_(steady_clock) {}
 
     xla::coordination::TaskState GetState() const { return state_; }
     absl::Status GetStatus() const { return status_; }
@@ -514,8 +521,10 @@ class CoordinationService {
     xla::coordination::TaskState state_ =
         xla::coordination::TaskState::DISCONNECTED;
     absl::Status status_;
+    const SteadyClock steady_clock_;
     absl::Mutex last_heartbeat_mu_;
-    uint64_t last_heartbeat_us_ ABSL_GUARDED_BY(last_heartbeat_mu_);
+    std::chrono::steady_clock::time_point last_heartbeat_
+        ABSL_GUARDED_BY(last_heartbeat_mu_);
     // This denotes the deadline after which we stop accepting heartbeats or
     // error polling requests from a disconnected task. This grace period
     // accounts for the lag time between the service recording the state change
@@ -567,6 +576,7 @@ class CoordinationService {
   tsl::Env& env_;
   const IncarnationId incarnation_{tsl::random::New64()};
   const Config config_;
+  const SteadyClock steady_clock_;
 
   const std::string shutdown_barrier_id_ =
       absl::StrCat("Shutdown::", incarnation_.value());

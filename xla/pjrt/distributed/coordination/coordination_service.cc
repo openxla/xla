@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -112,7 +113,7 @@ void CoordinationService::TaskState::SetConnected(
   status_ = absl::OkStatus();
   task_incarnation_ = task_incarnation;
   absl::MutexLock l(last_heartbeat_mu_);
-  last_heartbeat_us_ = tsl::Env::Default()->NowMicros();
+  last_heartbeat_ = steady_clock_();
 }
 
 void CoordinationService::TaskState::Disconnect(
@@ -140,7 +141,7 @@ absl::Status CoordinationService::TaskState::RecordHeartbeat(
   // Record heartbeat.
   if (task_incarnation_ == task_incarnation) {
     absl::MutexLock l(last_heartbeat_mu_);
-    last_heartbeat_us_ = tsl::Env::Default()->NowMicros();
+    last_heartbeat_ = steady_clock_();
     return absl::OkStatus();
   }
   // Task incarnation mismatch!
@@ -157,7 +158,9 @@ absl::Status CoordinationService::TaskState::RecordHeartbeat(
 
 int64_t CoordinationService::TaskState::TimeSinceLastHeartbeatMs() {
   absl::MutexLock l(last_heartbeat_mu_);
-  return (tsl::Env::Default()->NowMicros() - last_heartbeat_us_) / 1000;
+  return std::chrono::duration_cast<std::chrono::milliseconds>(steady_clock_() -
+                                                               last_heartbeat_)
+      .count();
 }
 
 absl::flat_hash_set<std::string>
@@ -178,8 +181,9 @@ bool CoordinationService::TaskState::IsDisconnectedBeyondGracePeriod() {
          tsl::Env::Default()->NowMicros() > disconnect_grace_period_us_;
 }
 
-CoordinationService::CoordinationService(tsl::Env* env, const Config& config)
-    : env_(*env), config_(config) {
+CoordinationService::CoordinationService(tsl::Env* env, const Config& config,
+                                         SteadyClock steady_clock)
+    : env_(*env), config_(config), steady_clock_(steady_clock) {
   LOG(INFO) << LogPrefix() << "Initializing CoordinationService";
   if (config.recoverable) {
     LOG(WARNING)
@@ -190,7 +194,7 @@ CoordinationService::CoordinationService(tsl::Env* env, const Config& config)
            "`WaitAtBarrier` explicitly at the end of the program.";
   }
   for (int i = 0; i < config.num_tasks; ++i) {
-    cluster_state_.emplace(i, std::make_unique<TaskState>(i));
+    cluster_state_.emplace(i, std::make_unique<TaskState>(i, steady_clock_));
   }
   StartCheckStaleness();
 }
