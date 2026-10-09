@@ -17,10 +17,11 @@ limitations under the License.
 #define XLA_HLO_TRANSLATE_MHLO_TO_HLO_STACK_FRAME_INDEX_BUILDER_H_
 
 #include <map>
-#include <string>
 #include <tuple>
+#include <utility>
 
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/DenseMap.h"
 #include "mlir/IR/Location.h"
 #include "xla/service/hlo.pb.h"
 
@@ -31,21 +32,20 @@ class StackFrameIndexBuilder {
 
   xla::StackFrameIndexProto Build() const;
 
-  struct AddStackFrameResult {
-    int last_frame_id;
-    std::string last_frame_file;
-    int last_frame_line;
-    int last_frame_end_line;
-    int last_frame_column;
-    int last_frame_end_column;
-  };
-
-  AddStackFrameResult AddCallStackAndGetFirstFrameId(
-      const mlir::Location& root_loc);
+  // Indexes the call stack encoded in root_loc and returns the id of its
+  // innermost frame, kInvalidIndex if it holds no frame.
+  int AddCallStackAndGetFirstFrameId(const mlir::Location& root_loc);
 
  private:
   int AddStackFrameLocation(const mlir::NameLoc& name_location,
                             int parent_frame_id);
+
+  // Adds the frames of the call stack encoded in loc on top of parent_frame_id,
+  // outermost first, and returns the id of the innermost one (parent_frame_id
+  // if loc holds no frame).
+  int AddFrames(mlir::Location loc, int parent_frame_id);
+
+  friend class StackFrameIndexBuilderTestPeer;
 
   xla::StackFrameIndexProto indexes_;
 
@@ -53,6 +53,10 @@ class StackFrameIndexBuilder {
   std::map<absl::string_view, int> file_name_to_id_;
   std::map<std::tuple<int, int, int, int>, int> file_location_to_id_;
   std::map<std::tuple<int, int>, int> frame_to_id_;
+
+  // Innermost frame id of every (location, parent frame id) pair walked so
+  // far. Ops share call stacks and callers, so each pair is indexed once.
+  llvm::DenseMap<std::pair<mlir::Location, int>, int> call_stack_to_frame_id_;
 };
 }  // namespace mlir
 
