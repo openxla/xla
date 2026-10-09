@@ -95,70 +95,35 @@ class GemmFusionTestBase : public HloHardwareIndependentTestBase {
   }
 };
 
-class GemmFusionTest : public GemmFusionTestBase,
-                       public ::testing::WithParamInterface<bool> {
- public:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = GemmFusionTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        GetParam());
-    return debug_options;
-  }
-};
+using GemmFusionTest = GemmFusionTestBase;
 
-// While we launch, create a parameterized test to test all combinations. This
-// test class has 2 parameters:
-// 1. Whether to use Gemm Fusion V1 or V2.
-// 2. Whether to use symbolic analysis or tiling propagation.
-class GemmFusionTestVersioned
-    : public GemmFusionTestBase,
-      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
+// While we launch, create a parameterized test to test both Gemm Fusion V1 and
+// V2.
+class GemmFusionTestVersioned : public GemmFusionTestBase,
+                                public ::testing::WithParamInterface<bool> {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmFusionTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_experimental_gemm_fusion_v2(
-        std::get<0>(GetParam()));
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        std::get<1>(GetParam()));
+    debug_options.set_xla_gpu_experimental_gemm_fusion_v2(GetParam());
     return debug_options;
   }
 };
 
 // Fixture for tests that are only meant to work for the new implementation
 // of dot fusion.
-class GemmFusionTestV2 : public GemmFusionTestBase,
-                         public ::testing::WithParamInterface<bool> {
+class GemmFusionTestV2 : public GemmFusionTestBase {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmFusionTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_experimental_gemm_fusion_v2(true);
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        GetParam());
     return debug_options;
   }
 };
 
 INSTANTIATE_TEST_SUITE_P(
-    GemmFusionTestVersioned, GemmFusionTestVersioned,
-    ::testing::Combine(::testing::Bool(), ::testing::Bool()),
+    GemmFusionTestVersioned, GemmFusionTestVersioned, ::testing::Bool(),
     [](const ::testing::TestParamInfo<GemmFusionTestVersioned::ParamType>&
-           info) {
-      return absl::StrCat(
-          std::get<0>(info.param) ? "V2" : "V1", "_",
-          std::get<1>(info.param) ? "TilingPropagation" : "SymbolicAnalysis");
-    });
-
-INSTANTIATE_TEST_SUITE_P(
-    GemmFusionTest, GemmFusionTest, ::testing::Bool(),
-    [](const ::testing::TestParamInfo<GemmFusionTest::ParamType>& info) {
-      return info.param ? "TilingPropagation" : "SymbolicAnalysis";
-    });
-
-INSTANTIATE_TEST_SUITE_P(
-    GemmFusionTestV2, GemmFusionTestV2, ::testing::Bool(),
-    [](const ::testing::TestParamInfo<GemmFusionTestV2::ParamType>& info) {
-      return info.param ? "TilingPropagation" : "SymbolicAnalysis";
-    });
+           info) { return info.param ? "V2" : "V1"; });
 
 TEST_P(GemmFusionTestVersioned, TransposeSubdimensionGroup) {
   // This HLO is artificial because unnecessary reshapes get optimized
@@ -182,7 +147,7 @@ ENTRY e {
               GmockMatch(m::Fusion(m::Op(), m::Op())));
 }
 
-TEST_P(GemmFusionTestV2, BitcastIsHoistedAboveElementwise) {
+TEST_F(GemmFusionTestV2, BitcastIsHoistedAboveElementwise) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -200,7 +165,7 @@ ENTRY e {
       GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, BitcastIsHoistedAboveMultiOperandElementwise) {
+TEST_F(GemmFusionTestV2, BitcastIsHoistedAboveMultiOperandElementwise) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -219,7 +184,7 @@ ENTRY e {
                                    m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, BitcastIsHoistedAboveBroadcast) {
+TEST_F(GemmFusionTestV2, BitcastIsHoistedAboveBroadcast) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -237,7 +202,7 @@ ENTRY e {
       GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, BitcastIsHoistedAboveTranspose) {
+TEST_F(GemmFusionTestV2, BitcastIsHoistedAboveTranspose) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -256,7 +221,7 @@ ENTRY e {
       GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, BitcastSinksPastElementwise) {
+TEST_F(GemmFusionTestV2, BitcastSinksPastElementwise) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -273,7 +238,7 @@ ENTRY e {
               GmockMatch(m::Bitcast(m::Fusion())));
 }
 
-TEST_P(GemmFusionTestV2, MultipleBitcastsSink) {
+TEST_F(GemmFusionTestV2, MultipleBitcastsSink) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -296,7 +261,7 @@ ENTRY e {
 )");
 }
 
-TEST_P(GemmFusionTestV2, BitcastSinksPastBroadcast) {
+TEST_F(GemmFusionTestV2, BitcastSinksPastBroadcast) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -313,7 +278,7 @@ ENTRY e {
               GmockMatch(m::Bitcast(m::Fusion())));
 }
 
-TEST_P(GemmFusionTestV2, BitcastSinksPastTranspose) {
+TEST_F(GemmFusionTestV2, BitcastSinksPastTranspose) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -331,7 +296,7 @@ ENTRY e {
               GmockMatch(m::Bitcast(m::Fusion())));
 }
 
-TEST_P(GemmFusionTestV2, UnhoistedBitcastCanStillBeFused) {
+TEST_F(GemmFusionTestV2, UnhoistedBitcastCanStillBeFused) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -349,7 +314,7 @@ ENTRY e {
               GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, UnhoistedBitcastIsNotFusedAtEdge) {
+TEST_F(GemmFusionTestV2, UnhoistedBitcastIsNotFusedAtEdge) {
   // The bitcast/reshape cannot be hoisted above the concat, but all are
   // included in the search space. When it cannot tile the concat, the fusion
   // cuts off before the concat. We need to make sure the bitcast is on the
@@ -375,7 +340,7 @@ ENTRY e {
       GmockMatch(m::Fusion(m::Bitcast(m::Concatenate()), m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, UnsunkBitcastIsNotFusedAtRoot) {
+TEST_F(GemmFusionTestV2, UnsunkBitcastIsNotFusedAtRoot) {
   // The bitcast/reshape cannot be sunk below the concat, but all are included
   // in the search space. When it cannot tile the reshape, and cuts off the
   // fusion between the bitcast & the reshape. We need to make sure the bitcast
@@ -401,7 +366,7 @@ ENTRY e {
                                         m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, PartiallySunkBitcastIsNotFusedAtRoot) {
+TEST_F(GemmFusionTestV2, PartiallySunkBitcastIsNotFusedAtRoot) {
   // The bitcast/reshape cannot be sunk below the concat, but all are included
   // in the search space. When it cannot tile the reshape, the fusion cuts off
   // between the bitcast & the reshape. We need to make sure the bitcast
@@ -428,7 +393,7 @@ ENTRY e {
                                         m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, BitcastOperandOfUserOfDotIsHoisted) {
+TEST_F(GemmFusionTestV2, BitcastOperandOfUserOfDotIsHoisted) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -448,7 +413,7 @@ ENTRY e {
                                    m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, BitcastIsBothSunkAndHoisted) {
+TEST_F(GemmFusionTestV2, BitcastIsBothSunkAndHoisted) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -468,7 +433,7 @@ ENTRY e {
                                       m::Parameter(), m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, BitcastIsHoistedAboveConstants) {
+TEST_F(GemmFusionTestV2, BitcastIsHoistedAboveConstants) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -499,7 +464,7 @@ ENTRY e {
 )");
 }
 
-TEST_P(GemmFusionTestV2, DoNotHoistBitcastOverParameterWithNonBitcastUsers) {
+TEST_F(GemmFusionTestV2, DoNotHoistBitcastOverParameterWithNonBitcastUsers) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 ENTRY e {
   p0 = bf16[32,12] parameter(0)
@@ -514,7 +479,7 @@ ENTRY e {
               GmockMatch(m::Fusion(m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, HoistBitcastOverMultipleEqualBitcasts) {
+TEST_F(GemmFusionTestV2, HoistBitcastOverMultipleEqualBitcasts) {
   // This is an example of when a single bitcast turns into 2 different bitcasts
   // due to hoisting over a binary operation, but then they come from the same
   // parameter, and should still get hoisted.
@@ -537,7 +502,7 @@ ENTRY e {
                                    m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, HoistBitcastOverParameterWithMultipleBitcastUsers) {
+TEST_F(GemmFusionTestV2, HoistBitcastOverParameterWithMultipleBitcastUsers) {
   // Regression test for b/524943134.
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -557,7 +522,7 @@ ENTRY e {
                                    m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, HoistBitcastAcrossTransposeWithTrivialDimension) {
+TEST_F(GemmFusionTestV2, HoistBitcastAcrossTransposeWithTrivialDimension) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 ENTRY e {
   p0 = f32[42,1]{1,0} parameter(0)
@@ -624,7 +589,7 @@ ENTRY e {
       GmockMatch(m::Fusion(ParamOrBitcastParam(), ParamOrBitcastParam())));
 }
 
-TEST_P(GemmFusionTest, DoNotTriggerOnUnsupportedOutputConversions) {
+TEST_F(GemmFusionTest, DoNotTriggerOnUnsupportedOutputConversions) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -748,7 +713,7 @@ ENTRY e {
 }
 
 // TODO(b/417172838): support dynamic slice op.
-TEST_P(GemmFusionTest, DISABLED_DynamicSliceIsFused) {
+TEST_F(GemmFusionTest, DISABLED_DynamicSliceIsFused) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -770,7 +735,7 @@ ENTRY e {
 }
 
 // TODO(b/417172838): support dynamic slice op.
-TEST_P(GemmFusionTest, DISABLED_DynamicSlicesAreFusedEvenIfTheyShareIndices) {
+TEST_F(GemmFusionTest, DISABLED_DynamicSlicesAreFusedEvenIfTheyShareIndices) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -799,7 +764,7 @@ ENTRY e {
 }
 
 // TODO(b/417172838): support dynamic slice op.
-TEST_P(GemmFusionTest, DISABLED_DoNotFuseDynamicSliceOfNonMajorFragments) {
+TEST_F(GemmFusionTest, DISABLED_DoNotFuseDynamicSliceOfNonMajorFragments) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -818,7 +783,7 @@ ENTRY e {
 }
 
 // TODO(b/417172838): support dynamic slice op.
-TEST_P(GemmFusionTest,
+TEST_F(GemmFusionTest,
        DISABLED_CanFuseDynamicSliceOfContractingDimIfItIsMajor) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
@@ -838,7 +803,7 @@ ENTRY e {
                                     m::Constant(), m::Constant()))));
 }
 
-TEST_P(GemmFusionTest, SliceToDegenerateIsSkipped) {
+TEST_F(GemmFusionTest, SliceToDegenerateIsSkipped) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -961,7 +926,7 @@ ENTRY e {
               GmockMatch(m::Fusion(m::Parameter(), ParamOrBitcastParam())));
 }
 
-TEST_P(GemmFusionTest, DoNotFuseIncompatibleDimensionSplits) {
+TEST_F(GemmFusionTest, DoNotFuseIncompatibleDimensionSplits) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -1102,7 +1067,7 @@ ENTRY e {
             TritonFusionAnalysis::kMaxParameterPerDotOperand * 2);
 }
 
-TEST_P(GemmFusionTest,
+TEST_F(GemmFusionTest,
        DoNotFuseTooManyParametersWhenAnInstructionWouldAddMultipleParameters) {
   static_assert(TritonFusionAnalysis::kMaxParameterPerDotOperand == 4,
                 "We have to update this test.");
@@ -1191,7 +1156,7 @@ ENTRY e {
   // ~VerifiedHloModule() will verify the module.
 }
 
-TEST_P(GemmFusionTest, EachScopeIsFusedToASeparateSubgraph) {
+TEST_F(GemmFusionTest, EachScopeIsFusedToASeparateSubgraph) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -1226,7 +1191,7 @@ CHECK-SAME: __triton_gemm
 // way, so the same parameter node is reused for them.
 // The reuse happens per "operand fusion", so the add of the LHS and RHS still
 // use different nodes.
-TEST_P(GemmFusionTest, ParamNodesAreReusedIfTheyHaveTheSameIterSpec) {
+TEST_F(GemmFusionTest, ParamNodesAreReusedIfTheyHaveTheSameIterSpec) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -1255,7 +1220,7 @@ CHECK-SAME: __triton_gemm
 
 // NEGATE has the same iteration spec at both usages, so the node is reused
 // (implying that P0 is also reused).
-TEST_P(GemmFusionTest, NonParamNodesAreReusedIfTheyHaveTheSameIterSpec) {
+TEST_F(GemmFusionTest, NonParamNodesAreReusedIfTheyHaveTheSameIterSpec) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -1289,7 +1254,7 @@ CHECK-SAME: __triton_gemm
 
 // The direct read of the input and the transposed read of the input have
 // different iteration specs, so we don't reuse the node.
-TEST_P(GemmFusionTest, NodesAreNotReusedIfTheyHaveDifferentIterSpecs) {
+TEST_F(GemmFusionTest, NodesAreNotReusedIfTheyHaveDifferentIterSpecs) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -1421,7 +1386,7 @@ ENTRY e {
             1);
 }
 
-TEST_P(GemmFusionTest, ParameterUsedNonElementwiseTwiceIsFusedOnBothPaths) {
+TEST_F(GemmFusionTest, ParameterUsedNonElementwiseTwiceIsFusedOnBothPaths) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 HloModule t
@@ -1441,7 +1406,7 @@ ENTRY e {
       GmockMatch((m::Fusion(m::Parameter(), m::Parameter(), m::Parameter()))));
 }
 
-TEST_P(GemmFusionTest,
+TEST_F(GemmFusionTest,
        ComputationParameterWithMultipleUsersIsNotTrivialToFuse) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
@@ -1635,7 +1600,7 @@ e {
                                    GmockMatch(m::Parameter())));
 }
 
-TEST_P(GemmFusionTest, ConcatenationOfBatchIsNotFused) {
+TEST_F(GemmFusionTest, ConcatenationOfBatchIsNotFused) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 e {
@@ -1653,7 +1618,7 @@ e {
               GmockMatch((m::Fusion(m::Concatenate(), m::Parameter()))));
 }
 
-TEST_P(GemmFusionTest,
+TEST_F(GemmFusionTest,
        DifferentConcatenationOfSameParametersIsFusedViaNodeDuplication) {
   // It means that the same input is passed to the fusion multiple times and
   // it's read differently for each.
@@ -1759,7 +1724,7 @@ e {
                                         m::Bitcast(m::GetTupleElement()))))));
 }
 
-TEST_P(GemmFusionTest, DoNotFuseNonProfitableDot) {
+TEST_F(GemmFusionTest, DoNotFuseNonProfitableDot) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -1784,14 +1749,7 @@ class SmallDotGemmFusionTest : public GemmFusionTest {
   }
 };
 
-INSTANTIATE_TEST_SUITE_P(
-    SmallDotGemmFusionTest, SmallDotGemmFusionTest, ::testing::Bool(),
-    [](const ::testing::TestParamInfo<SmallDotGemmFusionTest::ParamType>&
-           info) {
-      return info.param ? "TilingPropagation" : "SymbolicAnalysis";
-    });
-
-TEST_P(SmallDotGemmFusionTest, SkipSmallMatrixMultiplicationRewrite) {
+TEST_F(SmallDotGemmFusionTest, SkipSmallMatrixMultiplicationRewrite) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -1814,7 +1772,7 @@ ENTRY e {
 })");
 }
 
-TEST_P(SmallDotGemmFusionTest, LargeMatrixMultiplicationIsRewritten) {
+TEST_F(SmallDotGemmFusionTest, LargeMatrixMultiplicationIsRewritten) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2018,7 +1976,7 @@ TEST_P(GemmFusionTestVersioned, Int4WithMinorReshapedBatchDimIsNotRewritten) {
   EXPECT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(GemmFusionTestV2,
+TEST_F(GemmFusionTestV2,
        Int4WithMinorReshapedBatchAndNonContractingDimIsRewritten) {
   constexpr absl::string_view kInt4Dot = R"(
     ENTRY main {
@@ -2038,7 +1996,7 @@ TEST_P(GemmFusionTestV2,
   EXPECT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(GemmFusionTestV2,
+TEST_F(GemmFusionTestV2,
        Int4WithUntileableMinorNonContractingDimIsNotRewritten) {
   constexpr absl::string_view kInt4Dot = R"(
     ENTRY main {
@@ -2056,7 +2014,7 @@ TEST_P(GemmFusionTestV2,
   EXPECT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(GemmFusionTest, ScaledDotIsFused) {
+TEST_F(GemmFusionTest, ScaledDotIsFused) {
   constexpr absl::string_view kHloText = R"(
     HloModule ScaledDotIsFused
 
@@ -2259,14 +2217,9 @@ ENTRY e {
 using GemmFusionProfitabilityTest = GemmFusionTestVersioned;
 
 INSTANTIATE_TEST_SUITE_P(
-    GemmFusionProfitabilityTest, GemmFusionProfitabilityTest,
-    ::testing::Combine(::testing::Bool(), ::testing::Bool()),
+    GemmFusionProfitabilityTest, GemmFusionProfitabilityTest, ::testing::Bool(),
     [](const ::testing::TestParamInfo<GemmFusionProfitabilityTest::ParamType>&
-           info) {
-      return std::string(std::get<0>(info.param) ? "V2_" : "V1_") +
-             std::string(std::get<1>(info.param) ? "TilingPropagation"
-                                                 : "SymbolicAnalysis");
-    });
+           info) { return info.param ? "V2" : "V1"; });
 
 TEST_P(GemmFusionProfitabilityTest, UnprofitableOperand) {
   // Tests that a large elementwise operation with multiple users is not fused.
@@ -2390,7 +2343,7 @@ ENTRY e {
 
 // Regression test for a crash/verifier failure when hoisting type-changing
 // bitcasts.
-TEST_P(GemmFusionTestV2, TypeChangingBitcastIsNotHoisted) {
+TEST_F(GemmFusionTestV2, TypeChangingBitcastIsNotHoisted) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2506,7 +2459,7 @@ ENTRY main {
                   GmockMatch(TransposeOrBitcastTranspose())));
 }
 
-TEST_P(GemmFusionTestV2, AllowTransposeSwappingBatch) {
+TEST_F(GemmFusionTestV2, AllowTransposeSwappingBatch) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 HloModule module
@@ -2629,7 +2582,7 @@ ENTRY e {
               GmockMatch(TransposeOrTransposeBitcast(m::Fusion())));
 }
 
-TEST_P(GemmFusionTestV2, AllowEpilogueTransposeWithSwapsWithinDimensionGroup) {
+TEST_F(GemmFusionTestV2, AllowEpilogueTransposeWithSwapsWithinDimensionGroup) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2649,7 +2602,7 @@ ENTRY e {
               GmockMatch(m::Fusion()));
 }
 
-TEST_P(GemmFusionTestV2,
+TEST_F(GemmFusionTestV2,
        DoNotFuseNonContractingTransposeIfProducerCanAbsorbIt) {
   // The transpose only reorders the sub-dimensions of the LHS non-contracting
   // dimension, and its producer (a normalization) is not fused into the GEMM.
@@ -2688,7 +2641,7 @@ ENTRY e {
                   m::Bitcast(m::Transpose(m::Multiply()))))));
 }
 
-TEST_P(GemmFusionTestV2, FuseNonContractingTransposeIfProducerIsFused) {
+TEST_F(GemmFusionTestV2, FuseNonContractingTransposeIfProducerIsFused) {
   // The producer (a multiply by a broadcast parameter) is fused into the GEMM,
   // so the transpose is fused as well.
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
@@ -2712,7 +2665,7 @@ ENTRY e {
   EXPECT_THAT(fusion->operands(), Each(GmockMatch(ParamOrBitcastParam())));
 }
 
-TEST_P(GemmFusionTestV2,
+TEST_F(GemmFusionTestV2,
        FuseTransposeKeepingNonContractingDimensionContiguous) {
   // The transpose only swaps the batch and non-contracting dimensions.
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
@@ -2739,7 +2692,7 @@ ENTRY e {
                                    GmockMatch(m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, FuseNonContractingTransposeMovingMinorDimension) {
+TEST_F(GemmFusionTestV2, FuseNonContractingTransposeMovingMinorDimension) {
   // The contracting dimension is interleaved between the two parts of the
   // non-contracting dimension, but the transpose also moves the minor
   // dimension, so it would not be free to fuse into the producer.
@@ -2767,7 +2720,7 @@ ENTRY e {
                                    GmockMatch(m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, ConcatResetTrackerCrash) {
+TEST_F(GemmFusionTestV2, ConcatResetTrackerCrash) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2874,7 +2827,7 @@ ENTRY e {
       GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2,
+TEST_F(GemmFusionTestV2,
        DoNotFuseTransposeAboveBroadcastWithSwappedRhsNonContractingDimensions) {
   // The RHS non-contracting dimensions are swapped between the broadcast and
   // the dot (allowed because the minor dimension is coalesced). Their order
@@ -2907,7 +2860,7 @@ ENTRY e {
               Contains(GmockMatch(TransposeOrBitcastTranspose())));
 }
 
-TEST_P(GemmFusionTestV2, HoistBitcastOverTypeConvertingBitcast) {
+TEST_F(GemmFusionTestV2, HoistBitcastOverTypeConvertingBitcast) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2939,7 +2892,7 @@ ENTRY e {
 )");
 }
 
-TEST_P(GemmFusionTestV2, DoNotFuseConcatOnContractingDimension) {
+TEST_F(GemmFusionTestV2, DoNotFuseConcatOnContractingDimension) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2957,7 +2910,7 @@ ENTRY e {
               GmockMatch(m::Fusion(m::Concatenate(), m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, FuseConcatOnNonContractingDimension) {
+TEST_F(GemmFusionTestV2, FuseConcatOnNonContractingDimension) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2976,7 +2929,7 @@ ENTRY e {
       GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())));
 }
 
-TEST_P(GemmFusionTestV2, DoNotFuseIndivisibleConcat) {
+TEST_F(GemmFusionTestV2, DoNotFuseIndivisibleConcat) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -2998,10 +2951,7 @@ ENTRY e {
 // [3, 8] pair of dimensions, where the dimension of size 3 is the major one.
 // Fusing the transpose results in a fusion that is tileable in theory, but not
 // with any of the power-of-2 tile sizes that we use (b/559517319).
-TEST_P(GemmFusionTestV2, DoNotFuseIfNoDefaultTilingSatisfiesConstraints) {
-  if (!GetParam()) {
-    GTEST_SKIP() << "Only fixed for tiling propagation.";
-  }
+TEST_F(GemmFusionTestV2, DoNotFuseIfNoDefaultTilingSatisfiesConstraints) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -3023,7 +2973,7 @@ ENTRY e {
                            m::Bitcast(m::Parameter()))));
 }
 
-TEST_P(GemmFusionTestV2, DoNotFuseConcatenateUser) {
+TEST_F(GemmFusionTestV2, DoNotFuseConcatenateUser) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 HloModule m
