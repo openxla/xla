@@ -264,7 +264,6 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
-        "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
         "//xla/backends/gpu/runtime:thunk_executor",
@@ -308,7 +307,6 @@ cc_library(
         "//xla/pjrt/se:local_device_state",
         "//xla/pjrt/se:pjrt_stream_executor_client",
         "//xla/runtime:device_id",
-        "//xla/service:device_assignment",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service/gpu:gpu_executable_run_options",
