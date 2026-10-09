@@ -2090,10 +2090,8 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
   return true;
 }
 
-absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
-    const HloBuffer* hlo_buffer, bool is_thread_local,
-    BufferAllocationsManagerForComputationsWithoutOrdering* allocation_manager,
-    BufferAssignment* assignment) {
+absl::StatusOr<bool> BufferAssigner::AssignViewOrConstantBuffer(
+    const HloBuffer* hlo_buffer, BufferAssignment* assignment) {
   // "View" buffers are pointer stand-ins that alias into another allocation, so
   // they get no allocation of their own.
   if (opts_.dus_view_color.has_value()) {
@@ -2104,13 +2102,13 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
     }
   }
 
-  const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->instruction()->opcode() == HloOpcode::kConstant) {
       if (opts_.allocate_buffers_for_constants) {
         ABSL_ASSIGN_OR_RETURN(
             BufferAllocation * allocation,
-            assignment->NewAllocation(*hlo_buffer, buffer_size));
+            assignment->NewAllocation(*hlo_buffer,
+                                      assignment->HloBufferSize(*hlo_buffer)));
         allocation->set_constant(true);
         VLOG(3) << "New allocation #" << allocation->index() << " for constant "
                 << *hlo_buffer << " value ptr: " << value;
@@ -2118,7 +2116,21 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
       VLOG(3) << "Not allocating buffer for constant";
       return true;
     }
+  }
+  return false;
+}
 
+absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
+    const HloBuffer* hlo_buffer,
+    BufferAllocationsManagerForComputationsWithoutOrdering* allocation_manager,
+    BufferAssignment* assignment) {
+  ABSL_ASSIGN_OR_RETURN(bool handled,
+                        AssignViewOrConstantBuffer(hlo_buffer, assignment));
+  if (handled) {
+    return true;
+  }
+
+  for (const HloValue* value : hlo_buffer->values()) {
     const HloInstruction* instruction = value->instruction();
     const bool is_entry_parameter =
         instruction->opcode() == HloOpcode::kParameter &&
@@ -2134,7 +2146,8 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
       // callers.
       ABSL_ASSIGN_OR_RETURN(
           BufferAllocation * allocation,
-          assignment->NewAllocation(*hlo_buffer, buffer_size));
+          assignment->NewAllocation(*hlo_buffer,
+                                    assignment->HloBufferSize(*hlo_buffer)));
 
       allocation->set_entry_computation_parameter(
           instruction->parameter_number(), value->index(), parameter_has_alias);
@@ -2148,20 +2161,12 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
     }
   }
 
-  if (is_thread_local) {
-    ABSL_ASSIGN_OR_RETURN(BufferAllocation * allocation,
-                          assignment->NewAllocation(*hlo_buffer, buffer_size));
-    allocation->set_is_thread_local(true);
-    VLOG(3) << "New allocation #" << allocation->index()
-            << " for thread-local: " << *hlo_buffer;
-    return true;
-  }
-
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->shape().IsTuple()) {
       ABSL_ASSIGN_OR_RETURN(
           BufferAllocation * allocation,
-          assignment->NewAllocation(*hlo_buffer, buffer_size));
+          assignment->NewAllocation(*hlo_buffer,
+                                    assignment->HloBufferSize(*hlo_buffer)));
       allocation->set_is_tuple(true);
       VLOG(3) << "New allocation #" << allocation->index()
               << " for tuple-shaped buffer: " << *hlo_buffer;
@@ -2199,8 +2204,8 @@ bool BufferAssigner::DelayTemporaryBufferAssignment(
       // decide to create a new allocation, to ensure we've exhausted all
       // the buffer re-use cases above.
       //
-      // Entry parameters and thread local buffers were already handled
-      // earlier in this loop iteration.  See
+      // Special buffers (entry parameters, constants, tuples) were already
+      // handled earlier in this loop iteration.  See
       // BufferAllocation::IsPreallocatedTempBuffer for the definition of
       // temp buffers.
       (*buffers_to_assign_sequentially)[computation].insert(hlo_value);
@@ -2212,7 +2217,7 @@ bool BufferAssigner::DelayTemporaryBufferAssignment(
 }
 
 absl::Status BufferAssigner::AssignSingleHloBuffer(
-    const HloBuffer* hlo_buffer, bool is_thread_local,
+    const HloBuffer* hlo_buffer,
     absl::flat_hash_map<const HloComputation*,
                         absl::flat_hash_set<const HloValue*>>*
         buffers_to_assign_sequentially,
@@ -2267,9 +2272,42 @@ absl::Status BufferAssigner::AssignSingleHloBuffer(
   return absl::OkStatus();
 }
 
-absl::Status BufferAssigner::AssignBuffersForComputations(
+absl::Status BufferAssigner::AssignBuffersForThreadLocalComputations(
     const std::vector<const HloComputation*>& computations,
-    bool is_thread_local,
+    BufferAssignment* assignment) {
+  if (computations.empty()) {
+    return absl::OkStatus();
+  }
+
+  const HloAliasAnalysis& alias_analysis = assignment->alias_analysis();
+  absl::flat_hash_set<const HloComputation*> computations_set(
+      computations.begin(), computations.end());
+
+  for (const HloBuffer& buffer : alias_analysis.buffers()) {
+    TF_RET_CHECK(!buffer.values().empty());
+    const HloComputation* comp = buffer.values()[0]->instruction()->parent();
+    if (!computations_set.contains(comp) || assignment->HasAllocation(buffer)) {
+      continue;
+    }
+
+    ABSL_ASSIGN_OR_RETURN(bool handled,
+                          AssignViewOrConstantBuffer(&buffer, assignment));
+    if (handled) {
+      continue;
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        BufferAllocation * allocation,
+        assignment->NewAllocation(buffer, assignment->HloBufferSize(buffer)));
+    allocation->set_is_thread_local(true);
+    VLOG(3) << "New allocation #" << allocation->index()
+            << " for thread-local: " << buffer;
+  }
+  return absl::OkStatus();
+}
+
+absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
+    const std::vector<const HloComputation*>& computations,
     absl::flat_hash_map<const HloComputation*,
                         absl::flat_hash_set<const HloValue*>>*
         buffers_to_assign_sequentially,
@@ -2279,6 +2317,7 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
   if (computations.empty()) {
     return absl::OkStatus();
   }
+  TF_RET_CHECK(buffers_to_assign_sequentially != nullptr);
   std::vector<const HloBuffer*> sorted_buffers;
 
   // First assign the preset allocations.
@@ -2330,7 +2369,7 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
     const HloInstructionSequence* instruction_sequence =
         assignment->hlo_ordering().SequentialOrder(*computation);
     const bool has_sequential_order = instruction_sequence != nullptr;
-    if (has_sequential_order && buffers_to_assign_sequentially != nullptr) {
+    if (has_sequential_order) {
       // Every sequential computation must get an entry in the
       // buffers_to_assign_sequentially map, even if we end up with an empty
       // set of buffers. This ensures we can correctly determine whether to
@@ -2414,12 +2453,12 @@ absl::Status BufferAssigner::AssignBuffersForComputations(
         get_manager(color);
 
     ABSL_ASSIGN_OR_RETURN(
-        bool special, AssignSpecialHloBuffer(buffer, is_thread_local,
-                                             allocation_manager, assignment));
+        bool special,
+        AssignSpecialHloBuffer(buffer, allocation_manager, assignment));
     if (!special) {
-      ABSL_RETURN_IF_ERROR(AssignSingleHloBuffer(
-          buffer, is_thread_local, buffers_to_assign_sequentially,
-          allocation_manager, assignment));
+      ABSL_RETURN_IF_ERROR(
+          AssignSingleHloBuffer(buffer, buffers_to_assign_sequentially,
+                                allocation_manager, assignment));
     }
   }
   return absl::OkStatus();
@@ -3317,9 +3356,9 @@ absl::Status BufferAssigner::RunAssignBuffers(
   // 'buffers_to_assign_sequentially'.
   flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>
       buffers_to_assign_sequentially;
-  ABSL_RETURN_IF_ERROR(AssignBuffersForComputations(
-      global_computations, /*is_thread_local=*/false,
-      &buffers_to_assign_sequentially, assignment, non_sequential_algorithm));
+  ABSL_RETURN_IF_ERROR(AssignBuffersForGlobalComputations(
+      global_computations, &buffers_to_assign_sequentially, assignment,
+      non_sequential_algorithm));
   // Assign buffers with sequential ordering, if any. If all global
   // computations are sequential, we can run heap simulation on the whole
   // module, which reduces memory usage.
@@ -3348,11 +3387,8 @@ absl::Status BufferAssigner::RunAssignBuffers(
     thread_local_computations_no_fusion.push_back(computation);
   }
 
-  ABSL_RETURN_IF_ERROR(AssignBuffersForComputations(
-      thread_local_computations_no_fusion, /*is_thread_local=*/true,
-      /*buffers_to_assign_sequentially=*/nullptr, assignment,
-      non_sequential_algorithm));
-
+  ABSL_RETURN_IF_ERROR(AssignBuffersForThreadLocalComputations(
+      thread_local_computations_no_fusion, assignment));
   // Mark all buffers which may be live out of the entry computation as
   // "liveout".
   for (const HloBuffer* buffer :
