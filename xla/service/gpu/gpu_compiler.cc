@@ -2164,6 +2164,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // AlgebraicSimplifier will simplify it away again.
     // TODO(b/375566188): Figure out whether we can get rid of this pass.
     pipeline.AddPass<DotNormalizer>();
+    // Decompose FP8xN dot algorithms before SplitkRewriter, GemmFusion, and
+    // GemmRewriter so per channel amax is reduced over the full contracting
+    // dimension and the resulting F8E4M3FN dots can be fused or lowered.
+    pipeline.AddPass<DotAlgorithmRewriter>(gpu_version, /*fp8xn_only=*/true);
     if (IsTritonGemmEnabled(debug_options, gpu_version)) {
       pipeline.AddPass<DotDimensionNormalizer>(
           /*normalize_noncontracting_dimensions=*/!debug_options

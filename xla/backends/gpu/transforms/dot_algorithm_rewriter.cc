@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal_util.h"
+#include "xla/service/algorithm_util.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
@@ -351,6 +353,11 @@ absl::StatusOr<bool> DotAlgorithmRewriter::RunImpl(
         continue;
       }
       auto algorithm = instruction->precision_config().algorithm();
+      if (fp8xn_only_ &&
+          algorithm != PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3 &&
+          algorithm != PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4) {
+        continue;
+      }
       auto need_to_simulate_tpu_precision = [&]() -> bool {
         if (!default_to_bf16) {
           return false;  // Default to BF16 is disabled by flag.
@@ -397,6 +404,17 @@ absl::StatusOr<bool> DotAlgorithmRewriter::RunImpl(
           RewriteF32ToTF32X3(instruction);
           changed = true;
           break;
+        case PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3:
+        case PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4: {
+          // HIGHEST keeps cuBLASLt and Triton from enabling FP8 fast
+          // accumulation, which on Hopper loses enough accumulator bits to make
+          // FP8X4 less accurate than a BF16 dot.
+          ABSL_ASSIGN_OR_RETURN(bool rewritten,
+                                algorithm_util::RewriteFp8xNDot(
+                                    instruction, PrecisionConfig::HIGHEST));
+          changed |= rewritten;
+          break;
+        }
         default:
           break;
       }

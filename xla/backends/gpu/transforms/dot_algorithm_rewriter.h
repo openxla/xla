@@ -48,8 +48,9 @@ namespace xla::gpu {
 // emitters like Triton.
 class DotAlgorithmRewriter : public HloModulePass {
  public:
-  explicit DotAlgorithmRewriter(se::GpuComputeCapability gpu_version)
-      : gpu_version_(gpu_version) {}
+  explicit DotAlgorithmRewriter(se::GpuComputeCapability gpu_version,
+                                bool fp8xn_only = false)
+      : gpu_version_(gpu_version), fp8xn_only_(fp8xn_only) {}
   absl::string_view name() const override { return "dot-algorithm-rewriter"; }
 
   static absl::StatusOr<HloInstruction*> MakeMultiplyForBF16BF16F32(
@@ -72,6 +73,7 @@ class DotAlgorithmRewriter : public HloModulePass {
 
  private:
   se::GpuComputeCapability gpu_version_;
+  bool fp8xn_only_;
 };
 
 }  // namespace xla::gpu

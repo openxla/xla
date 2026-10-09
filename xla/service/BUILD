@@ -6177,6 +6177,7 @@ cc_library(
     srcs = ["algorithm_util.cc"],
     hdrs = ["algorithm_util.h"],
     deps = [
+        ":hlo_creation_utils",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -6184,9 +6185,12 @@ cc_library(
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:protobuf",
     ],
 )
