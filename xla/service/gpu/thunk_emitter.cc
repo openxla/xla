@@ -2294,12 +2294,6 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
         ir_emitter_context_->gpu_topology().num_devices_per_host(),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
         has_dynamic_root);
-  } else if constexpr (std::is_same_v<CollectiveThunkType,
-                                      RaggedAllToAllThunk>) {
-    thunks = ThunkSequence::Of<CollectiveThunkType>(
-        info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
-        ir_emitter_context_->gpu_topology().num_devices_per_host());
   } else if constexpr (std::is_constructible_v<
                            CollectiveThunkType, Thunk::ThunkInfo,
                            decltype(inst),
@@ -2309,7 +2303,8 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
   } else {
     thunks = ThunkSequence::Of<CollectiveThunkType>(
         info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        ir_emitter_context_->gpu_topology().num_devices_per_host());
   }
   return thunks;
 }
@@ -2701,11 +2696,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
       HostOffloadingExecutableProto::EXECUTABLE_TYPE_NANORT);
 
   ABSL_ASSIGN_OR_RETURN(
-      auto thunk, HostExecuteStartThunk::Create(
-                      Thunk::ThunkInfo::WithProfileAnnotation(
-                          async_start, ir_emitter_context_->GetNextThunkId()),
-                      std::move(host_offloading_executable_proto),
-                      std::move(operand_slices), std::move(result_slices)));
+      auto thunk,
+      HostExecuteStartThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              async_start, ir_emitter_context_->GetNextThunkId()),
+          std::move(host_offloading_executable_proto),
+          std::move(operand_slices), std::move(result_slices),
+          ir_emitter_context_->gpu_topology().num_devices_per_host()));
 
   auto [it, inserted] = GetInstructionToHostExecuteAsyncEvents().emplace(
       host_execute, thunk->async_events());
