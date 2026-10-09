@@ -2671,6 +2671,49 @@ TEST_F(HloInstructionTest, GatherDoesNotReuseElements) {
   EXPECT_FALSE(root->ReusesOperandElements(1));
 }
 
+TEST_F(HloInstructionTest, NonOverlappingReduceWindowDoesNotReuseElements) {
+  constexpr char kHloString[] = R"(
+  HloModule test_module
+
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY test {
+    input = f32[50,60] parameter(0)
+    init = f32[] constant(0)
+    ROOT reduce-window = f32[50,2] reduce-window(input, init),
+      window={size=1x32 stride=1x32 pad=0_0x0_4}, to_apply=add
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_FALSE(root->ReusesOperandElements(0));
+  EXPECT_TRUE(root->ReusesOperandElements(1));
+}
+
+TEST_F(HloInstructionTest, OverlappingReduceWindowReusesElements) {
+  constexpr char kHloString[] = R"(
+  HloModule test_module
+
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY test {
+    input = f32[50,60] parameter(0)
+    init = f32[] constant(0)
+    ROOT reduce-window = f32[50,58] reduce-window(input, init),
+      window={size=1x3 stride=1x1}, to_apply=add
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_TRUE(root->ReusesOperandElements(0));
+}
+
 TEST_F(HloInstructionTest, BackendConfigCanContainNonFiniteFloats) {
   HloComputation::Builder b(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {2, 2});

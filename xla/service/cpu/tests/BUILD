@@ -76,6 +76,7 @@ xla_test(
     srcs = ["cpu_fusion_test.cc"],
     backends = ["cpu"],
     deps = [
+        "//xla:comparison_util",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",

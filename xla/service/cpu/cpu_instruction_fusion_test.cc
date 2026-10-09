@@ -949,6 +949,63 @@ ENTRY main {
   EXPECT_THAT(module->entry_computation()->root_instruction(), op::Fusion());
 }
 
+TEST_F(InstructionFusionTest, FuseIntoNonOverlappingReduceWindow) {
+  // The reduce-window / reduce pair that TreeReductionRewriter produces.
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[50,64]{1,0} parameter(0)
+  b = f32[50,64]{1,0} parameter(1)
+  c = f32[50,64]{1,0} add(a, b)
+  init = f32[] constant(0)
+  w = f32[50,2]{1,0} reduce-window(c, init), window={size=1x32 stride=1x32},
+    to_apply=add
+  ROOT r = f32[50]{0} reduce(w, init), dimensions={1}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(fused_something);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Fusion(op::Parameter(), op::Parameter()));
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseExpensiveOpIntoOverlappingReduceWindow) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,1024]{1,0} parameter(0)
+  e = f32[64,1024]{1,0} exponential(a)
+  init = f32[] constant(0)
+  ROOT w = f32[64,961]{1,0} reduce-window(e, init),
+    window={size=1x64 stride=1x1}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
 TEST_F(OpcodeFusionTest, BigConstantNotInFusion) {
   absl::string_view module_string = R"(
 HloModule module
