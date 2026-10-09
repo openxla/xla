@@ -35,12 +35,15 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
@@ -152,8 +155,71 @@ class OrderedTiledHloPtrSet {
     return {&candidate, true};
   }
 
+  // Inserts an operand of `user` into the set. For tuple-producing operands
+  // whose outputs do not share a single tile, buffers each output's tile across
+  // its `get-tuple-element` users and only marks the producer as newly inserted
+  // once all outputs have been tiled.
+  absl::StatusOr<std::pair<TiledHloInstruction*, bool>> InsertOperand(
+      const HloInstruction& user, const HloInstructionAdaptor& operand_adaptor,
+      Tile tile) {
+    const HloInstruction* operand_hlo = &operand_adaptor.instruction();
+    if (!operand_hlo->shape().IsTuple() ||
+        !tile.tiling_space().HasPerOutputTiles(operand_adaptor)) {
+      return Insert(operand_hlo, std::move(tile));
+    }
+    if (user.opcode() != HloOpcode::kGetTupleElement) {
+      return absl::UnimplementedError(absl::StrCat(
+          "Tuple-producing instruction ", operand_hlo->name(),
+          " must be consumed through get-tuple-element, but is used by ",
+          user.ToString()));
+    }
+
+    PendingTupleProducer& pending = pending_tuple_producers_[operand_hlo];
+    const int64_t num_outputs = operand_hlo->shape().tuple_shapes().size();
+    if (pending.tiled_hlo == nullptr) {
+      pending.tiles.resize(num_outputs);
+      pending.tiled_hlo = &instructions_.emplace_back(
+          operand_hlo, llvm::SmallVector<experimental::Tile, 2>{});
+    }
+
+    const int64_t index = user.tuple_index();
+    if (pending.tiles[index].has_value()) {
+      if (*pending.tiles[index] != tile) {
+        return absl::UnimplementedError(
+            absl::StrCat("Output ", index, " of ", operand_hlo->name(),
+                         " is tiled with multiple incompatible tiles."));
+      }
+      return std::make_pair(pending.tiled_hlo, false);
+    }
+    pending.tiles[index] = std::move(tile);
+    if (++pending.num_assigned < num_outputs) {
+      return std::make_pair(pending.tiled_hlo, false);
+    }
+
+    llvm::SmallVector<experimental::Tile, 2> tiles;
+    tiles.reserve(num_outputs);
+    for (const std::optional<experimental::Tile>& t : pending.tiles) {
+      tiles.push_back(*t);
+    }
+    pending.tiled_hlo->set_tiles(std::move(tiles));
+    hash_set_.insert(pending.tiled_hlo);
+    insertion_order_.push_back(pending.tiled_hlo);
+    return std::make_pair(pending.tiled_hlo, true);
+  }
+
   // Consumes the set, returning pointers to its elements in insertion order.
-  std::vector<TiledHloInstruction*> ConsumeInInsertionOrder() && {
+  absl::StatusOr<std::vector<TiledHloInstruction*>>
+  ConsumeInInsertionOrder() && {
+    // Validate that all pending tuple producers have been inserted.
+    for (const auto& [tuple_producer, pending] : pending_tuple_producers_) {
+      for (int64_t k = 0; k < pending.tiles.size(); ++k) {
+        if (!pending.tiles[k].has_value()) {
+          return absl::UnimplementedError(
+              absl::StrCat("Output ", k, " of ", tuple_producer->name(),
+                           " is not consumed in the fusion."));
+        }
+      }
+    }
     return std::move(insertion_order_);
   }
 
@@ -172,6 +238,12 @@ class OrderedTiledHloPtrSet {
     }
   };
 
+  struct PendingTupleProducer {
+    TiledHloInstruction* tiled_hlo = nullptr;
+    llvm::SmallVector<std::optional<experimental::Tile>, 2> tiles;
+    int64_t num_assigned = 0;
+  };
+
   // Stores non-owning pointers to the elements in the set. Elements are
   // compared by the value behind the pointer, not the pointer itself.
   absl::flat_hash_set<TiledHloInstruction*, PtrHash, PtrEqual> hash_set_;
@@ -181,6 +253,9 @@ class OrderedTiledHloPtrSet {
 
   // Pointers to the elements of this set, in insertion order.
   std::vector<TiledHloInstruction*> insertion_order_;
+
+  llvm::MapVector<const HloInstruction*, PendingTupleProducer>
+      pending_tuple_producers_;
 };
 
 // Sorts tiled hlo instructions in def-before-use order, starting from
@@ -510,7 +585,7 @@ absl::StatusOr<TiledHloRegion> CreateHloRegion(
 
     ABSL_ASSIGN_OR_RETURN(
         auto operands_tiles,
-        PropagateTileToInput(tiling_space, *hlo, tiled_hlo->tile(), 0));
+        PropagateTilesToInputs(tiling_space, *hlo, tiled_hlo->tiles()));
 
     RegionSchema spec = GetRegionSchema(*tiled_hlo);
 
@@ -546,9 +621,10 @@ absl::StatusOr<TiledHloRegion> CreateHloRegion(
       // Hoists and deduplicates loop-invariant instructions.
       RegionContext* target_region =
           FindTargetRegion(&current_context, operands_tiles[id]);
-      auto [operand_tiled_hlo, inserted] =
-          target_region->instructions_set->Insert(
-              &operands[id].instruction(), std::move(operands_tiles[id]));
+      ABSL_ASSIGN_OR_RETURN(
+          (auto [operand_tiled_hlo, inserted]),
+          target_region->instructions_set->InsertOperand(
+              *hlo, operands[id], std::move(operands_tiles[id])));
       resolved_operands[id] = operand_tiled_hlo;
       if (inserted) {
         target_region->worklist->push_back(operand_tiled_hlo);
@@ -569,9 +645,10 @@ absl::StatusOr<TiledHloRegion> CreateHloRegion(
     }
   }
 
-  return TiledHloRegion{
-      std::move(tiled_hlo_instructions_set).ConsumeInInsertionOrder(),
-      std::move(canonical_roots)};
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<TiledHloInstruction*> instructions,
+      std::move(tiled_hlo_instructions_set).ConsumeInInsertionOrder());
+  return TiledHloRegion{std::move(instructions), std::move(canonical_roots)};
 }
 
 }  // namespace
