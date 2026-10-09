@@ -108,7 +108,7 @@ static RaggedAllToAllThunk MakeThunk(
     buffers.push_back(MakeBuffer(allocations[i], S64, kNumUpdates));
   }
   return RaggedAllToAllThunk(Thunk::ThunkInfo(), MakeConfig(),
-                             std::move(buffers));
+                             std::move(buffers), kNumDevices);
 }
 
 using DeviceTestSlot = CollectiveThunkMultiGpuTestState;

@@ -33,6 +33,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
@@ -1343,6 +1345,121 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
   EXPECT_THAT(HloValuesAt(async_update, {0, 1}),
               UnorderedElementsAre(&analysis.GetValueDefinedAt(b)));
   EXPECT_TRUE(analysis.ValueIsDefinedAt(async_update, {2}));
+}
+
+// A while loop that prefetches the output of an async fusion one iteration
+// ahead: the prologue start is in the entry computation, the body consumes the
+// loop-carried async state and starts the next prefetch, and the epilogue done
+// is after the loop. `$fusion_kind` and `$fused_root` select the wrapped
+// fusion.
+constexpr absl::string_view kLoopCrossingAsyncFusionHlo = R"(
+HloModule LoopCrossingAsyncFusion
+
+%fused_computation (p0: f32[8]) -> f32[8] {
+  %p0 = f32[8]{0} parameter(0)
+  ROOT %root.0 = f32[8]{0} $fused_root(%p0)
+}
+
+%fused_computation.1 (p1: f32[8]) -> f32[8] {
+  %p1 = f32[8]{0} parameter(0)
+  ROOT %root.1 = f32[8]{0} $fused_root(%p1)
+}
+
+%async_computation (a0: f32[8]) -> f32[8] {
+  %a0 = f32[8]{0} parameter(0)
+  ROOT %fusion.0 = f32[8]{0} fusion(%a0), kind=$fusion_kind, calls=%fused_computation
+}
+
+%async_computation.1 (a1: f32[8]) -> f32[8] {
+  %a1 = f32[8]{0} parameter(0)
+  ROOT %fusion.1 = f32[8]{0} fusion(%a1), kind=$fusion_kind, calls=%fused_computation.1
+}
+
+%cond (cond_state: (s32[], ((f32[8]), f32[8], s32[]), f32[8])) -> pred[] {
+  %cond_state = (s32[], ((f32[8]{0}), f32[8]{0}, s32[]), f32[8]{0}) parameter(0)
+  %cond_i = s32[] get-tuple-element(%cond_state), index=0
+  %limit = s32[] constant(8)
+  ROOT %lt = pred[] compare(%cond_i, %limit), direction=LT
+}
+
+%body (state: (s32[], ((f32[8]), f32[8], s32[]), f32[8])) -> (s32[], ((f32[8]), f32[8], s32[]), f32[8]) {
+  %state = (s32[], ((f32[8]{0}), f32[8]{0}, s32[]), f32[8]{0}) parameter(0)
+  %i = s32[] get-tuple-element(%state), index=0
+  %prefetch = ((f32[8]{0}), f32[8]{0}, s32[]) get-tuple-element(%state), index=1
+  %src = f32[8]{0} get-tuple-element(%state), index=2
+  %body-done = f32[8]{0} async-done(%prefetch), calls=%async_computation.1
+  %next-prefetch = ((f32[8]{0}), f32[8]{0}, s32[]) async-start(%src), calls=%async_computation.1
+  %one = s32[] constant(1)
+  %next_i = s32[] add(%i, %one)
+  %sum = f32[8]{0} add(%src, %body-done)
+  ROOT %next_state = (s32[], ((f32[8]{0}), f32[8]{0}, s32[]), f32[8]{0}) tuple(%next_i, %next-prefetch, %sum)
+}
+
+ENTRY %main (input: f32[8]) -> f32[8] {
+  %input = f32[8]{0} parameter(0)
+  %zero = s32[] constant(0)
+  %prologue-start = ((f32[8]{0}), f32[8]{0}, s32[]) async-start(%input), calls=%async_computation
+  %init = (s32[], ((f32[8]{0}), f32[8]{0}, s32[]), f32[8]{0}) tuple(%zero, %prologue-start, %input)
+  %while = (s32[], ((f32[8]{0}), f32[8]{0}, s32[]), f32[8]{0}) while(%init), condition=%cond, body=%body
+  %epilogue-state = ((f32[8]{0}), f32[8]{0}, s32[]) get-tuple-element(%while), index=1
+  ROOT %epilogue-done = f32[8]{0} async-done(%epilogue-state), calls=%async_computation.1
+}
+)";
+
+// An async cross_buffer_slice fusion whose start is loop-carried (e.g. a
+// prefetch issued in the previous iteration by a while loop pipeliner) must
+// forward the value of the loop-carried async state to its async-done, like an
+// async dynamic-slice.
+TEST_P(HloDataflowAnalysisTest,
+       LoopCrossingAsyncCrossBufferSliceDoneForwardsState) {
+  std::string hlo_str = absl::StrReplaceAll(
+      kLoopCrossingAsyncFusionHlo,
+      {{"$fusion_kind", "kCustom"},
+       {"$fused_root", "custom-call"},
+       {"(%p0)", "(%p0), custom_call_target=\"cross_buffer_slice\""},
+       {"(%p1)", "(%p1), custom_call_target=\"cross_buffer_slice\""}});
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  bool ssa_form = GetParam();
+  const HloDataflowAnalysis& analysis = RunAnalysis(ssa_form);
+
+  const HloInstruction* prefetch = FindInstruction(module_.get(), "prefetch");
+  const HloInstruction* body_done = FindInstruction(module_.get(), "body-done");
+  const HloInstruction* epilogue_state =
+      FindInstruction(module_.get(), "epilogue-state");
+  const HloInstruction* epilogue_done =
+      FindInstruction(module_.get(), "epilogue-done");
+
+  // The async-dones read the in-flight output ({1}) of the loop-carried async
+  // state, which holds the prologue start's output on the first iteration and
+  // the previous iteration's start output afterwards.
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(body_done));
+  EXPECT_EQ(analysis.GetValueSet(body_done),
+            analysis.GetValueSet(prefetch, /*index=*/{1}));
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(epilogue_done));
+  EXPECT_EQ(analysis.GetValueSet(epilogue_done),
+            analysis.GetValueSet(epilogue_state, /*index=*/{1}));
+}
+
+// Other async fusions keep taking the value of the wrapped computation's root,
+// even when their async state is loop-carried.
+TEST_P(HloDataflowAnalysisTest,
+       LoopCrossingAsyncLoopFusionDoesNotForwardState) {
+  std::string hlo_str = absl::StrReplaceAll(
+      kLoopCrossingAsyncFusionHlo,
+      {{"$fusion_kind", "kLoop"}, {"$fused_root", "negate"}});
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  bool ssa_form = GetParam();
+  const HloDataflowAnalysis& analysis = RunAnalysis(ssa_form);
+
+  const HloInstruction* prefetch = FindInstruction(module_.get(), "prefetch");
+  const HloInstruction* body_done = FindInstruction(module_.get(), "body-done");
+
+  EXPECT_NE(analysis.GetValueSet(body_done),
+            analysis.GetValueSet(prefetch, /*index=*/{1}));
 }
 
 TEST_P(HloDataflowAnalysisTest, AsyncCallExcludedThread) {
@@ -4470,6 +4587,74 @@ ENTRY main {
                 ::testing::Not(
                     ::testing::Contains(&analysis->GetValueDefinedAt(const0))));
   }
+}
+
+TEST_F(HloDataflowAnalysisTest,
+       DisablePropagateThroughCallsAndControlFlowMixedCallContexts) {
+  const char* hlo_text = R"hlo(
+HloModule module
+
+shared_callee {
+  param = f32[] parameter(0)
+  ROOT neg = f32[] negate(param)
+}
+
+false_branch {
+  param = f32[] parameter(0)
+  ROOT id = f32[] copy(param)
+}
+
+async_comp {
+  param = f32[] parameter(0)
+  ROOT neg = f32[] negate(param)
+}
+
+ENTRY main {
+  const0 = f32[] constant(1.0)
+  pred0 = pred[] constant(true)
+  tup = (f32[]) tuple(const0)
+  gte = f32[] get-tuple-element(tup), index=0
+  mapped = f32[] map(gte), to_apply=shared_callee
+  called = f32[] call(gte), to_apply=shared_callee
+  cond = f32[] conditional(pred0, gte, called), true_computation=shared_callee, false_computation=false_branch
+  async_start = ((f32[]), f32[], u32[]) async-start(cond), calls=async_comp
+  async_update = ((f32[]), f32[], u32[]) async-update(async_start)
+  ROOT async_done = f32[] async-done(async_update)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(
+                                    hlo_text, GetModuleConfigForTest()));
+  HloInstruction* const0 = FindInstruction(module_.get(), "const0");
+  HloInstruction* gte = FindInstruction(module_.get(), "gte");
+  HloInstruction* called = FindInstruction(module_.get(), "called");
+  HloInstruction* cond = FindInstruction(module_.get(), "cond");
+  HloInstruction* async_start = FindInstruction(module_.get(), "async_start");
+  HloInstruction* async_done = FindInstruction(module_.get(), "async_done");
+  HloInstruction* shared_param =
+      module_->GetComputationWithName("shared_callee")
+          ->parameter_instruction(0);
+  HloInstruction* false_param =
+      module_->GetComputationWithName("false_branch")->parameter_instruction(0);
+  HloInstruction* async_param =
+      module_->GetComputationWithName("async_comp")->parameter_instruction(0);
+
+  ASSERT_OK_AND_ASSIGN(
+      auto analysis,
+      HloDataflowAnalysis::Run(
+          *module_, /*ssa_form=*/false, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/false,
+          /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/false));
+  EXPECT_EQ(&analysis->GetUniqueValueAt(gte),
+            &analysis->GetValueDefinedAt(const0));
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(shared_param));
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(false_param));
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(async_param));
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(called));
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(cond));
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(async_start, {1}));
+  EXPECT_EQ(&analysis->GetUniqueValueAt(async_done),
+            &analysis->GetValueDefinedAt(async_start, {1}));
 }
 
 TEST_F(HloDataflowAnalysisTest, CallMarkerCustomCalls) {

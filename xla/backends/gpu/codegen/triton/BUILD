@@ -606,9 +606,8 @@ cc_library(
 
 xla_cc_test(
     name = "support_test",
-    timeout = "long",  # TODO: b/514293537 - remove after disabling symbolic analysis.
     srcs = ["support_test.cc"],
-    shard_count = 50,  # TODO: b/514293537 - change to 25 after disabling symbolic analysis.
+    shard_count = 25,
     deps = [
         ":support",
         ":support_test_base",
@@ -850,6 +849,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_query",
+        "//xla/runtime:object_pool",
         "//xla/service:gpu_topology",
         "//xla/service:hlo_creation_utils",
         "//xla/service/gpu:gpu_device_info_for_tests",

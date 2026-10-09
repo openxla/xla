@@ -61,6 +61,48 @@ limitations under the License.
 
 namespace xla {
 namespace {
+
+// Returns true if `instruction` is a cross_buffer_slice fusion: a custom fusion
+// whose fused computation either
+//  * is rooted at a "cross_buffer_slice" custom call (compact form),
+//  * is rooted at a nested custom fusion that writes the tiles into a buffer
+//    allocated inside the fusion (read form), or
+//  * returns a tuple of the source buffer parameter and such a nested custom
+//    fusion (write form).
+bool IsCrossBufferSliceFusion(const HloInstruction* instruction) {
+  if (instruction->opcode() != HloOpcode::kFusion ||
+      instruction->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+  const HloInstruction* root = instruction->fused_expression_root();
+  if (root->opcode() == HloOpcode::kCustomCall) {
+    return root->custom_call_target() == "cross_buffer_slice";
+  }
+  if (root->opcode() == HloOpcode::kTuple) {
+    if (root->operand_count() != 2 ||
+        root->operand(0)->opcode() != HloOpcode::kParameter) {
+      return false;
+    }
+    root = root->operand(1);
+  }
+  return root->IsCustomFusion();
+}
+
+// Returns true if the async op `async_op` wraps an op whose loop-carried async
+// state forwards the in-flight output (index {1}) to the async-update/done: a
+// dynamic-slice, a dynamic-update-slice or a cross_buffer_slice fusion.
+bool WrapsSliceOrCrossBufferSlice(const HloInstruction* async_op) {
+  switch (async_op->async_wrapped_opcode()) {
+    case HloOpcode::kDynamicSlice:
+    case HloOpcode::kDynamicUpdateSlice:
+      return true;
+    case HloOpcode::kFusion:
+      return IsCrossBufferSliceFusion(async_op->async_wrapped_instruction());
+    default:
+      return false;
+  }
+}
+
 // CalculatePostOrderSchedule traverses a module and assign a ordinal to each
 // instruction based the postorder dependency.
 int64_t CalculatePostOrderScheduleHelper(
@@ -616,9 +658,7 @@ bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
       async_update->operand(0)->opcode() == HloOpcode::kWhile ||
       async_update->operand(0)->opcode() == HloOpcode::kParameter;
   bool is_slice_or_copy =
-      is_loop_crossing &&
-      (async_update->async_wrapped_opcode() == HloOpcode::kDynamicUpdateSlice ||
-       async_update->async_wrapped_opcode() == HloOpcode::kDynamicSlice);
+      is_loop_crossing && WrapsSliceOrCrossBufferSlice(async_update);
 
   if (!is_slice_or_copy) {
     // 2. Update the output values from wrapped computation (index 1)
@@ -654,11 +694,11 @@ bool HloDataflowAnalysis::UpdateAsyncDoneValueSet(HloInstruction* async_done) {
       async_done->operand(0)->opcode() == HloOpcode::kWhile ||
       async_done->operand(0)->opcode() == HloOpcode::kParameter;
   bool is_slice_or_copy =
-      is_loop_crossing &&
-      (async_done->async_wrapped_opcode() == HloOpcode::kDynamicUpdateSlice ||
-       async_done->async_wrapped_opcode() == HloOpcode::kDynamicSlice);
-  // For loop-crossing chains where async-done wraps dynamic-slice or copy,
-  // forward the value set from operand tuple index 1 directly.
+      is_loop_crossing && WrapsSliceOrCrossBufferSlice(async_done);
+  // For loop-crossing chains where async-done wraps a dynamic-slice,
+  // dynamic-update-slice or cross_buffer_slice fusion (e.g. a prefetch started
+  // in a previous iteration), forward the value set from operand tuple index 1
+  // directly.
   if (!is_slice_or_copy) {
     return UpdateAsyncChainOutputValueSet(async_done);
   }
@@ -875,10 +915,12 @@ bool HloDataflowAnalysis::UpdateParameterValueSet(HloInstruction* parameter) {
   const CallGraphNode& call_graph_node =
       call_graph_->GetNode(parameter->parent());
 
-  // Subcomputations called in a parallel context (eg, map) do not have dataflow
-  // from the caller operands.
+  // Subcomputations called in a parallel context (eg, map), dead computations,
+  // or computations when cross computation propagation is disabled do not have
+  // dataflow from the caller operands.
   if (call_graph_node.context() == CallContext::kEmbedded ||
-      call_graph_node.caller_callsites().empty()) {
+      call_graph_node.caller_callsites().empty() ||
+      (!propagate_through_calls_ && !propagate_through_control_flow_)) {
     return false;
   }
   CHECK_EQ(call_graph_node.context(), CallContext::kControlFlow);
@@ -1315,22 +1357,25 @@ void HloDataflowAnalysis::Propagate() {
       // If user sequentially calls a computation, then the respective
       // parameter(s) of the computation need to be updated.
       if (user->opcode() == HloOpcode::kConditional) {
-        // If operand 0 is the use of instruction, then no parameters need to be
-        // updated, since that is the branch_index of the conditional.
-        // If operand n+1 is the use of instruction, then the branch_computation
-        // n's parameter need to be updated.
-        //
-        // Note that the same instruction can be used in multiple branches'
-        // operands.
-        for (int j = 0; j < user->branch_count(); ++j) {
-          if (user->operand(j + 1) == instruction) {
-            add_to_worklist(
-                user->branch_computation(j)->parameter_instruction(0));
+        if (propagate_through_control_flow_) {
+          // If operand 0 is the use of instruction, then no parameters need to
+          // be updated, since that is the branch_index of the conditional. If
+          // operand n+1 is the use of instruction, then the branch_computation
+          // n's parameter need to be updated.
+          //
+          // Note that the same instruction can be used in multiple branches'
+          // operands.
+          for (int j = 0; j < user->branch_count(); ++j) {
+            if (user->operand(j + 1) == instruction) {
+              add_to_worklist(
+                  user->branch_computation(j)->parameter_instruction(0));
+            }
           }
         }
       } else if (user->opcode() == HloOpcode::kAsyncUpdate ||
                  user->opcode() == HloOpcode::kAsyncDone) {
-        if (HloInstruction::IsThreadIncluded(user->async_execution_thread(),
+        if (propagate_through_control_flow_ &&
+            HloInstruction::IsThreadIncluded(user->async_execution_thread(),
                                              execution_threads_)) {
           // For async update and async done, we cannot distinguish which
           // parameter needs to be updated so add all to the worklist.
@@ -1348,6 +1393,12 @@ void HloDataflowAnalysis::Propagate() {
         for (HloComputation* called_computation : user->called_computations()) {
           if (!HloInstruction::IsThreadIncluded(
                   called_computation->execution_thread(), execution_threads_)) {
+            continue;
+          }
+          if ((!propagate_through_calls_ &&
+               user->opcode() == HloOpcode::kCall) ||
+              (!propagate_through_control_flow_ &&
+               user->opcode() != HloOpcode::kCall)) {
             continue;
           }
           const CallGraphNode& call_graph_node =
@@ -1437,11 +1488,6 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
       continue;
     }
     const CallGraphNode& call_graph_node = call_graph_->GetNode(computation);
-    const bool is_regular_call_computation =
-        IsRegularCallComputation(call_graph_node);
-    const bool is_control_flow_computation =
-        !call_graph_node.caller_callsites().empty() &&
-        !is_regular_call_computation;
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       // Create an empty shape tree.
@@ -1497,6 +1543,10 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
           // flow from their operands or from cross computation dataflow.
           break;
         case HloOpcode::kParameter: {
+          if (!propagate_through_calls_ && !propagate_through_control_flow_) {
+            define_all_values();
+            break;
+          }
           if (call_graph_node.context() == CallContext::kBoth) {
             // We do not support a subcomputation that is called from both a
             // parallel and sequential context. In this case, the parameter
@@ -1508,6 +1558,11 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
                 "sequential (eg, kCall) context",
                 computation->name());
           }
+          const bool is_regular_call_computation =
+              IsRegularCallComputation(call_graph_node);
+          const bool is_control_flow_computation =
+              !call_graph_node.caller_callsites().empty() &&
+              !is_regular_call_computation;
           if (call_graph_node.caller_callsites().empty() ||
               call_graph_node.context() == CallContext::kEmbedded ||
               (!propagate_through_calls_ && is_regular_call_computation) ||

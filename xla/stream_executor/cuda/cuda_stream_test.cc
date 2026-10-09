@@ -357,6 +357,12 @@ TEST_F(CudaStreamTest, DoHostCallbackWithStatusError) {
 }
 
 TEST_F(CudaStreamTest, CaptureStreamIsolation) {
+  if (executor_->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP()
+        << "Stream capture to graph requires CUDA driver 12.3 or newer";
+  }
+
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
                        CudaStream::Create(executor_,
                                           /*priority=*/std::nullopt));
@@ -402,6 +408,12 @@ TEST_F(CudaStreamTest, CaptureStreamIsolation) {
 }
 
 TEST_F(CudaStreamTest, NestedCaptureFails) {
+  if (executor_->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP()
+        << "Stream capture to graph requires CUDA driver 12.3 or newer";
+  }
+
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
                        CudaStream::Create(executor_,
                                           /*priority=*/std::nullopt));
