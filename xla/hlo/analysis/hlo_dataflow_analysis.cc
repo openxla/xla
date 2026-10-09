@@ -61,6 +61,11 @@ limitations under the License.
 
 namespace xla {
 namespace {
+bool IsCallOrControlFlowCustomCall(const HloInstruction* instruction) {
+  return GetInstructionCallContext(instruction) == CallContext::kControlFlow &&
+         (instruction->opcode() == HloOpcode::kCall ||
+          instruction->IsCustomCall("compute-on-start"));
+}
 
 // Returns true if `instruction` is a cross_buffer_slice fusion: a custom fusion
 // whose fused computation either
@@ -110,7 +115,7 @@ int64_t CalculatePostOrderScheduleHelper(
     absl::flat_hash_map<HloInstruction*, int64_t>* ordinal_map) {
   int64_t ordinal = start_ordinal;
   for (HloInstruction* instruction : comp->MakeInstructionPostOrder()) {
-    if (instruction->opcode() == HloOpcode::kCall ||
+    if (IsCallOrControlFlowCustomCall(instruction) ||
         instruction->opcode() == HloOpcode::kAsyncStart ||
         instruction->opcode() == HloOpcode::kConditional) {
       for (const HloComputation* called_computation :
@@ -927,7 +932,7 @@ bool HloDataflowAnalysis::UpdateParameterValueSet(HloInstruction* parameter) {
   bool need_phi = false;
   for (const CallSite& callsite : call_graph_node.caller_callsites()) {
     const HloOpcode& opcode = callsite.instruction()->opcode();
-    if (opcode == HloOpcode::kCall) {
+    if (IsCallOrControlFlowCustomCall(callsite.instruction())) {
       // The operand values of a call instruction are forwarded to the
       // respective parameter instruction of the subcomputation.
       if (propagate_through_calls_) {
@@ -1408,12 +1413,12 @@ void HloDataflowAnalysis::Propagate() {
       const CallGraphNode& call_graph_node =
           call_graph_->GetNode(instruction->parent());
       for (const CallSite& callsite : call_graph_node.caller_callsites()) {
-        if (!propagate_through_calls_ &&
-            callsite.instruction()->opcode() == HloOpcode::kCall) {
+        const bool is_call =
+            IsCallOrControlFlowCustomCall(callsite.instruction());
+        if (!propagate_through_calls_ && is_call) {
           continue;
         }
-        if (!propagate_through_control_flow_ &&
-            callsite.instruction()->opcode() != HloOpcode::kCall) {
+        if (!propagate_through_control_flow_ && !is_call) {
           continue;
         }
         if (callsite.instruction()->opcode() == HloOpcode::kWhile) {
@@ -1458,14 +1463,13 @@ InstructionValueSet& HloDataflowAnalysis::GetInstructionValueSet(
 
 namespace {
 bool IsRegularCallComputation(const CallGraphNode& node) {
+  auto is_call = [](const CallSite& cs) {
+    return IsCallOrControlFlowCustomCall(cs.instruction());
+  };
   bool is_regular_call_computation =
-      absl::c_any_of(node.caller_callsites(), [](const CallSite& cs) {
-        return cs.instruction()->opcode() == HloOpcode::kCall;
-      });
+      absl::c_any_of(node.caller_callsites(), is_call);
   CHECK(!is_regular_call_computation ||
-        absl::c_all_of(node.caller_callsites(), [](const CallSite& cs) {
-          return cs.instruction()->opcode() == HloOpcode::kCall;
-        }));
+        absl::c_all_of(node.caller_callsites(), is_call));
   return is_regular_call_computation;
 }
 }  // namespace

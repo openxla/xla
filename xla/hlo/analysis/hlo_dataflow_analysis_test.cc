@@ -361,6 +361,66 @@ ENTRY main {
   EXPECT_TRUE(analysis.GetValueDefinedAt(add).live_out_of_module());
 }
 
+TEST_P(HloDataflowAnalysisTest, ControlFlowCustomCall) {
+  std::string hlo_str = R"(
+HloModule ControlFlowCustomCall
+
+Subcomputation {
+  param0 = f32[] parameter(0)
+  param1 = f32[] parameter(1)
+  ROOT add = f32[] add(param0, param1)
+}
+
+ENTRY main {
+  const1 = f32[] constant(1.0)
+  const2 = f32[] constant(2.0)
+  start = ((f32[], f32[]), f32[], s32[]) custom-call(const1, const2), custom_call_target="compute-on-start", to_apply=Subcomputation
+  ROOT done = f32[] custom-call(start), custom_call_target="compute-on-done"
+}
+)";
+  ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+  HloInstruction* subparam0 = FindInstruction(module_.get(), "param0");
+  HloInstruction* subparam1 = FindInstruction(module_.get(), "param1");
+  HloInstruction* add = FindInstruction(module_.get(), "add");
+  HloInstruction* constant1 = FindInstruction(module_.get(), "const1");
+  HloInstruction* constant2 = FindInstruction(module_.get(), "const2");
+  HloInstruction* start = FindInstruction(module_.get(), "start");
+  SCOPED_TRACE(module_->ToString());
+
+  bool ssa_form = GetParam();
+  const HloDataflowAnalysis& analysis = RunAnalysis(ssa_form);
+
+  // The parameters of the subcomputation called by compute-on-start should not
+  // define values; their values flow from the caller operands.
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(constant1));
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(constant2));
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(subparam0));
+  EXPECT_FALSE(analysis.ValueIsDefinedAt(subparam1));
+  EXPECT_TRUE(analysis.ValueIsDefinedAt(add));
+
+  EXPECT_EQ(analysis.GetUniqueValueAt(subparam0),
+            analysis.GetValueDefinedAt(constant1));
+  EXPECT_EQ(analysis.GetUniqueValueAt(subparam1),
+            analysis.GetValueDefinedAt(constant2));
+
+  EXPECT_THAT(analysis.GetValueDefinedAt(constant1).GetUses(),
+              UnorderedElementsAre(HloUse{start, 0, {}}, HloUse{add, 0, {}}));
+  EXPECT_THAT(analysis.GetValueDefinedAt(constant2).GetUses(),
+              UnorderedElementsAre(HloUse{start, 1, {}}, HloUse{add, 1, {}}));
+
+  // When propagate_through_calls is false, the subcomputation parameters
+  // define their own values.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> no_prop_analysis,
+      HloDataflowAnalysis::Run(*module_, ssa_form,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false));
+  EXPECT_TRUE(no_prop_analysis->ValueIsDefinedAt(subparam0));
+  EXPECT_TRUE(no_prop_analysis->ValueIsDefinedAt(subparam1));
+}
+
 TEST_P(HloDataflowAnalysisTest, NestedCalls) {
   std::string hlo_str = R"(
 HloModule NestedCalls

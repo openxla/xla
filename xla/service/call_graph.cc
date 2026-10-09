@@ -85,7 +85,7 @@ void CallGraphNode::AddCallSiteForInstruction(
     HloInstruction* instruction,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   CHECK_EQ(instruction->parent(), computation());
-  const CallContext context = GetInstructionCallContext(instruction->opcode());
+  const CallContext context = GetInstructionCallContext(instruction);
   if (!instruction->called_computations().empty()) {
     CHECK(context == CallContext::kControlFlow ||
           context == CallContext::kEmbedded);

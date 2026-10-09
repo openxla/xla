@@ -6817,4 +6817,11 @@ std::string HloInstruction::GetStackTraceStringFromMetadata(int indent) const {
   return absl::StrJoin(frame_strings, "\n");
 }
 
+CallContext GetInstructionCallContext(const HloInstruction* instruction) {
+  if (instruction->IsCustomCall("compute-on-start")) {
+    return CallContext::kControlFlow;
+  }
+  return GetInstructionCallContext(instruction->opcode());
+}
+
 }  // namespace xla
