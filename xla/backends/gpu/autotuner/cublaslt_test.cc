@@ -118,7 +118,9 @@ class CublasLtBackendTest : public HloHardwareIndependentTestBase {
   CublasLtBackend backend_;
 
   CublasLtBackendTest()
-      : stream_executor_(PlatformUtil::GetDefaultPlatform()
+      : debug_options_(
+            HloHardwareIndependentTestBase::GetDebugOptionsForTest()),
+        stream_executor_(PlatformUtil::GetDefaultPlatform()
                              .value()
                              ->ExecutorForDevice(0)
                              .value()),
