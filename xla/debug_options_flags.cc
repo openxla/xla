@@ -49,7 +49,6 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
-#include "tsl/platform/cpu_info.h"  // NOLINT
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/hlo/pass/hlo_pass_filter.h"
@@ -60,6 +59,7 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"  // NOLINT
 
 namespace xla {
 
@@ -553,6 +553,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
+  opts.set_xla_gpu_experimental_fusion_recomputation(0);
+  opts.set_xla_gpu_fusion_recomputation_min_bytes(64 * 1024 * 1024);
+  opts.set_xla_gpu_fusion_recomputation_max_candidates(16);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
@@ -3882,6 +3885,27 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Limits the thunk buffer debug instrumentation to thunks with profile "
       "annotations matching one or more regexes passed as comma-separated "
       "string."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_fusion_recomputation",
+      int32_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_fusion_recomputation),
+      debug_options->xla_gpu_experimental_fusion_recomputation(),
+      "Fusion side-output recomputation: 0=off, 1=measure only, 2=apply "
+      "measured "
+      "improvements. Profiles 50 samples per variant; requires a GPU."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_fusion_recomputation_min_bytes",
+                int64_setter_for(
+                    &DebugOptions::set_xla_gpu_fusion_recomputation_min_bytes),
+                debug_options->xla_gpu_fusion_recomputation_min_bytes(),
+                "Minimum side-output size to consider for recomputation "
+                "(tuning budget)."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_fusion_recomputation_max_candidates",
+      int64_setter_for(
+          &DebugOptions::set_xla_gpu_fusion_recomputation_max_candidates),
+      debug_options->xla_gpu_fusion_recomputation_max_candidates(),
+      "Maximum recomputation candidates measured per module (tuning budget)."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_fusion_autotuner",
       bool_setter_for(

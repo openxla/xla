@@ -1396,3 +1396,36 @@ cc_embed_data(
     embedopts = ["--namespace=xla::gpu::config"],
     flatten = True,
 )
+
+cc_library(
+    name = "gpu_recomputation_cost_model",
+    srcs = ["gpu_recomputation_cost_model.cc"],
+    hdrs = ["gpu_recomputation_cost_model.h"],
+    deps = [
+        ":gpu_hlo_cost_analysis",
+        ":gpu_performance_model",
+        ":gpu_performance_model_base",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:decision",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_recomputation_cost_model_test",
+    srcs = ["gpu_recomputation_cost_model_test.cc"],
+    deps = [
+        ":gpu_recomputation_cost_model",
+        "//xla/backends/gpu/transforms:recompute_fusion_side_outputs",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:decision",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
