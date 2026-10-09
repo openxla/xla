@@ -347,8 +347,18 @@ class HloRunnerInterface {
       const OpaqueExecutable* absl_nonnull lhs,
       const OpaqueExecutable* absl_nonnull rhs) const = 0;
 
+  // Configures whether device output buffers should be poisoned before
+  // execution.
+  void set_poison_output_buffers(bool poison) {
+    poison_output_buffers_ = poison;
+  }
+  bool poison_output_buffers() const { return poison_output_buffers_; }
+
   virtual absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const = 0;
+
+ protected:
+  bool poison_output_buffers_ = false;
 };
 
 }  // namespace xla

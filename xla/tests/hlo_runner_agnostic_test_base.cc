@@ -734,6 +734,23 @@ HloRunnerAgnosticTestBase::RunAndCompareTwoExecutablesInternal(
     OpaqueExecutable* executable_0, OpaqueExecutable* executable_1,
     const absl::Span<const Literal* const> arguments,
     const std::optional<ErrorSpec>& error) {
+  struct ScopedPoisonOutputBuffers {
+    explicit ScopedPoisonOutputBuffers(HloRunnerInterface* runner)
+        : runner_(runner) {
+      if (runner_ != nullptr) {
+        runner_->set_poison_output_buffers(true);
+      }
+    }
+    ~ScopedPoisonOutputBuffers() {
+      if (runner_ != nullptr) {
+        runner_->set_poison_output_buffers(false);
+      }
+    }
+
+   private:
+    HloRunnerInterface* runner_;
+  } scoped_poison(test_runner_.get());
+
   const absl::StatusOr<Literal> test_0 =
       test_runner_->ExecuteWithExecutable(executable_0, arguments);
   if (!swallow_execution_errors_ && !test_0.ok()) {

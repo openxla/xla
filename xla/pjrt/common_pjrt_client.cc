@@ -2766,6 +2766,18 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
                               argument_handles, input_output_alias_config(),
                               device, output_memory_space_kind_ids_, options));
     output_leaf_buffers = std::move(prepared.buffers);
+    if (options.poison_output_buffers) {
+      for (auto& leaf_buf : output_leaf_buffers) {
+        if (leaf_buf != nullptr) {
+          size_t bytes = leaf_buf->GetOnDeviceSizeInBytes();
+          if (bytes > 0) {
+            std::vector<uint8_t> poison(bytes, 0xA5);
+            ABSL_RETURN_IF_ERROR(
+                leaf_buf->CopyRawHostToDevice(poison.data(), 0, bytes).Await());
+          }
+        }
+      }
+    }
     launch_args.output_device_shape_override =
         std::move(prepared.output_device_shape_override);
     VLOG(3) << "Created output buffer: " << output_device_shape_->ToString();
