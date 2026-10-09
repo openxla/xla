@@ -82,6 +82,37 @@ void AddOrUpdateVectorOfPairsAsAttribute(HloInstruction* instr,
   instr->set_frontend_attributes(attributes);
 }
 
+void UpdateFrontendAttributes(
+    HloInstruction* instruction, FrontendAttributes updates,
+    absl::Span<const absl::string_view> attributes_to_remove) {
+  for (absl::string_view key : attributes_to_remove) {
+    instruction->erase_frontend_attribute(key);
+  }
+  for (const auto& [key, value] : updates.map()) {
+    instruction->set_frontend_attribute(key, value);
+  }
+}
+
+absl::Status ReplaceInstructionWithMergedFrontendAttributes(
+    HloInstruction* old_instruction, HloInstruction* new_instruction) {
+  FrontendAttributes inherited_attributes;
+  if (!absl::c_linear_search(old_instruction->operands(), new_instruction)) {
+    inherited_attributes = old_instruction->frontend_attributes();
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      bool replaced,
+      old_instruction->parent()->ReplaceInstruction(
+          old_instruction, new_instruction, /*preserve_sharding=*/false,
+          /*relay_control_dependency=*/false, /*remove_unused_operands=*/true,
+          /*preserve_frontend_attributes=*/false));
+  if (!replaced) {
+    return absl::FailedPreconditionError(
+        "Instruction replacement was declined");
+  }
+  new_instruction->add_frontend_attributes(std::move(inherited_attributes));
+  return absl::OkStatus();
+}
+
 int32_t NestingDepth(const HloInstruction* hlo) {
   int level = 0;
   const HloComputation* c = hlo->parent();
