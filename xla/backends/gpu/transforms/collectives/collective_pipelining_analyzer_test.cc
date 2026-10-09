@@ -27,8 +27,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -92,8 +90,7 @@ ENTRY main {
   config.set_replica_count(1);
   config.set_num_partitions(8);
   config.set_use_spmd_partitioning(true);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ar = hlo_query::FindInstruction(
@@ -154,8 +151,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ar = hlo_query::FindInstruction(
@@ -218,8 +214,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ar = hlo_query::FindInstruction(
@@ -282,8 +277,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ar = hlo_query::FindInstruction(
@@ -345,8 +339,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* rs = hlo_query::FindInstruction(
@@ -410,8 +403,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* rs = hlo_query::FindInstruction(
@@ -475,8 +467,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* rs = hlo_query::FindInstruction(
@@ -534,8 +525,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ag = hlo_query::FindInstruction(
@@ -596,8 +586,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ag = hlo_query::FindInstruction(
@@ -657,8 +646,7 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_replica_count(1);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo, config));
   ASSERT_OK(CollectivePipeliningAnalyzer(/*pointer_size=*/4).Run(module.get()));
 
   HloInstruction* ag = hlo_query::FindInstruction(

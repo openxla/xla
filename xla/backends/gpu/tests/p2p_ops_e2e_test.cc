@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -23,7 +25,6 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/literal_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -59,11 +60,11 @@ TEST_P(P2POps, CollectivePermute) {
   )";
   HloModuleConfig config = GetModuleConfigForTest(
       /*replica_count=*/kNumReplicas);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
-                          ExecuteReplicated(std::move(module)));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module)));
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);

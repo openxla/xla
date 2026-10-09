@@ -641,6 +641,10 @@ std::vector<TransposeTestCase> GetTransposeTestCases() {
                         /*permutation=*/{3, 1, 2, 0},
                         /*input_tiling=*/{},
                         /*output_tiling=*/{8, 128}),
+      TransposeTestCase(/*dims=*/{3, 16, 17, 128},
+                        /*permutation=*/{3, 1, 2, 0},
+                        /*input_tiling=*/{8, 128},
+                        /*output_tiling=*/{}),
       TransposeTestCase(/*dims=*/{129, 1234567},
                         /*permutation=*/{0, 1},
                         /*input_tiling=*/{},
@@ -697,7 +701,25 @@ std::vector<TransposeTestCase> GetTransposeTestCases() {
       TransposeTestCase(/*dims=*/{52, 44, 45, 96, 1, 5},
                         /*permutation=*/{5, 4, 2, 3, 1, 0},
                         /*input_tiling=*/{}, /*output_tiling=*/{},
-                        /*input_striding=*/{})};
+                        /*input_striding=*/{}),
+
+      // Stride-1 dimension of size 3 in the input or output.
+      TransposeTestCase(/*dims=*/{3, 7}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 8}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 15}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 31}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{7, 3}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{8, 3}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{15, 3}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{31, 3}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 256, 256}, /*permutation=*/{1, 2, 0}),
+      TransposeTestCase(/*dims=*/{256, 256, 3}, /*permutation=*/{2, 0, 1}),
+      TransposeTestCase(/*dims=*/{256, 3}, /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 257, 255}, /*permutation=*/{1, 2, 0}),
+      TransposeTestCase(/*dims=*/{257, 255, 3}, /*permutation=*/{2, 0, 1}),
+      TransposeTestCase(/*dims=*/{5, 3, 64, 64}, /*permutation=*/{2, 3, 0, 1}),
+      TransposeTestCase(/*dims=*/{5, 3, 64, 64}, /*permutation=*/{0, 2, 3, 1}),
+      TransposeTestCase(/*dims=*/{5, 64, 64, 3}, /*permutation=*/{0, 3, 1, 2})};
   return cases;
 }
 
@@ -1128,6 +1150,12 @@ static std::vector<TransposeTestCase> BenchmarkCases() {
                         /*permutation=*/{1, 2, 3, 0}),
       TransposeTestCase(/*dims=*/{256, 64, 64, 3},
                         /*permutation=*/{1, 3, 2, 0}),
+      TransposeTestCase(/*dims=*/{256, 3},
+                        /*permutation=*/{1, 0}),
+      TransposeTestCase(/*dims=*/{3, 256, 256},
+                        /*permutation=*/{1, 2, 0}),
+      TransposeTestCase(/*dims=*/{256, 256, 3},
+                        /*permutation=*/{2, 0, 1}),
   };
 }
 
@@ -1301,19 +1329,53 @@ static void* benchmarks = []() {
   return nullptr;
 }();
 
-template <typename T, int bs, bool kWideStride = false>
+enum class StrideMode {
+  kTight,          // lda = ldb <= 64B (exercises SseSquare / 128-bit kernel)
+  kWideSymmetric,  // lda = ldb > 64B (exercises AvxRectangular gather)
+  kWideScatter,    // lda < ldb (exercises AvxRectangular scatter)
+};
+
+template <typename T, int bs>
+constexpr int BenchmarkOuterBlockSize() {
+  int max_by_elems = kMaxOuterBlockElems / bs;
+  int max_by_bytes = kMaxSquare128StrideBytes / (bs * sizeof(T));
+  return std::max(1, std::min(max_by_elems, max_by_bytes));
+}
+
+template <typename T, int bs, StrideMode kStrideMode = StrideMode::kTight>
 void BM_TransposeMicroKernel(::testing::benchmark::State& state) {
-  constexpr int64_t kRowBytes = bs * sizeof(T);
-  constexpr int64_t kLda = kWideStride ? kRowBytes + 64 : kRowBytes;
-  constexpr int64_t kLdb = kRowBytes;
-  ABSL_CACHELINE_ALIGNED std::array<char, bs * kLda> src = {};
-  ABSL_CACHELINE_ALIGNED std::array<char, bs * kLdb> dst = {};
+  constexpr int kOuterBs = BenchmarkOuterBlockSize<T, bs>();
+  constexpr int64_t kBlockBytes = kOuterBs * bs * sizeof(T);
+  constexpr int64_t kWideBytes = std::max<int64_t>(kBlockBytes, 1024) + 64;
+  constexpr int64_t kLda =
+      kStrideMode == StrideMode::kWideSymmetric ? kWideBytes : kBlockBytes;
+  constexpr int64_t kLdb =
+      kStrideMode == StrideMode::kTight ? kBlockBytes : kWideBytes;
+
+  ABSL_CACHELINE_ALIGNED std::array<char, kOuterBs * bs * kLda> src = {};
+  ABSL_CACHELINE_ALIGNED std::array<char, kOuterBs * bs * kLdb> dst = {};
+  const char* a = src.data();
+  char* b = dst.data();
+  int64_t lda = kLda;
+  int64_t ldb = kLdb;
+  int outer_bs = kOuterBs;
   for (auto _ : state) {
-    tsl::testing::DoNotOptimize(src);
-    TransposeMicroKernel<T, bs>::Apply(src.data(), kLda, dst.data(), kLdb);
-    tsl::testing::DoNotOptimize(dst);
+    benchmark::DoNotOptimize(a);
+    benchmark::DoNotOptimize(b);
+    benchmark::DoNotOptimize(lda);
+    benchmark::DoNotOptimize(ldb);
+    benchmark::DoNotOptimize(outer_bs);
+    for (int i = 0; i < outer_bs; ++i) {
+      for (int j = 0; j < outer_bs; ++j) {
+        TransposeMicroKernel<T, bs>::Apply(
+            a + bs * j * lda + i * bs * sizeof(T), lda,
+            b + bs * i * ldb + j * bs * sizeof(T), ldb);
+      }
+    }
+    benchmark::ClobberMemory();
   }
-  state.SetBytesProcessed(state.iterations() * bs * bs * sizeof(T));
+  state.SetBytesProcessed(state.iterations() * kOuterBs * kOuterBs * bs * bs *
+                          sizeof(T));
 }
 
 // 256-bit (32-byte) rows:
@@ -1329,11 +1391,24 @@ BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int16_t, 8);
 BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, float, 4);
 BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int64_t, 2);
 
-// 128-bit (16-byte) rows, wide stride (lda > 64):
-BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int8_t, 16, /*kWideStride=*/true);
-BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int16_t, 8, /*kWideStride=*/true);
-BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, float, 4, /*kWideStride=*/true);
-BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int64_t, 2, /*kWideStride=*/true);
+// 128-bit (16-byte) rows, wide symmetric stride (lda > 64):
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int8_t, 16,
+                   StrideMode::kWideSymmetric);
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int16_t, 8,
+                   StrideMode::kWideSymmetric);
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, float, 4,
+                   StrideMode::kWideSymmetric);
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int64_t, 2,
+                   StrideMode::kWideSymmetric);
+
+// 128-bit (16-byte) rows, wide scatter stride (lda < ldb):
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int8_t, 16,
+                   StrideMode::kWideScatter);
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int16_t, 8,
+                   StrideMode::kWideScatter);
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, float, 4, StrideMode::kWideScatter);
+BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int64_t, 2,
+                   StrideMode::kWideScatter);
 
 // Sub-128-bit (8B, 4B, 2B) rows:
 BENCHMARK_TEMPLATE(BM_TransposeMicroKernel, int8_t, 8);
@@ -1500,6 +1575,83 @@ TEST(TransposeTest, PackInt2_Unaligned) {
 TEST(TransposeTest, PackInt1_Unaligned) {
   TestPackIntN(1, {5, 5}, {1, 0});
   TestPackIntN(1, {15, 31}, {1, 0});
+}
+
+TEST(TransposeTest, InterleaveAndDeinterleaveSelection) {
+  struct SelectionCase {
+    std::vector<int64_t> dims;
+    std::vector<int64_t> permutation;
+    size_t elem_size = 4;
+    std::vector<int64_t> input_striding;
+    std::vector<int64_t> input_tiling;
+    std::vector<int64_t> output_tiling;
+    std::string expected_kernel;
+  };
+  const SelectionCase cases[] = {
+      {{3, 8}, {1, 0}, 1, {}, {}, {}, "inner_kernel=interleave"},
+      {{3, 8}, {1, 0}, 2, {}, {}, {}, "inner_kernel=interleave"},
+      {{3, 8}, {1, 0}, 4, {}, {}, {}, "inner_kernel=interleave"},
+      {{3, 8}, {1, 0}, 8, {}, {}, {}, "inner_kernel=interleave"},
+      {{3, 8}, {1, 0}, 16, {}, {}, {}, "inner_kernel=default"},
+      {{3, 7}, {1, 0}, 4, {}, {}, {}, "inner_kernel=default"},
+      {{8, 3}, {1, 0}, 1, {}, {}, {}, "inner_kernel=deinterleave"},
+      {{8, 3}, {1, 0}, 2, {}, {}, {}, "inner_kernel=deinterleave"},
+      {{8, 3}, {1, 0}, 4, {}, {}, {}, "inner_kernel=deinterleave"},
+      {{8, 3}, {1, 0}, 8, {}, {}, {}, "inner_kernel=deinterleave"},
+      {{8, 3}, {1, 0}, 16, {}, {}, {}, "inner_kernel=default"},
+      {{7, 3}, {1, 0}, 4, {}, {}, {}, "inner_kernel=default"},
+      {{3, 4, 16}, {2, 1, 0}, 4, {}, {}, {}, "inner_kernel=default"},
+      {{16, 4, 3}, {2, 1, 0}, 4, {}, {}, {}, "inner_kernel=default"},
+      {{3, 8}, {1, 0}, 4, {32, 4}, {}, {}, "inner_kernel=interleave"},
+      {{3, 8}, {1, 0}, 4, {-32, 4}, {}, {}, "inner_kernel=interleave"},
+      {{8, 3}, {1, 0}, 4, {12, 4}, {}, {}, "inner_kernel=deinterleave"},
+      {{2, 8, 3},
+       {0, 2, 1},
+       4,
+       {-128, 12, 4},
+       {},
+       {},
+       "inner_kernel=deinterleave"},
+      {{8, 3}, {1, 0}, 4, {32, 4}, {}, {}, "inner_kernel=default"},
+      {{8, 3}, {1, 0}, 4, {-32, 4}, {}, {}, "inner_kernel=default"},
+      {{32, 224, 224, 3},
+       {0, 3, 1, 2},
+       4,
+       {},
+       {},
+       {8, 128},
+       "inner_kernel=deinterleave"},
+      {{32, 3, 224, 224},
+       {0, 2, 3, 1},
+       4,
+       {},
+       {8, 128},
+       {},
+       "inner_kernel=interleave"},
+      {{6, 8}, {1, 0}, 4, {}, {}, {3}, "inner_kernel=default"},
+      {{8, 6}, {1, 0}, 4, {}, {3}, {}, "inner_kernel=default"},
+  };
+  for (const auto& tc : cases) {
+    TransposePlan::Options o;
+    o.elem_size_in_bytes = tc.elem_size;
+    o.dims = tc.dims;
+    o.permutation = tc.permutation;
+    if (!tc.input_striding.empty()) {
+      o.input_striding = TransposePlan::Striding{tc.input_striding};
+    }
+    if (!tc.input_tiling.empty()) {
+      o.input_tiling = TransposePlan::Tiling{tc.input_tiling};
+    }
+    if (!tc.output_tiling.empty()) {
+      o.output_tiling = TransposePlan::Tiling{tc.output_tiling};
+    }
+    auto status_or_plan = TransposePlan::Create(o);
+    if (!status_or_plan.ok()) {
+      FAIL() << status_or_plan.status();
+    }
+    EXPECT_THAT((*status_or_plan)->ToString(),
+                testing::HasSubstr(tc.expected_kernel));
+  }
 }
 
 }  // namespace xla
