@@ -1402,10 +1402,13 @@ cc_library(
     srcs = ["gpu_recomputation_cost_model.cc"],
     hdrs = ["gpu_recomputation_cost_model.h"],
     deps = [
+        ":combined_gpu_performance_model",
+        ":fusion_analysis_cache",
         ":gpu_hlo_cost_analysis",
-        ":gpu_performance_model",
         ":gpu_performance_model_base",
         "//xla:shape_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/service:decision",
         "//xla/stream_executor:device_description",
@@ -1413,6 +1416,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
     ],
 )
 

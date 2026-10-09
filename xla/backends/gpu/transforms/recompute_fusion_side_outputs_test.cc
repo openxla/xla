@@ -104,6 +104,13 @@ Decision AllowForTest(const FusionRecomputeVariants&) {
   return Decision::Allow();
 }
 
+std::string WithTritonReduction() {
+  return absl::StrReplaceAll(
+      kHlo,
+      {{"kind=kInput, calls=finish_reduction",
+        R"(kind=kCustom, calls=finish_reduction, backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tiles":[{"sizes":["1"]}],"num_warps":"4","num_ctas":1,"num_stages":1}}})"}});
+}
+
 using RecomputeFusionSideOutputsTest = HloHardwareIndependentTestBase;
 
 TEST_F(RecomputeFusionSideOutputsTest, ReusesShiftedLogitsAndKeepsReduction) {
@@ -127,6 +134,31 @@ TEST_F(RecomputeFusionSideOutputsTest, ReusesShiftedLogitsAndKeepsReduction) {
   EXPECT_EQ(probabilities->operand(0)->operand(0), shifted);
   ASSERT_OK_AND_ASSIGN(changed, RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(RecomputeFusionSideOutputsTest, PreservesTritonIntermediate) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(WithTritonReduction()));
+  int evaluated = 0;
+  RecomputeFusionSideOutputs pass(
+      [&](const FusionRecomputeVariants& v) {
+        ++evaluated;
+        for (auto* region : {v.before.get(), v.after.get()}) {
+          EXPECT_EQ(
+              absl::c_count_if(region->entry_computation()->instructions(),
+                               [](HloInstruction* i) {
+                                 return i->opcode() == HloOpcode::kFusion &&
+                                        i->fusion_kind() ==
+                                            HloInstruction::FusionKind::kCustom;
+                               }),
+              1);
+        }
+        return Decision::Allow();
+      },
+      0);
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(evaluated, 1);
 }
 
 TEST_F(RecomputeFusionSideOutputsTest, KeepsSmallSideOutput) {
@@ -357,6 +389,18 @@ TEST_F(RecomputeFusionSideOutputsExecutionTest, PreservesResults) {
   EXPECT_TRUE(RunAndCompareTwoModules(std::move(before), std::move(after),
                                       ErrorSpec{1e-5, 1e-5},
                                       /*run_hlo_passes=*/false));
+}
+
+TEST_F(RecomputeFusionSideOutputsExecutionTest,
+       PreservesResultsWithTritonIntermediate) {
+  ASSERT_OK_AND_ASSIGN(auto before,
+                       ParseAndReturnVerifiedModule(WithTritonReduction()));
+  auto after = before->Clone();
+  RecomputeFusionSideOutputs pass(AllowForTest, 0);
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(after.get()));
+  ASSERT_TRUE(changed);
+  EXPECT_TRUE(RunAndCompareTwoModules(std::move(before), std::move(after),
+                                      ErrorSpec{1e-5, 1e-5}, false));
 }
 
 TEST_F(RecomputeFusionSideOutputsExecutionTest,

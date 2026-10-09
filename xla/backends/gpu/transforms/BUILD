@@ -2471,6 +2471,7 @@ cc_library(
         "//xla/service:decision",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_fusible",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
