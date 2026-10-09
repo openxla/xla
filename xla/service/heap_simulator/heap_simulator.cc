@@ -2382,11 +2382,10 @@ GlobalDecreasingSizeBestFitHeap<
 }
 
 template <typename BufferType>
-absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
-    SlicedAllocationFinder::DoesPermutationFit(
-        absl::Span<const int64_t> permutation_of_slice_times,
-        const FreeChunkRoot& root, int64_t offset) const {
-  absl::Status result =
+bool GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
+    DoesPermutationFit(absl::Span<const int64_t> permutation_of_slice_times,
+                       const FreeChunkRoot& root, int64_t offset) const {
+  bool result =
       DoesPermutationFitImpl(permutation_of_slice_times, root, offset);
   VLOG(3) << "SlicedAllocationFinder::DoesPermutationFit\n"
           << "  permutation of slice times: [ "
@@ -2398,37 +2397,37 @@ absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
 }
 
 template <typename BufferType>
-absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
-    SlicedAllocationFinder::DoesPermutationFitImpl(
-        absl::Span<const int64_t> permutation_of_slice_times,
-        const FreeChunkRoot& root, int64_t offset) const {
+bool GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
+    DoesPermutationFitImpl(absl::Span<const int64_t> permutation_of_slice_times,
+                           const FreeChunkRoot& root, int64_t offset) const {
   if (permutation_of_slice_times.size() != sorted_slice_sizes_.size()) {
-    return InvalidArgumentStrCat(
-        sorted_slice_sizes_.size(), " slices times expected in permutation. ",
-        permutation_of_slice_times.size(), " specified.");
+    VLOG(3) << sorted_slice_sizes_.size()
+            << " slices times expected in permutation. "
+            << permutation_of_slice_times.size() << " specified.";
+    return false;
   }
   if (offset >= root.chunk.chunk_end()) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("Free chunk root ", root.chunk.ToString(),
-                           " does not overlap with offset ", offset, "."));
+    VLOG(3) << "Free chunk root " << root.chunk.ToString()
+            << " does not overlap with offset " << offset << ".";
+    return false;
   }
   if (offset + max_colocation_size_ > root.chunk.chunk_end()) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("Not enough space to fit enitre allocation [",
-                           offset, ", ", offset + max_colocation_size_,
-                           ") in free chunk root ", root.chunk.ToString()));
+    VLOG(3) << "Not enough space to fit entire allocation [" << offset << ", "
+            << offset + max_colocation_size_ << ") in free chunk root "
+            << root.chunk.ToString();
+    return false;
   }
   if (!is_offset_allowed_(offset)) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("We are not permitted to place an allocation at ",
-                           "offset ", offset, "."));
+    VLOG(3) << "We are not permitted to place an allocation at offset "
+            << offset << ".";
+    return false;
   }
 
   auto piece_fwd_it = root.pieces.lower_bound(offset);
   if (piece_fwd_it == root.pieces.end()) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("Offset ", offset, " comes before free chunk root ",
-                           root.chunk.ToString()));
+    VLOG(3) << "Offset " << offset << " comes before free chunk root "
+            << root.chunk.ToString();
+    return false;
   }
   ++piece_fwd_it;
   auto piece_reverse_it = std::make_reverse_iterator(piece_fwd_it);
@@ -2457,11 +2456,10 @@ absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
     if (current_piece_time > current_slice_time) {
       // The current piece is not free far enough back in time to support the
       // current slice.
-      return FailedPrecondition(
-          "%s",
-          absl::StrCat("At slice time t", current_slice_time, ", slice ",
-                       slice_index, " does not fit at offset ", current_offset,
-                       " in root ", root.chunk.ToString()));
+      VLOG(3) << "At slice time t" << current_slice_time << ", slice "
+              << slice_index << " does not fit at offset " << current_offset
+              << " in root " << root.chunk.ToString();
+      return false;
     }
 
     if (remaining_in_slice >= remaining_in_piece) {
@@ -2477,12 +2475,13 @@ absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
   }
 
   if (!out_of_slices(slice_index)) {
-    return InternalStrCat("Ran out of space in root ", root.chunk.ToString(),
-                          " to fit slice permutation; however, we should "
-                          "have caught such a condition earlier.");
+    VLOG(3) << "Ran out of space in root " << root.chunk.ToString()
+            << " to fit slice permutation; however, we should "
+               "have caught such a condition earlier.";
+    return false;
   }
 
-  return absl::OkStatus();
+  return true;
 }
 
 // Future opportunities:
@@ -2520,8 +2519,7 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::FindInRoot(
          !slice_time_permutation_iterator_->Done();
          slice_time_permutation_iterator_->Next()) {
       if (DoesPermutationFit(slice_time_permutation_iterator_->Get(), root,
-                             offset)
-              .ok()) {
+                             offset)) {
         return PermutationToChunks(slice_time_permutation_iterator_->Get(),
                                    offset);
       }
