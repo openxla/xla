@@ -21,8 +21,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
-#include "absl/status/status_matchers.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "xla/service/platform_util.h"
@@ -56,8 +56,8 @@ absl::StatusOr<StreamExecutor*> GpuExecutor() {
 // [kBatch, kSeqLen, kNumHeads, kHeadDim] with `max_seg_per_batch` segments per
 // row and returns the cuDNN workspace size in bytes. Descriptors mirror the
 // ones produced by cudnn_custom_call_compiler for a BSHD-layout backward call.
-absl::StatusOr<int64_t> PackedBackwardWorkspaceSize(
-    StreamExecutor* executor, int max_seg_per_batch) {
+absl::StatusOr<int64_t> PackedBackwardWorkspaceSize(StreamExecutor* executor,
+                                                    int max_seg_per_batch) {
   constexpr dnn::DataType kType = dnn::DataType::kBF16;
   const std::vector<int64_t> bshd = {kBatch, kSeqLen, kNumHeads, kHeadDim};
   const std::vector<int64_t> bshd_layout = {3, 2, 1, 0};
