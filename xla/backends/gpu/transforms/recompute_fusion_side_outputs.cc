@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/service/compilation_environments.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -231,8 +232,13 @@ absl::StatusOr<FusionRecomputeVariants> ExtractFusionRecomputeVariants(
         "recomputation region exceeds tuning budget");
   }
   for (HloInstruction* instruction : region) {
+    // An unchanged intermediate reduction may already use Triton. Preserve its
+    // selected configuration and include its real latency in both regions.
+    const bool triton = IsGenericTritonFusion(*instruction) &&
+                        !instruction->HasSideEffect() &&
+                        instruction->output_operand_aliasing().empty();
     if (instruction->HasControlDependencies() ||
-        (!IsNativeFusion(instruction) &&
+        (!IsNativeFusion(instruction) && !triton &&
          instruction->opcode() != HloOpcode::kGetTupleElement &&
          instruction->opcode() != HloOpcode::kBitcast)) {
       return absl::UnimplementedError(
