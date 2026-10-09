@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/conv_kind_assignment.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -36,12 +37,14 @@ limitations under the License.
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal_util.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -50,7 +53,8 @@ namespace {
 
 namespace m = ::xla::match;
 
-constexpr se::CudaComputeCapability kDefaultCC;
+constexpr se::CudaComputeCapability kDefaultCC =
+    se::CudaComputeCapability::Volta();
 
 class ConvKindAssignmentTest : public HloHardwareIndependentTestBase {
  public:
@@ -132,7 +136,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolve) {
           tf_default_dnums_for_backward_filter_,
           /*sparsity_config=*/{}, /*preferred_element_type=*/std::nullopt)
           .value(),
-      activations, gradients, /*feature_group_count=*/1,
+      {activations, gradients}, /*feature_group_count=*/1,
       /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_filter_, DefaultPrecisionConfig(2)));
 
@@ -164,7 +168,7 @@ TEST_F(ConvKindAssignmentTest,
           tf_default_dnums_for_backward_filter_,
           /*sparsity_config=*/{}, /*preferred_element_type=*/std::nullopt)
           .value(),
-      activations, gradients, /*feature_group_count=*/1,
+      {activations, gradients}, /*feature_group_count=*/1,
       /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_filter_, DefaultPrecisionConfig(2)));
 
@@ -195,7 +199,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithPaddedActivations) {
     conv_window.mutable_dimensions(i)->set_padding_high(1);
   }
   builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {3, 3, 32, 32}), activations, gradients,
+      ShapeUtil::MakeShape(F32, {3, 3, 32, 32}), {activations, gradients},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_filter_, DefaultPrecisionConfig(2)));
 
@@ -227,7 +231,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithPaddedGradients) {
     conv_window.mutable_dimensions(i)->set_window_dilation(2);
   }
   builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {3, 3, 192, 320}), activations, gradients,
+      ShapeUtil::MakeShape(F32, {3, 3, 192, 320}), {activations, gradients},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_filter_, DefaultPrecisionConfig(2)));
 
@@ -257,7 +261,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithUnevenPadding) {
     conv_window.mutable_dimensions(i)->set_padding_high(1);
   }
   builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {2, 2, 32, 32}), activations, gradients,
+      ShapeUtil::MakeShape(F32, {2, 2, 32, 32}), {activations, gradients},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_filter_, DefaultPrecisionConfig(2)));
 
@@ -302,11 +306,13 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveEvenPadding) {
   conv_dnums.add_kernel_spatial_dimensions(2);
   conv_dnums.add_kernel_spatial_dimensions(3);
 
-  HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {4, 3, 16, 16}), /*lhs=*/output,
-      /*rhs=*/reverse_kernel, /*feature_group_count=*/1,
-      /*batch_group_count=*/1, conv_window, conv_dnums,
-      DefaultPrecisionConfig(2)));
+  HloInstruction* conv = builder.AddInstruction(
+      HloInstruction::CreateConvolve(ShapeUtil::MakeShape(F32, {4, 3, 16, 16}),
+                                     {/*lhs=*/output,
+                                      /*rhs=*/reverse_kernel},
+                                     /*feature_group_count=*/1,
+                                     /*batch_group_count=*/1, conv_window,
+                                     conv_dnums, DefaultPrecisionConfig(2)));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(), ShapeInference::InferConvolveShape(
@@ -352,7 +358,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolve1x1Filter) {
           tf_default_dnums_for_backward_input_,
           /*sparsity_config=*/{}, /*preferred_element_type=*/std::nullopt)
           .value(),
-      /*lhs=*/output, /*rhs=*/kernel, /*feature_group_count=*/1,
+      {/*lhs=*/output, /*rhs=*/kernel}, /*feature_group_count=*/1,
       /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_input_, DefaultPrecisionConfig(2)));
 
@@ -388,7 +394,7 @@ TEST_F(ConvKindAssignmentTest,
           tf_default_dnums_for_backward_input_,
           /*sparsity_config=*/{}, /*preferred_element_type=*/std::nullopt)
           .value(),
-      /*lhs=*/output, /*rhs=*/kernel, /*feature_group_count=*/1,
+      {/*lhs=*/output, /*rhs=*/kernel}, /*feature_group_count=*/1,
       /*batch_group_count=*/1, default_conv_window_,
       tf_default_dnums_for_backward_input_, DefaultPrecisionConfig(2)));
 
@@ -436,7 +442,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveUnevenPaddingOnGradients) {
     conv_window.mutable_dimensions(i)->set_base_dilation(2);
   }
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), output, reverse_kernel,
+      ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_input_, DefaultPrecisionConfig(2)));
   // Verify the convolution's shape is consistent with ShapeInference.
@@ -480,7 +486,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveLowPaddingTooLarge) {
     conv_window.mutable_dimensions(i)->set_base_dilation(2);
   }
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), output, reverse_kernel,
+      ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_input_, DefaultPrecisionConfig(2)));
   // Verify the convolution's shape is consistent with ShapeInference.
@@ -538,7 +544,7 @@ TEST_F(ConvKindAssignmentTest,
   forward_conv_col_dim->set_padding_high(1);
   forward_conv_col_dim->set_base_dilation(2);
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {1, 1, 14, 1}), output, reverse_kernel,
+      ShapeUtil::MakeShape(F32, {1, 1, 14, 1}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_input_, DefaultPrecisionConfig(2)));
   // Verify the convolution's shape is consistent with ShapeInference.
@@ -592,7 +598,7 @@ TEST_F(ConvKindAssignmentTest,
   forward_conv_col_dim->set_size(2);
   forward_conv_col_dim->set_padding_high(2);
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {1, 1, 4, 1}), output, reverse_kernel,
+      ShapeUtil::MakeShape(F32, {1, 1, 4, 1}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       tf_default_dnums_for_backward_input_, DefaultPrecisionConfig(2)));
   // Verify the convolution's shape is consistent with ShapeInference.
@@ -634,7 +640,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveConstantFilter) {
           dim_labels=bf01_01oi->bf01, feature_group_count=1
     })",
                                                  constant_str);
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
   EXPECT_TRUE(RunPass(m.get()));
   EXPECT_THAT(
@@ -658,7 +664,7 @@ TEST_F(ConvKindAssignmentTest, TestBackwardFilterPatternMatch) {
 
       ROOT conv = f32[120,120,3,3] convolution(input, filter), window={size=256x256 pad=1_1x1_1}, dim_labels=fb01_io01->fb01
     })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
   EXPECT_TRUE(RunPass(m.get()));
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
@@ -679,7 +685,75 @@ TEST_F(ConvKindAssignmentTest, TestBackwardFilterPatternNoMatch) {
 
       ROOT conv = f32[8,128,2,32] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
     })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+
+  EXPECT_TRUE(RunPass(m.get()));
+  EXPECT_THAT(DynCast<HloConvolutionInstruction>(
+                  m->entry_computation()->root_instruction())
+                  ->convolution_kind(),
+              CONVOLUTION_KIND_FPROP);
+}
+
+TEST_F(ConvKindAssignmentTest, TransposedConvBackwardFilter) {
+  const std::string module_str = R"(
+    HloModule Test
+
+    ENTRY Test {
+      x = bf16[1024,12,12,256] parameter(0)
+      dy = bf16[1024,24,24,192] parameter(1)
+      ROOT conv = bf16[5,5,256,192] convolution(x, dy), window={size=24x24 pad=3_2x3_2 lhs_dilate=2x2}, dim_labels=f01b_i01o->01bf
+    })";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+
+  EXPECT_TRUE(RunPass(m.get()));
+  const HloInstruction* conv = nullptr;
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Reverse(
+                  m::Convolution(&conv, m::Parameter(1), m::Parameter(0)))));
+  EXPECT_THAT(m->entry_computation()->root_instruction()->dimensions(),
+              ::testing::ElementsAre(0, 1));
+  EXPECT_EQ(Cast<HloConvolutionInstruction>(conv)->convolution_kind(),
+            CONVOLUTION_KIND_WGRAD);
+  EXPECT_EQ(window_util::ToString(conv->window()),
+            "size=12x12 pad=1_2x1_2 rhs_dilate=2x2");
+  EXPECT_EQ(ConvolutionDimensionNumbersToString(
+                conv->convolution_dimension_numbers()),
+            "f01b_i01o->01fb");
+}
+
+// The forward pass of a transposed convolution is not a backward filter
+// convolution and must remain a forward convolution.
+TEST_F(ConvKindAssignmentTest, TransposedConvForwardIsNotBackwardFilter) {
+  const std::string module_str = R"(
+    HloModule Test
+
+    ENTRY Test {
+      x = bf16[1024,12,12,256] parameter(0)
+      w = bf16[5,5,256,192] parameter(1)
+      ROOT conv = bf16[1024,24,24,192] convolution(x, w), window={size=5x5 pad=3_2x3_2 lhs_dilate=2x2}, dim_labels=b01f_01io->b01f
+    })";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+
+  EXPECT_TRUE(RunPass(m.get()));
+  EXPECT_THAT(DynCast<HloConvolutionInstruction>(
+                  m->entry_computation()->root_instruction())
+                  ->convolution_kind(),
+              CONVOLUTION_KIND_FPROP);
+}
+
+// If swapping the operands would result in negative padding (padding larger
+// than the filter size), fall back to a forward convolution.
+TEST_F(ConvKindAssignmentTest,
+       TransposedConvBackwardFilterWithNegativePaddingNoMatch) {
+  const std::string module_str = R"(
+    HloModule Test
+
+    ENTRY Test {
+      x = bf16[1024,12,12,256] parameter(0)
+      dy = bf16[1024,26,26,192] parameter(1)
+      ROOT conv = bf16[5,5,256,192] convolution(x, dy), window={size=26x26 pad=5_2x5_2 lhs_dilate=2x2}, dim_labels=f01b_i01o->01bf
+    })";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
   EXPECT_TRUE(RunPass(m.get()));
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
@@ -701,7 +775,7 @@ TEST_F(ConvKindAssignmentTest, TestConv1dBackwardFilterPatternMatch) {
       reshape.2 = f32[8,1,254,128] reshape(filter)
       ROOT conv = f32[1,3,128,128] convolution(reshape.1, reshape.2), window={size=1x254}, dim_labels=f01b_i01o->01bf
     })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
   EXPECT_TRUE(RunPass(m.get()));
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
@@ -723,7 +797,7 @@ TEST_F(ConvKindAssignmentTest, TestConv1dBackwardInputPatternMatch) {
       reshape.2 = f32[1,3,128,128] reshape(reverse)
       ROOT conv = f32[8,1,256,128] convolution(reshape.1, reshape.2), window={size=1x3 pad=0_0x2_2}, dim_labels=b01f_01oi->b01f
     })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
   EXPECT_TRUE(RunPass(m.get()));
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
@@ -743,13 +817,35 @@ TEST_F(ConvKindAssignmentTest, ForwardConvolutionWithWindowDilation) {
       filter = f32[3,3,128,128] parameter(1)
       ROOT conv = f32[8,128,32,32] convolution(input, filter), window={size=3x3 pad=2_2x2_2 rhs_dilate=2x2}, dim_labels=bf01_01io->bf01
     })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
   EXPECT_TRUE(RunPass(m.get()));
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->convolution_kind(),
               CONVOLUTION_KIND_FPROP);
+}
+
+TEST_F(ConvKindAssignmentTest, BatchGroupedConvolution) {
+  const std::string module_str = R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = bf16[4,4,4,1] parameter(0)
+      filter = bf16[2,2,1,2] parameter(1)
+      ROOT conv = bf16[2,2,2,2] convolution(input, filter), window={size=2x2 stride=2x2}, dim_labels=b01f_01io->b01f, batch_group_count=2
+    })";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+
+  EXPECT_TRUE(RunPass(m.get()));
+  for (const HloComputation* comp : m->computations()) {
+    for (const HloInstruction* inst : comp->instructions()) {
+      if (inst->opcode() == HloOpcode::kConvolution) {
+        EXPECT_NE(DynCast<HloConvolutionInstruction>(inst)->convolution_kind(),
+                  CONVOLUTION_KIND_UNSET);
+      }
+    }
+  }
 }
 
 TEST_F(ConvKindAssignmentTest, TestInvalidTypes) {
@@ -766,8 +862,8 @@ TEST_F(ConvKindAssignmentTest, TestInvalidTypes) {
   for (absl::string_view type : {"c64", "c128"}) {
     const std::string module_with_type =
         absl::StrReplaceAll(module_str, {{"TYPE", type}});
-    TF_ASSERT_OK_AND_ASSIGN(auto m,
-                            ParseAndReturnVerifiedModule(module_with_type));
+    ASSERT_OK_AND_ASSIGN(auto m,
+                         ParseAndReturnVerifiedModule(module_with_type));
 
     absl::Status s = ConvKindAssignment(kDefaultCC).Run(m.get()).status();
     EXPECT_THAT(
@@ -780,8 +876,7 @@ TEST_F(ConvKindAssignmentTest, TestInvalidTypes) {
   // Test FP8 type on unsupported GPUs
   std::string module_with_type =
       absl::StrReplaceAll(module_str, {{"TYPE", "f8e4m3fn"}});
-  TF_ASSERT_OK_AND_ASSIGN(auto m,
-                          ParseAndReturnVerifiedModule(module_with_type));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_with_type));
   absl::Status s = ConvKindAssignment(se::CudaComputeCapability::Ampere())
                        .Run(m.get())
                        .status();
@@ -801,13 +896,74 @@ TEST_F(ConvKindAssignmentTest, TestInvalidTypes) {
 
   // Test unsupported FP8 type
   module_with_type = absl::StrReplaceAll(module_str, {{"TYPE", "f8e4m3fnuz"}});
-  TF_ASSERT_OK_AND_ASSIGN(m, ParseAndReturnVerifiedModule(module_with_type));
+  ASSERT_OK_AND_ASSIGN(m, ParseAndReturnVerifiedModule(module_with_type));
   s = ConvKindAssignment(kDefaultCC).Run(m.get()).status();
   EXPECT_THAT(s,
               absl_testing::StatusIs(
                   absl::StatusCode::kUnimplemented,
                   ::testing::HasSubstr("The only FP8 types supported in "
                                        "convolutions are f8e5m2 and f8e4m3")));
+}
+
+TEST_F(ConvKindAssignmentTest, Int8ConvolutionPreAmpere) {
+  // cuDNN graph API does not have engine execution plans for INT8 convolutions
+  // on pre-Ampere GPUs. Verify that ConvKindAssignment does not assign a conv
+  // kind on pre-Ampere GPUs (e.g. Volta), but succeeds on Ampere.
+  const std::string kInt8ToInt8Module = R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = s8[1,17,9,9] parameter(0)
+      filter = s8[3,3,17,32] parameter(1)
+      ROOT conv = s8[1,32,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
+    })";
+
+  const std::string kInt8ToInt32Module = R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = s8[1,17,9,9] parameter(0)
+      filter = s8[3,3,17,32] parameter(1)
+      ROOT conv = s32[1,32,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
+    })";
+
+  const std::string kUInt8ToUInt8Module = R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = u8[1,17,9,9] parameter(0)
+      filter = u8[3,3,17,32] parameter(1)
+      ROOT conv = u8[1,32,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
+    })";
+
+  for (const std::string& module_str :
+       {kInt8ToInt8Module, kInt8ToInt32Module, kUInt8ToUInt8Module}) {
+    // Pre-Ampere GPU (e.g. Volta) -> conv kind should not be assigned.
+    {
+      ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+      ASSERT_OK_AND_ASSIGN(
+          bool changed,
+          ConvKindAssignment(se::CudaComputeCapability::Volta()).Run(m.get()));
+      EXPECT_FALSE(changed);
+      EXPECT_EQ(DynCast<HloConvolutionInstruction>(
+                    m->entry_computation()->root_instruction())
+                    ->convolution_kind(),
+                CONVOLUTION_KIND_UNSET);
+    }
+
+    // Ampere GPU -> conv kind should be assigned.
+    {
+      ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+      ASSERT_OK_AND_ASSIGN(
+          bool changed,
+          ConvKindAssignment(se::CudaComputeCapability::Ampere()).Run(m.get()));
+      EXPECT_TRUE(changed);
+      EXPECT_EQ(DynCast<HloConvolutionInstruction>(
+                    m->entry_computation()->root_instruction())
+                    ->convolution_kind(),
+                CONVOLUTION_KIND_FPROP);
+    }
+  }
 }
 
 }  // anonymous namespace

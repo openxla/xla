@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/random/gaussian_distribution.h"
 #include "absl/random/random.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
@@ -51,13 +52,13 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Tools/ParseUtilities.h"
+#include "tsl/platform/statusor.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter_value.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/tensor_or_memref.h"
 #include "xla/mlir/tools/mlir_replay/public/execution_trace.pb.h"
 #include "xla/mlir/tools/mlir_replay/public/execution_trace_utils.h"
 #include "xla/service/hlo.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace mlir {
 namespace interpreter {
@@ -67,7 +68,7 @@ absl::StatusOr<SmallVector<InterpreterValue>> LoadArgs(
     const xla::HloSnapshot& snapshot, TypeRange types) {
   SmallVector<InterpreterValue> result;
   for (const auto& [arg, type] : llvm::zip(snapshot.arguments(), types)) {
-    TF_ASSIGN_OR_RETURN(auto converted, LiteralToValue(arg, type));
+    ABSL_ASSIGN_OR_RETURN(auto converted, LiteralToValue(arg, type));
     result.push_back(std::move(converted));
   }
   return result;
@@ -213,8 +214,8 @@ absl::StatusOr<SmallVector<InterpreterValue>> Run(
   }
 
   auto args_to_buffers = ExtractXlaBufferAssignment(main);
-  TF_ASSIGN_OR_RETURN(auto args,
-                      LoadArgs(snapshot, main.getBody().getArgumentTypes()));
+  ABSL_ASSIGN_OR_RETURN(auto args,
+                        LoadArgs(snapshot, main.getBody().getArgumentTypes()));
   auto out_args =
       main.getBody().getBlocks().front().getArguments().drop_front(args.size());
 
@@ -254,8 +255,8 @@ absl::StatusOr<SmallVector<InterpreterValue>> Run(
   if (trace) {
     options.listener = &tracer;
   }
-  TF_ASSIGN_OR_RETURN(auto results,
-                      RunInterpreter(symbols, main, args, options));
+  ABSL_ASSIGN_OR_RETURN(auto results,
+                        RunInterpreter(symbols, main, args, options));
 
   if (results.empty()) {
     return out_buffers;

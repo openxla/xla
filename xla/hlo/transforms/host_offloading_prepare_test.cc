@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/hlo/transforms/host_offloading_prepare.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -41,7 +43,7 @@ class HostOffloadingPrepareTest : public HloHardwareIndependentTestBase {
       return absl::InternalError("Expected a non-scheduled module");
     }
     HostOffloadingPrepare pass(rewrite);
-    TF_ASSIGN_OR_RETURN(bool changed, pass.Run(module));
+    ABSL_ASSIGN_OR_RETURN(bool changed, pass.Run(module));
     return changed;
   }
 

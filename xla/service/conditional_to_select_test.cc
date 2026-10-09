@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/conditional_to_select.h"
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 
@@ -164,8 +166,7 @@ TEST_F(ConditionalToSelectTest,
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
   ASSERT_TRUE(ConditionalToSelect().Run(module.get()).value());
   HloInstruction* root = module->entry_computation()->root_instruction();
   ASSERT_EQ(root->opcode(), HloOpcode::kMap);

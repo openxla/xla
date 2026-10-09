@@ -42,10 +42,10 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace {
@@ -211,8 +211,10 @@ SymbolicExpr SymbolicExprSimplifier::RewriteMod(SymbolicExpr mod) {
     return expr;
   });
 
-  if (extracted_constant % m != 0) {
-    new_lhs = new_lhs + (extracted_constant % m);
+  int64_t count = llvm::divideFloorSigned(extracted_constant, m);
+  int64_t rem = extracted_constant - count * m;
+  if (rem != 0) {
+    new_lhs = new_lhs + rem;
   }
 
   // Split the sum into `multiplied * multiplier_gcd + not_multiplied`.
@@ -276,6 +278,18 @@ SymbolicExpr SymbolicExprSimplifier::SimplifySumDiv(SymbolicExpr dividend,
         extracted = extracted + GetLhs(expr) * factor;
         // Remove from dividend.
         return zero_;
+      }
+    }
+    // Extract constant multiples of divisor from plain constant summands.
+    if (expr.GetType() == SymbolicExprType::kConstant) {
+      int64_t val = expr.GetValue();
+      int64_t count = llvm::divideFloorSigned(val, divisor);
+      if (count != 0) {
+        int64_t remainder = val - count * divisor;
+        extracted = extracted + CreateSymbolicConstant(
+                                    count, range_evaluator_->GetMLIRContext());
+        return CreateSymbolicConstant(remainder,
+                                      range_evaluator_->GetMLIRContext());
       }
     }
     // Not a constant multiplier, keep in dividend.
@@ -526,6 +540,34 @@ SymbolicExpr SymbolicExprSimplifier::SimplifyOnce(SymbolicExpr expr) {
   }
 
   switch (expr.GetType()) {
+    case SymbolicExprType::kMin: {
+      auto lhs_range = range_evaluator_->ComputeExpressionRange(expr.GetLHS());
+      auto rhs_range = range_evaluator_->ComputeExpressionRange(expr.GetRHS());
+      if (expr.GetLHS() == expr.GetRHS()) {
+        return expr.GetLHS();
+      }
+      if (lhs_range.upper <= rhs_range.lower) {
+        return expr.GetLHS();
+      }
+      if (rhs_range.upper <= lhs_range.lower) {
+        return expr.GetRHS();
+      }
+      return expr;
+    }
+    case SymbolicExprType::kMax: {
+      auto lhs_range = range_evaluator_->ComputeExpressionRange(expr.GetLHS());
+      auto rhs_range = range_evaluator_->ComputeExpressionRange(expr.GetRHS());
+      if (lhs_range.lower >= rhs_range.upper) {
+        return expr.GetLHS();
+      }
+      if (rhs_range.lower >= lhs_range.upper) {
+        return expr.GetRHS();
+      }
+      if (expr.GetLHS() == expr.GetRHS()) {
+        return expr.GetLHS();
+      }
+      return expr;
+    }
     case SymbolicExprType::kMul:
       return RewriteMul(expr);
     case SymbolicExprType::kAdd:
@@ -857,16 +899,8 @@ IndexingMap::IndexingMap(
     std::vector<IndexingMap::Variable> range_vars,
     std::vector<IndexingMap::Variable> rt_vars,
     const llvm::MapVector<SymbolicExpr, Interval>& constraints)
-    : symbolic_map_(symbolic_map),
-      dim_vars_(std::move(dimensions)),
-      range_vars_(std::move(range_vars)),
-      rt_vars_(std::move(rt_vars)),
-      constraints_(constraints) {
-  if (!VerifyVariableIntervals() || !VerifyConstraintIntervals()) {
-    ResetToKnownEmpty();
-    return;
-  }
-}
+    : IndexingMap(symbolic_map, std::move(dimensions), std::move(range_vars),
+                  std::move(rt_vars), constraints.getArrayRef()) {}
 
 IndexingMap IndexingMap::FromTensorSizes(
     SymbolicMap symbolic_map, absl::Span<const int64_t> dim_upper_bounds,
@@ -878,6 +912,16 @@ IndexingMap IndexingMap::FromTensorSizes(
 
 RangeEvaluator IndexingMap::GetRangeEvaluator() const {
   return RangeEvaluator(*this, GetMLIRContext());
+}
+
+llvm::SmallVector<Interval> IndexingMap::ComputeResultRanges() const {
+  RangeEvaluator range_evaluator = GetRangeEvaluator();
+  llvm::SmallVector<Interval> ranges;
+  ranges.reserve(GetNumResults());
+  for (SymbolicExpr expr : symbolic_map_.GetResults()) {
+    ranges.push_back(range_evaluator.ComputeExpressionRange(expr));
+  }
+  return ranges;
 }
 
 const Interval& IndexingMap::GetDimensionBound(int64_t dim_id) const {
@@ -1224,6 +1268,10 @@ bool SymbolicExprSimplifier::SimplifyConstraintExprs(IndexingMap& map) {
     // Skip constraints that are always satisfied.
     Interval evaluated_range =
         range_evaluator_->ComputeExpressionRange(simplified);
+    if (!evaluated_range.Intersect(range).IsFeasible()) {
+      map.ResetToKnownEmpty();
+      return true;
+    }
     if (evaluated_range.upper <= range.upper &&
         evaluated_range.lower >= range.lower) {
       to_remove.push_back(expr);
@@ -1388,7 +1436,6 @@ SmallBitVector ConcatenateBitVectors(const SmallBitVector& lhs,
 }
 
 void GetUsedParametersImpl(const SymbolicExpr& expr,
-
                            SmallVector<int64_t>& dimension_ids,
                            SmallVector<int64_t>& symbol_ids, int64_t num_dims) {
   if (IsDimension(expr, num_dims)) {
@@ -1407,7 +1454,6 @@ void GetUsedParametersImpl(const SymbolicExpr& expr,
 
 }  // namespace
 
-// Returns IDs of dimensions and symbols that participate in SymbolicExpr.
 UsedParameters GetUsedParameters(absl::Span<const SymbolicExpr> exprs,
                                  int64_t num_dims) {
   SmallVector<int64_t> dimension_ids, symbol_ids;
@@ -1545,12 +1591,6 @@ bool IndexingMap::VerifyVariableIntervals() {
          llvm::all_of(rt_vars_, [](const IndexingMap::Variable& rt_var) {
            return rt_var.bounds.IsFeasible();
          });
-}
-
-bool IndexingMap::VerifyConstraintIntervals() {
-  return llvm::all_of(constraints_, [](const auto& constraint) {
-    return constraint.second.IsFeasible();
-  });
 }
 
 SmallBitVector IndexingMap::RemoveUnusedVars() {

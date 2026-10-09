@@ -44,10 +44,10 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/stack_frame.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 

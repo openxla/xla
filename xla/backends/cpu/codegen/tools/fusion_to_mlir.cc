@@ -18,7 +18,9 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/fusion_emitter.h"
 #include "xla/codegen/kernel_definition.h"
@@ -27,13 +29,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::cpu {
 
 absl::Status Run(const std::string& filename) {
   auto mlir_context = FusionCompiler::CreateContext();
-  TF_ASSIGN_OR_RETURN(auto module, LoadTestModule(filename));
+  ABSL_ASSIGN_OR_RETURN(auto module, LoadTestModule(filename));
   auto* inst = module->entry_computation()->root_instruction();
   while (inst && (inst->opcode() == HloOpcode::kTuple ||
                   inst->opcode() == HloOpcode::kGetTupleElement)) {
@@ -41,7 +42,7 @@ absl::Status Run(const std::string& filename) {
   }
   auto fusion = DynCast<HloFusionInstruction>(inst);
   fusion->SetAndSanitizeName("main");
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       KernelDefinition kernel_definition,
       EmitFusionKernel(*mlir_context, *fusion, nullptr, false, false));
   llvm::outs() << kernel_definition.source().ToString();

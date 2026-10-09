@@ -18,7 +18,10 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
@@ -34,8 +37,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 
@@ -51,13 +52,16 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
                          {{"computation", computation.name()}});
   });
 
-  TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
-                      computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
 
   HloModuleConfig hlo_module_config(program_shape, /*ignore_layouts=*/false);
   hlo_module_config.set_debug_options(GetDebugOptionsFromFlags());
+  if (customize_hlo_module_config_) {
+    customize_hlo_module_config_(hlo_module_config);
+  }
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> hlo_module,
       HloModule::CreateFromProto(computation.proto(), hlo_module_config));
 
@@ -67,7 +71,7 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
   // Run high-level XLA CPU compiler passes.
   cpu::CpuCompiler compiler;
   if (!executable_build_options.run_backend_only()) {
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         hlo_module,
         compiler.RunHloPasses(std::move(hlo_module),
                               /*stream_exec=*/nullptr, compile_options));
@@ -77,7 +81,7 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
       hlo_module->entry_computation_layout().ComputeProgramShape();
 
   // Compile optimized HLO module to CPU executable.
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> executable,
       compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
                           compile_options));

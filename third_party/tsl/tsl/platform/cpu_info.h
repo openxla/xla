@@ -20,8 +20,8 @@ limitations under the License.
 
 // TODO(ahentz): This is not strictly required here but, for historical
 // reasons, many people depend on cpu_info.h in order to use kLittleEndian.
-#include "xla/tsl/platform/byte_order.h"
 #include "tsl/platform/platform.h"
+#include "xla/tsl/platform/byte_order.h"
 
 #if defined(_MSC_VER)
 // included so __cpuidex function is available for GETCPUID on Windows
@@ -141,6 +141,7 @@ enum CPUFeature {
   AMX_FP16 = 45,        // Float16 tile matrix multiplication
   AVX_NE_CONVERT = 46,  // Instructions for faster bfloat16, float16 convert.
   AVX_VNNI_INT8 = 47,   // VNNI instructions for combinations of u8, s8 dtypes.
+  AMX_FP8 = 48,         // Float8 tile matrix multiplication.
 
   //===--------------------------------------------------------------------===//
   // AArch64 features

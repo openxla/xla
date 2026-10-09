@@ -176,9 +176,15 @@ H AbslHashValue(H h, const SymbolicExpr& expr) {
   return H::combine(std::move(h), hash_value(expr));
 }
 
-// This method should be called once permlir::MLIRContext to register the
-// SymbolicExprStorage type with themlir::MLIRContext's uniquifier. It should be
+// This method should be called once per mlir::MLIRContext to register the
+// SymbolicExprStorage type with the mlir::MLIRContext's uniquer. It should be
 // called before any SymbolicExprs are created.
+//
+// Note: When mlir_context->isMultithreadingEnabled() is false,
+// SymbolicExprStorage uniquing is lock-free and NOT thread-safe. Callers must
+// ensure that an MLIRContext with multithreading disabled is not accessed
+// concurrently across multiple threads (e.g., by borrowing a per-thread
+// MLIRContext from an ObjectPool).
 void RegisterSymbolicExprStorage(mlir::MLIRContext* mlir_context);
 
 // Helpers to create SymbolicExprs.
@@ -206,14 +212,6 @@ namespace llvm {
 // SymbolicExpr hash just like pointers
 template <>
 struct DenseMapInfo<xla::SymbolicExpr> {
-  static xla::SymbolicExpr getEmptyKey() {
-    auto* pointer = llvm::DenseMapInfo<void*>::getEmptyKey();
-    return xla::SymbolicExpr(static_cast<xla::SymbolicExprStorage*>(pointer));
-  }
-  static xla::SymbolicExpr getTombstoneKey() {
-    auto* pointer = llvm::DenseMapInfo<void*>::getTombstoneKey();
-    return xla::SymbolicExpr(static_cast<xla::SymbolicExprStorage*>(pointer));
-  }
   static unsigned getHashValue(xla::SymbolicExpr val) {
     return hash_value(val);
   }

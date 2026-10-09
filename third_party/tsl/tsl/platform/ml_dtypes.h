@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_ML_DTYPES_H_
 #define TENSORFLOW_TSL_PLATFORM_ML_DTYPES_H_
 
-#include "ml_dtypes/include/float8.h"  // from @ml_dtypes_py
-#include "ml_dtypes/include/intn.h"  // from @ml_dtypes_py
+#include "ml_dtypes/include/float8.h"   // from @ml_dtypes_py
+#include "ml_dtypes/include/intn.h"     // from @ml_dtypes_py
 #include "ml_dtypes/include/mxfloat.h"  // from @ml_dtypes_py
 
 namespace tsl {
@@ -30,6 +30,8 @@ using float8_e4m3b11fnuz = ::ml_dtypes::float8_e4m3b11fnuz;
 using float8_e5m2 = ::ml_dtypes::float8_e5m2;
 using float8_e5m2fnuz = ::ml_dtypes::float8_e5m2fnuz;
 using float8_e8m0fnu = ::ml_dtypes::float8_e8m0fnu;
+using float6_e3m2fn = ::ml_dtypes::float6_e3m2fn;
+using float6_e2m3fn = ::ml_dtypes::float6_e2m3fn;
 
 using int1 = ::ml_dtypes::int1;
 using uint1 = ::ml_dtypes::uint1;

@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef XLA_TSL_LIB_IO_RANDOM_INPUTSTREAM_H_
 #define XLA_TSL_LIB_IO_RANDOM_INPUTSTREAM_H_
 
+#include "tsl/platform/cord.h"
 #include "xla/tsl/lib/io/inputstream_interface.h"
 #include "xla/tsl/platform/file_system.h"
-#include "tsl/platform/cord.h"
 
 namespace tsl {
 namespace io {

@@ -15,9 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/fusion_emitter.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -25,7 +27,9 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/numeric/bits.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -34,6 +38,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/cpu/alignment.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_scatter_emitter.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/backends/cpu/codegen/tiled/tiled_fusion_emitter.h"
@@ -46,12 +51,13 @@ limitations under the License.
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/mlir_kernel_source.h"
-#include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout_util.h"
+#include "xla/primitive_util.h"
 #include "xla/runtime/work_cluster.h"
 #include "xla/runtime/work_dimensions.h"
 #include "xla/runtime/work_group.h"
@@ -59,14 +65,17 @@ limitations under the License.
 #include "xla/runtime/work_tile_size.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla::cpu {
 
 using ::mlir::MLIRContext;
+using ::xla::xtile::BlockLevelParameters;
 
 static absl::StatusOr<std::string> GetName(const HloFusionInstruction& fusion,
                                            bool use_unique_c_name) {
@@ -136,27 +145,80 @@ static int64_t GetWorkGroupCount(const HloFusionInstruction& fusion) {
                             std::multiplies<int64_t>());
 }
 
-WorkDimensions GetWorkDimensions(const Shape& shape,
-                                 const HloFusionInstruction& fusion) {
-  auto minor_to_major = LayoutUtil::MinorToMajor(shape.layout());
+// Returns the maximum number of sub-byte elements packed into a single byte
+// across all outputs of `shape` (e.g. 2 for 4-bit types, 4 for 2-bit types, or
+// 1 if there are no packed sub-byte outputs).
+static int64_t GetMaxSubByteElementsPerByte(const Shape& shape) {
+  int64_t max_elements_per_byte = 1;
+  ShapeUtil::ForEachSubshape(
+      shape, [&](const Shape& subshape, const ShapeIndex&) {
+        if (subshape.IsArray() &&
+            primitive_util::IsSubByteNonPredType(subshape.element_type())) {
+          int64_t bit_width = primitive_util::BitWidth(subshape.element_type());
+          CHECK(absl::has_single_bit(static_cast<uint64_t>(bit_width)))
+              << "Expected power-of-2 sub-byte bit width, got " << bit_width;
+          max_elements_per_byte =
+              std::max<int64_t>(max_elements_per_byte, 8 / bit_width);
+        }
+      });
+  return max_elements_per_byte;
+}
 
+// Partitions the iteration space of `shape` across workgroups along the
+// major physical dimensions so each workgroup executes a contiguous slice of
+// elements. Leading dimensions smaller than the requested workgroup count are
+// folded into the next dimension until there is enough work to split, at which
+// point we define the "split tile" size. All remaining minor dimensions are
+// kept intact in each tile.
+//
+// For packed sub-byte outputs, if allow_sub_byte_multi_work_group is:
+// - true, the split tile size is rounded up to a multiple of the
+// elements-per-byte packing factor, so that distinct workgroups never
+// share a byte.
+// - false, a single workgroup is used.
+static WorkDimensions GetWorkDimensions(
+    const Shape& shape, const HloFusionInstruction& fusion,
+    bool allow_sub_byte_multi_work_group = true) {
+  if (!shape.has_layout()) {
+    Shape shape_with_layout = shape;
+    LayoutUtil::SetToDefaultLayout(&shape_with_layout);
+    return GetWorkDimensions(shape_with_layout, fusion,
+                             allow_sub_byte_multi_work_group);
+  }
+  auto minor_to_major = LayoutUtil::MinorToMajor(shape.layout());
   if (minor_to_major.empty()) {
     return WorkDimensions{};
   }
 
-  int64_t work_group_count = GetWorkGroupCount(fusion);
+  int64_t total_elements = ShapeUtil::ElementsIn(shape);
+  if (total_elements == 0) {
+    return WorkDimensions{};
+  }
+
+  int64_t sub_byte_alignment = GetMaxSubByteElementsPerByte(fusion.shape());
+  bool has_sub_byte_output = sub_byte_alignment > 1;
+  bool can_parallelize =
+      allow_sub_byte_multi_work_group || !has_sub_byte_output;
+  int64_t work_group_count =
+      can_parallelize ? std::min(GetWorkGroupCount(fusion), total_elements) : 1;
   NumWorkGroups num_work_groups{static_cast<uint64_t>(work_group_count)};
 
   WorkTileSize work_tile_size;
   int64_t folded_dims = 1;
   for (int64_t dim : llvm::reverse(minor_to_major)) {
     int64_t dim_size = ShapeUtil::GetDimension(shape, dim);
-    int64_t accumilated_dim_size = folded_dims * dim_size;
-    if (accumilated_dim_size < work_group_count) {
+    int64_t accumulated_dim_size = folded_dims * dim_size;
+    if (accumulated_dim_size < work_group_count) {
       folded_dims *= dim_size;
     } else if (work_group_count != 1) {
-      work_tile_size.dimensions.push_back(
-          CeilOfRatio(accumilated_dim_size, work_group_count));
+      // Round `split_tile` up to `sub_byte_alignment` so that
+      // `split_tile * (product of minor dims)` is a whole number of bytes.
+      int64_t split_tile =
+          RoundUpTo(CeilOfRatio(accumulated_dim_size, work_group_count),
+                    sub_byte_alignment);
+      work_tile_size.dimensions.push_back(split_tile);
+      num_work_groups = NumWorkGroups{
+          static_cast<uint64_t>(CeilOfRatio(accumulated_dim_size, split_tile))};
       work_group_count = 1;
     } else {
       work_tile_size.dimensions.push_back(dim_size);
@@ -182,7 +244,8 @@ static WorkDimensions GetConcatenateEmitterWorkDims(
   Shape indexing_shape =
       emitters::ConcatenateFusionKernelEmitter::GetIndexingShape(fusion_spec);
 
-  return GetWorkDimensions(indexing_shape, fusion);
+  return GetWorkDimensions(indexing_shape, fusion,
+                           /*allow_sub_byte_multi_work_group=*/false);
 }
 
 static WorkDimensions GetDynamicUpdateSliceEmitterWorkDims(
@@ -190,7 +253,8 @@ static WorkDimensions GetDynamicUpdateSliceEmitterWorkDims(
   Shape indexing_shape =
       emitters::DynamicUpdateSliceKernelEmitter::GetIndexingShape(fusion_spec);
 
-  return GetWorkDimensions(indexing_shape, fusion);
+  return GetWorkDimensions(indexing_shape, fusion,
+                           /*allow_sub_byte_multi_work_group=*/false);
 }
 
 static HloFusionSpec GetLoopFusionSpec(const HloFusionInstruction& fusion) {
@@ -221,8 +285,8 @@ static absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitLoopFusionKernel(
   emitters::LoopFusionKernelEmitter loop_fusion_emitter(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
-  TF_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                      loop_fusion_emitter.EmitKernelDefinition());
+  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
+                        loop_fusion_emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -245,8 +309,8 @@ EmitConcatenateFusionKernel(MLIRContext& context,
   emitters::ConcatenateFusionKernelEmitter concatenate_fusion_emitter(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
-  TF_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                      concatenate_fusion_emitter.EmitKernelDefinition());
+  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
+                        concatenate_fusion_emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -270,8 +334,8 @@ EmitDynamicUpdateSliceFusionKernel(MLIRContext& context,
   emitters::DynamicUpdateSliceKernelEmitter emitter(
       context, fusion, std::move(fusion_spec), buffer_assignment,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
-  TF_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
-                      emitter.EmitKernelDefinition());
+  ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
+                        emitter.EmitKernelDefinition());
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -286,22 +350,36 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     MLIRContext& mlir_context, const HloFusionInstruction& fusion,
     const BufferAssignment* buffer_assignment, bool use_unique_c_name,
     bool enable_tiled_emitter) {
-  TF_ASSIGN_OR_RETURN(std::string name, GetName(fusion, use_unique_c_name));
+  ABSL_ASSIGN_OR_RETURN(std::string name, GetName(fusion, use_unique_c_name));
 
-  if (enable_tiled_emitter && IsSupportedTiledFusion(fusion).ok()) {
-    if (absl::StatusOr<SymbolicTileAnalysis> symbolic_tile_analysis_or =
-            GetSymbolicTileAnalysis(mlir_context, fusion);
-        symbolic_tile_analysis_or.ok()) {
-      SymbolicTileAnalysis& symbolic_tile_analysis = *symbolic_tile_analysis_or;
-      if (auto tiling_or =
-              GetTiling(mlir_context, fusion, symbolic_tile_analysis);
-          tiling_or.ok()) {
-        return EmitTiledFusionKernel(mlir_context, fusion, buffer_assignment,
-                                     name, GetWorkGroupCount(fusion),
-                                     symbolic_tile_analysis,
-                                     std::move(*tiling_or));
-      }
+  std::optional<BlockLevelParameters> block_level_parameters;
+  auto gpu_config_or = fusion.backend_config<gpu::GpuBackendConfig>();
+  if (gpu_config_or.ok() && gpu_config_or->has_fusion_backend_config() &&
+      gpu_config_or->fusion_backend_config().has_block_level_fusion_config()) {
+    block_level_parameters = BlockLevelParameters::FromBlockLevelFusionConfig(
+        gpu_config_or->fusion_backend_config().block_level_fusion_config());
+  }
+
+  if (enable_tiled_emitter || block_level_parameters.has_value()) {
+    TiledEmissionResult result = EmitTiledFusionKernel(
+        mlir_context, fusion, buffer_assignment, name,
+        GetWorkGroupCount(fusion), block_level_parameters);
+    if (result.kernel.ok()) {
+      return std::move(*result.kernel);
     }
+
+    if (result.tiling_succeeded) {
+      return result.kernel.status();
+    }
+
+    VLOG(2) << "Tiled emitter failed due to tiling failure: "
+            << result.kernel.status() << ", falling back to loop emitter.";
+  }
+
+  if (fusion.fused_expression_root()->opcode() == HloOpcode::kScatter) {
+    TF_RET_CHECK(buffer_assignment != nullptr);
+    CpuScatterFusion kernel_emitter(*buffer_assignment, &fusion, &mlir_context);
+    return kernel_emitter.EmitKernelDefinition();
   }
 
   if (fusion.fusion_kind() == HloFusionInstruction::FusionKind::kLoop) {
@@ -313,18 +391,15 @@ absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     }
     auto fusion_spec = GetLoopFusionSpec(fusion);
     if (IsDynamicUpdateSliceFusion(fusion_spec)) {
-      TF_ASSIGN_OR_RETURN(
-          bool dus_inplace,
-          CanEmitFusedDynamicUpdateSliceInPlace(fusion_spec.fusion(),
-                                                buffer_assignment, &fusion));
-      if (dus_inplace) {
+      ABSL_ASSIGN_OR_RETURN(bool can_emit_dus, CanEmitFusedDynamicUpdateSlice(
+                                                   fusion_spec.fusion()));
+      if (can_emit_dus) {
         return EmitDynamicUpdateSliceFusionKernel(mlir_context, fusion,
                                                   buffer_assignment, name);
       }
     }
     return EmitLoopFusionKernel(mlir_context, fusion, buffer_assignment, name);
   }
-
   return absl::UnimplementedError("Fusion kind not supported.");
 }
 

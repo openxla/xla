@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status_matchers.h"
 #include "xla/tsl/platform/test.h"
 
@@ -44,6 +45,12 @@ TEST(SortJsonTest, SortsJson) {
 
   EXPECT_THAT(SortJson(R"({"a": "a}", "a": "a"})"),
               absl_testing::IsOkAndHolds(R"({"a":"a","a":"a}"})"));
+}
+
+TEST(SortJsonTest, SortsTuningKnobs) {
+  EXPECT_THAT(SortJson(R"({"algorithm":{"tuning_knobs":{"3":"0","2":"2"}}})"),
+              absl_testing::IsOkAndHolds(
+                  R"({"algorithm":{"tuning_knobs":{"2":"2","3":"0"}}})"));
 }
 
 }  // namespace

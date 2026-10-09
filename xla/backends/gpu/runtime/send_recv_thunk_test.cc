@@ -13,14 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "absl/base/casts.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
@@ -48,13 +51,11 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
-#include "xla/tests/hlo_test_base_legacy.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
@@ -86,15 +87,15 @@ ENTRY computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
 
   // Get Send Instruction
   const HloInstruction* root2_instr =
       module->entry_computation()->root_instruction()->operand(0);
   ASSERT_EQ(root2_instr->opcode(), HloOpcode::kSend);
   const HloSendInstruction* send_instr =
-      tensorflow::down_cast<const HloSendInstruction*>(root2_instr);
+      absl::down_cast<const HloSendInstruction*>(root2_instr);
   ASSERT_NE(send_instr, nullptr);
 
   // Buffer and Allocation Setup
@@ -135,7 +136,8 @@ ENTRY computation {
   send_sequence.push_back(std::move(send_thunk));
 
   auto async_start = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo{}, CommunicationStreamId(0), std::move(send_sequence));
+      Thunk::ThunkInfo{}, CommunicationStreamId(0), std::move(send_sequence),
+      /*devices_per_host=*/1);
 
   auto async_done = std::make_unique<AsyncDoneThunk>(
       Thunk::ThunkInfo{}, async_start->async_execution());
@@ -149,8 +151,8 @@ ENTRY computation {
   // Use LHS synchronization mode to append Done command
   conv_options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kLHS;
-  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
-                          ConvertToCommands(thunk_sequence, conv_options));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
+                       ConvertToCommands(thunk_sequence, conv_options));
 
   // AsyncStart inlines its nested send thunk as a command, and AsyncDone
   // with no control predecessors is a no-op, so we get 1 command.
@@ -179,15 +181,15 @@ ENTRY computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
 
   // Get Recv Instruction
   const HloInstruction* root2_instr =
       module->entry_computation()->root_instruction()->operand(0);
   ASSERT_EQ(root2_instr->opcode(), HloOpcode::kRecv);
   const HloRecvInstruction* recv_instr =
-      tensorflow::down_cast<const HloRecvInstruction*>(root2_instr);
+      absl::down_cast<const HloRecvInstruction*>(root2_instr);
   ASSERT_NE(recv_instr, nullptr);
 
   // Buffer and Allocation Setup
@@ -229,7 +231,8 @@ ENTRY computation {
   recv_sequence.push_back(std::move(recv_thunk));
 
   auto async_start = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo{}, CommunicationStreamId(0), std::move(recv_sequence));
+      Thunk::ThunkInfo{}, CommunicationStreamId(0), std::move(recv_sequence),
+      /*devices_per_host=*/1);
 
   auto async_done = std::make_unique<AsyncDoneThunk>(
       Thunk::ThunkInfo{}, async_start->async_execution());
@@ -243,8 +246,8 @@ ENTRY computation {
   // Use LHS synchronization mode to append Done command
   conv_options.synchronization_mode =
       CommandExecutor::SynchronizationMode::kLHS;
-  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
-                          ConvertToCommands(thunk_sequence, conv_options));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor cb_cmd_executor,
+                       ConvertToCommands(thunk_sequence, conv_options));
 
   // AsyncStart inlines its nested recv thunk as a command, and AsyncDone
   // with no control predecessors is a no-op, so we get 1 command.
@@ -276,8 +279,8 @@ ENTRY computation {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   config.set_debug_options(debug_options);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
 
   se::StreamExecutor* executor = backend().default_stream_executor();
   // TODO(Intel-tf): To remove this check once command buffer is implemented.
@@ -285,12 +288,12 @@ ENTRY computation {
     GTEST_SKIP() << "Command buffer is not supported on SYCL platform yet.";
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> compiled_module,
       backend().compiler()->RunHloPasses(module->Clone(), executor,
                                          /*device_allocator=*/nullptr));
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
       backend().compiler()->RunBackend(std::move(compiled_module), executor,
                                        /*device_allocator=*/nullptr));
@@ -308,7 +311,7 @@ ENTRY computation {
 
   // Downcast to the specific CommandBufferThunk type for inspection.
   CommandBufferThunk* cmd_buffer_thunk =
-      tensorflow::down_cast<CommandBufferThunk*>(thunk.get());
+      absl::down_cast<CommandBufferThunk*>(thunk.get());
   ASSERT_NE(cmd_buffer_thunk, nullptr);
 
   // Inspect the Thunk kinds

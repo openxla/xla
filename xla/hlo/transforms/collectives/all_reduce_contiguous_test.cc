@@ -15,17 +15,19 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/all_reduce_contiguous.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "tsl/platform/statusor.h"
+#include "xla/side_effect_util.h"
 
 namespace xla {
 namespace {
@@ -48,7 +50,8 @@ HloModule module
 ENTRY %comp {
   p0 = f32[128] parameter(0)
   p1 = f32[4,4] parameter(1)
-  ROOT crs = (f32[128], f32[4,4]) all-reduce(p0, p1), to_apply=add
+  ROOT crs = (f32[128], f32[4,4]) all-reduce(p0, p1), to_apply=add,
+    frontend_attributes={collective_group_key="g0"}
 })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
@@ -71,6 +74,13 @@ ENTRY %comp {
   EXPECT_EQ(root->operand(0)->operand(0)->slice_limits(0), 128);
   EXPECT_EQ(root->operand(1)->operand(0)->slice_starts(0), 128);
   EXPECT_EQ(root->operand(1)->operand(0)->slice_limits(0), 128 + 4 * 4);
+
+  const HloInstruction* new_all_reduce =
+      root->operand(0)->operand(0)->operand(0);
+  EXPECT_EQ(new_all_reduce->get_frontend_attribute(kCollectiveGroupKeyAttr),
+            "g0");
+  EXPECT_FALSE(
+      root->get_frontend_attribute(kCollectiveGroupKeyAttr).has_value());
 }
 
 }  // namespace

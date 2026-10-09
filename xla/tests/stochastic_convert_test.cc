@@ -13,9 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
@@ -31,7 +32,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using StochasticConvertTest = HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
+using StochasticConvertTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
 
 const char* const kModuleStr = R"(
   HloModule stochastic-convert

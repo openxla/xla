@@ -327,19 +327,19 @@ class LowerToIfrtPass
 
     // Set conversion from MeshTensorType to IFRT Array.
     mlir::TypeConverter type_converter;
-    type_converter.addConversion([&meshes, &mesh_name_to_devices_attr](
-                                     mpmd::MeshTensorType mesh_tensor_type)
-                                     -> mlir::Type {
-      auto it = absl::c_find_if(
-          meshes, [mesh_tensor_type](const mpmd::NamedMeshAttr& mesh) {
-            return mesh.getName() == mesh_tensor_type.getMeshName();
-          });
-      CHECK(it != meshes.end())
-          << "Mesh `" << mesh_tensor_type.getMeshName().str()
-          << "` not found in topology.";
-      return MeshTensorToArray(mesh_name_to_devices_attr, mesh_tensor_type,
-                               it->getMesh());
-    });
+    type_converter.addConversion(
+        [&meshes, &mesh_name_to_devices_attr](
+            mpmd::MeshTensorType mesh_tensor_type) -> mlir::Type {
+          auto it = absl::c_find_if(
+              meshes, [mesh_tensor_type](const mpmd::NamedMeshAttr& mesh) {
+                return mesh.getName() == mesh_tensor_type.getMeshName();
+              });
+          CHECK(it != meshes.end())
+              << "Mesh `" << mesh_tensor_type.getMeshName().str()
+              << "` not found in topology.";
+          return MeshTensorToArray(mesh_name_to_devices_attr, mesh_tensor_type,
+                                   it->getMesh());
+        });
 
     mlir::RewritePatternSet patterns(&ctx);
     patterns.add<FuncOpPattern, TransferOpPattern>(type_converter, &ctx);

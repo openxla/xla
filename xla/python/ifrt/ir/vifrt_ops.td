@@ -57,11 +57,23 @@ def Vifrt_ReshardOpV1 : Vifrt_Op<"ReshardV1", "0.1.0", "current",
     Vifrt_AnyType:$control_output);
 }
 
-def Vifrt_CopyArraysOpV1 : Vifrt_Op<"CopyArraysV1", "0.1.0", "current",
+def Vifrt_CopyArraysOpV1 : Vifrt_Op<"CopyArraysV1", "0.1.0", "0.3.0",
     [AttrSizedOperandSegments]> {
   let arguments = (ins
     Variadic<Vifrt_AnyType>:$inputs,
     Vifrt_AnyAttr:$donated,
+    Variadic<Vifrt_AnyType>:$control_inputs);
+  let results = (outs
+    Variadic<Vifrt_AnyType>:$outputs,
+    Vifrt_AnyType:$control_output);
+}
+
+def Vifrt_CopyArraysOpV2 : Vifrt_Op<"CopyArraysV2", "0.4.0", "current",
+    [AttrSizedOperandSegments]> {
+  let arguments = (ins
+    Variadic<Vifrt_AnyType>:$inputs,
+    Vifrt_AnyAttr:$donated,
+    Vifrt_AnyAttr:$reuse,
     Variadic<Vifrt_AnyType>:$control_inputs);
   let results = (outs
     Variadic<Vifrt_AnyType>:$outputs,
@@ -170,7 +182,7 @@ def Vifrt_FuncOpV1 : Vifrt_Op<"FuncV1", "0.1.0", "current"> {
     Vifrt_AnyAttr:$arg_attrs,
     Vifrt_AnyAttr:$res_attrs);
   let regions = (region Vifrt_AnyRegion:$body);
-  let assemblyFormat = "custom<FunctionBody>($sym_name, $body, $function_type) attr-dict";
+  let assemblyFormat = "custom<FunctionBody>($sym_name, $body, $function_type) prop-dict attr-dict";
 }
 
 def VIfrt_ReturnOpV1 : Vifrt_Op<"ReturnV1", "0.1.0", "current", [Terminator]> {

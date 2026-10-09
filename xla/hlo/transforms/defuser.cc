@@ -20,8 +20,12 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -29,9 +33,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 
@@ -43,13 +44,18 @@ absl::StatusOr<bool> Defuser::RunImpl(
 
   bool changed = false;
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
-  TF_RETURN_IF_ERROR(call_graph->VisitNodes(
+  ABSL_RETURN_IF_ERROR(call_graph->VisitNodes(
       [&](const CallGraphNode& call_graph_node) -> absl::Status {
         if (call_graph_node.computation()->IsFusionComputation()) {
           TF_RET_CHECK(call_graph_node.caller_callsites().size() == 1);
           HloInstruction* fusion_instruction =
               call_graph_node.caller_callsites()[0].instruction();
-          TF_RETURN_IF_ERROR(fusion_instruction->Defuse());
+          if (!execution_threads.empty() &&
+              !execution_threads.contains(
+                  fusion_instruction->parent()->execution_thread())) {
+            return absl::OkStatus();
+          }
+          ABSL_RETURN_IF_ERROR(fusion_instruction->Defuse());
           changed = true;
         }
         return absl::OkStatus();

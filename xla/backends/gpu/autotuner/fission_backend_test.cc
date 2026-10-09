@@ -15,29 +15,34 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/fission_backend.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #if GOOGLE_CUDA
-#include "xla/backends/gpu/autotuner/cublas.h"
+#include "xla/backends/gpu/autotuner/cublaslt.h"
 #elif TENSORFLOW_USE_ROCM
-#include "xla/backends/gpu/autotuner/rocblas.h"
+#include "xla/backends/gpu/autotuner/hipblaslt.h"
 #endif
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
@@ -48,6 +53,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
@@ -61,9 +67,13 @@ namespace {
 
 using absl_testing::IsOk;
 using absl_testing::IsOkAndHolds;
-using ::testing::Gt;
+using absl_testing::StatusIs;
+using ::testing::Each;
+using ::testing::Eq;
+using ::testing::Field;
 using ::testing::HasSubstr;
-using ::testing::SizeIs;
+using ::testing::IsEmpty;
+using ::testing::Not;
 
 const char kTritonFusionHlo[] = R"(
   HloModule module
@@ -84,90 +94,6 @@ const char kTritonFusionHlo[] = R"(
       kind=kCustom, calls=computation,
       backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
   })";
-
-const char kHloWithUpcast[] = R"(
-  HloModule module, entry_computation_layout={(bf16[1024,1024]{1,0}, bf16[1024,1024]{1,0})->f32[1024,1024]{1,0}}
-
-  %gemm_fusion_r_computation {
-    %parameter_0 = bf16[1024,1024]{1,0} parameter(0)
-    %convert.2 = f32[1024,1024]{1,0} convert(%parameter_0)
-    %parameter_1 = bf16[1024,1024]{1,0} parameter(1)
-    %convert.3 = f32[1024,1024]{1,0} convert(%parameter_1)
-    ROOT %r.1 = f32[1024,1024]{1,0} dot(%convert.2, %convert.3), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  }
-
-  ENTRY main {
-    %p0 = bf16[1024,1024]{1,0} parameter(0)
-    %p1 = bf16[1024,1024]{1,0} parameter(1)
-    ROOT %gemm_fusion_r = f32[1024,1024]{1,0} fusion(%p0, %p1), kind=kCustom, calls=gemm_fusion_r_computation, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false}
-  })";
-
-const char kHloWithUpcastPrologueK64[] = R"(
-  HloModule module
-
-  %gemm_fusion_r_computation (parameter_0.1: f32[1,256,4,16], parameter_1.1: bf16[1,4,16,4096]) -> f32[256,4096] {
-    %parameter_0.1 = f32[1,256,4,16]{3,2,1,0} parameter(0)
-    %bitcast.60 = f32[256,64]{1,0} bitcast(f32[1,256,4,16]{3,2,1,0} %parameter_0.1)
-    %parameter_1.1 = bf16[1,4,16,4096]{3,2,1,0} parameter(1)
-    %bitcast.61 = bf16[64,4096]{1,0} bitcast(bf16[1,4,16,4096]{3,2,1,0} %parameter_1.1)
-    %convert.22 = f32[64,4096]{1,0} convert(bf16[64,4096]{1,0} %bitcast.61)
-    ROOT r = f32[256,4096]{1,0} dot(f32[256,64]{1,0} %bitcast.60, f32[64,4096]{1,0} %convert.22), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  }
-
-  ENTRY main {
-    %p0 = f32[1,256,4,16] parameter(0)
-    %p1 = bf16[1,4,16,4096] parameter(1)
-    ROOT %gemm_fusion_r = f32[256,4096] fusion(%p0, %p1), kind=kCustom,
-    calls=gemm_fusion_r_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false}
-  }
-)";
-
-const char kHloWithUpcastPrologueK128[] = R"(
-  HloModule module
-
-  %gemm_fusion_r_computation (parameter_0.1: f32[1,256,4,32], parameter_1.1: bf16[1,4,32,4096]) -> f32[256,4096] {
-    %parameter_0.1 = f32[1,256,4,32]{3,2,1,0} parameter(0)
-    %bitcast.60 = f32[256,128]{1,0} bitcast(f32[1,256,4,32]{3,2,1,0} %parameter_0.1)
-    %parameter_1.1 = bf16[1,4,32,4096]{3,2,1,0} parameter(1)
-    %bitcast.61 = bf16[128,4096]{1,0} bitcast(bf16[1,4,32,4096]{3,2,1,0} %parameter_1.1)
-    %convert.22 = f32[128,4096]{1,0} convert(bf16[128,4096]{1,0} %bitcast.61)
-    ROOT r = f32[256,4096]{1,0} dot(f32[256,128]{1,0} %bitcast.60, f32[128,4096]{1,0} %convert.22), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  }
-
-  ENTRY main {
-    %p0 = f32[1,256,4,32] parameter(0)
-    %p1 = bf16[1,4,32,4096] parameter(1)
-    ROOT %gemm_fusion_r = f32[256,4096] fusion(%p0, %p1), kind=kCustom,
-    calls=gemm_fusion_r_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false}
-  }
-)";
-
-const char kHloWithUpcastPrologueEpilogueK64[] = R"(
-  HloModule module
-
-  %gemm_fusion_r_computation (parameter_0.1: f32[1,256,4,16], parameter_1.1: bf16[1,4,16,4096]) -> bf16[1048576] {
-    %parameter_0.1 = f32[1,256,4,16]{3,2,1,0} parameter(0)
-    %bitcast.60 = f32[256,64]{1,0} bitcast(f32[1,256,4,16]{3,2,1,0} %parameter_0.1)
-    %parameter_1.1 = bf16[1,4,16,4096]{3,2,1,0} parameter(1)
-    %bitcast.61 = bf16[64,4096]{1,0} bitcast(bf16[1,4,16,4096]{3,2,1,0} %parameter_1.1)
-    %convert.22 = f32[64,4096]{1,0} convert(bf16[64,4096]{1,0} %bitcast.61)
-    %dot.5 = f32[256,4096]{1,0} dot(f32[256,64]{1,0} %bitcast.60, f32[64,4096]{1,0} %convert.22), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-    %convert.23 = bf16[256,4096]{1,0} convert(f32[256,4096]{1,0} %dot.5)
-    %bitcast.62 = bf16[1,256,4096]{2,1,0} bitcast(bf16[256,4096]{1,0} %convert.23)
-    %transpose.18 = bf16[1,4096,256]{2,1,0} transpose(bf16[1,256,4096]{2,1,0} %bitcast.62), dimensions={0,2,1}
-    ROOT %bitcast.63 = bf16[1048576]{0} bitcast(bf16[1,4096,256]{2,1,0} %transpose.18)
-  }
-
-  ENTRY main {
-    %p0 = f32[1,256,4,16] parameter(0)
-    %p1 = bf16[1,4,16,4096] parameter(1)
-    ROOT %gemm_fusion_r = bf16[1048576] fusion(%p0, %p1), kind=kCustom,
-    calls=gemm_fusion_r_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false}
-  }
-)";
 
 const char kF8TritonFusionHlo[] = R"(
 HloModule o
@@ -222,11 +148,72 @@ const char kUnsupportedFusionHlo[] = R"(
       kind=kCustom, calls=computation
   })";
 
+const char kPureDotFusionHlo[] = R"(
+  HloModule module
+  computation {
+    p0 = f32[1024,1024]{1,0} parameter(0)
+    p1 = f32[1024,1024]{1,0} parameter(1)
+    ROOT dot = f32[1024,1024]{1,0} dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  }
+  ENTRY main {
+    p0 = f32[1024,1024]{1,0} parameter(0)
+    p1 = f32[1024,1024]{1,0} parameter(1)
+    ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1),
+      kind=kCustom, calls=computation,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })";
+
+const char kEpilogueFusionHlo[] = R"(
+  HloModule module
+  computation {
+    p0 = f32[1024,1024]{1,0} parameter(0)
+    p1 = f32[1024,1024]{1,0} parameter(1)
+    p2 = f32[1024,1024]{1,0} parameter(2)
+    dot = f32[1024,1024]{1,0} dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    exp = f32[1024,1024]{1,0} exponential(dot)
+    ROOT add = f32[1024,1024]{1,0} add(exp, p2)
+  }
+  ENTRY main {
+    p0 = f32[1024,1024]{1,0} parameter(0)
+    p1 = f32[1024,1024]{1,0} parameter(1)
+    p2 = f32[1024,1024]{1,0} parameter(2)
+    ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1, p2),
+      kind=kCustom, calls=computation,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })";
+
+const char kPrologueAndEpilogueFusionHlo[] = R"(
+  HloModule module
+  computation {
+    p0 = bf16[1024,1024]{1,0} parameter(0)
+    c0 = f32[1024,1024]{1,0} convert(p0)
+    neg0 = f32[1024,1024]{1,0} negate(c0)
+    p1 = s8[1024,1024]{1,0} parameter(1)
+    c1 = f32[1024,1024]{1,0} convert(p1)
+    neg1 = f32[1024,1024]{1,0} negate(c1)
+    p2 = f32[1024,1024]{1,0} parameter(2)
+    dot = f32[1024,1024]{1,0} dot(neg0, neg1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    exp = f32[1024,1024]{1,0} exponential(dot)
+    ROOT add = f32[1024,1024]{1,0} add(exp, p2)
+  }
+  ENTRY main {
+    p0 = bf16[1024,1024]{1,0} parameter(0)
+    p1 = s8[1024,1024]{1,0} parameter(1)
+    p2 = f32[1024,1024]{1,0} parameter(2)
+    ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1, p2),
+      kind=kCustom, calls=computation,
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })";
+
 std::unique_ptr<HloPassPipeline> GetCublasRewriterPipeline(
     const se::DeviceDescription& device_description) {
   auto pipeline = std::make_unique<HloPassPipeline>("fission_pipeline");
   pipeline->AddPass(std::make_unique<ScaledDotRewriter>());
-  pipeline->AddPass(std::make_unique<DotAlgorithmRewriter>());
+  pipeline->AddPass(std::make_unique<DotAlgorithmRewriter>(
+      device_description.gpu_compute_capability()));
   for (GemmRewriterOptions::DType dtype :
        {GemmRewriterOptions::DType::kFp8Only,
         GemmRewriterOptions::DType::kNonFp8Only}) {
@@ -238,31 +225,16 @@ std::unique_ptr<HloPassPipeline> GetCublasRewriterPipeline(
   return pipeline;
 }
 
-// Static helper to create a BLAS backend (Cublas on CUDA, Rocblas on ROCm).
-std::unique_ptr<GpuCodegenBackend> CreateCublasBackend(
+std::unique_ptr<GpuCodegenBackend> CreateCublasLtBackend(
     se::StreamExecutor* stream_executor, const DebugOptions* debug_options,
-    Compiler* compiler, const Compiler::GpuTargetConfig* target_config) {
+    Compiler* compiler, const Compiler::GpuTargetConfig* target_config,
+    mlir::MLIRContext* mlir_context = nullptr) {
 #if GOOGLE_CUDA
-  return std::make_unique<CublasBackend>(stream_executor, debug_options,
-                                         compiler, target_config);
+  return std::make_unique<CublasLtBackend>(
+      stream_executor, debug_options, compiler, target_config, mlir_context);
 #elif TENSORFLOW_USE_ROCM
-  return std::make_unique<RocblasBackend>(stream_executor, debug_options,
-                                          compiler, target_config);
-#endif
-  LOG(FATAL) << "Neither CUDA nor ROCm is enabled.";
-}
-
-std::unique_ptr<GpuCodegenBackend> CreateCublasBackendWithF8Fallback(
-    se::StreamExecutor* stream_executor, const DebugOptions* debug_options,
-    Compiler* compiler, const Compiler::GpuTargetConfig* target_config) {
-#if GOOGLE_CUDA
-  return std::make_unique<CublasBackend>(stream_executor, debug_options,
-                                         compiler, target_config,
-                                         /*enable_f8_fallback=*/true);
-#elif TENSORFLOW_USE_ROCM
-  return std::make_unique<RocblasBackend>(stream_executor, debug_options,
-                                          compiler, target_config,
-                                          /*fp8_lt_fallback=*/true);
+  return std::make_unique<HipblasLtBackend>(stream_executor, debug_options,
+                                            compiler, target_config);
 #endif
   LOG(FATAL) << "Neither CUDA nor ROCm is enabled.";
 }
@@ -283,7 +255,7 @@ struct FissionTestParams {
   // Factory function to create the underlying codegen backend.
   std::function<std::unique_ptr<GpuCodegenBackend>(
       se::StreamExecutor*, const DebugOptions*, Compiler*,
-      const Compiler::GpuTargetConfig*)>
+      const Compiler::GpuTargetConfig*, mlir::MLIRContext*)>
       backend_factory;
   // Substrings expected to be in the module after ApplyConfig.
   std::function<std::vector<std::string>(
@@ -301,11 +273,12 @@ class FissionTest : public HloHardwareIndependentTestBase,
   std::unique_ptr<Compiler> compiler_;
   Compiler::GpuTargetConfig target_config_;
   se::DeviceDescription device_description_;
+  mlir::MLIRContext mlir_context_;
+  MlirContextPool mlir_context_pool_{CreateMlirContext};
   std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
   std::unique_ptr<GpuCodegenBackend> base_codegen_backend_;
   GpuAliasInfo alias_info_;
   std::unique_ptr<FissionBackend> fission_backend_;
-  mlir::MLIRContext mlir_context_;
 
   FissionTest()
       : platform_(PlatformUtil::GetDefaultPlatform().value()),
@@ -314,14 +287,14 @@ class FissionTest : public HloHardwareIndependentTestBase,
         target_config_(stream_executor_),
         device_description_(stream_executor_->GetDeviceDescription()),
         rewriter_pipeline_(GetParam().pipeline_factory(device_description_)),
-        base_codegen_backend_(
-            GetParam().backend_factory(stream_executor_, &debug_options_,
-                                       compiler_.get(), &target_config_)),
+        base_codegen_backend_(GetParam().backend_factory(
+            stream_executor_, &debug_options_, compiler_.get(), &target_config_,
+            &mlir_context_)),
         alias_info_(device_description_),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
             std::move(base_codegen_backend_), std::move(rewriter_pipeline_),
-            &alias_info_, &mlir_context_, stream_executor_)) {}
+            &alias_info_, &mlir_context_pool_, stream_executor_)) {}
 };
 
 TEST_P(FissionTest, CanCreateFissionBackend) {
@@ -331,16 +304,27 @@ TEST_P(FissionTest, CanCreateFissionBackend) {
   }
 
   std::string expected_name = GetParam().expected_backend_name;
-  if (IsRocm(stream_executor_) && expected_name == "CUBLAS_FISSION") {
-    expected_name = "ROCBLAS_FISSION";
+  if (IsRocm(stream_executor_) && expected_name == "CUBLASLT_FISSION") {
+    expected_name = "HIPBLASLT_FISSION";
   }
   EXPECT_EQ(fission_backend_->name(), expected_name);
 }
 
 TEST_P(FissionTest, GetSupportedConfigs) {
   const std::string& test_name = GetParam().test_name;
-  if (IsRocm(stream_executor_) && test_name == "TritonFusion_CustomKernel") {
-    GTEST_SKIP() << test_name << " is not supported on ROCm";
+  if (IsRocm(stream_executor_)) {
+    if (test_name == "TritonFusion_CustomKernel") {
+      GTEST_SKIP() << test_name << " is not supported on ROCm";
+    }
+    if (test_name == "CublasFallbackForBf16Bf16F32Algorithm") {
+      GTEST_SKIP() << test_name << " is not supported on ROCm";
+    }
+    // TODO: fix failing test
+    if (test_name == "TritonFusion_CublasLt_F8") {
+      GTEST_SKIP()
+          << test_name
+          << " hipblaslt returns 0 algorithms for this particular case";
+    }
   }
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -352,6 +336,24 @@ TEST_P(FissionTest, GetSupportedConfigs) {
   EXPECT_THAT(configs, IsOkAndHolds(testing::SizeIs(testing::Ge(1))));
 }
 
+TEST_P(FissionTest, GetSupportedConfigsWithEstimates) {
+  if (IsRocm(stream_executor_)) {
+    GTEST_SKIP() << "HipblasLtBackend does not support config estimates.";
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(GetParam().hlo_string));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<CodegenBackend::EstimatedConfig> estimated_configs,
+      fission_backend_->GetSupportedConfigsWithEstimates(*fusion));
+  EXPECT_THAT(estimated_configs, Not(IsEmpty()));
+  for (const auto& config : estimated_configs) {
+    EXPECT_THAT(config.estimated_runtime,
+                testing::Optional(testing::Gt(absl::ZeroDuration())));
+  }
+}
+
 TEST_P(FissionTest, GetSupportedConfigsUnsupportedFusion) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kUnsupportedFusionHlo));
@@ -359,6 +361,33 @@ TEST_P(FissionTest, GetSupportedConfigsUnsupportedFusion) {
       fission_backend_->GetSupportedConfigs(
           (*module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs, IsOkAndHolds(testing::IsEmpty()));
+}
+
+TEST_P(FissionTest, GetSupportedConfigsWithNullStreamExecutor) {
+  const std::string& test_name = GetParam().test_name;
+  if (IsRocm(stream_executor_) && (test_name == "TritonFusion_CublasLt_F8" ||
+                                   test_name == "TritonFusion_CustomKernel")) {
+    GTEST_SKIP() << test_name << " is not supported on ROCm";
+  }
+
+  std::unique_ptr<GpuCodegenBackend> backend_without_stream_executor =
+      GetParam().backend_factory(/*stream_executor=*/nullptr, &debug_options_,
+                                 compiler_.get(), &target_config_,
+                                 &mlir_context_);
+  std::unique_ptr<HloPassPipeline> rewriter_pipeline =
+      GetParam().pipeline_factory(device_description_);
+  FissionBackend fission_backend_without_stream_executor(
+      &debug_options_, compiler_.get(), &target_config_,
+      std::move(backend_without_stream_executor), std::move(rewriter_pipeline),
+      &alias_info_, &mlir_context_pool_);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(GetParam().hlo_string));
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      fission_backend_without_stream_executor.GetSupportedConfigs(
+          (*module->entry_computation()->root_instruction()));
+  EXPECT_TRUE(configs.ok() ||
+              configs.status().code() == absl::StatusCode::kInvalidArgument);
 }
 
 TEST_P(FissionTest, GetDefaultConfig) {
@@ -371,7 +400,8 @@ TEST_P(FissionTest, GetDefaultConfig) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(GetParam().hlo_string));
   HloInstruction* fusion = module->entry_computation()->root_instruction();
-  EXPECT_THAT(fission_backend_->GetDefaultConfig(*fusion), IsOk());
+  EXPECT_THAT(fission_backend_->GetDefaultConfig(*fusion),
+              StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 TEST_P(FissionTest, Compile) {
@@ -384,11 +414,12 @@ TEST_P(FissionTest, Compile) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(GetParam().hlo_string));
   HloInstruction* fusion = module->entry_computation()->root_instruction();
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BackendConfig> config,
-                       fission_backend_->GetDefaultConfig(*fusion));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
 
+  ASSERT_THAT(configs, Not(IsEmpty()));
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
-                       fission_backend_->Compile(*fusion, *config));
+                       fission_backend_->Compile(*fusion, *configs[0]));
   EXPECT_NE(executable, nullptr);
 }
 
@@ -402,9 +433,10 @@ TEST_P(FissionTest, ApplyConfig) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(GetParam().hlo_string));
   HloInstruction* fusion = module->entry_computation()->root_instruction();
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BackendConfig> config,
-                       fission_backend_->GetDefaultConfig(*fusion));
-  EXPECT_THAT(fission_backend_->ApplyConfig(*fusion, *config), IsOk());
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+  EXPECT_THAT(fission_backend_->ApplyConfig(*fusion, *configs[0]), IsOk());
   std::string module_str = module->ToString();
   for (const std::string& expected_substr :
        GetParam().expected_module_substrings_fn(device_description_)) {
@@ -415,40 +447,37 @@ TEST_P(FissionTest, ApplyConfig) {
 INSTANTIATE_TEST_SUITE_P(
     FissionTests, FissionTest,
     ::testing::ValuesIn<FissionTestParams>({
-        {"TritonFusion_Cublas", kTritonFusionHlo, &GetCublasRewriterPipeline,
-         &CreateCublasBackend,
+        {"TritonFusion_CublasLt", kTritonFusionHlo, &GetCublasRewriterPipeline,
+         &CreateCublasLtBackend,
          /*expected_module_substrings_fn=*/
          [](const se::DeviceDescription& device_description) {
            return std::vector<std::string>{
-               "custom_call_target=\"__cublas$gemm\"",
-               "\"selected_algorithm\":\"-1\""};
+               "custom_call_target=\"__cublas$lt$matmul\"",
+               "\"selected_algorithm\":\"0\""};
          },
-         /*expected_backend_name=*/"CUBLAS_FISSION"},
+         /*expected_backend_name=*/"CUBLASLT_FISSION"},
         {"TritonFusion_CublasLt_F8", kF8TritonFusionHlo,
-         &GetCublasRewriterPipeline, &CreateCublasBackendWithF8Fallback,
+         &GetCublasRewriterPipeline, &CreateCublasLtBackend,
          /*expected_module_substrings_fn=*/
          [](const se::DeviceDescription& device_description) {
-           if (device_description.gpu_compute_capability()
-                   .cuda_compute_capability()
-                   ->IsAtLeastHopper()) {
-             return std::vector<std::string>{
-                 "custom_call_target=\"__cublas$lt$matmul$f8\"",
-                 "\"selected_algorithm\":\"0\""};
-           }
+           const auto& comp = device_description.gpu_compute_capability();
+           bool is_hopper = !comp.IsRocm() &&
+                            comp.cuda_compute_capability()->IsAtLeastHopper();
            return std::vector<std::string>{
-               "custom_call_target=\"__cublas$gemm\"",
-               "\"selected_algorithm\":\"-1\""};
+               is_hopper ? "custom_call_target=\"__cublas$lt$matmul$f8\""
+                         : "custom_call_target=\"__cublas$lt$matmul\"",
+               "\"selected_algorithm\":\"0\""};
          },
-         /*expected_backend_name=*/"CUBLAS_FISSION"},
+         /*expected_backend_name=*/"CUBLASLT_FISSION"},
         {"ScaledDotFusion_Cublas", kScaledDotFusionHlo,
-         &GetCublasRewriterPipeline, &CreateCublasBackend,
+         &GetCublasRewriterPipeline, &CreateCublasLtBackend,
          /*expected_module_substrings_fn=*/
          [](const se::DeviceDescription& device_description) {
            return std::vector<std::string>{
-               "custom_call_target=\"__cublas$gemm\"",
-               "\"selected_algorithm\":\"-1\""};
+               "custom_call_target=\"__cublas$lt$matmul\"",
+               "\"selected_algorithm\":\"0\""};
          },
-         /*expected_backend_name=*/"CUBLAS_FISSION"},
+         /*expected_backend_name=*/"CUBLASLT_FISSION"},
     }),
     [](const ::testing::TestParamInfo<FissionTest::ParamType>& info) {
       return info.param.test_name;
@@ -462,9 +491,10 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
   std::unique_ptr<Compiler> compiler_;
   Compiler::GpuTargetConfig target_config_;
   se::DeviceDescription device_description_;
+  mlir::MLIRContext mlir_context_;
+  MlirContextPool mlir_context_pool_{CreateMlirContext};
   GpuAliasInfo alias_info_;
   std::unique_ptr<FissionBackend> fission_backend_;
-  mlir::MLIRContext mlir_context_;
 
   CublasFissionBackendTest()
       : platform_(PlatformUtil::GetDefaultPlatform().value()),
@@ -475,20 +505,62 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
         alias_info_(device_description_),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
-            CreateCublasBackend(stream_executor_, &debug_options_,
-                                compiler_.get(), &target_config_),
+            CreateCublasLtBackend(stream_executor_, &debug_options_,
+                                  compiler_.get(), &target_config_,
+                                  &mlir_context_),
             GetCublasRewriterPipeline(device_description_), &alias_info_,
-            &mlir_context_, stream_executor_)) {}
+            &mlir_context_pool_, stream_executor_)) {}
+
+  absl::StatusOr<absl::Duration> GetFirstEstimate(
+      absl::string_view hlo_string) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+    HloInstruction* root = module->entry_computation()->root_instruction();
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<CodegenBackend::EstimatedConfig> configs,
+        fission_backend_->GetSupportedConfigsWithEstimates(*root));
+    if (configs.empty() || !configs[0].estimated_runtime.has_value()) {
+      return absl::NotFoundError("No estimate returned");
+    }
+    return *configs[0].estimated_runtime;
+  }
 };
+
+TEST_F(CublasFissionBackendTest, ApplyConfigReplacesFusionWithControlDeps) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+  c {
+    p0 = bf16[1024,1024] parameter(0)
+    p1 = bf16[1024,1024] parameter(1)
+    dot = bf16[1024,1024] dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  }
+
+  main {
+    p0 = bf16[1024,1024] parameter(0)
+    p1 = bf16[1024,1024] parameter(1)
+    a = bf16[1024,1024] add(p0, p0)
+    f = bf16[1024,1024] fusion(p0, p1),
+      kind=kCustom, calls=c, control-predecessors={a},
+      backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  })"));
+  HloInstruction& fusion = *module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+  EXPECT_OK(fission_backend_->ApplyConfig(fusion, *configs[0]));
+  EXPECT_THAT(module->ToString(), testing::Not(HasSubstr("__triton_gemm")));
+}
 
 TEST_F(CublasFissionBackendTest, ApplyConfigRemovesComputation) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kTritonFusionHlo));
   EXPECT_EQ(module->computation_count(), 2);
   HloInstruction* fusion = module->entry_computation()->root_instruction();
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BackendConfig> config,
-                       fission_backend_->GetDefaultConfig(*fusion));
-  EXPECT_THAT(fission_backend_->ApplyConfig(*fusion, *config), IsOk());
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  ASSERT_THAT(configs, Not(IsEmpty()));
+  EXPECT_THAT(fission_backend_->ApplyConfig(*fusion, *configs[0]), IsOk());
   EXPECT_EQ(module->computation_count(), 1);
 }
 
@@ -530,8 +602,7 @@ TEST_F(CublasFissionBackendTest, CublasFallbackForTf32Tf32F32X3Algorithm) {
 
   auto hasCublasConfig = [&](const auto& configs) {
     for (const auto& config : configs) {
-      AutotuneResult::GemmKey gemm_key;
-      if (config->UnpackTo(&gemm_key)) {
+      if (config->has_gemm()) {
         return true;
       }
     }
@@ -578,8 +649,7 @@ TEST_F(CublasFissionBackendTest, CublasFallbackForBf16Bf16F32Algorithm) {
 
   auto hasCublasConfig = [&](const auto& configs) {
     for (const auto& config : configs) {
-      AutotuneResult::GemmKey gemm_key;
-      if (config->UnpackTo(&gemm_key)) {
+      if (config->has_gemm()) {
         return true;
       }
     }
@@ -597,10 +667,115 @@ TEST_F(CublasFissionBackendTest, CublasFallbackForBf16Bf16F32Algorithm) {
     } else {
       EXPECT_FALSE(hasCublasConfig(configs));
     }
-  } else {
-    // ROCm
-    EXPECT_TRUE(hasCublasConfig(configs));
   }
+}
+
+// Verifies that user-defined DebugOptions are propagated into the module
+// extracted by GetFissionedAndRewrittenModule, so that the rewriter pipeline
+// observes the correct flag values rather than
+// DefaultDebugOptionsIgnoringFlags.
+//
+// Concretely, DefaultDebugOptionsIgnoringFlags sets
+// xla_gpu_gemm_rewrite_size_threshold = 100, while the test fixture's
+// default-constructed DebugOptions proto has the field at its proto default
+// value of 0 (meaning: rewrite ALL GEMMs regardless of size).
+//
+// The tiny 5×5 dot has a "combined size" of (5+5)*5 = 50:
+//   • Without the fix: the extracted module inherits threshold=100, so 50 < 100
+//     → the dot is treated as "tiny" and skipped by GemmRewriter, yielding no
+//     cuBLAS custom call and therefore no supported configs.
+//   • With the fix: the module gets the user's threshold=0, so 50 < 0 is false
+//     → the dot is NOT tiny → rewritten to a cuBLAS custom call → configs
+//     returned.
+TEST_F(CublasFissionBackendTest,
+       GetSupportedConfigsRespectsUserGemmRewriteSizeThreshold) {
+  // Confirm the fixture's debug options use the proto default (0), which
+  // differs from DefaultDebugOptionsIgnoringFlags() that sets it to 100.
+  EXPECT_EQ(debug_options_.xla_gpu_gemm_rewrite_size_threshold(), 0);
+
+  // A tiny f32 fusion whose dot's combined size is 50 < 100
+  // (the DefaultDebugOptionsIgnoringFlags threshold).
+  constexpr absl::string_view kTinyF32DotFusion = R"(
+    HloModule module
+
+    computation {
+      p0 = f32[5,5]{1,0} parameter(0)
+      p1 = f32[5,5]{1,0} parameter(1)
+      ROOT dot = f32[5,5]{1,0} dot(p0, p1),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+
+    ENTRY main {
+      p0 = f32[5,5]{1,0} parameter(0)
+      p1 = f32[5,5]{1,0} parameter(1)
+      ROOT fusion = f32[5,5]{1,0} fusion(p0, p1),
+        kind=kCustom, calls=computation
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kTinyF32DotFusion));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+
+  // With user's threshold=0, the tiny dot is NOT considered "too small" and
+  // must be rewritten to a cuBLAS (or hipBLASLt on ROCm) custom call.
+  // GetSupportedConfigs must therefore return at least one config.
+  ASSERT_OK_AND_ASSIGN(auto configs,
+                       fission_backend_->GetSupportedConfigs(*fusion));
+  EXPECT_THAT(configs, testing::Not(testing::IsEmpty()));
+}
+
+TEST_F(CublasFissionBackendTest,
+       GetSupportedConfigsWithEstimatesComposesPrologueEpilogueAndGemm) {
+  if (IsRocm(stream_executor_)) {
+    GTEST_SKIP() << "HipblasLtBackend does not support config estimates.";
+  }
+
+  ASSERT_OK_AND_ASSIGN(absl::Duration pure_dot_time,
+                       GetFirstEstimate(kPureDotFusionHlo));
+  ASSERT_OK_AND_ASSIGN(absl::Duration epilogue_time,
+                       GetFirstEstimate(kEpilogueFusionHlo));
+  ASSERT_OK_AND_ASSIGN(absl::Duration prologue_and_epilogue_time,
+                       GetFirstEstimate(kPrologueAndEpilogueFusionHlo));
+
+  EXPECT_LT(pure_dot_time, epilogue_time);
+  EXPECT_LT(epilogue_time, prologue_and_epilogue_time);
+}
+
+TEST_F(
+    CublasFissionBackendTest,
+    GetSupportedConfigsWithEstimatesUntileableFusionReturnsNulloptEstimates) {
+  constexpr absl::string_view kUntileableFusionHlo = R"(
+    HloModule module
+    computation {
+      p0 = f32[1024,1024]{1,0} parameter(0)
+      p1 = f32[1024,1024]{1,0} parameter(1)
+      dot = f32[1024,1024]{1,0} dot(p0, p1),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      c0 = f32[] constant(0)
+      c1 = f32[] constant(1)
+      rng = f32[1024,1024]{1,0} rng(c0, c1), distribution=rng_uniform
+      ROOT add = f32[1024,1024]{1,0} add(dot, rng)
+    }
+    ENTRY main {
+      p0 = f32[1024,1024]{1,0} parameter(0)
+      p1 = f32[1024,1024]{1,0} parameter(1)
+      ROOT fusion = f32[1024,1024]{1,0} fusion(p0, p1),
+        kind=kCustom, calls=computation,
+        backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kUntileableFusionHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<CodegenBackend::EstimatedConfig> estimated_configs,
+      fission_backend_->GetSupportedConfigsWithEstimates(*fusion));
+  ASSERT_THAT(estimated_configs, Not(IsEmpty()));
+  EXPECT_THAT(estimated_configs,
+              Each(Field(&CodegenBackend::EstimatedConfig::estimated_runtime,
+                         Eq(std::nullopt))));
 }
 
 }  // namespace

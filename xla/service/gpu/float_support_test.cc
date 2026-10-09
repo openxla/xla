@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
@@ -27,7 +28,7 @@ namespace gpu {
 namespace {
 
 class FloatSupportTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtGpuTestBase> {
+    : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
  public:
   const se::GpuComputeCapability& GetGpuComputeCapability() {
     return device_description().gpu_compute_capability();

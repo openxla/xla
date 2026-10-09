@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/service/loop_schedule_linearizer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -28,7 +30,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -56,7 +57,7 @@ class LoopScheduleLinearizerTest : public HloHardwareIndependentTestBase {
   void InsertCopies(HloModule* module, bool expect_change) {
     AliasInfo alias_info;
     LoopScheduleLinearizer loop_schedule_linearizer(&alias_info);
-    TF_ASSERT_OK_AND_ASSIGN(bool changed, loop_schedule_linearizer.Run(module));
+    ASSERT_OK_AND_ASSIGN(bool changed, loop_schedule_linearizer.Run(module));
     ASSERT_EQ(changed, expect_change);
 
     CopyInsertion copy_insertion(&alias_info);
@@ -96,8 +97,8 @@ ENTRY entry {
 }
 
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   InsertCopies(module.get(), /*expect_change=*/true);
   EXPECT_EQ(CountCopies(
                 *module->entry_computation()->root_instruction()->while_body()),
@@ -147,8 +148,8 @@ ENTRY entry {
 }
 
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   InsertCopies(module.get(), /*expect_change=*/false);
 }
 }  // namespace

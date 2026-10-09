@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/python/ifrt/mock.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/attribute_map.h"
+#include "xla/python/ifrt/bundle.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -46,6 +48,7 @@ namespace xla {
 namespace ifrt {
 
 char MockArray::ID = 0;
+char MockBundle::ID = 0;
 char MockClient::ID = 0;
 char MockCompiler::ID = 0;
 char MockExecutable::ID = 0;
@@ -76,6 +79,9 @@ MockArray::MockArray(xla::ifrt::ArrayRef delegated)
   });
   ON_CALL(*this, IsDeleted).WillByDefault([this]() {
     return delegated_->IsDeleted();
+  });
+  ON_CALL(*this, array_spec).WillByDefault([this]() {
+    return delegated_->array_spec();
   });
   ON_CALL(*this, dtype).WillByDefault([this]() { return delegated_->dtype(); });
   ON_CALL(*this, shape).WillByDefault([this]() -> const Shape& {
@@ -141,6 +147,11 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
                             absl::Span<const ArraySpec> array_specs) {
         return delegated_->MakeErrorArrays(error, array_specs);
       });
+  ON_CALL(*this, CopyArraysToHostBufferShards)
+      .WillByDefault([this](absl::Span<CopyArraysToHostBufferShardsSpec> specs,
+                            ArrayCopySemantics semantics) {
+        return delegated_->CopyArraysToHostBufferShards(specs, semantics);
+      });
   ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _, _, _))
       .WillByDefault(
           [this](DType dtype, Shape shape, ShardingRef sharding,
@@ -170,6 +181,10 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
                             ArrayCopySemantics semantics) {
         return delegated_->BitcastArrays(arrays, specs, semantics);
       });
+  ON_CALL(*this, HashValues)
+      .WillByDefault([this](absl::Span<const ValueRef> values, HashMode mode) {
+        return delegated_->HashValues(values, mode);
+      });
   ON_CALL(*this, ReshardArrays)
       .WillByDefault([this](absl::Span<ArrayRef> arrays,
                             absl::Span<const ArraySpec> specs,
@@ -180,9 +195,24 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
       .WillByDefault([this](absl::Span<const ValueRef> values) {
         return delegated_->GetReadyFuture(values);
       });
+  ON_CALL(*this, DeleteValues)
+      .WillByDefault([this](absl::Span<ValueRef> values) {
+        return delegated_->DeleteValues(values);
+      });
   ON_CALL(*this, MakeTuple).WillByDefault([this](absl::Span<ValueRef> values) {
     return delegated_->MakeTuple(values);
   });
+
+  ON_CALL(*this, Bundle)
+      .WillByDefault(
+          [this](absl::Span<ValueRef> values, ArrayCopySemantics semantics) {
+            return delegated_->Bundle(values, semantics);
+          });
+  ON_CALL(*this, ConcatBundles)
+      .WillByDefault(
+          [this](absl::Span<BundleRef> bundles, ArrayCopySemantics semantics) {
+            return delegated_->ConcatBundles(bundles, semantics);
+          });
   ON_CALL(*this, CancelExecution)
       .WillByDefault([this](xla::ifrt::LoadedExecutable::CancellationHandle
                                 cancellation_handle,
@@ -242,6 +272,11 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
   ON_CALL(*this, GetDefaultCompiler).WillByDefault([this]() {
     return delegated_->GetDefaultCompiler();
   });
+  ON_CALL(*this, Load)
+      .WillByDefault([this](absl::Span<const ExecutableRef> executables,
+                            absl::Span<std::unique_ptr<LoadOptions>> options) {
+        return delegated_->Load(executables, options);
+      });
   ON_CALL(*this, GetTopologyForDevices)
       .WillByDefault([this](const DeviceListRef& devices) {
         return delegated_->GetTopologyForDevices(devices);

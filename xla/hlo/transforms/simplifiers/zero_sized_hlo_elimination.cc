@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -28,7 +30,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -71,7 +72,7 @@ absl::StatusOr<bool> ZeroSizedHloElimination::RunImpl(
       }
 
       if (comp->IsSafelyRemovable(instruction)) {
-        TF_RETURN_IF_ERROR(comp->ReplaceWithNewInstruction(
+        ABSL_RETURN_IF_ERROR(comp->ReplaceWithNewInstruction(
             instruction,
             HloInstruction::CreateConstant(Literal::CreateFromShape(shape))));
         changed = true;
@@ -81,7 +82,7 @@ absl::StatusOr<bool> ZeroSizedHloElimination::RunImpl(
         HloInstruction* constant =
             comp->AddInstruction(HloInstruction::CreateConstant(
                 Literal::CreateFromShape(instruction->shape())));
-        TF_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(constant));
+        ABSL_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(constant));
         changed = true;
       }
     }

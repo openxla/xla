@@ -30,6 +30,8 @@
 #include "grpcpp/client_context.h"
 #include "grpcpp/support/client_callback.h"
 #include "grpcpp/support/sync_stream.h"
+#include "tsl/platform/unbounded_work_queue.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/distributed/util.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/python/ifrt_proxy/client/global_flags.h"
@@ -41,8 +43,6 @@
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/protobuf/status.pb.h"
-#include "tsl/platform/unbounded_work_queue.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {

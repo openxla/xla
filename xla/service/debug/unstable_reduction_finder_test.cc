@@ -15,16 +15,17 @@ limitations under the License.
 
 #include "xla/service/debug/unstable_reduction_finder.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/primitive_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -50,15 +51,15 @@ ENTRY main {
 TEST_F(ReductionStabilityTest,
        FindsUnstableReductionsIgnoresMaxAndMinReductions) {
   const std::string bf16 = primitive_util::LowercasePrimitiveTypeName(BF16);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto min_module,
       ParseAndReturnVerifiedModule(absl::Substitute(
           kHloReductionTemplate, HloOpcodeString(HloOpcode::kMinimum), "-inf",
           bf16)));
   EXPECT_TRUE(FindUnstableReductionInstructions(min_module.get()).empty());
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto max_module, ParseAndReturnVerifiedModule(absl::Substitute(
+  ASSERT_OK_AND_ASSIGN(auto max_module,
+                       ParseAndReturnVerifiedModule(absl::Substitute(
                            kHloReductionTemplate,
                            HloOpcodeString(HloOpcode::kMaximum), "inf", bf16)));
   EXPECT_TRUE(FindUnstableReductionInstructions(max_module.get()).empty());
@@ -67,14 +68,14 @@ TEST_F(ReductionStabilityTest,
 TEST_F(ReductionStabilityTest,
        FindsUnstableReductionsFlagsLowPrecisionSumAndProductReductions) {
   const std::string bf16 = primitive_util::LowercasePrimitiveTypeName(BF16);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto min_module,
       ParseAndReturnVerifiedModule(absl::Substitute(
           kHloReductionTemplate, HloOpcodeString(HloOpcode::kAdd), "0", bf16)));
   EXPECT_FALSE(FindUnstableReductionInstructions(min_module.get()).empty());
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto max_module, ParseAndReturnVerifiedModule(absl::Substitute(
+  ASSERT_OK_AND_ASSIGN(auto max_module,
+                       ParseAndReturnVerifiedModule(absl::Substitute(
                            kHloReductionTemplate,
                            HloOpcodeString(HloOpcode::kMultiply), "1", bf16)));
   EXPECT_FALSE(FindUnstableReductionInstructions(max_module.get()).empty());
@@ -82,7 +83,7 @@ TEST_F(ReductionStabilityTest,
 
 TEST_F(ReductionStabilityTest,
        FindsUnstableReductionsIgnoresF32SumAndProductReductions) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto min_module,
       ParseAndReturnVerifiedModule(absl::Substitute(
           kHloReductionTemplate, HloOpcodeString(HloOpcode::kAdd), "0",

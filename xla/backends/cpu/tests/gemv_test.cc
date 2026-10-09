@@ -13,9 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -26,7 +27,7 @@ limitations under the License.
 namespace xla::cpu {
 namespace {
 
-class GemvTest : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {};
+class GemvTest : public HloInterpreterReferenceMixin<HloTestBase> {};
 
 TEST_F(GemvTest, BatchedGemv) {
   absl::string_view hlo_string = R"(

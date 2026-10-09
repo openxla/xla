@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -48,11 +50,10 @@ limitations under the License.
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/cuda/ptx_linking_method.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {
@@ -105,7 +106,7 @@ ENTRY e {
 constexpr absl::string_view kResultsInNoPtxHlo = R"(
   ENTRY e {
     a = f32[5,5] parameter(0)
-    ROOT _ = f32[5,5] custom-call(a, a), custom_call_target="__cublas$gemm",
+    ROOT _ = f32[5,5] custom-call(a, a), custom_call_target="__cublas$lt$matmul",
       backend_config="{ \"gemm_backend_config\": {\"alpha_real\":1,\"beta\":0,\"dot_dimension_numbers\":{\"lhs_contracting_dimensions\":[\"1\"],\"rhs_contracting_dimensions\":[\"0\"],\"lhs_batch_dimensions\":[],\"rhs_batch_dimensions\":[]},\"alpha_imag\":0,\"precision_config\":{\"operand_precision\":[\"DEFAULT\",\"DEFAULT\"]},\"epilogue\":\"DEFAULT\"}}"
   })";
 
@@ -141,7 +142,7 @@ std::string GenerateParametrizedTestname(
 }
 
 class NVPTXCompilationTests
-    : public HloTestBase,
+    : public HloTestBaseLegacy,
       public ::testing::WithParamInterface<std::tuple<
           absl::string_view, PtxCompilationMethod, PtxLinkingMethod>> {
  public:
@@ -202,8 +203,6 @@ class NVPTXCompilationTests
             ? DebugOptions::LIB_NV_JIT_LINK_MODE_ENABLED
             : DebugOptions::LIB_NV_JIT_LINK_MODE_DISABLED);
 
-    debug_options->set_xla_gpu_enable_llvm_module_compilation_parallelism(
-        linking_method != PtxLinkingMethod::kNone);
     debug_options->set_xla_gpu_force_compilation_parallelism(12);
 
     if (linking_method == PtxLinkingMethod::kDriver) {
@@ -215,19 +214,16 @@ class NVPTXCompilationTests
     tsl::setenv("TF_USE_NVLINK_FOR_PARALLEL_COMPILATION",
                 linking_method == PtxLinkingMethod::kNvLink ? "true" : "false",
                 1);
-
-    // We need individual functions to test parallel compilation.
-    debug_options->set_xla_llvm_force_inline_before_split(false);
   }
 
   DebugOptions GetDebugOptionsForTest() const override {
-    auto debug_options = HloTestBase::GetDebugOptionsForTest();
+    auto debug_options = HloTestBaseLegacy::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(0);
     return debug_options;
   }
 
   void SetUp() override {
-    HloTestBase::SetUp();
+    HloTestBaseLegacy::SetUp();
     absl::string_view name = std::get<0>(GetParam());
     PtxCompilationMethod compilation_method = std::get<1>(GetParam());
     PtxLinkingMethod linking_method = std::get<2>(GetParam());
@@ -356,10 +352,10 @@ TEST_P(NVPTXCompilationTests, CompareBinaryOutput) {
     return text_sections;
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(auto executable_text_sections,
-                          get_text_sections(executable_binary));
-  TF_ASSERT_OK_AND_ASSIGN(auto reference_text_sections,
-                          get_text_sections(reference_binary));
+  ASSERT_OK_AND_ASSIGN(auto executable_text_sections,
+                       get_text_sections(executable_binary));
+  ASSERT_OK_AND_ASSIGN(auto reference_text_sections,
+                       get_text_sections(reference_binary));
 
   if (linking_method == reference_linking_method) {
     EXPECT_THAT(executable_text_sections,

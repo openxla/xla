@@ -17,8 +17,9 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "xla/xla.pb.h"
+
 #include "tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -38,6 +39,14 @@ TEST(PtxOptsFromDebugOptionsTest, GenerateDebugInfo) {
 
   EXPECT_THAT(PtxOptsFromDebugOptions(debug_options).extra_flags,
               Contains("--device-debug"));
+}
+
+TEST(PtxOptsFromDebugOptionsTest, ExtraFlags) {
+  xla::DebugOptions debug_options;
+  debug_options.add_xla_gpu_ptx_compiler_extra_flags("--verbose");
+
+  EXPECT_THAT(PtxOptsFromDebugOptions(debug_options).extra_flags,
+              Contains("--verbose"));
 }
 
 }  // namespace

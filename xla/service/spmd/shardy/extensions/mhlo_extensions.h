@@ -22,7 +22,7 @@ namespace xla {
 namespace sdy {
 
 // Register Shardy op interface extensions to MHLO ops.
-void registerMhloExtensions(mlir::DialectRegistry &registry);
+void registerMhloExtensions(mlir::DialectRegistry& registry);
 
 }  // namespace sdy
 }  // namespace xla

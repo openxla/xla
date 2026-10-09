@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -27,10 +26,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
-
-inline constexpr absl::string_view kYnnFusionKind = "__ynn_fusion";
 
 // Returns the mappings from HLO opcodes to YNNPACK unary operators.
 const absl::flat_hash_map<HloOpcode, ynn_unary_operator>& GetYnnUnaryOpMap();
@@ -57,6 +55,9 @@ bool IsLayoutSupportedByYnn(const Shape& shape);
 
 // Returns true if the bitcast op is supported by YNNPACK.
 bool IsBitcastOpSupportedByYnn(const HloInstruction* hlo);
+
+// Returns true if the copy op is supported by YNNPACK.
+bool IsCopyOpSupportedByYnn(const HloInstruction* hlo);
 
 // Returns true if the reshape op is supported by YNNPACK.
 bool IsReshapeOpSupportedByYnn(const HloInstruction* hlo);
@@ -97,19 +98,17 @@ bool IsElementwiseOpSupportedByYnn(const HloInstruction* hlo);
 
 // Returns true if the dot operation is supported by YNNPACK. Returns an error
 // if the dot operation shape is invalid.
-absl::StatusOr<bool> IsDotSupportedByYnn(
-    const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
-    const Shape& rhs_shape, const Shape& out_shape);
 absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo);
 
 // Returns true if the reduce or reduce window op is supported by YNNPACK.
 bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo);
 
-// Returns true if the reduce or reduce window op will be offloaded to YNNPACK.
-bool IsReduceLikeOpOffloadedToYnn(const HloInstruction* hlo);
-
 // Returns true if the convolution op is supported by YNNPACK.
 bool IsConvolutionOpSupportedByYnn(const HloInstruction* instr);
+
+// Returns true if we want to handle the instruction in YNNPACK. Does not imply
+// the instruction is supported.
+bool IsInstructionPreferredByYnn(const HloInstruction* instr);
 
 // Convert XLA options to YNNPACK flags.
 uint32_t YnnFlags(const DebugOptions& debug_options);

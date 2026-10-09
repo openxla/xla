@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/framework/device_id.h"
 #include "xla/tsl/framework/device_type.h"
 #include "xla/tsl/platform/errors.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 namespace {

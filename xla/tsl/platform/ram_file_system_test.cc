@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/tsl/platform/ram_file_system.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -110,5 +111,13 @@ TEST(RamFileSystemTest, ReadAfterWrite) {
   }
 }
 
+TEST(RamFileSystemTest, ExtensionUsesBasenameForPathsWithDirectory) {
+  RamFileSystem fs;
+  EXPECT_EQ(fs.Extension("dir/file.txt"), "txt");
+  EXPECT_EQ(fs.Extension("a/b/c/name.tar.gz"), "gz");
+  EXPECT_EQ(fs.Extension("/tmp/foo.log"), "log");
+  EXPECT_EQ(fs.Extension("file.txt"), "txt");
+  EXPECT_EQ(fs.Extension("noext"), "");
+}
 }  // namespace
 }  // namespace tsl

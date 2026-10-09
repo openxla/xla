@@ -25,11 +25,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -47,14 +47,18 @@ limitations under the License.
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
-#include "mlir/Support/LogicalResult.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
+#include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/future.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
@@ -67,6 +71,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"
 #include "xla/service/gpu/metrics.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/thunk_emitter.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/logical_buffer.h"
@@ -75,14 +80,9 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -92,18 +92,20 @@ using tsl::profiler::ScopedAnnotation;
 CompileModuleResults InitializeResults(const HloModule* hlo_module) {
   CompileModuleResults results;
   results.module_name = hlo_module->name();
-  results.use_original_allocations = true;
   results.execution_stream_assignment =
       std::make_unique<ExecutionStreamAssignment>(
           hlo_module,
           ExecutionStreamAssignment::Options{
               kDefaultNumComputeStreams,
-              /*number_of_collective_execution_streams=*/
+              /*number_of_communication_execution_streams=*/
               hlo_module->config()
                       .debug_options()
                       .xla_gpu_experimental_enable_collective_multi_streaming()
                   ? kDefaultNumCommunicationStreams
                   : 1,
+              // Keep disabled by default until the 14-day AOT
+              // forward-compatibility window has elapsed (9th of October 2026).
+              /*enable_dedicated_memcpy_streams=*/false,
           });
   return results;
 }
@@ -126,8 +128,7 @@ std::string Phase(absl::string_view phase_name, const HloModule* module) {
 }
 
 bool UseCache(const DebugOptions& options) {
-  return options.xla_gpu_enable_llvm_module_compilation_parallelism() &&
-         !options.xla_gpu_kernel_cache_file().empty();
+  return !options.xla_gpu_kernel_cache_file().empty();
 }
 
 }  // namespace
@@ -142,20 +143,16 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
                               cache_file_path);
   }
   if (tsl::Env::Default()->FileExists(resolved_path).ok()) {
-    std::string serialized;
-    TF_RETURN_IF_ERROR(
-        tsl::ReadFileToString(tsl::Env::Default(), resolved_path, &serialized));
     CompilationCacheProto proto;
-    if (!proto.ParseFromString(serialized)) {
-      return Internal("Failed to parse serialized CompilationCacheProto.");
-    }
+    ABSL_RETURN_IF_ERROR(
+        tsl::ReadBinaryProto(tsl::Env::Default(), resolved_path, &proto));
     // Register all cached kernel names with the name uniquer to avoid
     // naming conflicts.
     for (const auto& [name, _] : proto.entries()) {
       TF_RET_CHECK(ir_emitter_context.GetSanitizedUniqueName(name) == name)
           << "Failed registering " << name << "in NameUniquer.";
     }
-    TF_RETURN_IF_ERROR(ir_emitter_context.kernel_cache().Load(proto));
+    ABSL_RETURN_IF_ERROR(ir_emitter_context.kernel_cache().Load(proto));
   } else {
     VLOG(1) << "Compilation cache file does not exist: " << resolved_path;
   }
@@ -164,8 +161,7 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
 
 absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
     const HloModule* module, const GpuAliasInfo* alias_info,
-    BufferValue::SizeFunction buffer_size_bytes_function,
-    const GpuTopology& gpu_topology) {
+    BufferValue::SizeFunction buffer_size_bytes_function) {
   ScopedAnnotation annotation(Phase("XlaBufferAssignment", module));
 
   const DebugOptions& options = module->config().debug_options();
@@ -178,8 +174,17 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
-  opts.colorer = CreateColorer(options, gpu_topology);
+  opts.colorer = CreateColorer(options);
   opts.temp_buffer_color = color;
+
+  // Allow S(0) buffers to reuse S(1) temp allocations. S(1) allocations
+  // satisfy stricter alignment and symmetric-offset requirements, so they are
+  // valid storage for S(0) buffers. Keep this directional: S(1) buffers must
+  // not be assigned to S(0) allocations.
+  opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(
+      static_cast<int>(MemorySpaceColor::kDefault),
+      static_cast<int>(MemorySpaceColor::kCollective));
+
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
     case DebugOptions::CONCURRENT:
@@ -193,7 +198,7 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
       hlo_ordering =
           std::make_unique<SequentialHloOrdering>(module->schedule());
   }
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> buffer_assignment,
       BufferAssigner::Run(
           module, std::move(hlo_ordering),
@@ -216,7 +221,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     KernelCompiler* compiler,
     xla::cpu::TargetMachineOptions cpu_target_machine_options,
-    ObjectPool<std::unique_ptr<mlir::MLIRContext>>* mlir_context_pool) {
+    MlirContextPool* mlir_context_pool) {
   tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
   const se::DeviceDescription& device_desc =
       gpu_topology.gpu_target_config().device_description;
@@ -224,12 +229,12 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
 
   CompileModuleResults results = InitializeResults(hlo_module);
 
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       results.buffer_assignment,
       RunBufferAssignment(hlo_module, alias_info,
-                          std::move(buffer_size_bytes_function), gpu_topology));
-  ASSIGN_OR_RETURN(results.output_info,
-                   GetOutputInfo(*hlo_module, *results.buffer_assignment));
+                          std::move(buffer_size_bytes_function)));
+  ABSL_ASSIGN_OR_RETURN(results.output_info,
+                        GetOutputInfo(*hlo_module, *results.buffer_assignment));
 
   // capture the output shape after buffer assignment because it may change
   // during buffer assignment (nevertheless the const hlo_module)
@@ -240,14 +245,14 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   VLOG(1) << "After optimization module fingerprint for " << hlo_module->name()
           << ": " << hlo_module->GetFingerprint128();
 
-  ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
-                   mlir_context_pool->GetOrCreate());
+  ABSL_ASSIGN_OR_RETURN(BorrowedMlirContext borrowed_context,
+                        mlir_context_pool->GetOrCreate());
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(),
       results.execution_stream_assignment.get(), platform_id->ToName(),
-      device_desc, borrowed_context->get(), llvm_context, /*emit_kernels=*/true,
-      llvm::Triple(target_triple), data_layout, compiler,
-      std::move(cpu_target_machine_options), mlir_context_pool);
+      gpu_topology, borrowed_context->get(), llvm::Triple(target_triple),
+      data_layout, compiler, std::move(cpu_target_machine_options),
+      mlir_context_pool);
   ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
 
   const DebugOptions& options = hlo_module->config().debug_options();
@@ -255,23 +260,30 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   uint64_t start_usecs = tsl::Env::Default()->NowMicros();
 
   if (use_cache) {
-    TF_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         LoadCache(ir_emitter_context, options.xla_gpu_kernel_cache_file()));
   }
   XLA_SCOPED_LOGGING_TIMER(absl::StrCat(
       "GpuCompiler::RunBackend - IR emission for ", hlo_module->name()));
 
-  ASSIGN_OR_RETURN(auto sequential_thunk,
-                   thunk_emitter.EmitHloEntryComputation(hlo_module));
-  results.executable = std::move(sequential_thunk);
+  Future<ThunkSequence> future_thunks =
+      thunk_emitter.EmitHloEntryComputation(hlo_module);
 
-  results.llvm_modules = thunk_emitter.ConsumeKernelModules();
-  if (results.llvm_modules.empty()) {
-    results.llvm_modules.push_back(
-        ir_emitter_context.CreateLLVMModule(hlo_module->name()));
+  llvm::Module* constants_module = thunk_emitter.constants_module();
+  const bool has_constants_module =
+      !constants_module->empty() || !constants_module->global_empty();
+  if (has_constants_module) {
+    ABSL_ASSIGN_OR_RETURN(
+        results.constants_binary,
+        compiler->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule())
+            .Await());
+  } else {
+    VLOG(2) << "Constants LLVM module is empty; skipping target compilation.";
   }
 
-  results.llvm_module_constants = thunk_emitter.ConsumeConstantsModule();
+  ABSL_ASSIGN_OR_RETURN(ThunkSequence thunks, std::move(future_thunks).Await());
+  results.executable =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo{}, std::move(thunks));
 
   // This won't record values for calls that error out (because if they error
   // out we have no way of telling how far through the process we got).

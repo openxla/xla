@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/deviceless_estimate_cub_sort_scratch_size.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/libraries/cub/cub_scratch_size_deviceless_lookup.h"
@@ -43,9 +45,9 @@ class DevicelessEstimateCubSortScratchSizeTest
  protected:
   absl::StatusOr<int64_t> RunPassAndExtractScratchSize(
       absl::string_view hlo_text, DevicelessEstimateCubSortScratchSize& pass) {
-    TF_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_text));
 
-    TF_ASSIGN_OR_RETURN(bool changed, RunHloPass(&pass, module.get()));
+    ABSL_ASSIGN_OR_RETURN(bool changed, RunHloPass(&pass, module.get()));
     if (!changed) {
       return absl::InternalError("Pass did not change the module");
     }

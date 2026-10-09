@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
@@ -225,7 +226,7 @@ absl::Status EnumerateDomain(
                              int64_t& induction_var) -> absl::Status {
     for (int64_t i = range.lower; i <= range.upper; ++i) {
       induction_var = i;
-      TF_RETURN_IF_ERROR(enumerate(next_dim, next_sym));
+      ABSL_RETURN_IF_ERROR(enumerate(next_dim, next_sym));
     }
     return absl::OkStatus();
   };
@@ -263,7 +264,7 @@ absl::Status VerifyBijection(const IndexingMap& indexing_map,
                       std::pair<absl::InlinedVector<int64_t, 6>,
                                 absl::InlinedVector<int64_t, 3>>>
       codomain_to_domain;
-  TF_RETURN_IF_ERROR(EnumerateDomain(
+  ABSL_RETURN_IF_ERROR(EnumerateDomain(
       indexing_map,
       [&](absl::Span<int64_t const> dims,
           absl::Span<int64_t const> syms) -> absl::Status {

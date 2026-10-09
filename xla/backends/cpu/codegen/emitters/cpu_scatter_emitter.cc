@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
@@ -150,17 +151,18 @@ std::optional<IndexingMap> CpuScatterFusion::ComputeThreadIdToInputIndexing(
 SmallVector<Value> EmitScatterComputation(
     int64_t num_threads, const HloScatterInstruction* scatter,
     ValueRange indices, ValueRange update_elems, ValueRange output_tensors,
-    const emitters::PartitionedComputation& root_computation,
     const emitters::CallTargetProvider& call_targets,
-    mlir::func::FuncOp entry_function, mlir::ImplicitLocOpBuilder& b) {
+    mlir::ImplicitLocOpBuilder& b) {
   auto reducer =
       call_targets(scatter->called_computations()[0]->root_instruction());
   if (scatter->unique_indices() || num_threads == 1 ||
       scatter->scatter_operand_count() > 1) {
-    SmallVector<Value> computation_args =
-        ProvideParameterRange(root_computation, scatter, /*start=*/0,
-                              /*num=*/scatter->scatter_operand_count(), indices,
-                              call_targets, entry_function, b);
+    SmallVector<Value> computation_args;
+    computation_args.reserve(output_tensors.size() + update_elems.size());
+    for (Value output_tensor : output_tensors) {
+      computation_args.push_back(
+          mlir::tensor::ExtractOp::create(b, output_tensor, indices));
+    }
     computation_args.append(update_elems.begin(), update_elems.end());
     auto reduced_values =
         emitters::InlineBlock(b, reducer.getBody().front(), computation_args);
@@ -255,8 +257,8 @@ IndexingMap GetScatterIndexingMap(
 absl::StatusOr<CpuScatterFusion::KernelDefinition>
 CpuScatterFusion::EmitKernelDefinition() {
   mlir::OpBuilder builder(mlir_context_);
-  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
-                      CreateNamedMlirModuleOp(*fusion_, builder));
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+                        CreateNamedMlirModuleOp(*fusion_, builder));
 
   absl::string_view module_name(mlir_module->getName().value());
   emitters::SetIndexDataLayout(mlir_module.get(), *fusion_);
@@ -272,7 +274,7 @@ CpuScatterFusion::EmitKernelDefinition() {
       xla::CpuMemoryRegionNameAttr::name,
       builder.getStringAttr(BuildModuleMemoryRegionName(name(), fusion_)));
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       mlir::func::FuncOp entry_func,
       EmitEntryFunctionApi(mlir_module.get(), *fusion_,
                            std::string(module_name), buffer_assignment_));
@@ -281,11 +283,11 @@ CpuScatterFusion::EmitKernelDefinition() {
       GetEpilogues(*fusion_, mlir_context_);
   emitters::PartitionedComputations computations(
       fusion_->fused_instructions_computation(), mlir_context_, epilogues);
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       emitters::CallTargetProvider call_targets,
       EmitCallTargets(mlir_module.get(), *fusion_, computations, epilogues));
 
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       EmitEntryFunction(computations, call_targets, entry_func, *fusion_));
 
   // Convert kernel arguments to fake allocations and buffer uses.
@@ -293,7 +295,7 @@ CpuScatterFusion::EmitKernelDefinition() {
   KernelSpec::Buffers result_buffers;
 
   for (auto& indexed : ShapeUtil::GetLeafShapes(fusion_->shape())) {
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         BufferAllocation::Slice slice,
         buffer_assignment_.GetUniqueSlice(fusion_, indexed.index));
     result_buffers.push_back({slice, indexed.shape});
@@ -305,7 +307,7 @@ CpuScatterFusion::EmitKernelDefinition() {
   int64_t operand_index = 0;
   for (HloInstruction* operand : fusion_->operands()) {
     for (auto& indexed : ShapeUtil::GetLeafShapes(operand->shape())) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           BufferAllocation::Slice slice,
           buffer_assignment_.GetUniqueSlice(operand, indexed.index));
 
@@ -441,11 +443,10 @@ absl::Status CpuScatterFusion::EmitEntryFunction(
                                 update_indices[i + 1], output_indices[i]);
                       }
                       SmallVector<Value> updated_outputs =
-                          EmitScatterComputation(
-                              num_threads_, scatter, output_indices,
-                              update_elems, output_tensors, root_computation,
-                              call_targets, entry_function,
-                              implicit_then_builder);
+                          EmitScatterComputation(num_threads_, scatter,
+                                                 output_indices, update_elems,
+                                                 output_tensors, call_targets,
+                                                 implicit_then_builder);
                       implicit_then_builder.create<scf::YieldOp>(
                           updated_outputs);
                     },

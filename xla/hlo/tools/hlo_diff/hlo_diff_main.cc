@@ -22,8 +22,10 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -40,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace hlo_diff {
@@ -109,9 +110,9 @@ absl::Status CheckGroupFlags(const Options::HloPath& hlo_path) {
 // Builds a HloModule from the HloModuleProto.
 absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(
     const HloModuleProto& hlo_module_proto) {
-  TF_ASSIGN_OR_RETURN(HloModuleConfig config,
-                      HloModule::CreateModuleConfigFromProto(
-                          hlo_module_proto, xla::GetDebugOptionsFromFlags()));
+  ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
+                        HloModule::CreateModuleConfigFromProto(
+                            hlo_module_proto, xla::GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(hlo_module_proto, config);
 }
 
@@ -162,10 +163,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> LoadHLOModule(
 // Runs Gumgraph algorithm based diff and renders the diff results.
 absl::Status RunGumgraphDiff(HloModule& first_module, HloModule& second_module,
                              const Options& opts) {
-  TF_RETURN_IF_ERROR(first_module.RemoveUnusedComputations());
-  TF_RETURN_IF_ERROR(second_module.RemoveUnusedComputations());
+  ABSL_RETURN_IF_ERROR(first_module.RemoveUnusedComputations());
+  ABSL_RETURN_IF_ERROR(second_module.RemoveUnusedComputations());
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto hlo_gumgraph_diff,
       ComputeDiff(first_module, second_module, opts.diff_options));
   std::cout << "Diffing finished" << '\n';
@@ -181,7 +182,7 @@ absl::Status RunGumgraphDiff(HloModule& first_module, HloModule& second_module,
   if (!text_output.empty()) {
     std::ostringstream text;
     RenderText(diff, text);
-    TF_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         tsl::WriteStringToFile(tsl::Env::Default(), text_output, text.str()));
   }
 
@@ -189,7 +190,7 @@ absl::Status RunGumgraphDiff(HloModule& first_module, HloModule& second_module,
   if (!html_output.empty()) {
     std::ostringstream html;
     RenderHtml(diff, diff_summary, html);
-    TF_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         tsl::WriteStringToFile(tsl::Env::Default(), html_output, html.str()));
 
     std::cout << "The diff summary is saved to: " << html_output << '\n';
@@ -261,9 +262,9 @@ int main(int argc, char** argv) {
   };
 
   std::string usage = tsl::Flags::Usage(argv[0], flag_list);
-  tsl::port::InitMain(xla::hlo_diff::kUsage, &argc, &argv);
   bool parse_ok = tsl::Flags::Parse(&argc, argv, flag_list);
-  LOG_IF(QFATAL, argc != 1 || !parse_ok || need_help) << usage;
+  tsl::port::InitMain(xla::hlo_diff::kUsage, &argc, &argv);
+  LOG_IF(QFATAL, !parse_ok || need_help) << usage;
   xla::hlo_diff::RealMain(opts);
   return 0;
 }

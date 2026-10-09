@@ -25,8 +25,11 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/collectives/in_process_collectives.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
@@ -40,8 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::cpu {
 
@@ -80,6 +81,8 @@ absl::string_view Thunk::KindToString(Kind kind) {
       return "replica-id";
     case Kind::kRngGetAndUpdateState:
       return "rng-get-and-update-state";
+    case Kind::kRngSeed:
+      return "rng-seed";
     case Kind::kSort:
       return "sort";
     case Kind::kTopK:
@@ -160,8 +163,9 @@ Thunk::CustomCallExecuteParams::CustomCallExecuteParams(
 
 absl::StatusOr<Thunk::YnnParams> Thunk::YnnParams::Create(
     const ExecutableRunOptions* run_options) {
-  TF_ASSIGN_OR_RETURN(YnnThreadpool threadpool,
-                      CreateYnnThreadpool(run_options->intra_op_thread_pool()));
+  ABSL_ASSIGN_OR_RETURN(
+      YnnThreadpool threadpool,
+      CreateYnnThreadpool(run_options->intra_op_thread_pool()));
   return YnnParams(std::move(threadpool));
 }
 
@@ -231,9 +235,9 @@ static void ForEach(const ThunkSequence& sequence,
 static absl::Status ForEach(const ThunkSequence& sequence,
                             absl::FunctionRef<absl::Status(const Thunk&)> fn) {
   for (auto& thunk : sequence) {
-    TF_RETURN_IF_ERROR(fn(*thunk));
+    ABSL_RETURN_IF_ERROR(fn(*thunk));
     for (auto& [name, nested] : thunk->nested_thunks()) {
-      TF_RETURN_IF_ERROR(ForEach(*nested, fn));
+      ABSL_RETURN_IF_ERROR(ForEach(*nested, fn));
     }
   }
   return absl::OkStatus();

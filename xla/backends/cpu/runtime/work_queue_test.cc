@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
@@ -221,6 +222,7 @@ TEST(WorkQueueTest, WorkerParallelizeVariousWorkerTaskRatios) {
 
   std::vector<TestCase> test_cases = {
       {0, 1},     // Edge: no work_items
+      {0, 8},     // Edge: no work_items, many workers
       {1, 1},     // Edge: single task, single worker
       {1, 8},     // Edge: single task, many workers
       {8, 1},     // Serial execution
@@ -300,6 +302,33 @@ BENCHMARK(BM_PopWorkItemMultiThreaded)
     ->Arg(16)
     ->Arg(32)
     ->Arg(64);
+
+// Measures Worker::Parallelize entry-path overhead with a no-op body.
+static void BM_WorkerParallelize(benchmark::State& state) {
+  const size_t num_work_items = state.range(0);
+  tsl::thread::ThreadPool threads(tsl::Env::Default(), "bench",
+                                  tsl::port::MaxParallelism());
+
+  for (auto _ : state) {
+    auto event =
+        Worker::Parallelize(threads.AsEigenThreadPool(), threads.NumThreads(),
+                            num_work_items, [](size_t) {});
+    tsl::BlockUntilReady(event);
+  }
+}
+
+BENCHMARK(BM_WorkerParallelize)
+    ->MeasureProcessCPUTime()
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
+    ->Arg(32)
+    ->Arg(64)
+    ->Arg(128)
+    ->Arg(256)
+    ->Arg(512)
+    ->Arg(1024);
 
 }  // namespace
 }  // namespace xla::cpu

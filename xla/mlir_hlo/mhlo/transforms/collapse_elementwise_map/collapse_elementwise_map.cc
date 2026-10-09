@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <utility>
 
 #include "mhlo/IR/hlo_ops.h"
@@ -49,10 +48,10 @@ struct ConvertMapOfElementwiseOps : public OpRewritePattern<MapOp> {
   using OpRewritePattern<MapOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(MapOp map,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // Matches that the computation block only has element-wise ops.
     if (llvm::any_of(map.getComputation().front().without_terminator(),
-                     [](Operation &op) {
+                     [](Operation& op) {
                        return op.getNumResults() != 1 ||
                               !op.hasTrait<::mlir::OpTrait::Elementwise>();
                      })) {
@@ -66,13 +65,13 @@ struct ConvertMapOfElementwiseOps : public OpRewritePattern<MapOp> {
       blockAndValueMap.map(barg, map->getOperand(barg.getArgNumber()));
     }
     auto shape = map.getType().getShape();
-    for (Operation &op : map.getComputation().front().without_terminator()) {
+    for (Operation& op : map.getComputation().front().without_terminator()) {
       SmallVector<Value, 2> operands;
       // Remaps the operands.
       operands.reserve(op.getNumOperands());
       for (auto value : op.getOperands())
         operands.push_back(blockAndValueMap.lookup(value));
-      auto *newOp = rewriter.create(
+      auto* newOp = rewriter.create(
           op.getLoc(), op.getName().getIdentifier(), operands,
           mlir::cast<TensorType>(op.getResultTypes()[0]).clone(shape));
       // Maps the result.
@@ -89,7 +88,7 @@ struct ConvertMapOfElementwiseOps : public OpRewritePattern<MapOp> {
 struct CollapseElementwiseMapPass
     : public impl::CollapseElementwiseMapPassBase<CollapseElementwiseMapPass> {
   void runOnOperation() override {
-    MLIRContext *ctx = &getContext();
+    MLIRContext* ctx = &getContext();
     RewritePatternSet patterns(ctx);
     patterns.add<ConvertMapOfElementwiseOps>(ctx);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
@@ -97,11 +96,6 @@ struct CollapseElementwiseMapPass
   }
 };
 }  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>>
-createCollapseElementwiseMapPass() {
-  return std::make_unique<CollapseElementwiseMapPass>();
-}
 
 }  // namespace mhlo
 }  // namespace mlir

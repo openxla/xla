@@ -13,15 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -231,7 +233,7 @@ std::string BuildHloTextGroupedConvolution2D(
 }
 
 class GroupedConvolution2DTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>,
+    : public HloInterpreterReferenceMixin<HloTestBase>,
       public ::testing::WithParamInterface<
           ::testing::tuple<GroupedConvolution2DSpec, bool>> {};
 
@@ -242,13 +244,13 @@ TEST_P(GroupedConvolution2DTest, DoIt) {
   const std::string hlo_text =
       BuildHloTextGroupedConvolution2D(spec, use_bfloat16);
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{0.01, 0.01},
-                            [](HloModule* module) -> absl::Status {
-                              BFloat16MixedPrecisionRemoval remover;
-                              TF_RETURN_IF_ERROR(remover.Run(module).status());
-                              Despecializer despecializer;
-                              return despecializer.Run(module).status();
-                            }));
+  EXPECT_TRUE(RunAndCompare(
+      hlo_text, ErrorSpec{0.01, 0.01}, [](HloModule* module) -> absl::Status {
+        BFloat16MixedPrecisionRemoval remover;
+        ABSL_RETURN_IF_ERROR(remover.Run(module).status());
+        Despecializer despecializer;
+        return despecializer.Run(module).status();
+      }));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -257,8 +259,7 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::Bool()),
     GroupedConvolution2DTestDataToString);
 
-using GroupedConvolutionTest =
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
+using GroupedConvolutionTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 TEST_F(GroupedConvolutionTest, BackwardInputConvolution) {
   auto module = ParseAndReturnVerifiedModule(R"(

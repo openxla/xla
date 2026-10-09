@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "tsl/platform/random.h"
 #include "xla/pjrt/distributed/coordination/coordination_client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
-#include "tsl/platform/random.h"
 
 namespace xla {
 
@@ -84,6 +84,11 @@ class CoordinationServiceAgent {
     // together. If set to 0, no barrier is imposed upon shutdown and each
     // worker can disconnect individually.
     absl::Duration shutdown_barrier_timeout = absl::Seconds(10);
+
+    // Extra time added to `cluster_register_timeout` and
+    // `shutdown_barrier_timeout` so that errors reported by the service can
+    // arrive before the agent's own deadline.
+    absl::Duration extra_error_propagation_time = absl::Seconds(5);
 
     // If set, agents do not make an explicit Shutdown() call. Service will only
     // find out about the disconnected agent via stale heartbeats. Used for

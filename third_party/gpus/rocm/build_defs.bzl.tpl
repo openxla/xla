@@ -16,7 +16,7 @@ def if_rocm(if_true, if_false = []):
 
 def rocm_default_copts():
     """Default options for all ROCm compilations."""
-    return if_rocm(["-x", "rocm"] + %{rocm_extra_copts})
+    return if_rocm(["-x", "rocm"])
 
 def rocm_copts(opts = []):
     """Gets the appropriate set of copts for (maybe) ROCm compilation.
@@ -68,16 +68,15 @@ def is_rocm_configured():
     """
     return %{rocm_is_configured}
 
-def rocm_hipblaslt():
-    return %{rocm_is_configured} and %{rocm_hipblaslt}
-
 def if_rocm_hipblaslt(x):
-    if %{rocm_is_configured} and (%{rocm_hipblaslt} == "True"):
-        return select({"//conditions:default": x})
-    return select({"//conditions:default": []})
+    """ 
+    hipBlasLt is always available: kept for compatibility with Tensorflow.
+    """
+    return select({"//conditions:default": x})
 
 def rocm_library(copts = [], deps = [], **kwargs):
     """Wrapper over cc_library which adds default ROCm options."""
+    deps = list(deps)
     if "@local_config_rocm//rocm:rocm_headers" not in deps:
         deps.append("@local_config_rocm//rocm:rocm_headers")
     cc_library(copts = rocm_default_copts() + copts, deps = deps, **kwargs)
@@ -88,8 +87,7 @@ def get_rbe_amdgpu_pool(is_single_gpu = False):
 def rocm_lib_import(name, interface_library, data, deps):
     cc_import(
         name = name + "_interface",
-        interface_library = interface_library,
-        system_provided = True,
+        shared_library = interface_library,
         visibility = ["//visibility:private"],
     )
     cc_library(

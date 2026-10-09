@@ -23,14 +23,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/trace_events.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/tf_xplane_visitor.h"
 #include "xla/tsl/profiler/utils/trace_utils.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/trace_events.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -107,7 +107,7 @@ void ConvertXPlaneToTraceEvents(uint32_t device_id, const XPlaneVisitor& xplane,
 }  // namespace
 
 uint64_t GetTraceViewerMaxEvents() {
-  constexpr uint64_t kMaxEvents = 1000000;
+  constexpr uint64_t kMaxEvents = 5000000;
   // Testing only env variable, not recommended for use
   char* max_events = getenv("TF_PROFILER_TRACE_VIEWER_MAX_EVENTS");
   if (max_events != nullptr) {

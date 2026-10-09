@@ -13,32 +13,32 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla::gpu {
 
 namespace {
 
 class ReductionVectorizationTest
-    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
+    : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
 
 class ReductionVectorizationNoOptTest
-    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {
+    : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloPjRtInterpreterReferenceMixin<
+    DebugOptions debug_options = HloInterpreterReferenceMixin<
         GpuPjRtCodegenTest>::GetDebugOptionsForTest();
     // The test MultiOutputStore contain a MOF fusion and XLA optimizer pass
     // doesn't like this.

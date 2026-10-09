@@ -18,7 +18,6 @@ limitations under the License.
 // custom atomic functions that will be implemented in platform-specific passes
 // later in the Triton pipeline.
 
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -31,9 +30,9 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 
@@ -184,9 +183,5 @@ class TritonXLALowerAtomicsPass
 };
 
 }  // namespace
-
-std::unique_ptr<Pass> CreateTritonXLALowerAtomicsPass() {
-  return std::make_unique<TritonXLALowerAtomicsPass>();
-}
 
 }  // namespace mlir::triton::xla

@@ -83,6 +83,8 @@ struct NumpyScalarTypes {
   nanobind::object np_uint64;
   nanobind::object np_bfloat16;
   nanobind::object np_float4_e2m1fn;
+  nanobind::object np_float6_e2m3fn;
+  nanobind::object np_float6_e3m2fn;
   nanobind::object np_float8_e3m4;
   nanobind::object np_float8_e4m3;
   nanobind::object np_float8_e4m3fn;
@@ -112,12 +114,11 @@ absl::StatusOr<nanobind::object> LiteralToPython(
 template <typename T>
 nanobind::typed<nanobind::tuple, T, nanobind::ellipsis> SpanToNbTuple(
     absl::Span<T const> xs) {
-  nanobind::tuple out =
-      nanobind::steal<nanobind::tuple>(PyTuple_New(xs.size()));
-  for (int i = 0; i < xs.size(); ++i) {
-    PyTuple_SET_ITEM(out.ptr(), i, nanobind::cast(xs[i]).release().ptr());
+  nanobind::tuple_builder out(xs.size());
+  for (const T& x : xs) {
+    out.put(x);
   }
-  return out;
+  return out.commit();
 }
 
 // Converts a sequence of Python objects to a Python tuple, stealing the

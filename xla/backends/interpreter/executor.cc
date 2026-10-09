@@ -32,9 +32,9 @@ limitations under the License.
 namespace stream_executor {
 namespace interpreter {
 
-host::HostStream *AsExecutorStream(Stream *stream) {
+host::HostStream* AsExecutorStream(Stream* stream) {
   DCHECK(stream != nullptr);
-  return dynamic_cast<host::HostStream *>(stream);
+  return dynamic_cast<host::HostStream*>(stream);
 }
 
 DeviceAddressBase XlaInterpreterExecutor::Allocate(uint64_t size,
@@ -43,7 +43,7 @@ DeviceAddressBase XlaInterpreterExecutor::Allocate(uint64_t size,
 }
 
 void XlaInterpreterExecutor::Deallocate(DeviceAddressBase* mem) {
-  delete[] static_cast<char *>(mem->opaque());
+  delete[] static_cast<char*>(mem->opaque());
 }
 
 absl::Status XlaInterpreterExecutor::SynchronousMemcpy(

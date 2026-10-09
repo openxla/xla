@@ -266,7 +266,7 @@ class Shape {
   // Precondition: this is an array shape or a buffer shape.
   PrimitiveType element_type() const {
     if (const auto* const state = if_buffer_state()) {
-      return state->buffer_shape->element_type();
+      return state->buffer_shape->element_type_;
     }
     return element_type_;
   }
@@ -545,7 +545,11 @@ class Shape {
       return h;
     }
     if (const auto* const state = s.if_buffer_state()) {
-      return H::combine(std::move(h), s.element_type_, state->buffer_shape);
+      h = H::combine(std::move(h), s.element_type_);
+      if (state->buffer_shape != nullptr) {
+        h = H::combine(std::move(h), *state->buffer_shape);
+      }
+      return h;
     }
     return H::combine(std::move(h), s.element_type_);
   }

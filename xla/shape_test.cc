@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/shape.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -349,6 +350,11 @@ TEST_F(ShapeTest, SupportsAbslHash) {
   EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(
       {opaque_, token_, scalar_, scalar_with_tile_, matrix_, matrix2_,
        matrix_buffer_, tuple_, nested_tuple_, dynamic_matrix_}));
+}
+
+TEST(Shape, ClearBuffer) {
+  Shape shape(BUFFER);
+  shape.Clear();
 }
 
 //===----------------------------------------------------------------------===//

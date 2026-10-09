@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
+#include "tsl/platform/random.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/runtime/device_id.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -40,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/random.h"
 
 namespace xla {
 namespace {
@@ -548,10 +549,14 @@ TEST(CoordinationService, TestSetGetValues) {
 
   // Get simple key
   absl::Notification n1;
-  absl::StatusOr<absl::string_view> ret;
+  absl::StatusOr<std::string> ret;
   service->GetKeyValueAsync(
       "key0", [&](const absl::StatusOr<absl::string_view>& status_or_value) {
-        ret = status_or_value;
+        if (status_or_value.ok()) {
+          ret = std::string(*status_or_value);
+        } else {
+          ret = status_or_value.status();
+        }
         n1.Notify();
       });
   n1.WaitForNotification();
@@ -562,7 +567,11 @@ TEST(CoordinationService, TestSetGetValues) {
   service->GetKeyValueAsync(
       "path//to///key1////",
       [&](const absl::StatusOr<absl::string_view>& status_or_value) {
-        ret = status_or_value;
+        if (status_or_value.ok()) {
+          ret = std::string(*status_or_value);
+        } else {
+          ret = status_or_value.status();
+        }
         n2.Notify();
       });
   n2.WaitForNotification();
@@ -574,7 +583,11 @@ TEST(CoordinationService, TestSetGetValues) {
   absl::Notification n3;
   service->GetKeyValueAsync(
       "key0", [&](const absl::StatusOr<absl::string_view>& status_or_value) {
-        ret = status_or_value;
+        if (status_or_value.ok()) {
+          ret = std::string(*status_or_value);
+        } else {
+          ret = status_or_value.status();
+        }
         n3.Notify();
       });
   EXPECT_FALSE(n3.HasBeenNotified());

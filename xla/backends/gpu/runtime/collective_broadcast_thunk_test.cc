@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -23,12 +26,12 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "absl/base/casts.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
-#include "xla/tsl/platform/status_macros.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
@@ -65,13 +68,13 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
-#include "xla/tests/hlo_test_base_legacy.h"
+#include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
@@ -111,7 +114,8 @@ class NoOpCollectiveBroadcastThunk : public CollectiveBroadcastThunk {
                                CollectiveConfig config,
                                std::vector<CollectiveThunk::Buffer> buffers)
       : CollectiveBroadcastThunk(std::move(thunk_info), std::move(config),
-                                 std::move(buffers)) {}
+                                 std::move(buffers),
+                                 /*devices_per_host=*/1) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams&) override {
     return absl::OkStatus();
@@ -123,7 +127,7 @@ class NoOpCollectiveBroadcastThunk : public CollectiveBroadcastThunk {
     se::DeviceAddressBase dst =
         execute_params.buffer_allocations->GetDeviceAddress(
             buffers()[0].destination_buffer.slice);
-    ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<se::CommandBuffer> nested_cmd,
         se::TraceCommandBufferFactory::Create(
             execute_params.stream->parent(),
@@ -135,7 +139,7 @@ class NoOpCollectiveBroadcastThunk : public CollectiveBroadcastThunk {
                                                 create->dependencies);
     }
     if (auto* update = std::get_if<RecordUpdate>(&record_action)) {
-      RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           command_buffer->UpdateChildCommand(update->command, *nested_cmd));
       return update->command;
     }
@@ -205,12 +209,14 @@ ENTRY test_computation {
 
   // ThunkSequence Creation
   auto cb_start_thunk = std::make_unique<CollectiveBroadcastThunk>(
-      Thunk::ThunkInfo{}, cb_instr, std::move(buffers));
+      Thunk::ThunkInfo{}, cb_instr, std::move(buffers),
+      /*devices_per_host=*/1);
 
   ThunkSequence start_sequence;
   start_sequence.push_back(std::move(cb_start_thunk));
   auto async_start = std::make_unique<AsyncStartThunk>(
-      Thunk::ThunkInfo(), CommunicationStreamId(0), std::move(start_sequence));
+      Thunk::ThunkInfo(), CommunicationStreamId(0), std::move(start_sequence),
+      /*devices_per_host=*/1);
   auto async_done = std::make_unique<AsyncDoneThunk>(
       Thunk::ThunkInfo(), async_start->async_execution());
 
@@ -255,6 +261,12 @@ ENTRY test_computation {
 
   se::StreamExecutor* executor = backend().default_stream_executor();
 
+  if (executor->GetDeviceDescription()
+          .gpu_compute_capability()
+          .oneapi_compute_capability()) {
+    GTEST_SKIP() << "oneAPI command buffers are not implemented yet.";
+  }
+
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> compiled_module,
       backend().compiler()->RunHloPasses(module->Clone(), executor,
@@ -267,7 +279,7 @@ ENTRY test_computation {
 
   // Downcast to GPU executable
   xla::gpu::GpuExecutable* gpu_executable =
-      tensorflow::down_cast<xla::gpu::GpuExecutable*>(executable.get());
+      absl::down_cast<GpuExecutable*>(executable.get());
   ASSERT_NE(gpu_executable, nullptr);
 
   // Get the thunk sequence and check its size and type
@@ -278,7 +290,7 @@ ENTRY test_computation {
   ASSERT_EQ(thunk->kind(), Thunk::kCommandBuffer);
 
   CommandBufferThunk* cmd_buffer_thunk =
-      tensorflow::down_cast<CommandBufferThunk*>(thunk.get());
+      absl::down_cast<CommandBufferThunk*>(thunk.get());
   ASSERT_NE(cmd_buffer_thunk, nullptr);
 
   std::vector<Kind> kinds;
@@ -308,7 +320,8 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CollectiveBroadcastThunk> thunk,
       CollectiveBroadcastThunk::FromProto(
-          thunk_info, proto.collective_broadcast_thunk(), buffer_allocations));
+          thunk_info, proto.collective_broadcast_thunk(), buffer_allocations,
+          /*devices_per_host=*/1));
 
   ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
 

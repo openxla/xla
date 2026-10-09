@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -43,7 +44,7 @@ std::unique_ptr<HloRunnerInterface> CreateRunnerOrDie() {
   absl::StatusOr<std::unique_ptr<PjRtClient>> client =
       GetGlobalPjRtClientTestFactory().Get()();
   CHECK_OK(client);
-  return MakeHloRunnerPjRtAotAware(*std::move(client));
+  return MakeAotAwareHloRunner(*std::move(client));
 }
 
 //  In this test, we are taking the same module and compiling it `num_threads`

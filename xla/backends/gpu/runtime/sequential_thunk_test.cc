@@ -15,21 +15,20 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -41,6 +40,7 @@ class DummyThunk : public Thunk {
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     return absl::OkStatus();
   }
+  BufferUses buffer_uses() const override { return {}; }
   absl::StatusOr<ThunkProto> ToProto() const override {
     return absl::UnimplementedError("DummyThunk::ToProto is not implemented");
   }
@@ -59,7 +59,7 @@ Thunk::ThunkInfo GetExampleThunkInfo() {
 
 TEST(SequentialThunkTest, EmptySequentialThunkToProto) {
   SequentialThunk thunk{GetExampleThunkInfo(), {}};
-  TF_ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
+  ASSERT_OK_AND_ASSIGN(ThunkProto proto, thunk.ToProto());
   ASSERT_TRUE(proto.has_sequential_thunk());
   EXPECT_EQ(proto.sequential_thunk().thunks_size(), 0);
 
@@ -75,7 +75,7 @@ TEST(SequentialThunkTest, EmptySequentialThunkFromProto) {
     return absl::InternalError("This should never be called");
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SequentialThunk> sequential_thunk,
       SequentialThunk::FromProto(GetExampleThunkInfo(), proto, deserializer));
 
@@ -107,7 +107,7 @@ TEST(SequentialThunkTest, SequentialThunkChainFromProto) {
                                       always_fail_deserializer);
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SequentialThunk> outer_thunk,
       SequentialThunk::FromProto(GetExampleThunkInfo(), outer_proto,
                                  only_supports_sequential_thunk_deserializer));
@@ -129,16 +129,13 @@ TEST(SequentialThunkTest, ToString) {
   thunk_info.thunk_id = ThunkId(1);
 
   ThunkSequence thunks;
-  thunks.push_back(
-      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, thunk_info));
+  thunks.Emplace<DummyThunk>(Thunk::Kind::kGemm, thunk_info);
 
   thunk_info.thunk_id = ThunkId(2);
-  thunks.push_back(
-      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, thunk_info));
+  thunks.Emplace<DummyThunk>(Thunk::Kind::kGemm, thunk_info);
 
   thunk_info.thunk_id = ThunkId(3);
-  thunks.push_back(
-      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, thunk_info));
+  thunks.Emplace<DummyThunk>(Thunk::Kind::kGemm, thunk_info);
 
   thunk_info.thunk_id = ThunkId(4);
   SequentialThunk sequential_thunk(thunk_info, std::move(thunks));
@@ -159,15 +156,12 @@ TEST(SequentialThunkTest, TransformNested) {
     return info;
   };
   ThunkSequence thunks;
-  thunks.push_back(
-      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(1)));
-  thunks.push_back(
-      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(2)));
-  thunks.push_back(
-      std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(3)));
+  thunks.Emplace<DummyThunk>(Thunk::Kind::kGemm, make_info(1));
+  thunks.Emplace<DummyThunk>(Thunk::Kind::kGemm, make_info(2));
+  thunks.Emplace<DummyThunk>(Thunk::Kind::kGemm, make_info(3));
   SequentialThunk sequential_thunk(Thunk::ThunkInfo(), std::move(thunks));
 
-  TF_EXPECT_OK(sequential_thunk.TransformNested(
+  EXPECT_OK(sequential_thunk.TransformNested(
       [&](std::unique_ptr<Thunk> thunk) -> std::unique_ptr<Thunk> {
         return std::make_unique<DummyThunk>(
             Thunk::Kind::kCopy,

@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/llvm_kernel_backend.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/cpu/autotuner/cpu_codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {
@@ -112,8 +113,8 @@ TEST_F(LlvmKernelBackendTest, GetDefaultConfigTest) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto config, backend_->GetDefaultConfig(
                        *module->entry_computation()->root_instruction()));
-  LlvmKernelBackend::Config llvm_kernel_config;
-  ASSERT_TRUE(config->UnpackTo(&llvm_kernel_config));
+  ASSERT_TRUE(config->has_llvm_kernel());
+  LlvmKernelBackend::Config llvm_kernel_config = config->llvm_kernel();
 
   EXPECT_FALSE(llvm_kernel_config.disable_loop_unrolling());
   EXPECT_FALSE(llvm_kernel_config.slp_vectorizer_disabled());
@@ -153,8 +154,8 @@ TEST_F(LlvmKernelBackendTest, EnsureConfigIsApplied) {
                           backend_->GetSupportedConfigs(*instruction));
 
   for (const auto& config : configs) {
-    LlvmKernelBackend::Config llvm_kernel_config;
-    ASSERT_TRUE(config->UnpackTo(&llvm_kernel_config));
+    ASSERT_TRUE(config->has_llvm_kernel());
+    LlvmKernelBackend::Config llvm_kernel_config = config->llvm_kernel();
     EXPECT_TRUE(backend_->ApplyConfig(*instruction, *config).ok());
 
     TF_ASSERT_OK_AND_ASSIGN(auto instruction_backend_config,

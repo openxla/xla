@@ -38,6 +38,7 @@ limitations under the License.
 #if defined(PLATFORM_GOOGLE)
 #include "absl/types/source_location.h"
 #endif  // PLATFORM_GOOGLE
+#include "absl/status/status_macros.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -109,6 +110,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kNegate:
     case HloOpcode::kNot:
     case HloOpcode::kOptimizationBarrier:
@@ -130,6 +132,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kShiftLeft:
     case HloOpcode::kShiftRightArithmetic:
     case HloOpcode::kShiftRightLogical:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kStochasticConvert:
     case HloOpcode::kSubtract:
@@ -187,6 +190,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteDone:
     case HloOpcode::kCollectivePermuteStart:
@@ -195,12 +199,14 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kDot:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFft:
     case HloOpcode::kFusion:
     case HloOpcode::kGather:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kLogistic:
     case HloOpcode::kMap:
     case HloOpcode::kParameter:
@@ -638,6 +644,10 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
 
       std::vector<int64_t>& sorted_operand_numbers = next_entry.second;
 
+      // Cached result of IsConsumerSuitableForMultiOutputFusion for the current
+      // instruction.
+      std::optional<FusionDecision> mof_suitable;
+
       for (int64_t i : sorted_operand_numbers) {
         HloInstruction* operand = instruction->mutable_operand(i);
         VLOG(5) << "Considering fusion of: " << instruction->ToString()
@@ -684,7 +694,12 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
 
         FusionDecision use_mof = FusionDecision::Allow();
         if (!use_regular_fusion) {
-          use_mof = ShouldFuseIntoMultiOutput(instruction, i);
+          if (!mof_suitable.has_value()) {
+            mof_suitable = IsConsumerSuitableForMultiOutputFusion(instruction);
+          }
+          use_mof = mof_suitable->And(
+              ShouldFuseOperandIntoMultiOutputFusion(instruction, i));
+
           if (use_mof) {
             use_mof = use_mof.And(
                 FusionDecision{!MultiOutputFusionCreatesCycle(
@@ -705,7 +720,7 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
 
         if (fusion_instruction == nullptr) {
           FusionDecision fusion_decision = use_regular_fusion.Or(use_mof);
-          CHECK(!fusion_decision.CanFuse());
+          CHECK(fusion_decision.IsForbidden());
           if (dump_fusion) {
             VLOG(2) << "Not fusing " << operand->ToShortString() << "| into |"
                     << instruction->ToShortString() << "| as "
@@ -733,8 +748,8 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
           // Operand is now dead. Remove from queue.
           fusion_queue->RemoveInstruction(operand);
           // Remove from computation.
-          TF_RETURN_IF_ERROR(operand->SafelyDropAllControlDependencies());
-          TF_RETURN_IF_ERROR(computation->RemoveInstruction(operand));
+          ABSL_RETURN_IF_ERROR(operand->SafelyDropAllControlDependencies());
+          ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(operand));
         }
 
         if (dump_fusion) {
@@ -795,7 +810,11 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
     // have the same value as the root of the fused computation. However, we
     // copy the value nontheless to simplify some use cases that involve
     // fusions.
-    CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
+    auto status_or_changed = computation->ReplaceInstruction(
+        consumer, fusion_instruction, /*preserve_sharding=*/false,
+        /*relay_control_dependency=*/true);
+    CHECK_OK(status_or_changed.status());
+    CHECK(status_or_changed.value());
   }
   return fusion_instruction;
 }

@@ -19,13 +19,13 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/profiler/rpc/profiler_server.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/traceme.h"
 
 // The main method for the subprocess created by the
 // subprocess_profiling_session_test.cc.

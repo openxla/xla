@@ -17,13 +17,14 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/constants.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
@@ -35,41 +36,27 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
 
 constexpr ErrorSpec kErrorSpec{1e-3, 1e-5};
 
-using ConstantsTest = ClientLibraryTestRunnerMixin<
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>;
+using ConstantsTest =
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 template <typename T>
-class ConstantsFloatTest : public ConstantsTest {
- protected:
-  void SetUp() override {
-    if ((std::is_same_v<T, tsl::float4_e2m1fn> ||
-         std::is_same_v<T, tsl::float8_e8m0fnu>) &&
-        test::DeviceTypeIs(test::kTpu)) {
-      // TODO(b/385004399): Run tests on these types on TPU.
-      GTEST_SKIP();
-    }
-  }
-};
+class ConstantsFloatTest : public ConstantsTest {};
 
-using FloatTypes =
-    ::testing::Types<float, half, tsl::float8_e3m4, tsl::float8_e4m3,
-                     tsl::float8_e4m3fn, tsl::float8_e4m3b11fnuz,
-                     tsl::float8_e4m3fnuz, tsl::float8_e5m2,
-                     tsl::float8_e5m2fnuz
-                     ,
-                     tsl::float4_e2m1fn, tsl::float8_e8m0fnu
-                     >;
+using FloatTypes = ::testing::Types<
+    float, half, tsl::float8_e3m4, tsl::float8_e4m3, tsl::float8_e4m3fn,
+    tsl::float8_e4m3b11fnuz, tsl::float8_e4m3fnuz, tsl::float8_e5m2,
+    tsl::float8_e5m2fnuz, tsl::float4_e2m1fn, tsl::float8_e8m0fnu>;
 
 TYPED_TEST_SUITE(ConstantsFloatTest, FloatTypes);
 
@@ -273,7 +260,7 @@ TEST_F(ConstantsTest, FullLikeScalar) {
   ComputeAndCompareR0<float>(&b, -1, {}, kErrorSpec);
 }
 
-using ConstantsHloTest = HloPjRtTestBase;
+using ConstantsHloTest = HloTestBase;
 
 // TODO(b/121147351): Fails on GPU. Not clear if this is expected behavior.
 TEST_F(ConstantsHloTest, BitcastOfConstant) {

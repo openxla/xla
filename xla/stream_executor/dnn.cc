@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/engine_options.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace stream_executor {
 namespace dnn {
@@ -464,6 +464,7 @@ ConvDimIndices GetDimIndices(const FilterLayout& layout, const int data_dims) {
 
 std::vector<int64_t> ReorderDims(const std::vector<int64_t>& input,
                                  const DataLayout& from, const DataLayout& to) {
+  CHECK_GE(input.size(), 2);
   if (from == to) {
     return input;
   }
@@ -488,6 +489,7 @@ std::vector<int64_t> ReorderDims(const std::vector<int64_t>& input,
 std::vector<int64_t> ReorderDims(const std::vector<int64_t>& input,
                                  const FilterLayout& from,
                                  const FilterLayout& to) {
+  CHECK_GE(input.size(), 2);
   if (from == to) {
     return input;
   }
@@ -551,6 +553,9 @@ TensorDescriptor::GetPhysicalDimensionsMajorToMinor() const {
 }
 
 std::vector<int64_t> TensorDescriptor::GetPhysicalStridesMajorToMinor() const {
+  if (ndims() == 0) {
+    return {};
+  }
   std::vector<int64_t> phys_dims = GetPhysicalDimensionsMajorToMinor().value();
   std::vector<int64_t> phys_strides(ndims());
   phys_strides[ndims() - 1] = 1;

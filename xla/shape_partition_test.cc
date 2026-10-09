@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/shape_partition.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <map>
 #include <random>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
@@ -86,6 +87,14 @@ TEST_F(ShapePartitionAssignerTest, Shape532WithLayout210) {
       {4, 3} /* 13 */, {4, 3} /* 14 */, {5, 3} /* 15 */, {4, 2, 2} /* 16 */};
   RunR2Test(ShapeUtil::MakeShapeWithDenseLayout(F32, {5, 3, 2}, {2, 1, 0}), 16,
             expected_partitions);
+}
+
+TEST_F(ShapePartitionAssignerTest, ScalarShape) {
+  Shape shape = ShapeUtil::MakeShape(F32, {});
+  ShapePartitionAssigner assigner(shape);
+  std::vector<int64_t> actual_partitions =
+      assigner.Run(/*target_partition_count=*/4);
+  EXPECT_TRUE(actual_partitions.empty());
 }
 
 TEST_F(ShapePartitionAssignerTest, Shape532WithLayout201) {

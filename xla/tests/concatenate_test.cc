@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -36,7 +37,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using ConcatenateTest = HloPjRtTestBase;
+using ConcatenateTest = HloTestBase;
 
 TEST_F(ConcatenateTest, TwoR3Axis1) {
   const std::string hlo_text_module = R"(

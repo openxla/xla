@@ -30,11 +30,11 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/cuda/ptx_compiler_helpers.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 
@@ -84,6 +85,22 @@ absl::StatusOr<Assembly> DriverCompilationProvider::CompileAndLink(
   // (WGMMA, TMA, and more) are only supported in CUDA 12+.
   if (cc.feature_extension ==
       CudaComputeCapability::FeatureExtension::kAcceleratedFeatures) {
+    SemanticVersion min_driver_version = SemanticVersion{12, 0, 0};
+    if (cc.major == 9 && cc.minor == 0) {
+      min_driver_version = SemanticVersion{12, 0, 0};
+    } else if ((cc.major == 10 && (cc.minor == 0 || cc.minor == 1)) ||
+               (cc.major == 12 && cc.minor == 0)) {
+      min_driver_version = SemanticVersion{12, 8, 0};
+    } else {
+      min_driver_version = SemanticVersion{12, 9, 0};
+    }
+
+    if (stream_exec_->GetDeviceDescription().driver_version() <
+        min_driver_version) {
+      return absl::UnimplementedError(absl::StrCat(
+          "Accelerated target ", cc.GetPtxAsTargetName(),
+          " requires CUDA driver version >= ", min_driver_version.ToString()));
+    }
     target =
         static_cast<CUjit_target>(target + CU_COMPUTE_ACCELERATED_TARGET_BASE);
   }
@@ -135,7 +152,7 @@ absl::StatusOr<Assembly> DriverCompilationProvider::CompileAndLink(
   static_assert(sizeof(jit_options) / sizeof(jit_options[0]) ==
                 sizeof(jit_option_values) / sizeof(jit_option_values[0]));
 
-  RETURN_IF_ERROR(cuda::ToStatus(
+  ABSL_RETURN_IF_ERROR(cuda::ToStatus(
       cuLinkCreate(sizeof(jit_options) / sizeof(jit_options[0]), jit_options,
                    jit_option_values, &link_state)));
   absl::Cleanup link_state_cleaner = [&link_state] {
@@ -146,7 +163,7 @@ absl::StatusOr<Assembly> DriverCompilationProvider::CompileAndLink(
   for (const auto& input : inputs) {
     if (std::holds_alternative<RelocatableModule>(input)) {
       const RelocatableModule& module = std::get<RelocatableModule>(input);
-      RETURN_IF_ERROR(cuda::ToStatus(cuLinkAddData(
+      ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuLinkAddData(
           link_state, CU_JIT_INPUT_CUBIN,
           absl::bit_cast<void*>(module.cubin.data()), module.cubin.size(),
           /*name=*/"", 0, nullptr, nullptr)));
@@ -158,7 +175,7 @@ absl::StatusOr<Assembly> DriverCompilationProvider::CompileAndLink(
       if (result != CUDA_SUCCESS) {
         CHECK(error_log_buffer_size() <= kErrorLogBufferSize);
         error_log_buffer.resize(error_log_buffer_size());
-        RETURN_IF_ERROR(cuda::ToStatus(result, error_log_buffer));
+        ABSL_RETURN_IF_ERROR(cuda::ToStatus(result, error_log_buffer));
       }
     }
   }
@@ -178,15 +195,15 @@ absl::StatusOr<Assembly> DriverCompilationProvider::CompileAndLink(
 
   // Return status can be CUDA_SUCCESS with error in the log.
   VLOG(3) << "Driver compilation error log output: " << error_log_buffer;
-  RETURN_IF_ERROR(CreateErrorFromPTXASLog(error_log_buffer, architecture,
-                                          options.cancel_if_reg_spill));
+  ABSL_RETURN_IF_ERROR(CreateErrorFromPTXASLog(error_log_buffer, architecture,
+                                               options.cancel_if_reg_spill));
   if (result != CUDA_SUCCESS) {
     return cuda::ToStatus(result, error_log_buffer);
   }
 
   VLOG(3) << "Driver compilation info log output: " << info_log_buffer;
-  TF_RETURN_IF_ERROR(CreateErrorFromPTXASLog(info_log_buffer, architecture,
-                                             options.cancel_if_reg_spill));
+  ABSL_RETURN_IF_ERROR(CreateErrorFromPTXASLog(info_log_buffer, architecture,
+                                               options.cancel_if_reg_spill));
 
   std::vector<uint8_t> cubin(static_cast<uint8_t*>(cubin_out),
                              static_cast<uint8_t*>(cubin_out) + cubin_size);

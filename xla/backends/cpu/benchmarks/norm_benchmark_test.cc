@@ -18,7 +18,6 @@ limitations under the License.
 #include <memory>
 #include <random>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -28,10 +27,10 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
+#include "tsl/platform/stacktrace_handler.h"
 #include "xla/backends/cpu/benchmarks/aot_benchmark_helper.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -46,7 +45,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/stacktrace_handler.h"
 
 ABSL_FLAG(std::string, shapes,
           "{(f32[1024,1024], s32[1]), (f32[1024,4096], s32[1]), "

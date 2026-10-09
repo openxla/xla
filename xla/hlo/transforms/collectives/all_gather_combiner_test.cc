@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/all_gather_combiner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -31,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -624,8 +625,12 @@ TEST_F(AllGatherCombinerTest, PreservesMetadata) {
     ENTRY entry {
       param0 = f32[32] parameter(0)
       param1 = f32[32] parameter(1)
-      allgather0 = f32[128] all-gather(param0), replica_groups={}, dimensions={0}, metadata={op_type="test_type0" op_name="test_name0"}
-      allgather1 = f32[128] all-gather(param1), replica_groups={}, dimensions={0}, metadata={op_type="test_type1" op_name="test_name1"}
+      allgather0 = f32[128] all-gather(param0), replica_groups={},
+          dimensions={0},
+          metadata={op_type="test_type0" op_name="test_name0"}
+      allgather1 = f32[128] all-gather(param1), replica_groups={},
+          dimensions={0},
+          metadata={op_type="test_type1" op_name="test_name1"}
       ROOT tuple = (f32[128], f32[128]) tuple(allgather0, allgather1)
     }
   )";
@@ -654,8 +659,14 @@ TEST_F(AllGatherCombinerTest, PreservesFrontendAttributesAndMergedMetadata) {
     ENTRY entry {
       param0 = f32[32] parameter(0)
       param1 = f32[32] parameter(1)
-      allgather0 = f32[128] all-gather(param0), replica_groups={}, dimensions={0}, frontend_attributes={is_pipelinable="true", color="red"}, metadata={op_type="ag" op_name="model/layer/ag_0"}
-      allgather1 = f32[128] all-gather(param1), replica_groups={}, dimensions={0}, frontend_attributes={is_pipelinable="true", color="blue"}, metadata={op_type="ag" op_name="model/layer/ag_1"}
+      allgather0 = f32[128] all-gather(param0), replica_groups={},
+          dimensions={0},
+          frontend_attributes={is_pipelineable="true", color="red"},
+          metadata={op_type="ag" op_name="model/layer/ag_0"}
+      allgather1 = f32[128] all-gather(param1), replica_groups={},
+          dimensions={0},
+          frontend_attributes={is_pipelineable="true", color="blue"},
+          metadata={op_type="ag" op_name="model/layer/ag_1"}
       ROOT tuple = (f32[128], f32[128]) tuple(allgather0, allgather1)
     }
   )";
@@ -675,7 +686,7 @@ TEST_F(AllGatherCombinerTest, PreservesFrontendAttributesAndMergedMetadata) {
   // conflicting values sorted and comma-joined.
   ASSERT_TRUE(combined_ag->has_frontend_attributes());
   const auto& attrs = combined_ag->frontend_attributes().map();
-  EXPECT_EQ(attrs.at("is_pipelinable"), "true");
+  EXPECT_EQ(attrs.at("is_pipelineable"), "true");
   EXPECT_EQ(attrs.at("color"), "blue,red");
 
   // Metadata: common prefix "model/layer/" extracted, suffixes joined.

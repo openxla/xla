@@ -34,7 +34,7 @@ namespace mlir {
 namespace hlo {
 // Verifies the source target pairs attached to collective permute.
 LogicalResult verifyCollectivePermuteSourceTargetPairs(
-    Operation *op, DenseIntElementsAttr attr) {
+    Operation* op, DenseIntElementsAttr attr) {
   auto type = mlir::cast<RankedTensorType>(attr.getType());
   if (type.getRank() != 2)
     return op->emitError() << "expect source_target_pairs attribute to be of "
@@ -64,7 +64,7 @@ LogicalResult verifyCollectivePermuteSourceTargetPairs(
   return success();
 }
 
-LogicalResult verifyReduceScatter(Operation *op, TypeRange operandTypes,
+LogicalResult verifyReduceScatter(Operation* op, TypeRange operandTypes,
                                   TypeRange resultTypes,
                                   uint64_t scatterDimension) {
   // If operand and result are both ranked, then the size of the scatter
@@ -117,7 +117,7 @@ LogicalResult verifyReduceScatter(Operation *op, TypeRange operandTypes,
 
 namespace {
 // Custom formatting for convolution window attributes.
-void printWindowAttribute(OpAsmPrinter &p, DenseElementsAttr attribute) {
+void printWindowAttribute(OpAsmPrinter& p, DenseElementsAttr attribute) {
   if (attribute.getElementType().isInteger(/*width=*/1)) {
     // boolean attribute.
     llvm::interleaveComma(attribute.getValues<bool>(), p,
@@ -129,7 +129,7 @@ void printWindowAttribute(OpAsmPrinter &p, DenseElementsAttr attribute) {
     auto it = attribute.value_begin<int64_t>();
     std::vector<std::pair<int64_t, int64_t>> values(attribute.getNumElements() /
                                                     2);
-    for (auto &item : values) {
+    for (auto& item : values) {
       int64_t first = *it;
       ++it;
       int64_t second = *it;
@@ -146,7 +146,7 @@ void printWindowAttribute(OpAsmPrinter &p, DenseElementsAttr attribute) {
 }
 }  // namespace
 
-void printWindowAttributes(OpAsmPrinter &p, Operation * /*op*/,
+void printWindowAttributes(OpAsmPrinter& p, Operation* /*op*/,
                            std::optional<DenseIntElementsAttr> windowStrides,
                            std::optional<DenseIntElementsAttr> padding,
                            std::optional<DenseIntElementsAttr> lhsDilation,
@@ -164,21 +164,21 @@ void printWindowAttributes(OpAsmPrinter &p, Operation * /*op*/,
   // Do not print attributes that do no exist.
   auto nonNullAttributes = llvm::make_filter_range(
       printedAttributes,
-      [](const pair_t &a) { return static_cast<bool>(a.first); });
+      [](const pair_t& a) { return static_cast<bool>(a.first); });
 
-  llvm::interleaveComma(nonNullAttributes, p, [&](const pair_t &a) {
+  llvm::interleaveComma(nonNullAttributes, p, [&](const pair_t& a) {
     p << a.second << " = [";
     printWindowAttribute(p, a.first);
     p << "]";
   });
 }
 
-ParseResult parseWindowAttributes(OpAsmParser &parser,
-                                  DenseIntElementsAttr &windowStrides,
-                                  DenseIntElementsAttr &padding,
-                                  DenseIntElementsAttr &lhsDilation,
-                                  DenseIntElementsAttr &rhsDilation,
-                                  DenseElementsAttr &windowReversal) {
+ParseResult parseWindowAttributes(OpAsmParser& parser,
+                                  DenseIntElementsAttr& windowStrides,
+                                  DenseIntElementsAttr& padding,
+                                  DenseIntElementsAttr& lhsDilation,
+                                  DenseIntElementsAttr& rhsDilation,
+                                  DenseElementsAttr& windowReversal) {
   StringRef attributeName;
 
   llvm::StringSet<> allowedAttributeNames{

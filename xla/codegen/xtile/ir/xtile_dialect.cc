@@ -15,11 +15,11 @@ limitations under the License.
 
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 
-#include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
+#include "llvm/ADT/TypeSwitch.h"            // IWYU pragma: keep
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
 #include "mlir/Transforms/InliningUtils.h"
 #include "xla/codegen/xtile/ir/xtile_attrs.h"  // IWYU pragma: keep
-#include "xla/codegen/xtile/ir/xtile_ops.h"  // IWYU pragma: keep
+#include "xla/codegen/xtile/ir/xtile_ops.h"    // IWYU pragma: keep
 
 // Include the auto-generated implementation file.
 #include "xla/codegen/xtile/ir/xtile_dialect.cc.inc"

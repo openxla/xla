@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -31,16 +32,46 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_compiler_variant.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+absl::StatusOr<PjRtCompilerVariant> PickTpuCompilerVariant() {
+  static const PjRtCompilerVariant kFactoryVariantId =
+      tsl::Fingerprint64("factory_variant");
+  return kFactoryVariantId;
+}
+
+std::string CompilerVariantToString(PjRtCompilerVariant variant) {
+  if (variant == LinkedCompilerVariantId()) {
+    return std::string(kLinkedVariant);
+  }
+  if (variant == tsl::Fingerprint64("factory_variant")) {
+    return "factory_variant";
+  }
+  return std::string(kUnknownVariant);
+}
+
+namespace {
+bool RegisterTestVariantPicker() {
+  PjRtRegisterCompilerVariantPicker("tpu", []() -> absl::StatusOr<std::string> {
+    ABSL_ASSIGN_OR_RETURN(PjRtCompilerVariant variant,
+                          PickTpuCompilerVariant());
+    return CompilerVariantToString(variant);
+  });
+  return true;
+}
+bool test_variant_picker_registered = RegisterTestVariantPicker();
+}  // namespace
 
 namespace {
 using ::absl_testing::StatusIs;
@@ -67,6 +98,18 @@ class PjRtTestTopology : public PjRtTopologyDescription {
         "TestTopology does not support GetDefaultLayout");
   }
 };
+
+// Registers a compiler to compile programs for 'platform_name' with
+// 'compiler_variant'. Takes ownership of 'compiler'.
+//
+// REQUIRES: No compiler has been registered for the platform and compiler
+// variant yet.
+void PjRtRegisterCompiler(absl::string_view platform_name,
+                          absl::string_view compiler_variant,
+                          std::unique_ptr<PjRtCompiler> compiler) {
+  CHECK_OK(PjRtCompilerRegistry::Global().RegisterCompiler(
+      platform_name, compiler_variant, std::move(compiler)));
+}
 
 TEST(PjRtCompilerTest, CompilerNotRegistered) {
   PjRtTestTopology topology;
@@ -122,9 +165,7 @@ TEST(PjRtCompilerTest, CompilerRegistered) {
   };
   CompileOptions options;
   std::unique_ptr<PjRtCompiler> compiler = std::make_unique<PjRtTestCompiler>();
-  PjRtRegisterCompiler(topology.platform_name(),
-                       options.compiler_variant.value_or(""),
-                       std::move(compiler));
+  PjRtRegisterCompiler(topology.platform_name(), "", std::move(compiler));
 
   XlaComputation computation;
   auto res = PjRtCompile(options, computation, topology);
@@ -239,8 +280,43 @@ TEST(PjRtCompilerTest, VariantRegistryLookup) {
   EXPECT_TRUE(absl::IsNotFound(status.status()));
 }
 
+TEST(PjRtCompilerTest, IsCompilerVariantRegistered) {
+  const std::string platform = "has_variant_test_platform";
+  const std::string factory_variant = "factory_registered_variant";
+  const std::string compiler_variant = "compiler_registered_variant";
+
+  EXPECT_FALSE(PjRtIsCompilerVariantRegistered(platform, factory_variant));
+  EXPECT_FALSE(PjRtIsCompilerVariantRegistered(platform, compiler_variant));
+
+  bool factory_called = false;
+  PjRtRegisterCompilerFactory(
+      platform, factory_variant,
+      [&factory_called]() -> absl::StatusOr<std::unique_ptr<PjRtCompiler>> {
+        factory_called = true;
+        return std::make_unique<PjRtDeserializeCompiler>();
+      });
+  PjRtRegisterCompiler(platform, compiler_variant,
+                       std::make_unique<PjRtDeserializeCompiler>());
+
+  EXPECT_TRUE(PjRtIsCompilerVariantRegistered(platform, factory_variant));
+  EXPECT_TRUE(PjRtIsCompilerVariantRegistered(platform, compiler_variant));
+  // The query must not instantiate the compiler.
+  EXPECT_FALSE(factory_called);
+
+  EXPECT_FALSE(
+      PjRtIsCompilerVariantRegistered(platform, "unregistered_variant"));
+  EXPECT_FALSE(
+      PjRtIsCompilerVariantRegistered("wrong_platform", factory_variant));
+}
+
+TEST(PjRtTopologyDescriptionTest, DefaultMemorySpaceKindIds) {
+  PjRtTestTopology topology;
+  EXPECT_THAT(topology.GetMemorySpaceKindIds(), ::testing::ElementsAre(-1));
+  EXPECT_EQ(topology.GetDefaultMemorySpaceKindId(), -1);
+}
+
 TEST(PjRtCompilerTest, CompilerFactoryRegistered) {
-  const std::string platform = "factory_test_platform";
+  const std::string platform = "tpu";
   const std::string variant = "factory_variant";
   auto factory_called = std::make_shared<bool>(false);
 
@@ -253,13 +329,11 @@ TEST(PjRtCompilerTest, CompilerFactoryRegistered) {
 
   class PjRtResetPlatformNameTopology : public PjRtTestTopology {
    public:
-    absl::string_view platform_name() const override {
-      return "factory_test_platform";
-    }
+    PjRtPlatformId platform_id() const override { return xla::TpuId(); }
+    absl::string_view platform_name() const override { return "tpu"; }
   };
   PjRtResetPlatformNameTopology topology;
   CompileOptions options;
-  options.compiler_variant = variant;
   XlaComputation computation;
 
   // Factory should not be called yet.

@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include "absl/status/status.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/str_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/lib/io/record_reader.h"
@@ -22,8 +24,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/coding.h"
-#include "tsl/platform/str_util.h"
 
 namespace tsl {
 namespace io {

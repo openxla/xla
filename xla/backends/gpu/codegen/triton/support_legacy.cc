@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -217,7 +217,7 @@ bool IsTritonSupportedElementwiseUpToFloatNormalization(
 CodegenDecision CanTritonHandleElementwise(
     const HloInstruction& instr, const se::GpuComputeCapability& gpu_version) {
   if (auto decision = IsInstructionSupportsDataTypes(instr, gpu_version);
-      !decision.CanFuse()) {
+      decision.IsForbidden()) {
     return decision;
   }
   if (instr.opcode() == HloOpcode::kConstant) {
@@ -339,7 +339,7 @@ CodegenDecision CanTritonHandleGEMM(
 
   if (auto decision =
           AreDotInputAndOutputTypesSupportedAndCompatible(dot, gpu_version);
-      !decision.CanFuse()) {
+      decision.IsForbidden()) {
     return decision;
   }
 

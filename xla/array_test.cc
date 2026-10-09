@@ -20,10 +20,10 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/hlo/testlib/test.h"
 
 namespace xla {

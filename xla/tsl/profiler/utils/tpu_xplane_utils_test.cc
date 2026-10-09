@@ -17,11 +17,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -75,12 +75,15 @@ TEST(TpuXplaneUtilsTest, GetSparseCorePlanesFromXSpace) {
       &space, absl::StrCat(TpuPlaneName(0), " SparseCore 0"));
   XPlane* p4 = FindOrAddMutablePlaneWithName(
       &space, absl::StrCat(TpuPlaneName(0), " SparseCore 1"));
+  XPlane* p5 = FindOrAddMutablePlaneWithName(
+      &space, absl::StrCat(TpuPlaneName(0), " SparseCore Test 0"));
 
   EXPECT_THAT(FindTensorCorePlanes(space), UnorderedElementsAre(p1, p2));
   EXPECT_THAT(FindPlanesWithPrefix(space, kTpuPlanePrefix),
-              UnorderedElementsAre(p1, p2, p3, p4));
+              UnorderedElementsAre(p1, p2, p3, p4, p5));
   EXPECT_THAT(GetSparseCoreId(p3->name()), Optional(0));
   EXPECT_THAT(GetSparseCoreId(p4->name()), Optional(1));
+  EXPECT_THAT(GetSparseCoreId(p5->name()), Optional(0));
 }
 
 }  // namespace

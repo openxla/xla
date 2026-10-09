@@ -18,11 +18,11 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "google/protobuf/message.h"
 #include "grpcpp/impl/proto_utils.h"
 #include "grpcpp/support/byte_buffer.h"
 #include "grpcpp/support/slice.h"
 #include "grpcpp/support/status.h"
-#include "google/protobuf/message.h"
 #include "tsl/platform/tstring.h"
 
 namespace tsl {

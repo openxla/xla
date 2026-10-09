@@ -15,18 +15,18 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/reduction_layout_normalizer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -35,7 +35,7 @@ namespace {
 using ::testing::HasSubstr;
 
 class ReductionLayoutNormalizerTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
+    : public HloInterpreterReferenceMixin<HloTestBase> {
  public:
   void CheckReductionLayoutNormalizer(
       absl::string_view hlo, std::optional<absl::string_view> expected) {
@@ -156,7 +156,7 @@ ENTRY main {
 
 
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   auto cloned_module = module->Clone();
   ReductionLayoutNormalizer normalizer;
   EXPECT_THAT(normalizer.Run(module.get()),

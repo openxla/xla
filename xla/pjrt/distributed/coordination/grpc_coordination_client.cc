@@ -23,6 +23,7 @@ limitations under the License.
 #include "grpcpp/channel.h"
 #include "grpcpp/completion_queue.h"
 #include "grpcpp/generic/generic_stub.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/pjrt/distributed/coordination/coordination_client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/rpc/grpc_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -58,6 +58,8 @@ using xla::coordination::PollForErrorRequest;
 using xla::coordination::PollForErrorResponse;
 using xla::coordination::RegisterTaskRequest;
 using xla::coordination::RegisterTaskResponse;
+using xla::coordination::ReportErrorToServiceRequest;
+using xla::coordination::ReportErrorToServiceResponse;
 using xla::coordination::ShutdownTaskRequest;
 using xla::coordination::ShutdownTaskResponse;
 using xla::coordination::TryGetKeyValueRequest;
@@ -252,6 +254,18 @@ class GrpcCoordinationClient : public CoordinationClient {
     new tsl::RPCState<tsl::protobuf::Message>(
         &stub_, cq_, "/xla.coordination.CoordinationService/PollForError",
         *request, response, std::move(done), call_opts,
+        /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
+        &target_);
+  }
+
+  void ReportErrorToServiceAsync(
+      const ReportErrorToServiceRequest* request,
+      ReportErrorToServiceResponse* response,
+      std::function<void(const absl::Status&)> done) override {
+    new tsl::RPCState<tsl::protobuf::Message>(
+        &stub_, cq_,
+        "/xla.coordination.CoordinationService/ReportErrorToService", *request,
+        response, std::move(done), /*call_opts=*/nullptr,
         /*threadpool=*/nullptr, /*max_retries=*/0, /*fail_fast=*/true,
         &target_);
   }

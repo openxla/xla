@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/Any.h"
@@ -58,6 +59,8 @@ limitations under the License.
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Scalar.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/intrinsic_compiler_lib.h"
 #include "xla/codegen/intrinsic_lib.h"
@@ -71,8 +74,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla {
 namespace gpu {
@@ -257,7 +258,7 @@ absl::Status LinkAndOptimizeModule(
     return absl::StrFormat("XlaOptimizeLlvmIr:#module=%s#",
                            module->getName().str());
   });
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       module_linker(module, gpu_version, debug_options, device_bitcode_path));
 
   llvm::LoopAnalysisManager lam;

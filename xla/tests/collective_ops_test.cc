@@ -20,20 +20,21 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
 #include "ml_dtypes/include/float8.h"
+#include "tsl/platform/blocking_counter.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
-#include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/tests/aot_utils.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/pjrt_client_registry.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -41,7 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/types.h"
-#include "tsl/platform/blocking_counter.h"
 
 namespace xla {
 namespace {
@@ -50,7 +50,7 @@ namespace {
 //
 // Several tests requires at least four GPUs.  For instructions on running this
 // within Google, see go/multi-gpu-unit-test.
-class CollectiveOpsTest : public HloPjRtTestBase {
+class CollectiveOpsTest : public HloTestBase {
  public:
   CollectiveOpsTest() {
     VLOG(1) << "Running with " << num_devices() << " devices";
@@ -60,7 +60,7 @@ class CollectiveOpsTest : public HloPjRtTestBase {
 
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloPjRtTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     // Disable async->sync collective conversion pass to enable unit testing
     // of async collectives.
     debug_options.add_xla_disable_hlo_passes(
@@ -443,8 +443,8 @@ TEST_F(CollectiveOpsTest, AllReduce_ManyConcurrentAllReduces) {
           GetGlobalPjRtClientTestFactory().Get()();
       CHECK_OK(client_status.status());
       std::unique_ptr<PjRtClient> client = *std::move(client_status);
-      std::unique_ptr<HloRunnerPjRt> runner =
-          std::make_unique<HloRunnerPjRt>(std::move(client));
+      std::unique_ptr<HloRunner> runner =
+          std::make_unique<HloRunner>(std::move(client));
 
       std::unique_ptr<HloModule> module =
           MakeCrsModule(input_literal.shape(),

@@ -33,11 +33,11 @@ namespace {
 // must be the same shape. Alternatively, as a restricted form of broadcasting,
 // min and/or max can be a scalar of type T."
 struct ClampWithBroadcastConvert : public OpRewritePattern<ClampOp> {
-  explicit ClampWithBroadcastConvert(MLIRContext *context)
+  explicit ClampWithBroadcastConvert(MLIRContext* context)
       : OpRewritePattern<ClampOp>(context) {}
 
   LogicalResult matchAndRewrite(ClampOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto operandType =
         mlir::dyn_cast<RankedTensorType>(op.getOperand().getType());
     auto maxType = mlir::dyn_cast<RankedTensorType>(op.getMax().getType());
@@ -73,16 +73,16 @@ struct ClampWithBroadcastConvert : public OpRewritePattern<ClampOp> {
 
 }  // namespace
 
-void setupMaterializeBroadcastsLegality(MLIRContext * /*context*/,
-                                        ConversionTarget *conversionTarget) {
+void setupMaterializeBroadcastsLegality(MLIRContext* /*context*/,
+                                        ConversionTarget* conversionTarget) {
   conversionTarget->addDynamicallyLegalOp<ClampOp>([](ClampOp op) {
     return op.getMax().getType() == op.getOperand().getType() &&
            op.getMin().getType() == op.getOperand().getType();
   });
 }
 
-void populateMaterializeBroadcastsPatterns(MLIRContext *context,
-                                           RewritePatternSet *patterns) {
+void populateMaterializeBroadcastsPatterns(MLIRContext* context,
+                                           RewritePatternSet* patterns) {
   // ClampOp. This op has a special case where it accepts either same-shaped
   // inputs or scalars (a restricted form of broadcasting). This makes the
   // broadcast explicit.

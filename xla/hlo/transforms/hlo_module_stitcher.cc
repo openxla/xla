@@ -18,13 +18,13 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -32,12 +32,32 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/util.h"
 
 namespace xla {
 
 absl::StatusOr<bool> HloModuleStitcher::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  // Reset visited set on top-level entry to support pass reuse.
+  if (visiting_modules_.empty()) {  // Top-level call.
+    visited_modules_.clear();
+  }
+
+  if (visiting_modules_.contains(module)) {
+    return InternalStrCat(
+        "Circular dependency detected in submodule stitching: ",
+        module->name());
+  }
+
+  if (visited_modules_.contains(module)) {
+    return false;
+  }
+
+  visiting_modules_.insert(module);
+  auto cleanup =
+      absl::MakeCleanup([this, module]() { visiting_modules_.erase(module); });
+
   bool changed = false;
 
   std::vector<HloComputation*> computations =
@@ -52,23 +72,28 @@ absl::StatusOr<bool> HloModuleStitcher::RunImpl(
         std::string sub_module_name = inst->raw_backend_config_string();
         auto it = optimized_modules_.find(sub_module_name);
         if (it == optimized_modules_.end()) {
-          return absl::NotFoundError(
-              absl::StrCat("Sub-module ", sub_module_name, " not found"));
+          return NotFoundStrCat("Sub-module ", sub_module_name, " not found");
         }
 
-        const HloModule* sub_module = it->second;
+        HloModule* sub_module = it->second;
+        if (sub_module == nullptr) {
+          return absl::InternalError("sub_module is null");
+        }
+        // Resolve all nested custom calls in the submodule first recursively.
+        ABSL_RETURN_IF_ERROR(Run(sub_module).status());
         HloComputation* sub_entry = sub_module->entry_computation();
 
         if (inst->operand_count() != sub_entry->num_parameters()) {
-          return absl::InvalidArgumentError(absl::StrCat(
+          return InvalidArgumentStrCat(
               "Operand count mismatch: custom call has ", inst->operand_count(),
-              " operands but sub-module expects ",
-              sub_entry->num_parameters()));
+              " operands but sub-module expects ", sub_entry->num_parameters());
         }
 
         HloCloneContext context(module);
-        HloComputation* cloned_sub_entry =
-            module->DeepCloneComputation(sub_entry, &context);
+        HloComputation* cloned_sub_entry = context.FindComputation(sub_entry);
+        if (cloned_sub_entry == nullptr) {
+          cloned_sub_entry = module->DeepCloneComputation(sub_entry, &context);
+        }
 
         std::vector<HloInstruction*> operands;
         operands.reserve(inst->operand_count());
@@ -78,10 +103,10 @@ absl::StatusOr<bool> HloModuleStitcher::RunImpl(
               cloned_sub_entry->parameter_instruction(i)->shape();
           if (!ShapeUtil::Equal(operand->shape(), expected_shape)) {
             if (!ShapeUtil::Compatible(operand->shape(), expected_shape)) {
-              return absl::InvalidArgumentError(absl::StrCat(
+              return InvalidArgumentStrCat(
                   "Incompatible operand shape at index ", i, ": expected ",
                   ShapeUtil::HumanString(expected_shape), ", got ",
-                  ShapeUtil::HumanString(operand->shape())));
+                  ShapeUtil::HumanString(operand->shape()));
             }
             operand = comp->AddInstruction(HloInstruction::CreateUnary(
                 expected_shape, HloOpcode::kCopy, operand));
@@ -98,22 +123,23 @@ absl::StatusOr<bool> HloModuleStitcher::RunImpl(
         HloInstruction* replacement = call;
         if (!ShapeUtil::Equal(result_shape, inst->shape())) {
           if (!ShapeUtil::Compatible(result_shape, inst->shape())) {
-            return absl::InvalidArgumentError(
-                absl::StrCat("Incompatible result shape: expected ",
-                             ShapeUtil::HumanString(inst->shape()), ", got ",
-                             ShapeUtil::HumanString(result_shape)));
+            return InvalidArgumentStrCat("Incompatible result shape: expected ",
+                                         ShapeUtil::HumanString(inst->shape()),
+                                         ", got ",
+                                         ShapeUtil::HumanString(result_shape));
           }
           replacement = comp->AddInstruction(HloInstruction::CreateUnary(
               inst->shape(), HloOpcode::kCopy, call));
         }
 
-        RETURN_IF_ERROR(inst->ReplaceAllUsesWith(replacement));
-        RETURN_IF_ERROR(comp->RemoveInstruction(inst));
+        ABSL_RETURN_IF_ERROR(inst->ReplaceAllUsesWith(replacement));
+        ABSL_RETURN_IF_ERROR(comp->RemoveInstruction(inst));
         changed = true;
       }
     }
   }
 
+  visited_modules_.insert(module);
   return changed;
 }
 

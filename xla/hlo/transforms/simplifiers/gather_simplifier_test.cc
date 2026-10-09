@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/gather_simplifier.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
@@ -56,6 +57,29 @@ TEST_F(GatherSimplifierTest, TransformsStartIndices) {
     CHECK-SAME:     index_vector_dim=1,
     CHECK-SAME:     slice_sizes={7,8}
          CHECK: ROOT %{{.*}} = f32[42,43,7,8]{3,2,1,0} reshape(%[[GATHER]])
+  )");
+}
+
+TEST_F(GatherSimplifierTest, RewritesScalarOperandGatherToBroadcast) {
+  // A gather from a scalar (rank-0) operand selects that scalar for every
+  // index, so it is rewritten to a broadcast of the operand. Previously
+  // IsSimplifiedGather dereferenced the empty offset_dims out of bounds.
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule gather_simplifier
+
+    ENTRY kernel_entry {
+      operand = f32[] parameter(0)
+      indices = s32[7,0] parameter(1)
+      ROOT gather = f32[7] gather(operand, indices),
+          offset_dims={},
+          collapsed_slice_dims={},
+          start_index_map={},
+          index_vector_dim=1,
+          slice_sizes={}
+    })";
+
+  RunAndFilecheckHloRewrite(kModuleStr, GatherSimplifier(), R"(
+      CHECK: ROOT {{.*}} = f32[7]{0} broadcast(%operand), dimensions={}
   )");
 }
 

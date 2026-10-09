@@ -14,9 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/python/ifrt/ir/conversions/mpmd/utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

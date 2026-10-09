@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
@@ -27,8 +28,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-using BlockScalingRewriterCudnnTest =
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
+using BlockScalingRewriterCudnnTest = HloInterpreterReferenceMixin<HloTestBase>;
 
 const se::dnn::VersionInfo kCudnnDisabled;
 const se::dnn::VersionInfo kCudnnVersion(CUDNN_VERSION / 10000,

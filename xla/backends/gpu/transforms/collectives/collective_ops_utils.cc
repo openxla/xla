@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -26,18 +27,27 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/replica_group.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/side_effect_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -196,6 +206,43 @@ std::optional<CollectivePermuteProperty> GetCollectivePermuteProperty(
   return property;
 }
 
+template <typename DeviceRangeT>
+bool IsLocalReplicaGroup(int64_t num_devices_per_host,
+                         const DeviceRangeT& devices) {
+  static constexpr auto get_id = [](const auto& device) {
+    using T = std::decay_t<decltype(device)>;
+    if constexpr (std::is_same_v<T, GlobalDeviceId>) {
+      return device.value();
+    } else {
+      return device;
+    }
+  };
+  if (devices.empty()) {
+    LOG(WARNING) << "Device list was empty to when verifying locality.";
+    return false;
+  }
+  const int64_t target_host = get_id(devices[0]) / num_devices_per_host;
+  return absl::c_all_of(devices, [&](const auto& device) {
+    return get_id(device) / num_devices_per_host == target_host;
+  });
+}
+
+// Returns true if xla_gpu_unsupported_use_cross_host_one_shot_kernel is enabled
+// for the given collective op type.
+bool IsCrossHostOneShotKernelEnabled(
+    const DebugOptions& debug_options,
+    std::optional<DebugOptions::CollectiveOpType> op_type) {
+  if (!op_type.has_value()) {
+    return false;
+  }
+  return absl::c_linear_search(
+             debug_options.xla_gpu_unsupported_use_cross_host_one_shot_kernel(),
+             *op_type) ||
+         absl::c_linear_search(
+             debug_options.xla_gpu_unsupported_use_cross_host_one_shot_kernel(),
+             DebugOptions::ALLCOLLECTIVES);
+}
+
 }  // namespace
 
 CollectivePermuteCostModelType GetCollectivePermuteCostModelType(
@@ -237,12 +284,16 @@ bool IsGPUSyncCollective(const HloInstruction& instr) {
 absl::StatusOr<GPUCommunicationType> CommunicationType(
     int num_devices_per_partition, const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version) {
-  if (!gpu_version.IsCuda()) {
-    return absl::FailedPreconditionError("Only CUDA is supported.");
+  const bool is_supported_rocm =
+      gpu_version.IsRocm() &&
+      gpu_version.rocm_compute_capability()->gfx9_mi300_series();
+  if (!gpu_version.IsCuda() && !is_supported_rocm) {
+    return absl::FailedPreconditionError(
+        "Only CUDA and ROCm gfx942 (MI300) and gfx950 (MI350) are supported.");
   }
 
   if (const auto* collective = DynCast<HloCollectiveInstruction>(&instr)) {
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         CollectiveMetadata comm,
         CommunicationContext(*collective, num_devices_per_partition));
     if (IsSingleHost(comm)) {
@@ -284,6 +335,198 @@ bool IsIntraNVLinkDomain(const HloModuleConfig& config, int64_t slice_size) {
   VLOG(1) << "IsIntraNVLinkDomain: device_count=" << device_count
           << " slice_size=" << slice_size << " is_intra=" << is_intra;
   return is_intra;
+}
+
+bool IsSpmdGenerated(const HloInstruction& instr) {
+  auto attr = instr.get_frontend_attribute(kSpmdGeneratedAttr);
+  if (attr.has_value() && attr.value() == "true") {
+    return true;
+  }
+  auto backend_config = instr.backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    return false;
+  }
+  return backend_config->collective_backend_config().is_spmd_generated();
+}
+
+bool IsLsaPossible(const GpuTopology& gpu_topology) {
+  return gpu_topology.has_gpu_target_config() &&
+         gpu_topology.gpu_target_config()
+             .device_description.gpu_compute_capability()
+             .IsCuda();
+}
+
+int64_t GetCollectiveKernelDomainSize(
+    const GpuTopology& gpu_topology, const DebugOptions& debug_options,
+    std::optional<DebugOptions::CollectiveOpType> op_type) {
+  const int64_t num_devices_per_process =
+      gpu_topology.num_devices_per_process();
+  const int64_t slice_size = gpu_topology.slice_size();
+  if (IsLsaPossible(gpu_topology) &&
+      IsCrossHostOneShotKernelEnabled(debug_options, op_type) &&
+      num_devices_per_process > 0 && slice_size > num_devices_per_process) {
+    return slice_size;
+  }
+  return num_devices_per_process;
+}
+
+bool IsAllReplicasLocal(int64_t gpus_per_host,
+                        absl::Span<const ReplicaGroup> replica_groups,
+                        CollectiveOpGroupMode group_mode,
+                        const DeviceAssignment* device_assignment) {
+  if (VLOG_IS_ON(3)) {
+    VLOG(3) << "IsAllReplicasLocal: gpus_per_host=" << gpus_per_host
+            << ", replica_groups=" << ReplicaGroupsToString(replica_groups)
+            << ", device_assignment="
+            << (device_assignment != nullptr ? device_assignment->ToString()
+                                             : "nullptr");
+  }
+  // functional_hlo_runner assigns 0 for device assignments for multi-host
+  // cases. In this case we ignore the assignment.
+  // See LoadAndCompile in functional_hlo_runner.cc for more details.
+  const bool has_device_assignment =
+      [](const DeviceAssignment* device_assignment) {
+        if (device_assignment == nullptr) {
+          return false;
+        }
+        return !absl::c_all_of(*device_assignment,
+                               [](int64_t v) { return v == 0; });
+      }(device_assignment);
+  if (has_device_assignment) {
+    auto status_or_groups = GetParticipatingDevicesGroups(
+        *device_assignment, replica_groups, group_mode);
+    if (!status_or_groups.ok()) {
+      LOG(WARNING) << "Failed to get participating devices groups: "
+                   << status_or_groups.status();
+      return false;
+    }
+    return absl::c_all_of(*status_or_groups, [&](const auto& group) {
+      return IsLocalReplicaGroup(gpus_per_host, group);
+    });
+  }
+  return absl::c_all_of(replica_groups, [&](const auto& group) {
+    return IsLocalReplicaGroup(gpus_per_host, group.replica_ids());
+  });
+}
+
+absl::StatusOr<bool> IsCollectiveSingleHost(
+    const GpuTopology& gpu_topology, const HloInstruction& instruction,
+    const DeviceAssignment* device_assignment) {
+  const auto* collective = DynCast<HloCollectiveInstruction>(&instruction);
+  CHECK(collective != nullptr)
+      << "Instruction is not a collective instruction: " << instruction.name();
+  if (device_assignment == nullptr && instruction.GetModule() != nullptr &&
+      instruction.GetModule()->config().has_static_device_assignment()) {
+    device_assignment =
+        &instruction.GetModule()->config().static_device_assignment();
+  }
+  ABSL_ASSIGN_OR_RETURN(const CollectiveOpGroupMode group_mode,
+                        GetCollectiveOpGroupMode(collective));
+  return IsAllReplicasLocal(gpu_topology.num_devices_per_process(),
+                            collective->replica_groups(), group_mode,
+                            device_assignment);
+}
+
+absl::StatusOr<bool> IsCrossHostCollectiveKernelPossible(
+    const GpuTopology& gpu_topology, const HloInstruction& instruction,
+    const DeviceAssignment* device_assignment) {
+  const auto* collective = DynCast<HloCollectiveInstruction>(&instruction);
+  CHECK(collective != nullptr)
+      << "Instruction is not a collective instruction: " << instruction.name();
+  if (device_assignment == nullptr && instruction.GetModule() != nullptr &&
+      instruction.GetModule()->config().has_static_device_assignment()) {
+    device_assignment =
+        &instruction.GetModule()->config().static_device_assignment();
+  }
+  const DebugOptions& debug_options =
+      instruction.GetModule() != nullptr
+          ? instruction.GetModule()->config().debug_options()
+          : DebugOptions::default_instance();
+  if (!IsCrossHostOneShotKernelEnabled(debug_options,
+                                       GetCollectiveOpType(&instruction)) ||
+      gpu_topology.num_devices_per_process() <= 0 ||
+      gpu_topology.slice_size() <= gpu_topology.num_devices_per_process()) {
+    return false;
+  }
+  ABSL_ASSIGN_OR_RETURN(const CollectiveOpGroupMode group_mode,
+                        GetCollectiveOpGroupMode(collective));
+  return IsAllReplicasLocal(gpu_topology.slice_size(),
+                            collective->replica_groups(), group_mode,
+                            device_assignment);
+}
+
+bool AreAllReplicasOnSameSlice(
+    const GpuTopology& gpu_topology, const DebugOptions& debug_options,
+    std::optional<DebugOptions::CollectiveOpType> op_type,
+    absl::Span<const ReplicaGroup> replica_groups,
+    CollectiveOpGroupMode group_mode,
+    const DeviceAssignment* device_assignment) {
+  return IsAllReplicasLocal(
+      GetCollectiveKernelDomainSize(gpu_topology, debug_options, op_type),
+      replica_groups, group_mode, device_assignment);
+}
+
+absl::StatusOr<bool> AreAllReplicasOnSameSlice(
+    const GpuTopology& gpu_topology, const HloInstruction& instruction,
+    const DeviceAssignment* device_assignment) {
+  ABSL_ASSIGN_OR_RETURN(
+      const bool is_single_host,
+      IsCollectiveSingleHost(gpu_topology, instruction, device_assignment));
+  if (is_single_host) {
+    return true;
+  }
+  ABSL_ASSIGN_OR_RETURN(const bool is_cross_host_possible,
+                        IsCrossHostCollectiveKernelPossible(
+                            gpu_topology, instruction, device_assignment));
+  return is_cross_host_possible && IsLsaPossible(gpu_topology);
+}
+
+bool IsAllReplicasLocal(const GpuTopology& gpu_topology,
+                        absl::Span<const ReplicaGroup> replica_groups,
+                        CollectiveOpGroupMode group_mode,
+                        const DeviceAssignment* device_assignment) {
+  return IsAllReplicasLocal(gpu_topology.num_devices_per_process(),
+                            replica_groups, group_mode, device_assignment);
+}
+
+bool IsTritonCollectiveKernel(
+    CollectiveBackendConfig::CollectiveKernelStrategy kernel_strategy) {
+  return kernel_strategy ==
+             CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT ||
+         kernel_strategy ==
+             CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_TWO_SHOT;
+}
+
+absl::StatusOr<absl::flat_hash_set<HloOpcode>> OpcodesForTritonCollectives(
+    const DebugOptions& debug_options) {
+  absl::flat_hash_set<HloOpcode> instructions_to_annotate;
+  for (auto collective :
+       debug_options.xla_gpu_experimental_use_collective_kernels()) {
+    switch (collective) {
+      case xla::DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE: {
+        instructions_to_annotate.insert(HloOpcode::kAllReduce);
+        instructions_to_annotate.insert(HloOpcode::kAllReduceStart);
+        break;
+      }
+      case xla::DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER:
+        instructions_to_annotate.insert(HloOpcode::kAllGather);
+        break;
+      case xla::DebugOptions::COLLECTIVE_KERNEL_REDUCE_SCATTER:
+        instructions_to_annotate.insert(HloOpcode::kReduceScatter);
+        break;
+      case xla::DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES:
+        instructions_to_annotate.insert(HloOpcode::kAllReduce);
+        instructions_to_annotate.insert(HloOpcode::kAllReduceStart);
+        instructions_to_annotate.insert(HloOpcode::kAllGather);
+        instructions_to_annotate.insert(HloOpcode::kReduceScatter);
+        break;
+      default:
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Unsupported collective: %s",
+            xla::DebugOptions::CollectiveKernelType_Name(collective)));
+    }
+  }
+  return instructions_to_annotate;
 }
 
 }  // namespace gpu

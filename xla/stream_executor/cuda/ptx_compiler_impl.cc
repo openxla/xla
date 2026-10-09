@@ -25,12 +25,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/debugging/leak_check.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
@@ -46,7 +48,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/semantic_version.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
 
@@ -89,9 +90,9 @@ static absl::string_view ToString(nvPTXCompileResult status) {
   } while (false)
 
 absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingLibNvPtxCompiler(
-    const CudaComputeCapability& cc, const std::string& ptx_contents,
+    const CudaComputeCapability& cc, absl::string_view ptx_contents,
     GpuAsmOpts options, bool cancel_if_reg_spill, bool dump_compilation_log) {
-  TF_ASSIGN_OR_RETURN(auto version, GetLibNvPtxCompilerVersion());
+  ABSL_ASSIGN_OR_RETURN(auto version, GetLibNvPtxCompilerVersion());
   WarnIfBadPtxasVersion("nvPTXCompiler", cc, version);
 
   nvPTXCompilerHandle compiler_handle{};
@@ -176,7 +177,7 @@ absl::StatusOr<cuda::Assembly> CompileGpuAsmUsingLibNvPtxCompiler(
             std::min(ptx_contents.length(),
                      VLOG_IS_ON(3) ? ptx_contents.length() : 4096);
         VLOG(2) << "The following ptx produced a warning during compilation: \n"
-                << absl::string_view(ptx_contents).substr(0, ptxLogLength)
+                << ptx_contents.substr(0, ptxLogLength)
                 << (ptx_contents.size() > ptxLogLength ? "..." : "");
       }
       if (cancel_if_reg_spill &&
@@ -215,7 +216,9 @@ absl::StatusOr<SemanticVersion> GetLibNvPtxCompilerVersion() {
   return SemanticVersion{major, minor, 0};
 }
 
-absl::StatusOr<int> GetLatestPtxIsaVersionForNvptxCompiler() {
+namespace {
+
+absl::StatusOr<int> GetLatestPtxIsaVersionForNvptxCompilerImpl() {
   absl::string_view ptx_contents = ".version 99.99";
   nvPTXCompilerHandle compiler_handle{};
   RETURN_IF_NVPTXCOMPILER_ERROR(nvPTXCompilerCreate(
@@ -225,7 +228,7 @@ absl::StatusOr<int> GetLatestPtxIsaVersionForNvptxCompiler() {
   };
 
   std::optional<absl::LeakCheckDisabler> disabler;
-  TF_ASSIGN_OR_RETURN(SemanticVersion version, GetLibNvPtxCompilerVersion());
+  ABSL_ASSIGN_OR_RETURN(SemanticVersion version, GetLibNvPtxCompilerVersion());
   if (version < SemanticVersion(13, 0, 0)) {
     // libNvptxCompiler prior to CUDA 13 has a memory leak when calling
     // nvPTXCompilerCompile when the input PTX is invalid.
@@ -250,6 +253,17 @@ absl::StatusOr<int> GetLatestPtxIsaVersionForNvptxCompiler() {
       nvPTXCompilerGetErrorLog(compiler_handle, error_log.data()));
 
   return GetLatestPtxIsaVersionFromUnsupportedVersionErrorLog(error_log);
+}
+
+}  // namespace
+
+absl::StatusOr<int> GetLatestPtxIsaVersionForNvptxCompiler() {
+  // Cache the result because querying the supported PTX ISA version compiles a
+  // dummy `.version 99.99` PTX snippet and parses the resulting error log (and
+  // leaks memory inside libnvptxcompiler prior to CUDA 13).
+  static const absl::NoDestructor<absl::StatusOr<int>> version(
+      GetLatestPtxIsaVersionForNvptxCompilerImpl());
+  return *version;
 }
 
 }  // namespace stream_executor

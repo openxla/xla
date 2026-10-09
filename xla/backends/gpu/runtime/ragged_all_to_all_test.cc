@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/ragged_all_to_all.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -22,15 +25,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "third_party/nccl/nccl.h"
 #include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
+#include "xla/backends/gpu/collectives/nccl_types.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -46,11 +48,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/concurrency/future.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -137,20 +137,25 @@ std::vector<std::vector<T>> CopyDeviceToHost2D(
 
 absl::StatusOr<std::vector<std::unique_ptr<xla::SymmetricMemory>>>
 CreateSymmetricMemory(
-    tsl::Executor& exec, const std::vector<ncclComm_t>& comms,
-    const std::vector<std::unique_ptr<se::MemoryAllocation>>& buffers) {
+    std::shared_ptr<tsl::Executor> exec, const std::vector<ncclComm_t>& comms,
+    const std::vector<std::unique_ptr<se::MemoryAllocation>>& buffers,
+    const std::vector<se::StreamExecutor*>& executors) {
   int64_t num_devices = comms.size();
   std::vector<tsl::Future<std::unique_ptr<NcclSymmetricMemory>>>
       symmetric_memory_futures(num_devices);
   for (int i = 0; i < num_devices; ++i) {
-    symmetric_memory_futures[i] = tsl::MakeFutureOn(exec, [&, i]() {
-      return NcclSymmetricMemory::Create(comms[i], buffers[i]->address());
+    symmetric_memory_futures[i] = tsl::MakeFutureOn(*exec, [&, exec, i]() {
+      std::shared_ptr<NcclCommState> comm_state =
+          std::make_shared<NcclCommState>(comms[i]);
+      return NcclSymmetricMemory::Create(comm_state, buffers[i]->address(),
+                                         exec, executors[i]);
     });
   }
 
   std::vector<std::unique_ptr<xla::SymmetricMemory>> symmetric_memory;
   for (int i = 0; i < num_devices; ++i) {
-    ASSIGN_OR_RETURN(auto mem, std::move(symmetric_memory_futures[i]).Await());
+    ABSL_ASSIGN_OR_RETURN(auto mem,
+                          std::move(symmetric_memory_futures[i]).Await());
     symmetric_memory.push_back(std::move(mem));
   }
   return symmetric_memory;
@@ -177,14 +182,13 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
   for (int64_t i = 0; i < num_outputs; ++i) {
     output_buffers.emplace_back(executor, executor->AllocateArray<T>(n));
     ASSERT_TRUE(!output_buffers[i].address().is_null());
-    TF_ASSERT_OK(
-        stream->MemZero(output_buffers[i].address_ptr(), n * sizeof(T)));
+    ASSERT_OK(stream->MemZero(output_buffers[i].address_ptr(), n * sizeof(T)));
   }
 
   std::vector<T> input_data(n);
   absl::c_iota(input_data, 0);
-  TF_ASSERT_OK(stream->Memcpy(input_buffer.address_ptr(), input_data.data(),
-                              n * sizeof(T)));
+  ASSERT_OK(stream->Memcpy(input_buffer.address_ptr(), input_data.data(),
+                           n * sizeof(T)));
 
   std::vector<int64_t> input_offsets = {1, 4, 0, 3};
   std::vector<int64_t> send_sizes = {2, 3, 1, 2};
@@ -202,75 +206,9 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithArrayOfOutputPointers) {
     output_buffers_array[i] = output_buffers[i].address().opaque();
   }
 
-  TF_ASSERT_OK(RunRaggedAllToAllKernel(
+  ASSERT_OK(RunRaggedAllToAllKernel(
       stream.get(), primitive_util::NativeToPrimitiveType<T>(),
       input_buffer.address(), output_buffers_array,
-      input_offsets_buffer.address(), send_sizes_buffer.address(),
-      output_offsets_buffer.address(), num_outputs, num_update_per_output,
-      num_input_rows, num_row_elements));
-
-  std::vector<std::vector<T>> output_results =
-      CopyDeviceToHost2D<T>(executor, output_buffers, n);
-
-  std::vector<std::vector<T>> expected_output_results =
-      GetExpectedOutputResults<T>(
-          input_data, input_offsets, send_sizes, output_offsets, num_outputs,
-          num_update_per_output, num_input_rows, num_row_elements);
-
-  ASSERT_EQ(output_results.size(), expected_output_results.size());
-  EXPECT_EQ(output_results, expected_output_results);
-}
-
-TEST_F(RaggedAllToAllKernelTest, KernelWithOutputPtrsInDeviceMemory) {
-  using T = float;
-
-  auto* executor = GetGpuExecutor();
-  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  constexpr int64_t num_outputs = 2;
-  constexpr int64_t num_update_per_output = 2;
-  constexpr int64_t num_input_rows = 8;
-  constexpr int64_t num_row_elements = 2;
-  constexpr int64_t n = num_input_rows * num_row_elements;
-
-  stream_executor::DeviceAddressHandle input_buffer(
-      executor, executor->AllocateArray<T>(n));
-
-  std::vector<stream_executor::DeviceAddressHandle> output_buffers;
-  for (int64_t i = 0; i < num_outputs; ++i) {
-    output_buffers.emplace_back(executor, executor->AllocateArray<T>(n));
-    ASSERT_TRUE(!output_buffers[i].address().is_null());
-    TF_ASSERT_OK(
-        stream->MemZero(output_buffers[i].address_ptr(), n * sizeof(T)));
-  }
-
-  std::vector<T> input_data(n);
-  absl::c_iota(input_data, 0);
-  TF_ASSERT_OK(stream->Memcpy(input_buffer.address_ptr(), input_data.data(),
-                              n * sizeof(T)));
-
-  std::vector<int64_t> input_offsets = {1, 4, 0, 3};
-  std::vector<int64_t> send_sizes = {2, 3, 1, 2};
-  std::vector<int64_t> output_offsets = {0, 4, 1, 5};
-
-  stream_executor::DeviceAddressHandle input_offsets_buffer =
-      CreateDeviceBuffer(executor, input_offsets);
-  stream_executor::DeviceAddressHandle send_sizes_buffer =
-      CreateDeviceBuffer(executor, send_sizes);
-  stream_executor::DeviceAddressHandle output_offsets_buffer =
-      CreateDeviceBuffer(executor, output_offsets);
-
-  std::vector<void*> output_buffers_span;
-  for (auto& output_buffer : output_buffers) {
-    output_buffers_span.push_back(output_buffer.address().opaque());
-  }
-
-  stream_executor::DeviceAddressHandle output_buffers_ptr_buffer =
-      CreateDeviceBuffer(executor, output_buffers_span);
-
-  TF_ASSERT_OK(RunRaggedAllToAllKernel(
-      stream.get(), primitive_util::NativeToPrimitiveType<T>(),
-      input_buffer.address(), output_buffers_ptr_buffer.address(),
       input_offsets_buffer.address(), send_sizes_buffer.address(),
       output_offsets_buffer.address(), num_outputs, num_update_per_output,
       num_input_rows, num_row_elements));
@@ -346,15 +284,15 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
     se::DeviceAddressBase output_buffer_address = output_buffer->address();
     ASSERT_TRUE(!output_buffer_address.is_null());
 
-    TF_ASSERT_OK(streams[i]->MemZero(&output_buffer_address, total_bytes));
+    ASSERT_OK(streams[i]->MemZero(&output_buffer_address, total_bytes));
 
     output_buffers.push_back(std::move(output_buffer));
   }
 
   std::vector<T> input_data(n);
   absl::c_iota(input_data, 0);
-  TF_ASSERT_OK(streams[0]->Memcpy(input_buffer.address_ptr(), input_data.data(),
-                                  n * sizeof(T)));
+  ASSERT_OK(streams[0]->Memcpy(input_buffer.address_ptr(), input_data.data(),
+                               n * sizeof(T)));
 
   std::vector<int64_t> input_offsets = {1, 4, 0, 3};
   std::vector<int64_t> send_sizes = {2, 3, 1, 2};
@@ -374,13 +312,15 @@ TEST_F(RaggedAllToAllKernelTest, KernelWithSymmetricMemory) {
 
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "nccl",
                                visible_device_count);
-  tsl::Executor& exec = *pool.AsExecutor();
+  auto exec =
+      std::shared_ptr<tsl::Executor>(pool.AsExecutor(), [](tsl::Executor*) {});
 
-  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<xla::SymmetricMemory>>
-                           output_buffers_symmetric_memory,
-                       CreateSymmetricMemory(exec, comms, output_buffers));
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<xla::SymmetricMemory>>
+          output_buffers_symmetric_memory,
+      CreateSymmetricMemory(exec, comms, output_buffers, executors));
 
-  TF_ASSERT_OK(RunRaggedAllToAllWithSymmetricMemoryKernel(
+  ASSERT_OK(RunRaggedAllToAllWithSymmetricMemoryKernel(
       streams[0].get(), primitive_util::NativeToPrimitiveType<T>(),
       input_buffer.address(), output_buffers_symmetric_memory[0].get(),
       output_sym_offset, input_offsets_buffer.address(),

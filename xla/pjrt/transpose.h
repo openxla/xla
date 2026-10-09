@@ -37,6 +37,7 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/pjrt/lru_cache.h"
@@ -91,6 +92,25 @@ class TransposePlan {
     // Convert doubles into the ef57 extended precision pair-of-floats
     // representation used on TPU.
     kF64ToEf57 = 1,
+
+    // Pack 8-bit integers into sub-byte packed representation.
+    kPackSubbyte = 2,
+  };
+
+  // The kernel used for the innermost (stride-1) dimensions of the plan.
+  enum class InnerKernelKind {
+    // Blocked transpose using TransposeMicroKernel.
+    kDefault,
+    // A and B have the same stride-1 dimension, so the inner loop is a memcpy.
+    kMemcpy,
+    // B's stride-1 dimension has size 3 and A's stride-1 dimension is large:
+    // three contiguous rows of A, `lda` bytes apart, are merged element by
+    // element into one contiguous run of B, i.e. b[3 * i + k] = a[k][i].
+    kInterleave,
+    // The reverse of kInterleave: A's stride-1 dimension has size 3 and one
+    // contiguous run of A is split into three rows of B, `ldb` bytes apart,
+    // i.e. b[k][i] = a[3 * i + k].
+    kDeinterleave,
   };
 
   // Requested contiguity of chunks.
@@ -117,6 +137,11 @@ class TransposePlan {
     std::optional<Striding> input_striding = std::nullopt;
     std::optional<Tiling> output_tiling = std::nullopt;
     Transformation transformation = Transformation::kNone;
+    // If set, controls the subbyte packing ratio. Only 1, 2, 4 is supported.
+    // nullopt is equivalent to 8 (no subbyte packing). Packing happens after
+    // transpose is complete and packs 8 / dest_bits_per_element adjacent
+    // values together into a single byte.
+    std::optional<int> dest_bits_per_element = std::nullopt;
 
     // Requested number of chunks (threads). We will attempt to create
     // approximately this many chunks. The actual number of chunks may be
@@ -191,6 +216,10 @@ class TransposePlan {
   // Returns the number of items of parallel work in the plan.
   int Parallelism() const { return nodes_.size(); }
 
+  bool inner_kernel_is_memcpy() const {
+    return inner_kernel_kind_ == InnerKernelKind::kMemcpy;
+  }
+
   struct Node;
 
  protected:
@@ -264,12 +293,13 @@ class TransposePlan {
   void ChooseLoopOrder(std::vector<Loop>& loop_order) const;
 
   void set_inner_kernel_is_memcpy(bool is_memcpy) {
-    inner_kernel_is_memcpy_ = is_memcpy;
+    inner_kernel_kind_ =
+        is_memcpy ? InnerKernelKind::kMemcpy : InnerKernelKind::kDefault;
   }
 
  private:
-  // Performs plan initialization that cannot fail.
-  void Initialize();
+  // Performs plan initialization.
+  absl::Status Initialize();
 
   void BuildPlanNodes(int chunk_id, std::vector<Node>& nodes);
 
@@ -296,7 +326,13 @@ class TransposePlan {
   // address calculations with strides in bytes; the strides need not be
   // multiples of the element size.
   template <typename T, Transformation transformation>
-  void ExecuteTyped(const char* a, char* b, absl::Span<Node const> nodes) const;
+  void ExecuteTyped(const char* a, char* b, absl::Span<Node const> nodes,
+                    int bits_per_element) const;
+
+  void ExecuteInternal(
+      const void* a, void* b,
+      std::optional<absl::FunctionRef<void(std::function<void()>)>>
+          schedule_work) const;
 
   // Number of chunks requested.
   int num_chunks_requested_ = 1;
@@ -336,6 +372,7 @@ class TransposePlan {
   absl::InlinedVector<int64_t, 4> b_tiling_;
   bool a_is_tiled_ = false;
   bool b_is_tiled_ = false;
+  bool is_identity_permutation_ = false;
 
   // Per-chunk loop nests. Each loop nest has its own start/end bounds
   // representing one chunk of the work.
@@ -363,9 +400,8 @@ class TransposePlan {
   // nest. The outer vector is indexed on the thread ID.
   absl::InlinedVector<std::vector<Node>, 1> nodes_;
 
-  // Are the innermost (stride-1) dimensions the same dimension? This determines
-  // whether the inner kernel is a transpose or a memcpy.
-  bool inner_kernel_is_memcpy_ = false;
+  // Which kernel handles the innermost (stride-1) dimensions.
+  InnerKernelKind inner_kernel_kind_ = InnerKernelKind::kDefault;
 
   // Size of the inner (microkernel) block size. This is the unit of work for
   // our vectorized kernels.
@@ -387,6 +423,11 @@ class TransposePlan {
   //     bound transformation, and
   // (b) it allows us to support non-trivial striding.
   Transformation transformation_ = Transformation::kNone;
+  int bits_per_element_ = 0;
+  // If the inner dim is not divisible by the packing ratio, we cannot
+  // pack into the destination in parallel, so we fallback to transposing
+  // into a temporary buffer and then packing into the destination.
+  bool use_fallback_pack_ = false;
 
   ChunkContiguity chunk_contiguity_ = ChunkContiguity::kNone;
 
@@ -405,6 +446,7 @@ struct TransposePlanCacheKey {
   std::optional<absl::InlinedVector<int64_t, 4>> input_striding;
   std::optional<absl::InlinedVector<int64_t, 4>> output_tiling;
   TransposePlan::Transformation transformation;
+  std::optional<int> dest_bits_per_element;
   int num_threads;
 
   bool operator==(const TransposePlanCacheKey& other) const;

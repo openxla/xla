@@ -15,6 +15,8 @@ limitations under the License.
 
 // Tests the reduce-window XLA operation.
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -26,8 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
 
@@ -60,7 +61,7 @@ static std::array<PrimitiveType, 2> test_type_params = {F32, BF16};
 
 class ReduceWindowTestBase
     : public ClientLibraryTestRunnerMixin<
-          HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {
+          HloPjRtInterpreterReferenceMixin<HloTestBase>> {
  public:
   ErrorSpec DefaultErrorSpec() const {
     if (FloatType() == BF16) {
@@ -1636,7 +1637,7 @@ INSTANTIATE_TEST_CASE_P(
 
 // Test class for text-based test cases. Note that this compares with the
 // results on the interpreter backend.
-using ReduceWindowTextTest = HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
+using ReduceWindowTextTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
 
 TEST_F(ReduceWindowTextTest, R2General256x384) {
   const std::string hlo_string = R"(
@@ -1728,7 +1729,7 @@ ENTRY R3Window {
   EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{0.001}));
 }
 
-using ReduceWindowHloTest = HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
+using ReduceWindowHloTest = HloPjRtInterpreterReferenceMixin<HloTestBase>;
 
 TEST_F(ReduceWindowHloTest, ReduceWindowIdentity) {
   const std::string hlo_string = R"(

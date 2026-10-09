@@ -25,20 +25,21 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "grpcpp/client_context.h"
 #include "grpcpp/support/status.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/subprocess/subprocess_registry.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/profiler/utils/timestamp_utils.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -106,7 +107,7 @@ absl::Status SubprocessProfilingSession::Stop() {
   terminate_request.set_session_id(request_.session_id());
   tensorflow::TerminateResponse terminate_response;
   grpc::ClientContext context;
-  TF_RETURN_IF_ERROR(FromGrpcStatus(subprocess_info_.profiler_stub->Terminate(
+  ABSL_RETURN_IF_ERROR(FromGrpcStatus(subprocess_info_.profiler_stub->Terminate(
       &context, terminate_request, &terminate_response)));
 
   // Wait for the response from the AsyncProfile+Finish calls.
@@ -119,7 +120,7 @@ absl::Status SubprocessProfilingSession::Stop() {
   if (!success || !ok || got_tag != (void*)1) {
     return absl::InternalError("Failed to get response from profiler service");
   }
-  TF_RETURN_IF_ERROR(FromGrpcStatus(grpc_status_));
+  ABSL_RETURN_IF_ERROR(FromGrpcStatus(grpc_status_));
   return absl::OkStatus();
 }
 

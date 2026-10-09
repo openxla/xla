@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_common.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/pjrt/proto/pjrt_value_type.pb.h"
 
 using testing::ElementsAre;

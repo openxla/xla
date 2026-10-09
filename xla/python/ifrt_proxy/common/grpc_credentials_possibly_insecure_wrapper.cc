@@ -22,8 +22,8 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "grpcpp/security/credentials.h"
 #include "grpcpp/security/server_credentials.h"
-#include "xla/python/ifrt_proxy/common/grpc_credentials.h"
 #include "tsl/platform/platform.h"
+#include "xla/python/ifrt_proxy/common/grpc_credentials.h"
 
 namespace xla {
 namespace ifrt {

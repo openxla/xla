@@ -20,10 +20,10 @@ limitations under the License.
 #include <unordered_map>
 
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/lib/gtl/inlined_vector.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 
@@ -69,6 +69,10 @@ class TrackingAllocator : public Allocator {
   int64_t AllocationId(const void* ptr) const override;
   std::optional<AllocatorStats> GetStats() override;
   bool ClearStats() override;
+
+  bool AllocatesOpaqueHandle() const override {
+    return allocator_->AllocatesOpaqueHandle();
+  }
 
   AllocatorMemoryType GetMemoryType() const override {
     return allocator_->GetMemoryType();

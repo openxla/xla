@@ -15,19 +15,23 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/async_execution.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/service/platform_util.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/mock_stream.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
@@ -44,16 +48,17 @@ class TestThunk : public Thunk {
   absl::Status ExecuteOnStream(const ExecuteParams&) override {
     return absl::OkStatus();
   }
+  BufferUses buffer_uses() const override { return {}; }
   absl::StatusOr<ThunkProto> ToProto() const override {
     return absl::UnimplementedError("TestThunk::ToProto is not implemented");
   }
 };
 
 static absl::StatusOr<se::StreamExecutor*> CreateExecutor() {
-  ASSIGN_OR_RETURN(std::string platform_name,
-                   xla::PlatformUtil::CanonicalPlatformName("gpu"));
-  ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithName(platform_name));
+  ABSL_ASSIGN_OR_RETURN(std::string platform_name,
+                        xla::PlatformUtil::CanonicalPlatformName("gpu"));
+  ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
+                        se::PlatformManager::PlatformWithName(platform_name));
   return platform->ExecutorForDevice(0);
 }
 
@@ -68,7 +73,7 @@ TEST(AsyncExecutionTest, InitializeStartDone) {
   thunk_info.profile_annotation = "test-thunk";
   TestThunk thunk(thunk_info);
 
-  AsyncExecution async_execution(thunk_info);
+  AsyncExecution async_execution(thunk_info, /*devices_per_host=*/1);
   Thunk::ExecutionScopedState state;
 
   // Initialize creates an event in the execution scoped state.
@@ -83,6 +88,42 @@ TEST(AsyncExecutionTest, InitializeStartDone) {
   ASSERT_OK(async_execution.Done(&state, stream.get()));
 }
 
+TEST(AsyncExecutionTest, CompletionEventRecordedOnce) {
+  // Create an async_execution.
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, CreateExecutor());
+
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.thunk_id = ThunkId(1);
+  thunk_info.profile_annotation = "test-thunk";
+
+  AsyncExecution async_execution(thunk_info, /*devices_per_host=*/1);
+  Thunk::ExecutionScopedState state;
+  ASSERT_OK(async_execution.Initialize(&state, executor));
+
+  // Set up mock streams to verify behavior.
+  testing::NiceMock<se::MockStream> stream;
+  testing::NiceMock<se::MockStream> async_stream;
+
+  ON_CALL(stream, parent()).WillByDefault(testing::Return(executor));
+  ON_CALL(async_stream, WaitFor(&stream))
+      .WillByDefault(testing::Return(absl::OkStatus()));
+  ON_CALL(stream, WaitFor(testing::A<se::Event*>()))
+      .WillByDefault(testing::Return(absl::OkStatus()));
+
+  // The async execution event is recorded only once.
+  ON_CALL(async_stream, RecordEvent(testing::_))
+      .WillByDefault(testing::Return(absl::OkStatus()));
+  EXPECT_CALL(async_stream, RecordEvent(testing::_)).Times(1);
+
+  // Run the test by calling async_execution.{Start/Done}().
+  {
+    ASSERT_OK_AND_ASSIGN(auto guard,
+                         async_execution.Start(&state, &stream, &async_stream));
+  }
+
+  ASSERT_OK(async_execution.Done(&state, &stream));
+}
+
 TEST(AsyncExecutionTest, DoneWithoutStartFails) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, CreateExecutor());
 
@@ -93,7 +134,7 @@ TEST(AsyncExecutionTest, DoneWithoutStartFails) {
   thunk_info.profile_annotation = "test-thunk";
   TestThunk thunk(thunk_info);
 
-  AsyncExecution async_execution(thunk_info);
+  AsyncExecution async_execution(thunk_info, /*devices_per_host=*/1);
   Thunk::ExecutionScopedState state;
 
   // Done without Initialize should fail because event is not in state.

@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
-#include "xla/ffi/ffi.h"  // IWYU pragma: export
+#include "xla/ffi/ffi.h"                 // IWYU pragma: export
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -43,7 +43,7 @@ struct CtxDecoding<IntraOpThreadPool> {
   using Type = const Eigen::ThreadPoolDevice*;
 
   static std::optional<Type> Decode(const XLA_FFI_Api* api,
-                                    XLA_FFI_ExecutionContext* ctx,
+                                    XLA_FFI_InvokeContext* ctx,
                                     DiagnosticEngine& diagnostic) {
     return internal::DecodeInternalCtx<Type>(
         api, ctx, diagnostic,

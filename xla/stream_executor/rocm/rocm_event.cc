@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -34,17 +35,17 @@ limitations under the License.
 namespace stream_executor {
 namespace gpu {
 namespace {
-absl::Status WaitStreamOnEvent(StreamExecutor *executor, hipStream_t stream,
+absl::Status WaitStreamOnEvent(StreamExecutor* executor, hipStream_t stream,
                                hipEvent_t event) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       ToStatus(hipStreamWaitEvent(stream, event, 0 /* = flags */),
                "could not wait stream on event"));
   return absl::OkStatus();
 }
 
 enum class EventFlags { kDefault, kDisableTiming };
-absl::StatusOr<hipEvent_t> InitEvent(StreamExecutor *executor,
+absl::StatusOr<hipEvent_t> InitEvent(StreamExecutor* executor,
                                      EventFlags flags) {
   int hipflags;
   switch (flags) {
@@ -73,7 +74,7 @@ absl::StatusOr<hipEvent_t> InitEvent(StreamExecutor *executor,
       absl::StrCat("could not create ROCM event: ", ToString(res)));
 }
 
-void DestroyEvent(StreamExecutor *executor, hipEvent_t event) {
+void DestroyEvent(StreamExecutor* executor, hipEvent_t event) {
   if (event == nullptr) {
     return;
   }
@@ -108,9 +109,15 @@ absl::Status RocmEvent::WaitForEventOnExternalStream(std::intptr_t stream) {
                            handle_);
 }
 
-absl::StatusOr<RocmEvent> RocmEvent::Create(StreamExecutor *executor,
+absl::Status RocmEvent::Synchronize() {
+  std::unique_ptr<ActivateContext> activation = executor_->Activate();
+  return ToStatus(hipEventSynchronize(handle_),
+                  "could not synchronize on ROCm event");
+}
+
+absl::StatusOr<RocmEvent> RocmEvent::Create(StreamExecutor* executor,
                                             bool allow_timing) {
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       hipEvent_t event_handle,
       InitEvent(executor, allow_timing ? EventFlags::kDefault
                                        : EventFlags::kDisableTiming));
@@ -120,7 +127,7 @@ absl::StatusOr<RocmEvent> RocmEvent::Create(StreamExecutor *executor,
 
 RocmEvent::~RocmEvent() { DestroyEvent(executor_, handle_); }
 
-RocmEvent::RocmEvent(RocmEvent &&other)
+RocmEvent::RocmEvent(RocmEvent&& other)
     : executor_(other.executor_), handle_(other.handle_) {
   other.executor_ = nullptr;
   other.handle_ = nullptr;

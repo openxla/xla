@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
@@ -40,10 +41,10 @@ namespace gpu {
 namespace {
 
 class ParallelReductionTest
-    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {
+    : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloPjRtInterpreterReferenceMixin<
+    DebugOptions debug_options = HloInterpreterReferenceMixin<
         GpuPjRtCodegenTest>::GetDebugOptionsForTest();
     // The test contains a MOF fusion and the XLA optimizer passes
     // don't like this.
@@ -320,7 +321,7 @@ ENTRY %cluster {
 }
 
 class ParallelReductionTestBase
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtGpuTestBase> {};
+    : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {};
 
 TEST_F(ParallelReductionTestBase, ParallelReductionsWithAliasing) {
   const char* hlo_text = R"(

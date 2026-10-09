@@ -26,8 +26,11 @@ limitations under the License.
 
 #include "absl/container/btree_map.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -41,8 +44,6 @@ limitations under the License.
 #include "xla/tools/multihost_hlo_runner/profiler_interface.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 // Interface that may optionally returns an XSpace proto after UploadSession()
@@ -58,10 +59,10 @@ class XSpaceProfilerInterface : public ProfilerInterface {
 // profiling sessions for the MultihostHloRunner. It needs to be created after
 // PJRT client is initialized. Example usage:
 //
-//   TF_ASSIGN_OR_RETURN(
+//   ABSL_ASSIGN_OR_RETURN(
 //       env, xla::GetPjRtEnvironmentForGpu(...)));
 //   if (env.client != nullptr) {
-//     TF_ASSIGN_OR_RETURN(auto profiler, HLORunnerProfiler::Create());
+//     ABSL_ASSIGN_OR_RETURN(auto profiler, HLORunnerProfiler::Create());
 //   }
 //   profiler.CreateSession();
 //   ...
@@ -96,6 +97,9 @@ class HLORunnerProfiler : public XSpaceProfilerInterface {
   std::unique_ptr<tsl::ProfilerSession> session_;
   // The XSpace proto to be returned by GetXSpace().
   std::unique_ptr<tensorflow::profiler::XSpace> xspace_;
+  // Session counter to uniquely name dump paths when multiple sessions are
+  // uploaded.
+  int session_index_ = 0;
 };
 
 // FunctionalHloRunner takes an HLO module as input and runs the HLO module
@@ -108,6 +112,15 @@ using ShapeVec = std::vector<Shape>;
 using PerDeviceLiteralVecType = absl::btree_map<int, LiteralVec>;
 using PerDeviceShapeVecType = absl::btree_map<int, ShapeVec>;
 using PerDeviceIndexVecType = absl::btree_map<int, std::vector<int>>;
+
+struct HloModuleAndArguments {
+  std::unique_ptr<HloModule> hlo_module;
+
+  // The outer `std::vector` represents the list of shards. The inner
+  // `std::vector<Literal>` represents a list of arguments for a single shard
+  // partition.
+  std::vector<std::vector<Literal>> arguments;
+};
 
 enum class LogOutputMode { kLogOutput, kNotLogOutput };
 
@@ -231,19 +244,33 @@ struct RawCompileOptions {
   // It can also specify the number of replicas and partitions - in
   // that case we don't have to set num_replicas and num_partitions.
   std::optional<ExecutionOptions> execution_options = std::nullopt;
+  // We can set debug options directly without the other options in
+  // ExecutionOptions. We will prefer the debug options from ExecutionOptions
+  // though, if it exists.
+  DebugOptions debug_options;
   std::optional<int> num_replicas = 1;
   std::optional<int> num_partitions = 1;
   // See the comment on xla::MultiSliceConfig.
   std::optional<int> num_slices = std::nullopt;
   // A directory to dump xla debug data to.
   std::string xla_dump_to = "";
-  // When user runs HLO runner with hlo_config provided and
-  // XLA_FLAGS=--xla_dump_to=dir we want to respect the xla_dump_to field.
-  bool preserve_xla_dump_to = false;
+
   XlaTextDumpMode xla_text_dump_mode = XlaTextDumpMode::kNotDumpAsText;
   XlaProtoDumpMode xla_proto_dump_mode = XlaProtoDumpMode::kNotDumpAsProto;
   // A directory to dump xspace data to (GPU profiler only).
   std::string xla_gpu_dump_xspace_to = "";
+};
+
+struct TopologyConfig {
+  int num_replicas;
+  int num_partitions;
+  int num_nodes;
+};
+
+struct ResolveTopologyResult {
+  TopologyConfig topology;
+  // The loaded module and arguments, if they were loaded during resolution.
+  std::optional<HloModuleAndArguments> loaded_module;
 };
 
 // The options controlling the execution of the HLO module.
@@ -280,15 +307,6 @@ struct RunningOptions {
   }
 };
 
-struct HloModuleAndArguments {
-  std::unique_ptr<HloModule> hlo_module;
-
-  // The outer `std::vector` represents the list of shards. The inner
-  // `std::vector<Literal>` represents a list of arguments for a single shard
-  // partition.
-  std::vector<std::vector<Literal>> arguments;
-};
-
 struct ReplicasAndPartitions {
   int replicas = 1;
   int partitions = 1;
@@ -307,11 +325,22 @@ absl::StatusOr<CompileOptions> CreateCompileOptions(
     int num_nodes = 1,
     std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
 
+// Same as above, but uses `topology` instead of a client, so that compile
+// options can be created for ahead-of-time compilation (see the `Compile`
+// overload that takes a `PjRtTopologyDescription`) on a machine without the
+// target devices. If no device assignment is provided, the default device
+// assignment of `topology` for process `task_id` is used.
+absl::StatusOr<CompileOptions> CreateCompileOptions(
+    const PjRtTopologyDescription& topology,
+    const FunctionalHloRunner::RawCompileOptions& raw_options, int task_id = 0,
+    int num_nodes = 1,
+    std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
+
 // Runs on HLO module and dumps the output if needed.
 //
 // This is the highest level API in this file.
 absl::Status LoadAndRunAndDump(
-    PjRtClient& client, const DebugOptions& debug_options,
+    PjRtClient& client,
     const xla::FunctionalHloRunner::PreprocessingOptions& preproc_options,
     const xla::FunctionalHloRunner::RawCompileOptions& raw_compile_options,
     const xla::FunctionalHloRunner::RunningOptions& running_options,
@@ -326,8 +355,7 @@ absl::Status LoadAndRunAndDump(
 // The hlo file might be a HLO snapshot and thus contain arguments, otherwise
 // it is run with fake arguments.
 absl::StatusOr<PerDeviceLiteralVecType> LoadAndRun(
-    PjRtClient& client, const DebugOptions& debug_options,
-    const PreprocessingOptions& preproc_options,
+    PjRtClient& client, const PreprocessingOptions& preproc_options,
     const CompileOptions& compile_options,
     const RunningOptions& running_options, absl::string_view hlo_file,
     InputFormat input_format, const PerDeviceLiteralVecType& arguments = {},
@@ -337,7 +365,7 @@ absl::StatusOr<PerDeviceLiteralVecType> LoadAndRun(
 // The compiled executable is dumped to the specified path if the path is not
 // empty.
 absl::Status LoadAndCompileAndDump(
-    PjRtClient& client, const DebugOptions& debug_options,
+    PjRtClient& client,
     const xla::FunctionalHloRunner::PreprocessingOptions& preproc_options,
     const xla::FunctionalHloRunner::RawCompileOptions& raw_compile_options,
     absl::string_view hlo_file, InputFormat input_format,
@@ -350,8 +378,7 @@ absl::Status LoadAndCompileAndDump(
 // This function allows compiling multi-device HLOs on machines with fewer
 // devices.
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadAndCompile(
-    PjRtClient& client, const DebugOptions& debug_options,
-    const PreprocessingOptions& preproc_options,
+    PjRtClient& client, const PreprocessingOptions& preproc_options,
     const RawCompileOptions& raw_compile_options, absl::string_view hlo_file,
     InputFormat input_format, int task_id = 0, int num_nodes = 1,
     std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr,
@@ -361,16 +388,14 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadAndCompile(
 // device. The given arguments is a map from device ID to a list of arguments.
 // If the arguments map is empty, the HLO module is run with fake arguments.
 absl::StatusOr<PerDeviceLiteralVecType> CompileAndRun(
-    PjRtClient& client, const DebugOptions& debug_options,
-    const PreprocessingOptions& preproc_options,
+    PjRtClient& client, const PreprocessingOptions& preproc_options,
     const CompileOptions& compile_options,
     const RunningOptions& running_options, HloModule* hlo_module,
     const PerDeviceLiteralVecType& arguments = {},
     std::minstd_rand0* engine = nullptr);
 
 absl::StatusOr<PerDeviceLiteralVecType> CompileAndRun(
-    PjRtClient& client, const DebugOptions& debug_options,
-    const PreprocessingOptions& preproc_options,
+    PjRtClient& client, const PreprocessingOptions& preproc_options,
     const CompileOptions& compile_options,
     const RunningOptions& running_options, MaybeOwningMlirModule module,
     const PerDeviceLiteralVecType& arguments = {},
@@ -379,7 +404,6 @@ absl::StatusOr<PerDeviceLiteralVecType> CompileAndRun(
 // Compiles the HLO module.
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
     PjRtClient& client, HloModule* hlo_module,
-    const DebugOptions& debug_options,
     const PreprocessingOptions& preproc_options,
     const CompileOptions& compile_options);
 
@@ -388,7 +412,6 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
 // compilation based on captured information.
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
     PjRtClient& client, HloModule* hlo_module,
-    const DebugOptions& debug_options,
     const PreprocessingOptions& preproc_options,
     const CompileOptions& compile_options,
     const PjRtTopologyDescription& topology);
@@ -401,6 +424,18 @@ absl::StatusOr<PerDeviceLiteralVecType> Run(
 
 absl::StatusOr<HloModuleAndArguments> LoadHloModuleAndArguments(
     absl::string_view hlo_file, InputFormat input_format);
+
+// Resolves num_replicas and num_partitions by checking the provided values.
+// If they are empty (std::nullopt or negative), it tries to infer them from
+// `already_loaded_module` if provided, or by loading the module from
+// `hlo_file`.
+// If they still cannot be resolved, they default to 1.
+// `num_nodes` is calculated as `num_replicas * num_partitions`.
+absl::StatusOr<ResolveTopologyResult> ResolveTopology(
+    std::optional<int> num_replicas, std::optional<int> num_partitions,
+    absl::string_view hlo_file = "",
+    InputFormat input_format = InputFormat::kText,
+    const HloModule* already_loaded_module = nullptr);
 
 // This would ideally be private, but we need it for the implementation of
 // MultihostHloRunner.

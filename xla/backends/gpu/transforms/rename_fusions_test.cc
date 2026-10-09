@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/rename_fusions.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

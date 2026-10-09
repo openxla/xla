@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_fusion.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -30,16 +31,30 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/codegen/triton/support_legacy.h"
+#include "xla/backends/gpu/transforms/bitcast_utils.h"
+#include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
+#include "xla/codegen/tiling/experimental/tile.h"
+#include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/codegen/xtile/block_level_parameters.h"
+#include "xla/hlo/analysis/shape_tracker.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -48,7 +63,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/literal.h"
+#include "xla/map_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -57,11 +76,11 @@ limitations under the License.
 #include "xla/service/gpu/triton_tiling_propagation.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/instruction_fusion.h"
+#include "xla/service/matmul_indexing_utils.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -558,8 +577,8 @@ absl::StatusOr<HlosAndRequirements> FuseDotOperand(
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   // Direct dot inputs have well defined dimension orders.
-  TF_ASSIGN_OR_RETURN(const FusionContext context,
-                      FusionContext::FromDotOperand(dot, operand_index));
+  ABSL_ASSIGN_OR_RETURN(const FusionContext context,
+                        FusionContext::FromDotOperand(dot, operand_index));
   HloInstruction& operand = *dot.mutable_operand(operand_index);
   return FuseTowardOperands(operand, context.dim_orders().at(&operand),
                             TritonFusionAnalysis::kMaxParameterPerDotOperand,
@@ -693,8 +712,15 @@ bool AllowedInGemmFusion(const HloInstruction& instr) {
   if (!instr.IsFusible()) {
     return false;
   }
-  return HloPredicateIsNotOp<HloOpcode::kFusion, HloOpcode::kDot,
-                             HloOpcode::kParameter, HloOpcode::kReduce>(&instr);
+  if (instr.has_called_computations()) {
+    // Blocks instructions with sub-computations - fusing these is not
+    // implemented (currently crashes) and we don't want to fuse them anyway at
+    // the moment. Includes kFusion, kReduce, kAllReduce, etc.
+    return false;
+  }
+  return HloPredicateIsNotOp<HloOpcode::kDot, HloOpcode::kParameter,
+                             HloOpcode::kAllGather, HloOpcode::kAllGatherStart,
+                             HloOpcode::kAllGatherDone>(&instr);
 }
 
 // Returns true if we should consider fusing the instruction into the GEMM
@@ -705,15 +731,26 @@ bool IncludeInSearchSpace(const HloInstruction& instr,
          IsTritonSupportedInstruction(instr, gpu_version);
 }
 
+HloInstruction* CreateBitcastWithShape(Shape shape,
+                                       HloInstruction& new_operand) {
+  CopyElementType(new_operand.shape(), &shape);
+  return new_operand.parent()->AddInstruction(
+      HloInstruction::CreateBitcast(shape, &new_operand));
+}
+
 // Holds a module of the search space surrounding a dot instruction in order to
 // create an optimal fusion.
 class FusionSearchSpace {
  public:
+  // Dot instruction is kept, but not owned, so must outlive the search space.
   FusionSearchSpace(HloInstruction* dot,
-                    const se::GpuComputeCapability& gpu_version)
-      : original_dot_(dot) {
+                    const se::DeviceDescription& device_description)
+      : original_dot_(dot), device_description_(device_description) {
+    const se::GpuComputeCapability& gpu_version =
+        device_description.gpu_compute_capability();
     module_ = std::make_unique<HloModule>(
-        absl::StrCat(dot->name(), "_fusion_search_space"), HloModuleConfig());
+        absl::StrCat(dot->name(), "_fusion_search_space"),
+        dot->GetModule()->config());
     HloComputation::Builder builder(absl::StrCat(dot->name(), "_computation"));
     // Find the highest suitable user of the dot to be the root of the
     // fusion.
@@ -730,6 +767,9 @@ class FusionSearchSpace {
 
   HloInstruction* original_dot() const { return original_dot_; }
   HloComputation* entry() const { return entry_; }
+  const se::DeviceDescription& device_description() const {
+    return device_description_;
+  }
 
   const absl::flat_hash_map<HloInstruction*, HloInstruction*>&
   original_to_fused() const {
@@ -740,6 +780,25 @@ class FusionSearchSpace {
   fused_to_original() const {
     return fused_to_original_;
   }
+
+  // Given a fusion operand + fusion parameter pair in the fusion search space,
+  // returns the corresponding instruction in the original HLO module. If there
+  // is a shape mismatch (due to bitcast shepherding) or it's a newly added
+  // bitcast without a corresponding original instruction, it will create a new
+  // instruction in the original module and return it.
+  absl::StatusOr<HloInstruction*> GetOrCreateOriginalInstruction(
+      HloInstruction* fusion_operand, HloInstruction* fusion_param);
+
+  // Swaps a bitcast with its operand, if possible (collapsing with an operand
+  // bitcast/reshape if present). Returns the replacement instruction. If it
+  // cannot be hoisted, returns the original instruction.
+  absl::StatusOr<HloInstruction*> HoistBitcast(HloInstruction* instr);
+
+  // Swaps a bitcast with its user, if possible (collapsing with a user
+  // bitcast/reshape if present). Returns the new user (which is now the
+  // immediate user of the operand). If the bitcast was root and sunk, returns
+  // nullptr. If it cannot be sunk, returns the original instruction.
+  absl::StatusOr<HloInstruction*> SinkBitcast(HloInstruction* instr);
 
  private:
   // Recursive DFS to create maximum possible fusion.
@@ -760,6 +819,8 @@ class FusionSearchSpace {
   absl::flat_hash_map<HloInstruction*, HloInstruction*> fused_to_original_;
   // Pointer to the dot instruction in the original module.
   HloInstruction* original_dot_ = nullptr;
+  // Description of the target GPU.
+  const se::DeviceDescription& device_description_;
 };
 
 HloInstruction* FusionSearchSpace::FuseOperandsRecursively(
@@ -800,143 +861,1148 @@ HloInstruction* FusionSearchSpace::FuseOperandsRecursively(
   return param;
 }
 
-// Checks if the fusion can be tiled by SymbolicTileAnalysis.
-bool CanTile(mlir::MLIRContext& mlir_context, const HloFusionAdaptor& fusion) {
-  auto tile_or_error =
-      SymbolicTileAnalysis::AnalyzeFusion(fusion, &mlir_context);
-  if (std::holds_alternative<FusionDecision>(tile_or_error)) {
-    VLOG(3) << "Cannot tile: "
-            << std::get<FusionDecision>(tile_or_error).Explain();
-    return false;
+// Returns true if all users of the parameter are bitcast or reshape
+// instructions with the given shape. This means we can safely swap out the
+// parameter shape for the new shape.
+bool CanReplaceParameterShape(HloInstruction* parameter,
+                              const Shape& new_shape) {
+  for (HloInstruction* user : parameter->users()) {
+    if (user->opcode() == HloOpcode::kReshape &&
+        !ShapeUtil::ReshapeIsBitcast(parameter->shape(), user->shape())) {
+      return false;
+    }
+    if (HloPredicateIsNotOp<HloOpcode::kBitcast, HloOpcode::kReshape>(user) ||
+        user->shape() != new_shape) {
+      return false;
+    }
   }
   return true;
 }
 
-// Returns true if fusing `producer` into `consumer` is possible and supported.
-bool CanFuse(mlir::MLIRContext& mlir_context, HloInstruction* producer,
-             HloInstruction* consumer) {
-  // If the candidate is not a user of the fusion, we have already fused the
-  // instruction.
-  return consumer->IsUserOf(producer) &&
-         // Parameter means we have reached the end of the search space.
-         producer->opcode() != HloOpcode::kParameter &&
-         CanTile(mlir_context,
-                 *HloFusionAdaptor::ForProducerConsumer(producer, consumer));
-}
+absl::StatusOr<HloInstruction*> FusionSearchSpace::HoistBitcast(
+    HloInstruction* instr) {
+  if (instr->shape().element_type() !=
+      instr->operand(0)->shape().element_type()) {
+    return instr;
+  }
+  HloInstruction* operand = instr->mutable_operand(0);
+  HloInstruction* new_instr = nullptr;
 
-// Attempts to fuse all candidates and their operands into the fusion.
-void FuseOperandsBFS(mlir::MLIRContext& mlir_context,
-                     const HloInstruction::InstructionVector& candidates,
-                     absl::flat_hash_set<HloInstruction*>& visited,
-                     HloInstruction* fusion) {
-  std::queue<HloInstruction*> queue;
-  for (HloInstruction* operand : candidates) {
-    if (visited.insert(operand).second) {
-      queue.push(operand);
+  switch (operand->opcode()) {
+    case HloOpcode::kParameter: {
+      if (!CanReplaceParameterShape(operand, instr->shape())) {
+        return instr;
+      }
+      // Just update parameter shape in the submodule.
+      // We will realize the bitcast in the original module later.
+      Shape new_shape = instr->shape();
+      CopyElementType(operand->shape(), &new_shape);
+
+      *operand->mutable_shape() = new_shape;
+      // Copy users to a new vector to avoid invalidating the iterator.
+      std::vector<HloInstruction*> users(operand->users().begin(),
+                                         operand->users().end());
+      for (HloInstruction* user : users) {
+        ABSL_RETURN_IF_ERROR(user->ReplaceAllUsesWith(operand));
+        ABSL_RETURN_IF_ERROR(
+            user->parent()->RemoveInstructionAndUnusedOperands(user));
+      }
+      return operand;
+    }
+    // To hoist past a reshape or bitcast, we try collapsing the two into a
+    // single bitcast and then hoisting that.
+    case HloOpcode::kReshape: {
+      if (!ShapeUtil::ReshapeIsBitcast(operand->operand(0)->shape(),
+                                       operand->shape())) {
+        return instr;
+      }
+      [[fallthrough]];
+    }
+    case HloOpcode::kBitcast: {
+      HloInstruction* arg = operand->mutable_operand(0);
+      new_instr = instr->parent()->AddInstruction(
+          HloInstruction::CreateBitcast(instr->shape(), arg));
+      if (auto it = fused_to_original_.find(operand);
+          it != fused_to_original_.end()) {
+        HloInstruction* original_op = it->second;
+        fused_to_original_[new_instr] = original_op;
+        original_to_fused_[original_op] = new_instr;
+      }
+      ABSL_RETURN_IF_ERROR(instr->ReplaceAllUsesWith(new_instr));
+      ABSL_RETURN_IF_ERROR(
+          instr->parent()->RemoveInstructionAndUnusedOperands(instr));
+      return HoistBitcast(new_instr);
+    }
+    case HloOpcode::kConstant: {
+      auto* constant = Cast<HloConstantInstruction>(operand);
+      if (!ShapeUtil::IsEffectiveScalar(constant->shape())) {
+        return instr;
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          Literal new_literal,
+          constant->literal().Reshape(instr->shape().dimensions()));
+      new_instr = instr->parent()->AddInstruction(
+          HloInstruction::CreateConstant(std::move(new_literal)));
+      break;
+    }
+    case HloOpcode::kBroadcast: {
+      absl::StatusOr<BitcastParams> params = CalculateBitcastOfBroadcast(
+          Cast<HloBroadcastInstruction>(operand), instr->shape());
+      if (!params.ok()) {
+        return instr;
+      }
+      HloInstruction* arg = operand->mutable_operand(0);
+      HloInstruction* new_bitcast =
+          CreateBitcastWithShape(params->new_shape, *arg);
+      new_instr =
+          instr->parent()->AddInstruction(HloInstruction::CreateBroadcast(
+              instr->shape(), new_bitcast, params->new_dims));
+      break;
+    }
+    case HloOpcode::kTranspose: {
+      absl::StatusOr<BitcastParams> params = CalculateBitcastOfTranspose(
+          Cast<HloTransposeInstruction>(operand), instr->shape());
+      if (!params.ok()) {
+        return instr;
+      }
+      HloInstruction* arg = operand->mutable_operand(0);
+      HloInstruction* new_bitcast =
+          CreateBitcastWithShape(params->new_shape, *arg);
+      new_instr =
+          instr->parent()->AddInstruction(HloInstruction::CreateTranspose(
+              instr->shape(), new_bitcast, params->new_dims));
+      break;
+    }
+    default: {
+      if (!operand->IsElementwise()) {
+        return instr;
+      }
+      // bitcast(op(a, b)) -> op(bitcast(a), bitcast(b))
+      std::vector<HloInstruction*> new_operands;
+      for (HloInstruction* arg : operand->operands()) {
+        new_operands.push_back(CreateBitcastWithShape(instr->shape(), *arg));
+      }
+      new_instr = instr->parent()->AddInstruction(
+          operand->CloneWithNewOperands(instr->shape(), new_operands));
+      break;
     }
   }
-  while (!queue.empty()) {
-    HloInstruction* candidate = queue.front();
-    queue.pop();
 
-    if (!CanFuse(mlir_context, candidate, fusion)) {
-      VLOG(5) << "Cannot fuse operand: " << candidate->ToString();
-      continue;
+  if (new_instr == nullptr) {
+    return instr;
+  }
+
+  // Preserve mapping to original HLO.
+  if (auto it = fused_to_original_.find(operand);
+      it != fused_to_original_.end()) {
+    HloInstruction* original_op = it->second;
+    fused_to_original_[new_instr] = original_op;
+    original_to_fused_[original_op] = new_instr;
+  }
+
+  ABSL_RETURN_IF_ERROR(instr->ReplaceAllUsesWith(new_instr));
+  ABSL_RETURN_IF_ERROR(
+      instr->parent()->RemoveInstructionAndUnusedOperands(instr));
+  return new_instr;
+}
+
+absl::StatusOr<HloInstruction*> FusionSearchSpace::SinkBitcast(
+    HloInstruction* instr) {
+  if (instr->shape().element_type() !=
+      instr->operand(0)->shape().element_type()) {
+    return instr;
+  }
+  HloInstruction* operand = instr->mutable_operand(0);
+
+  // If bitcast is root, strip it to push it out of the fusion.
+  if (instr->IsRoot()) {
+    instr->parent()->set_root_instruction(operand,
+                                          /*accept_different_shape=*/true);
+    ABSL_RETURN_IF_ERROR(
+        instr->parent()->RemoveInstructionAndUnusedOperands(instr));
+    return nullptr;
+  }
+  // We only build fusions where epilogues have single users. This could be
+  // extended to handle the general case, but isn't needed for now.
+  if (instr->user_count() != 1) {
+    return instr;
+  }
+
+  HloInstruction* user = instr->users()[0];
+  HloInstruction* new_instr = nullptr;
+  switch (user->opcode()) {
+    case HloOpcode::kTranspose: {
+      absl::StatusOr<BitcastParams> params = CalculateTransposeOfBitcast(
+          Cast<HloTransposeInstruction>(user), operand->shape());
+      if (!params.ok()) {
+        return instr;
+      }
+      Shape new_transpose_shape = params->new_shape;
+      CopyElementType(operand->shape(), &new_transpose_shape);
+      new_instr =
+          instr->parent()->AddInstruction(HloInstruction::CreateTranspose(
+              new_transpose_shape, operand, params->new_dims));
+      break;
     }
-    VLOG(5) << "Fusing operand: " << candidate->ToString();
-    fusion->FuseInstruction(candidate);
-    for (HloInstruction* operand : candidate->operands()) {
-      if (visited.insert(operand).second) {
-        queue.push(operand);
+    case HloOpcode::kBroadcast: {
+      absl::StatusOr<BitcastParams> params = CalculateBroadcastOfBitcast(
+          Cast<HloBroadcastInstruction>(user), operand->shape());
+      if (!params.ok()) {
+        return instr;
+      }
+      Shape new_broadcast_shape = params->new_shape;
+      CopyElementType(operand->shape(), &new_broadcast_shape);
+      new_instr =
+          instr->parent()->AddInstruction(HloInstruction::CreateBroadcast(
+              new_broadcast_shape, operand, params->new_dims));
+      break;
+    }
+    // To sink past a reshape or bitcast, we try collapsing the two into a
+    // single bitcast and then sinking that.
+    case HloOpcode::kReshape: {
+      if (!ShapeUtil::ReshapeIsBitcast(instr->shape(), user->shape())) {
+        return instr;
+      }
+      [[fallthrough]];
+    }
+    case HloOpcode::kBitcast: {
+      HloInstruction* new_bitcast = instr->parent()->AddInstruction(
+          HloInstruction::CreateBitcast(user->shape(), operand));
+      if (auto it = fused_to_original_.find(user);
+          it != fused_to_original_.end()) {
+        HloInstruction* original_op = it->second;
+        fused_to_original_[new_bitcast] = original_op;
+        original_to_fused_[original_op] = new_bitcast;
+      }
+      ABSL_RETURN_IF_ERROR(user->ReplaceAllUsesWith(new_bitcast));
+      ABSL_RETURN_IF_ERROR(
+          instr->parent()->RemoveInstructionAndUnusedOperands(user));
+      return SinkBitcast(new_bitcast);
+    }
+    default: {
+      if (!user->IsElementwise()) {
+        return instr;
+      }
+      // Sink past elementwise users.
+      // op(bitcast(a), b) -> bitcast(op(a, bitcast(b)))
+      std::vector<HloInstruction*> new_operands;
+      for (HloInstruction* arg : user->operands()) {
+        if (arg == instr) {
+          new_operands.push_back(operand);
+        } else {
+          new_operands.push_back(
+              CreateBitcastWithShape(operand->shape(), *arg));
+        }
+      }
+      Shape new_user_shape = operand->shape();
+      CopyElementType(user->shape(), &new_user_shape);
+      new_instr = instr->parent()->AddInstruction(
+          user->CloneWithNewOperands(new_user_shape, new_operands));
+      break;
+    }
+  }
+
+  if (new_instr == nullptr) {
+    return instr;
+  }
+  HloInstruction* new_bitcast = instr->parent()->AddInstruction(
+      HloInstruction::CreateBitcast(user->shape(), new_instr));
+  // Preserve mapping to original HLO.
+  if (auto it = fused_to_original_.find(user); it != fused_to_original_.end()) {
+    HloInstruction* original_op = it->second;
+    fused_to_original_[new_instr] = original_op;
+    fused_to_original_[new_bitcast] = original_op;
+    original_to_fused_[original_op] = new_instr;
+  }
+  ABSL_RETURN_IF_ERROR(user->ReplaceAllUsesWith(new_bitcast));
+  ABSL_RETURN_IF_ERROR(
+      instr->parent()->RemoveInstructionAndUnusedOperands(user));
+  if (new_bitcast->IsRoot()) {
+    new_bitcast->parent()->set_root_instruction(
+        new_instr, /*accept_different_shape=*/true);
+    ABSL_RETURN_IF_ERROR(
+        new_bitcast->parent()->RemoveInstructionAndUnusedOperands(new_bitcast));
+  }
+  return new_instr;
+}
+
+// Removes bitcast and reshape operations from the boundaries of the fused
+// computation by hoisting parameter bitcasts and sinking root bitcasts out of
+// the fusion.
+absl::Status RemoveEdgeBitcasts(HloInstruction* fusion,
+                                FusionSearchSpace& search_space) {
+  HloComputation* computation = fusion->fused_instructions_computation();
+  VLOG(5) << "Removing edge bitcasts in computation: "
+          << computation->ToString();
+
+  // 1. Hoist parameter bitcasts
+  for (int i = 0; i < computation->num_parameters(); ++i) {
+    HloInstruction* param = computation->parameter_instruction(i);
+    bool param_changed = true;
+    while (param_changed) {
+      param_changed = false;
+      std::vector<HloInstruction*> users(param->users().begin(),
+                                         param->users().end());
+      for (HloInstruction* user : users) {
+        if (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(user)) {
+          ABSL_ASSIGN_OR_RETURN(HloInstruction * hoisted,
+                                search_space.HoistBitcast(user));
+          if (hoisted != user) {
+            param_changed = true;
+            break;  // Re-evaluate users of this parameter
+          }
+        }
       }
     }
   }
+
+  // 2. Sink root bitcasts
+  while (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(
+      computation->root_instruction())) {
+    HloInstruction* root = computation->root_instruction();
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * sunk,
+                          search_space.SinkBitcast(root));
+    if (sunk == root) {
+      break;
+    }
+  }
+
+  VLOG(5) << "Computation after removing edge bitcasts: "
+          << computation->ToString();
+  return absl::OkStatus();
+}
+
+// Builds a map replacing known power-of-2 variables `v` with `v * 2` to model
+// that we know they will be divisiable by 2. Specifically, extract the
+// variables for block_m, block_n, block_k.
+llvm::DenseMap<SymbolicExpr, SymbolicExpr> BuildEvenBlockSizeReplacements(
+    const experimental::TiledHloInstruction& tiled_dot,
+    mlir::MLIRContext& mlir_context) {
+  const DotDimensionNumbers& dim_numbers =
+      tiled_dot.hlo()->dot_dimension_numbers();
+  llvm::DenseMap<SymbolicExpr, SymbolicExpr> even_variable_replacements;
+  auto add_var_from_tile = [&](const experimental::DimTile& dim_tile) {
+    llvm::DenseSet<VariableID> vars;
+    dim_tile.size.GetUsedVariables(vars);
+    CHECK_EQ(vars.size(), 1)
+        << "Expected exactly one tiling variable for non-batch dot dimension: "
+        << dim_tile.size.ToString();
+    VariableID var = *vars.begin();
+    SymbolicExpr var_expr = CreateSymbolicVariable(var, &mlir_context);
+    even_variable_replacements[var_expr] = var_expr * 2;
+  };
+
+  // Output non-batch dimensions (block_m, block_n).
+  for (int64_t d = dim_numbers.lhs_batch_dimensions_size();
+       d < tiled_dot.tile().dim_tiles().size(); ++d) {
+    add_var_from_tile(tiled_dot.tile().dim_tiles()[d]);
+  }
+  // Contracting dimension variable (block_k).
+  for (int64_t k_dim : dim_numbers.lhs_contracting_dimensions()) {
+    if (k_dim < tiled_dot.operand(0)->tile().dim_tiles().size()) {
+      add_var_from_tile(tiled_dot.operand(0)->tile().dim_tiles()[k_dim]);
+    }
+  }
+  return even_variable_replacements;
+}
+
+// Returns true if `inst` is an S4 instruction whose minor-most non-unit
+// physical dimension has a tile size not divisible by 2.
+bool InstructionHasUntileableS4MinorDimension(
+    const experimental::TiledHloInstruction& inst,
+    const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& replacement_map) {
+  const Shape& shape = inst.hlo()->shape();
+  if (shape.element_type() != PrimitiveType::S4 || !shape.has_layout()) {
+    return false;
+  }
+
+  // Find the minor-most non-unit dimension according to the physical layout.
+  llvm::ArrayRef<experimental::DimTile> dim_tiles = inst.tile().dim_tiles();
+  auto minor_to_major = shape.layout().minor_to_major();
+  auto minor_dim = absl::c_find_if(
+      minor_to_major, [&](int64_t dim) { return shape.dimensions(dim) != 1; });
+  if (minor_dim == minor_to_major.end()) {
+    return false;
+  }
+
+  // Evaluate whether the tile size is divisible by 2 after taking into account
+  // that non-batch dimensions are even multiples.
+  SymbolicExpr tile_size = dim_tiles[*minor_dim].size.Replace(replacement_map);
+  return !tile_size.IsMultipleOf(2);
+}
+
+// Returns true if any instruction in `instructions`, or in any of their
+// (transitively) nested regions, has an untileable S4 minor dimension.
+bool AnyInstructionHasUntileableS4MinorDimension(
+    absl::Span<const experimental::TiledHloInstruction* const> instructions,
+    const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& replacement_map) {
+  return absl::c_any_of(
+      instructions, [&](const experimental::TiledHloInstruction* inst) {
+        return InstructionHasUntileableS4MinorDimension(*inst,
+                                                        replacement_map) ||
+               absl::c_any_of(
+                   inst->hlo_regions(),
+                   [&](const experimental::TiledHloRegion& region) {
+                     return AnyInstructionHasUntileableS4MinorDimension(
+                         region.instructions(), replacement_map);
+                   });
+      });
+}
+
+// Most S4 parameters are okay, but there are cases where the tile size along
+// the minor-most physical dimension is not divisible by 2 (e.g. if it
+// corresponds to a batch dimension which we blindly tile to 1 at the moment, or
+// due to complex reshape / transpose indexing before the dot). In such cases,
+// we cannot emit sub-byte memory loads. If we detect this case, forbid the
+// fusion.
+// TODO(b/514309966): Fix tiling to handle this case and remove this check.
+FusionDecision CanUnpackS4ParametersInFusion(
+    const HloFusionAdaptor& fusion_adaptor, mlir::MLIRContext& mlir_context) {
+  auto tiling_space =
+      experimental::TilingSpace::Create(fusion_adaptor, &mlir_context);
+  if (!tiling_space.ok()) {
+    return FusionDecision::Forbid(tiling_space.status().message());
+  }
+  auto tiled_computation = experimental::TiledHloComputation::Tile(
+      fusion_adaptor, std::move(*tiling_space));
+  if (!tiled_computation.ok()) {
+    return FusionDecision::Forbid(tiled_computation.status().message());
+  }
+
+  if (tiled_computation->roots().size() != 1 ||
+      tiled_computation->roots()[0]->hlo()->opcode() != HloOpcode::kDot) {
+    return FusionDecision::Forbid(
+        "Expected tiled computation root to be a single dot instruction.");
+  }
+  const experimental::TiledHloInstruction* tiled_dot =
+      tiled_computation->roots()[0];
+
+  llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacement_map =
+      BuildEvenBlockSizeReplacements(*tiled_dot, mlir_context);
+
+  // Parameters may live at any nesting level: inside the dot's region, or
+  // hoisted out of it if their tile does not depend on the contracting loop.
+  if (AnyInstructionHasUntileableS4MinorDimension(
+          tiled_computation->instructions(), replacement_map)) {
+    return FusionDecision::Forbid(
+        "Cannot tile S4 parameter with minor dimension tile size not "
+        "divisible by 2.");
+  }
+  return FusionDecision::Allow();
+}
+
+// Checks if the fusion can be tiled by SymbolicTileAnalysis.
+FusionDecision CanTile(mlir::MLIRContext& mlir_context,
+                       const HloFusionAdaptor& fusion,
+                       const se::DeviceDescription& device_description) {
+  if (fusion.GetRoots()[0]
+          .instruction()
+          .GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_enable_tiling_propagation()) {
+    namespace ge = ::xla::gpu::experimental;
+    auto ts = ge::TilingSpace::Create(fusion, &mlir_context);
+    if (!ts.ok()) {
+      return FusionDecision::Forbid(absl::StrCat(
+          "Failed to create tiling space: ", ts.status().message()));
+    }
+    auto tiled_computation =
+        ge::TiledHloComputation::Tile(fusion, std::move(ts.value()));
+    if (!tiled_computation.ok()) {
+      return FusionDecision::Forbid(
+          absl::StrCat("Fusion is not tileable with experimental tiling: ",
+                       tiled_computation.status().message()));
+    }
+
+    // The symbolic tiling may be satisfiable in theory, but we don't have any
+    // tiles that we will actually try. For example, the constraints may require
+    // a tile size to be divisible by 3, but all Triton tiles are powers of 2.
+    std::optional<HloInstructionAdaptor> dot =
+        HloBfsFindIf(fusion.GetRoots(), fusion, [](HloInstructionAdaptor node) {
+          return node.opcode() == HloOpcode::kDot;
+        });
+    if (!dot.has_value()) {
+      return FusionDecision::Forbid("No dot instruction found in the fusion.");
+    }
+    for (const TritonGemmConfig& config :
+         GetDefaultTritonConfigs(device_description.gpu_compute_capability())) {
+      absl::StatusOr<xtile::BlockLevelParameters> params =
+          FindBlockLevelParameters(fusion, &dot->instruction(), config,
+                                   &mlir_context, device_description);
+      if (params.ok()) {
+        return FusionDecision::Allow();
+      }
+    }
+    return FusionDecision::Forbid(
+        "None of the default Triton configs can be used to tile the fusion.");
+  }
+  auto fusion_analysis =
+      SymbolicTileAnalysis::AnalyzeFusion(fusion, &mlir_context);
+  if (std::holds_alternative<FusionDecision>(fusion_analysis)) {
+    return std::get<FusionDecision>(fusion_analysis);
+  }
+  return FusionDecision::Allow();
+}
+
+// Returns true if fusing `producer` into `consumer` is possible and supported.
+FusionDecision CanFuse(mlir::MLIRContext& mlir_context,
+                       HloInstruction* producer, HloInstruction* consumer,
+                       const se::DeviceDescription& device_description) {
+  // If the candidate is not a user of the fusion, we have already fused the
+  // instruction.
+  if (!consumer->IsUserOf(producer)) {
+    return FusionDecision::Forbid("Consumer is not a user of producer.");
+  }
+  // Parameter means we have reached the end of the search space.
+  if (HloPredicateIsOp<HloOpcode::kParameter>(producer)) {
+    return FusionDecision::Forbid("Cannot fuse parameter.");
+  }
+  return CanTile(mlir_context,
+                 *HloFusionAdaptor::ForProducerConsumer(producer, consumer),
+                 device_description);
+}
+
+bool IsBinaryElementwiseOfBroadcastParamOrConst(const HloInstruction& hlo) {
+  if (!hlo.IsElementwise() || hlo.operand_count() != 2) {
+    return false;
+  }
+  for (const HloInstruction* operand : hlo.operands()) {
+    if (operand->opcode() == HloOpcode::kBroadcast &&
+        HloPredicateIsOp<HloOpcode::kParameter, HloOpcode::kConstant>(
+            operand->operand(0))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Holds shape tracking information for an instruction during backward BFS.
+struct TrackerInfo {
+  // Tracker representing shape transformations from the instruction's output
+  // to a reference shape. The reference shape is the dot operand shape, unless
+  // the tracker was reset (e.g. at a broadcast), in which case it is the shape
+  // at which it was reset.
+  ShapeTracker tracker;
+  // Indicates which dot operand (LHS/0 or RHS/1) the tracker is associated
+  // with.
+  int64_t dot_operand_index;
+  // Dot dimension categories (batch, non-contracting, contracting) of the
+  // dimensions of `tracker.output_shape()`. Degenerate dimensions may not be
+  // assigned to any category.
+  DotOperandDims dims;
+};
+
+FusionDecision ShouldFuseConcat(const HloInstruction& concat,
+                                const TrackerInfo& tracker) {
+  constexpr int kMinConcatFragmentSize = 64;
+  if (absl::c_any_of(
+          concat.operands(), [&concat](const HloInstruction* operand) {
+            return operand->shape().dimensions(concat.concatenate_dimension()) %
+                       kMinConcatFragmentSize !=
+                   0;
+          })) {
+    return FusionDecision::Forbid(
+        "At least one operand of concatenation cannot be perfectly tiled.");
+  }
+
+  int64_t concat_dim = concat.concatenate_dimension();
+  std::optional<std::vector<int64_t>> mapped_dims =
+      tracker.tracker.MapInputDimensionsToOutputUnordered({concat_dim});
+
+  if (!mapped_dims.has_value() || mapped_dims->size() != 1) {
+    return FusionDecision::Forbid(
+        "Failed to map concat dimension to dot operand dimension.");
+  }
+  int64_t mapped_dim = (*mapped_dims)[0];
+
+  absl::Span<const int64_t> contracting =
+      tracker.dims.Indices(DotOperandDims::kContracting);
+  if (absl::c_linear_search(contracting, mapped_dim)) {
+    return FusionDecision::Forbid(
+        "Not fusing concatenate along contracting dimension.");
+  }
+
+  return FusionDecision::Allow();
+}
+
+// Returns true if the specified dimensions map to the parameter such that their
+// minor-most physical dimension has stride 1 and a size that is at least 16
+// bytes (128 bits) and 16-byte aligned for vectorized and coalesced memory
+// loads.
+bool HasCoalescedMinorDimension(const ShapeTracker& inverted_tracker,
+                                const Shape& operand_shape,
+                                absl::Span<const int64_t> dims) {
+  std::optional<std::vector<int64_t>> mapped_dims =
+      inverted_tracker.MapInputDimensionsToOutputUnordered(dims);
+  if (!mapped_dims.has_value() || mapped_dims->empty()) {
+    return false;
+  }
+
+  absl::Span<const int64_t> minor_to_major =
+      operand_shape.layout().minor_to_major();
+  auto minor_dim = absl::c_find_if(minor_to_major, [&](int64_t dim) {
+    return operand_shape.dimensions(dim) != 1;
+  });
+  if (minor_dim == minor_to_major.end()) {
+    return false;
+  }
+  if (!absl::c_linear_search(*mapped_dims, *minor_dim)) {
+    return false;
+  }
+
+  int64_t minor_bits = operand_shape.dimensions(*minor_dim) *
+                       primitive_util::BitWidth(operand_shape.element_type());
+  return minor_bits >= 128 && minor_bits % 128 == 0;
+}
+
+// Returns true if the producer of `transpose` is going to be emitted by a
+// separate kernel that can absorb the transpose at no extra memory cost, i.e.
+// if it is an elementwise instruction (looking through bitcasts and reshapes)
+// whose only user is `transpose` and that `ShouldFuseOperand` would not fuse
+// into the GEMM. `transpose` must be an instruction of the original module, so
+// that all users of its producer are visible.
+bool ProducerCanAbsorbTranspose(const HloInstruction& transpose) {
+  const HloInstruction* producer = transpose.operand(0);
+  while (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(producer) &&
+         producer->user_count() == 1) {
+    producer = producer->operand(0);
+  }
+  return producer->user_count() == 1 && producer->IsElementwise() &&
+         !IsBinaryElementwiseOfBroadcastParamOrConst(*producer) &&
+         !triton_fusion::IsInputWorthFusing(*producer);
+}
+
+FusionDecision ShouldFuseTranspose(const HloInstruction& transpose,
+                                   const HloInstruction& original_transpose,
+                                   const TrackerInfo& tracker) {
+  const int64_t operand_index = tracker.dot_operand_index;
+  ShapeTracker transpose_tracker = tracker.tracker;
+
+  absl::Status status = transpose_tracker.PrependInstruction(&transpose);
+  if (!status.ok()) {
+    return FusionDecision::Forbid(
+        absl::StrCat("Failed to prepend transpose: ", status.message()));
+  }
+  auto inverted_tracker = transpose_tracker.GetInverted();
+  if (!inverted_tracker.ok()) {
+    return FusionDecision::Forbid(
+        absl::StrCat("Failed to invert shape tracker: ",
+                     inverted_tracker.status().message()));
+  }
+
+  absl::Span<const int64_t> contracting =
+      tracker.dims.Indices(DotOperandDims::kContracting);
+  absl::Span<const int64_t> non_contracting =
+      tracker.dims.Indices(DotOperandDims::kNonContracting);
+  absl::Span<const int64_t> batch =
+      tracker.dims.Indices(DotOperandDims::kBatch);
+  if (!inverted_tracker->MapsToOneStride(contracting)) {
+    return FusionDecision::Forbid(
+        "Contracting dimension has non-contiguous section.");
+  }
+  if (!inverted_tracker->MapsToOneStride(batch, /*allow_swaps=*/true)) {
+    return FusionDecision::Forbid("Batch dimension splits other dimensions.");
+  }
+  if (operand_index == 1 &&
+      !inverted_tracker->MapsToOneStride(non_contracting) &&
+      !HasCoalescedMinorDimension(
+          *inverted_tracker, transpose.operand(0)->shape(), non_contracting)) {
+    return FusionDecision::Forbid(
+        "Non-contracting RHS dimension has non-contiguous section.");
+  }
+  // Fusing a transpose that makes a non-contracting dimension non-contiguous,
+  // without moving the minor-most dimension, saves no memory traffic if its
+  // producer is emitted by a separate kernel anyway: that kernel can write its
+  // output in the transposed order instead, at no extra cost. Fusing it,
+  // however, makes M or N multi-strided, which constrains the tiling of the
+  // GEMM and requires a separate transpose kernel if the GEMM ends up being
+  // lowered to cuBLAS. See b/571352199.
+  if (!inverted_tracker->MapsToOneStride(non_contracting) &&
+      !TransposesMinorDimension(&original_transpose) &&
+      ProducerCanAbsorbTranspose(original_transpose)) {
+    return FusionDecision::Forbid(
+        "Transpose within a non-contracting dimension can be fused into its "
+        "producer instead.");
+  }
+  return FusionDecision::Allow();
+}
+
+FusionDecision ShouldFuseOperand(HloInstruction* operand,
+                                 const HloInstruction& original_operand,
+                                 HloInstruction* fusion,
+                                 const std::optional<TrackerInfo>& tracker) {
+  int parameter_count = fusion->operand_count() + NumAddedParameters(*operand);
+  if (parameter_count > TritonFusionAnalysis::kMaxParameterPerDotOperand * 2) {
+    return FusionDecision::Forbid("Too many parameters.");
+  }
+  switch (operand->opcode()) {
+    case HloOpcode::kTranspose:
+      if (!tracker.has_value()) {
+        return FusionDecision::Forbid("No shape tracker found for transpose.");
+      }
+      return ShouldFuseTranspose(*operand, original_operand, *tracker);
+    case HloOpcode::kConcatenate:
+      if (!tracker.has_value()) {
+        return FusionDecision::Forbid(
+            "No shape tracker found for concatenate.");
+      }
+      return ShouldFuseConcat(*operand, *tracker);
+    case HloOpcode::kPower:
+      if (original_operand.user_count() > 1) {
+        return FusionDecision::Forbid(
+            "Not fusing power op with multiple users.");
+      }
+      break;
+    default:
+      break;
+  }
+
+  if (IsBinaryElementwiseOfBroadcastParamOrConst(original_operand) ||
+      triton_fusion::IsInputWorthFusing(original_operand)) {
+    return FusionDecision::Allow();
+  }
+  return FusionDecision::Forbid("Not obviously profitable to fuse as input.");
+}
+
+// Returns a new TrackerInfo starting at the operand of `broadcast`, given the
+// TrackerInfo of the broadcast's output. Since the broadcast does not preserve
+// the number of elements, the ShapeTracker cannot be propagated through it.
+// Instead, we start with a new identity tracker at the operand's shape, and
+// assign each operand dimension the dot dimension category of the output
+// dimension it is broadcast into. Returns nullopt if a category does not map
+// cleanly onto whole broadcast output dimensions, or if the order of the RHS
+// non-contracting dimensions would be lost.
+std::optional<TrackerInfo> ComputeBroadcastOperandTracker(
+    const HloInstruction* broadcast, const TrackerInfo& broadcast_info) {
+  // Maps the reference shape to the broadcast output shape.
+  absl::StatusOr<ShapeTracker> inverted = broadcast_info.tracker.GetInverted();
+  if (!inverted.ok()) {
+    return std::nullopt;
+  }
+  std::array<std::vector<int64_t>, 3> operand_dims;
+  for (DotOperandDims::Category category :
+       {DotOperandDims::kBatch, DotOperandDims::kNonContracting,
+        DotOperandDims::kContracting}) {
+    absl::Span<const int64_t> indices = broadcast_info.dims.Indices(category);
+    std::optional<std::vector<int64_t>> output_dims =
+        inverted->MapInputDimensionsToOutputUnordered(indices);
+    if (!output_dims.has_value()) {
+      return std::nullopt;
+    }
+    // The dimensions of each category are assigned to the new tracker in
+    // operand order, which loses their order relative to the dot if they are
+    // swapped between the reference shape and the broadcast output. This only
+    // matters for the RHS non-contracting dimensions: their order is checked
+    // in ShouldFuseTranspose, and a transpose swapping them can be fused below
+    // the broadcast if their minor dimension is coalesced. Batch dimensions
+    // are checked with `allow_swaps`, LHS non-contracting dimensions are not
+    // checked, and transposes swapping contracting dimensions are not fused.
+    if (broadcast_info.dot_operand_index == 1 &&
+        category == DotOperandDims::kNonContracting && !indices.empty()) {
+      absl::StatusOr<ShapeTracker> narrowed = inverted->Narrow(indices);
+      if (!narrowed.ok() ||
+          absl::c_any_of(narrowed->GetSteps(), [](const ShapeTracker::Step& s) {
+            return s.type == ShapeTracker::Step::Type::kTranspose;
+          })) {
+        return std::nullopt;
+      }
+    }
+    for (int64_t i = 0; i < broadcast->dimensions().size(); ++i) {
+      if (absl::c_linear_search(*output_dims, broadcast->dimensions(i))) {
+        operand_dims[category].push_back(i);
+      }
+    }
+  }
+  const Shape& operand_shape = broadcast->operand(0)->shape();
+  return TrackerInfo{
+      ShapeTracker(operand_shape), broadcast_info.dot_operand_index,
+      DotOperandDims(operand_shape, operand_dims[DotOperandDims::kBatch],
+                     operand_dims[DotOperandDims::kNonContracting],
+                     operand_dims[DotOperandDims::kContracting])};
+}
+
+// Propagates shape tracking information from `user` to `candidate` (operand of
+// `user`). Returns the updated TrackerInfo if propagation is successful. If
+// propagation fails (e.g. at an unsupported shape-changing operation like
+// concat), but the current tracker has no prior steps (it is identity), returns
+// a new identity tracker starting at the candidate's shape. For broadcasts, a
+// new identity tracker is started at the broadcast operand. Returns nullopt if
+// propagation fails and the tracker cannot be reset.
+std::optional<TrackerInfo> ComputeCandidateTracker(
+    const HloInstruction* candidate, const HloInstruction* user,
+    const TrackerInfo& user_info) {
+  TrackerInfo candidate_info = user_info;
+  if (candidate_info.tracker.PrependInstruction(user).ok()) {
+    return candidate_info;
+  }
+  if (user->IsElementwise()) {
+    candidate_info.tracker.SetElementType(candidate->shape().element_type());
+    return candidate_info;
+  }
+  if (user->opcode() == HloOpcode::kBroadcast) {
+    return ComputeBroadcastOperandTracker(user, user_info);
+  }
+  // If there have been no steps added to the tracker, then the memory has not
+  // changed and we can start from the candidate's shape (for example, the
+  // operand of a concatenate).
+  if (user_info.tracker.GetSteps().empty() &&
+      HloPredicateIsOp<HloOpcode::kConcatenate, HloOpcode::kSlice>(user)) {
+    candidate_info.tracker = ShapeTracker(candidate->shape());
+    CHECK_OK(candidate_info.dims.SetShape(candidate->shape()));
+    return candidate_info;
+  }
+  return std::nullopt;
+}
+
+FusionDecision ShouldFuseUserTranspose(const HloInstruction& transpose,
+                                       const HloInstruction& fusion,
+                                       const ShapeTracker& tracker) {
+  const HloInstruction* dot = hlo_query::FindInstruction(
+      fusion.fused_instructions_computation(), HloOpcode::kDot);
+  if (dot == nullptr) {
+    return FusionDecision::Forbid("Dot not found in fusion.");
+  }
+
+  absl::StatusOr<std::array<DotOperandDims, 2>> dot_dims =
+      DotOperandDims::FromDot(dot);
+  if (!dot_dims.ok()) {
+    return FusionDecision::Forbid("Failed to get dot operand dims.");
+  }
+  const auto& [lhs_dims, rhs_dims] = *dot_dims;
+
+  int64_t num_batch = lhs_dims.Rank(DotOperandDims::kBatch);
+  int64_t num_lhs_nc = lhs_dims.Rank(DotOperandDims::kNonContracting);
+  int64_t num_rhs_nc = rhs_dims.Rank(DotOperandDims::kNonContracting);
+
+  // Dot result always maps to [batch..., lhs_nc..., rhs_nc...].
+  absl::InlinedVector<int64_t, 4> batch_dims(num_batch);
+  absl::c_iota(batch_dims, 0);
+
+  absl::InlinedVector<int64_t, 4> lhs_nc_dims(num_lhs_nc);
+  absl::c_iota(lhs_nc_dims, num_batch);
+
+  absl::InlinedVector<int64_t, 4> rhs_nc_dims(num_rhs_nc);
+  absl::c_iota(rhs_nc_dims, num_batch + num_lhs_nc);
+
+  ShapeTracker transpose_tracker = tracker;
+  if (!transpose_tracker.AppendInstruction(&transpose).ok()) {
+    return FusionDecision::Forbid("Failed to append transpose to tracker.");
+  }
+
+  for (auto& dim : {batch_dims, lhs_nc_dims, rhs_nc_dims}) {
+    if (!dim.empty() &&
+        !transpose_tracker.MapsToOneStride(dim, /*allow_swaps=*/true)) {
+      return FusionDecision::Forbid("Dimension has non-contiguous section.");
+    }
+  }
+
+  return FusionDecision::Allow();
+}
+
+// Propagates shape tracking information forward from the dot output to `user`.
+// Returns the updated ShapeTracker if propagation is successful, or nullopt if
+// propagation fails.
+std::optional<ShapeTracker> ComputeUserTracker(
+    const HloInstruction* user, std::optional<ShapeTracker> current_tracker) {
+  if (!current_tracker.has_value()) {
+    return std::nullopt;
+  }
+  if (current_tracker->AppendInstruction(user).ok()) {
+    return current_tracker;
+  }
+  if (user->IsElementwise()) {
+    current_tracker->SetElementType(user->shape().element_type());
+    return current_tracker;
+  }
+  return std::nullopt;
+}
+
+FusionDecision ShouldFuseUser(const HloInstruction* user,
+                              const HloInstruction& original_user,
+                              const HloInstruction* fusion,
+                              const std::optional<ShapeTracker>& tracker) {
+  switch (user->opcode()) {
+    case HloOpcode::kTranspose:
+      if (!tracker.has_value()) {
+        return FusionDecision::Forbid(
+            "No shape tracker found for transpose user.");
+      }
+      return ShouldFuseUserTranspose(*user, *fusion, *tracker);
+    case HloOpcode::kConcatenate:
+      return FusionDecision::Forbid("Not fusing concatenate into epilogue.");
+    default:
+      break;
+  }
+
+  int64_t src_operand_index = user->operand_index(fusion);
+  for (int i = 0; i < user->operand_count(); ++i) {
+    const HloInstruction* operand = user->operand(i);
+    // Skip source operand.
+    if (i == src_operand_index) {
+      continue;
+    }
+    // Currently only
+    //  - effective parameters
+    //  - broadcasts of effective parameters
+    //  - broadcasts of scalars
+    // are accepted as other inputs of non-unary operations in
+    // the output fusion.
+    if ((operand->opcode() == HloOpcode::kBroadcast &&
+         (ShapeUtil::IsScalar(operand->operand(0)->shape()) ||
+          hlo_query::IsEffectiveParameter(*operand->operand(0)))) ||
+        hlo_query::IsEffectiveParameter(*operand)) {
+      continue;
+    }
+    return FusionDecision::Forbid(
+        "Has multiple inputs - not properly analyzed yet.");
+  }
+
+  if (!triton_fusion::IsOutputWorthFusing(original_user)) {
+    return FusionDecision::Forbid(
+        "Not obviously profitable to fuse as output.");
+  }
+  return FusionDecision::Allow();
+}
+
+// Attempts to fuse all candidates and their operands into the fusion.
+absl::Status FuseOperandsBFS(
+    mlir::MLIRContext& mlir_context, FusionSearchSpace& search_space,
+    std::queue<std::pair<HloInstruction*, std::optional<TrackerInfo>>>& queue,
+    HloInstruction* fusion) {
+  while (!queue.empty()) {
+    auto [candidate, tracker] = queue.front();
+    queue.pop();
+
+    // In case a candidate had multiple users, it's possible that it was already
+    // fused and is no longer a valid candidate.
+    if (!fusion->IsUserOf(candidate)) {
+      continue;
+    }
+
+    // Hoist bitcast away from the fusion if possible. If its operand is another
+    // bitcast or reshape, they will be collapsed and we try to keep hoisting.
+    if (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(candidate)) {
+      ABSL_ASSIGN_OR_RETURN(candidate, search_space.HoistBitcast(candidate));
+    }
+
+    const HloInstruction& original_candidate =
+        *FindOrDefault(search_space.fused_to_original(), candidate, candidate);
+    if (FusionDecision decision =
+            ShouldFuseOperand(candidate, original_candidate, fusion, tracker);
+        !decision.IsAllowed()) {
+      VLOG(5) << "Not fusing operand: " << candidate->ToString()
+              << " due to profitability decision: " << decision.Explain();
+      continue;
+    }
+    if (FusionDecision decision = CanFuse(mlir_context, candidate, fusion,
+                                          search_space.device_description());
+        !decision.IsAllowed()) {
+      VLOG(5) << "Not fusing operand: " << candidate->ToString()
+              << " due to tileability decision: " << decision.Explain();
+      continue;
+    }
+    VLOG(5) << "Fusing operand: " << candidate->ToString();
+    HloInstruction::InstructionVector operands = candidate->operands();
+    HloInstruction* fused_candidate = fusion->FuseInstruction(candidate);
+    for (HloInstruction* operand : operands) {
+      std::optional<TrackerInfo> operand_tracker;
+      if (tracker.has_value()) {
+        operand_tracker =
+            ComputeCandidateTracker(operand, fused_candidate, *tracker);
+      }
+      queue.push({operand, operand_tracker});
+    }
+  }
+  return absl::OkStatus();
 }
 
 // Fuses user into the fusion. If the user has more operands than the fusion,
 // then it will also attempt to fuse its operands. Returns the new fusion as the
 // only way to fuse a user is to create a new fusion.
 absl::StatusOr<HloInstruction*> FuseUserAndOperands(
-    mlir::MLIRContext& mlir_context, HloInstruction* fusion,
-    HloInstruction* user, absl::flat_hash_set<HloInstruction*>& visited) {
+    mlir::MLIRContext& mlir_context, FusionSearchSpace& search_space,
+    HloInstruction* fusion, HloInstruction* user) {
   int64_t operand_count = fusion->operand_count();
   HloInstruction* new_fusion =
       fusion->parent()->AddInstruction(HloInstruction::CreateFusion(
           user->shape(), HloInstruction::FusionKind::kCustom, user));
-  TF_RETURN_IF_ERROR(fusion->parent()->ReplaceInstruction(user, new_fusion));
+  ABSL_RETURN_IF_ERROR(fusion->parent()->ReplaceInstruction(user, new_fusion));
   new_fusion->MergeFusionInstruction(fusion);
   CHECK_EQ(0, fusion->users().size());
-  TF_RETURN_IF_ERROR(fusion->parent()->RemoveInstruction(fusion));
+  ABSL_RETURN_IF_ERROR(fusion->parent()->RemoveInstruction(fusion));
   if (new_fusion->operand_count() > operand_count) {
-    FuseOperandsBFS(mlir_context, new_fusion->operands(), visited, new_fusion);
+    std::queue<std::pair<HloInstruction*, std::optional<TrackerInfo>>> queue;
+    for (HloInstruction* operand : new_fusion->operands()) {
+      queue.push({operand, std::nullopt});
+    }
+    ABSL_RETURN_IF_ERROR(
+        FuseOperandsBFS(mlir_context, search_space, queue, new_fusion));
   }
   return new_fusion;
+}
+
+absl::StatusOr<HloInstruction*>
+FusionSearchSpace::GetOrCreateOriginalInstruction(
+    HloInstruction* fusion_operand, HloInstruction* fusion_param) {
+  if (auto it = fused_to_original_.find(fusion_operand);
+      it != fused_to_original_.end()) {
+    HloInstruction* original_instr = it->second;
+    if (original_instr->shape() == fusion_param->shape()) {
+      return original_instr;
+    }
+    // Shape mismatch due to bitcast hoisting past boundaries.
+    HloInstruction* instr = original_instr->parent()->AddInstruction(
+        HloInstruction::CreateBitcast(fusion_param->shape(), original_instr));
+    return instr;
+  }
+  // Some bitcasts were created in the search space and do not have a
+  // corresponding original instruction. Find their parent and add the bitcast
+  // to the original module.
+  if (fusion_operand->opcode() == HloOpcode::kBitcast) {
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * original_operand,
+        GetOrCreateOriginalInstruction(fusion_operand->mutable_operand(0),
+                                       fusion_param));
+    HloInstruction* bitcast = original_operand->parent()->AddInstruction(
+        HloInstruction::CreateBitcast(fusion_param->shape(), original_operand));
+    fused_to_original_[fusion_operand] = bitcast;
+    original_to_fused_[bitcast] = fusion_operand;
+    return bitcast;
+  }
+  return absl::InvalidArgumentError(
+      absl::StrCat("Non-bitcast instruction not mapped to original module: ",
+                   fusion_operand->ToString()));
 }
 
 // Creates a fusion from the search space. Starting from the dot instruction,
 // it fuses tileable operands using BFS. Then it fuses tileable users and their
 // operands until it reaches the root of the search space.
 absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateTileableFusion(
-    const FusionSearchSpace& fusion_search_space,
-    const se::GpuComputeCapability gpu_version, absl::string_view name) {
+    FusionSearchSpace& fusion_search_space, absl::string_view name) {
+  const se::DeviceDescription& device_description =
+      fusion_search_space.device_description();
   HloInstruction* original_dot = fusion_search_space.original_dot();
   HloInstruction* dot =
       fusion_search_space.original_to_fused().at(original_dot);
   mlir::MLIRContext mlir_context;
-  RegisterSymbolicExprStorage(&mlir_context);
-  if (!CanTile(mlir_context, *HloFusionAdaptor::ForInstruction(dot))) {
+  if (!CanTile(mlir_context, *HloFusionAdaptor::ForInstruction(dot),
+               device_description)) {
     return FusionDecision::Forbid("Cannot tile the dot instruction.");
   }
+
+  // Initialize queue with trackers for dot operands.
+  absl::StatusOr<std::array<DotOperandDims, 2>> dot_dims =
+      DotOperandDims::FromDot(dot);
+  if (!dot_dims.ok()) {
+    return FusionDecision::Forbid("Failed to get dot operand dims.");
+  }
+  std::queue<std::pair<HloInstruction*, std::optional<TrackerInfo>>> queue(
+      {{dot->mutable_operand(0),
+        TrackerInfo{ShapeTracker(dot->operand(0)->shape()), 0, (*dot_dims)[0]}},
+       {dot->mutable_operand(1),
+        TrackerInfo{ShapeTracker(dot->operand(1)->shape()), 1,
+                    (*dot_dims)[1]}}});
 
   // Start with a fusion containing only the dot instruction.
   auto entry = fusion_search_space.entry();
   auto fusion = entry->AddInstruction(HloInstruction::CreateFusion(
       dot->shape(), HloInstruction::FusionKind::kCustom, dot));
-  TF_RETURN_IF_ERROR(entry->ReplaceInstruction(dot, fusion));
+  ABSL_RETURN_IF_ERROR(entry->ReplaceInstruction(dot, fusion));
 
   // Keep track of the original HLO the fusion is replacing.
   HloInstruction* original_output = original_dot;
 
   // BFS of operands until we cannot tile.
-  absl::flat_hash_set<HloInstruction*> visited;
-  FuseOperandsBFS(mlir_context, fusion->operands(), visited, fusion);
+  ABSL_RETURN_IF_ERROR(
+      FuseOperandsBFS(mlir_context, fusion_search_space, queue, fusion));
+
+  bool prologue_has_s4 = absl::c_any_of(
+      fusion->fused_instructions_computation()->parameter_instructions(),
+      [](const HloInstruction* param) {
+        return param->shape().element_type() == PrimitiveType::S4;
+      });
+  // Before creating the epilogue, check if we can tile the dot's S4 prologue.
+  if (prologue_has_s4) {
+    if (FusionDecision decision = CanUnpackS4ParametersInFusion(
+            *HloFusionAdaptor::ForInstruction(fusion), mlir_context);
+        !decision.IsAllowed()) {
+      return decision;
+    }
+  }
+
+  // Initialize tracker for dot users.
+  std::optional<ShapeTracker> epilogue_tracker = ShapeTracker(dot->shape());
 
   // Fuse in users until we cannot tile or reach the root.
   while (!fusion->IsRoot()) {
     // Search space was created so that the result only ever has a single user.
     CHECK_EQ(fusion->users().size(), 1);
     auto user = fusion->users()[0];
-    if (!CanFuse(mlir_context, fusion, user)) {
-      VLOG(5) << "Cannot fuse user: " << user->ToString();
+
+    // Sink bitcast and reshape users downwards away from the fusion if
+    // possible.
+    if (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kReshape>(user)) {
+      ABSL_ASSIGN_OR_RETURN(user, fusion_search_space.SinkBitcast(user));
+      // nullptr means we have reached the root of the search space.
+      if (user == nullptr) {
+        continue;
+      }
+    }
+
+    HloInstruction* original_user =
+        fusion_search_space.fused_to_original().at(user);
+    if (FusionDecision decision =
+            ShouldFuseUser(user, *original_user, fusion, epilogue_tracker);
+        !decision.IsAllowed()) {
+      VLOG(5) << "Not fusing user: " << user->ToString()
+              << " due to profitability decision: " << decision.Explain();
+      break;
+    }
+    if (FusionDecision decision =
+            CanFuse(mlir_context, fusion, user, device_description);
+        !decision.IsAllowed()) {
+      VLOG(5) << "Not fusing user: " << user->ToString()
+              << " due to tileability decision: " << decision.Explain();
       break;
     }
     VLOG(5) << "Fusing user into epilogue: " << user->ToString();
-    TF_ASSIGN_OR_RETURN(
-        fusion, FuseUserAndOperands(mlir_context, fusion, user, visited));
-    original_output = fusion_search_space.fused_to_original().at(user);
-  }
-
-  // Find inputs to the fusion from the original module.
-  std::vector<HloInstruction*> fusion_inputs;
-  for (HloInstruction* operand : fusion->operands()) {
-    fusion_inputs.push_back(
-        fusion_search_space.fused_to_original().at(operand));
+    epilogue_tracker = ComputeUserTracker(user, std::move(epilogue_tracker));
+    ABSL_ASSIGN_OR_RETURN(
+        fusion,
+        FuseUserAndOperands(mlir_context, fusion_search_space, fusion, user));
+    original_output = original_user;
   }
 
   auto fusion_computation =
       Cast<HloFusionInstruction>(fusion)->fused_instructions_computation();
+
+  ABSL_RETURN_IF_ERROR(RemoveEdgeBitcasts(fusion, fusion_search_space));
+
+  // Find inputs to the fusion from the original module.
+  std::vector<HloInstruction*> fusion_inputs;
+  for (auto [index, operand] : llvm::enumerate(fusion->operands())) {
+    HloInstruction* fusion_param =
+        fusion_computation->parameter_instruction(index);
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * original_instruction,
+                          fusion_search_space.GetOrCreateOriginalInstruction(
+                              operand, fusion_param));
+    fusion_inputs.push_back(original_instruction);
+  }
+
   return Fusion{std::move(fusion_inputs),
                 fusion_computation->Clone(std::string(name)), original_output};
 }
 
 absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusionV2(
-    HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
+    HloDotInstruction& dot, const se::DeviceDescription& device_description,
     absl::string_view name) {
   VLOG(3) << "Creating dot fusion v2 around dot: " << dot.ToString();
-  FusionSearchSpace fusion_search_space(&dot, gpu_version);
+  FusionSearchSpace fusion_search_space(&dot, device_description);
   VLOG(3) << "Found fusion search space: \n"
           << fusion_search_space.entry()->ToString();
-  return CreateTileableFusion(fusion_search_space, gpu_version, name);
+
+  return CreateTileableFusion(fusion_search_space, name);
 }
 
 }  // namespace
@@ -944,9 +2010,11 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusionV2(
 // Fuses dot and the compatible and profitable to fuse operations around it
 // into a new fusion computation.
 absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
-    HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
+    HloDotInstruction& dot, const se::DeviceDescription& device_description,
     absl::string_view name) {
   VLOG(5) << dot.ToString();
+  const se::GpuComputeCapability& gpu_version =
+      device_description.gpu_compute_capability();
   if (CodegenDecision is_supported =
           IsTritonSupportedInstruction(dot, gpu_version);
       !is_supported) {
@@ -957,7 +2025,7 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
           ->config()
           .debug_options()
           .xla_gpu_experimental_gemm_fusion_v2()) {
-    return CreateDotFusionV2(dot, gpu_version, name);
+    return CreateDotFusionV2(dot, device_description, name);
   }
 
   HloComputation::Builder builder(name);
@@ -965,13 +2033,13 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
 
   std::vector<HlosAndRequirements> hlos_and_reqs;
   hlos_and_reqs.reserve(dot.operand_count());
-  TF_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
-                      FuseDotOperand(dot, /*operand_index=*/0, gpu_version,
-                                     builder, fusion_inputs));
+  ABSL_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
+                        FuseDotOperand(dot, /*operand_index=*/0, gpu_version,
+                                       builder, fusion_inputs));
   hlos_and_reqs.push_back(lhs_hlos_and_reqs);
-  TF_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
-                      FuseDotOperand(dot, /*operand_index=*/1, gpu_version,
-                                     builder, fusion_inputs));
+  ABSL_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
+                        FuseDotOperand(dot, /*operand_index=*/1, gpu_version,
+                                       builder, fusion_inputs));
   hlos_and_reqs.push_back(rhs_hlos_and_reqs);
   HloInstruction& fused_dot = FuseDot(dot, hlos_and_reqs, builder);
   // For now the RHS doesn't support splits, so it also doesn't impose any
@@ -1041,8 +2109,9 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
 // operations that can target the triton GEMM emitter.
 class GemmFusionVisitor : public DfsHloRewriteVisitor {
  public:
-  explicit GemmFusionVisitor(const se::GpuComputeCapability& gpu_version)
-      : gpu_version_(gpu_version) {}
+  explicit GemmFusionVisitor(const se::DeviceDescription& device_description)
+      : device_description_(device_description),
+        gpu_version_(device_description.gpu_compute_capability()) {}
   // Checks that a dot() should be targeting the triton GEMM emitter;
   // if so - fuses all its compatible inputs and outputs as a new computation
   // and replaces the original dot() with a call to the computation.
@@ -1054,17 +2123,17 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             ->config()
             .debug_options()
             .xla_gpu_gemm_rewrite_size_threshold();
-    TF_ASSIGN_OR_RETURN(bool is_matmul_tiny,
-                        IsMatrixMultiplicationTooSmallForRewriting(
-                            *dot, gemm_rewrite_size_threshold));
+    ABSL_ASSIGN_OR_RETURN(bool is_matmul_tiny,
+                          IsMatrixMultiplicationTooSmallForRewriting(
+                              *dot, gemm_rewrite_size_threshold));
     if (is_matmul_tiny && IsDotSupportedByClassicalEmitters(*dot)) {
       return absl::OkStatus();
     }
 
     std::string fusion_name = absl::StrCat("gemm_fusion_", dot->name());
-    TF_ASSIGN_OR_RETURN(
+    ABSL_ASSIGN_OR_RETURN(
         auto fusion_or_decision,
-        CreateDotFusion(*Cast<HloDotInstruction>(dot), gpu_version_,
+        CreateDotFusion(*Cast<HloDotInstruction>(dot), device_description_,
                         absl::StrCat(fusion_name, "_computation")));
 
     if (std::holds_alternative<FusionDecision>(fusion_or_decision)) {
@@ -1088,75 +2157,29 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     dot_fusion->set_metadata(dot->metadata());
     dot_fusion->GetModule()->SetAndUniquifyInstrName(dot_fusion, fusion_name);
 
-    TF_ASSIGN_OR_RETURN(auto gpu_config,
-                        dot_fusion->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          dot_fusion->backend_config<GpuBackendConfig>());
     FusionBackendConfig& backend_config =
         *gpu_config.mutable_fusion_backend_config();
     backend_config.set_kind(kTritonGemmFusionKind);
-    TF_RETURN_IF_ERROR(dot_fusion->set_backend_config(gpu_config));
+    ABSL_RETURN_IF_ERROR(dot_fusion->set_backend_config(gpu_config));
+
+    HloInstruction* replacement = dot_fusion;
+    if (fusion.output->shape() != dot_fusion->shape()) {
+      replacement = dot->parent()->AddInstruction(
+          HloInstruction::CreateBitcast(fusion.output->shape(), dot_fusion));
+    }
 
     if (fusion.output->IsRoot()) {
-      fusion.output->parent()->set_root_instruction(dot_fusion);
-      TF_RETURN_IF_ERROR(
+      fusion.output->parent()->set_root_instruction(replacement);
+      ABSL_RETURN_IF_ERROR(
           fusion.output->parent()->RemoveInstructionAndUnusedOperands(
               fusion.output));
       MarkAsChanged();
     } else {
-      TF_RETURN_IF_ERROR(ReplaceInstruction(fusion.output, dot_fusion));
+      ABSL_RETURN_IF_ERROR(ReplaceInstruction(fusion.output, replacement));
     }
     XLA_VLOG_LINES(5, computation->ToString(HloPrintOptions::ShortParsable()));
-    return absl::OkStatus();
-  }
-
-  absl::Status HandleRaggedDot(HloInstruction* ragged_dot) override {
-    auto module = ragged_dot->GetModule();
-    const bool has_grouped_gemm =
-        module->config()
-            .debug_options()
-            .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
-        module->config().debug_options().xla_gpu_enable_cublaslt();
-    const bool ragged_dot_fusion_enabled =
-        module->config()
-            .debug_options()
-            .xla_gpu_experimental_use_ragged_dot_fusion();
-    if (has_grouped_gemm || ragged_dot_fusion_enabled) {
-      // At the moment, if Gpublaslt support is available, it is prefered
-      // over triton fused ragged-dot. Therefore, we skip this pass and
-      // does not fused the ragged-dot op if the Gpublaslt support
-      // is available for this operation.
-      return absl::OkStatus();
-    }
-
-    HloComputation::Builder builder(
-        absl::StrCat("ragged_fusion_", ragged_dot->name(), "_computation"));
-
-    std::vector<HloInstruction*> new_operands;
-    new_operands.reserve(ragged_dot->operand_count());
-    for (int i = 0; i < ragged_dot->operand_count(); ++i) {
-      new_operands.push_back(builder.AddInstruction(
-          HloInstruction::CreateParameter(i, ragged_dot->operand(i)->shape(),
-                                          absl::StrCat("parameter_", i))));
-    }
-    builder.AddInstruction(
-        ragged_dot->CloneWithNewOperands(ragged_dot->shape(), new_operands));
-
-    HloComputation* computation =
-        module->AddComputationAndUnifyNamesAndIds(builder.Build(),
-                                                  /*is_entry=*/false);
-    HloInstruction* dot_fusion = ragged_dot->parent()->AddInstruction(
-        HloInstruction::CreateFusion(computation->root_instruction()->shape(),
-                                     HloInstruction::FusionKind::kCustom,
-                                     ragged_dot->operands(), computation));
-
-    TF_ASSIGN_OR_RETURN(auto gpu_config,
-                        dot_fusion->backend_config<GpuBackendConfig>());
-    FusionBackendConfig& backend_config =
-        *gpu_config.mutable_fusion_backend_config();
-    backend_config.set_kind("__triton_ragged_dot");
-    TF_RETURN_IF_ERROR(dot_fusion->set_backend_config(gpu_config));
-
-    TF_RETURN_IF_ERROR(ReplaceInstruction(ragged_dot, dot_fusion));
-    MarkAsChanged();
     return absl::OkStatus();
   }
 
@@ -1169,21 +2192,21 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
 
     std::vector<HlosAndRequirements> hlos_and_reqs;
     hlos_and_reqs.reserve(scaled_dot->operand_count());
-    TF_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
-                        FuseDotOperand(*scaled_dot, /*operand_index=*/0,
-                                       gpu_version_, builder, fusion_inputs));
+    ABSL_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/0,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(lhs_hlos_and_reqs);
-    TF_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
-                        FuseDotOperand(*scaled_dot, /*operand_index=*/1,
-                                       gpu_version_, builder, fusion_inputs));
+    ABSL_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/1,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(rhs_hlos_and_reqs);
-    TF_ASSIGN_OR_RETURN(HlosAndRequirements lhs_scale_hlos_and_reqs,
-                        FuseDotOperand(*scaled_dot, /*operand_index=*/2,
-                                       gpu_version_, builder, fusion_inputs));
+    ABSL_ASSIGN_OR_RETURN(HlosAndRequirements lhs_scale_hlos_and_reqs,
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/2,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(lhs_scale_hlos_and_reqs);
-    TF_ASSIGN_OR_RETURN(HlosAndRequirements rhs_scale_hlos_and_reqs,
-                        FuseDotOperand(*scaled_dot, /*operand_index=*/3,
-                                       gpu_version_, builder, fusion_inputs));
+    ABSL_ASSIGN_OR_RETURN(HlosAndRequirements rhs_scale_hlos_and_reqs,
+                          FuseDotOperand(*scaled_dot, /*operand_index=*/3,
+                                         gpu_version_, builder, fusion_inputs));
     hlos_and_reqs.push_back(rhs_scale_hlos_and_reqs);
 
     HloInstruction& fused_dot = FuseDot(*scaled_dot, hlos_and_reqs, builder);
@@ -1201,26 +2224,28 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             computation->root_instruction()->shape(),
             HloInstruction::FusionKind::kCustom, fusion_inputs, computation));
 
-    TF_ASSIGN_OR_RETURN(auto gpu_config,
-                        fusion->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          fusion->backend_config<GpuBackendConfig>());
     FusionBackendConfig& backend_config =
         *gpu_config.mutable_fusion_backend_config();
     backend_config.set_kind(kTritonGemmFusionKind);
-    TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
+    ABSL_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
     HloInstruction* fusion_output = fused_output_and_reqs.original_hlo;
-    TF_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, fusion));
+    ABSL_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, fusion));
     MarkAsChanged();
     return absl::OkStatus();
   }
 
  private:
+  const se::DeviceDescription& device_description_;
   se::GpuComputeCapability gpu_version_;
 };
 
 absl::StatusOr<bool> RunOnComputation(
-    HloComputation* computation, const se::GpuComputeCapability& gpu_version) {
-  GemmFusionVisitor visitor(gpu_version);
-  TF_RETURN_IF_ERROR(computation->Accept(&visitor));
+    HloComputation* computation,
+    const se::DeviceDescription& device_description) {
+  GemmFusionVisitor visitor(device_description);
+  ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
   return visitor.changed();
 }
 
@@ -1229,14 +2254,14 @@ absl::StatusOr<bool> RunOnComputation(
 absl::StatusOr<bool> GemmFusion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  TF_RETURN_IF_ERROR(
-      EnsureTritonSupportsComputeCapability(compute_capability_));
+  ABSL_RETURN_IF_ERROR(EnsureTritonSupportsComputeCapability(
+      device_description_.gpu_compute_capability()));
 
   bool changed = false;
   for (HloComputation* computation :
        GetFusibleComputations(*module, execution_threads)) {
-    TF_ASSIGN_OR_RETURN(bool result,
-                        RunOnComputation(computation, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          RunOnComputation(computation, device_description_));
     changed |= result;
   }
   return changed;

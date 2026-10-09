@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/mlir/utils/type_util.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/functional/function_ref.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Builders.h"
@@ -103,6 +104,10 @@ INSTANTIATE_TEST_SUITE_P(
         {{PRED, [](mlir::Builder b) { return b.getI1Type(); }},
          {F4E2M1FN,
           [](mlir::Builder b) { return b.getType<mlir::Float4E2M1FNType>(); }},
+         {F6E3M2FN,
+          [](mlir::Builder b) { return b.getType<mlir::Float6E3M2FNType>(); }},
+         {F6E2M3FN,
+          [](mlir::Builder b) { return b.getType<mlir::Float6E2M3FNType>(); }},
          {F8E5M2,
           [](mlir::Builder b) { return b.getType<mlir::Float8E5M2Type>(); }},
          {F8E4M3,

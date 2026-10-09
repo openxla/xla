@@ -15,9 +15,10 @@ limitations under the License.
 #ifndef XLA_TESTS_XLA_TEST_BACKEND_PREDICATES_H_
 #define XLA_TESTS_XLA_TEST_BACKEND_PREDICATES_H_
 
+#include <gtest/gtest.h>
+
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/nullability.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -112,6 +113,17 @@ template <typename T>
   std::vector<T> empty_vec;
   return ::testing::ValuesIn(empty_vec);
 }
+
+// Macros for concise device-based test skipping.
+// Can optionally be chained with << to provide a custom skip message.
+// Example usage:
+//   SKIP_IF_NOT_DEVICE(test::kA100, test::kH100) << "Only on A100 or H100";
+//   SKIP_IF_DEVICE(test::kV100);
+#define SKIP_IF_NOT_DEVICE(...) \
+  if (!::xla::test::DeviceIsOneOf({__VA_ARGS__})) GTEST_SKIP()
+
+#define SKIP_IF_DEVICE(...) \
+  if (::xla::test::DeviceIsOneOf({__VA_ARGS__})) GTEST_SKIP()
 
 }  // namespace xla::test
 #endif  // XLA_TESTS_XLA_TEST_BACKEND_PREDICATES_H_

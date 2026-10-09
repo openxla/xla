@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "llvm/IR/LLVMContext.h"
@@ -38,6 +39,7 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/debug_options_flags.h"
@@ -46,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 namespace {
 const char* const kUsage = R"(
@@ -93,7 +94,7 @@ absl::StatusOr<std::string> GetInputContents(const IrCompilerOptConfig& opts,
   }
 
   std::string data;
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       tsl::ReadFileToString(tsl::Env::Default(), input_path, &data));
   return data;
 }
@@ -125,14 +126,14 @@ absl::StatusOr<std::string> RunIrCompilerPasses(const IrCompilerOptConfig& opts,
   auto ir_compiler = IrCompiler::Create(target_options, ir_compiler_options,
                                         IrCompiler::CompilationHooks());
 
-  TF_ASSIGN_OR_RETURN(std::string ir_content,
-                      GetInputContents(opts, argc, argv));
+  ABSL_ASSIGN_OR_RETURN(std::string ir_content,
+                        GetInputContents(opts, argc, argv));
 
   llvm::LLVMContext context;
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> module,
-                      ParseLlvmIr(ir_content, context));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> module,
+                        ParseLlvmIr(ir_content, context));
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<llvm::TargetMachine> target_machine,
       ir_compiler->InferTargetMachine(
           target_options, static_cast<llvm::CodeGenOptLevel>(opts.opt_level),
@@ -149,13 +150,13 @@ absl::StatusOr<std::string> RunIrCompilerPasses(const IrCompilerOptConfig& opts,
 
 absl::Status RunIrCompilerOptMain(int argc, char** argv,
                                   const IrCompilerOptConfig& opts) {
-  TF_ASSIGN_OR_RETURN(std::string output,
-                      RunIrCompilerPasses(opts, argc, argv));
+  ABSL_ASSIGN_OR_RETURN(std::string output,
+                        RunIrCompilerPasses(opts, argc, argv));
 
   if (opts.output_file == "-") {
     std::cout << output << std::endl;
   } else {
-    TF_RETURN_IF_ERROR(
+    ABSL_RETURN_IF_ERROR(
         tsl::WriteStringToFile(tsl::Env::Default(), opts.output_file, output));
   }
   return absl::OkStatus();

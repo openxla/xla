@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/kernel_serialization_check.h"
 
 #include <gmock/gmock.h>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/kernel_spec.h"
@@ -36,9 +37,9 @@ void VerifyKernelIsSerializable(const KernelLoaderSpec& kernel_spec,
         persistent_kernel_name, platform_id);
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpecProto proto, kernel_spec.ToProto());
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpecProto proto, kernel_spec.ToProto());
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       KernelLoaderSpec deserialized_spec,
       KernelLoaderSpec::FromProto(proto, resolve_kernel_symbol));
 

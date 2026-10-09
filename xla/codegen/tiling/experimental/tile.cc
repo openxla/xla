@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
 
@@ -76,10 +78,10 @@ DimTile GetFullDimTile(int64_t dim_size, MLIRContext* ctx) {
                  CreateSymbolicConstant(dim_size, ctx)};
 }
 
-DimTile GetDefaultDimTile(int64_t id, SymbolicExpr tile_size,
+DimTile GetDefaultDimTile(TiledDimId id, SymbolicExpr tile_size,
                           int64_t dim_size) {
   MLIRContext* ctx = tile_size.GetContext();
-  auto tile_id = CreateDimExpr(id, ctx);
+  SymbolicExpr tile_id = CreateDimExpr(id.value(), ctx);
   return DimTile{tile_id * tile_size, tile_size, CreateSymbolicConstant(1, ctx),
                  CreateSymbolicConstant(dim_size, ctx)};
 }
@@ -87,6 +89,12 @@ DimTile GetDefaultDimTile(int64_t id, SymbolicExpr tile_size,
 bool DimTile::operator==(const DimTile& other) const {
   return offset == other.offset && size == other.size &&
          stride == other.stride && upper_bound == other.upper_bound;
+}
+
+std::string DimTile::ToString() const {
+  return absl::StrCat("offset [", offset.ToString(), "], size [",
+                      size.ToString(), "], stride [", stride.ToString(),
+                      "], upper bound [", upper_bound.ToString(), "]");
 }
 
 Tile::Tile(const TilingSpace& tiling_space, ArrayRef<SymbolicExpr> offsets,
@@ -101,8 +109,13 @@ Tile::Tile(const TilingSpace& tiling_space, ArrayRef<SymbolicExpr> offsets,
 }
 
 Tile::Tile(const TilingSpace& tiling_space,
-           llvm::SmallVector<DimTile> dim_tiles)
-    : tiling_space_(&tiling_space), dim_tiles_(std::move(dim_tiles)) {}
+           llvm::SmallVector<DimTile> dim_tiles,
+           llvm::SmallVector<DimTile> replica_ids,
+           llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints)
+    : tiling_space_(&tiling_space),
+      dim_tiles_(std::move(dim_tiles)),
+      replica_ids_(std::move(replica_ids)),
+      constraints_(constraints.begin(), constraints.end()) {}
 
 MLIRContext* Tile::mlir_context() const {
   return tiling_space_->mlir_context();
@@ -143,45 +156,68 @@ std::string Tile::ToString(bool print_variables) const {
   ss << "] upper bounds [";
   llvm::interleaveComma(upper_bounds(), ss, print_expr);
   ss << ']';
-  if (replica_id_.has_value()) {
-    ss << " replica_id [";
-    ss << replica_id_->ToString(tid_names, symbol_names);
+  if (!replica_ids_.empty()) {
+    ss << " replica ids {";
+    ss << " offsets [";
+    llvm::interleaveComma(offsets(DimTileType::kReplicaId), ss, print_expr);
+    ss << "] sizes [";
+    llvm::interleaveComma(sizes(DimTileType::kReplicaId), ss, print_expr);
+    ss << "] strides [";
+    llvm::interleaveComma(strides(DimTileType::kReplicaId), ss, print_expr);
+    ss << "] upper bounds [";
+    llvm::interleaveComma(upper_bounds(DimTileType::kReplicaId), ss,
+                          print_expr);
     ss << ']';
+    ss << '}';
+  }
+  if (!constraints_.empty()) {
+    ss << " constraints {";
+    llvm::interleave(
+        constraints_, ss,
+        [&](const auto& c) {
+          ss << c.first.ToString(tid_names, symbol_names) << " in ["
+             << c.second.lower << ", " << c.second.upper << "]";
+        },
+        "\n");
+    ss << '}';
   }
   return ss.str();
 }
 
-SmallVector<SymbolicExpr> Tile::offsets() const {
+SmallVector<SymbolicExpr> Tile::offsets(DimTileType type) const {
   SmallVector<SymbolicExpr> offsets;
-  offsets.reserve(dim_tiles_.size());
-  for (const DimTile& dim_tile : dim_tiles_) {
+  offsets.reserve(TilesOf(type).size());
+  for (const DimTile& dim_tile : TilesOf(type)) {
     offsets.push_back(dim_tile.offset);
   }
   return offsets;
 }
 
-SmallVector<SymbolicExpr> Tile::sizes() const {
+SmallVector<SymbolicExpr> Tile::sizes(DimTileType type) const {
   SmallVector<SymbolicExpr> sizes;
-  sizes.reserve(dim_tiles_.size());
-  for (const DimTile& dim_tile : dim_tiles_) {
+  llvm::ArrayRef<DimTile> tiles = TilesOf(type);
+  sizes.reserve(tiles.size());
+  for (const DimTile& dim_tile : tiles) {
     sizes.push_back(dim_tile.size);
   }
   return sizes;
 }
 
-SmallVector<SymbolicExpr> Tile::strides() const {
+SmallVector<SymbolicExpr> Tile::strides(DimTileType type) const {
   SmallVector<SymbolicExpr> strides;
-  strides.reserve(dim_tiles_.size());
-  for (const DimTile& dim_tile : dim_tiles_) {
+  llvm::ArrayRef<DimTile> tiles = TilesOf(type);
+  strides.reserve(tiles.size());
+  for (const DimTile& dim_tile : tiles) {
     strides.push_back(dim_tile.stride);
   }
   return strides;
 }
 
-SmallVector<SymbolicExpr> Tile::upper_bounds() const {
+SmallVector<SymbolicExpr> Tile::upper_bounds(DimTileType type) const {
   SmallVector<SymbolicExpr> upper_bounds;
-  upper_bounds.reserve(dim_tiles_.size());
-  for (const DimTile& dim_tile : dim_tiles_) {
+  llvm::ArrayRef<DimTile> tiles = TilesOf(type);
+  upper_bounds.reserve(tiles.size());
+  for (const DimTile& dim_tile : tiles) {
     upper_bounds.push_back(dim_tile.upper_bound);
   }
   return upper_bounds;
@@ -196,27 +232,124 @@ absl::StatusOr<llvm::SmallVector<int64_t>> Tile::GetStaticTileStrides() const {
 }
 
 void Tile::Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map) {
-  for (DimTile& dim_tile : dim_tiles_) {
+  for (DimTile& dim_tile : llvm::concat<DimTile>(dim_tiles_, replica_ids_)) {
     dim_tile.offset = dim_tile.offset.Replace(map);
     dim_tile.size = dim_tile.size.Replace(map);
     dim_tile.stride = dim_tile.stride.Replace(map);
     dim_tile.upper_bound = dim_tile.upper_bound.Replace(map);
   }
-  if (replica_id_.has_value()) {
-    replica_id_ = replica_id_->Replace(map);
+  auto old_constraints = std::move(constraints_);
+  constraints_.clear();
+  for (const auto& [expr, range] : old_constraints) {
+    AddConstraint(expr.Replace(map), range);
+  }
+}
+
+bool Tile::DependsOnVariables(llvm::ArrayRef<VariableID> variables) const {
+  for (const DimTile& dim_tile :
+       llvm::concat<const DimTile>(dim_tiles_, replica_ids_)) {
+    for (SymbolicExpr expr : {dim_tile.offset, dim_tile.size, dim_tile.stride,
+                              dim_tile.upper_bound}) {
+      for (VariableID var : variables) {
+        if (expr.IsFunctionOfVariable(var)) {
+          return true;
+        }
+      }
+    }
+  }
+  for (const auto& [expr, range] : constraints_) {
+    for (VariableID var : variables) {
+      if (expr.IsFunctionOfVariable(var)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void SimplifyDimTiles(
+    llvm::ArrayRef<llvm::MutableArrayRef<DimTile>> dim_tile_groups,
+    const TilingSpace& space,
+    llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints) {
+  int64_t total_dim_tiles = 0;
+  for (const auto& group : dim_tile_groups) {
+    total_dim_tiles += group.size();
+  }
+  if (total_dim_tiles == 0) {
+    return;
+  }
+  llvm::SmallVector<SymbolicExpr> expressions;
+  expressions.reserve(total_dim_tiles * 4);
+  for (auto& group : dim_tile_groups) {
+    for (DimTile& dim_tile : group) {
+      expressions.push_back(dim_tile.offset);
+      expressions.push_back(dim_tile.size);
+      expressions.push_back(dim_tile.stride);
+      expressions.push_back(dim_tile.upper_bound);
+    }
+  }
+  TilingSpace::SimplificationResult result =
+      space.SimplifyExpressions(expressions, constraints);
+  if (result.is_known_empty) {
+    // TODO(b/565301234): mark the tile as unreachable?
+    // The tile is never accessed, keep the expressions as they are.
+    return;
+  }
+  CHECK_EQ(result.expressions.size(), total_dim_tiles * 4);
+  int idx = 0;
+  for (auto& group : dim_tile_groups) {
+    for (DimTile& dim_tile : group) {
+      dim_tile.offset = result.expressions[idx++];
+      dim_tile.size = result.expressions[idx++];
+      dim_tile.stride = result.expressions[idx++];
+      dim_tile.upper_bound = result.expressions[idx++];
+    }
+  }
+}
+
+void SimplifyDimTiles(
+    llvm::MutableArrayRef<DimTile> dim_tiles, const TilingSpace& space,
+    llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints) {
+  SimplifyDimTiles(
+      llvm::ArrayRef<llvm::MutableArrayRef<DimTile>>(&dim_tiles, 1), space,
+      constraints);
+}
+
+void DimTile::Simplify(
+    const TilingSpace& space,
+    llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints) {
+  SimplifyDimTiles(*this, space, constraints);
+}
+
+void Tile::Simplify() {
+  SimplifyDimTiles({dim_tiles_, replica_ids_}, *tiling_space_, constraints_);
+}
+
+void Tile::AddConstraint(SymbolicExpr expr, Interval range) {
+  auto it = llvm::find_if(constraints_,
+                          [&](const auto& c) { return c.first == expr; });
+  if (it != constraints_.end()) {
+    it->second = it->second.Intersect(range);
+  } else {
+    constraints_.emplace_back(expr, range);
   }
 }
 
 Tile Tile::CloneWithNewDims(llvm::SmallVector<DimTile> new_dim_tiles) const {
-  Tile ret{*tiling_space_, std::move(new_dim_tiles)};
-  ret.set_replica_id(replica_id_);
+  Tile ret{*tiling_space_, std::move(new_dim_tiles), replica_ids_,
+           constraints_};
   return ret;
+}
+
+Tile Tile::CloneWithNewTilingSpace(const TilingSpace& new_space) const {
+  return Tile(new_space, dim_tiles_, replica_ids_, constraints_);
 }
 
 bool Tile::operator==(const Tile& other) const {
   return tiling_space_ == other.tiling_space_ &&  //
          dim_tiles_ == other.dim_tiles_ &&        //
-         replica_id_ == other.replica_id_;
+         replica_ids_ == other.replica_ids_ &&    //
+         constraints_ == other.constraints_;
 }
 
 }  // namespace xla::gpu::experimental

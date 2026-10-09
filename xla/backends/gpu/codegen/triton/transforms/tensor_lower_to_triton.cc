@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <utility>
 
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -26,8 +25,8 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/codegen/xtile/ir/xtile_ops.h"
 
 namespace mlir::triton::xla {
 
@@ -88,9 +87,5 @@ class TensorLowerToTritonPass
 };
 
 }  // namespace
-
-std::unique_ptr<Pass> CreateTensorLowerToTritonPass() {
-  return std::make_unique<TensorLowerToTritonPass>();
-}
 
 }  // namespace mlir::triton::xla

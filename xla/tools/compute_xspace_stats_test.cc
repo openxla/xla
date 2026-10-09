@@ -15,17 +15,18 @@ limitations under the License.
 
 #include "xla/tools/compute_xspace_stats.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/profiler/utils/group_events.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_test_utils.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla::gpu {
 namespace {

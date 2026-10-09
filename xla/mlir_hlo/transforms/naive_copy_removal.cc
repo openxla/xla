@@ -13,27 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <utility>
 
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Pass/Pass.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "transforms/passes.h"
 
 namespace mlir {
-namespace {
 
 #define GEN_PASS_DEF_NAIVECOPYREMOVALPASS
 #include "transforms/passes.h.inc"
 
+namespace {
+
 /// Remove memref::CopyOp whose target (can be either a memref::SubViewOp or
 /// memref::AllocOp) has no other users.
-LogicalResult removeCopy(memref::CopyOp op, PatternRewriter &rewriter) {
+LogicalResult removeCopy(memref::CopyOp op, PatternRewriter& rewriter) {
   Value valueIt = op.getTarget();
-  Operation *onlyNonStoreLikeUser = op;
+  Operation* onlyNonStoreLikeUser = op;
   for (auto subviewOp = valueIt.getDefiningOp<memref::SubViewOp>(); subviewOp;
        onlyNonStoreLikeUser = subviewOp, valueIt = subviewOp.getSource(),
             subviewOp = valueIt.getDefiningOp<memref::SubViewOp>()) {
@@ -48,7 +49,7 @@ LogicalResult removeCopy(memref::CopyOp op, PatternRewriter &rewriter) {
   }
 
   auto hasOnlyStoreLikeUsers = [&](Value alloc) {
-    return !llvm::any_of(alloc.getUsers(), [&](Operation *op) {
+    return !llvm::any_of(alloc.getUsers(), [&](Operation* op) {
       if (op == onlyNonStoreLikeUser) return false;
       // TODO(vuson) remove this exception when MemoryEffectOpInterface gets
       // corrected for linalg::FillOp. Right now it has MemoryEffects::Read
@@ -75,7 +76,7 @@ struct NaiveCopyRemovalPass
     : public impl::NaiveCopyRemovalPassBase<NaiveCopyRemovalPass> {
   void runOnOperation() override {
     auto func = getOperation();
-    auto *ctx = func.getContext();
+    auto* ctx = func.getContext();
 
     RewritePatternSet patterns(ctx);
     patterns.add(removeCopy);
@@ -84,10 +85,6 @@ struct NaiveCopyRemovalPass
       return signalPassFailure();
   }
 };
+
 }  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>> createNaiveCopyRemovalPass() {
-  return std::make_unique<NaiveCopyRemovalPass>();
-}
-
 }  // namespace mlir

@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/status_macros.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <functional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
@@ -137,7 +139,7 @@ using StatusReturningFunction = std::function<absl::Status()>;
 
 absl::StatusOr<int> CallStatusReturningFunction(
     const StatusReturningFunction& func) {
-  TF_RETURN_IF_ERROR(func());
+  ABSL_RETURN_IF_ERROR(func());
   return 42;
 }
 
@@ -155,7 +157,7 @@ TEST(StatusMacros, ReturnIfErrorOnError) {
 
 TEST(StatusMacros, AssignOrReturnSuccessfully) {
   absl::Status status = []() {
-    TF_ASSIGN_OR_RETURN(int value, CreateIntSuccessfully());
+    ABSL_ASSIGN_OR_RETURN(int value, CreateIntSuccessfully());
     EXPECT_EQ(value, 42);
     return absl::OkStatus();
   }();
@@ -164,7 +166,7 @@ TEST(StatusMacros, AssignOrReturnSuccessfully) {
 
 TEST(StatusMacros, AssignOrReturnUnsuccessfully) {
   absl::Status status = []() {
-    TF_ASSIGN_OR_RETURN(int value, CreateIntUnsuccessfully());
+    ABSL_ASSIGN_OR_RETURN(int value, CreateIntUnsuccessfully());
     (void)value;
     return absl::OkStatus();
   }();

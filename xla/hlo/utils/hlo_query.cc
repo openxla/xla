@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -45,6 +46,7 @@ bool IsCollectiveCommunicationOp(HloOpcode op) {
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectiveReduce:
     case HloOpcode::kReduceScatter:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllGatherStart:
@@ -208,6 +210,15 @@ bool IsEffectiveParameter(const HloInstruction& instr) {
          ((instr.opcode() == HloOpcode::kBitcast ||
            instr.opcode() == HloOpcode::kGetTupleElement) &&
           IsEffectiveParameter(*instr.operand(0)));
+}
+
+const HloInstruction* StripCastLike(const HloInstruction* instr) {
+  while (instr->opcode() == HloOpcode::kCopy ||
+         instr->opcode() == HloOpcode::kConvert ||
+         instr->opcode() == HloOpcode::kBitcast) {
+    instr = instr->operand(0);
+  }
+  return instr;
 }
 
 HloInstruction* GetFirstInstructionWithOpcode(const HloComputation& computation,
@@ -375,9 +386,9 @@ bool IsChangeTilingCopyFusion(const HloInstruction* instr) {
 bool IsStandardAssociativeScan(const HloInstruction* instruction) {
   auto* scan = DynCast<HloScanInstruction>(instruction);
   if (scan == nullptr || scan->IsRoot() ||
-      scan->is_associative() != TRI_STATE_TRUE || scan->is_reverse() ||
-      scan->num_carries() != 1 || scan->operand_count() != 2 ||
-      !scan->shape().IsTuple() || scan->shape().tuple_shapes().size() != 2 ||
+      scan->is_associative() != TRI_STATE_TRUE || scan->num_carries() != 1 ||
+      scan->operand_count() != 2 || !scan->shape().IsTuple() ||
+      scan->shape().tuple_shapes().size() != 2 ||
       !scan->shape().tuple_shapes(0).IsArray()) {
     return false;
   }
@@ -386,8 +397,7 @@ bool IsStandardAssociativeScan(const HloInstruction* instruction) {
     if (user->user_count() == 0 && !user->IsRoot()) {
       continue;
     }
-    if (user->opcode() != HloOpcode::kGetTupleElement ||
-        user->tuple_index() != 0) {
+    if (user->opcode() != HloOpcode::kGetTupleElement) {
       return false;
     }
   }

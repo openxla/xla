@@ -21,10 +21,12 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/loopback_communicator.h"
 #include "xla/core/collectives/clique_id.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 

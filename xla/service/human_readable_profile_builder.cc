@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/numbers.h"
 #include "xla/metric_table_report.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
 
 namespace xla {
 

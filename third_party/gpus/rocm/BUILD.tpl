@@ -1,6 +1,22 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
-load("@local_config_rocm//rocm:build_defs.bzl", "rocm_lib_import")
+load("@config_rocm_hipcc//rocm:build_defs.bzl", "hipcc_config")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_lib_import", "rocm_version_number")
 
 licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
@@ -86,8 +102,10 @@ cc_library(
     hdrs = glob([
         "%{rocm_root}/include/**",
     ]),
-    defines = {"__HIP_DISABLE_CPP_FUNCTIONS__": "1"},
     strip_include_prefix = "%{rocm_root}/include",
+    deps = [
+        "@xla//third_party/libdrm:drm_headers",
+    ],
 )
 
 cc_library(
@@ -106,24 +124,20 @@ cc_library(
     ],
 )
 
-# Provides -Wl,-rpath flags for ROCm libraries.
-# These must live in a cc_library (not a toolchain feature) because
-# cc_library linkopts propagate transitively through CcInfo to the
-# final linking target, whereas toolchain features do not.
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": [
-            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
         ],
         ":link_only": [
         ],
         ":multiple_rocm_paths": [
-            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
             "-Wl,-rpath=%{rocm_lib_paths}",
         ],
         "//conditions:default": [
-            "-Wl,-rpath,external/%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
             "-Wl,-rpath,/opt/rocm/lib",
         ],
     }),
@@ -141,6 +155,7 @@ rocm_lib_import(
     data = glob(
         [
             "%{rocm_root}/lib/libamdhip64.so*",
+            "%{rocm_root}/lib/librocm_kpack.so*",
         ],
     ),
     interface_library = "%{rocm_root}/lib/libamdhip64.so",
@@ -188,6 +203,7 @@ cc_library(
             "%{rocm_root}/lib/libamd_comgr_loader.so*",
             "%{rocm_root}/lib/libamd_comgr.so*",
             "%{rocm_root}/lib/llvm/lib/libLLVM.so*",
+            "%{rocm_root}/lib/llvm/lib/libclang-cpp.so*",
         ],
     ),
     deps = [
@@ -213,7 +229,15 @@ rocm_lib_import(
     name = "rocblas",
     data = glob([
         "%{rocm_root}/lib/librocblas.so*",
-        "%{rocm_root}/lib/rocblas/**",
+        "%{rocm_root}/lib/rocblas/library/*fallback.dat",
+    ]) + glob([
+        pattern
+        for arch in rocm_gpu_architectures()
+        for pattern in [
+            "%{rocm_root}/lib/rocblas/library/*" + arch + "*",
+            "%{rocm_root}/lib/rocblas/library/" + arch + "/**/*",
+            "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack",
+        ]
     ]),
     interface_library = "%{rocm_root}/lib/librocblas.so",
     deps = [
@@ -235,7 +259,10 @@ rocm_lib_import(
 
 cc_library(
     name = "rocfft_libs",
-    data = glob(["%{rocm_root}/lib/librocfft.so*"]),
+    data = glob(["%{rocm_root}/lib/librocfft.so*"]) + glob([
+        "%{rocm_root}/.kpack/fft_lib_" + arch + ".kpack"
+        for arch in rocm_gpu_architectures()
+    ]),
     deps = [
         ":hip_runtime_libs",
         ":hiprtc_libs",
@@ -254,18 +281,30 @@ rocm_lib_import(
 
 cc_library(
     name = "rocrand_libs",
-    data = glob(["%{rocm_root}/lib/librocrand.so*"]),
+    data = glob(["%{rocm_root}/lib/librocrand.so*"]) + glob([
+        "%{rocm_root}/.kpack/rand_lib_" + arch + ".kpack"
+        for arch in rocm_gpu_architectures()
+    ]),
     deps = [
         ":hip_runtime_libs",
     ],
+)
+
+cc_library(
+    name = "rocm_core_libs",
+    data = glob(["%{rocm_root}/lib/librocm-core.so*"]),
 )
 
 rocm_lib_import(
     name = "miopen",
     data = glob([
         "%{rocm_root}/lib/libMIOpen.so*",
-        "%{rocm_root}/share/miopen/**",
-        "%{rocm_root}/lib/librocm-core.so*",
+    ]) + glob([
+        "%{rocm_root}/share/miopen/db/" + arch + "*"
+        for arch in rocm_gpu_architectures()
+    ]) + glob([
+        "%{rocm_root}/lib/libMIOpenCKGroupedConv_" + arch + ".so"
+        for arch in rocm_gpu_architectures()
     ]),
     interface_library = "%{rocm_root}/lib/libMIOpen.so",
     deps = [
@@ -274,6 +313,7 @@ rocm_lib_import(
         ":hipblaslt_libs",
         ":hiprtc_libs",
         ":rocblas_libs",
+        ":rocm_core_libs",
         ":roctx_libs",
         ":system_libs",
     ],
@@ -281,26 +321,50 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rccl",
-    data = glob(["%{rocm_root}/lib/librccl.so*"]),
+    data = glob(["%{rocm_root}/lib/librccl.so*"]) + glob([
+        "%{rocm_root}/.kpack/rccl_lib_" + arch + ".kpack"
+        for arch in rocm_gpu_architectures()
+    ]),
     interface_library = "%{rocm_root}/lib/librccl.so",
     deps = [
-        ":hip_runtime_libs",
         ":amdsmi_libs",
+        ":hip_runtime_libs",
+        ":rocm_core_libs",
         ":rocm_smi_libs",
         ":rocprofiler_register_libs",
         ":roctx_libs",
     ],
 )
 
-cc_library(
-    name = "amdsmi_libs",
+# Both SMI libraries are exposed here; consumers pick one. They must not be
+# mixed in a single process, see the :smi alias in
+# xla/stream_executor/rocm/BUILD.
+rocm_lib_import(
+    name = "amdsmi",
     data = glob(["%{rocm_root}/lib/libamd_smi.so*"]),
+    interface_library = "%{rocm_root}/lib/libamd_smi.so",
+    deps = [
+        ":system_libs",
+    ],
 )
 
 rocm_lib_import(
     name = "rocm_smi",
     data = glob(["%{rocm_root}/lib/librocm_smi64.so*"]),
     interface_library = "%{rocm_root}/lib/librocm_smi64.so",
+    deps = [],
+)
+
+cc_import(
+    name = "hsakmt",
+    static_library = "%{rocm_root}/lib/libhsakmt.a",
+    visibility = ["//visibility:public"],
+)
+
+rocm_lib_import(
+    name = "hsa_runtime",
+    data = [":hsa_rocr_libs_data"],
+    interface_library = "%{rocm_root}/lib/libhsa-runtime64.so",
     deps = [],
 )
 
@@ -330,9 +394,13 @@ rocm_lib_import(
 
 cc_library(
     name = "rocsparse_libs",
-    data = glob(["%{rocm_root}/lib/librocsparse.so*"]),
+    data = glob(["%{rocm_root}/lib/librocsparse.so*"]) + glob([
+        "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack"
+        for arch in rocm_gpu_architectures()
+    ]),
     deps = [
         ":hip_runtime_libs",
+        ":rocblas_libs",
         ":roctx_libs",
     ],
 )
@@ -357,7 +425,10 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "rocprofiler_sdk",
-    data = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
+    data = glob([
+        "%{rocm_root}/lib/librocprofiler-sdk*.so*",
+        "%{rocm_root}/lib/libhsa-amd-aqlprofile64.so*",
+    ]),
     interface_library = "%{rocm_root}/lib/librocprofiler-sdk.so",
     deps = [
         ":amd_comgr_libs",
@@ -366,10 +437,22 @@ rocm_lib_import(
 )
 
 rocm_lib_import(
+    name = "rocprofiler_sdk_roctx",
+    data = glob(["%{rocm_root}/lib/librocprofiler-sdk-roctx.so*"]),
+    interface_library = "%{rocm_root}/lib/librocprofiler-sdk-roctx.so",
+    # NEEDED librocprofiler-register.so, which the glob above does not match.
+    # Without this a hermetic build stages the shim without it and fails at load.
+    deps = [":rocprofiler_register_libs"],
+)
+
+rocm_lib_import(
     name = "rocsolver",
     data = glob([
         "%{rocm_root}/lib/librocsolver.so*",
         "%{rocm_root}/lib/host-math/lib/*.so*",
+    ]) + glob([
+        "%{rocm_root}/.kpack/blas_lib_" + arch + ".kpack"
+        for arch in rocm_gpu_architectures()
     ]),
     interface_library = "%{rocm_root}/lib/librocsolver.so",
     deps = [
@@ -402,11 +485,25 @@ rocm_lib_import(
 
 rocm_lib_import(
     name = "hipblaslt",
-    data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
-        "%{rocm_root}/lib/libhipblaslt.so*",
-        "%{rocm_root}/lib/librocroller.so*",
-    ]),
+    data = glob(
+        [
+            "%{rocm_root}/lib/libhipblaslt.so*",
+            "%{rocm_root}/lib/librocroller.so*",
+            "%{rocm_root}/lib/liborigami.so*",
+        ],
+    ) + glob([
+        pattern
+        for arch in rocm_gpu_architectures()
+        for pattern in [
+            "%{rocm_root}/lib/hipblaslt/library/*" + arch + "*",
+            "%{rocm_root}/lib/hipblaslt/library/" + arch + "/**/*",
+        ]
+    ]) + glob(
+        ["%{rocm_root}/lib/hipblaslt/library/*"],
+        exclude = [
+            "%{rocm_root}/lib/hipblaslt/library/*gfx*",
+        ],
+    ),
     interface_library = "%{rocm_root}/lib/libhipblaslt.so",
     deps = [
         ":hip_runtime_libs",
@@ -416,15 +513,61 @@ rocm_lib_import(
 
 filegroup(
     name = "system_libs_data",
-    srcs = glob([
-        "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
-        "%{rocm_root}/lib/rocm_sysdeps/share/**",
-    ]),
+    srcs = glob(
+        [
+            "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
+            "%{rocm_root}/lib/rocm_sysdeps/share/**",
+        ],
+        exclude = [
+            "%{rocm_root}/lib/rocm_sysdeps/share/terminfo/**",
+        ],
+    ),
 )
 
+# rocm_sysdeps only exists in TheRock-based ROCm distributions. ROCm's own
+# libraries find it via their embedded RUNPATH; the rpath here is for binaries
+# that link a sysdeps library directly (see :drm, :drm_amdgpu, :numa). As with
+# /opt/rocm/lib in :rocm_rpath, the /opt/rocm entry lets binaries run outside
+# runfiles against a local TheRock install; it is skipped on classic ROCm.
 cc_library(
     name = "system_libs",
     data = [":system_libs_data"],
+    linkopts = select({
+        ":link_only": [],
+        ":build_hermetic": [
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
+        ],
+        "//conditions:default": [
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
+            "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
+        ],
+    }),
+)
+
+# System libraries bundled by TheRock ROCm under lib/rocm_sysdeps/lib, exposed
+# as real link targets (not just runtime data) so consumers like MORI's
+# libhsakmt.a resolve drm/numa symbols against the ROCm-shipped copies instead
+# of the host's /usr/lib. Requires a TheRock layout (hermetic distribution or a
+# TheRock-based local ROCm); classic ROCm installs do not ship rocm_sysdeps.
+rocm_lib_import(
+    name = "drm",
+    data = [":system_libs_data"],
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
+    deps = [":system_libs"],
+)
+
+rocm_lib_import(
+    name = "drm_amdgpu",
+    data = [":system_libs_data"],
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
+    deps = [":system_libs"],
+)
+
+rocm_lib_import(
+    name = "numa",
+    data = [":system_libs_data"],
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
+    deps = [":system_libs"],
 )
 
 filegroup(
@@ -432,11 +575,15 @@ filegroup(
     srcs = glob(
         include = [
             "%{rocm_root}/bin/hipcc",
-            "%{rocm_root}/lib/llvm/**",
+            "%{rocm_root}/lib/llvm/bin/*",
+            "%{rocm_root}/lib/llvm/lib/clang/*/include/**",
+            "%{rocm_root}/lib/llvm/lib/clang/*/lib/**/*.bc",
+            "%{rocm_root}/lib/llvm/lib/clang/*/lib/**/*.a",
+            "%{rocm_root}/lib/llvm/lib/*.so*",
             "%{rocm_root}/share/hip/version",
             "%{rocm_root}/amdgcn/**",
         ],
-        exclude = ["%{rocm_root}/lib/llvm/lib/*.a"],
+        allow_empty = True,
     ) + [":system_libs_data"],
     visibility = ["//visibility:public"],
 )

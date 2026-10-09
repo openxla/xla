@@ -19,20 +19,19 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "xla/backends/profiler/plugin/plugin_tracer.h"
-#include "xla/backends/profiler/plugin/profiler_c_api.h"
-#include "xla/backends/profiler/plugin/profiler_error.h"
-#include "xla/tsl/platform/logging.h"
-#include "xla/tsl/profiler/utils/xplane_builder.h"
-#include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "xla/tsl/profiler/utils/xplane_visitor.h"
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/backends/profiler/plugin/plugin_tracer.h"
+#include "xla/backends/profiler/plugin/profiler_c_api.h"
+#include "xla/backends/profiler/plugin/profiler_error.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/profiler/utils/xplane_builder.h"
+#include "xla/tsl/profiler/utils/xplane_utils.h"
+#include "xla/tsl/profiler/utils/xplane_visitor.h"
 
 namespace xla {
 namespace profiler {
@@ -91,6 +90,9 @@ TEST(PluginTracerTest, TestPluginWithPluginTracer) {
   api.start = &PLUGIN_Profiler_Start;
   api.stop = &PLUGIN_Profiler_Stop;
   api.collect_data = &PLUGIN_Profiler_CollectData;
+  api.consume = &PLUGIN_Profiler_Consume;
+  api.consume_result_destroy = &PLUGIN_Profiler_ConsumeResult_Destroy;
+  api.serialize = &PLUGIN_Profiler_Serialize;
   api.destroy = &PLUGIN_Profiler_Destroy;
   api.error_destroy = &PLUGIN_Profiler_Error_Destroy;
   api.error_message = &PLUGIN_Profiler_Error_Message;

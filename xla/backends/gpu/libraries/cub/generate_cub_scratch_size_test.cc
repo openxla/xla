@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/libraries/cub/generate_cub_scratch_size_lib.cu.h"
 

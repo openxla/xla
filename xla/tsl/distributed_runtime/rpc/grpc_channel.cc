@@ -22,12 +22,17 @@ limitations under the License.
 #include <unordered_map>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/synchronization/mutex.h"
 #include "grpcpp/create_channel.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_channel_common.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -37,10 +42,6 @@ limitations under the License.
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/protobuf/rpc_options.pb.h"
 #include "xla/tsl/util/device_name_utils.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/str_util.h"
-#include "tsl/platform/strcat.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 
@@ -147,7 +148,7 @@ absl::Status NewHostPortGrpcChannel(const std::string& target,
                                     const RPCOptions* rpc_options,
                                     SharedGrpcChannelPtr* channel_pointer) {
   // Minimally ensure that the target is valid
-  TF_RETURN_IF_ERROR(ValidateHostPortPair(target));
+  ABSL_RETURN_IF_ERROR(ValidateHostPortPair(target));
 
   ::grpc::ChannelArguments args = GetChannelArguments(rpc_options);
   *channel_pointer = ::grpc::CreateCustomChannel(
@@ -178,7 +179,7 @@ absl::Status GrpcChannelSpec::AddHostPortsJob(
         absl::StrCat("Duplicate job ID in cluster specification: ", job_id));
   }
   for (const auto& id_host_port : host_ports) {
-    TF_RETURN_IF_ERROR(ValidateHostPortPair(id_host_port.second));
+    ABSL_RETURN_IF_ERROR(ValidateHostPortPair(id_host_port.second));
   }
   host_ports_jobs_.emplace_back(job_id, host_ports);
   return absl::OkStatus();

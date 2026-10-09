@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_permute_cycle_decomposer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -31,8 +32,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -115,8 +114,8 @@ TEST_F(CollectivePermuteCycleDecomposerTest, ForwardCycle) {
         metadata={op_name="op1/op2/add" source_file="foo/bar/mysource.py" source_line=35}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          RunAndCheckHloRewrite(hlo, Decomposer(0), true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(hlo, Decomposer(0), true));
   EXPECT_TRUE(*RunFileCheck(module->ToString(PrintOptions()), R"(
     // CHECK:     ENTRY %test_computation (p: u32[8,8]) -> u32[8,8] {
     // CHECK-DAG:   %[[partition_id:.+]] = u32[] partition-id()
@@ -148,8 +147,8 @@ TEST_F(CollectivePermuteCycleDecomposerTest, ForwardCycleNoChannel) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          RunAndCheckHloRewrite(hlo, Decomposer(0), true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(hlo, Decomposer(0), true));
   EXPECT_TRUE(*RunFileCheck(module->ToString(PrintOptions()), R"(
     // CHECK:     ENTRY %test_computation (p: u32[8,8]) -> u32[8,8] {
     // CHECK-DAG:   %[[replica_id:.+]] = u32[] replica-id()
@@ -181,8 +180,8 @@ TEST_F(CollectivePermuteCycleDecomposerTest, ForwardCycleMultipleCycles) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          RunAndCheckHloRewrite(hlo, Decomposer(0), true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(hlo, Decomposer(0), true));
   EXPECT_TRUE(*RunFileCheck(module->ToString(PrintOptions()), R"(
     // CHECK:     ENTRY %test_computation (p: u32[8,8]) -> u32[8,8] {
     // CHECK-DAG:   %[[replica_id:.+]] = u32[] replica-id()
@@ -234,8 +233,8 @@ TEST_F(CollectivePermuteCycleDecomposerTest, ForwardCycleWithMatmul) {
     while_res = (u32[], f32[2,2], f32[2,2]) while(input), condition=while_cond, body=while_body
     ROOT data_out = f32[2,2] get-tuple-element(while_res), index=1
   })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          RunAndCheckHloRewrite(hlo, Decomposer(0), true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(hlo, Decomposer(0), true));
   Decomposed deco = FindComponents(module.get(), "cp");
   EXPECT_THAT(deco.cp_bwd->ToString(),
               HasSubstr("source_target_pairs={{3,0}}"));
@@ -257,8 +256,8 @@ TEST_F(CollectivePermuteCycleDecomposerTest, BackwardCycle) {
         metadata={op_name="op1/op2/add" source_file="foo/bar/mysource.py" source_line=35}
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          RunAndCheckHloRewrite(hlo, Decomposer(0), true));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(hlo, Decomposer(0), true));
   EXPECT_TRUE(*RunFileCheck(module->ToString(PrintOptions()), R"(
     // CHECK:     ENTRY %test_computation (p: u32[8,8]) -> u32[8,8] {
     // CHECK-DAG:   %[[partition:.+]] = u32[] partition-id()
@@ -289,8 +288,8 @@ TEST_F(CollectivePermuteCycleDecomposerTest, BackwardCycleNoChannel) {
         source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          RunAndCheckHloRewrite(hlo, Decomposer(0), true));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(hlo, Decomposer(0), true));
   EXPECT_TRUE(*RunFileCheck(module->ToString(PrintOptions()), R"(
     // CHECK:     ENTRY %test_computation (p: u32[8,8]) -> u32[8,8] {
     // CHECK-DAG:   %[[replica_id:.+]] = u32[] replica-id()

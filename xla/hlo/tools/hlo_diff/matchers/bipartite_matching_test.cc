@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/tools/hlo_diff/matchers/bipartite_matching.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::hlo_diff {
 namespace {

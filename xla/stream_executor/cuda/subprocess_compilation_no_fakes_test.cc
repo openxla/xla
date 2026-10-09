@@ -13,20 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/stream_executor/cuda/cubin_or_ptx_image.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/subprocess_compilation.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/path.h"
 
 namespace stream_executor {
 namespace {
@@ -68,8 +69,8 @@ TEST(SubprocessCompilationTest, BundleGpuAsmUsingFatbinWorks) {
   std::vector<uint8_t> bytes(ptx.begin(), ptx.end());
   images.push_back({/*is_ptx=*/true, cc, bytes});
 
-  TF_ASSERT_OK_AND_ASSIGN(auto assembly,
-                          CompileGpuAsmUsingPtxAs(cc, ptx, opts, false, false));
+  ASSERT_OK_AND_ASSIGN(auto assembly,
+                       CompileGpuAsmUsingPtxAs(cc, ptx, opts, false, false));
   images.push_back({/*is_ptx=*/false, cc, assembly.cubin});
 
   EXPECT_THAT(BundleGpuAsmUsingFatbin(images, opts), absl_testing::IsOk());

@@ -15,16 +15,19 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {

@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
-#include "xla/pjrt/pjrt_stream_executor_device_description.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
+#include "xla/pjrt/se/pjrt_stream_executor_device_description.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/xla_data.pb.h"
@@ -100,6 +100,10 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
     return 1;
   }
 
+  absl::StatusOr<std::pair<ProcessId, int>>
+  ProcessIdAndIndexOnProcessForLogicalDeviceOfDefaultType(
+      GlobalDeviceId device_id) const override;
+
   absl::StatusOr<std::pair<PjRtDeviceDimensions, int32_t>>
   ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
       GlobalDeviceId device_id) const override;
@@ -109,6 +113,17 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
   const std::optional<stream_executor::GpuTargetConfigProto>& target_config()
       const {
     return target_config_;
+  }
+
+  bool confidential_computing_enabled() const {
+    if (target_config_.has_value()) {
+      return target_config_->gpu_device_info().confidential_computing_enabled();
+    }
+    if (gpu_topology_ != nullptr && gpu_topology_->has_gpu_target_config()) {
+      return gpu_topology_->gpu_target_config()
+          .device_description.confidential_computing_enabled();
+    }
+    return false;
   }
 
   // Returns vendor specific attributes about the topology.
@@ -121,12 +136,28 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
       PrimitiveType element_type,
       absl::Span<const int64_t> dims) const override;
 
+  absl::StatusOr<xla::Shape> MakeCanonicalShapeForMemorySpace(
+      int memory_space_kind_id, xla::Shape shape,
+      const xla::Layout* layout) const override;
+
+  absl::Span<const int> GetMemorySpaceKindIds() const override;
+
   absl::StatusOr<PjRtDeviceDimensions> ChipBounds() const override;
 
   absl::StatusOr<xla::PjRtTopologyDescriptionProto> ToProto() const override;
 
   static absl::StatusOr<std::unique_ptr<StreamExecutorGpuTopologyDescription>>
   FromProto(const xla::PjRtTopologyDescriptionProto& proto);
+
+  absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
+      int process_index, int num_replicas,
+      std::optional<int> num_replicas_per_slice, int num_partitions,
+      const MultiSliceConfig* multi_slice_config) const override;
+
+  absl::StatusOr<int> GetMemorySpaceKindForShape(
+      const xla::Shape& shape) const override;
+
+  bool IsMemorySpaceOnCpu(int memory_space_kind_id) const override;
 
  private:
   std::unique_ptr<PjRtStreamExecutorDeviceDescription> CreateDeviceDescription(

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,28 +25,30 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
 
@@ -87,6 +92,46 @@ class PriorityFusionTest : public HloHardwareIndependentTestBase {
                           options, &mlir_context_);
   }();
 };
+
+TEST_F(PriorityFusionTest, ParallelTilingSearchMatchesSerialTilingSearch) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test_module
+
+    ENTRY main {
+      %p0 = f32[64,256] parameter(0)
+      %p1 = f32[64,256] parameter(1)
+      %log = f32[64,256] log(%p0)
+      %exp = f32[64,256] exponential(%p1)
+      %multiply = f32[64,256] multiply(%log, %exp)
+      %add = f32[64,256] add(%multiply, %p0)
+      ROOT %negate = f32[64,256] negate(%add)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> serial_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool serial_changed,
+                       priority_fusion_.Run(serial_module.get()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> parallel_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test_pool", 8);
+  // Same contexts as GpuCompiler pools. They are single-threaded, so the cost
+  // model must give each candidate its own context.
+  MlirContextPool mlir_context_pool(CreateMlirContext, /*preallocate=*/8);
+  std::unique_ptr<mlir::MLIRContext> parallel_mlir_context =
+      CreateMlirContext();
+  GpuHloCostAnalysis::Options options;
+  options.count_multiple_input_accesses = true;
+  PriorityFusion parallel_priority_fusion(
+      &thread_pool, device_info_, &alias_info_, options,
+      parallel_mlir_context.get(), &mlir_context_pool);
+  ASSERT_OK_AND_ASSIGN(bool parallel_changed,
+                       parallel_priority_fusion.Run(parallel_module.get()));
+
+  EXPECT_EQ(parallel_changed, serial_changed);
+  EXPECT_EQ(parallel_module->ToString(HloPrintOptions::ShortParsable()),
+            serial_module->ToString(HloPrintOptions::ShortParsable()));
+}
 
 TEST_F(PriorityFusionTest, FuseWithSharedArgument) {
   auto module = ParseAndReturnVerifiedModule(R"(
@@ -984,7 +1029,7 @@ ENTRY main {
   triton_softmax = f32[125,127]{1,0} fusion(producer_fusion), kind=kCustom, calls=triton_softmax_computation, backend_config={"fusion_backend_config": {"kind":"__triton","block_level_fusion_config":{"output_tiles":[{"sizes":["1","127"]}],"num_warps":"1"}}}
   ROOT consumer_fusion = f32[125,127]{1,0} fusion(param_1, triton_softmax), kind=kLoop, calls=consumer_computation
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   EXPECT_TRUE(priority_fusion_.Run(module.get()).value());
   EXPECT_TRUE(verifier().Run(module.get()).status().ok());
@@ -1037,7 +1082,7 @@ ENTRY main {
   ROOT tuple = (f32[125,127], f32[125,127]) tuple(consumer_fusion.1, consumer_fusion.2)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   EXPECT_TRUE(priority_fusion_.Run(module.get()).value());
   EXPECT_TRUE(verifier().Run(module.get()).status().ok());
@@ -1047,8 +1092,8 @@ ENTRY main {
   EXPECT_THAT(root, GmockMatch(m::Tuple(m::Fusion(&fusion1, m::Parameter()),
                                         m::Fusion(&fusion2, m::Parameter()))));
   EXPECT_TRUE(IsGenericTritonFusion(*fusion1));
-  TF_ASSERT_OK_AND_ASSIGN(auto backend_config1,
-                          fusion1->backend_config<GpuBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(auto backend_config1,
+                       fusion1->backend_config<GpuBackendConfig>());
   EXPECT_TRUE(
       backend_config1.fusion_backend_config().has_block_level_fusion_config());
   EXPECT_EQ(backend_config1.fusion_backend_config()
@@ -1058,8 +1103,8 @@ ENTRY main {
             2);
 
   EXPECT_TRUE(IsGenericTritonFusion(*fusion2));
-  TF_ASSERT_OK_AND_ASSIGN(auto backend_config2,
-                          fusion2->backend_config<GpuBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(auto backend_config2,
+                       fusion2->backend_config<GpuBackendConfig>());
   EXPECT_TRUE(
       backend_config2.fusion_backend_config().has_block_level_fusion_config());
   EXPECT_EQ(backend_config2.fusion_backend_config()
@@ -1071,6 +1116,9 @@ ENTRY main {
 
 TEST_F(PriorityFusionTest,
        FuseTritonProducerWithTwoConsumersUsingMultiOutputFusion) {
+  // TODO(b/530092114): support multi-output fusions.
+  GTEST_SKIP() << "Multi-output fusions are not supported with tile-based "
+                  "block-level emitter";
   const std::string kHloText = R"(
 HloModule t
 
@@ -1091,7 +1139,7 @@ ENTRY main {
   ROOT tuple = (f32[125,127], f32[125,127]) tuple(consumer_fusion, producer_fusion)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   module->mutable_config()
       .mutable_debug_options()
@@ -1112,8 +1160,8 @@ ENTRY main {
                   m::GetTupleElement(m::Fusion(&fusion2, m::Parameter()), 1))));
   EXPECT_EQ(fusion1, fusion2);
   EXPECT_TRUE(IsGenericTritonFusion(*fusion1));
-  TF_ASSERT_OK_AND_ASSIGN(auto backend_config1,
-                          fusion1->backend_config<GpuBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(auto backend_config1,
+                       fusion1->backend_config<GpuBackendConfig>());
   EXPECT_TRUE(
       backend_config1.fusion_backend_config().has_block_level_fusion_config());
   EXPECT_EQ(backend_config1.fusion_backend_config()
@@ -1125,6 +1173,8 @@ ENTRY main {
 
 TEST_F(PriorityFusionTest,
        FuseProducerWithTritonConsumerUsingMultiOutputFusion) {
+  GTEST_SKIP() << "Multi-output fusions are not supported with tile-based "
+                  "block-level emitter";
   const std::string kHloText = R"(
 HloModule t
 
@@ -1140,7 +1190,7 @@ ENTRY main {
   ROOT tuple = (f32[125,127], f32[125,127]) tuple(consumer_fusion, producer)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   module->mutable_config()
       .mutable_debug_options()
@@ -1161,8 +1211,8 @@ ENTRY main {
                   m::GetTupleElement(m::Fusion(&fusion2, m::Parameter()), 1))));
   EXPECT_EQ(fusion1, fusion2);
   EXPECT_TRUE(IsGenericTritonFusion(*fusion1));
-  TF_ASSERT_OK_AND_ASSIGN(auto backend_config1,
-                          fusion1->backend_config<GpuBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(auto backend_config1,
+                       fusion1->backend_config<GpuBackendConfig>());
   EXPECT_TRUE(
       backend_config1.fusion_backend_config().has_block_level_fusion_config());
   EXPECT_EQ(backend_config1.fusion_backend_config()
@@ -1173,6 +1223,8 @@ ENTRY main {
 }
 
 TEST_F(PriorityFusionTest, FuseTritonFusionBothEndsUsingMultiOutputFusion) {
+  GTEST_SKIP() << "Multi-output fusions are not supported with tile-based "
+                  "block-level emitter";
   // Here, we fuse `fusion` first into `exp` and `sqrt`. When we try to fuse
   // `log` into the two fusions resulting from the previous step using
   // multi-output fusion, we currently don't allow that, as we would need to
@@ -1196,7 +1248,7 @@ ENTRY main {
   ROOT tuple = (f32[1024,512],f32[1024,512],f32[1024,512]) tuple(exponential, sqrt, log)
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   module->mutable_config()
       .mutable_debug_options()
@@ -1212,6 +1264,27 @@ ENTRY main {
   EXPECT_NE(fusion1, fusion2);
   EXPECT_TRUE(IsGenericTritonFusion(*fusion1));
   EXPECT_TRUE(IsGenericTritonFusion(*fusion2));
+}
+
+TEST_F(PriorityFusionTest,
+       ProducerWithOnlyBitcastUsersHasNoMultiOutputFusionCandidates) {
+  // `negate` can only be fused into bitcasts, so there are no candidates for
+  // Triton multi-output fusion either.
+  constexpr absl::string_view kHloText = R"(
+HloModule t
+
+ENTRY main {
+  p0 = f32[16,32] parameter(0)
+  negate = f32[16,32] negate(p0)
+  ROOT bitcast = f32[512] bitcast(negate)
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
+  ASSERT_OK_AND_ASSIGN(bool changed, priority_fusion_.Run(module.get()));
+  EXPECT_FALSE(changed);
 }
 
 TEST_F(PriorityFusionTest, TritonProducerNotSupported_DoNotFuse) {
@@ -1236,7 +1309,7 @@ ENTRY main {
   producer_fusion = f32[125,127] fusion(param_0), kind=kLoop, calls=producer_computation
   ROOT triton_fusion = f32[125,127] fusion(producer_fusion, param_1), kind=kCustom, calls=triton_computation, backend_config={"fusion_backend_config": {"kind":"__triton","block_level_fusion_config":{"output_tiles":[{"sizes":["1","127"]}],"num_warps":"1"}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   // Triton does not support c64, so producer_fusion and triton_fusion and will
   // not be fused.
@@ -1266,7 +1339,7 @@ ENTRY main {
   triton_fusion = f32[125,127] fusion(param_0), kind=kCustom, calls=triton_computation, backend_config={"fusion_backend_config": {"kind":"__triton","block_level_fusion_config":{"output_tiles":[{"sizes":["1","127"]}],"num_warps":"1"}}}
   ROOT consumer_fusion = f32[125,127] fusion(param_1, triton_fusion), kind=kLoop, calls=consumer_computation
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   // Triton does not support c64, so triton_fusion and consumer_fusion will not
   // be fused.
@@ -1299,7 +1372,7 @@ TEST_F(PriorityFusionTest, DoNotFuseInsideReducer) {
 }
 
 TEST_F(PriorityFusionTest, SkipsTilingsWithInfiniteRuntime) {
-  // This test verifies the fix in TryFindBestTilingForFusion that skips
+  // This test verifies the fix in TryFindBestTilingForFusionAsync that skips
   // tilings with infinite runtime estimates.
   //
   // The fix: After estimating runtime for each tiling candidate, check if
@@ -1398,7 +1471,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   module->mutable_config()
       .mutable_debug_options()
@@ -1415,7 +1488,7 @@ ENTRY main {
               absl_testing::IsOkAndHolds(false));
 }
 
-class PriorityFusionWithTritonEnabledTest : public PriorityFusionTest {
+class HerolessPriorityFusionTest : public PriorityFusionTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = PriorityFusionTest::GetDebugOptionsForTest();
@@ -1425,8 +1498,7 @@ class PriorityFusionWithTritonEnabledTest : public PriorityFusionTest {
   }
 };
 
-TEST_F(PriorityFusionWithTritonEnabledTest,
-       TwoElementwiseOpsAreFusedWithTriton) {
+TEST_F(HerolessPriorityFusionTest, TwoElementwiseOpsAreFusedWithTriton) {
   auto module = *ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -1445,7 +1517,7 @@ ENTRY main {
   EXPECT_TRUE(IsGenericTritonFusion(*root));
 }
 
-TEST_F(PriorityFusionWithTritonEnabledTest, DoNotFuseIntoRoot) {
+TEST_F(HerolessPriorityFusionTest, DoNotFuseIntoRoot) {
   auto module = *ParseAndReturnVerifiedModule(R"(
     HloModule test_module
 
@@ -1463,7 +1535,7 @@ TEST_F(PriorityFusionWithTritonEnabledTest, DoNotFuseIntoRoot) {
               absl_testing::IsOkAndHolds(false));
 }
 
-TEST_F(PriorityFusionWithTritonEnabledTest, LimitNumberOfParameters) {
+TEST_F(HerolessPriorityFusionTest, LimitNumberOfParameters) {
   std::string module_text =
       "HloModule m\n\nENTRY main {\nadd0 = f32[] parameter(0)\n";
   for (int64_t i = 1; i <= MaxOperandsAndOutputsPerFusion(); ++i) {
@@ -1471,9 +1543,8 @@ TEST_F(PriorityFusionWithTritonEnabledTest, LimitNumberOfParameters) {
     module_text +=
         absl::StrFormat("add%d = f32[] add(add%d, p%d)\n", i, i - 1, i);
   }
-  module_text += "}";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(module_text));
+  module_text += '}';
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(module_text));
   EXPECT_THAT(priority_fusion_.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   // Assert that there is not just a single fusion with all parameters as
@@ -1482,8 +1553,9 @@ TEST_F(PriorityFusionWithTritonEnabledTest, LimitNumberOfParameters) {
   EXPECT_LE(root->operand_count(), MaxOperandsAndOutputsPerFusion());
 }
 
-TEST_F(PriorityFusionWithTritonEnabledTest,
-       MultipleMultiOutputFusionCandidates) {
+TEST_F(HerolessPriorityFusionTest, MultipleMultiOutputFusionCandidates) {
+  GTEST_SKIP() << "Multi-output fusions are not supported with tile-based "
+                  "block-level emitter";
   auto module = *ParseAndReturnVerifiedModule(R"(
     HloModule test_module
 
@@ -1562,6 +1634,7 @@ ENTRY main.4 {
   PriorityFusion priority_fusion(nullptr, device_info_, &alias_info_, options,
                                  &mlir_context_);
   HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsForTest());
   config.mutable_debug_options()
       .set_xla_gpu_experimental_enable_triton_heroless_priority_fusion(true);
 
@@ -1573,6 +1646,123 @@ CHECK: %[[QUANT_FUSION:.*]] = s8[2,256,512]{2,1,0} fusion(%[[VAL]], %[[SCALE_FUS
 CHECK: ROOT %{{.*}} = (s8[2,256,512]{2,1,0}, bf16[2,256,4]{2,1,0}) tuple(%[[QUANT_FUSION]], %[[SCALE_FUSION]])
       )",
                             /*after_pass_checks=*/nullptr, &config);
+}
+
+// Verifies that device memory bandwidth drives PriorityFusion's reduce-into-
+// consumers decision (the ROCm gfx950 case behind rocm_memory_bandwidth.cc).
+// A reduce feeds two elementwise consumers. Duplicating the reduce into a
+// consumer re-reads the large input from HBM, so whether it pays off depends on
+// bandwidth:
+//   - low (legacy formula) bandwidth  -> re-read too costly, reduce stays a
+//     standalone fusion, consumers unfused -> 1 fusion.
+//   - high (corrected) bandwidth      -> re-read cheap, reduce duplicated into
+//     both consumers -> 2 fusions.
+// Counted right after PriorityFusion; for the full-compiler behavior (a later
+// pass merges the two back into one) see memory_bandwidth_fusion.hlo.
+class PriorityFusionRocmMemoryBandwidthTest
+    : public HloHardwareIndependentTestBase {
+ public:
+  PriorityFusionRocmMemoryBandwidthTest() {
+    RegisterSymbolicExprStorage(&mlir_context_);
+  }
+
+  int RunAndCountFusions(absl::string_view hlo, int64_t memory_bandwidth) {
+    se::DeviceDescription device_info = TestGpuDeviceInfo::AMDMI350DeviceInfo();
+    device_info.set_memory_bandwidth(memory_bandwidth);
+
+    GpuHloCostAnalysis::Options options;
+    options.count_multiple_input_accesses = true;
+    PriorityFusion priority_fusion(/*thread_pool=*/nullptr, device_info,
+                                   &alias_info_, options, &mlir_context_);
+
+    auto module = ParseAndReturnVerifiedModule(hlo).value();
+    EXPECT_THAT(priority_fusion.Run(module.get()),
+                absl_testing::IsOkAndHolds(true));
+    EXPECT_THAT(module->RemoveUnusedComputations(), absl_testing::IsOk());
+
+    int fusion_count = 0;
+    for (auto computation : module->computations()) {
+      if (computation->FusionInstruction() != nullptr) {
+        ++fusion_count;
+      }
+    }
+    return fusion_count;
+  }
+
+  mlir::MLIRContext mlir_context_;
+  AliasInfo alias_info_;
+};
+
+TEST_F(PriorityFusionRocmMemoryBandwidthTest, MemoryBandwidthTipsReduceFusion) {
+  absl::string_view kHlo = R"(
+    HloModule rf_8_256_1152
+
+    add {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT r = f32[] add(a, b)
+    }
+
+    ENTRY main {
+      p = f32[8,256,1152]{2,1,0} parameter(0)
+      w1 = f32[256,1152]{1,0} parameter(1)
+      w2 = f32[256,1152]{1,0} parameter(2)
+      z = f32[] constant(0)
+      red = f32[256,1152]{1,0} reduce(p, z), dimensions={0}, to_apply=add
+      c1 = f32[256,1152]{1,0} add(red, w1)
+      c2 = f32[256,1152]{1,0} subtract(red, w2)
+      ROOT out = (f32[256,1152]{1,0}, f32[256,1152]{1,0}) tuple(c1, c2)
+    })";
+
+  // gfx950 legacy formula bandwidth: 2 * (8192/8) * 1.9e9 = 3.8912 TB/s.
+  constexpr int64_t kFormulaBandwidth = 3'891'200'000'000;
+  // gfx950 corrected per-gfx bandwidth (rocm_memory_bandwidth.cc).
+  constexpr int64_t kFixedBandwidth = 7'782'000'000'000;
+
+  // The bandwidth value changes the PriorityFusion decision for this HLO.
+  EXPECT_EQ(RunAndCountFusions(kHlo, kFormulaBandwidth), 1);
+  EXPECT_EQ(RunAndCountFusions(kHlo, kFixedBandwidth), 2);
+}
+
+TEST_F(HerolessPriorityFusionTest, DoNotFuseScanEpilogue) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  add = f32[] add(p0, p1)
+  ROOT t = (f32[], f32[]) tuple(add, add)
+}
+
+fused_computation {
+  p0 = f32[100] parameter(0)
+  p1 = f32[] parameter(1)
+  scan = (f32[100], f32[]) scan(p0, p1), to_apply=add, dimensions={0}, num_carries=1
+  ROOT get-tuple-element = f32[100] get-tuple-element(scan), index=0
+}
+
+ENTRY entry {
+  p0 = f32[100] parameter(0)
+  p1 = f32[] parameter(1)
+  scan_fusion = f32[100] fusion(p0, p1), kind=kCustom, calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":
+      {"output_tiles":[{"sizes":[]}],"num_warps":"1"}}}
+  c = f32[] constant(1.0)
+  bcast = f32[100] broadcast(c), dimensions={}
+  ROOT add = f32[100] add(scan_fusion, bcast)
+}
+  )";
+
+  GpuHloCostAnalysis::Options options;
+  options.count_multiple_input_accesses = true;
+  PriorityFusion priority_fusion(nullptr, device_info_, &alias_info_, options,
+                                 &mlir_context_);
+  RunAndFilecheckHloRewrite(kHlo, std::move(priority_fusion), R"(
+CHECK: ENTRY
+CHECK: %[[SCAN_FUSION:.*]] = f32[100]{0} fusion(%{{.*}}, %{{.*}}), kind=kCustom
+CHECK: ROOT %[[EPILOGUE_FUSION:.*]] = f32[100]{0} fusion(%[[SCAN_FUSION]]), kind=kCustom
+      )");
 }
 
 }  // namespace gpu

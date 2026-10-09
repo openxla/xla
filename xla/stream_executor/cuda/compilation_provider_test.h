@@ -16,10 +16,11 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_COMPILATION_PROVIDER_TEST_H_
 #define XLA_STREAM_EXECUTOR_CUDA_COMPILATION_PROVIDER_TEST_H_
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"

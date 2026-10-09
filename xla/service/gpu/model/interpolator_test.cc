@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/model/interpolator.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -25,7 +27,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/functional/overload.h"
 #include "absl/log/log.h"
 

@@ -15,16 +15,19 @@ limitations under the License.
 
 #include "xla/service/gpu/autotuning/autotune_cache_key.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/stream_executor/device_description.h"
@@ -33,8 +36,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -99,7 +100,7 @@ TEST(AutotuneCacheKeyTest, DeviceDescriptionToCacheKey) {
 
   EXPECT_EQ(AutotuneCacheKey::DeviceDescriptionToCacheKey(
                 device_description("bmg_g21.txtpb")),
-            "oneAPI: BMG, Cores: 20, GPU clock: 2.85 GHz, Memory "
+            "oneAPI: BMG_G21, Cores: 20, GPU clock: 2.85 GHz, Memory "
             "bandwidth: 456 GB/s, L2 cache: 18 MB, DNN version: 0.0.0");
 
   EXPECT_EQ(AutotuneCacheKey::DeviceDescriptionToCacheKey(
@@ -110,8 +111,8 @@ TEST(AutotuneCacheKeyTest, DeviceDescriptionToCacheKey) {
 
 TEST(AutotuneCacheKeyTest, VersionIsIncludedInCacheKey) {
   stream_executor::DeviceDescription empty_device_description;
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(kDotFusionHloText));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kDotFusionHloText));
   AutotuneCacheKey key =
       AutotuneCacheKey(empty_device_description,
                        *module->entry_computation()->root_instruction());
@@ -120,8 +121,8 @@ TEST(AutotuneCacheKeyTest, VersionIsIncludedInCacheKey) {
 }
 
 TEST(AutotuneCacheKeyTest, VersionChangeInvalidateCacheKey) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(kDotFusionHloText));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kDotFusionHloText));
   stream_executor::DeviceDescription empty_device_description;
 
   AutotuneCacheKey key0 = AutotuneCacheKey(

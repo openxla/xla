@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/string_view.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/hlo_module_config.h"
@@ -23,7 +24,7 @@ namespace xla {
 namespace gpu {
 namespace {
 
-class GpuConvolutionRegressionTest : public HloPjRtTestBase {
+class GpuConvolutionRegressionTest : public HloTestBase {
  public:
   // CreateExecutable with run_hlo_passes=true goes through convolution
   // autotuning, which performs correctness cross-checking.

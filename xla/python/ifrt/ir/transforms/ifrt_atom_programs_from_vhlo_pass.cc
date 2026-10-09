@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/strings/cord.h"
+#include "google/protobuf/repeated_ptr_field.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -22,12 +24,11 @@ limitations under the License.
 #include "mlir/InitAllDialects.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/TypeID.h"
-#include "google/protobuf/repeated_ptr_field.h"
 #include "stablehlo/dialect/Register.h"
 #include "stablehlo/dialect/Serialization.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.pb.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -68,7 +69,7 @@ void IfrtAtomProgramsFromVhloPass::runOnOperation() {
   mlir::MLIRContext& context = getContext();
   for (const auto& atom_program_proto : atom_programs_) {
     auto atom_program_module = mlir::stablehlo::deserializePortableArtifact(
-        atom_program_proto.program(), &context);
+        absl::Cord(atom_program_proto.program()).Flatten(), &context);
     if (!atom_program_module) {
       module->emitOpError()
           << "Failed to deserialize atom program `" << atom_program_proto.name()

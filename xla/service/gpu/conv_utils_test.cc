@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/conv_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -99,10 +100,11 @@ TEST_F(ConvUtilsTest, BackwardFilterConvolveWithPaddedActivations) {
     conv_window.mutable_dimensions(i)->set_padding_high(1);
   }
   builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {3, 3, 32, 32}), activations, gradients,
+      ShapeUtil::MakeShape(F32, {3, 3, 32, 32}), {activations, gradients},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       dnums_for_backward_filter_, DefaultPrecisionConfig(2),
-      /*sparsity_config=*/{}, CONVOLUTION_KIND_WGRAD));
+      /*sparsity_config=*/{}, /*block_scaling_config=*/{},
+      CONVOLUTION_KIND_WGRAD));
 
   auto module = CreateNewVerifiedModule();
   HloComputation* entry_computation =
@@ -162,11 +164,13 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveEvenPadding) {
   conv_dnums.add_kernel_spatial_dimensions(3);
 
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {4, 3, 16, 16}), /*lhs=*/output,
-      /*rhs=*/reverse_kernel, /*feature_group_count=*/1,
+      ShapeUtil::MakeShape(F32, {4, 3, 16, 16}),
+      {/*lhs=*/output,
+       /*rhs=*/reverse_kernel},
+      /*feature_group_count=*/1,
       /*batch_group_count=*/1, conv_window, conv_dnums,
       DefaultPrecisionConfig(2), /*sparsity_config=*/{},
-      CONVOLUTION_KIND_WGRAD));
+      /*block_scaling_config=*/{}, CONVOLUTION_KIND_WGRAD));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(), ShapeInference::InferConvolveShape(
@@ -219,10 +223,11 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveUnevenPaddingOnGradients) {
     conv_window.mutable_dimensions(i)->set_base_dilation(2);
   }
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), output, reverse_kernel,
+      ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       dnums_for_backward_input_, DefaultPrecisionConfig(2),
-      /*sparsity_config=*/{}, CONVOLUTION_KIND_DGRAD));
+      /*sparsity_config=*/{}, /*block_scaling_config=*/{},
+      CONVOLUTION_KIND_DGRAD));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(),
@@ -273,10 +278,11 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveUnevenPaddingOnActivations) {
   forward_conv_col_dim->set_padding_high(1);
   forward_conv_col_dim->set_base_dilation(2);
   HloInstruction* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
-      ShapeUtil::MakeShape(F32, {1, 1, 14, 1}), output, reverse_kernel,
+      ShapeUtil::MakeShape(F32, {1, 1, 14, 1}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       dnums_for_backward_input_, DefaultPrecisionConfig(2),
-      /*sparsity_config=*/{}, CONVOLUTION_KIND_DGRAD));
+      /*sparsity_config=*/{}, /*block_scaling_config=*/{},
+      CONVOLUTION_KIND_DGRAD));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(),

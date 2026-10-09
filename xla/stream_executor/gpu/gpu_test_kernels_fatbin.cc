@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
@@ -32,14 +33,14 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "xla/stream_executor/gpu/gpu_init.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/test.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 
@@ -53,7 +54,7 @@ absl::StatusOr<std::vector<uint8_t>> GetFatbinFromArchive(
   tsl::Env* env = tsl::Env::Default();
 
   std::string file_contents;
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       tsl::ReadFileToString(env, std::string(archive_path), &file_contents));
 
   const auto buffer = llvm::MemoryBuffer::getMemBuffer(

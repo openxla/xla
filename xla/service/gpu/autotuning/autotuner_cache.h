@@ -31,7 +31,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-
 using AutotuneNoCacheFn = std::function<absl::StatusOr<AutotuneResult>()>;
 
 class AutotunerCache {

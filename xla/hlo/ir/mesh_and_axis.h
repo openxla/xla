@@ -77,12 +77,15 @@ class Mesh {
   explicit Mesh(TileAssignment device_assignment,
                 absl::Span<const absl::string_view> axes_names);
 
-  // Returns whether this mesh is a maximal-sharding mesh.
+  // Returns whether this mesh is a single-device mesh.
   //
-  // A maximal-sharding mesh contains an empty axis list and a single device id.
-  bool IsMaximal() const {
+  // A single-device mesh contains an empty axis list and a single device id.
+  bool IsSingleDevice() const {
     return axes_names_.empty() && device_assignment_.num_elements() == 1;
   }
+
+  // Backward compatibility alias for `IsSingleDevice()`.
+  bool IsMaximal() const { return IsSingleDevice(); }
 
   bool operator==(const Mesh& other) const {
     return device_assignment_ == other.device_assignment_ &&
@@ -253,6 +256,12 @@ bool AxesCanCoexistWithoutOverlap(absl::Span<const AxisRef> axes);
 absl::Status ValidateSpanOfAxes(absl::Span<const AxisRef> axes,
                                 const Mesh& mesh,
                                 bool allow_mergeable_neighbors = false);
+
+// Merges consecutive adjacent axes.
+//
+// Adjacent axes that overlap will cause a fatal error.
+// Adjacent axes that can be merged are merged.
+void MergeAxes(std::vector<AxisRef>& axes, const Mesh& mesh);
 
 // Sorts and merges axes.
 //

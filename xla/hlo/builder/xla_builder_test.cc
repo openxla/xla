@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/builder/xla_builder.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <complex>
@@ -26,12 +29,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -58,6 +60,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/shuffle.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tuple_tree.h"
 #include "xla/util.h"
@@ -80,24 +83,24 @@ HloInstruction* GetRoot(HloModule& module) {
 
 // TODO(b/74197823): Move the tests to service/.
 absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b) {
-  TF_ASSIGN_OR_RETURN(XlaComputation computation,
-                      b.Build(/*remove_dynamic_dimensions=*/false));
+  ABSL_ASSIGN_OR_RETURN(XlaComputation computation,
+                        b.Build(/*remove_dynamic_dimensions=*/false));
   const HloModuleProto& proto = computation.proto();
-  TF_ASSIGN_OR_RETURN(const auto& config,
-                      HloModule::CreateModuleConfigFromProto(
-                          proto, GetDebugOptionsFromFlags()));
+  ABSL_ASSIGN_OR_RETURN(const auto& config,
+                        HloModule::CreateModuleConfigFromProto(
+                            proto, GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(proto, config);
 }
 
 // Overload which explicitly specifies the root instruction.
 absl::StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b,
                                                           XlaOp root) {
-  TF_ASSIGN_OR_RETURN(XlaComputation computation,
-                      b.Build(root, /*remove_dynamic_dimensions=*/false));
+  ABSL_ASSIGN_OR_RETURN(XlaComputation computation,
+                        b.Build(root, /*remove_dynamic_dimensions=*/false));
   const HloModuleProto& proto = computation.proto();
-  TF_ASSIGN_OR_RETURN(const auto& config,
-                      HloModule::CreateModuleConfigFromProto(
-                          proto, GetDebugOptionsFromFlags()));
+  ABSL_ASSIGN_OR_RETURN(const auto& config,
+                        HloModule::CreateModuleConfigFromProto(
+                            proto, GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(proto, config);
 }
 
@@ -369,6 +372,24 @@ TEST(XlaBuilderTest, DynamicDimensionReshapeToR0) {
   Reshape(dx, {});
   auto statusor = BuildHloModule(b);
   ASSERT_TRUE(statusor.ok());
+}
+
+TEST(XlaBuilderTest, DynamicDimensionReshapeSplitMultipleNonDegenerate) {
+  // Regression test for https://github.com/openxla/xla/issues/44945: a
+  // dynamic dimension split into multiple non-degenerate dimensions must stay
+  // dynamic on the most-major one instead of being silently dropped.
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {128, 128}), "x");
+  auto y = Parameter(&b, 1, ShapeUtil::MakeShape(S32, {}), "dyn_dim");
+  auto dx = SetDimensionSize(x, y, 1);
+  Reshape(dx, {64, 2, 64, 2});
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  const Shape& result_shape =
+      module->entry_computation()->root_instruction()->shape();
+  EXPECT_TRUE(ShapeUtil::Equal(
+      result_shape,
+      ShapeUtil::MakeShape(F32, {64, 2, 64, 2}, {false, false, true, false})))
+      << result_shape.ToString(/*print_layout=*/false);
 }
 
 TEST(XlaBuilderTest, ParameterAlreadyRegistered) {
@@ -965,6 +986,56 @@ TEST(XlaBuilderTest, CollectiveBroadcast) {
   EXPECT_EQ(GetRoot(*module)->opcode(), HloOpcode::kCollectiveBroadcast);
 }
 
+TEST(XlaBuilderTest, CollectiveBroadcastWithDynamicRoot) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  auto root = Parameter(&b, 1, ShapeUtil::MakeShape(S32, {1}), "root");
+
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(0);
+  replica_group.add_replica_ids(1);
+  CollectiveBroadcast({x, root}, {replica_group}, std::nullopt,
+                      /*has_dynamic_root=*/true);
+  ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  EXPECT_EQ(GetRoot(*module)->opcode(), HloOpcode::kCollectiveBroadcast);
+}
+
+TEST(XlaBuilderTest, CollectiveBroadcastWithDynamicRootFailWithOpMismatch) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  auto root = Parameter(&b, 1, ShapeUtil::MakeShape(S32, {2}), "root");
+
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(0);
+  replica_group.add_replica_ids(1);
+  CollectiveBroadcast({x, root}, {replica_group}, std::nullopt,
+                      /*has_dynamic_root=*/true);
+  absl::Status status = b.Build().status();
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr(
+          "the same number of elements as the number of non-root operands"));
+}
+
+TEST(XlaBuilderTest,
+     CollectiveBroadcastWithDynamicRootFailWithRootDimMismatch) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  auto root = Parameter(&b, 1, ShapeUtil::MakeShape(S32, {2, 1}), "root");
+
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(0);
+  replica_group.add_replica_ids(1);
+  CollectiveBroadcast({x, root}, {replica_group}, std::nullopt,
+                      /*has_dynamic_root=*/true);
+  absl::Status status = b.Build().status();
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("a 1-D array of S32"));
+}
+
 TEST(XlaBuilderTest, CollectivePermute) {
   XlaBuilder b(TestName());
   auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
@@ -1025,6 +1096,40 @@ TEST(XlaBuilderTest, ReportError) {
   auto statusor = b.Build();
   ASSERT_FALSE(statusor.ok());
   EXPECT_THAT(statusor.status().message(), HasSubstr("a test error"));
+}
+
+TEST(XlaBuilderTest, ReportErrorWithPythonLocation) {
+  XlaBuilder b(TestName());
+  OpMetadata metadata;
+  metadata.set_source_file("test_file.py");
+  metadata.set_source_line(42);
+  b.SetOpMetadata(metadata);
+
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  Add(b.ReportError(InvalidArgument("a test error")), x);
+  auto statusor = b.Build();
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(), HasSubstr("a test error"));
+  EXPECT_THAT(statusor.status().message(), HasSubstr("Python Code Location:"));
+  EXPECT_THAT(statusor.status().message(), HasSubstr("File: test_file.py:42"));
+}
+
+TEST(XlaBuilderTest, ReportErrorWithOneShotPythonLocation) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+
+  OpMetadata metadata;
+  metadata.set_source_file("test_file_oneshot.py");
+  metadata.set_source_line(84);
+  b.SetOneShotOpMetadata(metadata);
+
+  Add(b.ReportError(InvalidArgument("a test error")), x);
+  auto statusor = b.Build();
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(), HasSubstr("a test error"));
+  EXPECT_THAT(statusor.status().message(), HasSubstr("Python Code Location:"));
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("File: test_file_oneshot.py:84"));
 }
 
 TEST(XlaBuilderTest, ReportErrorOrReturnHandlesNonErrors) {
@@ -2108,14 +2213,15 @@ TEST(XlaBuilderTest, SetAndGetSharding) {
             hlo_sharding_2);
 }
 
-TEST(XlaBuilderTest, ComparisonType) {
+TEST(XlaBuilderTest, ComparisonOrder) {
   XlaBuilder b(TestName());
   (void)Le(ConstantR0<int32_t>(&b, 1), ConstantR0<int32_t>(&b, 2));
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   const HloInstruction* root = GetRoot(*module);
   ASSERT_THAT(root, GmockMatch(m::Compare(m::Constant(), m::Constant())));
-  EXPECT_EQ(Comparison::Type::kSigned,
-            DynCast<HloCompareInstruction>(root)->type());
+  const auto* compare = DynCast<HloCompareInstruction>(root);
+  EXPECT_EQ(S32, compare->comparison().GetPrimitiveType());
+  EXPECT_EQ(ComparisonOrder::kTotal, compare->order());
 }
 
 TEST(XlaBuilderTest, StableLookUpInstructionByHandle) {
@@ -3484,6 +3590,20 @@ TEST(XlaBuilderTest, UnboundedReverse) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
+TEST(XlaBuilderTest, UnboundedShuffle) {
+  XlaBuilder b(TestName());
+  ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[?, 10]"));
+  ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[?, 10]"));
+
+  Shuffle(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{0, 1},
+          shuffle::Rotate(/*shifts=*/{1, 3}));
+  ASSERT_OK_AND_ASSIGN(const std::unique_ptr<HloModule> module,
+                       BuildHloModule(b));
+
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
 TEST(XlaBuilderTest, UnboundedRngBitGenerator) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(const Shape initial_state, ParseShape("u32[?, 10]"));
@@ -4108,6 +4228,34 @@ TEST(XlaBuilderTest, OriginalValue) {
       {original_array0, original_array1});
   EXPECT_NE(tuple_original_value, nullptr);
   EXPECT_THAT(*tuple_original_value, expected_tuple_original_value);
+}
+
+TEST(XlaBuilderTest, AsyncStartWithOutputOperandAliasing) {
+  XlaBuilder b("async_start_aliasing");
+  Shape shape = ShapeUtil::MakeShape(F32, {4});
+  XlaOp p0 = Parameter(&b, 0, shape, "p0");
+
+  std::unique_ptr<XlaBuilder> sub_b = b.CreateSubBuilder("subcomp");
+  XlaOp sub_p0 = Parameter(sub_b.get(), 0, shape, "sub_p0");
+  XlaOp sub_neg = Neg(sub_p0);
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputationId sub_comp_id,
+                          sub_b->BuildSubComputation(sub_neg));
+
+  Shape start_shape =
+      ShapeUtil::MakeTupleShape({ShapeUtil::MakeTupleShape({shape}), shape,
+                                 ShapeUtil::MakeShape(S32, {})});
+
+  std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>> aliasing =
+      {{{1}, {0, {}}}};
+
+  internal::XlaBuilderFriend::BuildAsyncStart(
+      &b, {p0}, HloInstruction::kMainExecutionThread, sub_comp_id, start_shape,
+      aliasing);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module, BuildHloModule(b));
+  HloInstruction* root = GetRoot(*module);
+  EXPECT_EQ(root->opcode(), HloOpcode::kAsyncStart);
+  EXPECT_EQ(root->output_operand_aliasing(), aliasing);
 }
 
 }  // namespace

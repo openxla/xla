@@ -35,6 +35,7 @@
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -46,7 +47,6 @@
 #include "xla/hlo/tools/hlo_diff/utils/text_diff.h"
 #include "xla/printer.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace hlo_diff {

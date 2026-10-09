@@ -19,10 +19,12 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
@@ -123,7 +125,7 @@ absl::StatusOr<TmaDescriptor> CreateTmaDescriptor(
   auto interleave = TmaDescriptor::TmaInterleave::kNone;
   auto l2_promotion = TmaDescriptor::TmaL2Promotion::k128B;
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto tma_desc,
       TmaDescriptor::Create(global_dims, global_strides, box_dims,
                             element_strides, element_byte_size, interleave,
@@ -152,7 +154,7 @@ bool IsTmaRecommended(const TritonGemmConfig& config) {
 }
 
 // Equivalent to the recommendation constructed for TritonGemmConfig.
-bool IsTmaRecommended(const BlockLevelFusionConfig& config) {
+bool IsTmaRecommended(const xtile::BlockLevelFusionConfig& config) {
   if (!(config.num_warps() <= 8 &&
         (config.num_stages() == 1 || config.num_stages() == 3 ||
          config.num_stages() == 4))) {

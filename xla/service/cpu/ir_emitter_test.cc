@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/cpu/ir_emitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -22,8 +25,9 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/BasicBlock.h"
@@ -39,6 +43,10 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
@@ -66,12 +74,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla::cpu {
 namespace {
@@ -105,12 +107,12 @@ TEST_F(IrEmitterTest, ComputeFuncStack) {
       ROOT %zero = f32[] constant(0)
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo, ParseAndReturnUnverifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(auto hlo, ParseAndReturnUnverifiedModule(hlo_text));
   const HloInstruction* zero = FindInstruction(hlo.get(), "zero");
   ASSERT_NE(zero, nullptr);
 
   AliasInfo alias_info;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<BufferAssignment> buffer_assignment,
       BufferAssigner::Run(
           hlo.get(), std::make_unique<DependencyHloOrdering>(hlo.get()),
@@ -141,12 +143,11 @@ TEST_F(IrEmitterTest, ComputeFuncStack) {
   const auto linkagetype = llvm::GlobalValue::LinkageTypes::ExternalLinkage;
   const HloModuleConfig module_config;
   ir_emitter.PushComputeFunction(funcname, linkagetype, module_config,
-                                 module.get(), 0);
+                                 module.get());
   ASSERT_EQ(ir_emitter.compute_function()->function()->getName().str(),
             funcname);
 
-  ir_emitter.PushComputeFunction(b, module.get(), 0, function, nullptr,
-                                 return_block);
+  ir_emitter.PushComputeFunction(b, module.get(), function, return_block);
   ASSERT_EQ(ir_emitter.compute_function()->function(), function);
 
   ir_emitter.PopComputeFunction();
@@ -255,7 +256,6 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
   };
 
   llvm::TargetOptions target_options;
-  target_options.AllowFPOpFusion = llvm::FPOpFusion::Fast;
 
   // Returns a global (per-process) thread pool for XLA CPU compilation tasks.
   auto compilation_task_runner = [](cpu::JitCompiler::Task task) {
@@ -269,7 +269,7 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
       IrCompiler::Create(target_options, std::move(ir_compiler_options),
                          IrCompiler::CompilationHooks());
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       JitCompiler jit_compiler,
       JitCompiler::Create(std::move(jit_compiler_options),
                           std::move(ir_compiler), compilation_task_runner));
@@ -285,15 +285,15 @@ CreateIrEmitterForConstantEmissionTests(HloModule& module,
                              std::make_unique<BFScheduler>(
                                  &alias_info, buffer_size_bytes_function));
 
-  TF_ASSIGN_OR_RETURN(HloSchedule schedule,
-                      ScheduleModule(&module, *scheduler));
-  TF_RETURN_IF_ERROR(module.set_schedule(schedule));
+  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
+                        ScheduleModule(&module, *scheduler));
+  ABSL_RETURN_IF_ERROR(module.set_schedule(schedule));
 
   auto memory_alignment = [](LogicalBuffer::Color) { return MinAlign(); };
   // Run buffer allocation on the HLO graph.
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> assignment,
       BufferAssigner::Run(&module,
                           std::make_unique<SequentialHloOrdering>(schedule),
@@ -332,17 +332,17 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnUnverifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(module_string));
 
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
   auto llvm_module = std::make_unique<llvm::Module>("test", *llvm_context);
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto wrapped_ir_emitter,
       CreateIrEmitterForConstantEmissionTests(*module, *llvm_module));
 
-  TF_ASSERT_OK(wrapped_ir_emitter->ir_emitter->EmitSmallConstantGlobals());
+  ASSERT_OK(wrapped_ir_emitter->ir_emitter->EmitSmallConstantGlobals());
 
   EXPECT_EQ(
       std::distance(llvm_module->global_begin(), llvm_module->global_end()),

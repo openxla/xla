@@ -26,13 +26,12 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"        // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "xla/backends/cpu/codegen/computation_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/elemental/concatenate_kernel_emitter.h"
-#include "xla/backends/cpu/codegen/elemental/elemental_kernel_emitter.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_scatter_emitter.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/fusion_emitter.h"
@@ -138,7 +137,7 @@ NB_MODULE(_extension, kernel_runner_module) {
              return std::move(buffer_assignment).value();
            })
       .def("create_hlo_schedule", [](const CpuCompiler& self,
-                                     const HloModule& hlo_module) {
+                                     HloModule& hlo_module) {
         absl::StatusOr<HloSchedule> schedule =
             self.CreateHloSchedule(hlo_module);
 
@@ -155,13 +154,6 @@ NB_MODULE(_extension, kernel_runner_module) {
   nb::class_<TargetMachineFeatures>(kernel_runner_module,
                                     "TargetMachineFeatures")
       .def("__str__", &TargetMachineFeatures::get_target_feature_string);
-
-  nb::class_<ElementalKernelEmitter, KernelEmitter<LlvmKernelSource>>(
-      kernel_runner_module, "ElementalKernelEmitter")
-      .def(nb::init<const HloInstruction*, const BufferAssignment*,
-                    const TargetMachineFeatures*>(),
-           nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
-           nb::keep_alive<1, 4>());
 
   nb::class_<DotKernelEmitter, KernelEmitter<LlvmKernelSource>>(
       kernel_runner_module, "DotKernelEmitter")
@@ -270,16 +262,17 @@ NB_MODULE(_extension, kernel_runner_module) {
 
   kernel_runner_module.def(
       "run_fusion_wrapper_pass",
-      [](std::unique_ptr<HloModule, nb::deleter<HloModule>> hlo_module) {
-        FusionWrapper fusion_wrapper(/*using_new_fusion_emitter=*/true,
-                                     /*use_tiled_emitter=*/true);
+      [](std::unique_ptr<HloModule, nb::deleter<HloModule>> hlo_module,
+         const TargetMachineFeatures* target_machine_features) {
+        FusionWrapper fusion_wrapper(target_machine_features);
         absl::StatusOr<bool> result = fusion_wrapper.Run(hlo_module.get());
         if (!result.ok()) {
           throw std::runtime_error(std::string(result.status().message()));
         }
 
         return hlo_module->Clone();
-      });
+      },
+      nb::arg("hlo_module"), nb::arg("target_machine_features") = nullptr);
 }
 
 }  // namespace xla::cpu

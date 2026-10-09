@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_unified_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/device_address.h"
@@ -90,13 +91,12 @@ TEST(CudaUnifiedAllocatorTest, MemcpyRoundTrip) {
   }
 
   // Copy unified memory to device memory.
-  DeviceAddress<uint8_t> device_addr(device_alloc->address());
-  ASSERT_OK(
-      stream->MemcpyH2D(absl::Span<const uint8_t>(unified_span), &device_addr));
+  DeviceAddressBase device_addr = device_alloc->address();
+  ASSERT_OK(stream->Memcpy(&device_addr, unified_span.data(), kSize));
 
   // Zero the unified buffer and copy back from device.
   std::memset(unified_span.data(), 0, kSize);
-  ASSERT_OK(stream->MemcpyD2H(device_addr, unified_span));
+  ASSERT_OK(stream->Memcpy(unified_span.data(), device_addr, kSize));
   ASSERT_OK(stream->BlockHostUntilDone());
 
   // Verify the data roundtripped correctly.

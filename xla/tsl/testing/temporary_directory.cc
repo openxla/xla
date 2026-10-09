@@ -15,17 +15,19 @@ limitations under the License.
 
 #include "xla/tsl/testing/temporary_directory.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/path.h"
 
 namespace tsl {
 namespace testing {
@@ -35,7 +37,7 @@ absl::StatusOr<TemporaryDirectory> TemporaryDirectory::CreateForTestcase(
   std::string path =
       tsl::io::JoinPath(::testing::TempDir(), "xla_testing_tmp",
                         test_info.test_suite_name(), test_info.name());
-  TF_RETURN_IF_ERROR(tsl::Env::Default()->RecursivelyCreateDir(path));
+  ABSL_RETURN_IF_ERROR(tsl::Env::Default()->RecursivelyCreateDir(path));
   return TemporaryDirectory(std::move(path));
 }
 

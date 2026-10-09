@@ -19,20 +19,57 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla::gpu::experimental {
+
+// Tiled dimension ID within tiling space. Separate type for safety to not
+// confuse dimension ID in the tiling space with e.g. position of dimension
+// in HLO op etc.
+class TiledDimId {
+ public:
+  constexpr explicit TiledDimId(int64_t value) : value_(value) {}
+  constexpr int64_t value() const { return value_; }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const TiledDimId& i) {
+    return H::combine(std::move(h), i.value_);
+  }
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const TiledDimId& id) {
+    absl::Format(&sink, "%v", id.value());
+  }
+
+  friend constexpr bool operator==(TiledDimId lhs, TiledDimId rhs) {
+    return lhs.value() == rhs.value();
+  }
+
+  friend constexpr bool operator!=(TiledDimId lhs, TiledDimId rhs) {
+    return lhs.value() != rhs.value();
+  }
+
+ private:
+  int64_t value_;
+};
+
+inline std::ostream& operator<<(std::ostream& os, TiledDimId id) {
+  return os << id.value();
+}
 
 class TilingSpace;
 
@@ -59,6 +96,7 @@ class TilingSpace;
 //  - runtime variables.
 struct DimTile {
   bool operator==(const DimTile& other) const;
+  bool operator!=(const DimTile& other) const { return !(*this == other); }
 
   SymbolicExpr offset;
   SymbolicExpr size;
@@ -87,6 +125,19 @@ struct DimTile {
   //                      strides [1]
   //                      upper bounds [17 * tid0]
   SymbolicExpr upper_bound;
+
+  // Simplify expressions inside the DimTile using the actual dimension and
+  // symbol bounds.
+  void Simplify(
+      const TilingSpace& space,
+      llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints = {});
+
+  std::string ToString() const;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const DimTile& dim_tile) {
+    sink.Append(dim_tile.ToString());
+  }
 };
 
 template <typename H>
@@ -96,12 +147,30 @@ H AbslHashValue(H h, const DimTile& dim_tile) {
   return H::combine(std::move(h), static_cast<size_t>(dim_tile_hash));
 }
 
+// Simplifies groups of DimTiles using the dimension and symbol bounds of the
+// given tiling space.
+void SimplifyDimTiles(
+    llvm::ArrayRef<llvm::MutableArrayRef<DimTile>> dim_tile_groups,
+    const TilingSpace& space,
+    llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints = {});
+
+// Simplifies a list of DimTiles using the dimension and symbol bounds of the
+// given tiling space.
+void SimplifyDimTiles(
+    llvm::MutableArrayRef<DimTile> dim_tiles, const TilingSpace& space,
+    llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints = {});
+
 // Tile is a collection of tilings for every dimension of output tensor
 // of an HLO instruction. TiledHloInstruction associates a Tile
 // with an HLO instruction.
 class Tile {
+  // Differentiate between dimensions and replica IDs.
+  enum class DimTileType { kSpatial, kReplicaId };
+
  public:
-  Tile(const TilingSpace& tiling_space, llvm::SmallVector<DimTile> dim_tiles);
+  Tile(const TilingSpace& tiling_space, llvm::SmallVector<DimTile> dim_tiles,
+       llvm::SmallVector<DimTile> replica_ids = {},
+       llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints = {});
 
   Tile(const TilingSpace& tiling_space, llvm::ArrayRef<SymbolicExpr> offsets,
        llvm::ArrayRef<SymbolicExpr> sizes, llvm::ArrayRef<SymbolicExpr> strides,
@@ -109,12 +178,21 @@ class Tile {
 
   std::string ToString(bool print_variables = true) const;
 
-  llvm::SmallVector<SymbolicExpr> offsets() const;
-  llvm::SmallVector<SymbolicExpr> sizes() const;
-  llvm::SmallVector<SymbolicExpr> strides() const;
-  llvm::SmallVector<SymbolicExpr> upper_bounds() const;
+  llvm::SmallVector<SymbolicExpr> offsets(
+      DimTileType type = DimTileType::kSpatial) const;
+  llvm::SmallVector<SymbolicExpr> sizes(
+      DimTileType type = DimTileType::kSpatial) const;
+  llvm::SmallVector<SymbolicExpr> strides(
+      DimTileType type = DimTileType::kSpatial) const;
+  llvm::SmallVector<SymbolicExpr> upper_bounds(
+      DimTileType type = DimTileType::kSpatial) const;
   llvm::ArrayRef<DimTile> dim_tiles() const { return dim_tiles_; }
+  llvm::ArrayRef<DimTile> replica_ids() const { return replica_ids_; }
+  llvm::ArrayRef<DimTile> TilesOf(DimTileType type) const {
+    return type == DimTileType::kSpatial ? dim_tiles_ : replica_ids_;
+  }
   int64_t num_dim_tiles() const { return dim_tiles_.size(); }
+  int64_t num_replica_ids() const { return replica_ids_.size(); }
 
   absl::StatusOr<llvm::SmallVector<int64_t>> GetStaticTileSizes() const;
   absl::StatusOr<llvm::SmallVector<int64_t>> GetStaticTileStrides() const;
@@ -122,13 +200,26 @@ class Tile {
   const TilingSpace& tiling_space() const { return *tiling_space_; }
   mlir::MLIRContext* mlir_context() const;
 
-  const std::optional<SymbolicExpr>& replica_id() const { return replica_id_; }
-  void set_replica_id(std::optional<SymbolicExpr> replica_id) {
-    replica_id_ = std::move(replica_id);
-  }
-
   // Replace tiling expressions with the given map.
   void Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map);
+
+  // Returns true if any of the tile expressions (including constraints) uses
+  // any of the given variables (tile IDs, tile sizes, runtime variables).
+  bool DependsOnVariables(llvm::ArrayRef<VariableID> variables) const;
+
+  // Simplify expressions inside the tile using actual dimension and symbol
+  // bounds.
+  void Simplify();
+
+  // Constraints on the tiling space variables (tile IDs, tile sizes and
+  // runtime variables) that hold for this tile, e.g. the range of the offset
+  // that selects a particular operand of a concatenate.
+  llvm::ArrayRef<std::pair<SymbolicExpr, Interval>> constraints() const {
+    return constraints_;
+  }
+  int64_t num_constraints() const { return constraints_.size(); }
+
+  void AddConstraint(SymbolicExpr expr, Interval range);
 
   // Clone the tile with new dim tiles.
   // When we are propagating a tile to an input, we need to adjust the offsets
@@ -136,7 +227,11 @@ class Tile {
   // the original tile.
   Tile CloneWithNewDims(llvm::SmallVector<DimTile> new_dim_tiles) const;
 
+  // Creates a copy of the tile associated with a new tiling space.
+  Tile CloneWithNewTilingSpace(const TilingSpace& new_space) const;
+
   bool operator==(const Tile& other) const;
+  bool operator!=(const Tile& other) const { return !(*this == other); }
 
   // This allows GUnit to print the tile.
   template <typename Sink>
@@ -147,17 +242,23 @@ class Tile {
  private:
   const TilingSpace* tiling_space_;
   llvm::SmallVector<DimTile> dim_tiles_;
-  std::optional<SymbolicExpr> replica_id_;
+  // Keep replica IDs separate from the dim tiles since it does not correspond
+  // to a specific dimension on the tile. Propagating a tile to an input may add
+  // a replica ID, but does not change the number of dimensions so propagation
+  // for ops that don't have replica IDs stays the same.
+  llvm::SmallVector<DimTile> replica_ids_;
+  llvm::SmallVector<std::pair<SymbolicExpr, Interval>, 2> constraints_;
 };
 
 template <typename H>
 H AbslHashValue(H h, const Tile& tile) {
   h = H::combine(std::move(h), &tile.tiling_space());
-  for (const DimTile& dim_tile : tile.dim_tiles()) {
+  for (const DimTile& dim_tile :
+       llvm::concat<const DimTile>(tile.dim_tiles(), tile.replica_ids())) {
     h = H::combine(std::move(h), dim_tile);
   }
-  if (tile.replica_id().has_value()) {
-    h = H::combine(std::move(h), tile.replica_id().value());
+  for (const auto& [expr, interval] : tile.constraints()) {
+    h = H::combine(std::move(h), expr, interval);
   }
   return h;
 }
@@ -170,7 +271,8 @@ DimTile GetFullDimTile(int64_t dim_size, mlir::MLIRContext* ctx);
 // Returns a DimTile that covers the entire dimension, i.e.
 //  offset = SymbolicDimExpr(id) * SymbolicSymbolExpr(id),
 //  size = SymbolicVariable(id), stride 1, upper_bound = dim_size.
-DimTile GetDefaultDimTile(int64_t id, SymbolicExpr tile_size, int64_t dim_size);
+DimTile GetDefaultDimTile(TiledDimId id, SymbolicExpr tile_size,
+                          int64_t dim_size);
 
 }  // namespace xla::gpu::experimental
 

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -103,7 +104,7 @@ class HloPassInterface {
   virtual absl::Status RunOnChangedComputations(
       HloModule* module, RunState* run_state,
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
-    TF_ASSIGN_OR_RETURN(bool changed, Run(module, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(bool changed, Run(module, execution_threads));
     if (changed) {
       auto computations = module->computations(execution_threads);
       run_state->changed_this_iteration.insert(computations.begin(),
@@ -117,7 +118,7 @@ class HloPassInterface {
   // If an HloPassMetadata has previously been created, it adds a (key, value)
   // pair metric if none was already set or updates the existing value.
   // If an HloPassMetadata doesn't exist, it simply returns.
-  static void SetKVMetric(HloModule* module, const std::string& key,
+  static void SetKVMetric(HloModule* module, absl::string_view key,
                           int64_t value) {
     auto status = module->metadata()->set_key_value_metric(key, value);
     if (!status.ok()) {

@@ -17,14 +17,13 @@ limitations under the License.
 #define XLA_UTIL_DLPACK_TYPES_H_
 
 #include "absl/status/statusor.h"
-#include "include/dlpack/dlpack.h"
+#include "dlpack/dlpack.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 
 absl::StatusOr<DLDataType> PrimitiveTypeToDLDataType(PrimitiveType type);
 absl::StatusOr<PrimitiveType> DLDataTypeToPrimitiveType(DLDataType type);
-
 
 }  // namespace xla
 

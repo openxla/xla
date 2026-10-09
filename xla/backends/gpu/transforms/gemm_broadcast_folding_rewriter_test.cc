@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/gemm_broadcast_folding_rewriter.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -34,7 +34,7 @@ namespace xla::gpu {
 namespace {
 
 class GemmBroadcastFoldingRewriteTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtGpuTestBase> {
+    : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
  protected:
   const auto& GpuComputeComp() {
     return device_description().gpu_compute_capability();
@@ -222,16 +222,16 @@ ENTRY %RHSBatchDimNonZero (Arg_1: f32[4,3], Arg_2: f32[4,7,3]) -> f32[4,7,7] {
 }
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
   GemmRewriter gemm_rewriter(
       GpuComputeComp(),
       /*toolkit_version=*/stream_executor::SemanticVersion{12, 4, 0});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          this->RunHloPass(&gemm_rewriter, module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       this->RunHloPass(&gemm_rewriter, module.get()));
   EXPECT_TRUE(changed);
   GemmBroadcastFoldingRewriter pass;
-  TF_ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(changed, this->RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }
 

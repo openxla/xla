@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -84,7 +85,7 @@ absl::StatusOr<FusedIrEmitter::IndexedGenerator> FusedIrEmitter::DefaultAction(
       }
     }
 
-    TF_ASSIGN_OR_RETURN(value, generator(index));
+    ABSL_ASSIGN_OR_RETURN(value, generator(index));
     value_cache_[std::move(key)] = value;
     return value;
   });
@@ -132,23 +133,25 @@ absl::StatusOr<FusedIrEmitter::IndexedGenerator> FusedIrEmitter::HandleTuple(
   llvm::IRBuilderBase* b = elemental_emitter_.b();
   llvm::Type* type = llvm::StructType::get(b->getContext(), element_ir_types);
 
-  return absl::StatusOr<IndexedGenerator>([&, b,
-                                           type](const IrArray::Index& index)
-                                              -> absl::StatusOr<llvm::Value*> {
-    llvm::Value* ret = llvm::UndefValue::get(type);
-    for (size_t i = 0; i < tuple.operand_count(); ++i) {
-      IrArray::Index used_index = index;
-      if (i > 0 && !ShapeUtil::EqualIgnoringElementType(
-                       tuple.operand(i)->shape(), tuple.operand(0)->shape())) {
-        used_index = used_index.SourceIndexOfBitcast(
-            tuple.operand(0)->shape(), tuple.operand(i)->shape(), b);
-      }
-      TF_ASSIGN_OR_RETURN(llvm::Value * value,
-                          indexed_generators_.at(tuple.operand(i))(used_index));
-      ret = b->CreateInsertValue(ret, value, i);
-    }
-    return ret;
-  });
+  return absl::StatusOr<IndexedGenerator>(
+      [&, b,
+       type](const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
+        llvm::Value* ret = llvm::UndefValue::get(type);
+        for (size_t i = 0; i < tuple.operand_count(); ++i) {
+          IrArray::Index used_index = index;
+          if (i > 0 &&
+              !ShapeUtil::EqualIgnoringElementType(tuple.operand(i)->shape(),
+                                                   tuple.operand(0)->shape())) {
+            used_index = used_index.SourceIndexOfBitcast(
+                tuple.operand(0)->shape(), tuple.operand(i)->shape(), b);
+          }
+          ABSL_ASSIGN_OR_RETURN(
+              llvm::Value * value,
+              indexed_generators_.at(tuple.operand(i))(used_index));
+          ret = b->CreateInsertValue(ret, value, i);
+        }
+        return ret;
+      });
 }
 
 absl::StatusOr<FusedIrEmitter::IndexedGenerator>
@@ -178,7 +181,7 @@ absl::StatusOr<FusedIrEmitter::IndexedGenerator> FusedIrEmitter::GetGenerator(
     if (indexed_generator != nullptr) continue;
 
     stack.insert(stack.end(), instr.operands().begin(), instr.operands().end());
-    TF_ASSIGN_OR_RETURN(indexed_generator, CreateGenerator(instr));
+    ABSL_ASSIGN_OR_RETURN(indexed_generator, CreateGenerator(instr));
   }
   return indexed_generators_[&instruction];
 }

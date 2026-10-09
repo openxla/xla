@@ -502,6 +502,7 @@ class HloCostAnalysis : public ConstDfsHloVisitor {
   absl::Status HandleAllToAll(const HloInstruction* hlo) override;
   absl::Status HandleRaggedAllToAll(const HloInstruction* hlo) override;
   absl::Status HandleCollectiveBroadcast(const HloInstruction* hlo) override;
+  absl::Status HandleCollectiveReduce(const HloInstruction* hlo) override;
   absl::Status HandleCollectivePermute(const HloInstruction* hlo) override;
   absl::Status HandleCollectivePermuteStart(const HloInstruction* hlo) override;
   absl::Status HandleCollectivePermuteDone(const HloInstruction* hlo) override;
@@ -514,6 +515,7 @@ class HloCostAnalysis : public ConstDfsHloVisitor {
   absl::Status HandleRngGetAndUpdateState(
       const HloInstruction* random) override;
   absl::Status HandleReverse(const HloInstruction* reverse) override;
+  absl::Status HandleShuffle(const HloInstruction* shuffle) override;
   absl::Status HandleSort(const HloInstruction* sort) override;
   absl::Status HandleParameter(const HloInstruction* parameter) override;
   absl::Status HandleReduce(const HloInstruction* reduce) override;
@@ -655,21 +657,21 @@ class HloCostAnalysis : public ConstDfsHloVisitor {
 
   // Allows exclusion of certain types of inputs from bytes accessed during
   // FusionProcessOperandBytesRead.
-  virtual bool ShouldFilterFusionInput(const HloInstruction* fusion,
-                                       int64_t input_index) {
+  virtual absl::StatusOr<bool> ShouldFilterFusionInput(
+      const HloInstruction* fusion, int64_t input_index) {
     return false;
   }
 
   // Allows exclusion of certain instructions from FusionCalculateUtilizations.
-  virtual bool ShouldFilterFusionInstruction(
+  virtual absl::StatusOr<bool> ShouldFilterFusionInstruction(
       const HloInstruction* fusion, const HloInstruction* instruction) {
     return false;
   }
 
   // Allows exclusion of certain types of output from bytes written during
   // FusionProcessOutputBytesAccessed.
-  virtual bool ShouldFilterFusionOutputIndex(const HloInstruction* fusion,
-                                             const ShapeIndex& output_index) {
+  virtual absl::StatusOr<bool> ShouldFilterFusionOutputIndex(
+      const HloInstruction* fusion, const ShapeIndex& output_index) {
     return false;
   }
 

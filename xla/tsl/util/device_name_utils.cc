@@ -27,9 +27,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "tsl/platform/str_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/str_util.h"
 
 namespace tsl {
 
@@ -633,7 +633,8 @@ std::vector<std::string> DeviceNameUtils::GetLocalNamesForDeviceMappings(
     const std::string& device_name, std::string* host_device_name) {
   DeviceNameUtils::ParsedName device;
   if (!DeviceNameUtils::ParseFullName(device_name, &device)) {
-    return errors::Internal("Could not parse device name ", device_name);
+    return absl::InternalError(
+        absl::StrCat("Could not parse device name ", device_name));
   }
   device.type = "CPU";
   device.has_type = true;

@@ -19,13 +19,14 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "cub/version.cuh"
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "cub/version.cuh"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
@@ -111,12 +112,12 @@ const std::string& CudaPlatform::Name() const { return name_; }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
 CudaPlatform::DescriptionForDevice(int ordinal) const {
-  TF_RETURN_IF_ERROR(PlatformInitialize());
+  ABSL_RETURN_IF_ERROR(PlatformInitialize());
   return CudaExecutor::CreateDeviceDescription(ordinal);
 }
 
 absl::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(int ordinal) {
-  TF_RETURN_IF_ERROR(PlatformInitialize());
+  ABSL_RETURN_IF_ERROR(PlatformInitialize());
   return executor_cache_.GetOrCreate(
       ordinal, [this, ordinal]() { return GetUncachedExecutor(ordinal); });
 }
@@ -128,7 +129,7 @@ absl::StatusOr<StreamExecutor*> CudaPlatform::FindExisting(int ordinal) {
 absl::StatusOr<std::unique_ptr<StreamExecutor>>
 CudaPlatform::GetUncachedExecutor(int ordinal) {
   auto executor = std::make_unique<CudaExecutor>(this, ordinal);
-  TF_RETURN_IF_ERROR(executor->Init());
+  ABSL_RETURN_IF_ERROR(executor->Init());
   return std::move(executor);
 }
 

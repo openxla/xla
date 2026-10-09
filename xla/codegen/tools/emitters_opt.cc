@@ -13,12 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <string>
+#include <utility>
+
+#include "absl/log/check.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Bufferization/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
@@ -57,6 +63,7 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/stream_executor/device_description.pb.h"
 
 struct EmittersOptOptions
     : public mlir::PassPipelineOptions<EmittersOptOptions> {
@@ -72,7 +79,8 @@ struct EmittersOptOptions
       return xla::gpu::TestGpuDeviceInfo::RTXA6000DeviceInfo();
     }
     stream_executor::GpuDeviceInfoProto device_info;
-    CHECK(google::protobuf::TextFormat::ParseFromString(gpu_device_info, &device_info));
+    CHECK(google::protobuf::TextFormat::ParseFromString(gpu_device_info,
+                                                        &device_info));
     auto device_description =
         stream_executor::DeviceDescription::FromProto(device_info);
     CHECK_OK(device_description.status());
@@ -106,6 +114,7 @@ int main(int argc, char** argv) {
   mlir::bufferization::registerBufferizationPasses();
 
   mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::bufferization::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
       registry);
   mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);

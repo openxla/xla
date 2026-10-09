@@ -13,15 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal.h"
@@ -32,14 +35,12 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
 
-using TwoPlusTwoSimpleTest = ClientLibraryTestRunnerMixin<
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>;
+using TwoPlusTwoSimpleTest =
+    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(TwoPlusTwoSimpleTest, TwoPlusTwoVector) {
   XlaBuilder builder("two_plus_two");

@@ -173,6 +173,12 @@ absl::StatusOr<std::string> duplicateShardingsAtIndices(
 // TODO(b/420837831): delete this once we don't fall back to GSPMD.
 bool hasGspmdAttrsOrOps(mlir::ModuleOp module);
 
+// Returns true if the module has frontend_attributes containing mhlo.sharding.
+bool hasFrontendMhloShardings(mlir::ModuleOp module);
+
+// Returns true if the module has frontend_attributes containing xla.sdy.meshes.
+bool hasFrontendMeshes(mlir::ModuleOp module);
+
 // Check if the module has any sort of Shardy mesh:
 // - `mesh`
 // - `maximal_mesh_{X}`
@@ -188,13 +194,21 @@ mlir::sdy::AxisRefAttr toSdyAxisRefAttr(const AxisRef& axisRef,
                                         const Mesh& mesh,
                                         mlir::MLIRContext* context);
 
-// Converts a non-tuple XLA HloSharding to an SDY TensorShardingAttr.
+// Converts a non-tuple XLA HloSharding to an SDY TensorShardingAttr, where
+// `rank` is the rank of the value the sharding applies to.
+//
+// The rank is needed because HLO omits the dimension shardings of a fully
+// manual tensor, whereas `TensorShardingAttr` always has one per dimension.
 mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
-    const HloSharding& hloSharding, mlir::MLIRContext* context);
+    const HloSharding& hloSharding, int64_t rank, mlir::MLIRContext* context);
 
-// Converts a tuple XLA HloSharding to an SDY TensorShardingPerValueAttr.
+// Converts an XLA HloSharding to an SDY TensorShardingPerValueAttr, where
+// `types` are the types of the values the sharding applies to.
+//
+// See `convertToSdyShardingAttr` for why the types are needed.
 mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
-    const HloSharding& hloSharding, mlir::MLIRContext* context);
+    const HloSharding& hloSharding, mlir::TypeRange types,
+    mlir::MLIRContext* context);
 
 // Returns whether the call is on a manual computation.
 bool isManualComputation(mlir::func::CallOp callOp);

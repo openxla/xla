@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -24,6 +25,8 @@ int main(int argc, char** argv) {
   const std::string disabled[] = {
       // Neither IFRT Proxy nor PjRt CPU does not support `GetHloModules`.
       "*LoadedExecutableImplTest.GetHloModules*",
+      // ExecuteBundle is not implemented.
+      "*CompileAndExecuteBundle*",
       // CPU backend does not support serialization.
       "*SerializeAndLoad*",
   };

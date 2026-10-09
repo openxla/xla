@@ -35,6 +35,24 @@ struct AccuracyBudget {
   UlpBudget cpu;
   UlpBudget gpu;
   std::optional<UlpBudget> rocm_gpu = {};
+  std::optional<UlpBudget> intel_gpu = {};
+};
+
+// Atan
+constexpr AccuracyBudget kAtanF32Budget = {
+    /*cpu=*/{/*regular=*/3,
+             /*subnormal=*/1},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+};
+
+constexpr AccuracyBudget kAtanF64Budget = {
+    /*cpu=*/{/*regular=*/2,
+             /*subnormal=*/1},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
 };
 
 // Exp
@@ -46,11 +64,10 @@ constexpr AccuracyBudget kExpF32Budget = {
      /*subnormal=*/0},
 };
 
-constexpr AccuracyBudget kExpF64Budget = {
-    /*cpu=*/{/*regular=*/1,
-             /*subnormal=*/41132809365},
-    /*gpu=*/{/*regular=*/1,
-             /*subnormal=*/0}};
+constexpr AccuracyBudget kExpF64Budget = {/*cpu=*/{/*regular=*/1,
+                                                   /*subnormal=*/41132809365},
+                                          /*gpu=*/{/*regular=*/1,
+                                                   /*subnormal=*/0}};
 
 // Log1p
 constexpr AccuracyBudget kLog1pF32Budget = {
@@ -116,6 +133,10 @@ constexpr AccuracyBudget kRsqrtF64Budget = {
     UlpBudget{/*regular=*/1,
               /*subnormal=*/0,
               /*special_values=*/2},
+    /*intel_gpu=*/
+    UlpBudget{/*regular=*/1,
+              /*subnormal=*/0,
+              /*special_values=*/2},
 };
 
 // Tanh
@@ -133,6 +154,52 @@ constexpr AccuracyBudget kTanhF64Budget = {
     /*gpu=*/
     {/*regular=*/1,
      /*subnormal=*/0},
+    /*rocm_gpu=*/std::nullopt,
+    /*intel_gpu=*/
+    UlpBudget{/*regular=*/2,
+              /*subnormal=*/0},
+};
+
+// Sin
+constexpr AccuracyBudget kSinF32Budget = {
+    /*cpu=*/{/*regular=*/1,
+             /*subnormal=*/0},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+};
+
+constexpr AccuracyBudget kSinF64Budget = {
+    /*cpu=*/{/*regular=*/1,
+             /*subnormal=*/1},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+    /*rocm_gpu=*/std::nullopt,
+    /*intel_gpu=*/
+    UlpBudget{/*regular=*/2,
+              /*subnormal=*/0},
+};
+
+// Cos
+constexpr AccuracyBudget kCosF32Budget = {
+    /*cpu=*/{/*regular=*/1,
+             /*subnormal=*/0},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+};
+
+constexpr AccuracyBudget kCosF64Budget = {
+    /*cpu=*/{/*regular=*/1,
+             /*subnormal=*/0},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+    /*rocm_gpu=*/std::nullopt,
+    /*intel_gpu=*/
+    UlpBudget{/*regular=*/2,
+              /*subnormal=*/0},
 };
 
 // Erf
@@ -145,6 +212,10 @@ constexpr AccuracyBudget kErfF32Budget = {
     /*rocm_gpu=*/
     UlpBudget{/*regular=*/3,
               /*subnormal=*/0},
+    /*intel_gpu=*/
+    UlpBudget{/*regular=*/2,
+              /*subnormal=*/0,
+              /*special_values=*/1},
 };
 
 constexpr AccuracyBudget kErfF64Budget = {
@@ -153,6 +224,32 @@ constexpr AccuracyBudget kErfF64Budget = {
     /*gpu=*/
     {/*regular=*/1,
      /*subnormal=*/0},
+    /*rocm_gpu=*/std::nullopt,
+    /*intel_gpu=*/
+    UlpBudget{/*regular=*/2,
+              /*subnormal=*/0},
+};
+
+// Tan
+constexpr AccuracyBudget kTanF32Budget = {
+    /*cpu=*/{/*regular=*/2, /*subnormal=*/0},
+    /*gpu=*/{/*regular=*/4, /*subnormal=*/0},
+};
+
+constexpr AccuracyBudget kTanF64Budget = {
+    /*cpu=*/{/*regular=*/1, /*subnormal=*/1},
+    /*gpu=*/{/*regular=*/4, /*subnormal=*/1},
+};
+
+// Cbrt
+constexpr AccuracyBudget kCbrtF32Budget = {
+    /*cpu=*/{/*regular=*/1, /*subnormal=*/0},
+    /*gpu=*/{/*regular=*/2, /*subnormal=*/0},
+};
+
+constexpr AccuracyBudget kCbrtF64Budget = {
+    /*cpu=*/{/*regular=*/2, /*subnormal=*/2994893752201379840LL},
+    /*gpu=*/{/*regular=*/2, /*subnormal=*/0},
 };
 
 // Sqrt

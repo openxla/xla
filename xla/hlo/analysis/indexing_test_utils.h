@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_HLO_ANALYSIS_INDEXING_TEST_UTILS_H_
 #define XLA_HLO_ANALYSIS_INDEXING_TEST_UTILS_H_
 
+#include <gmock/gmock.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -24,7 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

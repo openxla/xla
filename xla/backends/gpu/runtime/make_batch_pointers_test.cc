@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/make_batch_pointers.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "xla/service/platform_util.h"
@@ -27,23 +29,22 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 using ::testing::ElementsAreArray;
 
 static absl::StatusOr<stream_executor::StreamExecutor*> GpuExecutor() {
-  TF_ASSIGN_OR_RETURN(stream_executor::Platform * platform,
-                      PlatformUtil::GetDefaultPlatform());
+  ABSL_ASSIGN_OR_RETURN(stream_executor::Platform * platform,
+                        PlatformUtil::GetDefaultPlatform());
   return platform->ExecutorForDevice(0);
 }
 
 TEST(MakeBatchPointersTest, Basic) {
-  TF_ASSERT_OK_AND_ASSIGN(stream_executor::StreamExecutor * executor,
-                          GpuExecutor());
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<stream_executor::Stream> stream,
-                          executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(stream_executor::StreamExecutor * executor,
+                       GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<stream_executor::Stream> stream,
+                       executor->CreateStream());
 
   // We don't care what `base` points to, we only need a pointer to a buffer
   // that we can use as a base.

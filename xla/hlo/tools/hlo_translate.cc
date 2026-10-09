@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/service/hlo_proto_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/protobuf.h"
 
 namespace {
 
@@ -110,7 +110,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> GetModuleFromHLOText(
 
   auto hlo_module = std::move(hlo_text.value());
 
-  // For emitting StableHLO, use new APIs by defualt.
+  // For emitting StableHLO, use new APIs by default.
   if (!emit_mhlo) {
     return xla::ConvertHloToStablehlo(*context, hlo_module.get());
   }
@@ -134,7 +134,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> GetModuleFromHLOProto(
     return absl::InvalidArgumentError(kLoadHloError);
   }
 
-  // For emitting StableHLO, use new APIs by defualt.
+  // For emitting StableHLO, use new APIs by default.
   if (!emit_mhlo) {
     return xla::ConvertHloToStablehlo(*context, hlo_proto.mutable_hlo_module());
   }
@@ -184,7 +184,7 @@ mlir::OwningOpRef<mlir::ModuleOp> GetModuleFromHloInput(
   if (module_from_proto.ok()) {
     return std::move(module_from_proto).value();
   }
-  if (module_from_text.status().message().rfind(kLoadHloError, 0) != 0) {
+  if (module_from_proto.status().message().rfind(kLoadHloError, 0) != 0) {
     emitError() << "Failed to convert HLO to MLIR: "
                 << module_from_proto.status().message();
     return nullptr;

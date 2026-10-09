@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tools/collective_perf_table_gen.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/log/log.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"

@@ -15,12 +15,13 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PROFILER_LIB_PROFILER_CONTROLLER_H_
 #define TENSORFLOW_TSL_PROFILER_LIB_PROFILER_CONTROLLER_H_
 
+#include <any>
 #include <memory>
 
 #include "absl/status/status.h"
-#include "xla/tsl/platform/status.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/platform/status.h"
 
 namespace tsl {
 namespace profiler {
@@ -44,6 +45,11 @@ class ProfilerController : public ProfilerInterface {
   absl::Status Stop() override;
 
   absl::Status CollectData(tensorflow::profiler::XSpace* space) override;
+
+  absl::StatusOr<ConsumeResult> Consume() override;
+
+  absl::Status Serialize(std::any data,
+                         tensorflow::profiler::XSpace* space) override;
 
  private:
   enum class ProfilerState {

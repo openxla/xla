@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/strings/cord.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -44,6 +45,16 @@ TEST(PjRtCApiStatusUtilsTest, PjrtErrorToStatusNullError) {
   const PJRT_Api* api = GetPjrtApi();
   absl::Status result = PjrtErrorToStatus(nullptr, api);
   EXPECT_TRUE(result.ok());
+}
+
+TEST(PjRtCApiStatusUtilsTest, PjrtErrorCodeToStatusCodeFallback) {
+  EXPECT_EQ(PjrtErrorCodeToStatusCode(static_cast<PJRT_Error_Code>(-1)),
+            absl::StatusCode::kUnknown);
+}
+
+TEST(PjRtCApiStatusUtilsTest, StatusCodeToPjrtErrorCodeFallback) {
+  EXPECT_EQ(StatusCodeToPjrtErrorCode(static_cast<absl::StatusCode>(-1)),
+            PJRT_Error_Code_UNKNOWN);
 }
 
 }  // namespace

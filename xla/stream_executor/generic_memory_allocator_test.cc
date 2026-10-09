@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/generic_memory_allocator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -44,7 +45,7 @@ TEST(GenericMemoryAllocatorTest, AllocateReturnsCorrectMemoryAllocation) {
               ++deleter_called;
             });
       });
-  TF_ASSERT_OK_AND_ASSIGN(auto allocation, allocator.Allocate(64));
+  ASSERT_OK_AND_ASSIGN(auto allocation, allocator.Allocate(64));
   EXPECT_EQ(deleter_called, 0);
   allocation.reset();
   EXPECT_EQ(deleter_called, 1);

@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace xla {
@@ -148,6 +149,16 @@ ExecutableRunOptions::cpu_executable_run_options() const {
   return cpu_executable_run_options_;
 }
 
+ExecutableRunOptions& ExecutableRunOptions::set_custom_options(
+    std::shared_ptr<const CustomOptions> custom_options) {
+  custom_options_ = std::move(custom_options);
+  return *this;
+}
+
+const CustomOptions* ExecutableRunOptions::custom_options() const {
+  return custom_options_.get();
+}
+
 ExecutableRunOptions& ExecutableRunOptions::set_ffi_execution_context(
     const ffi::ExecutionContext* ffi_execution_context) {
   ffi_execution_context_ = ffi_execution_context;
@@ -191,16 +202,6 @@ ExecutableRunOptions& ExecutableRunOptions::set_clique_keys(
 std::vector<std::unique_ptr<CliqueKey>>* ExecutableRunOptions::clique_keys()
     const {
   return clique_keys_;
-}
-
-ExecutableRunOptions& ExecutableRunOptions::set_command_buffer_va_range_idx(
-    int idx) {
-  command_buffer_va_range_idx_ = idx;
-  return *this;
-}
-
-int ExecutableRunOptions::command_buffer_va_range_idx() const {
-  return command_buffer_va_range_idx_;
 }
 
 }  // namespace xla

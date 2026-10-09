@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/framework/metrics.h"
 #include "xla/tsl/platform/env.h"
 
@@ -66,6 +67,7 @@ void* AllocatorRetry::AllocateRaw(
     return nullptr;
   }
   ScopedTimeTracker tracker(env_);
+  tsl::profiler::TraceMe traceme("AllocatorRetry::AllocateRaw");
   absl::Time deadline;
   bool first = true;
   while (true) {

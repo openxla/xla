@@ -271,6 +271,9 @@ class VifrtToIfrtTypeConverter : public VifrtTypeConverterBuiltin {
       if (llvm::isa<VifrtTokenV1Type>(shape.getElementType())) {
         shape = mlir::RankedTensorType::get(
             {}, IfrtTokenType::get(array.getContext()));
+      } else if (llvm::isa<VifrtStringV1Type>(shape.getElementType())) {
+        shape = mlir::RankedTensorType::get(
+            shape.getShape(), IfrtStringType::get(array.getContext()));
       }
       return IfrtArrayType::get(array.getContext(), shape, sharding_attr,
                                 devices_attr, memory_kind_attr, layout_attr);
@@ -365,7 +368,7 @@ class VifrtToIfrtOpConverter : public mlir::OpConversionPattern<VifrtOpTy> {
       return mlir::failure();
     }
 
-    // Convert the IFRT attributes to VIFRT attributes.
+    // Convert the VIFRT attributes to IFRT attributes.
     llvm::SmallVector<mlir::NamedAttribute> ifrt_attrs;
     llvm::DenseSet<mlir::StringAttr> already_converted_attrs;
     // Special case operations.

@@ -25,9 +25,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -199,7 +200,7 @@ absl::Status SinkSlices(
             user->shape(), {operation_on_slice_sources}));
     VLOG(10) << "Adding new slice: " << user_slice->ToString()
              << " to replace: " << user->ToString();
-    TF_RETURN_IF_ERROR(user->ReplaceAllUsesWith(user_slice));
+    ABSL_RETURN_IF_ERROR(user->ReplaceAllUsesWith(user_slice));
   }
   return absl::OkStatus();
 }
@@ -288,7 +289,8 @@ absl::StatusOr<bool> SliceSinker::RunImpl(
           instruction->operands(), std::back_inserter(slice_sources),
           [](HloInstruction* slice) { return slice->mutable_operand(0); });
 
-      TF_RETURN_IF_ERROR(SinkSlices(slice_sources, similar_operations.value()));
+      ABSL_RETURN_IF_ERROR(
+          SinkSlices(slice_sources, similar_operations.value()));
       changed = true;
     }
   }

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/pjrt/device_event_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -40,7 +41,7 @@ TEST(DeviceEventUtilsTest, GetErrors) {
   PjRtDeviceEventRef ev2 =
       PjRtDeviceEventPtr::FromAsyncValue(error_av.get()).CopyRef();
 
-  std::vector<PjRtDeviceEventRef> events;
+  PjRtDeviceEventRefVector events;
   events.push_back(std::move(ev1));
   events.push_back(std::move(ev2));
 
@@ -60,7 +61,7 @@ TEST(DeviceEventUtilsTest, RunWhenReady) {
   PjRtDeviceEventRef ev2 =
       PjRtDeviceEventPtr::FromAsyncValue(av2.GetAsyncValue()).CopyRef();
 
-  std::vector<PjRtDeviceEventRef> events;
+  PjRtDeviceEventRefVector events;
   events.push_back(std::move(ev1));
   events.push_back(std::move(ev2));
 
@@ -79,7 +80,7 @@ TEST(DeviceEventUtilsTest, ExecuteWhenReady) {
   auto av1 = tsl::MakeUnconstructedAsyncValueRef<bool>();
   PjRtDeviceEventRef ev1 =
       PjRtDeviceEventPtr::FromAsyncValue(av1.GetAsyncValue()).CopyRef();
-  std::vector<PjRtDeviceEventRef> events;
+  PjRtDeviceEventRefVector events;
   events.push_back(std::move(ev1));
 
   auto& executor = tsl::InlineExecutor::Instance();

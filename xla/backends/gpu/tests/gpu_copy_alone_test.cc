@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::gpu {
 
@@ -32,7 +32,7 @@ namespace {
 // error isn't caught. We expect and CUDA_ERROR_ILLEGAL_ADDRESS to be
 // thrown with the old buggy code.
 class CopyAloneNoOptTest
-    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
+    : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
 
 TEST_F(CopyAloneNoOptTest, CopyTranspose) {
   const char* hlo_text = R"(

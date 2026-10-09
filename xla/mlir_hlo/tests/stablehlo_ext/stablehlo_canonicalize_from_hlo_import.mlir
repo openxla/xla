@@ -1,3 +1,17 @@
+// Copyright 2026 The OpenXLA Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: mlir-hlo-opt %s -split-input-file -stablehlo-ext-canonicalize-from-hlo-import='entry-function=main' -allow-unregistered-dialect | FileCheck %s
 
 ///////////////////
@@ -169,3 +183,59 @@ func.func @unpack_repack_same_tuple_single_element(%arg0: tuple<tensor<i32>>) ->
   // CHECK: return [[ARG0]]
   return %1 : tuple<tensor<i32>>
 }
+
+// -----
+
+// CHECK-LABEL: while_op_original_value_index_shifting
+func.func @while_op_original_value_index_shifting(
+    %arg0: tensor<10xf32>, %arg1: tensor<i32>,
+    %arg2: tensor<10xf32>, %arg3: tensor<10xf32>)
+    -> (tensor<10xf32>, tensor<10xf32>, tensor<10xf32>) {
+  %c = stablehlo.constant dense<1> : tensor<i32>
+  %c_0 = stablehlo.constant dense<10> : tensor<i32>
+
+  // CHECK: stablehlo.while
+  // CHECK-SAME: mhlo.original_value = #mhlo.original_value<false, [<[0], <"first", []>>, <[1, 0], <"third_0", []>>, <[1, 1], <"third_1", []>>]>
+  %1:4 = stablehlo.while(%iterArg = %arg0, %iterArg_2 = %arg1, %iterArg_3 = %arg2, %iterArg_4 = %arg3)
+      : tensor<10xf32>, tensor<i32>, tensor<10xf32>, tensor<10xf32>
+      attributes {mhlo.original_value = #mhlo.original_value<false, [
+        <[0], <"first", []>>,
+        <[1], <"second", []>>,
+        <[2, 0], <"third_0", []>>,
+        <[2, 1], <"third_1", []>>
+      ]>}
+    cond {
+    %cond_compare = stablehlo.compare LT, %iterArg_2, %c_0, SIGNED : (tensor<i32>, tensor<i32>) -> tensor<i1>
+    stablehlo.return %cond_compare : tensor<i1>
+  } do {
+    %add_0 = stablehlo.add %iterArg, %iterArg : tensor<10xf32>
+    %add_2 = stablehlo.add %iterArg_3, %iterArg_3 : tensor<10xf32>
+    %add_3 = stablehlo.add %iterArg_4, %iterArg_4 : tensor<10xf32>
+    stablehlo.return %add_0, %iterArg_2, %add_2, %add_3
+        : tensor<10xf32>, tensor<i32>, tensor<10xf32>, tensor<10xf32>
+  }
+  return %1#0, %1#2, %1#3 : tensor<10xf32>, tensor<10xf32>, tensor<10xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @concatenate_single_operand
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<2x4xf32>) -> tensor<2x4xf32>
+func.func @concatenate_single_operand(%arg0: tensor<2x4xf32>) -> tensor<2x4xf32> {
+  // CHECK-NOT: stablehlo.concatenate
+  // CHECK: return %[[ARG0]] : tensor<2x4xf32>
+  %0 = stablehlo.concatenate %arg0, dim = 0 : (tensor<2x4xf32>) -> tensor<2x4xf32>
+  return %0 : tensor<2x4xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @concatenate_remove_empty
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<2x4xf32>, %[[ARG1:.*]]: tensor<0x4xf32>) -> tensor<2x4xf32>
+func.func @concatenate_remove_empty(%arg0: tensor<2x4xf32>, %arg1: tensor<0x4xf32>) -> tensor<2x4xf32> {
+  // CHECK-NOT: stablehlo.concatenate
+  // CHECK: return %[[ARG0]] : tensor<2x4xf32>
+  %0 = stablehlo.concatenate %arg0, %arg1, dim = 0 : (tensor<2x4xf32>, tensor<0x4xf32>) -> tensor<2x4xf32>
+  return %0 : tensor<2x4xf32>
+}
+

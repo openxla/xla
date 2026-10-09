@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -41,6 +42,7 @@ using ::absl_testing::IsOk;
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::testing::Not;
+using ::testing::Pointee;
 
 // Check that we correctly detect move-only types.
 static_assert(internal::IsMoveOnly<std::unique_ptr<int32_t>>::value);
@@ -67,6 +69,28 @@ TEST(FutureTest, StatusConstructedFuture) {
   Future<> future = Future<>(absl::OkStatus());
   EXPECT_TRUE(future.IsReady());
   EXPECT_EQ(future.Await(), absl::OkStatus());
+}
+
+TEST(FutureTest, FutureBoolCopyAndMoveDoesNotConvertViaOperatorBool) {
+  auto [promise, future] = MakePromise<bool>();
+  EXPECT_FALSE(future.IsReady());
+
+  // Copying a non-const Future<bool> lvalue must copy the future (sharing the
+  // pending async value), not invoke operator bool() via Future(U&&).
+  Future<bool> copied_from_non_const = future;
+  EXPECT_FALSE(copied_from_non_const.IsReady());
+
+  // Moving a const Future<bool> rvalue (e.g. when moving a lambda that captured
+  // Future<bool> by value) must copy the future, not invoke operator bool().
+  const Future<bool> const_future = future;
+  Future<bool> moved_from_const = std::move(const_future);
+  EXPECT_FALSE(moved_from_const.IsReady());
+
+  promise.Set(false);
+  EXPECT_TRUE(copied_from_non_const.IsReady());
+  EXPECT_THAT(copied_from_non_const.Await(), IsOkAndHolds(false));
+  EXPECT_TRUE(moved_from_const.IsReady());
+  EXPECT_THAT(moved_from_const.Await(), IsOkAndHolds(false));
 }
 
 TEST(FutureTest, ValueConstructedFuture) {
@@ -188,7 +212,7 @@ TEST(FutureTest, ValueImplicitConversion) {
 
 TEST(FutureTest, StatusMacro) {
   auto f = [&](absl::StatusOr<int> value) -> tsl::Future<int> {
-    TF_ASSIGN_OR_RETURN(const int x, value);
+    ABSL_ASSIGN_OR_RETURN(const int x, value);
     return x;
   };
 
@@ -211,8 +235,13 @@ TEST(FutureTest, OnReadyRvalueFuture) {
 
   promise.Set(42);
 
-  std::move(future).OnReady(
-      [](absl::StatusOr<int32_t> value) { EXPECT_EQ(*value, 42); });
+  future.OnReady([](const absl::StatusOr<int32_t>& value) {
+    EXPECT_THAT(value, IsOkAndHolds(42));
+  });
+
+  std::move(future).OnReady([](absl::StatusOr<int32_t> value) {
+    EXPECT_THAT(value, IsOkAndHolds(42));
+  });
 }
 
 TEST(FutureTest, OnReadyMoveOnlyFuture) {
@@ -220,8 +249,12 @@ TEST(FutureTest, OnReadyMoveOnlyFuture) {
 
   promise.Set(std::make_unique<int32_t>(42));
 
+  future.OnReady([](const absl::StatusOr<std::unique_ptr<int32_t>>& value) {
+    EXPECT_THAT(value, IsOkAndHolds(Pointee(42)));
+  });
+
   std::move(future).OnReady([](absl::StatusOr<std::unique_ptr<int32_t>> value) {
-    EXPECT_EQ(**value, 42);
+    EXPECT_THAT(value, IsOkAndHolds(Pointee(42)));
   });
 }
 
@@ -994,6 +1027,23 @@ TEST(FutureTest, JoinErrors) {
   EXPECT_EQ(join_two.Await(), absl::InternalError("error #0"));
 }
 
+TEST(FutureTest, JoinInvalid) {
+  auto [promise0, future0] = MakePromise();
+  auto [promise1, future1] = MakePromise();
+
+  std::vector<Future<>> futures0 = {future0, {}};
+  std::vector<Future<>> futures1 = {future0, {}, future1};
+
+  auto join_one = JoinFutures(futures0);
+  EXPECT_FALSE(join_one.IsValid());
+
+  auto join_two = JoinFutures(futures1);
+  EXPECT_FALSE(join_two.IsValid());
+
+  promise0.Set();
+  promise1.Set();
+}
+
 TEST(FutureTest, JoinCopyableFutures) {
   auto [promise0, future0] = MakePromise<int32_t>();
   auto [promise1, future1] = MakePromise<int32_t>();
@@ -1035,6 +1085,25 @@ TEST(FutureTest, JoinCopyableFuturesError) {
 
   EXPECT_TRUE(join_two.IsReady());
   EXPECT_EQ(join_two.Await().status(), absl::InternalError("error0"));
+}
+
+TEST(FutureTest, JoinEmptyCopyableFutures) {
+  std::vector<Future<int32_t>> futures;
+  Future<std::vector<int32_t>> join = JoinFutures<int32_t>(futures);
+  ASSERT_TRUE(join.IsValid());
+  EXPECT_TRUE(join.IsReady());
+  ASSERT_OK_AND_ASSIGN(std::vector<int32_t> v, join.Await());
+  EXPECT_TRUE(v.empty());
+}
+
+TEST(FutureTest, JoinEmptyMoveOnlyFutures) {
+  std::vector<Future<std::unique_ptr<int32_t>>> futures;
+  Future<std::vector<std::unique_ptr<int32_t>>> join =
+      JoinFutures<std::unique_ptr<int32_t>>(absl::MakeSpan(futures));
+  ASSERT_TRUE(join.IsValid());
+  EXPECT_TRUE(join.IsReady());
+  ASSERT_OK_AND_ASSIGN(auto v, std::move(join).Await());
+  EXPECT_TRUE(v.empty());
 }
 
 TEST(FutureTest, JoinMoveOnlyFuture) {
@@ -1143,6 +1212,16 @@ TEST(FutureTest, JoinStaticallyError) {
   promise0.Set(absl::InternalError("error0"));
   promise1.Set(absl::InternalError("error1"));
   EXPECT_EQ(joined.Await().status(), absl::InternalError("error0"));
+}
+
+TEST(FutureTest, JoinStaticallyInvalid) {
+  auto [promise, future] = MakePromise<int32_t>();
+
+  Future<std::tuple<int32_t, int32_t>> joined =
+      JoinFutures(future, tsl::Future<int32_t>());
+  EXPECT_FALSE(joined.IsValid());
+
+  promise.Set(absl::InternalError("error0"));
 }
 
 TEST(FutureTest, JoinStaticallyToCustomType) {
@@ -1715,6 +1794,36 @@ TEST(FutureTest, DetachStatefulOnThreadPoolExecutor) {
 
   EXPECT_EQ(JoinFutures(mapped).Await(), absl::OkStatus());
   EXPECT_EQ(counter, 100);
+}
+
+TEST(PromiseOnceTest, SetMultipleTimes) {
+  auto [promise, future] = MakePromiseOnce();
+
+  EXPECT_TRUE(promise.Set(absl::OkStatus()));
+  EXPECT_FALSE(promise.Set());
+  EXPECT_FALSE(promise.Set(absl::InternalError("error")));
+
+  EXPECT_OK(future.Await());
+  EXPECT_OK(promise.future().Await());
+}
+
+TEST(PromiseOnceTest, MoveOnly) {
+  auto [promise, future] = MakePromiseOnce<std::unique_ptr<int32_t>>();
+
+  EXPECT_TRUE(promise.Set(std::make_unique<int32_t>(42)));
+  EXPECT_FALSE(promise.Set(std::make_unique<int32_t>(43)));
+
+  EXPECT_THAT(future.Await(), IsOkAndHolds(Pointee(42)));
+}
+
+TEST(PromiseOnceTest, Copyable) {
+  auto [promise, future] = MakePromiseOnce<int32_t>();
+
+  EXPECT_TRUE(promise.Set(42));
+  EXPECT_FALSE(promise.Set(43));
+
+  EXPECT_THAT(future.Await(), IsOkAndHolds(42));
+  EXPECT_THAT(promise.future().Await(), IsOkAndHolds(42));
 }
 
 //===----------------------------------------------------------------------===//

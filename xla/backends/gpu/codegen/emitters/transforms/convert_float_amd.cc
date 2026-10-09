@@ -17,12 +17,12 @@ limitations under the License.
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <string>
 #include <tuple>
 #include <utility>
 
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
@@ -43,7 +43,6 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -553,16 +552,15 @@ struct RewriteFp8ExtFPattern : public Fp8OpRewritePattern<arith::ExtFOp> {
 class ConvertFloatAMDPass
     : public impl::ConvertFloatAMDPassBase<ConvertFloatAMDPass> {
  public:
-  explicit ConvertFloatAMDPass(const ConvertFloatAMDPassOptions& options)
-      : ConvertFloatAMDPassBase(options) {}
+  using ConvertFloatAMDPassBase::ConvertFloatAMDPassBase;
 
   explicit ConvertFloatAMDPass(const se::RocmComputeCapability& cc) : cc_(cc) {}
 
   void runOnOperation() override {
     if (!gpu_device_info_.empty()) {
       se::GpuDeviceInfoProto device_info;
-      CHECK(
-          google::protobuf::TextFormat::ParseFromString(gpu_device_info_, &device_info));
+      CHECK(google::protobuf::TextFormat::ParseFromString(gpu_device_info_,
+                                                          &device_info));
       absl::StatusOr<se::DeviceDescription> device_description =
           se::DeviceDescription::FromProto(device_info);
       CHECK_OK(device_description.status());
@@ -583,13 +581,6 @@ class ConvertFloatAMDPass
 };
 
 }  // namespace
-
-std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
-    const std::string& gpu_device_info) {
-  ConvertFloatAMDPassOptions options;
-  options.gpu_device_info_ = gpu_device_info;
-  return std::make_unique<ConvertFloatAMDPass>(options);
-}
 
 std::unique_ptr<mlir::Pass> CreateConvertFloatAMDPass(
     const se::RocmComputeCapability& cc) {

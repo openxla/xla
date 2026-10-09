@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THREADPOOL_H_
 #define XLA_BACKENDS_CPU_RUNTIME_ONEDNN_ONEDNN_THREADPOOL_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -23,9 +24,11 @@ limitations under the License.
 #include "Eigen/ThreadPool"
 #include "oneapi/dnnl/dnnl_threadpool.h"  // IWYU pragma: keep
 #include "oneapi/dnnl/dnnl_threadpool_iface.hpp"
+#include "oneapi/dnnl/dnnl_version.h"
 #include "xla/backends/cpu/runtime/work_queue.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
+#include "xla/tsl/platform/logging.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -66,9 +69,8 @@ class OneDnnThreadPool final
 
   uint64_t get_flags() const final { return is_async_ ? ASYNCHRONOUS : 0; }
 
-#ifdef ENABLE_ONEDNN_ASYNC
-  // The wait() method only exists with oneDNN's experimental support for
-  // asynchronous execution determined by the ENABLE_ONEDNN_ASYNC.
+#if defined(ENABLE_ONEDNN_ASYNC) || DNNL_VERSION_MAJOR > 3 || \
+    (DNNL_VERSION_MAJOR == 3 && DNNL_VERSION_MINOR >= 11)
   void wait() override {
     if (is_async_) {
       // While performing asynchronous execution, wait() method is needed to
@@ -77,16 +79,22 @@ class OneDnnThreadPool final
       tsl::BlockUntilReady(done_event_);
     }
   }
-#endif  // ENABLE_ONEDNN_ASYNC
+#endif  // defined(ENABLE_ONEDNN_ASYNC) || DNNL_VERSION_MAJOR > 3 ||
+        // (DNNL_VERSION_MAJOR == 3 && DNNL_VERSION_MINOR >= 11)
 
   void parallel_for(int n, const std::function<void(int, int)>& fn) final {
+    // Cap num_workers at n to avoid Worker::Parallelize's partition-clamping
+    // logic that reduces parallelism when num_workers > num_work_items.
+    const size_t num_workers =
+        std::min<size_t>(static_cast<size_t>(n), thread_pool_->NumThreads());
+
     if (is_async_) {
       // If we are using oneDNN with async support, we need to schedule the
       // parallel loop using the done_event_. This allows us to return
       // immediately and not block the caller thread.
-      auto parallelize = [this, n, fn](tsl::Chain) {
+      auto parallelize = [this, n, num_workers, fn](tsl::Chain) {
         return Worker::Parallelize(
-            thread_pool_, thread_pool_->NumThreads(), n,
+            thread_pool_, num_workers, n,
             [fn, n](size_t i) { fn(static_cast<int>(i), n); });
       };
 
@@ -98,8 +106,7 @@ class OneDnnThreadPool final
     // block here as Worker implements work stealing that guarantees forward
     // progress and deadlock freedom, even if we are running in the same thread
     // pool as the Eigen thread_pool.
-    tsl::BlockUntilReady(Worker::Parallelize(thread_pool_,
-                                             thread_pool_->NumThreads(), n,
+    tsl::BlockUntilReady(Worker::Parallelize(thread_pool_, num_workers, n,
                                              [fn, n](size_t i) { fn(i, n); }));
   }
 
@@ -124,6 +131,14 @@ class OneDnnThreadPool final
   // This is used only when is_async_ is true.
   tsl::AsyncValueRef<tsl::Chain> done_event_;
 };
+
+inline Eigen::ThreadPoolInterface* GetFallbackThreadPoolForOneDnn() {
+  static auto* pool = new Eigen::ThreadPool(1);
+  VLOG_FIRST_N(0, 1)
+      << "No intra-op thread pool available. "
+         "Using fallback single-threaded thread pool for oneDNN execution.";
+  return pool;
+}
 
 }  // namespace xla::cpu
 

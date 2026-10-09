@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
 #include <unistd.h>
 
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/array3d.h"
 #include "xla/array4d.h"
 #include "xla/client/local_client.h"
@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/tests/client_library_test_base.h"
-#include "tsl/platform/env.h"
+#include "xla/tsl/platform/env.h"
 
 namespace xla {
 namespace {

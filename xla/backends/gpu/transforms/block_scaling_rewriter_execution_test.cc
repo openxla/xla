@@ -13,21 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
-using BlockScalingRewriterExecutionTest = HloPjRtTestBase;
+using BlockScalingRewriterExecutionTest = HloTestBase;
 
 TEST_F(BlockScalingRewriterExecutionTest, QuantizeDequantizeCompare) {
   constexpr absl::string_view hlo_test = R"(
@@ -41,12 +42,12 @@ ENTRY main {
   ROOT %dequantized = f32[256,256] custom-call(%values, %scales),
       custom_call_target="__op$dequantize"
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnUnverifiedModule(hlo_test));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnUnverifiedModule(hlo_test));
 
   BlockScalingRewriter pass(se::dnn::VersionInfo{});
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto changed, pass.Run(test_module.get(), /*execution_threads=*/{}));
+  ASSERT_OK_AND_ASSIGN(auto changed,
+                       pass.Run(test_module.get(), /*execution_threads=*/{}));
   EXPECT_TRUE(changed);
 
   constexpr absl::string_view hlo_reference = R"(
@@ -54,8 +55,8 @@ HloModule reference
 ENTRY main {
   ROOT %input = f32[256,256] parameter(0)
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto reference_module,
-                          ParseAndReturnUnverifiedModule(hlo_reference));
+  ASSERT_OK_AND_ASSIGN(auto reference_module,
+                       ParseAndReturnUnverifiedModule(hlo_reference));
 
   EXPECT_TRUE(RunAndCompareTwoModules(std::move(test_module),
                                       std::move(reference_module),

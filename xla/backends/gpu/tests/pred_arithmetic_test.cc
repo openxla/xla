@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <optional>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <optional>
+
 #include "xla/literal_util.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
@@ -24,8 +25,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-class PredArithmeticTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
+class PredArithmeticTest : public HloInterpreterReferenceMixin<HloTestBase> {
  protected:
   void RunAndCompareTruthTable(const char* const hlo_text) {
     auto false_literal = LiteralUtil::CreateR0(false);

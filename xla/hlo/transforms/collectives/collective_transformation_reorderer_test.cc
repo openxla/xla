@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/collective_transformation_reorderer.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -116,6 +117,28 @@ TEST_F(CollectiveTransformationReordererTest, ReshapeAcrossShards) {
     param = bf16[8,1,8,128] parameter(0)
     all-gather = bf16[8,8,8,128] all-gather(param), dimensions={1}, replica_groups={{0,1,2,3,4,5,6,7}}, channel_id=1
     ROOT reshape = bf16[64,8,128] reshape(all-gather)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          RunCollectiveTransformationReorderer(module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(CollectiveTransformationReordererTest,
+       SizeOneAllGatherDimensionReshapeConsumesFullRank) {
+  // Regression test: when the all-gather dimension has size 1, the loop that
+  // maps strides onto the reshaped operand can consume the entire reshaped
+  // rank to reach the stride count, leaving the candidate reshaped all-gather
+  // dimension equal to the rank. The transformation must be rejected rather
+  // than performing an out-of-bounds dimensions() access on the reshape.
+  absl::string_view hlo_string = R"(
+  HloModule module
+  ENTRY entry {
+    param = bf16[4,2,1] parameter(0)
+    all-gather = bf16[4,2,1] all-gather(param), dimensions={2}, replica_groups={{0}}, channel_id=1
+    ROOT reshape = bf16[8] reshape(all-gather)
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,

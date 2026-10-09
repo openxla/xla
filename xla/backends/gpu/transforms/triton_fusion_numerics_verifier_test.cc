@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/triton_fusion_numerics_verifier.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -38,6 +39,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/hlo_test_base.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -47,11 +49,11 @@ namespace {
 using ::mlir::MLIRContext;
 
 class TritonFusionNumericsVerifierTest
-    : public HloPjRtTestBase,
+    : public HloTestBase,
       public ::testing::WithParamInterface<PrimitiveType> {
  public:
   void SetUp() override {
-    HloPjRtTestBase::SetUp();
+    HloTestBase::SetUp();
     se::Platform* platform = PlatformUtil::GetPlatform("gpu").value();
     auto executors_or = PlatformUtil::GetStreamExecutors(platform);
     EXPECT_OK(executors_or);
@@ -62,7 +64,7 @@ class TritonFusionNumericsVerifierTest
         stream_executor_->GetDeviceDescription());
   }
   DebugOptions GetDebugOptionsForTest() const override {
-    auto options = HloPjRtTestBase::GetDebugOptionsForTest();
+    auto options = HloTestBase::GetDebugOptionsForTest();
     options.set_xla_gpu_verify_triton_fusion_numerics(true);
     // TODO: b/509502550 - remove the flag and disable tests that use
     // multi-output fusions when removing the feature.
@@ -186,7 +188,8 @@ ENTRY entry {
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 
-TEST_P(TritonFusionNumericsVerifierTest, MultiOutput) {
+// TODO: b/502910372 - support multi-output fusions.
+TEST_P(TritonFusionNumericsVerifierTest, DISABLED_MultiOutput) {
   constexpr absl::string_view kHlo = R"hlo(
 HloModule m
 fusion_computation {

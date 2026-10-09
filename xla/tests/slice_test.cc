@@ -22,7 +22,6 @@ limitations under the License.
 #include <numeric>
 #include <string>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -39,13 +38,14 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace {
 
-using SliceTest = ClientLibraryTestRunnerMixin<
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>;
+using SliceTest =
+    ClientLibraryTestRunnerMixin<HloPjRtInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(SliceTest, Slice3x3x3_To_3x3x1_F32) {
   Array3D<float> values(3, 3, 3);
@@ -219,7 +219,7 @@ struct R1Spec {
 // Parameterized test that generates R1 values, slices them according
 // to the R1Spec, and compares the result with a computed version.
 class SliceR1Test : public ClientLibraryTestRunnerMixin<
-                        HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>,
+                        HloPjRtInterpreterReferenceMixin<HloTestBase>>,
                     public ::testing::WithParamInterface<R1Spec> {
  protected:
   template <typename NativeT>
@@ -425,7 +425,7 @@ struct R2Spec {
 // Parameterized test that generates patterned R2 values, slices them according
 // to the R2Spec, and compares the results with the ReferenceUtil version.
 class SliceR2Test : public ClientLibraryTestRunnerMixin<
-                        HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>,
+                        HloPjRtInterpreterReferenceMixin<HloTestBase>>,
                     public ::testing::WithParamInterface<R2Spec> {};
 
 TEST_P(SliceR2Test, DoIt) {
@@ -515,7 +515,7 @@ std::string R4SpecToString(const ::testing::TestParamInfo<R4Spec>& data) {
 }
 
 class SliceR4Test : public ClientLibraryTestRunnerMixin<
-                        HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>,
+                        HloPjRtInterpreterReferenceMixin<HloTestBase>>,
                     public ::testing::WithParamInterface<R4Spec> {
  protected:
   void Run(const R4Spec& spec) {

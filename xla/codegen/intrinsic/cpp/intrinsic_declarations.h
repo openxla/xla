@@ -19,10 +19,13 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
 #include "xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/type.h"
@@ -30,12 +33,20 @@ limitations under the License.
 
 namespace xla::codegen::intrinsics {
 
+inline llvm::FunctionType* UnaryFunctionType(llvm::Module* module, Type type) {
+  llvm::Type* ir_type = type.to_ir_type(module->getContext());
+  return llvm::FunctionType::get(ir_type, {ir_type}, /*isVarArg=*/false);
+}
+
 class EigenTanh : public Intrinsic<EigenTanh> {
  public:
   static constexpr absl::string_view kName = "tanh";
 
   static std::vector<std::vector<Type>> SupportedVectorTypes(
       absl::string_view features) {
+    if (!AreEigenIntrinsicsAvailable(features)) {
+      return {};
+    }
     return {
         {Type::S(xla::F32)},     {Type::V(xla::F32, 4)}, {Type::V(xla::F32, 8)},
         {Type::V(xla::F32, 16)}, {Type::S(xla::F64)},    {Type::V(xla::F64, 4)},
@@ -45,7 +56,31 @@ class EigenTanh : public Intrinsic<EigenTanh> {
 
   static absl::StatusOr<llvm::Function*> CreateDefinition(
       llvm::Module* module, const IntrinsicOptions& options, Type type) {
-    return GetCppGenFunction(module, Name(type));
+    return GetCppGenFunction(module, Name(type),
+                             UnaryFunctionType(module, type));
+  }
+};
+
+class EigenAtan : public Intrinsic<EigenAtan> {
+ public:
+  static constexpr absl::string_view kName = "atan";
+
+  static std::vector<std::vector<Type>> SupportedVectorTypes(
+      absl::string_view features) {
+    if (!AreEigenIntrinsicsAvailable(features)) {
+      return {};
+    }
+    return {
+        {Type::S(xla::F32)},     {Type::V(xla::F32, 4)}, {Type::V(xla::F32, 8)},
+        {Type::V(xla::F32, 16)}, {Type::S(xla::F64)},    {Type::V(xla::F64, 2)},
+        {Type::V(xla::F64, 4)},  {Type::V(xla::F64, 8)},
+    };
+  }
+
+  static absl::StatusOr<llvm::Function*> CreateDefinition(
+      llvm::Module* module, const IntrinsicOptions& options, Type type) {
+    return GetCppGenFunction(module, Name(type),
+                             UnaryFunctionType(module, type));
   }
 };
 }  // namespace xla::codegen::intrinsics

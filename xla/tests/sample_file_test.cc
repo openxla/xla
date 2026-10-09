@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/path.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/test.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/tests/hlo_runner_agnostic_reference_mixin.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -44,13 +44,13 @@ std::unique_ptr<HloRunnerInterface> GetReferenceRunner() {
   if (!client.ok()) {
     LOG(FATAL) << "Failed to create XLA:CPU PjRtClient: " << client.status();
   }
-  return std::make_unique<HloRunnerPjRt>(*std::move(client));
+  return std::make_unique<HloRunner>(*std::move(client));
 }
 
-class SampleFileTest : public HloRunnerAgnosticReferenceMixin<HloPjRtTestBase> {
+class SampleFileTest : public HloRunnerAgnosticReferenceMixin<HloTestBase> {
  protected:
   SampleFileTest()
-      : HloRunnerAgnosticReferenceMixin<HloPjRtTestBase>(
+      : HloRunnerAgnosticReferenceMixin<HloTestBase>(
             /*reference_runner=*/GetReferenceRunner()) {}
 };
 

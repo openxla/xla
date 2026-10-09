@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/collective_permute_cse.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

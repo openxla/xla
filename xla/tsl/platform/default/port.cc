@@ -20,14 +20,14 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/profile_utils/cpu_utils.h"
-#include "xla/tsl/platform/types.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/snappy.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/profile_utils/cpu_utils.h"
+#include "xla/tsl/platform/types.h"
 
 #if defined(__linux__)
 #include <sched.h>
@@ -302,6 +302,37 @@ void AlignedSizedFree(void* aligned_memory, size_t size,
   (void)size;
 
   Free(aligned_memory);
+}
+
+void* AlignedNew(size_t size, std::align_val_t minimum_alignment) {
+#if defined(__STDCPP_DEFAULT_NEW_ALIGNMENT__)
+  if (static_cast<size_t>(minimum_alignment) <=
+      __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+    return ::operator new(size, std::nothrow);
+  }
+#else
+  if (static_cast<size_t>(minimum_alignment) <= 16) {
+    return ::operator new(size, std::nothrow);
+  }
+#endif
+  return ::operator new(size, minimum_alignment, std::nothrow);
+}
+
+void AlignedDelete(void* aligned_memory, size_t size,
+                   std::align_val_t alignment) {
+  (void)size;
+#if defined(__STDCPP_DEFAULT_NEW_ALIGNMENT__)
+  if (static_cast<size_t>(alignment) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+    ::operator delete(aligned_memory);
+    return;
+  }
+#else
+  if (static_cast<size_t>(alignment) <= 16) {
+    ::operator delete(aligned_memory);
+    return;
+  }
+#endif
+  ::operator delete(aligned_memory, alignment);
 }
 
 void* Malloc(size_t size) { return malloc(size); }

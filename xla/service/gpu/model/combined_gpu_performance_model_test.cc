@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/model/combined_gpu_performance_model.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
-#include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -53,8 +53,12 @@ class CombinedGpuPerformanceModelTest : public HloHardwareIndependentTestBase {
   HloFusionAnalysisCache fusion_analysis_cache_{device_info_};
   GpuHloCostAnalysis analysis_;
   CombinedGpuPerformanceModel model_{
-      device_info_, fusion_analysis_cache_, mlir_context_,
-      [](const Shape& shape) { return ShapeUtil::ByteSizeOf(shape); }};
+      device_info_,
+      fusion_analysis_cache_,
+      mlir_context_,
+      [](const Shape& shape) { return ShapeUtil::ByteSizeOf(shape); },
+      /*use_experimental_tiling=*/true,
+      /*enable_same_shape_multi_output_fusion=*/false};
 };
 
 TEST_F(CombinedGpuPerformanceModelTest,
@@ -72,7 +76,7 @@ TEST_F(CombinedGpuPerformanceModelTest,
   ASSERT_OK(add->Accept(&analysis_));
   GpuPerformanceModelCache reference_cache;
   GpuPerformanceModel reference_model(device_info_, fusion_analysis_cache_,
-                                      reference_cache, &mlir_context_);
+                                      reference_cache);
   const EstimateRunTimeData expected_result =
       reference_model.EstimateRunTimeForInstruction(add, &analysis_);
 
@@ -106,7 +110,7 @@ TEST_F(CombinedGpuPerformanceModelTest,
   ASSERT_OK(module->entry_computation()->Accept(&analysis_));
   GpuPerformanceModelCache cache;
   GpuPerformanceModel standalone_model(device_info_, fusion_analysis_cache_,
-                                       cache, &mlir_context_);
+                                       cache);
   standalone_model.EstimateRunTimeForInstruction(add, &analysis_);
   standalone_model.EstimateRunTimeForInstruction(exp, &analysis_);
   auto expected = standalone_model.EstimateRunTimes(add, &analysis_, {exp});
@@ -139,7 +143,7 @@ TEST_F(CombinedGpuPerformanceModelTest,
   ASSERT_OK(module->entry_computation()->Accept(&analysis_));
   GpuPerformanceModelCache cache;
   GpuPerformanceModel standalone_model(device_info_, fusion_analysis_cache_,
-                                       cache, &mlir_context_);
+                                       cache);
   auto expected = standalone_model.EstimateRunTimesForMultiOutputFusion(
       add, exp, &analysis_);
 

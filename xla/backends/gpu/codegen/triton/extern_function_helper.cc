@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -33,9 +34,9 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/tsl/platform/statusor.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 
@@ -407,9 +408,9 @@ absl::StatusOr<ExternFunctionInstruction> ParseExternFunctionName(
           absl::StrFormat("%s expects %d arguments, got %d", Instruction::kName,
                           Instruction::kNumArgs, num_args));
     }
-    TF_ASSIGN_OR_RETURN(MemSemantic semantic, ParseMemSemantic(tokens[2]));
-    TF_ASSIGN_OR_RETURN(MemSyncScope scope, ParseMemSyncScope(tokens[3]));
-    TF_ASSIGN_OR_RETURN(bool has_mask, ParseMask(tokens[4]));
+    ABSL_ASSIGN_OR_RETURN(MemSemantic semantic, ParseMemSemantic(tokens[2]));
+    ABSL_ASSIGN_OR_RETURN(MemSyncScope scope, ParseMemSyncScope(tokens[3]));
+    ABSL_ASSIGN_OR_RETURN(bool has_mask, ParseMask(tokens[4]));
     return Instruction{semantic, scope, has_mask};
   }
 
@@ -422,10 +423,10 @@ absl::StatusOr<ExternFunctionInstruction> ParseExternFunctionName(
                           Instruction::kNumArgs, num_args));
     }
 
-    TF_ASSIGN_OR_RETURN(MemSemantic semantic, ParseMemSemantic(tokens[2]));
-    TF_ASSIGN_OR_RETURN(MemSyncScope scope, ParseMemSyncScope(tokens[3]));
-    TF_ASSIGN_OR_RETURN(Comparator comparator, ParseComparator(tokens[4]));
-    TF_ASSIGN_OR_RETURN(bool has_mask, ParseMask(tokens[5]));
+    ABSL_ASSIGN_OR_RETURN(MemSemantic semantic, ParseMemSemantic(tokens[2]));
+    ABSL_ASSIGN_OR_RETURN(MemSyncScope scope, ParseMemSyncScope(tokens[3]));
+    ABSL_ASSIGN_OR_RETURN(Comparator comparator, ParseComparator(tokens[4]));
+    ABSL_ASSIGN_OR_RETURN(bool has_mask, ParseMask(tokens[5]));
     return Instruction{semantic, scope, comparator, has_mask};
   }
 

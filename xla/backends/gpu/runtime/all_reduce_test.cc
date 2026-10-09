@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_reduce.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -24,11 +27,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -49,6 +53,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/gpu/multicast_memory.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
@@ -56,7 +61,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -97,22 +101,23 @@ class AllReduceKernelTest : public ::testing::Test,
       const std::vector<Array<T>>& input_data, ReductionKind reduction_kind) {
     const int64_t num_ranks = input_data.size();
     const LaunchDimensions launch_dimensions = AllReduceLaunchDimensions(
-        input_data[0].num_elements(), num_ranks, params_.all_reduce_strategy);
+        input_data[0].num_elements(), num_ranks, params_.all_reduce_strategy,
+        executors[0]->GetDeviceDescription());
 
     int64_t num_elements = input_data[0].num_elements();
 
-    TF_RETURN_IF_ERROR(executors[0]->EnablePeerAccessTo(executors[1]));
-    TF_RETURN_IF_ERROR(executors[1]->EnablePeerAccessTo(executors[0]));
+    ABSL_RETURN_IF_ERROR(executors[0]->EnablePeerAccessTo(executors[1]));
+    ABSL_RETURN_IF_ERROR(executors[1]->EnablePeerAccessTo(executors[0]));
 
     std::unique_ptr<se::gpu::MulticastMemory> multicast_memory;
     if (params_.all_reduce_strategy == AllReduceStrategy::kMultimem) {
-      TF_ASSIGN_OR_RETURN(
+      ABSL_ASSIGN_OR_RETURN(
           multicast_memory,
           dynamic_cast<se::gpu::GpuExecutor*>(executors[0])
               ->CreateMulticastMemory(num_elements * sizeof(T), num_ranks));
 
       for (int i = 0; i < num_ranks; ++i) {
-        TF_RETURN_IF_ERROR(multicast_memory->SubscribeDevice(i));
+        ABSL_RETURN_IF_ERROR(multicast_memory->SubscribeDevice(i));
       }
     }
 
@@ -141,7 +146,7 @@ class AllReduceKernelTest : public ::testing::Test,
           /*signal_buffer_size=*/aligned_signal_size;
       allocated_buffers.emplace_back(executor->AllocateArray<T>(
           total_size,
-          static_cast<int64_t>(stream_executor::MemorySpace::kP2P)));
+          static_cast<int64_t>(stream_executor::MemorySpace::kCollective)));
       input_buffers.emplace_back(
           allocated_buffers[i].GetByteSlice(0, aligned_input_size));
       TF_RET_CHECK(!input_buffers[i].is_null());
@@ -153,16 +158,16 @@ class AllReduceKernelTest : public ::testing::Test,
       output_buffers.emplace_back(allocated_buffers[i].GetByteSlice(
           2 * aligned_input_size, aligned_input_size));
       TF_RET_CHECK(!output_buffers[i].is_null());
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           streams[i]->MemZero(&output_buffers[i], aligned_input_size));
 
       signal_flags_buffers.emplace_back(allocated_buffers[i].GetByteSlice(
           3 * aligned_input_size, aligned_signal_size));
       TF_RET_CHECK(!signal_flags_buffers[i].is_null());
-      TF_RETURN_IF_ERROR(
+      ABSL_RETURN_IF_ERROR(
           streams[i]->MemZero(&signal_flags_buffers[i], aligned_signal_size));
-      TF_RETURN_IF_ERROR(streams[i]->Memcpy(&input_buffers[i],
-                                            input_data[i].data(), input_size));
+      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(
+          &input_buffers[i], input_data[i].data(), input_size));
       XLA_VLOG_DEVICE(1, i)
           << "Allocated buffer: " << allocated_buffers[i].opaque()
           << ", Input buffer: " << input_buffers[i].opaque()
@@ -192,7 +197,7 @@ class AllReduceKernelTest : public ::testing::Test,
         se::gpu::GpuExecutor* gpu_executor =
             dynamic_cast<se::gpu::GpuExecutor*>(executors[i]);
         TF_RET_CHECK(gpu_executor != nullptr);
-        TF_ASSIGN_OR_RETURN(
+        ABSL_ASSIGN_OR_RETURN(
             void* mapped_memory,
             multicast_memory->MapMemory(allocated_buffers[i], gpu_executor));
         std::vector<void*> param_to_multimem_addresses =
@@ -213,7 +218,7 @@ class AllReduceKernelTest : public ::testing::Test,
                 param_to_multimem_addresses_byte_size);
         metadata.param_to_multimem_addresses = reinterpret_cast<void**>(
             param_to_multimem_addresses_buffer.opaque());
-        TF_RETURN_IF_ERROR(
+        ABSL_RETURN_IF_ERROR(
             streams[i]->Memcpy(&param_to_multimem_addresses_buffer,
                                param_to_multimem_addresses.data(),
                                param_to_multimem_addresses_byte_size));
@@ -249,20 +254,20 @@ class AllReduceKernelTest : public ::testing::Test,
                                            param_to_peers_size_bytes);
       metadata.param_to_peers =
           reinterpret_cast<void**>(param_to_peers_ptrs_buffer.opaque());
-      TF_RETURN_IF_ERROR(streams[i]->Memcpy(&param_to_peers_ptrs_buffer,
-                                            param_to_peers_ptrs.data(),
-                                            param_to_peers_size_bytes));
-      TF_RETURN_IF_ERROR(streams[i]->Memcpy(&metadata_buffers[i], &metadata,
-                                            sizeof(CollectiveKernelMetadata)));
+      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(&param_to_peers_ptrs_buffer,
+                                              param_to_peers_ptrs.data(),
+                                              param_to_peers_size_bytes));
+      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(
+          &metadata_buffers[i], &metadata, sizeof(CollectiveKernelMetadata)));
     }
 
     for (int i = 0; i < num_ranks; ++i) {
-      TF_RETURN_IF_ERROR(streams[i]->BlockHostUntilDone());
+      ABSL_RETURN_IF_ERROR(streams[i]->BlockHostUntilDone());
     }
 
     for (int i = 0; i < num_ranks; ++i) {
       auto active_context = executors[i]->Activate();
-      TF_RETURN_IF_ERROR(RunAllReduceKernel(
+      ABSL_RETURN_IF_ERROR(RunAllReduceKernel(
           streams[i].get(), launch_dimensions,
           primitive_util::NativeToPrimitiveType<T>(),
           /*reduction_kind=*/reduction_kind,
@@ -280,13 +285,13 @@ class AllReduceKernelTest : public ::testing::Test,
     }
 
     for (int i = 0; i < num_ranks; ++i) {
-      TF_RETURN_IF_ERROR(streams[i]->BlockHostUntilDone());
+      ABSL_RETURN_IF_ERROR(streams[i]->BlockHostUntilDone());
     }
 
     std::vector<Array<T>> results;
     for (int i = 0; i < num_ranks; ++i) {
       Array<T> output_results({num_elements});
-      TF_RETURN_IF_ERROR(streams[i]->Memcpy(
+      ABSL_RETURN_IF_ERROR(streams[i]->Memcpy(
           output_results.data(), output_buffers[i], num_elements * sizeof(T)));
 
       results.push_back(std::move(output_results));
@@ -332,8 +337,8 @@ TEST_P(AllReduceKernelTest, KernelTestAddF32) {
     inputs.push_back(std::move(input_data));
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto results, RunKernel<float>(executors, inputs, ReductionKind::SUM));
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       RunKernel<float>(executors, inputs, ReductionKind::SUM));
 
   const Literal expected_output_literal =
       LiteralUtil::CreateFromArray<float>(expected_output);
@@ -373,7 +378,7 @@ TEST_P(AllReduceKernelTest, KernelTestAddBF16) {
     inputs.push_back(std::move(input_data));
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto results, RunKernel<bfloat16>(executors, inputs, ReductionKind::SUM));
 
   for (int i = 0; i < kNumRanks; ++i) {
@@ -410,8 +415,8 @@ TEST_P(AllReduceKernelTest, KernelTestOrPred) {
 
   // There are no logical operations in all-reduce reduction kind, so OR is
   // simulated with MAX on uint8.
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto results, RunKernel<bool>(executors, inputs, ReductionKind::MAX));
+  ASSERT_OK_AND_ASSIGN(auto results,
+                       RunKernel<bool>(executors, inputs, ReductionKind::MAX));
 
   for (int i = 0; i < kNumRanks; ++i) {
     EXPECT_EQ(results[i], expected_output);
@@ -454,7 +459,7 @@ INSTANTIATE_TEST_SUITE_P(
                              info.param.num_elements);
     });
 
-class AllReduceHloTest : public HloPjRtTestBase {};
+class AllReduceHloTest : public HloTestBase {};
 
 TEST_F(AllReduceHloTest, DefaultDeviceAssnWithHloRunner) {
   // xla::HloRunnerPjRt passes a single device assignment. Test this returns an
@@ -474,8 +479,8 @@ TEST_F(AllReduceHloTest, DefaultDeviceAssnWithHloRunner) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   Literal input = LiteralUtil::CreateR1<float>(std::vector<float>(1, 2));
 
   EXPECT_THAT(test_runner().Execute(std::move(module), {std::move(input)}),

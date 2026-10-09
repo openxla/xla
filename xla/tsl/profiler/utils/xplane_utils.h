@@ -18,17 +18,18 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/profiler/utils/timespan.h"
 #include "xla/tsl/profiler/utils/trace_utils.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -95,6 +96,9 @@ void MergeSubprocessXSpace(XSpace& dst, const XSpace& src);
 const XLine* FindLineWithId(const XPlane& plane, int64_t id);
 std::vector<const XLine*> FindLinesWithId(const XPlane& plane, int64_t id);
 const XLine* FindLineWithName(const XPlane& plane, absl::string_view name);
+
+// Returns the mutable line with the given name or nullptr if not found.
+XLine* FindMutableLineWithName(XPlane& plane, absl::string_view name);
 
 XStat* FindOrAddMutableStat(const XStatMetadata& stat_metadata, XEvent* event);
 
@@ -310,6 +314,15 @@ inline bool IsOpLineName(absl::string_view line_name) {
 // Returns the timespan of the event from the device offset and duration stats.
 // If the stats are not present, returns the event's timespan.
 Timespan GetDeviceEventTimespan(const XEventVisitor& event);
+
+// Merges `from` XSpace into `to` XSpace.
+// This function performs a zero-copy merge by transferring ownership of planes,
+// lines, and events out of `from` to avoid memory duplication. It dynamically
+// maps and builds new metadata IDs to prevent collisions on duplicate names.
+// After the merge, `from` will be left as an empty shell and safely
+// deallocated. Events of merged lines are kept sorted (see `SortXLine`) as long
+// as the input lines are sorted.
+void MergeXSpace(std::unique_ptr<XSpace> from, XSpace* to);
 
 }  // namespace profiler
 }  // namespace tsl

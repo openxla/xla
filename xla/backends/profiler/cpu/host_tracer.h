@@ -20,9 +20,15 @@ limitations under the License.
 #include <memory>
 
 #include "tsl/profiler/lib/profiler_interface.h"
+#include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
 
 namespace xla {
 namespace profiler {
+
+struct HostTracerChunk {
+  uint64_t start_timestamp_ns;
+  tsl::profiler::TraceMeRecorder::Events events;
+};
 
 struct HostTracerOptions {
   // Levels of host tracing:

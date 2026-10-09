@@ -15,67 +15,84 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
-namespace {
-
-CUmemAllocationProp BuildAllocationProperties(CUdevice device) {
-  CUmemAllocationProp props = {};
-  props.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-  props.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-  props.location.id = device;
-  props.requestedHandleTypes =
-      static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_NONE);
-  return props;
-}
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
 CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   CUdevice device;
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
 
-  CUmemAllocationProp props = BuildAllocationProperties(device);
+  ABSL_ASSIGN_OR_RETURN(CudaDeviceAllocator::Options options,
+                        QueryDeviceAllocatorOptions(device));
+  return CreateWithDevice(executor, device, size, options);
+}
 
-  size_t granularity = 0;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
-      &granularity, &props, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
+absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
+CudaMemoryReservation::Create(StreamExecutor* executor, uint64_t size,
+                              const CudaDeviceAllocator::Options& options) {
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
 
-  uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
+  CUdevice device;
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuDeviceGet(&device, executor->device_ordinal())));
+  return CreateWithDevice(executor, device, size, options);
+}
+
+absl::StatusOr<std::unique_ptr<CudaMemoryReservation>>
+CudaMemoryReservation::CreateWithDevice(
+    StreamExecutor* executor, CUdevice device, uint64_t size,
+    const CudaDeviceAllocator::Options& options) {
+  if (!options.use_vmm) {
+    return absl::InvalidArgumentError(
+        "CudaMemoryReservation requires CUDA VMM, but options.use_vmm is "
+        "false");
+  }
+
+  // The granularity query itself can be rejected for unsupported handle
+  // types; probe with the same fallback CudaDeviceAllocator uses.
+  ABSL_ASSIGN_OR_RETURN(VmmGranularityProbe probe,
+                        ProbeVmmGranularity(device, options));
+
+  // Same effective alignment as CudaDeviceAllocator. The mapping granularity
+  // reported to callers stays the driver's value.
+  size_t alignment = std::max(options.alignment, probe.granularity);
+  uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, alignment);
 
   CUdeviceptr ptr;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMemAddressReserve(&ptr, padded_size, alignment, 0, 0)));
 
   return std::unique_ptr<CudaMemoryReservation>(
-      new CudaMemoryReservation(executor, ptr, padded_size));
+      new CudaMemoryReservation(executor, ptr, padded_size, probe.granularity));
 }
 
 CudaMemoryReservation::CudaMemoryReservation(StreamExecutor* executor,
-                                             CUdeviceptr ptr, uint64_t size)
-    : executor_(executor), ptr_(ptr), size_(size) {}
+                                             CUdeviceptr ptr, uint64_t size,
+                                             size_t granularity)
+    : executor_(executor), ptr_(ptr), size_(size), granularity_(granularity) {}
 
 DeviceAddressBase CudaMemoryReservation::address() const {
   return DeviceAddressBase(reinterpret_cast<void*>(ptr_), size_);
@@ -104,7 +121,7 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
   desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   desc.location.id = executor_->device_ordinal();
   desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       cuda::ToStatus(cuMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
                      "cuMemSetAccess for local device"));
 
@@ -112,7 +129,7 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
   // automatically inherit peer access, so NCCL collective operations using
   // NVLink to read/write peer GPU buffers will deadlock without this.
   int device_count = 0;
-  TF_RETURN_IF_ERROR(
+  ABSL_RETURN_IF_ERROR(
       cuda::ToStatus(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount"));
   for (int32_t peer = 0; peer < device_count; ++peer) {
     if (peer == executor_->device_ordinal()) {
@@ -122,7 +139,7 @@ absl::Status CudaMemoryReservation::SetAccess(uint64_t reservation_offset,
       continue;
     }
     desc.location.id = peer;
-    RETURN_IF_ERROR(cuda::ToStatus(
+    ABSL_RETURN_IF_ERROR(cuda::ToStatus(
         cuMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
         "cuMemSetAccess for peer device"));
   }
@@ -140,14 +157,9 @@ CudaMemoryReservation::~CudaMemoryReservation() {
     return;
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  // Attempt to unmap the full range before freeing the virtual address space.
-  // Sub-ranges already unmapped by ScopedMapping destructors will cause this
-  // call to fail; the error is logged and the address range is freed anyway.
-  auto unmap_status =
-      cuda::ToStatus(cuMemUnmap(ptr_, size_), "Error unmapping CUDA memory");
-  if (!unmap_status.ok()) {
-    LOG(ERROR) << unmap_status.message();
-  }
+  // ScopedMapping owns each mapped slice and must be destroyed first. The
+  // reservation may have an unmapped tail, so unmapping the full range here
+  // would be invalid.
   auto free_status = cuda::ToStatus(cuMemAddressFree(ptr_, size_),
                                     "Error freeing CUDA address range");
   if (!free_status.ok()) {

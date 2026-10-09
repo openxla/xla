@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/miopen.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "xla/autotuning.pb.h"
@@ -36,8 +38,6 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla.pb.h"
@@ -109,47 +109,56 @@ TEST_F(MIOpenBackendTest, GetSupportedConfigsFromMIOpenCustomCall) {
   if (!IsRocm()) {
     GTEST_SKIP() << "Skipping test on non-ROCm platform";
   }
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           (*hlo_module->entry_computation()->root_instruction()->operand(0)));
   ASSERT_THAT(configs, IsOkAndHolds(SizeIs(1)));
-  MIOpenBackendConfig algorithm_config;
-  ASSERT_TRUE((*configs)[0]->UnpackTo(&algorithm_config));
+  ASSERT_TRUE((*configs)[0]->has_algorithm());
+  MIOpenBackendConfig algorithm_config = (*configs)[0]->algorithm();
   EXPECT_NE(algorithm_config.algo_id(), 0);
+}
+
+TEST_F(MIOpenBackendTest, GetSupportedConfigsReturnsErrorForDeviceless) {
+  MIOpenBackend backend_without_stream_executor(
+      nullptr, &debug_options_, &compiler_, &target_config_, &allocator_);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_without_stream_executor.GetSupportedConfigs(
+          (*hlo_module->entry_computation()->root_instruction()->operand(0)));
+  EXPECT_THAT(configs,
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(MIOpenBackendTest, GetDefaultConfigFromMIOpenCustomCall) {
   if (!IsRocm()) {
     GTEST_SKIP() << "Skipping test on non-ROCm platform";
   }
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(
           (*hlo_module->entry_computation()->root_instruction()->operand(0)));
-  TF_ASSERT_OK(config);
-  MIOpenBackendConfig algorithm_config;
-  ASSERT_TRUE(config->get()->UnpackTo(&algorithm_config));
-  EXPECT_EQ(algorithm_config.algo_id(), 0);
+  EXPECT_THAT(config, absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 TEST_F(MIOpenBackendTest, ApplyConfigToMIOpenCustomCall) {
   if (!IsRocm()) {
     GTEST_SKIP() << "Skipping test on non-ROCm platform";
   }
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
   MIOpenBackendConfig config;
   config.set_algo_id(1);
   HloInstruction* instr =
       hlo_module->entry_computation()->root_instruction()->mutable_operand(0);
-  google::protobuf::Any any;
-  any.PackFrom(config);
-  TF_ASSERT_OK(backend_.ApplyConfig(*instr, any));
-  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
-                          instr->backend_config<GpuBackendConfig>());
+  BackendConfig backend_config;
+  *backend_config.mutable_algorithm() = config;
+  ASSERT_OK(backend_.ApplyConfig(*instr, backend_config));
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                       instr->backend_config<GpuBackendConfig>());
   EXPECT_THAT(gpu_config.cudnn_conv_backend_config().algorithm(),
               EqualsProto(config));
 }
@@ -158,22 +167,22 @@ TEST_F(MIOpenBackendTest, ApplyConfigToMIOpenCustomCallWithWorkspace) {
   if (!IsRocm()) {
     GTEST_SKIP() << "Skipping test on non-ROCm platform";
   }
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kMIOpenCustomCallHlo));
   MIOpenBackendConfig config;
   config.set_algo_id(1);
   config.mutable_workspace_size()->set_value(1024);
   HloInstruction* instr =
       hlo_module->entry_computation()->root_instruction()->mutable_operand(0);
-  google::protobuf::Any any;
-  any.PackFrom(config);
-  TF_ASSERT_OK(backend_.ApplyConfig(*instr, any));
+  BackendConfig backend_config;
+  *backend_config.mutable_algorithm() = config;
+  ASSERT_OK(backend_.ApplyConfig(*instr, backend_config));
 
   auto* replaced_instr =
       hlo_module->entry_computation()->GetInstructionWithName("cudnn-conv");
 
-  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
-                          replaced_instr->backend_config<GpuBackendConfig>());
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                       replaced_instr->backend_config<GpuBackendConfig>());
   EXPECT_THAT(gpu_config.cudnn_conv_backend_config().algorithm(),
               EqualsProto(config));
   EXPECT_EQ(replaced_instr->shape().tuple_shapes(1).dimensions(0), 1024);

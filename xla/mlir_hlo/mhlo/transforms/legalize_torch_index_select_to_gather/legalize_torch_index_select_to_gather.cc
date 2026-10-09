@@ -16,7 +16,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <memory>
 #include <utility>
 
 #include "llvm/ADT/SmallVector.h"
@@ -46,7 +45,7 @@ struct TorchIndexSelectIsGather : public OpRewritePattern<TorchIndexSelectOp> {
   using OpRewritePattern<TorchIndexSelectOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(TorchIndexSelectOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto operand = op.getOperand();
     auto operandTy = operand.getType();
     if (!operandTy.hasRank()) {
@@ -146,14 +145,9 @@ struct LegalizeTorchIndexSelectToGatherPass
 };
 }  // namespace
 
-void populateTorchIndexSelectToGatherPatterns(mlir::MLIRContext *context,
-                                              RewritePatternSet *patterns) {
+void populateTorchIndexSelectToGatherPatterns(mlir::MLIRContext* context,
+                                              RewritePatternSet* patterns) {
   patterns->add<TorchIndexSelectIsGather>(context);
-}
-
-std::unique_ptr<OperationPass<func::FuncOp>>
-createLegalizeTorchIndexSelectToGatherPass() {
-  return std::make_unique<LegalizeTorchIndexSelectToGatherPass>();
 }
 
 }  // namespace mhlo

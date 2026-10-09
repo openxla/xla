@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
@@ -33,14 +34,14 @@ namespace {
 using testing::Ge;
 
 TEST(RocmKernelTest, GetMaxOccupiedBlocksPerCore) {
-  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
-                          PlatformManager::PlatformWithName("ROCM"));
-  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
-                          platform->ExecutorForDevice(0));
-  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpec add_kernel,
-                          GetAddI32TestKernelSpec(rocm::kROCmPlatformId));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> rocm_kernel,
-                          executor->LoadKernel(add_kernel));
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("ROCM"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec add_kernel,
+                       GetAddI32TestKernelSpec(rocm::kROCmPlatformId));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> rocm_kernel,
+                       executor->LoadKernel(add_kernel));
 
   EXPECT_EQ(rocm_kernel->Arity(), 3);
   EXPECT_THAT(rocm_kernel->GetMaxOccupiedBlocksPerCore(

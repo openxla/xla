@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_custom_call_converter.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
 namespace xla {

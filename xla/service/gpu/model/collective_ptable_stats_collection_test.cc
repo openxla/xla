@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/model/collective_ptable_stats_collection.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {
@@ -84,8 +85,8 @@ class CollectivePerfTableStatsCollectionTest
         profiles_path_(tsl::io::JoinPath(tsl::testing::TmpDir(), kFile)) {}
 
   void SetUp() override {
-    TF_ASSERT_OK(tsl::WriteTextProto(tsl::Env::Default(), profiles_path_,
-                                     TestProfiles(device_info_)));
+    ASSERT_OK(tsl::WriteTextProto(tsl::Env::Default(), profiles_path_,
+                                  TestProfiles(device_info_)));
   }
 
  protected:
@@ -112,10 +113,10 @@ TEST_F(CollectivePerfTableStatsCollectionTest,
     ROOT ar-done = f32[1024] all-reduce-done(ar-start)
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, CollectivePerfTableStatsCollection(
-                                            profiles_path_, device_info_)
-                                            .Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(bool changed, CollectivePerfTableStatsCollection(
+                                         profiles_path_, device_info_)
+                                         .Run(module.get()));
 
   VLOG(1) << module->ToString();
 

@@ -29,17 +29,17 @@ limitations under the License.
 #include "absl/container/fixed_array.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/computation_placer.h"
 #include "xla/service/cpu/executable.pb.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
-#include "tsl/platform/mem.h"
 
 #define EIGEN_USE_THREADS
 

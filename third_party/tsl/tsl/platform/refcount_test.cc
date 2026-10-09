@@ -102,12 +102,16 @@ TEST_F(RefTest, ReturnOfUnref) {
 }
 
 TEST_F(RefTest, ScopedUnref) {
-  { ScopedUnref unref(new MyRef); }
+  {
+    ScopedUnref unref(new MyRef);
+  }
   EXPECT_EQ(destroyed_, 1);
 }
 
 TEST_F(RefTest, ScopedUnref_Nullptr) {
-  { ScopedUnref unref(nullptr); }
+  {
+    ScopedUnref unref(nullptr);
+  }
   EXPECT_EQ(destroyed_, 0);
 }
 
@@ -300,7 +304,9 @@ TEST(WeakPtr, DestroyedNotifyNotCalled) {
   auto obj = new ObjType();
   int num_calls = 0;
   auto notify_fn = [&num_calls]() { num_calls++; };
-  { WeakPtr<ObjType> weakptr(obj, notify_fn); }
+  {
+    WeakPtr<ObjType> weakptr(obj, notify_fn);
+  }
   ASSERT_TRUE(obj->RefCountIsOne());
   EXPECT_EQ(obj->WeakRefCount(), 0);
 

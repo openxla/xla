@@ -436,6 +436,19 @@ def MHLO_ExpOp: MHLO_UnaryElementwiseOp<"exponential",
   let hasVerifier = 1;
   let hasFolder = 1;
 }
+def MHLO_Exp2Op: MHLO_UnaryElementwiseOp<"exp2",
+    [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpComplexOrQuantizedIntTensor> {
+  let summary = "Exp2 operation";
+  let description = [{
+    Performs element-wise base-2 exponential operation on `operand` tensor
+    and produces a `result` tensor.
+  }];
+  let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
+                       DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr,
+                       "::mlir::mhlo::ResultAccuracyMode::DEFAULT">:$result_accuracy);
+  let results = (outs MHLO_FpComplexOrQuantizedIntTensor:$result);
+  let hasVerifier = 1;
+}
 def MHLO_Expm1Op: MHLO_UnaryElementwiseOp<"exponential_minus_one",
     [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpComplexOrQuantizedIntTensor> {
   let summary = "Expm1 operation";
@@ -553,6 +566,19 @@ def MHLO_Log1pOp: MHLO_UnaryElementwiseOp<"log_plus_one",
     ```mlir
     %result = mhlo.log_plus_one %operand : tensor<6xf32>
     ```
+  }];
+  let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
+                       DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr,
+                       "::mlir::mhlo::ResultAccuracyMode::DEFAULT">:$result_accuracy);
+  let results = (outs MHLO_FpComplexOrQuantizedIntTensor:$result);
+  let hasVerifier = 1;
+}
+def MHLO_Log2Op: MHLO_UnaryElementwiseOp<"log2",
+    [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpComplexOrQuantizedIntTensor> {
+  let summary = "Log2 operation";
+  let description = [{
+    Performs element-wise base-2 logarithm operation on `operand` tensor and
+    produces a `result` tensor.
   }];
   let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
                        DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr,
@@ -1027,6 +1053,16 @@ def MHLO_MulOp : MHLO_BinaryElementwiseOp<"multiply",
     ```
   }];
   let hasFolder = 1;
+}
+
+def MHLO_MulhiOp : MHLO_BinaryElementwiseOp<"mulhi",
+      [Commutative, Pure, HLO_CompatibleOperandsAndResultType], MHLO_IntTensor> {
+  let summary = "Mulhi operation";
+  let description = [{
+    Performs element-wise multiplication of two integer tensors `lhs` and `rhs`,
+    returning the most significant bits of the product.
+  }];
+  let hasCustomHLOConverter = 1;
 }
 
 def MHLO_PowOp : MHLO_BinaryElementwiseOp<"power",
@@ -2531,6 +2567,52 @@ def MHLO_CollectiveBroadcastOp: MHLO_Op<"collective_broadcast",
       "::mlir::Attribute":$replica_groups)>];
 }
 
+def MHLO_CollectiveReduceOp : MHLO_Op<"collective_reduce", [
+    SingleBlockImplicitTerminator<"ReturnOp">,
+    InferTensorType
+  ]> {
+  let summary = "CollectiveReduce operation";
+  let description = [{
+    Within each process group in the process grid, applies a reduction function
+    `computation` to the values of the operand tensors from each process and
+    writes the reduced result to a single root process (unlike `all_reduce`,
+    which writes the result to every process). The `computation` is applied
+    separately for each data operand, producing one result per data operand.
+
+    The root process is the first member of each replica group by default. When
+    `has_dynamic_root` is set, the last operand is a 1-D `i32` tensor whose
+    length equals the number of data operands and whose values select the root
+    rank for each data operand at run time; that operand is not itself reduced
+    and does not contribute a result.
+
+    This is an MHLO extension without a StableHLO counterpart.
+
+    Example:
+    ```mlir
+    %result = "mhlo.collective_reduce"(%operand) ({
+      ^bb0(%arg0: tensor<f32>, %arg1: tensor<f32>):
+        %0 = mhlo.add %arg0, %arg1 : tensor<f32>
+        mhlo.return %0 : tensor<f32>
+    }) {
+      replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>,
+      channel_handle = #mhlo.channel_handle<handle = 0, type = 0>
+    } : (tensor<4xf32>) -> tensor<4xf32>
+    ```
+  }];
+
+  let arguments = (ins
+    Variadic<MHLO_Tensor>:$operands,
+    MHLO_ReplicaGroups:$replica_groups,
+    OptionalAttr<MHLO_ChannelHandle>:$channel_handle,
+    UnitAttr:$use_global_device_ids,
+    UnitAttr:$has_dynamic_root
+  );
+  let regions = (region SizedRegion<1>:$computation);
+  let results = (outs Variadic<MHLO_Tensor>);
+
+  let hasCustomHLOConverter = 1;
+}
+
 def MHLO_CollectivePermuteOp: MHLO_Op<"collective_permute",
     [Pure, HLO_CompatibleOperandsAndResultType]> {
   let summary = "CollectivePermute operation";
@@ -2808,7 +2890,8 @@ def MHLO_CustomCallOp: MHLO_Op<"custom_call",
         TypedArrayAttrBase<
             MHLO_OutputOperandAlias,
             "Aliasing attribute for outputs and operands of CustomCall">,
-        "{}">:$output_operand_aliases
+        "{}">:$output_operand_aliases,
+    OptionalAttr<MHLO_ArrayOfTilingAttr>:$result_tilings
   );
   let results = (outs Variadic<MHLO_CustomCallValue>);
   let hasCustomHLOConverter = 1;
@@ -2825,7 +2908,8 @@ def MHLO_CustomCallOp: MHLO_Op<"custom_call",
       "::mlir::mhlo::CustomCallApiVersionAttr":$api_version,
       "::mlir::ArrayAttr":$called_computations,
       "::mlir::ArrayAttr":$operand_layouts,
-      "::mlir::ArrayAttr":$result_layouts)>];
+      "::mlir::ArrayAttr":$result_layouts,
+      "::mlir::ArrayAttr":$result_tilings)>];
 
   let assemblyFormat = [{
     custom<CustomCallTarget>($call_target_name) `(` $inputs `)`
@@ -3344,6 +3428,10 @@ def MHLO_TopKOp : MHLO_Op<"topk", [RecursiveMemoryEffects, InferTensorType]> {
     dimension of the operand if `largest=true` or the bottom `k` values if
     `largest=false`.
 
+    If `is_stable=true` (the default), the original relative order of equal
+    elements is preserved. If `is_stable=false`, the order of equal elements
+    is undefined, which may allow for more efficient execution on some backends.
+
     See:
     https://www.tensorflow.org/xla/operation_semantics#top-k
 
@@ -3357,13 +3445,14 @@ def MHLO_TopKOp : MHLO_Op<"topk", [RecursiveMemoryEffects, InferTensorType]> {
   let arguments = (ins
     MHLO_Tensor:$operand,
     I64Attr:$k,
-    DefaultValuedOptionalAttr<BoolAttr, "true">:$largest
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$largest,
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$is_stable
   );
   let results = (outs MHLO_Tensor:$values,
                       MHLO_Tensor:$indices);
 
   let assemblyFormat = [{
-    `(`$operand `,` `k` `=` $k (`,` `largest` `=` $largest^)? `)` attr-dict `:`
+    `(`$operand `,` `k` `=` $k (`,` `largest` `=` $largest^)? (`,` `is_stable` `=` $is_stable^)? `)` attr-dict `:`
     type($operand) `->` `(`type($values)`,` type($indices)`)`
   }];
   let hasCustomHLOConverter = 1;
@@ -4159,4 +4248,3 @@ def MHLO_MinimumBroadcastShapesOp : CppDeprecated<"Do not use this op outside of
 }
 
 #endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
-

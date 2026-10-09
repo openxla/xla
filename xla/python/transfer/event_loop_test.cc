@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/python/transfer/event_loop.h"
 
 #include <errno.h>
+#include <gtest/gtest.h>
 #include <string.h>
 #include <sys/socket.h>
 
@@ -24,7 +25,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"

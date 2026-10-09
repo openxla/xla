@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/buffer_debug_log_entry_metadata_store.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "xla/backends/gpu/runtime/buffer_debug_log.pb.h"
 #include "xla/backends/gpu/runtime/buffer_debug_log_structs.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/tsl/util/proto/proto_matchers.h"

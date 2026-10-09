@@ -24,10 +24,10 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/context_types.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/profiler/lib/context_types.h"
 
 namespace tsl {
 namespace profiler {
@@ -156,6 +156,8 @@ enum HostEventType {
   kScheduleWithSplit,
   kScheduleWithEagerSplit,
   kASBSQueueSchedule,
+  kOrbaxConcatInputBuffers,
+  kOrbaxProcessBatch,
   // TFRT related.
   kTfrtModelRun,
   // Serving related.
@@ -269,6 +271,7 @@ enum StatType {
   kDeduplicatedName,
   kHloCategory,
   kHloModule,
+  kUniqueHloOpId,
   kProgramId,
   kEquation,
   kIsEager,
@@ -400,11 +403,22 @@ enum StatType {
   // Stats for subprocess trace collection.
   kConsumerPid,
   kProcessId,
+  // Transaction ID for DMA transfers with
+  kTransactionWithChipCoreId,
+  // Program Counter in Oci Descriptors, etc
+  kProgramCounter,
+  kUsesIci,
+  kDimensions,
+  kType,
+  kDevCapPeakSpmemRdBwGigabytesPerSecond,
+  kDevCapPeakSpmemWrBwGigabytesPerSecond,
+  kDevCapPeakScTeraflopsPerSecond,
+  kDevCapNumSparseCoreTiles,
   // LINT.ThenChange(:last_stat_type)
 
   // LINT.IfChange(last_stat_type)
   // Change this to point to the last stat type when adding a new one.
-  kLastStatType = kProcessId,
+  kLastStatType = kDevCapNumSparseCoreTiles,
   // LINT.ThenChange(:stat_type_enum)
 };
 
@@ -433,11 +447,10 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleLoopIteration,
   kMegaScaleGraphProtos,
   kMegaScaleNetworkTransportLatency,
-  kMegaScaleTransmissionBudgetUs,
-  kMegaScaleDelayBudgetUs,
   kMegaScaleHloModule,
   kMegaScaleMultiSliceTopology,
-  kLastMegaScaleStatType = kMegaScaleMultiSliceTopology,
+  kMegaScaleActivationToNetworkReceiveDurationUs,
+  kLastMegaScaleStatType = kMegaScaleActivationToNetworkReceiveDurationUs,
 };
 
 enum TaskEnvStatType {

@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors All Rights Reserved.
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,12 +23,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/test.h"
-#include "xla/tsl/profiler/rpc/profiler_server.h"
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/profiler/rpc/profiler_server.h"
 
 namespace tsl {
 namespace profiler {

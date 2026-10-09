@@ -17,11 +17,21 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 
+#include "absl/algorithm/container.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/literal_util.h"
@@ -31,10 +41,11 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
+
+using ::absl_testing::IsOkAndHolds;
 
 class FlattenCallGraphTest : public HloHardwareIndependentTestBase {
  protected:
@@ -95,8 +106,12 @@ class FlattenCallGraphTest : public HloHardwareIndependentTestBase {
 
   absl::StatusOr<bool> RunFlattenCallGraph(HloModule* module) {
     FlattenCallGraph flatten;
-    TF_ASSIGN_OR_RETURN(bool result, flatten.Run(module));
+    ABSL_ASSIGN_OR_RETURN(bool result, flatten.Run(module));
     return result;
+  }
+
+  FlattenCallGraph CreateSkipCallsFlattenPass() {
+    return FlattenCallGraph(FlattenCallGraph::SkipCloningForCalls);
   }
 
   const Shape kScalarShape = ShapeUtil::MakeShape(F32, {});
@@ -115,88 +130,149 @@ TEST_F(FlattenCallGraphTest, ComplexGraph) {
   //    c
   //
   // Calls are made via kCall, kWhile, and kMap instructions.
-  auto module = CreateNewVerifiedModule();
-  HloComputation* cond_computation =
-      module->AddEmbeddedComputation(MakeConditionComputation());
+  absl::string_view hlo_string = R"hlo(
+HloModule ComplexGraph, entry_computation_layout={(f32[])->f32[]}
+
+%ComplexGraph.ScalarComputation (param0.1: f32[]) -> f32[] {
+  %param0.1 = f32[] parameter(0)
+  ROOT %negate = f32[] negate(%param0.1)
+}
+
+%ComplexGraph.MappingComputation (param0.2: f32[]) -> f32[] {
+  %param0.2 = f32[] parameter(0)
+  ROOT %map = f32[] map(%param0.2), dimensions={}, to_apply=%ComplexGraph.ScalarComputation
+}
+
+%ComplexGraph.ConditionComputation (param0: f32[]) -> pred[] {
+  %param0 = f32[] parameter(0)
+  %constant = f32[] constant(0)
+  ROOT %compare = pred[] compare(%param0, %constant), direction=GT
+}
+
+%ComplexGraph.a (param0.3: f32[]) -> f32[] {
+  %param0.3 = f32[] parameter(0)
+  %call = f32[] call(%param0.3), to_apply=%ComplexGraph.ScalarComputation
+  ROOT %while = f32[] while(%call), condition=%ComplexGraph.ConditionComputation, body=%ComplexGraph.MappingComputation
+}
+
+ENTRY %ComplexGraph.entry (param0.4: f32[]) -> f32[] {
+  %param0.4 = f32[] parameter(0)
+  ROOT %while.1 = f32[] while(%param0.4), condition=%ComplexGraph.ConditionComputation, body=%ComplexGraph.a
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
+  EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule ComplexGraph, entry_computation_layout={(f32[])->f32[]}
+
+%ComplexGraph.ScalarComputation.clone (param0.5: f32[]) -> f32[] {
+  %param0.5 = f32[] parameter(0)
+  ROOT %negate.1 = f32[] negate(%param0.5)
+}
+
+%ComplexGraph.ScalarComputation (param0.1: f32[]) -> f32[] {
+  %param0.1 = f32[] parameter(0)
+  ROOT %negate = f32[] negate(%param0.1)
+}
+
+%ComplexGraph.MappingComputation (param0.2: f32[]) -> f32[] {
+  %param0.2 = f32[] parameter(0)
+  ROOT %map = f32[] map(%param0.2), dimensions={}, to_apply=%ComplexGraph.ScalarComputation
+}
+
+%ComplexGraph.ConditionComputation (param0: f32[]) -> pred[] {
+  %param0 = f32[] parameter(0)
+  %constant = f32[] constant(0)
+  ROOT %compare = pred[] compare(%param0, %constant), direction=GT
+}
+
+%ComplexGraph.a (param0.3: f32[]) -> f32[] {
+  %param0.3 = f32[] parameter(0)
+  %call = f32[] call(%param0.3), to_apply=%ComplexGraph.ScalarComputation.clone
+  ROOT %while = f32[] while(%call), condition=%ComplexGraph.ConditionComputation, body=%ComplexGraph.MappingComputation
+}
+
+%ComplexGraph.ConditionComputation.clone (param0.6: f32[]) -> pred[] {
+  %param0.6 = f32[] parameter(0)
+  %constant.1 = f32[] constant(0)
+  ROOT %compare.1 = pred[] compare(%param0.6, %constant.1), direction=GT
+}
+
+ENTRY %ComplexGraph.entry (param0.4: f32[]) -> f32[] {
+  %param0.4 = f32[] parameter(0)
+  ROOT %while.1 = f32[] while(%param0.4), condition=%ComplexGraph.ConditionComputation.clone, body=%ComplexGraph.a
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
+  std::unique_ptr<CallGraph> flat_call_graph = CallGraph::Build(module.get());
   HloComputation* c_computation =
-      module->AddEmbeddedComputation(MakeScalarComputation());
-  HloComputation* b_computation = module->AddEmbeddedComputation(
-      MakeMappingComputation(c_computation, /*callsites=*/1));
-
-  HloComputation* a_computation;
-  {
-    HloComputation::Builder builder(TestName() + ".a");
-    HloInstruction* param0 = builder.AddInstruction(
-        HloInstruction::CreateParameter(0, kScalarShape, "param0"));
-    HloInstruction* call = builder.AddInstruction(
-        HloInstruction::CreateCall(kScalarShape, {param0}, c_computation));
-    builder.AddInstruction(HloInstruction::CreateWhile(
-        kScalarShape, cond_computation, b_computation, call));
-    a_computation = module->AddEmbeddedComputation(builder.Build());
-  }
-
-  HloComputation* entry_computation;
-  {
-    HloComputation::Builder builder(TestName() + ".entry");
-    HloInstruction* param0 = builder.AddInstruction(
-        HloInstruction::CreateParameter(0, kScalarShape, "param0"));
-    builder.AddInstruction(HloInstruction::CreateWhile(
-        kScalarShape, cond_computation, a_computation, param0));
-    entry_computation = module->AddEntryComputation(builder.Build());
-  }
-
-  {
-    TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
-    EXPECT_TRUE(result);
-    std::unique_ptr<CallGraph> flat_call_graph = CallGraph::Build(module.get());
-    const CallGraphNode& c_node = flat_call_graph->GetNode(c_computation);
-    EXPECT_EQ(1, c_node.caller_callsites().size());
-  }
+      module->GetComputationWithName("ComplexGraph.ScalarComputation");
+  const CallGraphNode& c_node = flat_call_graph->GetNode(c_computation);
+  EXPECT_EQ(1, c_node.caller_callsites().size());
 }
 
 // Test corner case of a computation used as a body and a loop condition.
 TEST_F(FlattenCallGraphTest, SharedWhileConditionAndBody) {
-  auto module = CreateNewVerifiedModule();
-  HloComputation* cond_computation;
-  {
-    HloComputation::Builder builder(TestName() + ".cond");
-    HloInstruction* param0 =
-        builder.AddInstruction(HloInstruction::CreateParameter(
-            0, ShapeUtil::MakeShape(PRED, {}), "param0"));
-    HloInstruction* false_constant = builder.AddInstruction(
-        HloInstruction::CreateConstant(LiteralUtil::CreateR0<bool>(false)));
-    builder.AddInstruction(HloInstruction::CreateCompare(
-        ShapeUtil::MakeShape(PRED, {}), param0, false_constant,
-        ComparisonDirection::kEq));
-    cond_computation = module->AddEmbeddedComputation(builder.Build());
-  }
+  absl::string_view hlo_string = R"hlo(
+HloModule SharedWhileConditionAndBody, entry_computation_layout={()->pred[]}
 
-  HloComputation* entry_computation;
-  HloInstruction* while_op;
-  {
-    HloComputation::Builder builder(TestName() + ".entry");
-    HloInstruction* false_constant = builder.AddInstruction(
-        HloInstruction::CreateConstant(LiteralUtil::CreateR0<bool>(false)));
-    while_op = builder.AddInstruction(HloInstruction::CreateWhile(
-        ShapeUtil::MakeShape(PRED, {}), cond_computation, cond_computation,
-        false_constant));
-    entry_computation = module->AddEntryComputation(builder.Build());
-  }
+%SharedWhileConditionAndBody.cond (param0: pred[]) -> pred[] {
+  %param0 = pred[] parameter(0)
+  %constant = pred[] constant(false)
+  ROOT %compare = pred[] compare(%param0, %constant), direction=EQ
+}
 
-  {
-    std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
-    const CallGraphNode& cond_node = call_graph->GetNode(cond_computation);
-    EXPECT_EQ(2, cond_node.caller_callsites().size());
-  }
+ENTRY %SharedWhileConditionAndBody.entry () -> pred[] {
+  %constant.1 = pred[] constant(false)
+  ROOT %while = pred[] while(%constant.1), condition=%SharedWhileConditionAndBody.cond, body=%SharedWhileConditionAndBody.cond
+}
+)hlo";
 
-  {
-    TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
-    EXPECT_TRUE(result);
-    EXPECT_NE(while_op->while_body(), while_op->while_condition());
-    std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
-    const CallGraphNode& cond_node = call_graph->GetNode(cond_computation);
-    EXPECT_EQ(0, cond_node.caller_callsites().size());
-  }
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
+  EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule SharedWhileConditionAndBody, entry_computation_layout={()->pred[]}
+
+%SharedWhileConditionAndBody.cond (param0: pred[]) -> pred[] {
+  %param0 = pred[] parameter(0)
+  %constant = pred[] constant(false)
+  ROOT %compare = pred[] compare(%param0, %constant), direction=EQ
+}
+
+%SharedWhileConditionAndBody.cond.clone (param0.1: pred[]) -> pred[] {
+  %param0.1 = pred[] parameter(0)
+  %constant.2 = pred[] constant(false)
+  ROOT %compare.1 = pred[] compare(%param0.1, %constant.2), direction=EQ
+}
+
+%SharedWhileConditionAndBody.cond.clone.1 (param0.2: pred[]) -> pred[] {
+  %param0.2 = pred[] parameter(0)
+  %constant.3 = pred[] constant(false)
+  ROOT %compare.2 = pred[] compare(%param0.2, %constant.3), direction=EQ
+}
+
+ENTRY %SharedWhileConditionAndBody.entry () -> pred[] {
+  %constant.1 = pred[] constant(false)
+  ROOT %while = pred[] while(%constant.1), condition=%SharedWhileConditionAndBody.cond.clone.1, body=%SharedWhileConditionAndBody.cond.clone
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
+  HloInstruction* while_op =
+      module->entry_computation()->GetInstructionWithName("while");
+  EXPECT_NE(while_op->while_body(), while_op->while_condition());
+  std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
+  HloComputation* cond_computation =
+      module->GetComputationWithName("SharedWhileConditionAndBody.cond");
+  const CallGraphNode& cond_node = call_graph->GetNode(cond_computation);
+  EXPECT_EQ(0, cond_node.caller_callsites().size());
 }
 
 // Test flattening of a nested calling computations.
@@ -210,56 +286,145 @@ TEST_F(FlattenCallGraphTest, SharedWhileConditionAndBody) {
 //     C
 //
 TEST_F(FlattenCallGraphTest, FlattenCalls) {
-  auto module = CreateNewVerifiedModule();
-  HloComputation* c_computation =
-      module->AddEmbeddedComputation(MakeScalarComputation());
+  absl::string_view hlo_string = R"hlo(
+HloModule FlattenCalls, entry_computation_layout={(f32[])->f32[]}
 
-  HloComputation* b_computation = module->AddEmbeddedComputation(
-      MakeCallingComputation(c_computation, /*callsites=*/2, ".B"));
+%FlattenCalls.ScalarComputation (param0: f32[]) -> f32[] {
+  %param0 = f32[] parameter(0)
+  ROOT %negate = f32[] negate(%param0)
+}
 
-  module->AddEntryComputation(
-      MakeCallingComputation(b_computation, /*callsites=*/2, ".Entry"));
+%FlattenCalls.B (param0.1: f32[]) -> f32[] {
+  %param0.1 = f32[] parameter(0)
+  %call = f32[] call(%param0.1), to_apply=%FlattenCalls.ScalarComputation
+  ROOT %call.1 = f32[] call(%call), to_apply=%FlattenCalls.ScalarComputation
+}
 
+ENTRY %FlattenCalls.Entry (param0.2: f32[]) -> f32[] {
+  %param0.2 = f32[] parameter(0)
+  %call.2 = f32[] call(%param0.2), to_apply=%FlattenCalls.B
+  ROOT %call.3 = f32[] call(%call.2), to_apply=%FlattenCalls.B
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule FlattenCalls, entry_computation_layout={(f32[])->f32[]}
+
+%FlattenCalls.ScalarComputation (param0: f32[]) -> f32[] {
+  %param0 = f32[] parameter(0)
+  ROOT %negate = f32[] negate(%param0)
+}
+
+%FlattenCalls.ScalarComputation.clone (param0.3: f32[]) -> f32[] {
+  %param0.3 = f32[] parameter(0)
+  ROOT %negate.1 = f32[] negate(%param0.3)
+}
+
+%FlattenCalls.B (param0.1: f32[]) -> f32[] {
+  %param0.1 = f32[] parameter(0)
+  %call = f32[] call(%param0.1), to_apply=%FlattenCalls.ScalarComputation
+  ROOT %call.1 = f32[] call(%call), to_apply=%FlattenCalls.ScalarComputation.clone
+}
+
+%FlattenCalls.ScalarComputation.clone.1 (param0.5: f32[]) -> f32[] {
+  %param0.5 = f32[] parameter(0)
+  ROOT %negate.2 = f32[] negate(%param0.5)
+}
+
+%FlattenCalls.ScalarComputation.clone.clone (param0.6: f32[]) -> f32[] {
+  %param0.6 = f32[] parameter(0)
+  ROOT %negate.3 = f32[] negate(%param0.6)
+}
+
+%FlattenCalls.B.clone (param0.4: f32[]) -> f32[] {
+  %param0.4 = f32[] parameter(0)
+  %call.4 = f32[] call(%param0.4), to_apply=%FlattenCalls.ScalarComputation.clone.1
+  ROOT %call.5 = f32[] call(%call.4), to_apply=%FlattenCalls.ScalarComputation.clone.clone
+}
+
+ENTRY %FlattenCalls.Entry (param0.2: f32[]) -> f32[] {
+  %param0.2 = f32[] parameter(0)
+  %call.2 = f32[] call(%param0.2), to_apply=%FlattenCalls.B
+  ROOT %call.3 = f32[] call(%call.2), to_apply=%FlattenCalls.B.clone
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
   EXPECT_EQ(7, module->computation_count());
-
+  HloComputation* c_computation =
+      module->GetComputationWithName("FlattenCalls.ScalarComputation");
   const CallGraphNode& c_node = call_graph->GetNode(c_computation);
   EXPECT_EQ(1, c_node.caller_callsites().size());
-
+  HloComputation* b_computation =
+      module->GetComputationWithName("FlattenCalls.B");
   const CallGraphNode& b_node = call_graph->GetNode(b_computation);
   EXPECT_EQ(1, b_node.caller_callsites().size());
 }
 
 TEST_F(FlattenCallGraphTest, FlattenCallsInConditional) {
-  auto module = CreateNewVerifiedModule();
-  HloComputation* sub_computation =
-      module->AddEmbeddedComputation(MakeScalarComputation());
+  absl::string_view hlo_string = R"hlo(
+HloModule FlattenCallsInConditional, entry_computation_layout={()->f32[]}
 
-  // Create entry computation, which is a conditional that has the same
-  // computation in the true and false branch.
-  HloComputation::Builder builder(TestName());
-  auto pred = builder.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<bool>(true)));
-  auto constant1 = builder.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(56.0f)));
-  auto constant2 = builder.AddInstruction(
-      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(12.0f)));
-  auto cond = builder.AddInstruction(HloInstruction::CreateConditional(
-      kScalarShape, pred, constant1, sub_computation, constant2,
-      sub_computation));
-  module->AddEntryComputation(builder.Build());
-  EXPECT_EQ(2, module->computation_count());
+%FlattenCallsInConditional.ScalarComputation (param0: f32[]) -> f32[] {
+  %param0 = f32[] parameter(0)
+  ROOT %negate = f32[] negate(%param0)
+}
 
+ENTRY %FlattenCallsInConditional () -> f32[] {
+  %constant = pred[] constant(true)
+  %constant.1 = f32[] constant(56)
+  %constant.2 = f32[] constant(12)
+  ROOT %conditional = f32[] conditional(%constant, %constant.1, %constant.2), true_computation=%FlattenCallsInConditional.ScalarComputation, false_computation=%FlattenCallsInConditional.ScalarComputation
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   EXPECT_TRUE(result);
+  absl::string_view expected =
+      R"hlo(HloModule FlattenCallsInConditional, entry_computation_layout={()->f32[]}
+
+%FlattenCallsInConditional.ScalarComputation (param0: f32[]) -> f32[] {
+  %param0 = f32[] parameter(0)
+  ROOT %negate = f32[] negate(%param0)
+}
+
+%FlattenCallsInConditional.ScalarComputation.clone (param0.1: f32[]) -> f32[] {
+  %param0.1 = f32[] parameter(0)
+  ROOT %negate.1 = f32[] negate(%param0.1)
+}
+
+%FlattenCallsInConditional.ScalarComputation.clone.1 (param0.2: f32[]) -> f32[] {
+  %param0.2 = f32[] parameter(0)
+  ROOT %negate.2 = f32[] negate(%param0.2)
+}
+
+ENTRY %FlattenCallsInConditional () -> f32[] {
+  %constant = pred[] constant(true)
+  %constant.1 = f32[] constant(56)
+  %constant.2 = f32[] constant(12)
+  ROOT %conditional = f32[] conditional(%constant, %constant.1, %constant.2), true_computation=%FlattenCallsInConditional.ScalarComputation.clone, false_computation=%FlattenCallsInConditional.ScalarComputation.clone.1
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
   // The true and false computations must now be different.
   EXPECT_EQ(4, module->computation_count());
+  HloInstruction* cond =
+      module->entry_computation()->GetInstructionWithName("conditional");
   EXPECT_NE(cond->branch_computation(0), cond->branch_computation(1));
 
   //  The original computation is no longer used.
+  HloComputation* sub_computation = module->GetComputationWithName(
+      "FlattenCallsInConditional.ScalarComputation");
   const CallGraphNode& sub_node = call_graph->GetNode(sub_computation);
   EXPECT_EQ(0, sub_node.caller_callsites().size());
 }
@@ -286,14 +451,52 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule AsyncCall, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+%called_computation (param_0: f32[4096], param_1: f32[4096]) -> f32[4096] {
+  %param_0 = f32[4096]{0} parameter(0)
+  %param_1 = f32[4096]{0} parameter(1)
+  ROOT %result.1 = f32[4096]{0} add(%param_0, %param_1)
+}
+
+%async_wrapped (async_param: f32[4096], async_param.1: f32[4096]) -> f32[4096] {
+  %async_param = f32[4096]{0} parameter(0)
+  %async_param.1 = f32[4096]{0} parameter(1)
+  ROOT %call = f32[4096]{0} call(%async_param, %async_param.1), to_apply=%called_computation
+}
+
+%called_computation.clone (param_0.1: f32[4096], param_1.1: f32[4096]) -> f32[4096] {
+  %param_0.1 = f32[4096]{0} parameter(0)
+  %param_1.1 = f32[4096]{0} parameter(1)
+  ROOT %result.0 = f32[4096]{0} add(%param_0.1, %param_1.1)
+}
+
+%async_wrapped.1 (async_param.2: f32[4096], async_param.3: f32[4096]) -> f32[4096] {
+  %async_param.2 = f32[4096]{0} parameter(0)
+  %async_param.3 = f32[4096]{0} parameter(1)
+  ROOT %call.1 = f32[4096]{0} call(%async_param.2, %async_param.3), to_apply=%called_computation.clone
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %b = f32[4096]{0} parameter(1)
+  %call-start.0 = ((f32[4096]{0}, f32[4096]{0}), f32[4096]{0}, u32[]) async-start(%a, %b), calls=%async_wrapped
+  %call-done.0 = f32[4096]{0} async-done(%call-start.0)
+  %call-start.1 = ((f32[4096]{0}, f32[4096]{0}), f32[4096]{0}, u32[]) async-start(%call-done.0, %b), calls=%async_wrapped.1
+  %call-done.1 = f32[4096]{0} async-done(%call-start.1)
+  ROOT %add_1 = f32[4096]{0} add(%a, %call-done.1)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
 
   // We expect the entry computation, two async_wrapped computations and two
   // called_computation computations.
   EXPECT_EQ(5, module->computation_count());
-
   EXPECT_EQ(FindInstruction(module.get(), "call-start.0")
                 ->async_wrapped_computation(),
             FindInstruction(module.get(), "call-done.0")
@@ -345,10 +548,56 @@ HloModule WhileInCall
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-
   ASSERT_EQ(module->computation_count(), 4);
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule WhileInCall, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+%while_body (p: (f32[4096])) -> (f32[4096]) {
+  ROOT %p = (f32[4096]{0}) parameter(0)
+}
+
+%while_cond (p.cond: (f32[4096])) -> pred[] {
+  %p.cond = (f32[4096]{0}) parameter(0)
+  ROOT %eq = pred[] constant(false)
+}
+
+%called_computation (arg: f32[4096]) -> f32[4096] {
+  %arg = f32[4096]{0} parameter(0)
+  %while_init = (f32[4096]{0}) tuple(%arg)
+  %while = (f32[4096]{0}) while(%while_init), condition=%while_cond, body=%while_body
+  ROOT %get-tuple-element = f32[4096]{0} get-tuple-element(%while), index=0
+}
+
+%while_body.clone (p.1: (f32[4096])) -> (f32[4096]) {
+  ROOT %p.1 = (f32[4096]{0}) parameter(0)
+}
+
+%while_cond.clone (p.cond.1: (f32[4096])) -> pred[] {
+  %p.cond.1 = (f32[4096]{0}) parameter(0)
+  ROOT %eq.1 = pred[] constant(false)
+}
+
+%called_computation.clone (arg.1: f32[4096]) -> f32[4096] {
+  %arg.1 = f32[4096]{0} parameter(0)
+  %while_init.1 = (f32[4096]{0}) tuple(%arg.1)
+  %while.1 = (f32[4096]{0}) while(%while_init.1), condition=%while_cond.clone, body=%while_body.clone
+  ROOT %get-tuple-element.1 = f32[4096]{0} get-tuple-element(%while.1), index=0
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %call0 = f32[4096]{0} call(%a), to_apply=%called_computation
+  %b = f32[4096]{0} parameter(1)
+  %call1 = f32[4096]{0} call(%b), to_apply=%called_computation.clone
+  ROOT %multiply = f32[4096]{0} multiply(%call0, %call1)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
   EXPECT_EQ(module->computation_count(), 7);
 }
 
@@ -394,6 +643,64 @@ HloModule CallInWhileInCall
   ASSERT_EQ(module->computation_count(), 5);
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule CallInWhileInCall, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+%called_computation_internal (arg.internal: f32[4096]) -> f32[4096] {
+  ROOT %arg.internal = f32[4096]{0} parameter(0)
+}
+
+%while_body (p.body: (f32[4096])) -> (f32[4096]) {
+  %p.body = (f32[4096]{0}) parameter(0)
+  %call.internal = f32[4096]{0} call(%p.body#0), to_apply=%called_computation_internal
+  ROOT %tuple.body = (f32[4096]{0}) tuple(%call.internal)
+}
+
+%while_cond (p.cond: (f32[4096])) -> pred[] {
+  %p.cond = (f32[4096]{0}) parameter(0)
+  ROOT %eq = pred[] constant(false)
+}
+
+%called_computation_external (arg.external: f32[4096]) -> f32[4096] {
+  %arg.external = f32[4096]{0} parameter(0)
+  %while.init = (f32[4096]{0}) tuple(%arg.external)
+  %while = (f32[4096]{0}) while(%while.init), condition=%while_cond, body=%while_body
+  ROOT %get-tuple-element = f32[4096]{0} get-tuple-element(%while), index=0
+}
+
+%called_computation_internal.clone (arg.internal.1: f32[4096]) -> f32[4096] {
+  ROOT %arg.internal.1 = f32[4096]{0} parameter(0)
+}
+
+%while_body.clone (p.body.1: (f32[4096])) -> (f32[4096]) {
+  %p.body.1 = (f32[4096]{0}) parameter(0)
+  %call.internal.1 = f32[4096]{0} call(%p.body.1#0), to_apply=%called_computation_internal.clone
+  ROOT %tuple.body.1 = (f32[4096]{0}) tuple(%call.internal.1)
+}
+
+%while_cond.clone (p.cond.1: (f32[4096])) -> pred[] {
+  %p.cond.1 = (f32[4096]{0}) parameter(0)
+  ROOT %eq.1 = pred[] constant(false)
+}
+
+%called_computation_external.clone (arg.external.1: f32[4096]) -> f32[4096] {
+  %arg.external.1 = f32[4096]{0} parameter(0)
+  %while.init.1 = (f32[4096]{0}) tuple(%arg.external.1)
+  %while.1 = (f32[4096]{0}) while(%while.init.1), condition=%while_cond.clone, body=%while_body.clone
+  ROOT %get-tuple-element.1 = f32[4096]{0} get-tuple-element(%while.1), index=0
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %call0 = f32[4096]{0} call(%a), to_apply=%called_computation_external
+  %b = f32[4096]{0} parameter(1)
+  %call1 = f32[4096]{0} call(%b), to_apply=%called_computation_external.clone
+  ROOT %multiply = f32[4096]{0} multiply(%call0, %call1)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
   EXPECT_EQ(module->computation_count(), 9);
 }
 
@@ -428,6 +735,42 @@ HloModule SortInCall
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   ASSERT_EQ(module->computation_count(), 5);
   EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule SortInCall, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+%compare (p.0.lhs: f32[], p.0.rhs: f32[]) -> pred[] {
+  %p.0.lhs = f32[] parameter(0)
+  %p.0.rhs = f32[] parameter(1)
+  ROOT %lt = pred[] compare(%p.0.lhs, %p.0.rhs), direction=LT
+}
+
+%called_computation (x: f32[4096]) -> f32[4096] {
+  %x = f32[4096]{0} parameter(0)
+  ROOT %sort = f32[4096]{0} sort(%x), dimensions={0}, to_apply=%compare
+}
+
+%compare.clone (p.0.lhs.1: f32[], p.0.rhs.1: f32[]) -> pred[] {
+  %p.0.lhs.1 = f32[] parameter(0)
+  %p.0.rhs.1 = f32[] parameter(1)
+  ROOT %lt.1 = pred[] compare(%p.0.lhs.1, %p.0.rhs.1), direction=LT
+}
+
+%called_computation.clone (x.1: f32[4096]) -> f32[4096] {
+  %x.1 = f32[4096]{0} parameter(0)
+  ROOT %sort.1 = f32[4096]{0} sort(%x.1), dimensions={0}, to_apply=%compare.clone
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %call0 = f32[4096]{0} call(%a), to_apply=%called_computation
+  %b = f32[4096]{0} parameter(1)
+  %call1 = f32[4096]{0} call(%b), to_apply=%called_computation.clone
+  ROOT %multiply = f32[4096]{0} multiply(%call0, %call1)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
 
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
   for (const CallGraphNode& node : call_graph->nodes()) {
@@ -473,6 +816,54 @@ HloModule CallInSortInCall
   ASSERT_EQ(module->computation_count(), 7);
   EXPECT_TRUE(result);
 
+  absl::string_view expected =
+      R"hlo(HloModule CallInSortInCall, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+%compare.impl (p.0.lhs: f32[], p.0.rhs: f32[]) -> pred[] {
+  %p.0.lhs = f32[] parameter(0)
+  %p.0.rhs = f32[] parameter(1)
+  ROOT %lt = pred[] compare(%p.0.lhs, %p.0.rhs), direction=LT
+}
+
+%compare (p.0.lhs.1: f32[], p.0.rhs.1: f32[]) -> pred[] {
+  %p.0.lhs.1 = f32[] parameter(0)
+  %p.0.rhs.1 = f32[] parameter(1)
+  ROOT %lt.1 = pred[] call(%p.0.lhs.1, %p.0.rhs.1), to_apply=%compare.impl
+}
+
+%called_computation (x: f32[4096]) -> f32[4096] {
+  %x = f32[4096]{0} parameter(0)
+  ROOT %sort = f32[4096]{0} sort(%x), dimensions={0}, to_apply=%compare
+}
+
+%compare.impl.clone (p.0.lhs.3: f32[], p.0.rhs.3: f32[]) -> pred[] {
+  %p.0.lhs.3 = f32[] parameter(0)
+  %p.0.rhs.3 = f32[] parameter(1)
+  ROOT %lt.3 = pred[] compare(%p.0.lhs.3, %p.0.rhs.3), direction=LT
+}
+
+%compare.clone (p.0.lhs.2: f32[], p.0.rhs.2: f32[]) -> pred[] {
+  %p.0.lhs.2 = f32[] parameter(0)
+  %p.0.rhs.2 = f32[] parameter(1)
+  ROOT %lt.2 = pred[] call(%p.0.lhs.2, %p.0.rhs.2), to_apply=%compare.impl.clone
+}
+
+%called_computation.clone (x.1: f32[4096]) -> f32[4096] {
+  %x.1 = f32[4096]{0} parameter(0)
+  ROOT %sort.1 = f32[4096]{0} sort(%x.1), dimensions={0}, to_apply=%compare.clone
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %call0 = f32[4096]{0} call(%a), to_apply=%called_computation
+  %b = f32[4096]{0} parameter(1)
+  %call1 = f32[4096]{0} call(%b), to_apply=%called_computation.clone
+  ROOT %multiply = f32[4096]{0} multiply(%call0, %call1)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
   for (const CallGraphNode& node : call_graph->nodes()) {
     EXPECT_LE(node.caller_callsites().size(), 1);
@@ -497,6 +888,18 @@ HloModule NoChange
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
   ASSERT_EQ(module->computation_count(), 1);
   EXPECT_FALSE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule NoChange, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %b = f32[4096]{0} parameter(1)
+  ROOT %multiply = f32[4096]{0} multiply(%a, %b)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
 }
 
 TEST_F(FlattenCallGraphTest, SkipCloningTest) {
@@ -552,6 +955,52 @@ ENTRY %main (param: f32[]) -> (f32[], f32[], f32[]) {
   TF_ASSERT_OK_AND_ASSIGN(bool result, flatten.Run(module.get()));
   EXPECT_TRUE(result);
 
+  absl::string_view expected =
+      R"hlo(HloModule SkipCloning, entry_computation_layout={(f32[])->(f32[], f32[], f32[])}
+
+%while_body (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+%while_cond (param.1: f32[]) -> pred[] {
+  %param.1 = f32[] parameter(0)
+  %zero = f32[] constant(0)
+  ROOT %cmp = pred[] compare(%param.1, %zero), direction=GT
+}
+
+%a_comp (param.2: f32[]) -> f32[] {
+  %param.2 = f32[] parameter(0)
+  ROOT %while = f32[] while(%param.2), condition=%while_cond, body=%while_body
+}
+
+%while_body.clone (param.5: f32[]) -> f32[] {
+  %param.5 = f32[] parameter(0)
+  ROOT %neg.1 = f32[] negate(%param.5)
+}
+
+%while_cond.clone (param.6: f32[]) -> pred[] {
+  %param.6 = f32[] parameter(0)
+  %zero.1 = f32[] constant(0)
+  ROOT %cmp.1 = pred[] compare(%param.6, %zero.1), direction=GT
+}
+
+%b_comp (param.3: f32[]) -> f32[] {
+  %param.3 = f32[] parameter(0)
+  ROOT %while.1 = f32[] while(%param.3), condition=%while_cond.clone, body=%while_body.clone
+}
+
+ENTRY %main (param.4: f32[]) -> (f32[], f32[], f32[]) {
+  %param.4 = f32[] parameter(0)
+  %a.0 = f32[] call(%param.4), to_apply=%a_comp
+  %a.1 = f32[] call(%param.4), to_apply=%a_comp
+  %b = f32[] call(%param.4), to_apply=%b_comp
+  ROOT %tuple = (f32[], f32[], f32[]) tuple(%a.0, %a.1, %b)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
   HloComputation* a_computation = FindComputation(module.get(), "a_comp");
   HloComputation* while_body_computation =
       FindComputation(module.get(), "while_body");
@@ -560,6 +1009,804 @@ ENTRY %main (param: f32[]) -> (f32[], f32[], f32[]) {
   EXPECT_EQ(2, call_graph->GetNode(a_computation).caller_callsites().size());
   EXPECT_EQ(
       1, call_graph->GetNode(while_body_computation).caller_callsites().size());
+}
+
+TEST_F(FlattenCallGraphTest, PreserveScheduleTest) {
+  std::string hlo_string = R"(
+HloModule PreserveScheduleTest, is_scheduled=true
+
+%called_computation (param_0: f32[4096], param_1: f32[4096]) -> f32[4096] {
+  %param_0 = f32[4096] parameter(0)
+  %param_1 = f32[4096] parameter(1)
+  ROOT %result.1 = f32[4096] add(f32[4096] %param_0, f32[4096] %param_1)
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096] parameter(0)
+  %b = f32[4096] parameter(1)
+  %call.0 = f32[4096] call(%a, %b), to_apply=%called_computation
+  %call.1 = f32[4096] call(%call.0, %b), to_apply=%called_computation
+  ROOT %add_1 = f32[4096] add(%a, %call.1)
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool result, RunFlattenCallGraph(module.get()));
+  EXPECT_TRUE(result);
+
+  absl::string_view expected =
+      R"hlo(HloModule PreserveScheduleTest, is_scheduled=true, entry_computation_layout={(f32[4096]{0}, f32[4096]{0})->f32[4096]{0}}
+
+%called_computation (param_0: f32[4096], param_1: f32[4096]) -> f32[4096] {
+  %param_0 = f32[4096]{0} parameter(0)
+  %param_1 = f32[4096]{0} parameter(1)
+  ROOT %result.1 = f32[4096]{0} add(%param_0, %param_1)
+}
+
+%called_computation.clone (param_0.1: f32[4096], param_1.1: f32[4096]) -> f32[4096] {
+  %param_0.1 = f32[4096]{0} parameter(0)
+  %param_1.1 = f32[4096]{0} parameter(1)
+  ROOT %result.0 = f32[4096]{0} add(%param_0.1, %param_1.1)
+}
+
+ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(0)
+  %b = f32[4096]{0} parameter(1)
+  %call.0 = f32[4096]{0} call(%a, %b), to_apply=%called_computation
+  %call.1 = f32[4096]{0} call(%call.0, %b), to_apply=%called_computation.clone
+  ROOT %add_1 = f32[4096]{0} add(%a, %call.1)
+}
+
+)hlo";
+  EXPECT_EQ(module->ToString(), expected);
+
+  // We expect the entry computation and two called_computation computations.
+  EXPECT_EQ(3, module->computation_count());
+  HloComputation* called_computation_0 =
+      FindInstruction(module.get(), "call.0")->to_apply();
+  HloComputation* called_computation_1 =
+      FindInstruction(module.get(), "call.1")->to_apply();
+
+  EXPECT_TRUE(module->has_schedule());
+  const auto& schedule = module->schedule();
+
+  EXPECT_TRUE(schedule.is_computation_scheduled(called_computation_0));
+  EXPECT_TRUE(schedule.is_computation_scheduled(called_computation_1));
+}
+
+TEST_F(FlattenCallGraphTest, SkipCloningForCalls_NoCloningAllCallersAreKCalls) {
+  // Verify that if all callers are kCall, cloning is skipped.
+  std::string hlo_string = R"(
+HloModule AllCallersKCalls
+
+%shared_comp (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+// CHECK: ENTRY %main
+// CHECK: %call0 = f32[] call({{.*}}), to_apply=%shared_comp
+// CHECK: %call1 = f32[] call({{.*}}), to_apply=%shared_comp
+ENTRY %main (param: f32[]) -> (f32[], f32[]) {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%shared_comp
+  %call1 = f32[] call(%param), to_apply=%shared_comp
+  ROOT %tuple = (f32[], f32[]) tuple(%call0, %call1)
+}
+  )";
+
+  // We expect no change because all callers are kCall and we configured the
+  // pass to skip cloning in this case.
+  RunAndFilecheckHloRewrite(hlo_string, CreateSkipCallsFlattenPass(),
+                            std::nullopt);
+}
+
+TEST_F(FlattenCallGraphTest, SkipCloningForCalls_MixedCallAndWhileCallers) {
+  // Verify that pathological sharing (same computation from while and calls) IS
+  // cloned for all calls when we use the custom handler that skips flattenning
+  // for calls.
+  std::string hlo_string = R"(
+HloModule MixedCallAndWhileCallers
+
+%while_cond (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+// CHECK-DAG: %shared_comp ({{.*}}) -> f32[]
+// CHECK-DAG: %shared_comp.clone ({{.*}}) -> f32[]
+// CHECK-DAG: %shared_comp.clone.1 ({{.*}}) -> f32[]
+%shared_comp (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+// CHECK: %while_caller
+// CHECK: ROOT %while = f32[] while({{.*}}), condition={{.*}}, body=%shared_comp
+%while_caller (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %while = f32[] while(%param), condition=%while_cond, body=%shared_comp
+}
+
+// CHECK: ENTRY %main
+// CHECK: %call0 = f32[] call({{.*}}), to_apply=%shared_comp.clone
+// CHECK: %call1 = f32[] call({{.*}}), to_apply=%shared_comp.clone.1
+ENTRY %main (param: f32[]) -> (f32[], f32[], f32[]) {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%shared_comp
+  %call1 = f32[] call(%param), to_apply=%shared_comp
+  %while_res = f32[] call(%param), to_apply=%while_caller
+  ROOT %tuple = (f32[], f32[], f32[]) tuple(%call0, %call1, %while_res)
+}
+  )";
+
+  RunAndFilecheckHloRewrite(hlo_string, CreateSkipCallsFlattenPass());
+}
+
+TEST_F(FlattenCallGraphTest, SkipCloningForCalls_WhileHasSameCondAndBody) {
+  // Verify that pathological sharing (same cond and body from the same while)
+  // IS cloned for all calls when we use the custom handler that skips
+  // flattenning for calls.
+  // NOTE: It leaves the original %while_body dead. It is because when a
+  // computation is called multiple times by the same caller, the pass decides
+  // to clone it.
+  std::string hlo_string = R"(
+HloModule WhileHasSameCondAndBody
+
+// CHECK-DAG: %while_body ({{.*}}) -> pred[]
+// CHECK-DAG: %while_body.clone ({{.*}}) -> pred[]
+// CHECK-DAG: %while_body.clone.1 ({{.*}}) -> pred[]
+%while_body (param: pred[]) -> pred[] {
+  %param = pred[] parameter(0)
+  %constant = pred[] constant(false)
+  ROOT %compare = pred[] compare(%param, %constant), direction=EQ
+}
+
+// CHECK: ENTRY %main
+// CHECK: ROOT %while = pred[] while({{.*}}), condition=%while_body.clone.1, body=%while_body.clone
+ENTRY %main () -> pred[] {
+  %constant.1 = pred[] constant(false)
+  ROOT %while = pred[] while(%constant.1), condition=%while_body, body=%while_body
+}
+  )";
+
+  RunAndFilecheckHloRewrite(hlo_string, CreateSkipCallsFlattenPass());
+}
+
+TEST_F(FlattenCallGraphTest, SkipCloningForCalls_NonFlatChainOneWhile) {
+  std::string hlo_string = R"(
+HloModule NonFlatChainOneWhile
+
+%while_cond_1 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_2 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%E (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+// CHECK: %D ({{.*}}) -> f32[]
+// CHECK: ROOT %call{{.*}} = f32[] call({{.*}}), to_apply=%E
+%D (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %call = f32[] call(%param), to_apply=%E
+}
+
+// CHECK: %C ({{.*}}) -> f32[]
+// CHECK: %call0 = f32[] call({{.*}}), to_apply=%D
+// CHECK: %call1 = f32[] call({{.*}}), to_apply=%D
+// CHECK: ROOT %add{{.*}} = f32[] add(%call0, %call1)
+// CHECK: %C.clone ({{.*}}) -> f32[]
+// CHECK: %call0{{.*}} = f32[] call({{.*}}), to_apply=%D
+// CHECK: %call1{{.*}} = f32[] call({{.*}}), to_apply=%D
+// CHECK: ROOT %add{{.*}} = f32[] add(%call0{{.*}}, %call1{{.*}})
+%C (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%D
+  %call1 = f32[] call(%param), to_apply=%D
+  ROOT %add = f32[] add(%call0, %call1)
+}
+
+// CHECK: %B ({{.*}}) -> f32[]
+// CHECK: %while1 = f32[] while({{.*}}), condition=%while_cond_1, body=%C
+// CHECK: %while2 = f32[] while({{.*}}), condition=%while_cond_2, body=%C.clone
+// CHECK: ROOT %add{{.*}} = f32[] add(%while1, %while2)
+%B (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %while1 = f32[] while(%param), condition=%while_cond_1, body=%C
+  %while2 = f32[] while(%param), condition=%while_cond_2, body=%C
+  ROOT %add = f32[] add(%while1, %while2)
+}
+
+// CHECK: %A ({{.*}}) -> f32[]
+// CHECK: %call0{{.*}} = f32[] call({{.*}}), to_apply=%B
+// CHECK: %call1{{.*}} = f32[] call({{.*}}), to_apply=%B
+// CHECK: ROOT %add{{.*}} = f32[] add(%call0{{.*}}, %call1{{.*}})
+%A (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%B
+  %call1 = f32[] call(%param), to_apply=%B
+  ROOT %add = f32[] add(%call0, %call1)
+}
+
+ENTRY %main (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %call = f32[] call(%param), to_apply=%A
+}
+  )";
+
+  RunAndFilecheckHloRewrite(hlo_string, CreateSkipCallsFlattenPass());
+}
+
+TEST_F(FlattenCallGraphTest, SkipCloningForCalls_NonFlatChainTwoWhiles) {
+  std::string hlo_string = R"(
+HloModule NonFlatChainTwoWhiles
+
+%while_cond_1 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_2 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_3 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_4 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%E (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+
+// CHECK: %F ({{.*}}) -> f32[]
+// CHECK: ROOT %neg{{.*}} = f32[] negate({{.*}})
+// CHECK: %F.clone ({{.*}}) -> f32[]
+// CHECK: ROOT %neg{{.*}} = f32[] negate({{.*}})
+%F (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+// CHECK: %D ({{.*}}) -> f32[]
+// CHECK: %while2{{.*}} = f32[] while({{.*}}), condition=%while_cond_4, body=%F.clone
+// CHECK: %call{{.*}} = f32[] call({{.*}}), to_apply=%E
+// CHECK: %while1{{.*}} = f32[] while({{.*}}), condition=%while_cond_3, body=%F
+// CHECK: ROOT %add{{.*}} = f32[] add(%call{{.*}}, %while1{{.*}})
+%D (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %call = f32[] call(%param), to_apply=%E
+  %while1 = f32[] while(%param), condition=%while_cond_3, body=%F
+  %while2 = f32[] while(%param), condition=%while_cond_4, body=%F
+  ROOT %add = f32[] add(%call, %while1)
+}
+
+// CHECK: %C ({{.*}}) -> f32[]
+// CHECK: %call0 = f32[] call({{.*}}), to_apply=%D
+// CHECK: %call1 = f32[] call({{.*}}), to_apply=%D
+// CHECK: %C.clone ({{.*}}) -> f32[]
+// CHECK: %call0{{.*}} = f32[] call({{.*}}), to_apply=%D
+// CHECK: %call1{{.*}} = f32[] call({{.*}}), to_apply=%D
+%C (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%D
+  %call1 = f32[] call(%param), to_apply=%D
+  ROOT %add = f32[] add(%call0, %call1)
+}
+
+// CHECK: %B ({{.*}}) -> f32[]
+// CHECK: %while1{{.*}} = f32[] while({{.*}}), condition=%while_cond_1, body=%C
+// CHECK: %while2{{.*}} = f32[] while({{.*}}), condition=%while_cond_2, body=%C.clone
+%B (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %while1 = f32[] while(%param), condition=%while_cond_1, body=%C
+  %while2 = f32[] while(%param), condition=%while_cond_2, body=%C
+  ROOT %add = f32[] add(%while1, %while2)
+}
+
+// CHECK: %A ({{.*}}) -> f32[]
+// CHECK: %call0{{.*}} = f32[] call({{.*}}), to_apply=%B
+// CHECK: %call1{{.*}} = f32[] call({{.*}}), to_apply=%B
+%A (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%B
+  %call1 = f32[] call(%param), to_apply=%B
+  ROOT %add = f32[] add(%call0, %call1)
+}
+
+ENTRY %main (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %call = f32[] call(%param), to_apply=%A
+}
+  )";
+
+  RunAndFilecheckHloRewrite(hlo_string, CreateSkipCallsFlattenPass());
+}
+
+TEST_F(FlattenCallGraphTest,
+       SkipCloningForCalls_NonFlatChainTwoSuccessiveWhiles) {
+  std::string hlo_string = R"(
+HloModule NonFlatChainTwoSuccessiveWhiles
+
+%while_cond_b1 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_b2 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_c1 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%while_cond_c2 (param: f32[]) -> pred[] {
+  %param = f32[] parameter(0)
+  %zero = f32[] constant(0.0)
+  ROOT %cmp = pred[] compare(%param, %zero), direction=GT
+}
+
+%E (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %neg = f32[] negate(%param)
+}
+
+// CHECK: %D ({{.*}}) -> f32[]
+// CHECK: ROOT %call{{.*}} = f32[] call({{.*}}), to_apply=%E
+// CHECK: %D.clone ({{.*}}) -> f32[]
+// CHECK: ROOT %call{{.*}} = f32[] call({{.*}}), to_apply=%E
+%D (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %call = f32[] call(%param), to_apply=%E
+}
+
+// CHECK: %C ({{.*}}) -> f32[]
+// CHECK: %while1{{.*}} = f32[] while({{.*}}), condition=%while_cond_c1, body=%D
+// CHECK: %while2{{.*}} = f32[] while({{.*}}), condition=%while_cond_c2, body=%D.clone
+%C (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %while1 = f32[] while(%param), condition=%while_cond_c1, body=%D
+  %while2 = f32[] while(%param), condition=%while_cond_c2, body=%D
+  ROOT %add = f32[] add(%while1, %while2)
+}
+
+// CHECK: %D.clone.1 ({{.*}}) -> f32[]
+// CHECK: ROOT %call{{.*}} = f32[] call({{.*}}), to_apply=%E
+// CHECK: %D.clone.clone ({{.*}}) -> f32[]
+// CHECK: ROOT %call{{.*}} = f32[] call({{.*}}), to_apply=%E
+// CHECK: %C.clone ({{.*}}) -> f32[]
+// CHECK: %while1{{.*}} = f32[] while({{.*}}), condition=%while_cond_c1.clone, body=%D.clone.1
+// CHECK: %while2{{.*}} = f32[] while({{.*}}), condition=%while_cond_c2.clone, body=%D.clone.clone
+
+// CHECK: %B ({{.*}}) -> f32[]
+// CHECK: %while1{{.*}} = f32[] while({{.*}}), condition=%while_cond_b1, body=%C
+// CHECK: %while2{{.*}} = f32[] while({{.*}}), condition=%while_cond_b2, body=%C.clone
+%B (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %while1 = f32[] while(%param), condition=%while_cond_b1, body=%C
+  %while2 = f32[] while(%param), condition=%while_cond_b2, body=%C
+  ROOT %add = f32[] add(%while1, %while2)
+}
+
+// CHECK: %A ({{.*}}) -> f32[]
+// CHECK: %call0{{.*}} = f32[] call({{.*}}), to_apply=%B
+// CHECK: %call1{{.*}} = f32[] call({{.*}}), to_apply=%B
+%A (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  %call0 = f32[] call(%param), to_apply=%B
+  %call1 = f32[] call(%param), to_apply=%B
+  ROOT %add = f32[] add(%call0, %call1)
+}
+
+ENTRY %main (param: f32[]) -> f32[] {
+  %param = f32[] parameter(0)
+  ROOT %call = f32[] call(%param), to_apply=%A
+}
+  )";
+
+  RunAndFilecheckHloRewrite(hlo_string, CreateSkipCallsFlattenPass());
+}
+
+// Tests that an async computation (`ds_comp`) shared between a while-loop
+// prologue async chain (`prologue_start` -> `ds_done`) and an in-body next-
+// iteration prefetch chain (`async_next` -> `epilogue_done`) is duplicated
+// so that each distinct (start, done) async chain receives its own unique
+// called computation.
+//
+// In the input HLO below, look for:
+// - `prologue_start` in ENTRY calling `ds_comp` and feeding into `loop` init;
+// - `ds_done` in `while_body` completing the prologue's token and calling
+// `ds_comp`;
+// - `async_next` in `while_body` launching the next-iteration prefetch and
+// calling `ds_comp`;
+// - `epilogue_done` in ENTRY completing the final iteration's token and calling
+// `ds_comp`.
+TEST_F(FlattenCallGraphTest,
+       AsyncPipelinedWhileLoopDuplicatesSharedAsyncComputationPerChain) {
+  absl::string_view hlo_string = R"hlo(
+HloModule Module, is_scheduled=true
+
+ds_comp {
+  p_base = f32[8,16]{1,0} parameter(0)
+  p_idx0 = s32[] parameter(1)
+  p_idx1 = s32[] parameter(2)
+  ROOT ds = f32[2,16]{1,0} dynamic-slice(p_base, p_idx0, p_idx1), dynamic_slice_sizes={2,16}
+}
+
+while_cond {
+  param = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(4)
+  ROOT cond = pred[] compare(i, limit), direction=LT
+}
+
+while_body {
+  param = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  async_in = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) get-tuple-element(param), index=1
+  acc = f32[2,16]{1,0} get-tuple-element(param), index=2
+  base = f32[8,16]{1,0} get-tuple-element(param), index=3
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  ds_done = f32[2,16]{1,0} async-done(async_in), calls=ds_comp
+  new_acc = f32[2,16]{1,0} add(acc, ds_done)
+  zero = s32[] constant(0)
+  next_row = s32[] multiply(next_i, s32[] constant(2))
+  async_next = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(base, next_row, zero), calls=ds_comp
+  ROOT next_state = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) tuple(next_i, async_next, new_acc, base)
+}
+
+ENTRY main {
+  p_base = f32[8,16]{1,0} parameter(0)
+  c0 = s32[] constant(0)
+  c_idx0 = s32[] constant(0)
+  c_idx1 = s32[] constant(0)
+  c_zero = f32[] constant(0.0)
+  init_acc = f32[2,16]{1,0} broadcast(c_zero), dimensions={}
+  prologue_start = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(p_base, c_idx0, c_idx1), calls=ds_comp
+  init = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) tuple(c0, prologue_start, init_acc, p_base)
+  loop = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) while(init), condition=while_cond, body=while_body
+  loop_async_out = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) get-tuple-element(loop), index=1
+  loop_acc_out = f32[2,16]{1,0} get-tuple-element(loop), index=2
+  epilogue_done = f32[2,16]{1,0} async-done(loop_async_out), calls=ds_comp
+  ROOT acc_with_done = f32[2,16]{1,0} add(loop_acc_out, epilogue_done)
+}
+  )hlo";
+
+  absl::StatusOr<std::unique_ptr<HloModule>> module_or =
+      ParseAndReturnVerifiedModule(hlo_string);
+  ASSERT_TRUE(module_or.ok());
+  if (!module_or.ok()) {
+    return;
+  }
+  std::unique_ptr<HloModule> module = std::move(*module_or);
+  FlattenCallGraph pass(FlattenCallGraph::SkipCloningForNonAsync);
+  absl::StatusOr<bool> changed_or = pass.Run(module.get());
+  ASSERT_TRUE(changed_or.ok());
+  if (!changed_or.ok()) {
+    return;
+  }
+  EXPECT_TRUE(*changed_or);
+
+  HloInstruction* while_instr =
+      module->entry_computation()->GetInstructionWithName("loop");
+  ASSERT_NE(while_instr, nullptr);
+  HloComputation* while_body = while_instr->while_body();
+  HloInstruction* prologue_start =
+      module->entry_computation()->GetInstructionWithName("prologue_start");
+  HloInstruction* epilogue_done =
+      module->entry_computation()->GetInstructionWithName("epilogue_done");
+  HloInstruction* ds_done = while_body->GetInstructionWithName("ds_done");
+  HloInstruction* async_next = while_body->GetInstructionWithName("async_next");
+
+  // Verify that the prologue chain and the in-body prefetch chain now point to
+  // distinct cloned computations rather than sharing `ds_comp`.
+  EXPECT_NE(prologue_start->async_wrapped_computation(),
+            async_next->async_wrapped_computation());
+
+  // Verify that within the prologue chain (prologue_start -> in_body ds_done),
+  // both start and done reference the same computation.
+  EXPECT_EQ(prologue_start->async_wrapped_computation(),
+            ds_done->async_wrapped_computation());
+
+  // Verify that within the loop-carried prefetch chain (in_body async_next ->
+  // epilogue_done), both start and done reference the same computation.
+  EXPECT_EQ(async_next->async_wrapped_computation(),
+            epilogue_done->async_wrapped_computation());
+
+  // Verify that both cloned computations maintain valid execution schedules.
+  EXPECT_TRUE(module->schedule().is_computation_scheduled(
+      prologue_start->async_wrapped_computation()));
+  EXPECT_TRUE(module->schedule().is_computation_scheduled(
+      async_next->async_wrapped_computation()));
+}
+
+// Tests a 2-stage (multi-buffered) pipelined while loop where `ds_comp` is
+// shared across 3 distinct async chains:
+// 1. `prologue_start0` (in ENTRY) -> `ds_done` (in `while_body` via index 1);
+// 2. `prologue_start1` (in ENTRY) -> `epilogue_done0` (in ENTRY via index 2 ->
+//    index 1);
+// 3. `async_next` (in `while_body`) -> `epilogue_done1` (in ENTRY via index 2).
+TEST_F(FlattenCallGraphTest,
+       MultiBufferedAsyncPipelinedWhileLoopDuplicatesPerChain) {
+  absl::string_view hlo_string = R"hlo(
+HloModule Module, is_scheduled=true
+
+ds_comp {
+  p_base = f32[8,16]{1,0} parameter(0)
+  p_idx0 = s32[] parameter(1)
+  p_idx1 = s32[] parameter(2)
+  ROOT ds = f32[2,16]{1,0} dynamic-slice(p_base, p_idx0, p_idx1), dynamic_slice_sizes={2,16}
+}
+
+while_cond {
+  param = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(4)
+  ROOT cond = pred[] compare(i, limit), direction=LT
+}
+
+while_body {
+  param = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  async_in0 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) get-tuple-element(param), index=1
+  async_in1 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) get-tuple-element(param), index=2
+  acc = f32[2,16]{1,0} get-tuple-element(param), index=3
+  base = f32[8,16]{1,0} get-tuple-element(param), index=4
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  ds_done = f32[2,16]{1,0} async-done(async_in0), calls=ds_comp
+  new_acc = f32[2,16]{1,0} add(acc, ds_done)
+  zero = s32[] constant(0)
+  next_row = s32[] multiply(next_i, s32[] constant(2))
+  async_next = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(base, next_row, zero), calls=ds_comp
+  ROOT next_state = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) tuple(next_i, async_in1, async_next, new_acc, base)
+}
+
+ENTRY main {
+  p_base = f32[8,16]{1,0} parameter(0)
+  c0 = s32[] constant(0)
+  c_idx0 = s32[] constant(0)
+  c_idx1 = s32[] constant(2)
+  c_zero = f32[] constant(0.0)
+  init_acc = f32[2,16]{1,0} broadcast(c_zero), dimensions={}
+  prologue_start0 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(p_base, c_idx0, c0), calls=ds_comp
+  prologue_start1 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(p_base, c_idx1, c0), calls=ds_comp
+  init = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) tuple(c0, prologue_start0, prologue_start1, init_acc, p_base)
+  loop = (s32[], ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]), f32[2,16]{1,0}, f32[8,16]{1,0}) while(init), condition=while_cond, body=while_body
+  loop_async_out0 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) get-tuple-element(loop), index=1
+  loop_async_out1 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) get-tuple-element(loop), index=2
+  loop_acc_out = f32[2,16]{1,0} get-tuple-element(loop), index=3
+  epilogue_done0 = f32[2,16]{1,0} async-done(loop_async_out0), calls=ds_comp
+  epilogue_done1 = f32[2,16]{1,0} async-done(loop_async_out1), calls=ds_comp
+  acc_with_done0 = f32[2,16]{1,0} add(loop_acc_out, epilogue_done0)
+  ROOT acc_with_done1 = f32[2,16]{1,0} add(acc_with_done0, epilogue_done1)
+}
+  )hlo";
+
+  absl::StatusOr<std::unique_ptr<HloModule>> module_or =
+      ParseAndReturnVerifiedModule(hlo_string);
+  ASSERT_TRUE(module_or.ok());
+  if (!module_or.ok()) {
+    return;
+  }
+  std::unique_ptr<HloModule> module = std::move(*module_or);
+  FlattenCallGraph pass(FlattenCallGraph::SkipCloningForNonAsync);
+  absl::StatusOr<bool> changed_or = pass.Run(module.get());
+  ASSERT_TRUE(changed_or.ok());
+  if (!changed_or.ok()) {
+    return;
+  }
+  EXPECT_TRUE(*changed_or);
+
+  HloInstruction* while_instr =
+      module->entry_computation()->GetInstructionWithName("loop");
+  ASSERT_NE(while_instr, nullptr);
+  HloComputation* while_body = while_instr->while_body();
+  HloInstruction* prologue_start0 =
+      module->entry_computation()->GetInstructionWithName("prologue_start0");
+  HloInstruction* prologue_start1 =
+      module->entry_computation()->GetInstructionWithName("prologue_start1");
+  HloInstruction* epilogue_done0 =
+      module->entry_computation()->GetInstructionWithName("epilogue_done0");
+  HloInstruction* epilogue_done1 =
+      module->entry_computation()->GetInstructionWithName("epilogue_done1");
+  HloInstruction* ds_done = while_body->GetInstructionWithName("ds_done");
+  HloInstruction* async_next = while_body->GetInstructionWithName("async_next");
+
+  // Verify that all 3 `kAsyncStart` chains receive distinct cloned
+  // computations.
+  EXPECT_NE(prologue_start0->async_wrapped_computation(),
+            prologue_start1->async_wrapped_computation());
+  EXPECT_NE(prologue_start0->async_wrapped_computation(),
+            async_next->async_wrapped_computation());
+  EXPECT_NE(prologue_start1->async_wrapped_computation(),
+            async_next->async_wrapped_computation());
+
+  // Verify that each `kAsyncDone` is paired with its matching `kAsyncStart`'s
+  // computation across the 2-stage pipeline.
+  EXPECT_EQ(prologue_start0->async_wrapped_computation(),
+            ds_done->async_wrapped_computation());
+  EXPECT_EQ(prologue_start1->async_wrapped_computation(),
+            epilogue_done0->async_wrapped_computation());
+  EXPECT_EQ(async_next->async_wrapped_computation(),
+            epilogue_done1->async_wrapped_computation());
+  EXPECT_THAT(
+      prologue_start0->async_wrapped_computation()->caller_instructions(),
+      ::testing::UnorderedElementsAre(prologue_start0, ds_done));
+  EXPECT_THAT(
+      prologue_start1->async_wrapped_computation()->caller_instructions(),
+      ::testing::UnorderedElementsAre(prologue_start1, epilogue_done0));
+  EXPECT_THAT(async_next->async_wrapped_computation()->caller_instructions(),
+              ::testing::UnorderedElementsAre(async_next, epilogue_done1));
+}
+
+// Tests that when an outer computation (`sub_comp`) containing an async chain
+// (`start` -> `done`) is cloned because `sub_comp` is called twice (`call0`,
+// `call1`), the subtree cloning inside `FlattenCallGraph` keeps `start` and
+// `done` within each cloned `sub_comp` pointing to the same cloned `ds_comp`.
+TEST_F(FlattenCallGraphTest,
+       SharedOuterComputationWithAsyncChainPreservesChainInSubtreeClone) {
+  absl::string_view hlo_string = R"hlo(
+HloModule Module
+
+ds_comp {
+  p_base = f32[8,16]{1,0} parameter(0)
+  p_idx0 = s32[] parameter(1)
+  p_idx1 = s32[] parameter(2)
+  ROOT ds = f32[2,16]{1,0} dynamic-slice(p_base, p_idx0, p_idx1), dynamic_slice_sizes={2,16}
+}
+
+sub_comp {
+  p0 = f32[8,16]{1,0} parameter(0)
+  c0 = s32[] constant(0)
+  start = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(p0, c0, c0), calls=ds_comp
+  ROOT done = f32[2,16]{1,0} async-done(start), calls=ds_comp
+}
+
+ENTRY main {
+  p0 = f32[8,16]{1,0} parameter(0)
+  p1 = f32[8,16]{1,0} parameter(1)
+  call0 = f32[2,16]{1,0} call(p0), to_apply=sub_comp
+  call1 = f32[2,16]{1,0} call(p1), to_apply=sub_comp
+  ROOT sum = f32[2,16]{1,0} add(call0, call1)
+}
+  )hlo";
+
+  absl::StatusOr<std::unique_ptr<HloModule>> module_or =
+      ParseAndReturnVerifiedModule(hlo_string);
+  ASSERT_TRUE(module_or.ok());
+  if (!module_or.ok()) {
+    return;
+  }
+  std::unique_ptr<HloModule> module = std::move(*module_or);
+
+  FlattenCallGraph pass;
+  absl::StatusOr<bool> changed_or = pass.Run(module.get());
+  ASSERT_TRUE(changed_or.ok());
+  if (!changed_or.ok()) {
+    return;
+  }
+  EXPECT_TRUE(*changed_or);
+
+  HloInstruction* call0 =
+      module->entry_computation()->GetInstructionWithName("call0");
+  HloInstruction* call1 =
+      module->entry_computation()->GetInstructionWithName("call1");
+  // Verify the outer `sub_comp` computation was cloned for `call1`.
+  ASSERT_NE(call0->to_apply(), call1->to_apply());
+
+  HloInstruction* call0_done = call0->to_apply()->root_instruction();
+  HloInstruction* call0_start = call0_done->mutable_operand(0);
+  HloInstruction* call1_done = call1->to_apply()->root_instruction();
+  HloInstruction* call1_start = call1_done->mutable_operand(0);
+
+  // Verify each cloned `sub_comp` preserves the (start, done) computation match
+  // while separating `call0`'s async computation from `call1`'s.
+  EXPECT_EQ(call0_start->async_wrapped_computation(),
+            call0_done->async_wrapped_computation());
+  EXPECT_EQ(call1_start->async_wrapped_computation(),
+            call1_done->async_wrapped_computation());
+  EXPECT_NE(call0_start->async_wrapped_computation(),
+            call1_start->async_wrapped_computation());
+}
+
+// Tests that `SkipCloningForNonAsync` also clones nested sub-computations
+// (`inner_helper`, where `inner_helper.IsAsyncComputation() == false`) called
+// from inside a shared async computation (`async_comp`) when `async_comp` is
+// cloned across `start0` and `start1`.
+TEST_F(FlattenCallGraphTest,
+       SkipCloningForNonAsyncClonesSubComputationsInsideAsyncComputations) {
+  absl::string_view hlo_string = R"hlo(
+HloModule Module
+
+inner_helper {
+  p_base = f32[8,16]{1,0} parameter(0)
+  p_idx0 = s32[] parameter(1)
+  p_idx1 = s32[] parameter(2)
+  ROOT ds = f32[2,16]{1,0} dynamic-slice(p_base, p_idx0, p_idx1), dynamic_slice_sizes={2,16}
+}
+
+async_comp {
+  p_base = f32[8,16]{1,0} parameter(0)
+  p_idx0 = s32[] parameter(1)
+  p_idx1 = s32[] parameter(2)
+  ROOT called = f32[2,16]{1,0} call(p_base, p_idx0, p_idx1), to_apply=inner_helper
+}
+
+ENTRY main {
+  p0 = f32[8,16]{1,0} parameter(0)
+  c0 = s32[] constant(0)
+  c2 = s32[] constant(2)
+  start0 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(p0, c0, c0), calls=async_comp
+  done0 = f32[2,16]{1,0} async-done(start0)
+  start1 = ((f32[8,16]{1,0}, s32[], s32[]), f32[2,16]{1,0}, s32[]) async-start(p0, c2, c0), calls=async_comp
+  done1 = f32[2,16]{1,0} async-done(start1)
+  ROOT sum = f32[2,16]{1,0} add(done0, done1)
+}
+  )hlo";
+
+  absl::StatusOr<std::unique_ptr<HloModule>> module_or =
+      ParseAndReturnVerifiedModule(hlo_string);
+  ASSERT_TRUE(module_or.ok());
+  if (!module_or.ok()) {
+    return;
+  }
+  std::unique_ptr<HloModule> module = std::move(*module_or);
+
+  FlattenCallGraph pass(FlattenCallGraph::SkipCloningForNonAsync);
+  absl::StatusOr<bool> changed_or = pass.Run(module.get());
+  ASSERT_TRUE(changed_or.ok());
+  if (!changed_or.ok()) {
+    return;
+  }
+  EXPECT_TRUE(*changed_or);
+
+  HloInstruction* start0 =
+      module->entry_computation()->GetInstructionWithName("start0");
+  HloInstruction* start1 =
+      module->entry_computation()->GetInstructionWithName("start1");
+  // Verify the outer async computation `async_comp` was cloned.
+  ASSERT_NE(start0->async_wrapped_computation(),
+            start1->async_wrapped_computation());
+
+  HloInstruction* inner_call0 =
+      start0->async_wrapped_computation()->root_instruction();
+  HloInstruction* inner_call1 =
+      start1->async_wrapped_computation()->root_instruction();
+  // Verify the nested `inner_helper` sub-computation inside `async_comp` was
+  // also cloned so the two async computations do not share `inner_helper`.
+  EXPECT_NE(inner_call0->to_apply(), inner_call1->to_apply());
 }
 
 }  // namespace

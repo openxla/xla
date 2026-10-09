@@ -17,9 +17,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
+#include "xla/tsl/platform/logging.h"
 
 // Implements the cusparse API by forwarding to cusparse loaded from the DSO.
 

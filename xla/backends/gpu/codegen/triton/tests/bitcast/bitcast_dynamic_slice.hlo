@@ -1,23 +1,22 @@
-// RUN: hlo_to_xtileir %s | FileCheck %s
+// RUN: fusion_to_triton %s | FileCheck %s
 // RUN: triton_test_correctness %s
-
 HloModule m
 
-triton_softmax_computation (p0: f32[1024, 16], offset: s32[]) -> f32[8192] {
+fusion (p0: f32[1024, 16], offset: s32[]) -> f32[8192] {
   p0 = f32[1024, 16]{1,0} parameter(0)
   offset = s32[] parameter(1)
   dynamic_slice = f32[512,16]{1,0} dynamic-slice(p0, offset, offset), dynamic_slice_sizes={512, 16}
   ROOT bitcast = f32[8192]{0} bitcast(dynamic_slice)
 }
 
-// CHECK: #[[$ATTR_0:.+]] = #xla.indexing_map<"(pid_0, d1) -> (pid_0 floordiv 2 + d1), domain: pid_0 in [0, 1023], d1 in [0, 512]">
-// CHECK: #[[$ATTR_1:.+]] = #xla.indexing_map<"(pid_0) -> ((pid_0 mod 2) * 8), domain: pid_0 in [0, 1023]">
-// CHECK: #[[$ATTR_2:.+]] = #xla.indexing_map<"(pid_0) -> (pid_0 * 8), domain: pid_0 in [0, 1023]">
+// CHECK: #[[$ATTR_0:.+]] = #xla.indexing_map<"([[PID:pid(_0)?]], d1) -> ([[PID]] / 2 + d1), domain: [[PID]] in [0, 1023], d1 in [0, 512]">
+// CHECK: #[[$ATTR_1:.+]] = #xla.indexing_map<"([[PID]]) -> (([[PID]] mod 2) * 8), domain: [[PID]] in [0, 1023]">
+// CHECK: #[[$ATTR_2:.+]] = #xla.indexing_map<"([[PID]]) -> ([[PID]] * 8), domain: [[PID]] in [0, 1023]">
 // CHECK-LABEL:   xtile.entry_func @triton_fn(
 // CHECK-SAME:      %[[ARG0:.*]]: memref<1024x16xf32>,
 // CHECK-SAME:      %[[ARG1:.*]]: memref<i32>,
 // CHECK-SAME:      %[[ARG2:.*]]: memref<8192xf32>,
-// CHECK-SAME:      %[[ARG3:.*]]: index) attributes {num_opaque_args = 0 : i32} {
+// CHECK-SAME:      %[[ARG3:.*]]: index{{( \{xla.range = \[0 : index, 1023 : index\]\})?}}) attributes {num_opaque_args = 0 : i32} {
 // CHECK:           %[[CONSTANT_0:.*]] = arith.constant 512 : i32
 // CHECK:           %[[CONSTANT_1:.*]] = arith.constant 0 : i32
 // CHECK:           %[[EXTRACT_0:.*]] = xtile.extract %[[ARG1]][] [] [] : memref<i32> -> tensor<i32>
@@ -38,7 +37,7 @@ triton_softmax_computation (p0: f32[1024, 16], offset: s32[]) -> f32[8192] {
 ENTRY main {
   p0 = f32[1024, 16]{1,0} parameter(0)
   offset = s32[] parameter(1)
-  ROOT triton_softmax = f32[8192]{0} fusion(p0, offset), kind=kCustom, calls=triton_softmax_computation,
+  ROOT triton_fusion = f32[8192]{0} fusion(p0, offset), kind=kCustom, calls=fusion,
     backend_config={
     "fusion_backend_config":{
       "kind":"__triton",

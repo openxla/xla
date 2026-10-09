@@ -15,25 +15,27 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/profile_with_cuda_kernels.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_version.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_error_manager.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_wrapper.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -109,6 +111,12 @@ void HandleRecords(PmSamples* samples) {
 
 void SimpleAddSubWithProfilerTest(bool enable_activity_hardware_tracing,
                                   bool enable_pm_sampling) {
+  if (enable_activity_hardware_tracing) {
+    if (auto status = CuptiTracer::EnableHES(); !status.ok()) {
+      LOG(WARNING) << "Failed to enable HES: " << status.message();
+    }
+  }
+
   uint32_t cupti_version = 0;
   cuptiGetVersion(&cupti_version);
   LOG(INFO) << "RUNTIME CUPTI version " << cupti_version
@@ -123,11 +131,6 @@ void SimpleAddSubWithProfilerTest(bool enable_activity_hardware_tracing,
   CuptiTracerCollectorOptions collector_options{};
   collector_options.num_gpus = CuptiTracer::NumGpus();
   LOG(INFO) << "Cupti found #gpus: " << collector_options.num_gpus;
-  uint64_t start_walltime_ns = absl::GetCurrentTimeNanos();
-  uint64_t start_gputime_ns = CuptiTracer::GetTimestamp();
-  auto collector = CreateCuptiCollector(collector_options, start_walltime_ns,
-                                        start_gputime_ns);
-
   CuptiPmSamplerOptions sampler_options;
   sampler_options.enable = enable_pm_sampling;
   // Metrics can be queried with Nsight Compute
@@ -151,6 +154,13 @@ void SimpleAddSubWithProfilerTest(bool enable_activity_hardware_tracing,
 
   CuptiErrorManager error_manager(std::make_unique<CuptiWrapper>());
   TestableCuptiTracer tracer(&error_manager);
+  ASSERT_OK(tracer.PrepareForProfilerStart(tracer_options));
+  ASSERT_OK_AND_ASSIGN(uint64_t start_gputime_ns,
+                       tracer.GetTimestampForSubscriber());
+
+  uint64_t start_walltime_ns = absl::GetCurrentTimeNanos();
+  auto collector = CreateCuptiCollector(collector_options, start_walltime_ns,
+                                        start_gputime_ns);
 
   std::vector<std::unique_ptr<tensorflow::profiler::XPlane>> xplanes;
   xplanes.reserve(collector_options.num_gpus);
@@ -189,7 +199,8 @@ void SimpleAddSubWithProfilerTest(bool enable_activity_hardware_tracing,
   EXPECT_THAT(vec, Each(DistanceFrom(0, Lt(0.001))));
 
   auto space = std::make_unique<tensorflow::profiler::XSpace>();
-  collector->Export(space.get(), CuptiTracer::GetTimestamp());
+  ASSERT_OK_AND_ASSIGN(uint64_t end_gpu_ns, collector->GetTracingEndTimeNs());
+  collector->Export(space.get(), end_gpu_ns);
   EXPECT_GE(space->planes_size(), 1);
 
   if (enable_pm_sampling) {

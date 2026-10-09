@@ -19,7 +19,10 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -31,8 +34,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -61,7 +62,7 @@ absl::StatusOr<std::optional<HloInstruction*>> UpdateLayoutForCudnnConvolution(
       hlo->shape().IsTuple() ? hlo->shape().tuple_shapes(0) : hlo->shape();
 
   Shape input_shape, filter_shape, output_shape;
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       gpu::CudnnConvKind conv_kind,
       gpu::GetCudnnConvKind(Cast<HloCustomCallInstruction>(hlo)));
   switch (conv_kind) {
@@ -170,8 +171,8 @@ absl::StatusOr<std::optional<HloInstruction*>> UpdateLayoutForCudnnConvolution(
         normalized_conv->shape().tuple_shapes().size());
 
     for (int i = 0; i < normalized_conv->shape().tuple_shapes().size(); ++i) {
-      TF_ASSIGN_OR_RETURN(HloInstruction * normalized_out,
-                          MakeGetTupleElementHlo(normalized_conv, i));
+      ABSL_ASSIGN_OR_RETURN(HloInstruction * normalized_out,
+                            MakeGetTupleElementHlo(normalized_conv, i));
       tuple_elements[i] =
           MakeBitcastHlo(normalized_out, hlo->shape().tuple_shapes(i));
     }
@@ -187,8 +188,8 @@ absl::StatusOr<std::optional<HloInstruction*>> UpdateLayoutForCudnnConvolution(
 absl::StatusOr<std::optional<HloInstruction*>> NormalizeLayoutForGpuCustomCalls(
     HloCustomCallInstruction* hlo) {
   if (IsCustomCallToDnnConvolution(*hlo)) {
-    TF_ASSIGN_OR_RETURN(std::optional<HloInstruction*> bc_to_orig,
-                        UpdateLayoutForCudnnConvolution(hlo));
+    ABSL_ASSIGN_OR_RETURN(std::optional<HloInstruction*> bc_to_orig,
+                          UpdateLayoutForCudnnConvolution(hlo));
     return bc_to_orig;
   }
   return std::nullopt;

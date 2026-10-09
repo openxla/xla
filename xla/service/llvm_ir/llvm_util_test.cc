@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,301 +15,261 @@ limitations under the License.
 
 #include "xla/service/llvm_ir/llvm_util.h"
 
-#include <limits>
-#include <memory>
-#include <optional>
-#include <string>
-#include <utility>
-
 #include <gtest/gtest.h>
-#include "absl/log/check.h"
-#include "absl/strings/string_view.h"
-#include "absl/types/span.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/IRBuilder.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "llvm/ADT/StringRef.h"
+#include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
-#include "xla/error_spec.h"
-#include "xla/hlo/ir/hlo_clone_context.h"
-#include "xla/literal.h"
-#include "xla/primitive_util.h"
-#include "xla/service/hlo_module_config.h"
-#include "xla/tests/hlo_test_base.h"
-#include "xla/tsl/platform/statusor.h"
-#include "xla/xla_data.pb.h"
+#include "llvm/Support/SourceMgr.h"
 
 namespace xla::llvm_ir {
 namespace {
 
-using std::nullopt;
-struct EmitReducePrecisionIrTestCase {
-  float input;
-  std::string expected_res;
+llvm::Instruction* FindInstruction(llvm::Function& fn, llvm::StringRef name) {
+  for (llvm::Instruction& inst : llvm::instructions(fn)) {
+    if (inst.getName() == name) {
+      return &inst;
+    }
+  }
+  return nullptr;
+}
+
+std::vector<const llvm::Instruction*> InstructionOrder(
+    const llvm::Function& fn) {
+  std::vector<const llvm::Instruction*> order;
+  for (const llvm::Instruction& inst : llvm::instructions(fn)) {
+    order.push_back(&inst);
+  }
+  return order;
+}
+
+struct SinkFMulTestCase {
+  std::string test_name;
+  std::string ir;
+  bool should_sink;
 };
 
-class EmitReducePrecisionIrExecutionTest : public HloTestBase {
- protected:
-  void RunTest(const std::string& hlo_text, absl::Span<Literal* const> args) {
-    HloModuleConfig config;
-    config.set_debug_options(GetDebugOptionsForTest());
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
-    EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), args, nullopt));
-  }
+class SinkContractableFMulToFAddFSubTest
+    : public ::testing::TestWithParam<SinkFMulTestCase> {};
 
-  void RunTypeConversionTest(absl::string_view hlo_text) {
-    HloModuleConfig config;
-    auto debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_cpu_fast_math_honor_nans(true);
-    debug_options.set_xla_cpu_fast_math_honor_infs(true);
-    config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
-    EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{(0.)}));
-  }
-};
+TEST_P(SinkContractableFMulToFAddFSubTest,
+       SinksOnlyContractableSingleUsePairs) {
+  const SinkFMulTestCase& tc = GetParam();
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic diagnostic;
+  std::unique_ptr<llvm::Module> module =
+      llvm::parseAssemblyString(tc.ir, diagnostic, context);
+  ASSERT_NE(module, nullptr) << diagnostic.getMessage().str();
 
-TEST_F(EmitReducePrecisionIrExecutionTest, EmitReducePrecisionIR_F16ToF8e5m2) {
-  llvm::LLVMContext llvm_context;
-  llvm::IRBuilder<> builder(llvm_context);
-  llvm::IRBuilderBase* b = &builder;
-  llvm::Type* f16_type = b->getHalfTy();
+  llvm::Function* fn = module->getFunction("test_fn");
+  ASSERT_NE(fn, nullptr);
+  const std::vector<const llvm::Instruction*> order_before =
+      InstructionOrder(*fn);
 
-  float inf = std::numeric_limits<float>::infinity();
-  float qnan = std::numeric_limits<float>::quiet_NaN();
-  float snan = std::numeric_limits<float>::signaling_NaN();
+  SinkContractableFMulToFAddFSub(*module);
 
-  EmitReducePrecisionIrTestCase test_cases[] = {
-      // clang-format off
-      {0.0, "half 0.000000e+00"},
-      {0x1.0p-14, "half 6.103520e-05"},
-      {0.250, "half 2.500000e-01"},
-      {1.0, "half 1.000000e+00"},
-      {0x1.2p0, "half 1.000000e+00"},
-      {0x1.Cp15, "half 5.734400e+04"},
-      {-0x1.Cp15, "half -5.734400e+04"},
-      {0x1.Dp15, "half 5.734400e+04"},
-      {0x1.Ep15, "half +inf"},
-      {0x1.0p16, "half +inf"},
-      {inf, "half +inf"},
-      {-inf, "half -inf"},
-      {qnan, "half +qnan"},
-      {-qnan, "half -qnan"},
-      {snan, "half +nan(0x100)"},
-      {-snan, "half -nan(0x100)"},
-      // clang-format on
-  };
-
-  for (auto tc : test_cases) {
-    llvm::Value* c0 = llvm::ConstantFP::get(f16_type, tc.input);
-
-    absl::StatusOr<llvm::Value*> f16_reduced_statusor = EmitReducePrecisionIR(
-        /*src_ty=*/F16, c0,
-        /*dest_exponent_bits=*/primitive_util::ExponentWidth(F8E5M2),
-        /*dest_mantissa_bits=*/primitive_util::SignificandWidth(F8E5M2) - 1,
-        /*quiet_nans=*/true, b);
-    CHECK(f16_reduced_statusor.ok());
-    llvm::Value* f16_reduced = f16_reduced_statusor.value();
-
-    std::string res = llvm_ir::DumpToString(f16_reduced);
-    EXPECT_EQ(res, tc.expected_res) << "Wrong result for input " << tc.input;
+  llvm::Instruction* mul = FindInstruction(*fn, "mul");
+  llvm::Instruction* user = FindInstruction(*fn, "user");
+  ASSERT_NE(mul, nullptr);
+  ASSERT_NE(user, nullptr);
+  if (tc.should_sink) {
+    EXPECT_EQ(mul->getNextNode(), user) << DumpToString(fn);
+    if (llvm::Instruction* mul0 = FindInstruction(*fn, "mul0")) {
+      EXPECT_EQ(mul0->getNextNode(), mul) << DumpToString(fn);
+    }
+  } else {
+    // Nothing at all should have moved.
+    EXPECT_EQ(InstructionOrder(*fn), order_before) << DumpToString(fn);
   }
 }
 
-TEST_F(EmitReducePrecisionIrExecutionTest, EmitReducePrecisionIR_F16ToF8e4m3) {
-  llvm::LLVMContext llvm_context;
-  llvm::IRBuilder<> builder(llvm_context);
-  llvm::IRBuilderBase* b = &builder;
-  llvm::Type* f16_type = b->getHalfTy();
-
-  float inf = std::numeric_limits<float>::infinity();
-  float qnan = std::numeric_limits<float>::quiet_NaN();
-  float snan = std::numeric_limits<float>::signaling_NaN();
-
-  EmitReducePrecisionIrTestCase test_cases[] = {
-      // clang-format off
-      {0.0, "half 0.000000e+00"},
-      {0x1.0p-6, "half 1.562500e-02"},
-      {0.125, "half 1.250000e-01"},
-      {1.0, "half 1.000000e+00"},
-      {0x1.1p0, "half 1.000000e+00"},
-      {0x1.Ep7, "half 2.400000e+02"},
-      {-0x1.Ep7, "half -2.400000e+02"},
-      {0x1.E8p7, "half 2.400000e+02"},
-      {0x1.Fp7, "half +inf"},
-      {0x1.0p8, "half +inf"},
-      {inf, "half +inf"},
-      {-inf, "half -inf"},
-      {qnan, "half +qnan"},
-      {-qnan, "half -qnan"},
-      {snan, "half +qnan"},
-      {-snan, "half -qnan"},
-      // clang-format on
-  };
-
-  for (auto tc : test_cases) {
-    llvm::Value* c0 = llvm::ConstantFP::get(f16_type, tc.input);
-
-    absl::StatusOr<llvm::Value*> f16_reduced_statusor = EmitReducePrecisionIR(
-        /*src_ty=*/F16, c0,
-        /*dest_exponent_bits=*/4,
-        /*dest_mantissa_bits=*/3,
-        /*quiet_nans=*/true, b);
-    CHECK(f16_reduced_statusor.ok());
-    llvm::Value* f16_reduced = f16_reduced_statusor.value();
-
-    std::string res = llvm_ir::DumpToString(f16_reduced);
-    EXPECT_EQ(res, tc.expected_res) << "Wrong result for input " << tc.input;
-  }
-}
-
-TEST_F(EmitReducePrecisionIrExecutionTest, EmitReducePrecisionIR_F16ToF8e3m4) {
-  llvm::LLVMContext llvm_context;
-  llvm::IRBuilder<> builder(llvm_context);
-  llvm::IRBuilderBase* b = &builder;
-  llvm::Type* f16_type = b->getHalfTy();
-
-  float inf = std::numeric_limits<float>::infinity();
-  float qnan = std::numeric_limits<float>::quiet_NaN();
-  float snan = std::numeric_limits<float>::signaling_NaN();
-
-  EmitReducePrecisionIrTestCase test_cases[] = {
-      // clang-format off
-      {0.0, "half 0.000000e+00"},
-      {0x1.0p-2, "half 2.500000e-01"},
-      {0.5, "half 5.000000e-01"},
-      {1.0, "half 1.000000e+00"},
-      {0x1.08p0, "half 1.000000e+00"},
-      {0x1.Fp3, "half 1.550000e+01"},
-      {-0x1.Fp3, "half -1.550000e+01"},
-      {0x1.F4p3, "half 1.550000e+01"},
-      {0x1.F8p3, "half +inf"},
-      {0x1.0p4, "half +inf"},
-      {inf, "half +inf"},
-      {-inf, "half -inf"},
-      {qnan, "half +qnan"},
-      {-qnan, "half -qnan"},
-      {snan, "half +qnan"},
-      {-snan, "half -qnan"},
-      // clang-format on
-  };
-
-  for (auto tc : test_cases) {
-    llvm::Value* c0 = llvm::ConstantFP::get(f16_type, tc.input);
-
-    absl::StatusOr<llvm::Value*> f16_reduced_statusor = EmitReducePrecisionIR(
-        /*src_ty=*/F16, c0,
-        /*dest_exponent_bits=*/3,
-        /*dest_mantissa_bits=*/4,
-        /*quiet_nans=*/true, b);
-    CHECK(f16_reduced_statusor.ok());
-    llvm::Value* f16_reduced = f16_reduced_statusor.value();
-
-    std::string res = llvm_ir::DumpToString(f16_reduced);
-    EXPECT_EQ(res, tc.expected_res) << "Wrong result for input " << tc.input;
-  }
-}
-
-TEST_F(EmitReducePrecisionIrExecutionTest,
-       EmitReducePrecisionIR_F16ToF8e4m3fn) {
-  llvm::LLVMContext llvm_context;
-  llvm::IRBuilder<> builder(llvm_context);
-  llvm::IRBuilderBase* b = &builder;
-  llvm::Type* f16_type = b->getHalfTy();
-
-  float inf = std::numeric_limits<float>::infinity();
-
-  EmitReducePrecisionIrTestCase test_cases[] = {
-      // clang-format off
-      {0.0, "half 0.000000e+00"},
-      {0x1.0p-6, "half 1.562500e-02"},
-      {0.125, "half 1.250000e-01"},
-      {1.0, "half 1.000000e+00"},
-      {0x1.1p0, "half 1.000000e+00"},
-      {0x1.Cp8, "half 4.480000e+02"},
-      {-0x1.Cp8, "half -4.480000e+02"},
-      {0x1.Dp8, "half 4.480000e+02"},
-      {0x1.Ep8, "half 4.800000e+02"},
-      {0x1.0p9, "half 5.120000e+02"},
-      {inf, "half +inf"},
-      {-inf, "half -inf"},
-      // clang-format on
-  };
-
-  for (auto tc : test_cases) {
-    llvm::Value* c0 = llvm::ConstantFP::get(f16_type, tc.input);
-
-    // Truncate the mantissa to 3 bits. ReducePrecision cannot deal with
-    // f8E4M3FN's NaN representations, so don't use ReducePrecision to handle
-    // exponent reduction.
-    absl::StatusOr<llvm::Value*> f16_reduced_statusor = EmitReducePrecisionIR(
-        /*src_ty=*/F16, c0,
-        /*dest_exponent_bits=*/5,
-        /*dest_mantissa_bits=*/3,
-        /*quiet_nans=*/false, b);
-    CHECK(f16_reduced_statusor.ok());
-    llvm::Value* f16_reduced = f16_reduced_statusor.value();
-
-    std::string res = llvm_ir::DumpToString(f16_reduced);
-    EXPECT_EQ(res, tc.expected_res) << "Wrong result for input " << tc.input;
-  }
-}
-
-using LLVMSPIRVTest = HloTestBase;
-
-TEST_F(LLVMSPIRVTest, AddRangeMetadataTest) {
-  llvm::LLVMContext llvm_context;
-  llvm::IRBuilder<> builder(llvm_context);
-  llvm::Triple spirv_triple("spirv64-unknown-unknown");
-  auto llvm_module = std::make_unique<llvm::Module>("Module", llvm_context);
-  llvm_module->setTargetTriple(spirv_triple);
-  llvm::Value* p0 = builder.getInt64(2);
-
-  auto SPIRVBuiltinOfType = [&llvm_context, &llvm_module](
-                                llvm::Type* type, absl::string_view func_name) {
-    llvm::FunctionType* func_type = llvm::FunctionType::get(
-        type, {llvm::Type::getInt64Ty(llvm_context)}, false);
-    return llvm_module->getOrInsertFunction(func_name, func_type);
-  };
-
-  auto EmitCallAndAddMDForType = [&](llvm::Type* type,
-                                     absl::string_view func_name) {
-    llvm::Instruction* call =
-        builder.CreateCall(SPIRVBuiltinOfType(type, func_name), {p0});
-    return AddRangeMetadata(5, 10, call, llvm_module.get());
-  };
-
-  auto GetMetadataValue = [](llvm::MDTuple* metadata_tuple, int index) {
-    llvm::ValueAsMetadata* metadata = llvm::dyn_cast<llvm::ValueAsMetadata>(
-        metadata_tuple->getOperand(index));
-    return metadata->getValue();
-  };
-
-  llvm::Function* main_func = llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_context), false),
-      llvm::Function::ExternalLinkage, "main", *llvm_module);
-  llvm::BasicBlock* entry_block =
-      llvm::BasicBlock::Create(llvm_context, "entry", main_func);
-  builder.SetInsertPoint(entry_block);
-
-  llvm::Instruction* call_int = EmitCallAndAddMDForType(
-      llvm::Type::getInt64Ty(llvm_context), "__spirv_builtin_func_i64");
-  llvm::Instruction* call_f32 = EmitCallAndAddMDForType(
-      llvm::Type::getFloatTy(llvm_context), "__spirv_builtin_func_float");
-
-  EXPECT_NE(call_int->getMetadata(llvm::LLVMContext::MD_range), nullptr);
-  // No metadata for non-int types
-  EXPECT_EQ(call_f32->getMetadata(llvm::LLVMContext::MD_range), nullptr);
-  llvm::MDTuple* metadata_tuple = llvm::dyn_cast<llvm::MDTuple>(
-      call_int->getMetadata(llvm::LLVMContext::MD_range));
-
-  // Metadata type must match Call type
-  EXPECT_TRUE(GetMetadataValue(metadata_tuple, 0)->getType()->isIntegerTy(64));
-  EXPECT_TRUE(GetMetadataValue(metadata_tuple, 1)->getType()->isIntegerTy(64));
-}
+INSTANTIATE_TEST_SUITE_P(
+    SinkContractableFMulToFAddFSubTests, SinkContractableFMulToFAddFSubTest,
+    ::testing::Values(SinkFMulTestCase{
+                          /*test_name=*/"FAddOperand0SingleUse",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fadd contract float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"FAddOperand1SingleUse",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fadd contract float %c, %mul
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"FSubOperand0SingleUse",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fsub contract float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"FSubOperand1SingleUse",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fsub contract float %c, %mul
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"FAddBothOperandsSingleUse",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, float %d, ptr %p) {
+              entry:
+                %mul0 = fmul contract float %a, %b
+                %mul = fmul contract float %c, %d
+                %load = load float, ptr %p, align 4
+                %user = fadd contract float %mul0, %mul
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"VectorSingleUse",
+                          /*ir=*/R"(
+              define <4 x float> @test_fn(<4 x float> %a, <4 x float> %b, <4 x float> %c, ptr %p) {
+              entry:
+                %mul = fmul contract <4 x float> %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fadd contract <4 x float> %mul, %c
+                ret <4 x float> %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"AlreadyAdjacentUnchanged",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %load = load float, ptr %p, align 4
+                %mul = fmul contract float %a, %b
+                %user = fadd contract float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/true,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"NoContractOnFMulNotSunk",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fadd contract float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/false,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"NoContractOnUserNotSunk",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fadd float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/false,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"MultiUseNotSunk",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fadd contract float %mul, %c
+                %extra = fadd contract float %mul, %load
+                ret float %extra
+              }
+            )",
+                          /*should_sink=*/false,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"FDivUserNotSunk",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fdiv contract float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/false,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"FMulUserNotSunk",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, ptr %p) {
+              entry:
+                %mul = fmul contract float %a, %b
+                %load = load float, ptr %p, align 4
+                %user = fmul contract float %mul, %c
+                ret float %user
+              }
+            )",
+                          /*should_sink=*/false,
+                      },
+                      SinkFMulTestCase{
+                          /*test_name=*/"DifferentBasicBlocksNotSunk",
+                          /*ir=*/R"(
+              define float @test_fn(float %a, float %b, float %c, i1 %cond) {
+              entry:
+                %mul = fmul contract float %a, %b
+                br i1 %cond, label %then, label %else
+              then:
+                %user = fadd contract float %mul, %c
+                ret float %user
+              else:
+                ret float %c
+              }
+            )",
+                          /*should_sink=*/false,
+                      }),
+    [](const ::testing::TestParamInfo<SinkFMulTestCase>& info) {
+      return info.param.test_name;
+    });
 
 }  // namespace
-
 }  // namespace xla::llvm_ir

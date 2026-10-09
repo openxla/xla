@@ -17,6 +17,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
@@ -41,7 +42,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> EmitPtxCustomKernelThunk(
         "PTX custom call backend config is empty");
   }
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       KernelCall call,
       KernelCall::Parse(backend_config_str, context->mlir_context()));
   if (call.kernel_type != KernelCall::KernelType::kPtxSource) {
@@ -51,12 +52,12 @@ absl::StatusOr<std::unique_ptr<Thunk>> EmitPtxCustomKernelThunk(
 
   emitters::KernelArguments::BufferAlignment buffer_alignment =
       GetDefaultBufferAlignment();
-  TF_ASSIGN_OR_RETURN(emitters::KernelArguments kernel_arguments,
-                      emitters::KernelArguments::Create(
-                          context->buffer_assignment(), buffer_alignment, instr,
-                          call.output_indices));
+  ABSL_ASSIGN_OR_RETURN(emitters::KernelArguments kernel_arguments,
+                        emitters::KernelArguments::Create(
+                            context->buffer_assignment(), buffer_alignment,
+                            instr, call.output_indices));
 
-  TF_ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       CustomKernel ptx_custom_kernel,
       kernel::GetOwnedPtxCustomKernel(
           call.name, call.kernel_data, kernel_arguments.args().size(),
@@ -65,7 +66,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> EmitPtxCustomKernelThunk(
   Thunk::ThunkInfo thunk_info =
       Thunk::ThunkInfo::WithProfileAnnotation(instr, context->GetNextThunkId());
   return std::make_unique<CustomKernelThunk>(
-      std::move(thunk_info), ptx_custom_kernel, kernel_arguments);
+      std::move(thunk_info), ptx_custom_kernel, kernel_arguments,
+      context->gpu_topology().num_devices_per_process());
 }
 
 }  // namespace gpu

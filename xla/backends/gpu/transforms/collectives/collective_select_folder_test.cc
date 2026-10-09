@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/collective_select_folder.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <initializer_list>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -30,8 +31,6 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -98,7 +97,7 @@ const char* kSPMD2cp = R"(
 )";
 
 TEST_F(CollectiveSelectFolderTest, SimpleForwardCycle) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSPMD2cp, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -112,7 +111,7 @@ TEST_F(CollectiveSelectFolderTest, SimpleForwardCycle) {
 }
 
 TEST_F(CollectiveSelectFolderTest, SimpleBackwardCycle) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSPMD2cp, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -125,7 +124,7 @@ TEST_F(CollectiveSelectFolderTest, SimpleBackwardCycle) {
 }
 
 TEST_F(CollectiveSelectFolderTest, CompareNEForwardCycle) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSPMD2cp, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -144,7 +143,7 @@ TEST_F(CollectiveSelectFolderTest, CompareNEForwardCycle) {
 // to fwd_data while forward collective-permute is expected remain linked
 // to the select.
 TEST_F(CollectiveSelectFolderTest, LastDeviceIdMismatch) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSPMD2cp, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -173,7 +172,7 @@ const char* kSelectBasecase = R"(
 )";
 
 TEST_F(CollectiveSelectFolderTest, EqualTrueBranchTransform) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSelectBasecase, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -185,7 +184,7 @@ TEST_F(CollectiveSelectFolderTest, EqualTrueBranchTransform) {
 }
 
 TEST_F(CollectiveSelectFolderTest, EqualFalseBranchTransform) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSelectBasecase, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -197,7 +196,7 @@ TEST_F(CollectiveSelectFolderTest, EqualFalseBranchTransform) {
 }
 
 TEST_F(CollectiveSelectFolderTest, NotEqualFalseBranchTransform) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSelectBasecase, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -209,7 +208,7 @@ TEST_F(CollectiveSelectFolderTest, NotEqualFalseBranchTransform) {
 }
 
 TEST_F(CollectiveSelectFolderTest, NotEqualTrueTrueTransform) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSelectBasecase, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -235,9 +234,9 @@ TEST_F(CollectiveSelectFolderTest, CommutativeCompare) {
         source_target_pairs={{0,1},{1,2},{4,5},{5,6}}, channel_id=1
   }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          RunAndCheckHloRewrite(kHlo, CollectiveSelectFolder(),
-                                                /*expect_change=*/true));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kHlo, CollectiveSelectFolder(),
+                                             /*expect_change=*/true));
   auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::CollectivePermute(op::Parameter(0)));
 }
@@ -276,7 +275,7 @@ const char* kSelectNoBroadcast = R"(
 )";
 
 TEST_F(CollectiveSelectFolderTest, SelectNoBroadcastTransform) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       RunAndCheckHloRewrite(kSelectNoBroadcast, CollectiveSelectFolder(),
                             /*expect_change=*/true,
@@ -423,29 +422,25 @@ TEST_F(CollectiveSelectFolderTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          RunAndCheckHloRewrite(kHlo, CollectiveSelectFolder(),
-                                                /*expect_change=*/true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(kHlo, CollectiveSelectFolder(),
+                                             /*expect_change=*/true));
   const absl::string_view kExpected = R"(
     // CHECK:      ENTRY %computation
     // CHECK:        %[[PARAM:.*]] = (f32[8192]{0}, f32[8192]{0}) parameter(0)
-    // CHECK:        %[[OPERAND_BWD:.*]] = {{.*}} get-tuple-element
-    // CHECK-SAME:       ({{.*}}%[[PARAM]]), index=0
-    // CHECK:        %[[OPERAND_FWD:.*]] = {{.*}} get-tuple-element
-    // CHECK-SAME:       ({{.*}}%[[PARAM]]), index=1
     // CHECK:        %[[CP_BWD:.*]] = {{.*}} collective-permute
-    // CHECK-SAME:       ({{.*}}%[[OPERAND_BWD]]), channel_id=1,
+    // CHECK-SAME:       ({{.*}}%[[PARAM]]#0), channel_id=1,
     // CHECK-SAME:       source_target_pairs={{\{}}{3,0}}
     // CHECK:        %[[CP_FWD:.*]] = {{.*}} collective-permute
-    // CHECK-SAME:       ({{.*}}%[[OPERAND_FWD]]), channel_id=2,
+    // CHECK-SAME:       ({{.*}}%[[PARAM]]#1), channel_id=2,
     // CHECK-SAME:       source_target_pairs={{\{}}{0,1},{1,2},{2,3}}
     // CHECK:        ROOT %{{.*}} =
     // CHECK-SAME:       select({{.*}}, {{.*}}%[[CP_BWD]],
     // CHECK-SAME:       {{.*}}%[[CP_FWD]])
     // CHECK:      }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), kExpected));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), kExpected));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -471,16 +466,15 @@ TEST_F(CollectiveSelectFolderTest, DtypeConvertedPartitionId) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          RunAndCheckHloRewrite(kHlo, CollectiveSelectFolder(),
-                                                /*expect_change=*/true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(kHlo, CollectiveSelectFolder(),
+                                             /*expect_change=*/true));
   const absl::string_view kExpected = R"(
     // CHECK: %[[PARAM:.*]] = {{.*}} parameter(0)
-    // CHECK: %[[DATA_A:.*]] = {{.*}} get-tuple-element({{.*}}%[[PARAM]]), index=0
-    // CHECK: ROOT %[[DATA_A_:.*]] = {{.*}} collective-permute({{.*}}%[[DATA_A]])
+    // CHECK: ROOT %{{.*}} = {{.*}} collective-permute({{.*}}%[[PARAM]]#0)
   )";
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                          RunFileCheck(module->ToString(), kExpected));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                       RunFileCheck(module->ToString(), kExpected));
   EXPECT_TRUE(filecheck_result);
 }
 

@@ -18,13 +18,13 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/pattern_matcher.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -263,6 +263,89 @@ ENTRY fusion.2653 {
   EXPECT_THAT(module->GetComputationWithName("fused_computation.4564")
                   ->num_parameters(),
               2);
+}
+
+TEST_F(FusionConstantSinkingTest, SinkMustFuseConstantsInCustomFusion) {
+  std::string hlo_string = R"(
+HloModule jit_fused_op
+
+%fused_computation.clone (param_0.2: bf16[1024,1024], param_1.4: bf16[]) -> bf16[1024,1024] {
+  %param_0.2 = bf16[1024,1024]{1,0:T(8,128)(2,1)} parameter(0)
+  %param_1.4 = bf16[]{:T(256)} parameter(1)
+  %mul.7 = bf16[1024,1024]{1,0:T(8,128)(2,1)} broadcast(%param_1.4), dimensions={}, frontend_attributes={MUST_FUSE="1"}
+  ROOT %mul.6 = bf16[1024,1024]{1,0:T(8,128)(2,1)} multiply(%param_0.2, %mul.7), frontend_attributes={MUST_FUSE="1"}
+}
+
+%fused_computation.1 (param_0.1: bf16[1024,4096], param_1.3: s32[], param_2.2: bf16[1024,3072], param_3.1: bf16[1024,1024], param_4: bf16[]) -> bf16[1024,4096] {
+  %param_0.1 = bf16[1024,4096]{1,0:T(8,128)(2,1)} parameter(0)
+  %param_3.1 = bf16[1024,1024]{1,0:T(8,128)(2,1)} parameter(3)
+  %param_4 = bf16[]{:T(256)} parameter(4)
+  %broadcast_multiply_fusion.1 = bf16[1024,1024]{1,0:T(8,128)(2,1)} fusion(%param_3.1, %param_4), kind=kLoop, calls=%fused_computation.clone, frontend_attributes={MUST_FUSE="1"}
+  %param_2.2 = bf16[1024,3072]{1,0:T(8,128)(2,1)} parameter(2)
+  %quantized_matmul_kernel.1 = bf16[1024,3072]{1,0:T(8,128)(2,1)} custom-call(%broadcast_multiply_fusion.1, %param_2.2), custom_call_target="tpu_custom_call", operand_layout_constraints={bf16[1024,1024]{1,0}, bf16[1024,3072]{1,0}}, frontend_attributes={MUST_FUSE="1",kernel_metadata={}}, backend_config={"custom_call_config": {"body": "the body", "serialization_format": 1, "needs_layout_passes": true, "allow_input_fusion": [true,true,true]}}
+  %param_1.3 = s32[]{:T(128)} parameter(1)
+  ROOT %dynamic_update_slice.2 = bf16[1024,4096]{1,0:T(8,128)(2,1)} dynamic-update-slice(%param_0.1, %quantized_matmul_kernel.1, %param_1.3, %param_1.3), frontend_attributes={MUST_FUSE="1"}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"indices_config":{"index_known_bits":[{"zeroes":"4294967295","ones":"0","bitwidth":"32"},{"zeroes":"4294967295","ones":"0","bitwidth":"32"}],"is_index_aligned":[]},"used_scoped_memory_configs":[]}
+}
+
+ENTRY %main.3 (x.1: bf16[1024,1024], w.1: bf16[1024,3072], out.1: bf16[1024,4096]) -> bf16[1024,4096] {
+  %out.1 = bf16[1024,4096]{1,0:T(8,128)(2,1)} parameter(2), metadata={op_name="out"}
+  %constant.1 = s32[]{:T(128)} constant(0), frontend_attributes={MUST_FUSE="1"}
+  %w.1 = bf16[1024,3072]{1,0:T(8,128)(2,1)} parameter(1), metadata={op_name="w"}
+  %x.1 = bf16[1024,1024]{1,0:T(8,128)(2,1)} parameter(0), metadata={op_name="x"}
+  %constant.0 = bf16[]{:T(256)} constant(2), frontend_attributes={MUST_FUSE="1"}
+  ROOT %custom-call_dynamic-update-slice_fusion = bf16[1024,4096]{1,0:T(8,128)(2,1)} fusion(%out.1, %constant.1, %w.1, %x.1, %constant.0), kind=kCustom, calls=%fused_computation.1, frontend_attributes={MUST_FUSE="1"}
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  FusionConstantSinking constant_sinking;
+
+  TF_ASSERT_OK_AND_ASSIGN(bool result,
+                          RunHloPass(&constant_sinking, module.get()));
+
+  EXPECT_TRUE(result);
+  EXPECT_THAT(
+      module->GetComputationWithName("fused_computation.1")->num_parameters(),
+      3);
+}
+
+// A FUSE_LIMIT constant is a fusion boundary, so it stays a fusion operand
+// while the unmarked constant is sunk.
+TEST_F(FusionConstantSinkingTest, FuseLimitConstantNoSink) {
+  std::string hlo_string = R"(
+  HloModule FuseLimitConstant
+
+    %fused_computation (param_0: f32[8,128], param_1: f32[], param_2: f32[]) -> f32[8,128] {
+      %param_0 = f32[8,128]{1,0} parameter(0)
+      %param_1 = f32[] parameter(1)
+      %broadcast.1 = f32[8,128]{1,0} broadcast(%param_1), dimensions={}
+      %multiply = f32[8,128]{1,0} multiply(%param_0, %broadcast.1)
+      %param_2 = f32[] parameter(2)
+      %broadcast.2 = f32[8,128]{1,0} broadcast(%param_2), dimensions={}
+      ROOT %add = f32[8,128]{1,0} add(%multiply, %broadcast.2)
+    }
+
+    ENTRY main {
+      p0 = f32[8,128]{1,0} parameter(0)
+      c0 = f32[] constant(8128), frontend_attributes={FUSE_LIMIT="true"}
+      c1 = f32[] constant(1)
+      ROOT out = f32[8,128]{1,0} fusion(p0, c0, c1), kind=kLoop, calls=%fused_computation
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  FusionConstantSinking constant_sinking;
+
+  ASSERT_OK_AND_ASSIGN(bool result,
+                       RunHloPass(&constant_sinking, module.get()));
+
+  EXPECT_TRUE(result);
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(fusion->operand_count(), 2);
+  EXPECT_EQ(fusion->operand(1)->name(), "c0");
 }
 
 }  // namespace

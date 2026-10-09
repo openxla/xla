@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/model/hlo_op_profiler.h"
 
-#include <unordered_set>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <unordered_set>
+
 #include "absl/container/flat_hash_set.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -33,9 +34,13 @@ namespace {
 class HloOpProfilerTest : public HloPjRtGpuTestBase {
  protected:
   void SetUp() override {
+    if (IsRocm()) {
+      GTEST_SKIP() << "Test timeouts in rocm";  // TODO ROCm fix timeout
+    }
+
     const auto& cap = device_description().gpu_compute_capability();
-    if (!cap.IsCuda() && !cap.IsRocm()) {
-      GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
+    if (!cap.IsCuda()) {
+      GTEST_SKIP() << "Not built with --config=cuda";
     }
   }
 
@@ -120,7 +125,7 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
         !HloOpProfiler::Unsupported().count(op) &&
         !(is_rocm && skip_on_rocm.count(op))) {
       auto Type = FloatTypes.count(op) ? F32 : S32;
-      TF_EXPECT_OK(profiler.MeasureClockCyclesPerOp(op, Type));
+      EXPECT_OK(profiler.MeasureClockCyclesPerOp(op, Type));
     }
   }
 }

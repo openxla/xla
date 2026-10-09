@@ -65,7 +65,7 @@ namespace xla {
   V(kAsinh, "asinh", 1)                                                        \
   V(kAsyncDone, "async-done", 1)                                               \
   V(kAsyncStart, "async-start", kHloOpcodeIsVariadic)                          \
-  V(kAsyncUpdate, "async-update", 1)                                           \
+  V(kAsyncUpdate, "async-update", kHloOpcodeIsVariadic)                        \
   V(kAtan2, "atan2", 2)                                                        \
   V(kAtanh, "atanh", 1)                                                        \
   V(kBatchNormGrad, "batch-norm-grad", 5)                                      \
@@ -84,13 +84,14 @@ namespace xla {
   V(kCollectivePermute, "collective-permute", kHloOpcodeIsVariadic)            \
   V(kCollectivePermuteDone, "collective-permute-done", 1)                      \
   V(kCollectivePermuteStart, "collective-permute-start", kHloOpcodeIsVariadic) \
+  V(kCollectiveReduce, "collective-reduce", kHloOpcodeIsVariadic)              \
   V(kCompare, "compare", 2)                                                    \
   V(kComplex, "complex", 2)                                                    \
   V(kConcatenate, "concatenate", kHloOpcodeIsVariadic)                         \
   V(kConditional, "conditional", kHloOpcodeIsVariadic)                         \
   V(kConstant, "constant", 0)                                                  \
   V(kConvert, "convert", 1)                                                    \
-  V(kConvolution, "convolution", 2)                                            \
+  V(kConvolution, "convolution", kHloOpcodeIsVariadic)                         \
   V(kCopy, "copy", 1)                                                          \
   V(kCopyDone, "copy-done", 1)                                                 \
   V(kCopyStart, "copy-start", 1)                                               \
@@ -99,12 +100,13 @@ namespace xla {
   V(kCustomCall, "custom-call", kHloOpcodeIsVariadic)                          \
   V(kDivide, "divide", 2)                                                      \
   V(kDomain, "domain", 1)                                                      \
-  V(kDot, "dot", 2)                                                            \
+  V(kDot, "dot", kHloOpcodeIsVariadic)                                         \
   V(kDynamicReshape, "dynamic-reshape", kHloOpcodeIsVariadic)                  \
   V(kDynamicSlice, "dynamic-slice", kHloOpcodeIsVariadic)                      \
   V(kDynamicUpdateSlice, "dynamic-update-slice", kHloOpcodeIsVariadic)         \
   V(kErf, "erf", 1)                                                            \
   V(kExp, "exponential", 1)                                                    \
+  V(kExp2, "exp2", 1)                                                          \
   V(kExpm1, "exponential-minus-one", 1)                                        \
   V(kFft, "fft", 1)                                                            \
   V(kFloor, "floor", 1)                                                        \
@@ -118,10 +120,12 @@ namespace xla {
   V(kIsFinite, "is-finite", 1)                                                 \
   V(kLog, "log", 1)                                                            \
   V(kLog1p, "log-plus-one", 1)                                                 \
+  V(kLog2, "log2", 1)                                                          \
   V(kLogistic, "logistic", 1)                                                  \
   V(kMap, "map", kHloOpcodeIsVariadic)                                         \
   V(kMaximum, "maximum", 2)                                                    \
   V(kMinimum, "minimum", 2)                                                    \
+  V(kMulhi, "mulhi", 2)                                                        \
   V(kMultiply, "multiply", 2)                                                  \
   V(kNegate, "negate", 1)                                                      \
   V(kNot, "not", 1)                                                            \
@@ -163,6 +167,7 @@ namespace xla {
   V(kShiftLeft, "shift-left", 2)                                               \
   V(kShiftRightArithmetic, "shift-right-arithmetic", 2)                        \
   V(kShiftRightLogical, "shift-right-logical", 2)                              \
+  V(kShuffle, "shuffle", 1)                                                    \
   V(kSign, "sign", 1)                                                          \
   V(kSin, "sine", 1)                                                           \
   V(kSinh, "sinh", 1)                                                          \
@@ -224,6 +229,7 @@ inline bool HloOpcodeIsBinaryCommutative(HloOpcode opcode) {
   switch (opcode) {
     case HloOpcode::kAdd:
     case HloOpcode::kMultiply:
+    case HloOpcode::kMulhi:
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kAnd:

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -42,11 +44,14 @@ limitations under the License.
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Passes/OptimizationLevel.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -65,6 +70,7 @@ limitations under the License.
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
+#include "xla/backends/cpu/codegen/object_buffer_identifier.h"
 #include "xla/backends/cpu/codegen/polynomial_approximations.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
@@ -74,7 +80,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 
@@ -181,9 +187,13 @@ static std::unique_ptr<HloModuleConfig> ParseXlaBackendExtraOptions(
 static absl_nullable std::unique_ptr<HloModuleConfig> GetXlaBackendExtraOptions(
     const llvm::Module& llvm_module) {
   llvm::Metadata* md = llvm_module.getModuleFlag("xla_backend_extra_options");
-  if (md == nullptr) return nullptr;
+  if (md == nullptr) {
+    return nullptr;
+  }
   auto* md_string = llvm::dyn_cast<llvm::MDString>(md);
-  if (md_string == nullptr) return nullptr;
+  if (md_string == nullptr) {
+    return nullptr;
+  }
   std::string config_csv = md_string->getString().str();
   return ParseXlaBackendExtraOptions(config_csv);
 }
@@ -372,6 +382,26 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
   target_library_info_impl->addVectorizableFunctions(
       PolynomialApproximationsVectorization());
 
+  int prefer_vector_width = 0;
+  for (const auto& func : module) {
+    if (func.hasFnAttribute("prefer-vector-width")) {
+      unsigned width = 0;
+      if (!func.getFnAttribute("prefer-vector-width")
+               .getValueAsString()
+               .getAsInteger(10, width)) {
+        prefer_vector_width =
+            std::max(prefer_vector_width, static_cast<int>(width));
+      }
+    }
+  }
+
+  // The explicit feature string lacks features implied by the target CPU.
+  std::string features = absl::StrJoin(
+      target_machine->getMCSubtargetInfo().getEnabledProcessorFeatures(), ",",
+      [](std::string* out, const llvm::SubtargetFeatureKV* feature) {
+        absl::StrAppend(out, "+", feature->key());
+      });
+
   xla::codegen::intrinsics::DeviceType device_type;
   if (target_triple.isX86()) {
     // As a heuristic, we check for SSE4a to determine if we are on AMD.
@@ -380,7 +410,7 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     // between increased precision and SSE4a; Intel could decide to add it in
     // the future but they are very unlikely to do so as they haven't in the
     // past 18 years.
-    if (target_machine->getTargetFeatureString().contains("+sse4a")) {
+    if (absl::StrContains(features, "+sse4a")) {
       device_type = xla::codegen::intrinsics::DeviceType::kAmdCpu;
     } else {
       device_type = xla::codegen::intrinsics::DeviceType::kIntelCpu;
@@ -392,11 +422,10 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
   } else {
     LOG(FATAL) << "Unsupported CPU type: " << target_triple.str();
   }
-
   codegen::IntrinsicFunctionLib intrinsic_lib(
-      {target_machine->getTargetFeatureString().str(), device_type,
+      {std::move(features), device_type,
        /*disable_platform_dependent_math=*/
-       options_.disable_platform_dependent_math});
+       options_.disable_platform_dependent_math, prefer_vector_width});
   target_library_info_impl->addVectorizableFunctions(
       intrinsic_lib.Vectorizations());
 
@@ -410,10 +439,6 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
   pb.crossRegisterProxies(lam, fam, cgam, mam);
 
   llvm::ModulePassManager pm;
-
-  if (options_.dfsan_enabled) {
-    pm.addPass(llvm::DataFlowSanitizerPass(options_.dfsan_abi_list_files));
-  }
 
   llvm::OptimizationLevel opt_level = GetOptimizationLevel(options_);
   if (opt_level == llvm::OptimizationLevel::O0) {
@@ -454,7 +479,34 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     codegen::intrinsic::RunInlineAndOptPasses(module);
   }
 
+  // Must run after all optimization passes: middle-end passes behave
+  // differently on instructions that already carry `contract`.
+  llvm_ir::SetAllowContractOnFpArithmetic(module);
+  // Must run after `contract` is set and before sanitizer instrumentation, so
+  // that instrumentation cannot split contractable fmul/fadd pairs into
+  // separate basic blocks.
+  llvm_ir::SinkContractableFMulToFAddFSub(module);
+
+  // Sanitizer instrumentation must be the last IR transformation.
+  if (options_.dfsan_enabled) {
+    // The transformations immediately above are not visible to the analysis
+    // manager; clear its cache.
+    mam.clear();
+
+    RunSanitizerPasses(module, mam);
+  }
+
   return llvm::Error::success();
+}
+
+void IrCompiler::RunSanitizerPasses(llvm::Module& module,
+                                    llvm::ModuleAnalysisManager& mam) const {
+  llvm::ModulePassManager pm;
+
+  if (options_.dfsan_enabled) {
+    pm.addPass(llvm::DataFlowSanitizerPass(options_.dfsan_abi_list_files));
+  }
+  pm.run(module, mam);
 }
 
 std::unique_ptr<llvm::MemoryBuffer> IrCompiler::EmitMachineCode(
@@ -467,8 +519,6 @@ std::unique_ptr<llvm::MemoryBuffer> IrCompiler::EmitMachineCode(
   llvm::MCContext* mc_context;
   llvm::legacy::PassManager codegen_passes;
   codegen_passes.add(new llvm::RuntimeLibraryInfoWrapper(
-      module.getTargetTriple(), target_machine->Options.ExceptionModel,
-      target_machine->Options.FloatABIType, target_machine->Options.EABIVersion,
       target_machine->Options.MCOptions.ABIName,
       target_machine->Options.VecLib));
   target_machine->addPassesToEmitMC(codegen_passes, mc_context, ostream);
@@ -486,8 +536,17 @@ std::unique_ptr<llvm::MemoryBuffer> IrCompiler::EmitMachineCode(
   CHECK(md_str != nullptr);
   llvm::StringRef mem_region_name_str = md_str->getString();
 
+  // Each module gets assigned two names encoded into the buffer identifier:
+  // - Memory region name: human-friendly name shared among related kernels,
+  //   so that profilers can aggregate results per kernel.
+  // - Buffer identifier: to refer to each module uniquely. Necessary for
+  //   sanitizers.
+  std::string buffer_identifier = EncodeBufferIdentifier(
+      absl::string_view(mem_region_name_str.data(), mem_region_name_str.size()),
+      module.getModuleIdentifier());
+
   return std::make_unique<llvm::SmallVectorMemoryBuffer>(
-      std::move(mc_stream_buffer), mem_region_name_str);
+      std::move(mc_stream_buffer), buffer_identifier);
 }
 
 llvm::CodeGenOptLevel IrCompiler::GetCodeGenOptLevel(

@@ -21,11 +21,13 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/log.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Target/TargetOptions.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
@@ -71,7 +73,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 
@@ -84,8 +85,8 @@ class CpuOptProvider : public CompiledOptProvider {
   absl::StatusOr<std::optional<std::string>> GenerateStage(
       std::unique_ptr<HloModule> module, absl::string_view s) override {
     if (s == "llvm-before-optimizations") {
-      TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                          GetExecutable(std::move(module)));
+      ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
+                            GetExecutable(std::move(module)));
       return static_cast<cpu::CpuExecutable*>(executable.get())
           ->ir_module_string();
     }
@@ -177,8 +178,7 @@ class CpuOptProvider : public CompiledOptProvider {
     // Fails to register if module does not have entry computation layout
     if (module.config().has_entry_computation_layout()) {
       RegisterPass<cpu::CpuLayoutAssignment>(
-          module.mutable_entry_computation_layout(), &target_machine_features,
-          nullptr);
+          module.mutable_entry_computation_layout(), &target_machine_features);
     }
 
     const int max_parallelism =
@@ -211,9 +211,6 @@ class CpuOptProvider : public CompiledOptProvider {
   llvm::TargetOptions CompilerTargetOptions(
       const HloModuleConfig& module_config) {
     llvm::TargetOptions target_options;
-    // Always allow FMA fusion. This increases precision instead of decreasing
-    // it.
-    target_options.AllowFPOpFusion = llvm::FPOpFusion::Fast;
     return target_options;
   }
 };

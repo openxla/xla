@@ -19,6 +19,10 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
@@ -26,10 +30,6 @@ limitations under the License.
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "tsl/profiler/lib/profiler_factory.h"
-#include "tsl/profiler/lib/profiler_interface.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -112,8 +112,12 @@ absl::Status GpuTracer::DoStart() {
       trace_collector_options, start_walltime_ns, start_gputime_ns);
   rocm_trace_collector_->SetGpuAgents(rocm_tracer_->GpuAgents());
 
-  TF_RETURN_IF_ERROR(
-      rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get()));
+  absl::Status status =
+      rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
+  if (!status.ok()) {
+    AnnotationStack::Enable(false);
+    return status;
+  }
   return absl::OkStatus();
 }
 

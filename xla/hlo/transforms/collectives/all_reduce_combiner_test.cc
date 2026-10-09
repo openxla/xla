@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/all_reduce_combiner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
@@ -540,6 +541,35 @@ TEST_F(AllReduceCombinerTest, PreservesMetadata) {
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               op::Tuple(op::GetTupleElement(combined_all_reduce, 0),
                         op::GetTupleElement(combined_all_reduce, 1)));
+}
+
+TEST_F(AllReduceCombinerTest, DoNotCombineOpWithSchedulingAnnotation) {
+  absl::string_view hlo_text = R"(
+    HloModule Module
+
+    %add (x: f32[], y: f32[]) -> f32[] {
+      %x = f32[] parameter(0)
+      %y = f32[] parameter(1)
+      ROOT %add = f32[] add(f32[] %x, f32[] %y)
+    }
+
+    ENTRY entry {
+      %param.0 = f32[32] parameter(0)
+      %param.1 = f32[32] parameter(1)
+      %all-reduce.0 = f32[32] all-reduce(%param.0), replica_groups={},
+          to_apply=%add, frontend_attributes={_scheduling_group_id="0"}
+      %all-reduce.1 = f32[32] all-reduce(%param.1), replica_groups={},
+          to_apply=%add
+      ROOT tuple = (f32[32], f32[32]) tuple(%all-reduce.0, %all-reduce.1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+  AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
+  EXPECT_THAT(combine.Run(module.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::AllReduce(op::Parameter(0)),
+                        op::AllReduce(op::Parameter(1))));
 }
 
 }  // namespace

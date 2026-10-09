@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/launch_dim.pb.h"
@@ -51,7 +52,8 @@ ThreadDimProto stream_executor::ThreadDim::ToProto() const {
 }
 
 absl::StatusOr<ThreadDim> ThreadDim::FromProto(const ThreadDimProto& proto) {
-  TF_ASSIGN_OR_RETURN(Dim3D coordinates, Dim3D::FromProto(proto.coordinates()));
+  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates,
+                        Dim3D::FromProto(proto.coordinates()));
   return ThreadDim(coordinates);
 }
 
@@ -62,7 +64,8 @@ BlockDimProto stream_executor::BlockDim::ToProto() const {
 }
 
 absl::StatusOr<BlockDim> BlockDim::FromProto(const BlockDimProto& proto) {
-  TF_ASSIGN_OR_RETURN(Dim3D coordinates, Dim3D::FromProto(proto.coordinates()));
+  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates,
+                        Dim3D::FromProto(proto.coordinates()));
   return BlockDim(coordinates);
 }
 
@@ -73,7 +76,8 @@ ClusterDimProto stream_executor::ClusterDim::ToProto() const {
 }
 
 absl::StatusOr<ClusterDim> ClusterDim::FromProto(const ClusterDimProto& proto) {
-  TF_ASSIGN_OR_RETURN(Dim3D coordinates, Dim3D::FromProto(proto.coordinates()));
+  ABSL_ASSIGN_OR_RETURN(Dim3D coordinates,
+                        Dim3D::FromProto(proto.coordinates()));
   return ClusterDim(coordinates);
 }
 

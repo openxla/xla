@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/reduction_degenerate_dim_remover.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 

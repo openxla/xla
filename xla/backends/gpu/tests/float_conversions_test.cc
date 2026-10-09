@@ -13,9 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
@@ -25,10 +26,10 @@ limitations under the License.
 namespace xla::gpu {
 
 class FloatConversionTest
-    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
+    : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest> {};
 
 class FloatConversionParamTest
-    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest>,
+    : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest>,
       public ::testing::WithParamInterface<std::string> {};
 
 INSTANTIATE_TEST_SUITE_P(FloatConversionParamSuite, FloatConversionParamTest,

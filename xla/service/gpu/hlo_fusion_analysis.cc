@@ -127,10 +127,6 @@ HloFusionAnalysis::EmitterFusionKind GetEmitterFusionKind(
     return HloFusionAnalysis::EmitterFusionKind::kTriton;
   }
 
-  if (fusion_backend_config.kind() == kDynamicMemcpyFusionKind) {
-    return HloFusionAnalysis::EmitterFusionKind::kDynamicMemcpy;
-  }
-
   if (fusion_backend_config.kind() == kCuDnnFusionKind) {
     return HloFusionAnalysis::EmitterFusionKind::kCuDnn;
   }
@@ -215,6 +211,20 @@ int SmallestBitWidth(const Container& args) {
   return bits;
 }
 
+std::optional<HloInstructionAdaptor> FindCollectiveHero(
+    const HloFusionAdaptor& fusion) {
+  std::optional<HloInstructionAdaptor> collective_hero;
+  for (HloInstructionAdaptor instr : fusion.MakeInstructionPostOrder()) {
+    if (instr.opcode() == HloOpcode::kAllGather ||
+        instr.opcode() == HloOpcode::kAllReduce ||
+        instr.opcode() == HloOpcode::kReduceScatter) {
+      collective_hero = instr;
+      break;
+    }
+  }
+  return collective_hero;
+}
+
 }  // namespace
 
 bool IsGpuFusionKind(const HloInstruction& hlo, absl::string_view kind) {
@@ -245,8 +255,17 @@ HloFusionAnalysis HloFusionAnalysis::Create(
     const se::DeviceDescription* device_info) {
   absl::InlinedVector<HloInstructionAdaptor, 2> roots = fusion->GetRoots();
   absl::InlinedVector<HloInstructionAdaptor, 2> heroes;
-  for (auto root : roots) {
-    heroes.push_back(FindNonTrivialHero(root));
+
+  if (backend_config.kind() == kTritonCollectiveFusionKind) {
+    if (std::optional<HloInstructionAdaptor> collective_hero =
+            FindCollectiveHero(*fusion);
+        collective_hero.has_value()) {
+      heroes.push_back(collective_hero.value());
+    }
+  } else {
+    for (auto root : roots) {
+      heroes.push_back(FindNonTrivialHero(root));
+    }
   }
 
   InputOutputInfo input_output_info{
@@ -313,6 +332,14 @@ HloFusionAnalysis HloFusionAnalysis::Create(
       std::move(fusion_backend_config),
       HloFusionAdaptor::ForProducerConsumer(&producer, &consumer),
       &device_info);
+}
+
+const Shape& HloFusionAnalysis::first_result_shape() const {
+  const Shape* shape = &fusion_root(0).shape();
+  while (shape->IsTuple()) {
+    shape = &shape->tuple_shapes(0);
+  }
+  return *shape;
 }
 
 const HloInstruction* HloFusionAnalysis::FindHeroReduction() const {

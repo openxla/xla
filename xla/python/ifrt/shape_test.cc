@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/ifrt/shape.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <sstream>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/hash/hash_testing.h"
 #include "absl/status/status.h"
@@ -119,6 +120,33 @@ INSTANTIATE_TEST_SUITE_P(
     [](const testing::TestParamInfo<SerDesVersion>& info) {
       return absl::StrCat(info.param.version_number().value());
     });
+
+TEST(ShapeTest, FromProtoRejectsDimensionProductOverflow) {
+  // Individually plausible dimensions whose product overflows int64_t.
+  // Simulates a crafted ShapeProto reaching Shape::FromProto via a
+  // deserialized RPC request (e.g. ifrt_proxy), independent of any
+  // downstream bounds check that might otherwise assume num_elements() is
+  // accurate.
+  ShapeProto proto;
+  proto.set_version_number(SerDesVersionNumber(0).value());
+  proto.add_dims(3037000500LL);
+  proto.add_dims(3037000500LL);
+  proto.add_dims(4LL);
+
+  absl::StatusOr<Shape> shape = Shape::FromProto(proto);
+  EXPECT_THAT(shape.status(),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(ShapeTest, FromProtoAcceptsNonOverflowingDimensions) {
+  ShapeProto proto;
+  proto.set_version_number(SerDesVersionNumber(0).value());
+  proto.add_dims(100);
+  proto.add_dims(200);
+
+  TF_ASSERT_OK_AND_ASSIGN(Shape shape, Shape::FromProto(proto));
+  EXPECT_EQ(shape, Shape({100, 200}));
+}
 
 TEST(ShapeTest, Hash) {
   EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly({

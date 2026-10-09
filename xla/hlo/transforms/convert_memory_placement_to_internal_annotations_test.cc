@@ -15,10 +15,11 @@
 
 #include "xla/hlo/transforms/convert_memory_placement_to_internal_annotations.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -568,6 +569,27 @@ TEST_F(ConvertMemoryPlacementToInternalAnnotationsTest,
     }
   }
   EXPECT_EQ(pin_todevice_count, 1);
+}
+
+TEST_F(ConvertMemoryPlacementToInternalAnnotationsTest,
+       ConvertDevicePreservesShardingTest) {
+  constexpr absl::string_view hlo_string = R"(
+  HloModule m
+
+  ENTRY m {
+    x = f32[2,2] parameter(0)
+    ROOT transfer = f32[2,2] custom-call(x), custom_call_target="annotate_device_placement", sharding={devices=[2,1]<=[2]}, frontend_attributes={_xla_buffer_placement="device"}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  bool changed =
+      ConvertMemoryPlacementToInternalAnnotations().Run(module.get()).value();
+  EXPECT_TRUE(changed);
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_TRUE(
+      root->IsCustomCall(memory_annotations::kMoveToDeviceCustomCallTarget));
+  EXPECT_TRUE(root->has_sharding());
+  EXPECT_EQ(root->sharding().ToString(), "{devices=[2,1]<=[2]}");
 }
 
 }  // namespace

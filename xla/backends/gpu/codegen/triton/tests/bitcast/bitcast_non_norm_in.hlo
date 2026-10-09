@@ -1,4 +1,4 @@
-// RUN: hlo_to_xtileir %s | FileCheck %s
+// RUN: fusion_to_triton %s | FileCheck %s
 // RUN: triton_test_correctness %s
 
 fusion {

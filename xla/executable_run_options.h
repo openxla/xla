@@ -48,6 +48,8 @@ class AsyncValueRef;
 
 namespace xla {
 
+class CustomOptions;
+
 class CliqueKey;
 class DeviceAssignment;
 class ExecutionProfile;
@@ -249,6 +251,11 @@ class ExecutableRunOptions {
       const gpu::GpuExecutableRunOptions* gpu_executable_run_options);
   const gpu::GpuExecutableRunOptions* gpu_executable_run_options() const;
 
+  // Per-execution custom options.
+  ExecutableRunOptions& set_custom_options(
+      std::shared_ptr<const CustomOptions> custom_options);
+  const CustomOptions* custom_options() const;
+
   // XLA FFI specific execution context that allows to pass auxiliary data to
   // FFI handlers. It's a caller responsibility to ensure that the XLA FFI
   // execution context stays alive while the executable is running.
@@ -265,12 +272,6 @@ class ExecutableRunOptions {
   ExecutableRunOptions& set_clique_keys(
       std::vector<std::unique_ptr<CliqueKey>>* clique_keys);
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys() const;
-
-  // Index into the set of VA reservations used for command buffer remapping.
-  // With kNumVaReservationSets=2 reservations, alternating between idx 0 and
-  // 1 allows CPU remapping of one range while the GPU executes the other.
-  ExecutableRunOptions& set_command_buffer_va_range_idx(int idx);
-  int command_buffer_va_range_idx() const;
 
  private:
   stream_executor::DeviceAddressAllocator* allocator_ = nullptr;
@@ -291,9 +292,9 @@ class ExecutableRunOptions {
   RunId run_id_{0};
   const cpu::CpuExecutableRunOptions* cpu_executable_run_options_ = nullptr;
   const gpu::GpuExecutableRunOptions* gpu_executable_run_options_ = nullptr;
+  std::shared_ptr<const CustomOptions> custom_options_;
   const ffi::ExecutionContext* ffi_execution_context_ = nullptr;
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys_ = nullptr;
-  int command_buffer_va_range_idx_ = 0;
 };
 
 }  // namespace xla

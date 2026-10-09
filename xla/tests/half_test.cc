@@ -19,9 +19,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"
@@ -42,8 +42,8 @@ using UnaryBuildFuncTy = std::function<void(const xla::XlaOp& src)>;
 constexpr int kNumElements = 4;
 constexpr ErrorSpec kErrorSpec{0.001, 0.001};
 
-using HalfTestBase = ClientLibraryTestRunnerMixin<
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>;
+using HalfTestBase =
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 struct UnaryOpTestParam {
   std::function<half(half)> compute_func;

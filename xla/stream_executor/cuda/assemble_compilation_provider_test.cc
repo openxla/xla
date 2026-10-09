@@ -15,22 +15,23 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
+#include "tsl/platform/cuda_root_path.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/cuda/nvjitlink_support.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/cuda_root_path.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
 
 namespace stream_executor::cuda {
 
@@ -59,7 +60,6 @@ TEST(AssembleCompilationProviderTest,
   CompilationProviderOptions options{
       CompilationProviderOptions::NvJitLinkMode::kDisabled,
       /*enable_libnvptxcompiler=*/false,
-      /*enable_llvm_module_compilation_parallelism=*/false,
       /*enable_driver_compilation=*/false,
       /*cuda_data_dir=*/"/does/not/exist",
   };
@@ -78,12 +78,11 @@ TEST(AssembleCompilationProviderTest,
   CompilationProviderOptions options{
       CompilationProviderOptions::NvJitLinkMode::kDisabled,
       /*enable_libnvptxcompiler=*/false,
-      /*enable_llvm_module_compilation_parallelism=*/false,
       /*enable_driver_compilation=*/true,
       /*cuda_data_dir=*/"/does/not/exist",
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CompilationProvider> compilation_provider,
       AssembleCompilationProvider(options));
 
@@ -102,12 +101,11 @@ TEST(AssembleCompilationProviderTest,
   CompilationProviderOptions options{
       CompilationProviderOptions::NvJitLinkMode::kDisabled,
       /*enable_libnvptxcompiler=*/false,
-      /*enable_llvm_module_compilation_parallelism=*/false,
       /*enable_driver_compilation=*/false,
       /*cuda_data_dir=*/cuda_dir,
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CompilationProvider> compilation_provider,
       AssembleCompilationProvider(options));
 
@@ -125,12 +123,11 @@ TEST(
   CompilationProviderOptions options{
       CompilationProviderOptions::NvJitLinkMode::kEnabled,
       /*enable_libnvptxcompiler=*/false,
-      /*enable_llvm_module_compilation_parallelism=*/false,
       /*enable_driver_compilation=*/false,
       /*cuda_data_dir=*/"/does/not/exist",
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CompilationProvider> compilation_provider,
       AssembleCompilationProvider(options));
 
@@ -151,12 +148,11 @@ TEST(AssembleCompilationProviderTest,
   CompilationProviderOptions options{
       CompilationProviderOptions::NvJitLinkMode::kEnabled,
       /*enable_libnvptxcompiler=*/true,
-      /*enable_llvm_module_compilation_parallelism=*/false,
       /*enable_driver_compilation=*/false,
       /*cuda_data_dir=*/"/does/not/exist",
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CompilationProvider> compilation_provider,
       AssembleCompilationProvider(options));
 

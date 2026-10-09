@@ -74,6 +74,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
@@ -86,10 +87,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/MD5.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 
 ABSL_FLAG(std::string, align, "16", "Align embedded data to this value.");
 ABSL_FLAG(bool, allow_dir, false,
@@ -172,7 +173,7 @@ absl::StatusOr<std::vector<std::string>> ExpandDirs(
       return absl::FailedPreconditionError(absl::StrCat(
           "filewrapper: refusing to process dir '", filename, "'"));
     } else if (s.ok()) {
-      TF_RETURN_IF_ERROR(env.GetChildren(filename, &to_process));
+      ABSL_RETURN_IF_ERROR(env.GetChildren(filename, &to_process));
     } else if (absl::IsFailedPrecondition(s)) {
       allfiles.push_back(filename);
     }
@@ -558,9 +559,9 @@ absl::Status WriteCpp(tsl::Env* env, const std::string& cc_filename,
     // simple cross-platform way to truncate files, so we just read and write
     // again.
     std::string contents;
-    TF_RETURN_IF_ERROR(tsl::ReadFileToString(env, cc_filename, &contents));
+    ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(env, cc_filename, &contents));
     contents.resize(end_pos);
-    TF_RETURN_IF_ERROR(tsl::WriteStringToFile(env, cc_filename, contents));
+    ABSL_RETURN_IF_ERROR(tsl::WriteStringToFile(env, cc_filename, contents));
   }
 
   return absl::OkStatus();

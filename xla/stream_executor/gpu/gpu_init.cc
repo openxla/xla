@@ -19,9 +19,9 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/logging.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
-#include "tsl/platform/logging.h"
 
 namespace stream_executor {
 
@@ -47,6 +47,8 @@ Platform* GPUMachineManager() {
 std::string GpuPlatformName() {
 #if TENSORFLOW_USE_ROCM
   return "ROCM";
+#elif TENSORFLOW_USE_SYCL
+  return "SYCL";
 #else
   // This function will return "CUDA" even when building TF without GPU support
   // This is done to preserve existing functionality

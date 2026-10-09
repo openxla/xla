@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -35,8 +35,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "stablehlo/dialect/StablehloOps.h"
-#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 
 namespace mlir::triton::xla {
 
@@ -88,8 +88,8 @@ absl::StatusOr<TensorValue> CanonicalizeDotOperand(
         "Expected dot operand tile to have exactly two non-unit tile sizes");
   }
   if (shape.size() != shape_without_unit_dims.size()) {
-    ASSIGN_OR_RETURN(operand, ::xla::xtile::EmitTiledReshape(
-                                  b, shape_without_unit_dims, operand));
+    ABSL_ASSIGN_OR_RETURN(operand, ::xla::xtile::EmitTiledReshape(
+                                       b, shape_without_unit_dims, operand));
   }
   int expected_contracting_dim_position = side == DotOperandSide::kLhs ? 1 : 0;
   bool is_transposed =
@@ -217,6 +217,15 @@ mlir::LogicalResult LowerReshape::matchAndRewrite(
   bool allow_reorder = false;
   rewriter.replaceOpWithNewOp<ttir::ReshapeOp>(op, op.getResult().getType(),
                                                op.getOperand(), allow_reorder);
+  return mlir::success();
+}
+
+mlir::LogicalResult LowerTranspose::matchAndRewrite(
+    stablehlo::TransposeOp op, mlir::PatternRewriter& rewriter) const {
+  SmallVector<int32_t> permutation =
+      llvm::to_vector_of<int32_t>(op.getPermutation());
+  rewriter.replaceOpWithNewOp<ttir::TransOp>(op, op.getResult().getType(),
+                                             op.getOperand(), permutation);
   return mlir::success();
 }
 

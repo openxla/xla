@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "xla/error_spec.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
@@ -21,8 +22,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-class KernelLaunchTest
-    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {};
+class KernelLaunchTest : public HloInterpreterReferenceMixin<HloTestBase> {};
 
 TEST_F(KernelLaunchTest, Basic) {
   const char* hlo_text = R"(

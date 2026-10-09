@@ -19,12 +19,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "third_party/gpus/cudnn/cudnn_version.h"
-#if CUDNN_VERSION >= 90000
 #include "third_party/gpus/cudnn/cudnn_graph.h"
-#else
-#include "third_party/gpus/cudnn/cudnn_ops_infer.h"
-#endif
+#include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/stream_executor/semantic_version.h"
 
 namespace stream_executor {

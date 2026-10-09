@@ -20,11 +20,11 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
-#include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
+#include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
+#include "xla/tsl/profiler/utils/xplane_schema.h"
 
 namespace xla {
 namespace ifrt {

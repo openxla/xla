@@ -12,11 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
 #include "xla/debug_options_flags.h"
@@ -24,21 +25,25 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
-#include "xla/service/computation_placer.h"
-#include "xla/service/executable.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
 
-class GpuSpmdE2ECompileTest : public HloPjRtTestBase {
+bool IsCollectiveOp(const HloInstruction* instr) {
+  return hlo_query::IsCollectiveCommunicationOp(instr->opcode()) ||
+         hlo_query::IsAsyncCollectiveStartOp(instr) ||
+         hlo_query::IsAsyncCollectiveDoneOp(instr);
+}
+
+class GpuSpmdE2ECompileTest : public HloTestBase {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloPjRtTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(0);
     return debug_options;
   }
@@ -64,7 +69,7 @@ ENTRY entry {
   absl::StatusOr<std::unique_ptr<OpaqueExecutable>> executable =
       CreateExecutable(std::move(hlo_module),
                        /*run_hlo_passes=*/true);
-  TF_EXPECT_OK(executable.status());
+  EXPECT_OK(executable.status());
 }
 
 TEST_F(GpuSpmdE2ECompileTest, DotSharding) {
@@ -99,9 +104,7 @@ ENTRY main {
   // module.
   const bool has_collective_ops = absl::c_any_of(
       optimized_module->entry_computation()->instructions(),
-      [](const HloInstruction* inst) {
-        return hlo_query::IsCollectiveCommunicationOp(inst->opcode());
-      });
+      [](const HloInstruction* inst) { return IsCollectiveOp(inst); });
   EXPECT_FALSE(has_collective_ops);
 }
 
@@ -138,7 +141,7 @@ ENTRY main {
   // dependencies.
   const HloComputation* entry = optimized_module->entry_computation();
   for (const HloInstruction* instr : entry->instructions()) {
-    if (!hlo_query::IsCollectiveCommunicationOp(instr->opcode())) {
+    if (!IsCollectiveOp(instr)) {
       continue;
     }
     EXPECT_TRUE(instr->control_predecessors().empty());
@@ -187,7 +190,7 @@ ENTRY main {
   bool has_control_deps = false;
   const HloComputation* entry = optimized_module->entry_computation();
   for (const HloInstruction* instr : entry->instructions()) {
-    if (!hlo_query::IsCollectiveCommunicationOp(instr->opcode())) {
+    if (!IsCollectiveOp(instr)) {
       continue;
     }
     has_control_deps |= !instr->control_predecessors().empty() ||

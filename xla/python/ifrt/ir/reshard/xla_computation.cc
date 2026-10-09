@@ -26,12 +26,14 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -47,6 +49,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -102,18 +105,26 @@ std::vector<int64_t> FindDonatableInputs(
 // work by the time when the execution is considered complete).
 absl::Status SetComputeType(xla::XlaBuilder& builder, xla::XlaOp op,
                             const MemoryKind& memory_kind) {
-  if (memory_kind.memory_kind().has_value()) {
-    if (*memory_kind.memory_kind() == "device") {
-      // No need to set the attribute.
-    } else if (*memory_kind.memory_kind() == "pinned_host") {
-      TF_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
-          op, "_xla_compute_type", "host"));
-    } else {
-      return absl::UnimplementedError(
-          absl::StrCat("Unsupported memory kind: ", memory_kind));
-    }
+  if (memory_kind.is_default()) {
+    // No need to set the attribute.
+  } else if (memory_kind.value() == "pinned_host") {
+    ABSL_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
+        op, "_xla_compute_type", "host"));
+  } else {
+    return absl::UnimplementedError(
+        absl::StrCat("Unsupported memory kind: ", memory_kind));
   }
   return absl::OkStatus();
+}
+
+// Returns a string representation of a span of `MemoryKind`s. This is used to
+// include memory kinds in the fingerprint of an XLA computation.
+std::string MemoryKindsToString(absl::Span<const MemoryKind> memory_kinds) {
+  std::string s;
+  for (const MemoryKind& memory_kind : memory_kinds) {
+    absl::StrAppend(&s, memory_kind.value(), ";");
+  }
+  return s;
 }
 
 }  // namespace
@@ -132,7 +143,23 @@ XlaComputationBuilder::BuildXlaReshardComputation(
                xla_shape.tuple_shapes().size());
   const int64_t num_arrays = xla_shape.tuple_shapes().size();
 
-  xla::XlaBuilder builder(pre_resharding ? "pre_reshard" : "post_reshard");
+  std::string base_name = pre_resharding ? "pre_reshard" : "post_reshard";
+  std::string serialized_xla_shape;
+  CHECK(tsl::SerializeToStringDeterministic(xla_shape.ToProto(),
+                                            &serialized_xla_shape));
+  std::string serialized_old_hlo_sharding;
+  CHECK(tsl::SerializeToStringDeterministic(old_hlo_sharding.ToProto(),
+                                            &serialized_old_hlo_sharding));
+  std::string serialized_new_hlo_sharding;
+  CHECK(tsl::SerializeToStringDeterministic(new_hlo_sharding.ToProto(),
+                                            &serialized_new_hlo_sharding));
+  std::string full_name =
+      absl::StrCat(base_name, "_",
+                   tsl::Fingerprint64(absl::StrCat(
+                       serialized_xla_shape, ";", serialized_old_hlo_sharding,
+                       ";", serialized_new_hlo_sharding, ";",
+                       MemoryKindsToString(memory_kinds))));
+  xla::XlaBuilder builder(full_name);
   std::vector<xla::XlaOp> params;
   params.reserve(num_arrays);
   for (int64_t idx = 0; idx < num_arrays; ++idx) {
@@ -146,14 +173,14 @@ XlaComputationBuilder::BuildXlaReshardComputation(
     // TODO(b/391701945): Remove this custom call. In principle, we should not
     // need this extra annotation because we already set `mhlo.memory_kind`
     // attribute for the output in `ConvertToHloProgram()`.
-    if (memory_kinds[idx].memory_kind().has_value() && device_kind_ != "cpu") {
+    if (!memory_kinds[idx].is_default() && device_kind_ != "cpu") {
       param = xla::CustomCall(&builder, "annotate_device_placement", {param},
                               xla_shape.tuple_shapes(idx),
                               /*opaque=*/"",
                               /*has_side_effect=*/true);
-      TF_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
+      ABSL_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
           param, "_xla_buffer_placement",
-          std::string(*memory_kinds[idx].memory_kind())));
+          std::string(memory_kinds[idx].value())));
     }
     params.push_back(param);
   }
@@ -162,9 +189,9 @@ XlaComputationBuilder::BuildXlaReshardComputation(
     xla::XlaScopedShardingAssignment sa(&builder, new_hlo_sharding.ToProto());
     root = xla::Tuple(&builder, params);
   }
-  TF_ASSIGN_OR_RETURN(auto hlo, builder.Build(root));
+  ABSL_ASSIGN_OR_RETURN(auto hlo, builder.Build(root));
 
-  TF_ASSIGN_OR_RETURN(auto program_shape, hlo.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(auto program_shape, hlo.GetProgramShape());
   TF_RET_CHECK(program_shape.result() == xla_shape);
 
   std::vector<int64_t> donatable_input_indices = FindDonatableInputs(
@@ -192,7 +219,17 @@ XlaComputationBuilder::BuildXlaZerosComputation(
             xla_shape.tuple_shapes(idx)));
   }
 
-  xla::XlaBuilder builder("zeros");
+  std::string serialized_xla_shape;
+  CHECK(tsl::SerializeToStringDeterministic(xla_shape.ToProto(),
+                                            &serialized_xla_shape));
+  std::string serialized_new_hlo_sharding;
+  CHECK(tsl::SerializeToStringDeterministic(new_hlo_sharding.ToProto(),
+                                            &serialized_new_hlo_sharding));
+  std::string full_name = absl::StrCat(
+      "zeros_", tsl::Fingerprint64(absl::StrCat(
+                    serialized_xla_shape, ";", serialized_new_hlo_sharding, ";",
+                    MemoryKindsToString(memory_kinds))));
+  xla::XlaBuilder builder(full_name);
   std::vector<xla::XlaOp> elems;
   elems.reserve(num_arrays);
   for (int64_t idx = 0; idx < num_arrays; ++idx) {
@@ -201,26 +238,26 @@ XlaComputationBuilder::BuildXlaZerosComputation(
     xla::XlaOp zeros =
         xla::Broadcast(zero, new_buffer_shapes[idx].dimensions());
     if (device_kind_ != "cpu") {
-      TF_RETURN_IF_ERROR(SetComputeType(builder, zeros, memory_kinds[idx]));
+      ABSL_RETURN_IF_ERROR(SetComputeType(builder, zeros, memory_kinds[idx]));
       // TODO(b/391701945): Remove this custom call. In principle, we should not
       // need this extra annotation because we already set `mhlo.memory_kind`
       // attribute for the output in `ConvertToHloProgram()`.
-      if (memory_kinds[idx].memory_kind().has_value()) {
+      if (!memory_kinds[idx].is_default()) {
         zeros = xla::CustomCall(&builder, "annotate_device_placement", {zeros},
                                 new_buffer_shapes[idx],
                                 /*opaque=*/"",
                                 /*has_side_effect=*/true);
-        TF_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
+        ABSL_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
             zeros, "_xla_buffer_placement",
-            std::string(*memory_kinds[idx].memory_kind())));
+            std::string(memory_kinds[idx].value())));
       }
     }
     elems.push_back(zeros);
   }
   xla::XlaOp root = xla::Tuple(&builder, elems);
-  TF_ASSIGN_OR_RETURN(auto hlo, builder.Build(root));
+  ABSL_ASSIGN_OR_RETURN(auto hlo, builder.Build(root));
 
-  TF_ASSIGN_OR_RETURN(auto program_shape, hlo.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(auto program_shape, hlo.GetProgramShape());
   TF_RET_CHECK(program_shape.result().IsTuple());
   TF_RET_CHECK(program_shape.result().tuple_shapes().size() == num_arrays);
   for (int64_t idx = 0; idx < num_arrays; ++idx) {
@@ -251,7 +288,25 @@ XlaComputationBuilder::BuildXlaReduceComputation(
                new_xla_shape.tuple_shapes().size());
   const int64_t num_arrays = old_xla_shape.tuple_shapes().size();
 
-  xla::XlaBuilder builder("reduce");
+  std::string serialized_old_xla_shape;
+  CHECK(tsl::SerializeToStringDeterministic(old_xla_shape.ToProto(),
+                                            &serialized_old_xla_shape));
+  std::string serialized_old_hlo_sharding;
+  CHECK(tsl::SerializeToStringDeterministic(old_hlo_sharding.ToProto(),
+                                            &serialized_old_hlo_sharding));
+  std::string serialized_new_xla_shape;
+  CHECK(tsl::SerializeToStringDeterministic(new_xla_shape.ToProto(),
+                                            &serialized_new_xla_shape));
+  std::string serialized_new_hlo_sharding;
+  CHECK(tsl::SerializeToStringDeterministic(new_hlo_sharding.ToProto(),
+                                            &serialized_new_hlo_sharding));
+  std::string full_name = absl::StrCat(
+      "reduce_",
+      tsl::Fingerprint64(absl::StrCat(
+          serialized_old_xla_shape, ";", serialized_old_hlo_sharding, ";",
+          serialized_new_xla_shape, ";", serialized_new_hlo_sharding, ";",
+          MemoryKindsToString(memory_kinds))));
+  xla::XlaBuilder builder(full_name);
   std::vector<xla::XlaOp> params;
   params.reserve(num_arrays);
   for (int64_t idx = 0; idx < num_arrays; ++idx) {
@@ -288,7 +343,8 @@ XlaComputationBuilder::BuildXlaReduceComputation(
     xla::LayoutUtil::SetToDefaultLayout(&reshaped_shape);
     xla::XlaOp reshaped = xla::Reshape(reshaped_shape, params[idx]);
     if (device_kind_ != "cpu") {
-      TF_RETURN_IF_ERROR(SetComputeType(builder, reshaped, memory_kinds[idx]));
+      ABSL_RETURN_IF_ERROR(
+          SetComputeType(builder, reshaped, memory_kinds[idx]));
     }
 
     // Reduce-sum over the first dimension.
@@ -298,18 +354,18 @@ XlaComputationBuilder::BuildXlaReduceComputation(
                                         &builder),
         {0});
     if (device_kind_ != "cpu") {
-      TF_RETURN_IF_ERROR(SetComputeType(builder, reduced, memory_kinds[idx]));
+      ABSL_RETURN_IF_ERROR(SetComputeType(builder, reduced, memory_kinds[idx]));
       // TODO(b/391701945): Remove this custom call. In principle, we should not
       // need this extra annotation because we already set `mhlo.memory_kind`
       // attribute for the output in `ConvertToHloProgram()`.
-      if (memory_kinds[idx].memory_kind().has_value()) {
+      if (!memory_kinds[idx].is_default()) {
         reduced = xla::CustomCall(&builder, "annotate_device_placement",
                                   {reduced}, new_xla_shape.tuple_shapes(idx),
                                   /*opaque=*/"",
                                   /*has_side_effect=*/true);
-        TF_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
+        ABSL_RETURN_IF_ERROR(builder.SetInstructionFrontendAttribute(
             reduced, "_xla_buffer_placement",
-            std::string(*memory_kinds[idx].memory_kind())));
+            std::string(memory_kinds[idx].value())));
       }
     }
     elems.push_back(reduced);
@@ -319,9 +375,9 @@ XlaComputationBuilder::BuildXlaReduceComputation(
     xla::XlaScopedShardingAssignment sa(&builder, new_hlo_sharding.ToProto());
     root = xla::Tuple(&builder, elems);
   }
-  TF_ASSIGN_OR_RETURN(auto hlo, builder.Build(root));
+  ABSL_ASSIGN_OR_RETURN(auto hlo, builder.Build(root));
 
-  TF_ASSIGN_OR_RETURN(auto program_shape, hlo.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(auto program_shape, hlo.GetProgramShape());
   TF_RET_CHECK(program_shape.result() == new_xla_shape);
 
   std::vector<int64_t> donatable_input_indices = FindDonatableInputs(

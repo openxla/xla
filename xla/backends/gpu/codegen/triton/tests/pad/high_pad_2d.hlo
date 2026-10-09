@@ -1,8 +1,5 @@
-// RUN: hlo_to_xtileir %s | FileCheck %s
+// RUN: fusion_to_triton %s | FileCheck %s
 // RUN: triton_test_correctness %s
-
-// RUN: hlo_to_xtileir %s --xla_gpu_experimental_enable_tiling_propagation | FileCheck %s
-// RUN: triton_test_correctness %s --xla_gpu_experimental_enable_tiling_propagation
 
 triton_computation {
   param_0 = f32[17,137]{1,0} parameter(0)

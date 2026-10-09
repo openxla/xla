@@ -26,9 +26,9 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "tsl/platform/platform.h"  // IWYU pragma: keep
 #if !defined(IS_MOBILE_PLATFORM)
 #include "xla/tsl/profiler/utils/traceme_global_flags.h"
 #endif
@@ -37,11 +37,15 @@ limitations under the License.
 #define TRACEME_ENCODE_TOSTRING(x) TRACEME_ENCODE_STRINGIFY(x)
 #define TRACEME_FILE_AND_LINE __FILE__ ":" TRACEME_ENCODE_TOSTRING(__LINE__)
 
-#if !defined(LIBTPU_ON_GCE) && ABSL_HAVE_BUILTIN(__builtin_FILE)
+#if !defined(LIBTPU_ON_GCE)
+#if ABSL_HAVE_BUILTIN(__builtin_FILE)
 // TODO(b/507077868): Switch to absl::SourceLocation after XLA upgrades to the
 // next absl version. For more details, see
 // https://gist.github.com/youchunni/24ee88f9daa9566312f055d71513dbea
 #define TRACEME_DEFAULT_FILE __builtin_FILE()
+#else
+#define TRACEME_DEFAULT_FILE ""
+#endif
 #else
 #define TRACEME_DEFAULT_FILE ""
 #endif

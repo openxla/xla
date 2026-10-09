@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/ifrt/layout.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <tuple>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -197,7 +198,7 @@ TEST(LayoutTest, EquivalentLayouts) {
   auto memory0 = std::make_unique<MockMemory>();
   auto memory1 = std::make_unique<MockMemory>();
   auto memory2 = std::make_unique<MockMemory>();
-  MemoryKind memory_kind0("memory kind 0");
+  MemoryKind memory_kind0;
   ON_CALL(*memory0, Kind()).WillByDefault(ReturnRef(memory_kind0));
   ON_CALL(*memory1, Kind()).WillByDefault(ReturnRef(memory_kind0));
   ON_CALL(*memory2, Kind()).WillByDefault(ReturnRef(memory_kind0));

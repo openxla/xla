@@ -31,12 +31,12 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -327,6 +327,12 @@ class CallGraph {
   // sequential context. The call graph of a module can be flattened with
   // FlattenCallGraph.
   bool IsFlattened() const;
+
+  // Returns whether the call graph is flat for control flow (kWhile and
+  // kConditional). All called computations of control flow instructions must be
+  // called by exactly one control flow instruction, and each called computation
+  // of a control flow instruction should be separate from each other.
+  bool IsFlatOnControlFlow() const;
 
   // Returns a vector of instructions calling the passed computation.
   // (Often a vector of size 1.)

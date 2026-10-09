@@ -1,3 +1,17 @@
+// Copyright 2026 The OpenXLA Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
 // RUN: emitters_opt %s -split-input-file -xla-simplify-arith -cse \
 // RUN:   -canonicalize | FileCheck %s
 
@@ -264,7 +278,7 @@ func.func @refine_constraints(%tensor: tensor<100xf32>) -> tensor<100xf32> {
 // -----
 
 #map = #xla.indexing_map<
-  "(d0, d1)[s0, s1] -> (((d0 * 4 + d1 * 512 + s1) floordiv 9 + s0 * 32768) mod 2400000),"
+  "(d0, d1)[s0, s1] -> (((d0 * 4 + d1 * 512 + s1) / 9 + s0 * 32768) mod 2400000),"
   "domain: d0 in [0, 127], d1 in [0, 575], s0 in [0, 73], s1 in [0, 3]">
 #map1 = #xla.indexing_map<"(d0, d1)[s0] -> ((d0 * 4 + d1 * 512 + s0) mod 9),"
   "domain: d0 in [0, 127], d1 in [0, 575], s0 in [0, 3]">
@@ -291,13 +305,13 @@ func.func @refine_constraints_for_symbol(%arg0: tensor<2400000x9xf32>,
   }
   return %0 : tensor<2400000x9xf32>
 }
-// CHECK: #[[$MAP:.*]] = #xla.indexing_map<"(d0, d1, d2, d3) -> (d2 * 32768 + (d0 * 4 + d1 * 512 + d3) floordiv 9),
+// CHECK: #[[$MAP:.*]] = #xla.indexing_map<"(d0, d1, d2, d3) -> (d2 * 32768 + (d0 * 4 + d1 * 512 + d3) / 9),
 // CHECK-LABEL: func.func @refine_constraints_for_symbol
 
 // -----
 
 #map = #xla.indexing_map<
-  "(d0, d1, d2, d3, d4, d5)[s0] -> ((d0 * 4 + s0) floordiv 6, (d0 * 4 + s0) mod 6),"
+  "(d0, d1, d2, d3, d4, d5)[s0] -> ((d0 * 4 + s0) / 6, (d0 * 4 + s0) mod 6),"
   "domain:"
   "d0 in [0, 29],"
   "d1 in [0, 0],"
@@ -435,3 +449,48 @@ module {
 // CHECK-NEXT: %[[MAX:.*]] = arith.minimumf %[[ARG0]], %[[ARG1]] : f32
 // CHECK-NEXT: return %[[MAX]] : f32
 
+// -----
+
+module {
+  func.func @pred_reduce_tensor(%in: tensor<16xi1>, %shuffled: tensor<16xi32>) -> tensor<16xi1> {
+    %0 = arith.trunci %shuffled : tensor<16xi32> to tensor<16xi1>
+    %1 = arith.ori %in, %0 : tensor<16xi1>
+    return %1 : tensor<16xi1>
+  }
+}
+
+// CHECK-LABEL: @pred_reduce_tensor
+// CHECK: %[[EXT:.*]] = arith.extui %arg0
+// CHECK-NEXT: %[[ORI:.*]] = arith.ori %[[EXT]], %arg1
+// CHECK-NEXT: %[[TRUNC:.*]] = arith.trunci %[[ORI]]
+// CHECK-NEXT: return %[[TRUNC]]
+
+// -----
+
+module {
+  func.func @both_range_tensor(%arg0: tensor<4xindex> {xla.range = [12 : index, 42 : index]},
+                               %arg1: tensor<4xindex> {xla.range = [63 : index, 100 : index]}) -> tensor<4xi1> {
+    %eq = arith.cmpi slt, %arg0, %arg1 : tensor<4xindex>
+    return %eq : tensor<4xi1>
+  }
+}
+
+// CHECK-LABEL: @both_range_tensor
+// CHECK-NEXT: %[[CST:.*]] = arith.constant dense<true> : tensor<4xi1>
+// CHECK-NEXT: return %[[CST]]
+
+// -----
+
+#constrained_map = #xla.indexing_map<"(d0, d1) -> ((d0 * 21846 + d1) floordiv 256), domain: d0 in [0, 11], d1 in [0, 21845]">
+module {
+  func.func @apply_indexing_range_attr(%pid: index, %tid: index) -> i1 {
+    %row = xla.apply_indexing #constrained_map(%pid, %tid) {xla.range = [0 : index, 1023 : index]}
+    %c1024 = arith.constant 1024 : index
+    %in_bounds = arith.cmpi slt, %row, %c1024 : index
+    return %in_bounds : i1
+  }
+}
+
+// CHECK-LABEL: @apply_indexing_range_attr
+// CHECK-NEXT: %[[TRUE:.*]] = arith.constant true
+// CHECK-NEXT: return %[[TRUE]]

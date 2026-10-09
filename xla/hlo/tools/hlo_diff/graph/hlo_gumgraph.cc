@@ -26,9 +26,11 @@
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -43,7 +45,6 @@
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace hlo_diff {
@@ -65,7 +66,8 @@ HloPrintOptions CreateHloPrintOptions(
           .set_print_subcomputation_mode(
               HloPrintOptions::PrintSubcomputationMode::kOff)
           .set_print_parameter_number(false)
-          .set_print_only_essential_constants(false);
+          .set_print_only_essential_constants(false)
+          .set_print_large_constants(true);
   if (fingerprint_options.ignore_shape) {
     hlo_print_options.set_print_operand_shape(false);
     hlo_print_options.set_print_result_shape(false);
@@ -153,7 +155,7 @@ absl::Status HloGumgraph::ConstructGraph(const HloModule& hlo_module) {
           for (auto* computation : instruction->called_computations()) {
             if (call_graph_->GetComputationCallers(computation).size() == 1) {
               inline_called_computations = true;
-              TF_RETURN_IF_ERROR(ConnectCalledComputation(
+              ABSL_RETURN_IF_ERROR(ConnectCalledComputation(
                   instruction->operands(),
                   computation->parameter_instructions()));
             }
@@ -178,7 +180,7 @@ absl::Status HloGumgraph::ConstructGraph(const HloModule& hlo_module) {
                     ->GetComputationCallers(instruction->branch_computation(i))
                     .size() == 1) {
               inline_called_computations = true;
-              TF_RETURN_IF_ERROR(ConnectCalledComputation(
+              ABSL_RETURN_IF_ERROR(ConnectCalledComputation(
                   HloInstruction::InstructionVector(
                       {instruction->operands()[i + 1]}),
                   instruction->branch_computation(i)
@@ -192,7 +194,7 @@ absl::Status HloGumgraph::ConstructGraph(const HloModule& hlo_module) {
       }
 
       if (!inline_called_computations) {
-        TF_RETURN_IF_ERROR(ConnectOperands(node));
+        ABSL_RETURN_IF_ERROR(ConnectOperands(node));
       }
 
       // Connect the root instruction of the called computation with the
@@ -299,8 +301,8 @@ void HloGumgraph::PrecomputeSizeAndHeight() {
 
 absl::Status HloGumgraph::PrecomputeComputationFingerprint() {
   LOG(INFO) << "Precomputing computation fingerprint";
-  TF_RETURN_IF_ERROR(call_graph_->VisitNodes([&](const CallGraphNode& node)
-                                                 -> absl::Status {
+  ABSL_RETURN_IF_ERROR(call_graph_->VisitNodes([&](const CallGraphNode& node)
+                                                   -> absl::Status {
     absl::flat_hash_map<const HloInstruction*, uint64_t> subgraph_fingerprint;
     const HloComputation* computation = node.computation();
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
@@ -395,14 +397,14 @@ absl::StatusOr<std::unique_ptr<const HloGumgraph>> HloGumgraph::Create(
       new HloGumgraph(*hlo_module, fingerprint_options, std::move(call_graph),
                       std::move(hlo_value_tracing_ptr)));
 
-  TF_RETURN_IF_ERROR(graph->ConstructGraph(*hlo_module));
-  TF_ASSIGN_OR_RETURN(std::vector<HloInstructionNode*> zero_indegree_nodes,
-                      graph->PrecomputeGenerations());
+  ABSL_RETURN_IF_ERROR(graph->ConstructGraph(*hlo_module));
+  ABSL_ASSIGN_OR_RETURN(std::vector<HloInstructionNode*> zero_indegree_nodes,
+                        graph->PrecomputeGenerations());
   for (auto* zero_indegree_node : zero_indegree_nodes) {
     AddEdge(&graph->root_, zero_indegree_node);
   }
   graph->PrecomputeSizeAndHeight();
-  TF_RETURN_IF_ERROR(graph->PrecomputeComputationFingerprint());
+  ABSL_RETURN_IF_ERROR(graph->PrecomputeComputationFingerprint());
   if (precompute_instruction_dependencies) {
     graph->PrecomputeInstructionDependencies();
   }

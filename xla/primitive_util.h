@@ -33,11 +33,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace primitive_util {
@@ -75,6 +75,9 @@ bool HasNaN(PrimitiveType type);
 
 // Returns whether the type has a value for negative zero.
 bool HasNegativeZero(PrimitiveType type);
+
+// Returns whether the type has a value for positive zero.
+bool HasPositiveZero(PrimitiveType type);
 
 // Returns the XLA primitive type (eg, F32) corresponding to the given
 // template parameter native type (eg, float). Doesn't compile if the native
@@ -193,6 +196,16 @@ constexpr PrimitiveType NativeToPrimitiveType<bfloat16>() {
 template <>
 constexpr PrimitiveType NativeToPrimitiveType<tsl::float4_e2m1fn>() {
   return F4E2M1FN;
+}
+
+template <>
+constexpr PrimitiveType NativeToPrimitiveType<tsl::float6_e3m2fn>() {
+  return F6E3M2FN;
+}
+
+template <>
+constexpr PrimitiveType NativeToPrimitiveType<tsl::float6_e2m3fn>() {
+  return F6E2M3FN;
 }
 
 template <>
@@ -357,6 +370,16 @@ struct PrimitiveTypeToNative<F4E2M1FN> {
 };
 
 template <>
+struct PrimitiveTypeToNative<F6E3M2FN> {
+  using type = tsl::float6_e3m2fn;
+};
+
+template <>
+struct PrimitiveTypeToNative<F6E2M3FN> {
+  using type = tsl::float6_e2m3fn;
+};
+
+template <>
 struct PrimitiveTypeToNative<F8E5M2> {
   using type = tsl::float8_e5m2;
 };
@@ -418,9 +441,16 @@ template <PrimitiveType kPrimitiveType>
 using PrimitiveTypeConstant =
     std::integral_constant<PrimitiveType, kPrimitiveType>;
 
-// Returns true if the given primitive type is a MX floating-point type.
+// Returns true if the given primitive type is a microscaling (MX) specific
+// format that is not classified under standard F8 or F6 types (e.g. 4-bit
+// formats or scale-only formats like E8M0).
 constexpr bool IsMXType(PrimitiveType type) {
   return type == F4E2M1FN || type == F8E8M0FNU;
+}
+
+// Returns true if the given primitive type is an 6-bit floating-point type.
+constexpr bool IsF6Type(PrimitiveType type) {
+  return type == F6E3M2FN || type == F6E2M3FN;
 }
 
 // Returns true if the given primitive type is an 8-bit floating-point type.
@@ -433,7 +463,7 @@ constexpr bool IsF8Type(PrimitiveType type) {
 // Returns true if the given primitive type is a floating-point type.
 constexpr bool IsFloatingPointType(PrimitiveType type) {
   return type == F16 || type == F32 || type == F64 || type == BF16 ||
-         IsF8Type(type) || IsMXType(type);
+         IsF8Type(type) || IsF6Type(type) || IsMXType(type);
 }
 
 // Returns true if the given primitive type is a complex type.
@@ -547,6 +577,12 @@ constexpr decltype(auto) FloatingPointTypeSwitch(F&& f, PrimitiveType type) {
       case F4E2M1FN:
         return std::forward<F>(f)(
             PrimitiveTypeConstant<PrimitiveType::F4E2M1FN>());
+      case F6E3M2FN:
+        return std::forward<F>(f)(
+            PrimitiveTypeConstant<PrimitiveType::F6E3M2FN>());
+      case F6E2M3FN:
+        return std::forward<F>(f)(
+            PrimitiveTypeConstant<PrimitiveType::F6E2M3FN>());
       case F8E3M4:
         return std::forward<F>(f)(
             PrimitiveTypeConstant<PrimitiveType::F8E3M4>());
@@ -666,6 +702,8 @@ constexpr void IntegralTypeForEach(F&& f) {
 template <typename F>
 constexpr void FloatingPointTypeForEach(F&& f) {
   std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F4E2M1FN>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F6E3M2FN>());
+  std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F6E2M3FN>());
   std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E3M4>());
   std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E4M3>());
   std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::F8E4M3FN>());
@@ -780,6 +818,32 @@ inline constexpr int StorageBitWidth(PrimitiveType type) {
 // if the type is not an array type.
 inline constexpr int ByteWidth(PrimitiveType type) {
   return internal::WidthForType<internal::kByteWidths>(type);
+}
+
+// If `type` is an array type, returns the result of applying polymorphic
+// functor f on a canonical PrimitiveTypeConstant<kType> value with the same
+// ByteWidth(type) (U8 for 1-byte, U16 for 2-byte, U32 for 4-byte, U64 for
+// 8-byte, and C128 for 16-byte types); otherwise crashes.
+template <typename F>
+constexpr decltype(auto) ByteWidthTypeSwitch(F&& f, PrimitiveType type) {
+  if (ABSL_PREDICT_TRUE(IsArrayType(type))) {
+    switch (ByteWidth(type)) {
+      case 1:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U8>());
+      case 2:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U16>());
+      case 4:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U32>());
+      case 8:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U64>());
+      case 16:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::C128>());
+      default:
+        LOG(FATAL) << "Unexpected byte width " << ByteWidth(type)
+                   << " for type " << type;
+    }
+  }
+  LOG(FATAL) << "Not an array data type " << type;
 }
 
 // Returns the primitive type for the unsigned integral type with the given

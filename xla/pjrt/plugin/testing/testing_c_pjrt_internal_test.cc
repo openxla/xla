@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/testing/testing_c_pjrt_internal.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -27,12 +28,12 @@ namespace testing {
 namespace {
 
 TEST(PjRtCApiTest, GetPjrtApi) {
-  const PJRT_Api* pjrt_api = GetTestingPjrtApi(nullptr);
+  const PJRT_Api* pjrt_api = GetTestingPjrtApi();
   ASSERT_NE(pjrt_api, nullptr);
 }
 
 TEST(PjRtCApiTest, TopologyCreate) {
-  const PJRT_Api* pjrt_api = GetTestingPjrtApi(nullptr);
+  const PJRT_Api* pjrt_api = GetTestingPjrtApi();
   PJRT_TopologyDescription_Create_Args args;
   args.struct_size = PJRT_TopologyDescription_Create_Args_STRUCT_SIZE;
   PJRT_Error* error = pjrt_api->PJRT_TopologyDescription_Create(&args);
@@ -43,7 +44,7 @@ TEST(PjRtCApiTest, TopologyCreate) {
 }
 
 TEST(PjRtCApiTest, ClientApi) {
-  const PJRT_Api* pjrt_api = GetTestingPjrtApi(nullptr);
+  const PJRT_Api* pjrt_api = GetTestingPjrtApi();
   ASSERT_NE(pjrt_api, nullptr);
 
   PJRT_Client_Create_Args create_args;
@@ -85,7 +86,8 @@ TEST(PjRtCApiTest, Extension) {
   my_extension.base.next = nullptr;
   my_extension.foo = 42;
 
-  const PJRT_Api* pjrt_api = GetTestingPjrtApi(&my_extension.base);
+  SetTestingPjRtExtension(&my_extension.base);
+  const PJRT_Api* pjrt_api = GetTestingPjrtApi();
   ASSERT_NE(pjrt_api, nullptr);
 
   const auto* layouts_extension = pjrt::FindExtension<PJRT_Layouts_Extension>(
@@ -97,6 +99,7 @@ TEST(PjRtCApiTest, Extension) {
   ASSERT_NE(unknown_extension, nullptr);
   EXPECT_EQ(&unknown_extension->base, &my_extension.base);
   EXPECT_EQ(unknown_extension->foo, 42);
+  SetTestingPjRtExtension(nullptr);
 }
 
 }  // namespace

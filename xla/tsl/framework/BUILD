@@ -1,3 +1,18 @@
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 # Description:
 #   Tensor Standard Libraries.
 #
@@ -47,14 +62,22 @@ filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
         "allocator.cc",
-        "allocator.h",
         "allocator_registry.cc",
-        "allocator_registry.h",
         "cpu_allocator_impl.cc",
+        "scoped_allocation_trace.cc",
+        "tracking_allocator.cc",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_no_runtime",
+    srcs = [
+        "allocator.h",
+        "allocator_registry.h",
         "device_type.h",
         "fixedpoint_types.h",
         "numeric_types.h",
-        "tracking_allocator.cc",
+        "scoped_allocation_trace.h",
         "tracking_allocator.h",
         "type_traits.h",
     ],
@@ -65,9 +88,15 @@ filegroup(
     name = "mobile_srcs_only_runtime",
     srcs = [
         "cancellation.cc",
+        "metrics.cc",
+    ],
+)
+
+filegroup(
+    name = "mobile_hdrs_only_runtime",
+    srcs = [
         "cancellation.h",
         "fixedpoint_types.h",
-        "metrics.cc",
         "metrics.h",
     ],
 )
@@ -108,28 +137,25 @@ cc_library(
     features = ["parse_headers"],
     visibility = ["//visibility:public"],
     deps = [
+        "//xla/tsl/lib/gtl:inlined_vector",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:thread_annotations",
     ] + if_static(
         extra_deps = [
             ":allocator_registry_impl",
-            "@com_google_absl//absl/synchronization",
-            "//xla/tsl/lib/gtl:inlined_vector",
-            "@tsl//tsl/platform:numbers",
             "@tsl//tsl/platform:strcat",
             "//xla/tsl/platform:env",
             "//xla/tsl/platform:env_impl",
-            "//xla/tsl/platform:logging",
-            "//xla/tsl/platform:macros",
-            "//xla/tsl/platform:types",
             "@tsl//tsl/platform:platform_port",
-            "@tsl//tsl/platform:thread_annotations",
         ],
         otherwise = [
-            "//xla/tsl/lib/gtl:inlined_vector",
-            "//xla/tsl/platform:logging",
-            "@tsl//tsl/platform:numbers",
             "@tsl//tsl/platform:platform_port",
             "@tsl//tsl/platform:strcat",
             "//xla/tsl/platform:env",
@@ -174,6 +200,20 @@ cc_library(
 )
 
 cc_library(
+    name = "scoped_allocation_trace",
+    srcs = ["scoped_allocation_trace.cc"],
+    hdrs = ["scoped_allocation_trace.h"],
+    features = ["parse_headers"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "bfc_allocator",
     srcs = [
         "allocator_retry.cc",
@@ -186,6 +226,7 @@ cc_library(
     deps = [
         ":allocator",
         ":metrics",
+        ":scoped_allocation_trace",
         ":shared_counter",
         "//xla/tsl/lib/core:bits",
         "//xla/tsl/platform:env",
@@ -214,14 +255,19 @@ tsl_cc_test(
     deps = [
         ":allocator",
         ":bfc_allocator",
+        ":scoped_allocation_trace",
+        ":shared_counter",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:env_impl",  # buildcleaner: keep
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -291,6 +337,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:str_util",

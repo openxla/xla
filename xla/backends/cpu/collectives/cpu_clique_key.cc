@@ -19,12 +19,13 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/hash/hash.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "tsl/platform/casts.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/runtime/device_id.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 

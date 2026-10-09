@@ -47,13 +47,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/stacktrace.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 
@@ -198,6 +198,16 @@ std::string RoundTripFpToString(tsl::float8_e3m4 value) {
 }
 
 std::string RoundTripFpToString(tsl::float8_e8m0fnu value) {
+  std::string result = GenericRoundTripFpToString(value);
+  return result;
+}
+
+std::string RoundTripFpToString(tsl::float6_e3m2fn value) {
+  std::string result = GenericRoundTripFpToString(value);
+  return result;
+}
+
+std::string RoundTripFpToString(tsl::float6_e2m3fn value) {
   std::string result = GenericRoundTripFpToString(value);
   return result;
 }

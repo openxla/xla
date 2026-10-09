@@ -24,7 +24,6 @@ limitations under the License.
 #include <random>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/types/span.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
@@ -37,6 +36,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
@@ -61,8 +61,8 @@ XlaOp ConvWithHighestPrecision(const XlaOp lhs, const XlaOp rhs,
               /*batch_group_count=*/1, &precision_config);
 }
 
-using ConvolutionVariantsTest = ClientLibraryTestRunnerMixin<
-    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>;
+using ConvolutionVariantsTest =
+    ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
 
 TEST_F(ConvolutionVariantsTest, Minimal) {
   XlaBuilder builder(TestName());

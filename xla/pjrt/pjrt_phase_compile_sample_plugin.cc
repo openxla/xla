@@ -113,7 +113,7 @@ absl::Status PhaseValidator(
 
 absl::StatusOr<std::vector<xla::PjRtPartialProgramProto>> PhaseCompiler(
     xla::CompileOptions compile_options,
-    const std::vector<xla::PjRtPartialProgramProto>& input_programs,
+    std::vector<xla::PjRtPartialProgramProto>&& input_programs,
     const xla::PjRtTopologyDescription& topology) {
   std::vector<xla::PjRtPartialProgramProto> serialized_output_objects;
   mlir::MLIRContext context;
@@ -161,7 +161,6 @@ absl::StatusOr<std::vector<xla::PjRtPartialProgramProto>> PhaseCompiler(
 
     serialized_output_objects.push_back(std::move(serialized_output_object));
   }
-
   return serialized_output_objects;
 }
 
@@ -221,6 +220,8 @@ PJRT_PhaseCompile_Extension CreateSamplePhaseCompileExtension() {
                                            PJRT_PhaseCompile_Destroy_Compiler);
 }
 
+const PJRT_Api* GetSamplePhaseCompilePjrtApi();
+
 PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_Create_Args", PJRT_Client_Create_Args_STRUCT_SIZE,
@@ -231,7 +232,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
 
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtClient> client,
                         xla::GetXlaPjrtCpuClient(std::move(options)));
-  args->client = pjrt::CreateWrapperClient(std::move(client));
+  args->client = pjrt::CreateWrapperClient(GetSamplePhaseCompilePjrtApi(),
+                                           std::move(client));
   return nullptr;
 }
 

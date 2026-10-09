@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/util/embedded_constant_buffers.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/TargetSelect.h"
@@ -64,6 +65,19 @@ TEST_F(EmbeddedConstantBuffersTest, CreateEmbeddedConstantBuffers) {
   EXPECT_EQ(embedded_constant_buffers.variable_decls[1].variable_name,
             "symbol2_constant_buffer_contents");
 
+  EXPECT_FALSE(embedded_constant_buffers.object_file_data.empty());
+}
+
+TEST_F(EmbeddedConstantBuffersTest, SerializeEmptyBuffer) {
+  ConstantToEmbed constant;
+  constant.symbol_prefix = "empty";
+  constant.SerializeIntoBuffer({});
+  EXPECT_GT(constant.data().size(), 0);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      EmbeddedConstantBuffers embedded_constant_buffers,
+      CreateEmbeddedConstantBuffers(kTargetTripleForHost,
+                                    absl::MakeSpan(&constant, 1)));
   EXPECT_FALSE(embedded_constant_buffers.object_file_data.empty());
 }
 

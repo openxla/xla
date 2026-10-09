@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors All Rights Reserved.
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,11 +22,11 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_cat.h"
 #include "json/json.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/protobuf/trace_events.pb.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/format_utils.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/protobuf/trace_events.pb.h"
 
 namespace tsl {
 namespace profiler {

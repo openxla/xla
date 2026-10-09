@@ -29,11 +29,12 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/status_macros.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -87,6 +88,37 @@ DimTile GetDimTile(const TilingSpace::DimensionInfo& dim_info,
       /*upper_bound=*/CreateSymbolicConstant(dim_info.dimension_size, ctx)};
 }
 
+// Returns the constant value of the symbolic expr if it simplifies to one.
+std::optional<int64_t> TryGetConstantValue(const SymbolicExpr& expr) {
+  auto canonical = expr.Canonicalize();
+  if (canonical.GetType() == SymbolicExprType::kConstant) {
+    return canonical.GetValue();
+  }
+  return std::nullopt;
+}
+
+// Returns true if the symbolic expression simplifies to the given constant.
+bool IsConstantValue(const SymbolicExpr& expr, int64_t value) {
+  auto val = TryGetConstantValue(expr);
+  return val.has_value() && *val == value;
+}
+
+// Returns true if the tile fully covers the given dimension size.
+// This is the case if size == dim or size * stride == dim.
+bool DimIsFullyCovered(const DimTile& tile, int64_t dim) {
+  auto size_val = TryGetConstantValue(tile.size);
+  if (!size_val.has_value()) {
+    return false;
+  }
+
+  if (*size_val == dim) {
+    return true;
+  }
+
+  auto stride_val = TryGetConstantValue(tile.stride);
+  return stride_val.has_value() && (*size_val * *stride_val) == dim;
+}
+
 Tiles PropagateTileToInputForCwiseOp(const HloInstruction& hlo,
                                      const Tile& input_tile) {
   return Tiles(hlo.operand_count(), input_tile);
@@ -108,11 +140,10 @@ Tiles PropagateTileToInputForBroadcastOp(const HloBroadcastInstruction& bcast,
   return {output_tile.CloneWithNewDims(std::move(dim_tiles))};
 }
 
-Tiles PropagateTileToOutputForBroadcastOp(const HloBroadcastInstruction& bcast,
-                                          const Tile& input_tile) {
-  absl::Span<const int64_t> bcast_dims = bcast.dimensions();
-  const Shape& output_shape = bcast.shape();
-  auto output_rank = bcast.shape().dimensions().size();
+Tile PropagateTileToOutputForBroadcastOpImpl(
+    const Shape& output_shape, absl::Span<const int64_t> bcast_dims,
+    const Tile& input_tile) {
+  int64_t output_rank = output_shape.dimensions().size();
 
   SmallVector<DimTile> dim_tiles;
   dim_tiles.reserve(output_rank);
@@ -129,160 +160,195 @@ Tiles PropagateTileToOutputForBroadcastOp(const HloBroadcastInstruction& bcast,
     dim_tiles.push_back(
         input_tile.dim_tiles()[std::distance(bcast_dims.begin(), bcast_dim)]);
   }
-  return {input_tile.CloneWithNewDims(std::move(dim_tiles))};
+  return input_tile.CloneWithNewDims(std::move(dim_tiles));
 }
 
-absl::StatusOr<Tiles> PropagateTileToInputForConcatenateOp(
-    TilingSpace& tiling_space, const HloConcatenateInstruction& concatenate,
-    const Tile& output_tile) {
+Tiles PropagateTileToOutputForBroadcastOp(const HloBroadcastInstruction& bcast,
+                                          const Tile& input_tile) {
+  return {PropagateTileToOutputForBroadcastOpImpl(
+      bcast.shape(), bcast.dimensions(), input_tile)};
+}
+
+absl::Status VerifyConcatenateAlignment(
+    const TilingSpace& tiling_space,
+    const HloConcatenateInstruction& concatenate, const Tile& output_tile) {
+  if (tiling_space.IsSymbolic()) {
+    VLOG(2) << "Tiling space is symbolic, skipping validation for "
+            << concatenate.ToString();
+    return absl::OkStatus();
+  }
   int64_t num_operands = concatenate.operand_count();
-
-  Tiles tiles;
-  tiles.reserve(num_operands);
-
-  // For concatenate, we need to adjust the offsets and the bounds in the
-  // concatenate dimension.
   int64_t concat_dim = concatenate.concatenate_dimension();
 
-  auto offset_expr = output_tile.dim_tiles()[concat_dim].offset;
-  auto size_expr = output_tile.dim_tiles()[concat_dim].size;
+  SymbolicExpr offset_expr = output_tile.dim_tiles()[concat_dim].offset;
+  SymbolicExpr tile_size_expr = output_tile.dim_tiles()[concat_dim].size;
 
-  // We evaluate the base offset B = E(0) by setting all dimension variables to
-  // 0. If B is a constant, we accumulate operand sizes to locate the starting
-  // operand k containing index B. To prevent tiles from crossing operand
-  // boundaries, we enforce/record constraints that:
-  // 1. The variable step (offset_expr - B) is divisible by the tile size.
-  // 2. The remaining size in operand k from index B is divisible by the tile
-  //    size (unless k is the last operand).
+  // We evaluate the constant part of the offset (base_offset) by setting all
+  // dimension variables to 0. Then we accumulate operand sizes to locate the
+  // operand that contains the base_offset.
+  //
+  // The tile grid positions along the concatenate dimension are
+  // `base_offset + k * tile_size` for all integer k. A tiling is only valid if
+  // no tile straddles an operand boundary: every operand boundary must line up
+  // with a tile boundary. Whether a given operand boundary lines up with a tile
+  // boundary depends only on whether the distance from base_offset to that
+  // boundary is a multiple of tile_size. This distance is measured from the
+  // true base_offset and is computed the same way whether base_offset is
+  // positive or negative, so all the checks below hold regardless of the sign
+  // of base_offset. In particular, base_offset may be negative (e.g. inherited
+  // from a pad's edge_padding_low above the concatenate): a negative
+  // base_offset merely means the first tile(s) reach before the concatenated
+  // tensor begins, and the same "distance is a multiple of tile_size" alignment
+  // rule still decides whether the tiling is valid.
+  //
+  // We enforce (regardless of the sign of base_offset):
+  // 1. The variable step (offset_expr - base_offset) is divisible by the tile
+  //    size. With base_offset being the true constant part, this simplifies to
+  //    d[*] * tile_size and guarantees the tile grid steps by whole tiles.
+  //    TODO: b/491092362 - why do we need that?
+  // 2. The remaining size in the located operand,
+  //    `remaining_size = (accumulated_offset + current_op_size) - base_offset`,
+  //    (i.e. the distance from base_offset to the end of that operand) is
+  //    divisible by the tile size (unless it is the last operand), so that the
+  //    end of this operand lines up with a tile boundary. Note this value is
+  //    measured from the true base_offset and may exceed the operand size when
+  //    base_offset is negative; that is intentional, since only whether it is a
+  //    multiple of tile_size matters, independent of the sign of base_offset.
   // 3. All subsequent operand sizes are divisible by the tile size (unless
   //    they are the last operand).
+  //
+  // Illustration of the alignment checks:
+  //
+  //          accumulated_offset       |           |
+  //          |        base_offset     |           |
+  //          v        v               |           |
+  // |--------|--------|---------------|-----------| .. --------|
+  // |  Op 0  |      Op 1 (base_op)    |    Op 2   |     (last) |
+  // |--------|------------------------|-----------| .. --------|
+  //                   |<------------->|<--------->|
+  //                     remaining_size  op_size(2)
+  //
+  // Tile:             |---|---|---|---|---|---|---|---|---|---|-xx|
+  //                       |   |   |   |   |   |   |   |   |   |
+  //                       |<->| tile_size                      masked tile
+
   mlir::MLIRContext* ctx = tiling_space.mlir_context();
   llvm::DenseMap<SymbolicExpr, SymbolicExpr> zero_map;
   for (int64_t d = 0; d < tiling_space.num_dimensions(); ++d) {
     zero_map[CreateDimExpr(d, ctx)] = CreateSymbolicConstant(0, ctx);
   }
   SymbolicExpr base_offset_expr = offset_expr.Replace(zero_map);
+  std::optional<int64_t> base_offset_val =
+      TryGetConstantValue(base_offset_expr);
+  if (!base_offset_val.has_value()) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Tiling propagation rejected for ", concatenate.ToString(),
+                     ": The base offset ", base_offset_expr.ToString(),
+                     " is not a constant."));
+  }
 
-  if (base_offset_expr.GetType() == SymbolicExprType::kConstant) {
-    int64_t B = base_offset_expr.GetValue();
-    int64_t current_operand_idx = 0;
-    int64_t accumulated_offset = 0;
-    while (current_operand_idx < num_operands) {
-      int64_t op_size = concatenate.operand(current_operand_idx)
-                            ->shape()
-                            .dimensions(concat_dim);
-      if (B < accumulated_offset + op_size) {
-        break;
-      }
-      accumulated_offset += op_size;
-      ++current_operand_idx;
+  // Keep the true (possibly negative) constant part. A negative base_offset is
+  // valid; the operand-location loop below naturally selects operand 0 for it,
+  // and the sign-agnostic `remaining_size % tile_size` check (which measures
+  // the distance from base_offset to the operand boundary) governs correctness.
+  int64_t base_offset = base_offset_expr.GetValue();
+  int64_t base_operand_idx = 0;
+  int64_t accumulated_offset = 0;
+  while (base_operand_idx < num_operands) {
+    int64_t op_size =
+        concatenate.operand(base_operand_idx)->shape().dimensions(concat_dim);
+    if (base_offset < accumulated_offset + op_size) {
+      break;
     }
-    if (current_operand_idx >= num_operands) {
+    accumulated_offset += op_size;
+    ++base_operand_idx;
+  }
+  if (base_operand_idx >= num_operands) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "Tiling propagation rejected for ", concatenate.ToString(),
+        ": The base offset ", base_offset,
+        " falls completely outside the total concatenate dimension size ",
+        accumulated_offset));
+  }
+
+  int64_t current_op_size =
+      concatenate.operand(base_operand_idx)->shape().dimensions(concat_dim);
+  // Remaining size: distance from the (true, possibly negative) base_offset to
+  // the boundary at the end of the located operand. Measured the same way for
+  // any sign of base_offset; it may exceed current_op_size when base_offset is
+  // negative, but only whether it is a multiple of tile_size matters.
+  int64_t remaining_size = (accumulated_offset + current_op_size) - base_offset;
+  SymbolicExpr variable_step =
+      (offset_expr - CreateSymbolicConstant(base_offset, ctx)).Canonicalize();
+  std::optional<int64_t> tile_size_val = TryGetConstantValue(tile_size_expr);
+  if (!tile_size_val.has_value()) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "Tiling propagation rejected for ", concatenate.ToString(),
+        ": The tile size ", tile_size_expr.ToString(), " is not a constant."));
+  }
+  int64_t tile_size = tile_size_expr.GetValue();
+
+  // A negative base_offset means the anchor tile reaches before operand 0
+  // begins. This is only emittable when operand 0's start lands on a tile
+  // boundary, i.e. base_offset is a whole number of tiles below zero. In that
+  // case the fully-out-of-range prefix consists of entire tiles, which the
+  // emitter masks as whole tiles.
+  if (base_offset < 0) {
+    // The modulo op would give a non-positive value for a negative
+    // base_offset, so we normalize it.
+    int64_t offset_within_tile =
+        ((base_offset % tile_size) + tile_size) % tile_size;
+    if (offset_within_tile != 0) {
       return absl::FailedPreconditionError(absl::StrCat(
-          "Tiling propagation rejected for Concatenate: The base offset ", B,
-          " falls completely outside the total concatenate dimension size ",
-          accumulated_offset));
-    }
-
-    int64_t current_op_size = concatenate.operand(current_operand_idx)
-                                  ->shape()
-                                  .dimensions(concat_dim);
-    int64_t remaining_size = (accumulated_offset + current_op_size) - B;
-    SymbolicExpr variable_step =
-        (offset_expr - CreateSymbolicConstant(B, ctx)).Canonicalize();
-
-    if (size_expr.GetType() == SymbolicExprType::kConstant) {
-      int64_t T = size_expr.GetValue();
-
-      if (!variable_step.IsMultipleOf(T)) {
-        return absl::FailedPreconditionError(absl::StrCat(
-            "Tiling propagation rejected for Concatenate: The variable step "
-            "expression '",
-            variable_step.ToString(),
-            "' must be a clean multiple of its tile size ", T,
-            " to prevent correctness bugs from tiles covering multiple concat "
-            "operands."));
-      }
-
-      if (current_operand_idx < num_operands - 1) {
-        if (remaining_size % T != 0) {
-          return absl::FailedPreconditionError(absl::StrCat(
-              "Tiling propagation rejected for Concatenate: The remaining "
-              "dimension size ",
-              remaining_size, " in the concatenate operand ",
-              current_operand_idx,
-              " must be a clean multiple of its tile size ", T));
-        }
-      }
-
-      for (int i = current_operand_idx + 1; i < num_operands - 1; ++i) {
-        int64_t op_size =
-            concatenate.operand(i)->shape().dimensions(concat_dim);
-        if (op_size % T != 0) {
-          return absl::FailedPreconditionError(absl::StrCat(
-              "Tiling propagation rejected for Concatenate: The operand "
-              "dimension size ",
-              op_size,
-              " in the concatenate dimension must be a clean multiple of its "
-              "tile size ",
-              T));
-        }
-      }
-    } else {
-      tiling_space.AddDivisibilityConstraint(variable_step, size_expr);
-
-      if (current_operand_idx < num_operands - 1) {
-        tiling_space.AddDivisibilityConstraint(
-            CreateSymbolicConstant(remaining_size, ctx), size_expr);
-      }
-
-      for (int i = current_operand_idx + 1; i < num_operands - 1; ++i) {
-        int64_t op_size =
-            concatenate.operand(i)->shape().dimensions(concat_dim);
-        tiling_space.AddDivisibilityConstraint(
-            CreateSymbolicConstant(op_size, ctx), size_expr);
-      }
-    }
-  } else {
-    // Fallback to strict logic starting from operand 0
-    if (size_expr.GetType() == SymbolicExprType::kConstant) {
-      int64_t T = size_expr.GetValue();
-
-      if (!offset_expr.IsMultipleOf(T)) {
-        return absl::FailedPreconditionError(absl::StrCat(
-            "Tiling propagation rejected for Concatenate: The tile offset "
-            "expression '",
-            offset_expr.ToString(),
-            "' must be a clean multiple of its tile size ", T,
-            " to prevent correctness bugs from tiles covering multiple concat "
-            "operands."));
-      }
-
-      for (int i = 0; i < num_operands - 1; ++i) {
-        int64_t op_size =
-            concatenate.operand(i)->shape().dimensions(concat_dim);
-        if (op_size % T != 0) {
-          return absl::FailedPreconditionError(absl::StrCat(
-              "Tiling propagation rejected for Concatenate: The operand "
-              "dimension size ",
-              op_size,
-              " in the concatenate dimension must be a clean multiple of its "
-              "tile size ",
-              T));
-        }
-      }
-    } else {
-      tiling_space.AddDivisibilityConstraint(offset_expr, size_expr);
-
-      for (int i = 0; i < num_operands - 1; ++i) {
-        int64_t op_size =
-            concatenate.operand(i)->shape().dimensions(concat_dim);
-        tiling_space.AddDivisibilityConstraint(
-            CreateSymbolicConstant(op_size, ctx), size_expr);
-      }
+          "Tiling propagation rejected for ", concatenate.ToString(),
+          ": The negative base offset ", base_offset,
+          " is not aligned to the tile size ", tile_size,
+          " ; operand 0 would require an unsupported low-side (left) mask."));
     }
   }
 
+  if (!variable_step.IsMultipleOf(tile_size)) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "Tiling propagation rejected for ", concatenate.ToString(),
+        ": The variable step expression '", variable_step.ToString(),
+        "' must be a clean multiple of its tile size ", tile_size,
+        " to prevent correctness bugs from tiles covering multiple concat "
+        "operands."));
+  }
+
+  if (base_operand_idx < num_operands - 1) {
+    if (remaining_size % tile_size != 0) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Tiling propagation rejected for ", concatenate.ToString(),
+          ": The remaining operand size ", remaining_size % tile_size,
+          " (in concatenate operand ", base_operand_idx,
+          ") is not divisible by the selected tile size ", tile_size, "."));
+    }
+  }
+
+  for (int i = base_operand_idx + 1; i < num_operands - 1; ++i) {
+    int64_t op_size = concatenate.operand(i)->shape().dimensions(concat_dim);
+    if (op_size % tile_size != 0) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Tiling propagation rejected for ", concatenate.ToString(),
+          ": The operand dimension size ", op_size,
+          " in the concatenate dimension must be a multiple of the tile size ",
+          tile_size));
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<Tiles> PropagateTileToInputForConcatenateOp(
+    TilingSpace& tiling_space, const HloConcatenateInstruction& concatenate,
+    const Tile& output_tile) {
+  ABSL_RETURN_IF_ERROR(
+      VerifyConcatenateAlignment(tiling_space, concatenate, output_tile));
+  int64_t num_operands = concatenate.operand_count();
+  Tiles tiles;
+  tiles.reserve(num_operands);
+  // Only tiling of the concatenate dimension is affected.
+  int64_t concat_dim = concatenate.concatenate_dimension();
   auto upper_bound = output_tile.upper_bounds()[concat_dim];
   int64_t offset = 0;
   for (const HloInstruction* operand : concatenate.operands()) {
@@ -290,10 +356,19 @@ absl::StatusOr<Tiles> PropagateTileToInputForConcatenateOp(
     dim_tiles[concat_dim].offset = dim_tiles[concat_dim].offset - offset;
     CHECK_LT(concat_dim, operand->shape().dimensions().size());
     int64_t operand_dim_size = operand->shape().dimensions(concat_dim);
-
     dim_tiles[concat_dim].upper_bound =
         (upper_bound - offset).min(operand_dim_size).max(0);
-    tiles.push_back(output_tile.CloneWithNewDims(std::move(dim_tiles)));
+    Tile op_tile = output_tile.CloneWithNewDims(std::move(dim_tiles));
+    // TODO(b/491092362): This constraint is only sound at the moment as
+    // VerifyConcatenateAlignment rejects non-negative tiles overlapping the
+    // start start before the operand.
+    // TODO(b/565301234): constraints should be added symmetrically
+    // independent of direction of traverse: i.e.
+    // PropagateTileToOutputForConcatenateOp should give us the same
+    // constraints. Or maybe they should be added in a third place altogether.
+    op_tile.AddConstraint(op_tile.dim_tiles()[concat_dim].offset,
+                          Interval{0, operand_dim_size - 1});
+    tiles.push_back(op_tile);
     offset += operand_dim_size;
   }
   return tiles;
@@ -599,6 +674,285 @@ Tiles PropagateTileToInputForScaledDotOp(const TilingSpace& tiling_space,
           std::move(lhs_scale_tile), std::move(rhs_scale_tile)};
 }
 
+// Propagate tile to inputs for a kRaggedDot instruction.
+//
+// Returns three operand tiles: [lhs_tile, rhs_tile, group_sizes_tile].
+//
+// kRaggedNonContracting (G is kSequential):
+//   LHS (M_total, K), RHS (G, K, N), group_sizes (G,) → output (M_total, N)
+//   LHS M tile: offset = d[m]*BLOCK_M (within-group); upper_bound = gs_sym.
+//   The emitter adds last_m (loop-carried iter_arg) to the M pointer offset.
+//   LHS K tile: sequential dim tile.
+//   RHS G tile: sequential dim tile (one group per G-loop iteration).
+//   RHS K tile: sequential dim tile (same as LHS K tile).
+//   RHS N tile: directly from output N dim.
+//   group_sizes tile: scalar slice at G-loop index.
+//
+// kRaggedContracting (G is kParallel):
+//   LHS (M_total, K), RHS (K, N), group_sizes (G,) → output (G, K, N)
+//   LHS/RHS M tile: absolute offset = sm_sym + d[m]*BLOCK_M;
+//                   upper_bound = sm_sym + gs_sym.
+//   LHS K tile, RHS N tile: directly from output K / N dims.
+//   group_sizes tile: scalar slice at output G dim.
+absl::StatusOr<Tiles> PropagateTileToInputForRaggedDotOp(
+    const TilingSpace& tiling_space, const HloInstruction& hlo,
+    const Tile& output_tile) {
+  const auto* ragged_dot = Cast<HloRaggedDotInstruction>(&hlo);
+  const RaggedDotDimensionNumbers& ragged_dims =
+      ragged_dot->ragged_dot_dimension_numbers();
+  const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
+
+  MLIRContext* ctx = output_tile.mlir_context();
+  const int64_t num_dims = tiling_space.num_dimensions();
+
+  absl::Span<const int64_t> lhs_contracting_dims(
+      dot_dims.lhs_contracting_dimensions());
+  absl::Span<const int64_t> rhs_contracting_dims(
+      dot_dims.rhs_contracting_dimensions());
+  absl::Span<const int64_t> lhs_batch_dims(dot_dims.lhs_batch_dimensions());
+  absl::Span<const int64_t> rhs_batch_dims(dot_dims.rhs_batch_dimensions());
+
+  const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+  const bool is_contracting =
+      absl::c_count(lhs_contracting_dims, lhs_ragged_dim) > 0;
+  const bool is_batch = absl::c_count(lhs_batch_dims, lhs_ragged_dim) > 0;
+
+  const Shape& lhs_shape = hlo.operand(0)->shape();
+  const Shape& rhs_shape = hlo.operand(1)->shape();
+  const int64_t lhs_rank = lhs_shape.dimensions().size();
+  const int64_t rhs_rank = rhs_shape.dimensions().size();
+  const int64_t output_rank = hlo.shape().dimensions().size();
+
+  if (is_batch) {
+    // kRaggedBatch: regular batched GEMM tiling.
+    // LHS [B_total, M, K]: B from output batch dims, M from non-contracting,
+    //                       K from sequential dim.
+    // RHS [B_total, K, N]: same B batch, K sequential, N non-contracting.
+    // gs  [G]: trivial tile (group_sizes not used in computation).
+
+    // K sequential dim tile(s).
+    SmallVector<DimTile, 1> k_tiles;
+    k_tiles.reserve(lhs_contracting_dims.size());
+    for (auto [index, _] : llvm::enumerate(lhs_contracting_dims)) {
+      k_tiles.push_back(
+          GetDimTile(tiling_space.GetDimensionInfo(hlo, output_rank + index),
+                     num_dims, ctx));
+    }
+
+    // Output dim ordering for kRaggedBatch: [B_total, M, N]
+    auto lhs_nc =
+        GetNonContractingDims(lhs_shape, lhs_batch_dims, lhs_contracting_dims);
+    CHECK_OK(lhs_nc);
+    auto rhs_nc =
+        GetNonContractingDims(rhs_shape, rhs_batch_dims, rhs_contracting_dims);
+    CHECK_OK(rhs_nc);
+
+    const int64_t num_batch = lhs_batch_dims.size();
+    const int64_t out_m_start = num_batch;
+    const int64_t out_n_start = out_m_start + lhs_nc.value().size();
+
+    // Build LHS tile.
+    SmallVector<DimTile> lhs_dim_tiles(lhs_rank);
+    for (auto [i, b] : llvm::enumerate(lhs_batch_dims)) {
+      lhs_dim_tiles[b] = output_tile.dim_tiles()[i];
+    }
+    for (auto [i, m] : llvm::enumerate(lhs_nc.value())) {
+      lhs_dim_tiles[m] = output_tile.dim_tiles()[out_m_start + i];
+    }
+    for (auto [lhs_k, k_tile] : llvm::zip(lhs_contracting_dims, k_tiles)) {
+      lhs_dim_tiles[lhs_k] = k_tile;
+    }
+
+    // Build RHS tile.
+    SmallVector<DimTile> rhs_dim_tiles(rhs_rank);
+    for (auto [i, b] : llvm::enumerate(rhs_batch_dims)) {
+      rhs_dim_tiles[b] = output_tile.dim_tiles()[i];
+    }
+    for (auto [rhs_k, k_tile] : llvm::zip(rhs_contracting_dims, k_tiles)) {
+      rhs_dim_tiles[rhs_k] = k_tile;
+    }
+    for (auto [i, n] : llvm::enumerate(rhs_nc.value())) {
+      rhs_dim_tiles[n] = output_tile.dim_tiles()[out_n_start + i];
+    }
+
+    // gs tile.
+    const int64_t G = hlo.operand(2)->shape().dimensions(0);
+    SmallVector<DimTile> gs_dim_tiles = {GetFullDimTile(G, ctx)};
+
+    return Tiles{output_tile.CloneWithNewDims(std::move(lhs_dim_tiles)),
+                 output_tile.CloneWithNewDims(std::move(rhs_dim_tiles)),
+                 output_tile.CloneWithNewDims(std::move(gs_dim_tiles))};
+  }
+
+  // group_size[g] RTVar — always registered at operand_id=2.
+  auto gs_rtvar_or = tiling_space.GetRTVarInfo(hlo, 2);
+  CHECK(gs_rtvar_or.has_value())
+      << "Missing group_size RTVar for " << hlo.ToString();
+  SymbolicExpr gs_sym =
+      CreateSymbolExpr(num_dims + (*gs_rtvar_or)->id, num_dims, ctx);
+
+  if (!is_contracting) {
+    // ---- kRaggedNonContracting ----
+    // Output: (batch..., M_total, N).
+    // Sequential dims registered by ProcessRaggedDot:
+    //   dim_position = output_rank + 0  → G (outer group loop)
+    //   dim_position = output_rank + 1  → K (inner contraction)
+    const TilingSpace::DimensionInfo& g_dim_info =
+        tiling_space.GetDimensionInfo(hlo, output_rank);
+    DimTile g_tile = GetDimTile(g_dim_info, num_dims, ctx);
+
+    // Build per-contracting-dim K tiles.
+    SmallVector<DimTile, 1> k_tiles;
+    k_tiles.reserve(lhs_contracting_dims.size());
+    for (auto [index, _] : llvm::enumerate(lhs_contracting_dims)) {
+      k_tiles.push_back(GetDimTile(
+          tiling_space.GetDimensionInfo(hlo, output_rank + 1 + index), num_dims,
+          ctx));
+    }
+
+    // Compute non-contracting dims of LHS (M) and RHS (N).
+    auto lhs_nc =
+        GetNonContractingDims(lhs_shape, lhs_batch_dims, lhs_contracting_dims);
+    CHECK_OK(lhs_nc);
+    // For RHS non-contracting dims, treat the group dim as a batch dim.
+    std::vector<int64_t> rhs_batch_group_dims(rhs_batch_dims.begin(),
+                                              rhs_batch_dims.end());
+    for (int64_t d : ragged_dims.rhs_group_dimensions()) {
+      rhs_batch_group_dims.push_back(d);
+    }
+    auto rhs_nc = GetNonContractingDims(
+        rhs_shape, absl::MakeSpan(rhs_batch_group_dims), rhs_contracting_dims);
+    CHECK_OK(rhs_nc);
+
+    // Build LHS tile.
+    SmallVector<DimTile> lhs_dim_tiles(lhs_rank);
+    // Batch dims → pass through from output.
+    for (auto [i, lhs_b] : llvm::enumerate(lhs_batch_dims)) {
+      lhs_dim_tiles[lhs_b] = output_tile.dim_tiles()[i];
+    }
+    // LHS non-contracting (M) → within-group offset; emitter adds last_m.
+    int64_t out_m_id = lhs_batch_dims.size();
+    for (int64_t lhs_m : lhs_nc.value()) {
+      const DimTile& m_out = output_tile.dim_tiles()[out_m_id++];
+      lhs_dim_tiles[lhs_m] = DimTile{
+          m_out.offset,  // d[m]*BLOCK_M — within-group (emitter adds last_m)
+          m_out.size,    // BLOCK_M
+          m_out.stride,  // 1
+          gs_sym         // runtime mask: offs_m < group_size_g
+      };
+    }
+    // LHS contracting (K).
+    for (auto [lhs_k, k_tile] : llvm::zip(lhs_contracting_dims, k_tiles)) {
+      lhs_dim_tiles[lhs_k] = k_tile;
+    }
+
+    // Build RHS tile.
+    SmallVector<DimTile> rhs_dim_tiles(rhs_rank);
+    // Batch dims → pass through from output.
+    for (auto [i, rhs_b] : llvm::enumerate(rhs_batch_dims)) {
+      rhs_dim_tiles[rhs_b] = output_tile.dim_tiles()[i];
+    }
+    // Group dim in RHS → G sequential tile (one group per iteration).
+    for (int64_t g_rhs : ragged_dims.rhs_group_dimensions()) {
+      rhs_dim_tiles[g_rhs] = g_tile;
+    }
+    // RHS non-contracting (N) → output N dims.
+    int64_t out_n_id = out_m_id;  // continues after M dims
+    for (int64_t rhs_n : rhs_nc.value()) {
+      rhs_dim_tiles[rhs_n] = output_tile.dim_tiles()[out_n_id++];
+    }
+    // RHS contracting (K).
+    for (auto [rhs_k, k_tile] : llvm::zip(rhs_contracting_dims, k_tiles)) {
+      rhs_dim_tiles[rhs_k] = k_tile;
+    }
+
+    // group_sizes tile: one element per G-loop iteration.
+    // For non-batched gs [G]: tile is [g_tile] (1D).
+    // For batched gs [B, G]: tile is [batch_tiles..., g_tile] (2D+).
+    SmallVector<DimTile> gs_dim_tiles;
+    for (int64_t i = 0; i < static_cast<int64_t>(lhs_batch_dims.size()); ++i) {
+      gs_dim_tiles.push_back(output_tile.dim_tiles()[i]);
+    }
+    gs_dim_tiles.push_back(g_tile);
+
+    return Tiles{output_tile.CloneWithNewDims(std::move(lhs_dim_tiles)),
+                 output_tile.CloneWithNewDims(std::move(rhs_dim_tiles)),
+                 output_tile.CloneWithNewDims(std::move(gs_dim_tiles))};
+  }
+
+  // ---- kRaggedContracting ----
+  // Output: (G, batch..., K, N).  G is output dim 0.
+  // Sequential dim registered by ProcessRaggedDot:
+  //   dim_position = output_rank + 0  → M (ragged contracting)
+  // RTVars: group_size (op_id=2), start_m (op_id=-1).
+
+  const TilingSpace::DimensionInfo& m_dim_info =
+      tiling_space.GetDimensionInfo(hlo, output_rank);
+  DimTile m_rel_tile = GetDimTile(m_dim_info, num_dims, ctx);
+  // Relative M tile: offset is just d[m]*BLOCK_M (relative within the group).
+  // The emitter adds start_m to the buffer address manually when calling
+  // ExtractTileOp, since start_m is a synthetic prefix-sum RTVar (op_id=-1)
+  // that has no backing tiled HLO instruction and cannot be resolved by
+  // EvaluateTilingParameters via rt_symbol_to_tiled_hlo.
+  // The upper_bound uses gs_sym (group_size, op_id=2) which IS a real
+  // operand.
+  DimTile m_tile = DimTile{
+      m_rel_tile.offset,  // d[m]*BLOCK_M (relative, no sm_sym)
+      m_rel_tile.size,    // BLOCK_M
+      m_rel_tile.stride,  // 1
+      gs_sym              // group_size (relative mask, no sm_sym)
+  };
+
+  // Compute non-contracting dims of LHS (K) and RHS (N).
+  auto lhs_nc =
+      GetNonContractingDims(lhs_shape, lhs_batch_dims, lhs_contracting_dims);
+  CHECK_OK(lhs_nc);
+  auto rhs_nc =
+      GetNonContractingDims(rhs_shape, rhs_batch_dims, rhs_contracting_dims);
+  CHECK_OK(rhs_nc);
+
+  // Output dim ordering for kRaggedContracting:
+  //   [G, batch..., lhs_nc(K)..., rhs_nc(N)...]
+  // output_tile.dim_tiles()[0]                   = G
+  // output_tile.dim_tiles()[1..1+num_batch-1]    = batch
+  // output_tile.dim_tiles()[1+num_batch..]       = K (lhs nc)
+  // output_tile.dim_tiles()[1+num_batch+num_lnc..] = N (rhs nc)
+  const int64_t num_batch = lhs_batch_dims.size();
+  const int64_t out_k_start = 1 + num_batch;
+  const int64_t out_n_start = out_k_start + lhs_nc.value().size();
+
+  // Build LHS tile.
+  SmallVector<DimTile> lhs_dim_tiles(lhs_rank);
+  for (auto [i, lhs_b] : llvm::enumerate(lhs_batch_dims)) {
+    lhs_dim_tiles[lhs_b] = output_tile.dim_tiles()[1 + i];
+  }
+  for (auto [i, lhs_k] : llvm::enumerate(lhs_nc.value())) {
+    lhs_dim_tiles[lhs_k] = output_tile.dim_tiles()[out_k_start + i];
+  }
+  for (int64_t lhs_c : lhs_contracting_dims) {
+    lhs_dim_tiles[lhs_c] = m_tile;
+  }
+
+  // Build RHS tile.
+  SmallVector<DimTile> rhs_dim_tiles(rhs_rank);
+  for (auto [i, rhs_b] : llvm::enumerate(rhs_batch_dims)) {
+    rhs_dim_tiles[rhs_b] = output_tile.dim_tiles()[1 + i];
+  }
+  for (auto [i, rhs_n] : llvm::enumerate(rhs_nc.value())) {
+    rhs_dim_tiles[rhs_n] = output_tile.dim_tiles()[out_n_start + i];
+  }
+  for (int64_t rhs_c : rhs_contracting_dims) {
+    rhs_dim_tiles[rhs_c] = m_tile;
+  }
+
+  // group_sizes tile: scalar slice at output G dim [0].
+  SmallVector<DimTile> gs_dim_tiles = {output_tile.dim_tiles()[0]};
+
+  return Tiles{output_tile.CloneWithNewDims(std::move(lhs_dim_tiles)),
+               output_tile.CloneWithNewDims(std::move(rhs_dim_tiles)),
+               output_tile.CloneWithNewDims(std::move(gs_dim_tiles))};
+}
+
 Tiles PropagateTileToInputForReduceOp(const TilingSpace& tiling_space,
                                       const HloReduceInstruction& reduce,
                                       const Tile& output_tile) {
@@ -651,6 +1005,65 @@ Tiles PropagateTileToOutputForReduceOp(const HloReduceInstruction& reduce,
   return {input_tile.CloneWithNewDims(std::move(output_dim_tiles))};
 }
 
+Tiles GetScanTiles(const HloScanInstruction& scan, const Tile& main_tile) {
+  int64_t num_carries = scan.num_carries();
+  int64_t num_inputs = scan.operand_count() - num_carries;
+  int64_t scan_dim = scan.scan_dimension();
+
+  llvm::SmallVector<DimTile> carry_dim_tiles;
+  for (auto [idx, dim_tile] : llvm::enumerate(main_tile.dim_tiles())) {
+    if (idx != scan_dim) {
+      carry_dim_tiles.push_back(dim_tile);
+    }
+  }
+  Tile carry_tile{main_tile.tiling_space(), std::move(carry_dim_tiles),
+                  llvm::to_vector(main_tile.replica_ids())};
+
+  Tiles tiles;
+  tiles.reserve(scan.operand_count());
+  for (int i = 0; i < num_inputs; ++i) {
+    tiles.push_back(main_tile);
+  }
+  for (int i = 0; i < num_carries; ++i) {
+    tiles.push_back(carry_tile);
+  }
+  return tiles;
+}
+
+absl::StatusOr<Tiles> PropagateTileToInputForScanOp(const HloInstruction& scan,
+                                                    const Tile& output_tile,
+                                                    int64_t output_index) {
+  const auto& scan_inst = *Cast<HloScanInstruction>(&scan);
+  if (output_index >= scan.operand_count() - scan_inst.num_carries()) {
+    return absl::InvalidArgumentError(
+        "Output to input tile propagation not implemented from scan carry "
+        "outputs.");
+  }
+  return GetScanTiles(scan_inst, output_tile);
+}
+
+absl::StatusOr<Tiles> PropagateTileToOutputForScanOp(const HloInstruction& scan,
+                                                     const Tile& input_tile,
+                                                     int64_t input_index) {
+  const auto& scan_inst = *Cast<HloScanInstruction>(&scan);
+  if (input_index >= scan.operand_count() - scan_inst.num_carries()) {
+    return absl::InvalidArgumentError(
+        "Input to output tile propagation not implemented from scan carry "
+        "operands.");
+  }
+  return GetScanTiles(scan_inst, input_tile);
+}
+
+Tiles PropagateTileToInputForGetTupleElementOp(const HloInstruction& gte,
+                                               const Tile& output_tile) {
+  return Tiles{output_tile};
+}
+
+Tiles PropagateTileToOutputForGetTupleElementOp(const HloInstruction& gte,
+                                                const Tile& input_tile) {
+  return Tiles{input_tile};
+}
+
 absl::Status IsSupportedReshape(const std::vector<MinimalReshape>& reshapes) {
   for (const auto& minimal_reshape : reshapes) {
     if (minimal_reshape.category == MinimalReshapeCategory::kGeneric) {
@@ -692,87 +1105,231 @@ NonTrivialDimInfo GetNonTrivialDimInfo(
   return result;
 }
 
-// Returns true if the symbolic expression simplifies to the given constant.
-bool IsConstantValue(const SymbolicExpr& expr, int64_t value) {
-  auto canonical = expr.Canonicalize();
-  return canonical.GetType() == SymbolicExprType::kConstant &&
-         canonical.GetValue() == value;
-}
-
-// Consider a reshape with 1-to-n (kExpandShape) or n-to-1 (kCollapseShape)
-// mapping of the "significant" dimensions, verify if the reshape is supported.
+/// Checks whether a minimal reshape (Collapse or Expand) has a supported
+/// contiguity pattern.
 //
-// We consider a kCollapseShape / kExpandShape to be supported if for the
-// multidim side there is at most one dimension that is partially tiled.
-// Specifically:
-// - At most one dimension is partially tiled (1 < ts_i < d_i).
-// - Any dimensions inner to the tiled dimension are fully covered (ts_i = d_i),
-//   or skipped (ts_i = 1) only for collapse.
-// - Any dimensions outer to the tiled dimension are skipped (ts_i = 1).
-// - All dimensions except the innermost have stride 1.
-// Example: for [3, 4] -> [12] we support:
-// - tile_size [1, 4], or
-// - tile_size [3, 1] (allowing collapsed dimension segments with inner
-//   degenerate tile sizes)
-absl::Status VerifyReshapeContiguity(
-    const MinimalReshape& minimal_reshape,
-    absl::Span<const DimTile> linear_side_tiles,
-    absl::Span<const DimTile> multidim_side_tiles,
-    absl::Span<const int64_t> multidim_side_dims) {
-  const MinimalReshapeCategory& category = minimal_reshape.category;
-  CHECK(category == MinimalReshapeCategory::kCollapseShape ||
-        category == MinimalReshapeCategory::kExpandShape);
-  const bool is_collapse = category == MinimalReshapeCategory::kCollapseShape;
+// =============================================================================
+//                       RESHAPE TILING PROPAGATION
+// =============================================================================
+// Tiling propagation maps tiles between a 1D "linear" side and a
+// "multidimensional" side (e.g., [12] <-> [3, 4]).
+//
+// We support two distinct tiling patterns for collapse and expand reshapes:
+//
+// -----------------------------------------------------------------------------
+// PATTERN 1: CONTIGUOUS TILING
+// -----------------------------------------------------------------------------
+// All active dimensions have stride 1. We allow AT MOST ONE partially tiled
+// dimension on the multidim side.
+//
+// Visual layout of multidim tiles (from left/outermost to right/innermost):
+//
+//   [  1,  1,  ...,  1,   Partially Tiled,   Full,  Full,  ...,  Full  ]
+//    \________________/  \_______________/  \_________________________/
+//      Outer Skipped       At most one dim        Inner Fully Covered
+//       (size == 1)       (1 < size < dim)       (size*stride == dim)
+//                    ^                        ^
+//              Index i                  Index j
+//
+// --- Concrete Collapse Examples ([3, 4] -> [12]) ---
+//   * SUPPORTED:
+//     - multidim tile: [1, 2] -> linear tile: [2]
+//       Tiling only the innermost dimension partially.
+//     - multidim tile: [2, 4] -> linear tile: [8]
+//       Tiling the outer dimension partially, innermost is fully covered.
+//     - multidim tile: [3, 4] -> linear tile: [12]
+//       All fully covered.
+//   * UNSUPPORTED:
+//     - multidim tile: [2, 2] -> linear tile would have holes/gaps!
+//
+// -----------------------------------------------------------------------------
+// PATTERN 2: STRIDED (NON-CONTIGUOUS) TILING
+// -----------------------------------------------------------------------------
+// We allow EXACTLY ONE dimension on the multidim side to have a stride > 1.
+// This is the "strided" dimension.
+//
+// --- Collapse [3, 4] -> [12] ---
+// Assume source strides are [2, 1].
+//   * SUPPORTED:
+//     - multidim tile stride [2, 1] with multidim tile sizes [2, 1].
+//       Linear indices: { 0, 8 } (size 2, stride 8).
+//   * UNSUPPORTED:
+//     - multidim tile strides [2, 1] with multidim tile sizes [2, 2].
+//       Linear indices: { 0, 8, 1, 9 } does not have a constant stride.
+//
+// --- Expand [12] -> [3, 4] ---
+// The flat strides of target [3, 4] are [4, 1]. If the linear source tile has a
+// stride > 1, it MUST match one of these flat strides.
+//   * SUPPORTED:
+//     - Linear tile has stride 4.
+//       Matches flat stride of target Dim 0. Target Dim 0 is the strided dim.
+//       Target tiles: Dim 0 (tiled size > 1), Dim 1 (must be size 1).
+//       Linear Source:  [ X . . . X . . . X ]  (stride 4)
+//                        |       |       |
+//       Target [3, 4]:  (0,0)   (1,0)   (2,0)  (Stepped along Dim 0)
+//   * NOTE on restricting to flat strides:
+//     - About flat strides: For a target shape [D0, D1, D2], the flat strides
+//       are [D1*D2, D2, 1].
+//     - Mathematically, any stride that is a multiple of a target flat stride
+//       (e.g. linear stride 8) is also valid. It would map onto target Dim 0
+//       with a mapped stride of 2 (matching indices at (0,0) and (2,0)).
+//     - For simplicity, the current implementation
+//       strictly enforces that the linear stride must equal the flat stride
+//       (i.e. mapped target stride is always 1), as stride multiples are not
+//       generated during tiling propagation.
+//   * UNSUPPORTED:
+//     - Linear tile has stride 2.
+//
+absl::Status VerifyReshapeContiguity(absl::Span<const int64_t> source_dims,
+                                     absl::Span<const DimTile> source_tiles,
+                                     absl::Span<const int64_t> target_dims,
+                                     absl::Span<const DimTile> target_tiles) {
+  const bool is_collapse = target_tiles.size() < source_tiles.size();
+
+  absl::Span<const int64_t> multidim_side_dims =
+      is_collapse ? source_dims : target_dims;
+  absl::Span<const DimTile> multidim_side_tiles =
+      is_collapse ? source_tiles : target_tiles;
+  absl::Span<const DimTile> linear_side_tiles =
+      is_collapse ? target_tiles : source_tiles;
+
   auto FormatError = [&](auto... args) {
-    return absl::UnimplementedError(absl::StrCat("Unsupported minimal reshape ",
-                                                 minimal_reshape.ToString(),
-                                                 ": ", args...));
+    return absl::UnimplementedError(absl::StrCat(
+        "Reshape is non-contiguous [", absl::StrJoin(source_dims, ", "),
+        "] -> [", absl::StrJoin(target_dims, ", "), "], tiling ",
+        absl::StrJoin(source_tiles, "; "), " -> ",
+        absl::StrJoin(target_tiles, "; "), ": ", args...));
   };
 
-  CHECK(linear_side_tiles.size() == 1 && !multidim_side_tiles.empty())
-      << "Invalid minimal reshape dimensions for " << minimal_reshape.ToString()
-      << ".";
+  if (linear_side_tiles.size() != 1) {
+    return FormatError("Expected linear side to have 1 tile, got ",
+                       linear_side_tiles.size(), ".");
+  }
+  if (multidim_side_tiles.empty()) {
+    return FormatError("Expected multidim side to be non-empty.");
+  }
 
-  // Verify that the source tiles are contiguous.
-  // - In Collapse: All but the innermost source dimensions must be stride 1.
-  // - In Expand: The single source dimension must be stride 1.
+  // ===========================================================================
+  // 1. Stride Verification & Strided Dimension Identification
+  // ===========================================================================
   int n = static_cast<int>(multidim_side_tiles.size());
   auto source_stride_check_span =
       is_collapse ? multidim_side_tiles.subspan(0, n - 1) : linear_side_tiles;
-  if (!absl::c_all_of(source_stride_check_span, [](const DimTile& dt) {
-        return IsConstantValue(dt.stride, 1);
-      })) {
-    return FormatError("Source tiles must be contiguous.");
+
+  // Extract and validate source strides.
+  std::vector<int64_t> source_strides;
+  for (const auto& source_stride : source_stride_check_span) {
+    auto source_stride_val = TryGetConstantValue(source_stride.stride);
+    if (!source_stride_val.has_value() || *source_stride_val <= 0) {
+      return FormatError("Expect constant positive source tile stride. Got: ",
+                         source_stride.stride.ToString());
+    }
+    source_strides.push_back(*source_stride_val);
   }
 
+  // Identify which dimensions (if any) are strided (stride > 1).
+  // - In Collapse: any outer source dimension (except the innermost) with
+  //   stride > 1 is strided.
+  // - In Expand: the single linear source stride must match one of the flat
+  //   strides of the target dimensions to identify which target dimension is
+  //   strided. For target shape [D0, D1, D2], flat strides are [D1*D2, D2, 1].
+  std::vector<int> strided_dims;
+  if (is_collapse) {
+    for (int j = 0; j < source_strides.size(); ++j) {
+      if (source_strides[j] > 1) {
+        strided_dims.push_back(j);
+      }
+    }
+  } else if (source_strides[0] > 1) {
+    int64_t flat_stride = 1;
+    for (int i = n - 2; i >= 0; --i) {
+      flat_stride *= multidim_side_dims[i + 1];
+      if (source_strides[0] == flat_stride) {
+        strided_dims.push_back(i);
+        break;
+      }
+    }
+    if (strided_dims.empty()) {
+      return FormatError(
+          "Source tile stride (=", source_strides[0],
+          ") does not match any of the flat strides of the target dimensions");
+    }
+  }
+
+  // We only support at most one strided dimension.
+  if (strided_dims.size() > 1) {
+    return FormatError(
+        "At most one dimension can have stride >1, found strided dimensions: [",
+        absl::StrJoin(strided_dims, ", "), "]");
+  }
+
+  // ===========================================================================
+  // 2. Non-Contiguous Tiling Verification (Has Strided Dimension)
+  // ===========================================================================
+  // If a strided dimension is present, we enforce a strict rule: No other
+  // dimension on the multidim side can be tiled (all others must have size 1).
+  if (!strided_dims.empty()) {
+    int strided_dim = strided_dims[0];
+    for (int j = 0; j < n; ++j) {
+      if (j != strided_dim &&
+          !IsConstantValue(multidim_side_tiles[j].size, 1)) {
+        return FormatError(
+            "For non-contiguous source tile stride, only the strided "
+            "dimension ",
+            strided_dim, " can have size > 1. Found: dim ", j, " has size ",
+            multidim_side_tiles[j].size.ToString(), ".");
+      }
+    }
+    return absl::OkStatus();
+  }
+
+  // ===========================================================================
+  // 3. Contiguous Tiling Verification (All strides are 1)
+  // ===========================================================================
   // Verify that the multidim side has at most one partially tiled dimension.
-  // - In Collapse: we allow the inner dimensions to be fully covered or
-  //   skipped (size 1)
   // - In Expand: we allow inner dimensions to be fully covered.
+  // - In Collapse: we allow the inner dimensions to be fully covered, or
+  //   partially tiled with size 1 ONLY if they are at the innermost boundary
+  //   (i.e., not sandwiched between other tiled dimensions).
+  //   A sandwiched size-1 tile is a partially tiled dimension that introduces
+  //   irregular gaps in the access pattern (non-contiguous collapse), whereas
+  //   an innermost size-1 tile only introduces a regular stride multiplier.
   int i = 0;
   while (i < n && IsConstantValue(multidim_side_tiles[i].size, 1)) {
     ++i;
   }
+
   int j = n - 1;
-  while (j >= 0 &&
-         (IsConstantValue(multidim_side_tiles[j].size, multidim_side_dims[j]) ||
-          (is_collapse && IsConstantValue(multidim_side_tiles[j].size, 1)))) {
-    --j;
+  // Tracks if all dimensions processed so far (from right to left) have a tile
+  // size of 1. If we encounter any dimension with tile size > 1, this becomes
+  // false, meaning any subsequent size-1 dimensions are "sandwiched" (have a
+  // tiled dimension to their right).
+  bool all_suffix_is_size_1 = true;
+  while (j >= 0) {
+    auto size_val = TryGetConstantValue(multidim_side_tiles[j].size);
+    if (!size_val.has_value()) {
+      break;
+    }
+    if (DimIsFullyCovered(multidim_side_tiles[j], multidim_side_dims[j])) {
+      if (*size_val > 1) {
+        all_suffix_is_size_1 = false;
+      }
+      --j;
+    } else if (is_collapse && *size_val == 1 && all_suffix_is_size_1) {
+      // We can skip a size-1 dimension during collapse only if it is not
+      // sandwiched (all_suffix_is_size_1 is still true).
+      --j;
+    } else {
+      break;
+    }
   }
+
   // All dimensions before i are size 1 and all dimensions after j are full.
   // If i >= j, then only index k=i=j potentially partially tiled.
   if (i < j) {
-    return FormatError(
-        "Multiple dimensions are partially tiled: tile_size [",
-        absl::StrJoin(multidim_side_tiles, ", ",
-                      [](std::string* out, const DimTile& dt) {
-                        absl::StrAppend(out, dt.size.ToString());
-                      }),
-        "] dim_size [", absl::StrJoin(multidim_side_dims, ", "),
-        "]. The first dimension with tile size > 1 is at index ", i,
-        " and the last dimension that is not fully covered is at index ", j,
-        ". Expected i >= j.");
+    return FormatError("Multiple dimensions are partially tiled");
   }
+
   return absl::OkStatus();
 }
 
@@ -786,6 +1343,7 @@ absl::Status PropagateTileThroughMinimalReshape(
       GetNonTrivialDimInfo(source_shape, source_range, source_tile.dim_tiles());
   auto target_info = GetNonTrivialDimInfo(target_shape, target_range,
                                           absl::MakeSpan(target_dim_tiles));
+  const TilingSpace& tiling_space = source_tile.tiling_space();
 
   switch (minimal_reshape.category) {
     // 1-to-1 mapping of the "significant" dimensions (size > 1).
@@ -813,8 +1371,7 @@ absl::Status PropagateTileThroughMinimalReshape(
 
       int64_t target_id = target_info.ids[0];
       target_dim_tiles[target_id].offset =
-          LinearizeShape(source_info.dims, offsets, mlir_context)
-              .Canonicalize();
+          LinearizeShape(source_info.dims, offsets, mlir_context);
       // The linear stride of the collapsed dimension is the step of the
       // innermost tiled dimension (with tile size > 1) multiplied by the sizes
       // of all dimensions inner to it.
@@ -827,17 +1384,23 @@ absl::Status PropagateTileThroughMinimalReshape(
         }
         multiplier *= source_info.dims[idx];
       }
-      target_dim_tiles[target_id].stride = collapsed_stride.Canonicalize();
-      target_dim_tiles[target_id].size = total_tile_elements.Canonicalize();
+      target_dim_tiles[target_id].stride = collapsed_stride;
+      target_dim_tiles[target_id].size = total_tile_elements;
       target_dim_tiles[target_id].upper_bound =
-          (LinearizeShape(source_info.dims, upper_bounds_inclusive,
-                          mlir_context) +
-           1)
-              .Canonicalize();
+          LinearizeShape(source_info.dims, upper_bounds_inclusive,
+                         mlir_context) +
+          1;
 
+      if (tiling_space.IsSymbolic()) {
+        VLOG(2) << "Skipping reshape contiguity check as tile sizes are not "
+                   "assigned yet.";
+        return absl::OkStatus();
+      }
+
+      target_dim_tiles[target_id].Simplify(tiling_space);
       return VerifyReshapeContiguity(
-          minimal_reshape, absl::MakeSpan(&target_dim_tiles[target_id], 1),
-          source_info.tiles, source_info.dims);
+          source_info.dims, source_info.tiles, target_info.dims,
+          absl::MakeSpan(&target_dim_tiles[target_id], 1));
     }
     case MinimalReshapeCategory::kExpandShape: {
       const DimTile& source_dt = source_info.tiles[0];
@@ -850,17 +1413,30 @@ absl::Status PropagateTileThroughMinimalReshape(
 
       for (int i = 0; i < static_cast<int>(target_info.ids.size()); ++i) {
         int64_t target_id = target_info.ids[i];
-        target_dim_tiles[target_id].offset = offsets[i].Canonicalize();
-        target_dim_tiles[target_id].stride = source_dt.stride.Canonicalize();
+        target_dim_tiles[target_id].offset = offsets[i];
+        target_dim_tiles[target_id].stride =
+            CreateSymbolicConstant(1, mlir_context);
         target_dim_tiles[target_id].size =
-            (upper_bounds_inclusive[i] - offsets[i] + 1).Canonicalize();
-        target_dim_tiles[target_id].upper_bound =
-            (upper_bounds_inclusive[i] + 1).Canonicalize();
-        target_info.tiles[i] = target_dim_tiles[target_id];
+            upper_bounds_inclusive[i] - offsets[i] + 1;
+        target_dim_tiles[target_id].upper_bound = upper_bounds_inclusive[i] + 1;
       }
 
-      return VerifyReshapeContiguity(minimal_reshape, source_info.tiles,
-                                     target_info.tiles, target_info.dims);
+      if (tiling_space.IsSymbolic()) {
+        VLOG(2) << "Skipping reshape contiguity check as tile sizes are not "
+                   "assigned yet.";
+        return absl::OkStatus();
+      }
+
+      for (auto [i, target_id] : llvm::enumerate(target_info.ids)) {
+        target_info.tiles[i] = target_dim_tiles[target_id];
+      }
+      SimplifyDimTiles(target_info.tiles, tiling_space);
+      for (auto [i, target_id] : llvm::enumerate(target_info.ids)) {
+        target_dim_tiles[target_id] = target_info.tiles[i];
+      }
+
+      return VerifyReshapeContiguity(source_info.dims, source_info.tiles,
+                                     target_info.dims, target_info.tiles);
     }
     // m-to-n mapping of the "significant" dimensions (size > 1).
     case MinimalReshapeCategory::kGeneric:
@@ -877,29 +1453,52 @@ absl::StatusOr<Tile> PropagateTileThroughReshape(const Tile& tile,
           << "  src: " << src.ToString() << "\n"
           << "  dst: " << dst.ToString() << "\n"
           << "  tile: " << tile.ToString();
-  std::vector<MinimalReshape> reshapes = GetMinimalReshapes(src, dst);
-  VLOG(2) << "reshapes: " << absl::StrJoin(reshapes, ", ");
-  RETURN_IF_ERROR(IsSupportedReshape(reshapes));
 
+  // Represent reshape as a reshape followed by rank increase:
+  // src -> reshape_shape -> dst.
+  // We use this approach in the emitter as new rank dimensions might not have a
+  // trivial tile size and thus have to be handled as a broadcast. Applying the
+  // same algorithm here for consistency.
+  llvm::SmallVector<int64_t> non_trivial_dim_positions =
+      PositionsOfNonTrivialDims(dst.dimensions());
+
+  llvm::SmallVector<int64_t> reshape_dims;
+  reshape_dims.reserve(non_trivial_dim_positions.size());
+  for (int64_t dim : non_trivial_dim_positions) {
+    reshape_dims.push_back(dst.dimensions(dim));
+  }
+  Shape reshape_shape = ShapeUtil::MakeShape(dst.element_type(), reshape_dims);
+
+  VLOG(2) << absl::StrCat(
+      "reshape: ", reshape_shape.ToString(),
+      "\nbroadcast: ", absl::StrJoin(non_trivial_dim_positions, ","));
+
+  std::vector<MinimalReshape> reshapes = GetMinimalReshapes(src, reshape_shape);
+  VLOG(2) << "reshapes: " << absl::StrJoin(reshapes, ", ");
+  ABSL_RETURN_IF_ERROR(IsSupportedReshape(reshapes));
   SmallVector<DimTile> target_dim_tiles;
-  target_dim_tiles.reserve(dst.dimensions().size());
+  target_dim_tiles.reserve(reshape_dims.size());
   const TilingSpace& tiling_space = tile.tiling_space();
   mlir::MLIRContext* mlir_context = tiling_space.mlir_context();
-  for (int64_t dim_size : dst.dimensions()) {
+  for (int64_t dim_size : reshape_dims) {
     target_dim_tiles.push_back(GetFullDimTile(dim_size, mlir_context));
   }
   for (const auto& minimal_reshape : reshapes) {
-    RETURN_IF_ERROR(PropagateTileThroughMinimalReshape(
-        mlir_context, minimal_reshape, src, dst, tile, target_dim_tiles));
+    ABSL_RETURN_IF_ERROR(PropagateTileThroughMinimalReshape(
+        mlir_context, minimal_reshape, src, reshape_shape, tile,
+        target_dim_tiles));
   }
-  return {Tile(tiling_space, std::move(target_dim_tiles))};
+  Tile reshape_tile(tiling_space, std::move(target_dim_tiles),
+                    llvm::to_vector(tile.replica_ids()), tile.constraints());
+  return PropagateTileToOutputForBroadcastOpImpl(dst, non_trivial_dim_positions,
+                                                 reshape_tile);
 }
 
 absl::StatusOr<Tiles> PropagateTileToInputForReshapeOp(
     const HloInstruction& hlo, const Tile& output_tile) {
   const Shape& input_shape = hlo.operand(0)->shape();
   const Shape& output_shape = hlo.shape();
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto input_tile,
       PropagateTileThroughReshape(output_tile, output_shape, input_shape));
   return Tiles{std::move(input_tile)};
@@ -909,7 +1508,7 @@ absl::StatusOr<Tiles> PropagateTileToOutputForReshapeOp(
     const HloInstruction& hlo, const Tile& input_tile) {
   const Shape& input_shape = hlo.operand(0)->shape();
   const Shape& output_shape = hlo.shape();
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto output_tile,
       PropagateTileThroughReshape(input_tile, input_shape, output_shape));
   return Tiles{std::move(output_tile)};
@@ -925,7 +1524,8 @@ absl::StatusOr<Tile> PropagateTileForBitcastOp(const Tile& tile,
   if (!src.dimensions().empty()) {
     if (std::optional<std::vector<int64_t>> transpose_dims =
             ShapeUtil::DeduceTransposeDimensionsForBitcast(src, dst)) {
-      return PropagateTileThroughTransposeOp(tile, *transpose_dims);
+      return PropagateTileThroughTransposeOp(
+          tile, InversePermutation(*transpose_dims));
     }
   }
   // Bitcast is reshape.
@@ -938,19 +1538,21 @@ absl::StatusOr<Tile> PropagateTileForBitcastOp(const Tile& tile,
     return absl::InvalidArgumentError("Bitcast is not decomposable to TRT.");
   }
   const ShapeUtil::BitcastDecompositionTrt& trt = maybe_trt.value();
-  Tile transpose1_tile =
-      PropagateTileThroughTransposeOp(tile, trt.transpose1_dims);
-  ASSIGN_OR_RETURN(auto reshape_tile, PropagateTileThroughReshape(
-                                          transpose1_tile, trt.transpose1_shape,
-                                          trt.reshape_shape));
-  return PropagateTileThroughTransposeOp(reshape_tile, trt.transpose2_dims);
+  Tile transpose1_tile = PropagateTileThroughTransposeOp(
+      tile, InversePermutation(trt.transpose1_dims));
+  ABSL_ASSIGN_OR_RETURN(
+      auto reshape_tile,
+      PropagateTileThroughReshape(transpose1_tile, trt.transpose1_shape,
+                                  trt.reshape_shape));
+  return PropagateTileThroughTransposeOp(
+      reshape_tile, InversePermutation(trt.transpose2_dims));
 }
 
 absl::StatusOr<Tiles> PropagateTileToInputForBitcastOp(
     const HloInstruction& hlo, const Tile& output_tile) {
   const Shape& input_shape = hlo.operand(0)->shape();
   const Shape& output_shape = hlo.shape();
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto input_tile,
       PropagateTileForBitcastOp(output_tile, output_shape, input_shape));
   return Tiles{std::move(input_tile)};
@@ -960,10 +1562,69 @@ absl::StatusOr<Tiles> PropagateTileToOutputForBitcastOp(
     const HloInstruction& hlo, const Tile& input_tile) {
   const Shape& input_shape = hlo.operand(0)->shape();
   const Shape& output_shape = hlo.shape();
-  ASSIGN_OR_RETURN(
+  ABSL_ASSIGN_OR_RETURN(
       auto output_tile,
       PropagateTileForBitcastOp(input_tile, input_shape, output_shape));
   return Tiles{std::move(output_tile)};
+}
+
+// Calculates the required input tile for a ReduceScatter operation.
+//
+// In a ReduceScatter, the input tensor is divided into "shards" along the
+// scatter dimension and distributed across R replicas. For example:
+//   * Replicas (R) = 2
+//   * Input shape  = [128, 256]
+//   * Output shape = [64,  256] (Each replica gets a 64-row shard)
+//
+// This method does two things to the tile along the scattered dimension:
+//
+// 1. Scales it up by R:
+//    Because the data will be scattered, a thread block needs to process R
+//    times as much input data. If the block is assigned an output tile of
+//    8 rows, it must actually compute 16 rows of the input. We multiply
+//    the offset, size, and upper bounds by R to reflect this.
+//
+// 2. Enforces single-destination routing:
+//    We add a divisibility constraint to ensure that our scaled-up input
+//    tile (e.g., 16 rows) fits perfectly inside a single replica's shard
+//    (64 rows). This guarantees that the tile never crosses the boundary
+//    between shards (e.g., crossing row 64), meaning this thread block
+//    only ever has to send its data to exactly *one* target GPU.
+absl::StatusOr<Tiles> PropagateTileToInputForReduceScatterOp(
+    const TilingSpace& tiling_space,
+    const HloReduceScatterInstruction& reduce_scatter,
+    const Tile& output_tile) {
+  // Crash OK. Must be checked while forming the fusion.
+  CHECK_EQ(reduce_scatter.operand_count(), 1)
+      << "Multi-operand ReduceScatter is not yet supported.";
+  const int64_t scatter_dim = reduce_scatter.scatter_dimension();
+  const int64_t shard_size = reduce_scatter.shape().dimensions(scatter_dim);
+  const int64_t num_replicas =
+      reduce_scatter.operand(0)->shape().dimensions(scatter_dim) / shard_size;
+
+  SmallVector<DimTile> dim_tiles(output_tile.dim_tiles());
+  DimTile& scatter_tile = dim_tiles[scatter_dim];
+  if (!IsConstantValue(scatter_tile.stride, 1)) {
+    return absl::UnimplementedError(
+        absl::StrCat("Non-unit stride on the scatter dimension of ",
+                     reduce_scatter.ToString()));
+  }
+  scatter_tile.offset = scatter_tile.offset * num_replicas;
+  scatter_tile.size = scatter_tile.size * num_replicas;
+  scatter_tile.upper_bound = scatter_tile.upper_bound * num_replicas;
+
+  if (!tiling_space.IsSymbolic()) {
+    std::optional<int64_t> size = TryGetConstantValue(scatter_tile.size);
+    if (!size.has_value() || shard_size % *size != 0 ||
+        !scatter_tile.offset.Canonicalize().IsMultipleOf(*size)) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Tiling propagation rejected for ", reduce_scatter.ToString(),
+          ": operand tile ", scatter_tile.size.ToString(), " at ",
+          scatter_tile.offset.ToString(),
+          " crosses shard boundary (shard_size=", shard_size, ")"));
+    }
+  }
+  return Tiles{output_tile.CloneWithNewDims(std::move(dim_tiles))};
 }
 
 }  // namespace
@@ -976,18 +1637,38 @@ std::string ToString(const Tiles& tiles) {
   return ss.str();
 }
 
-Tiles PropagateTileToInputForAllGatherOp(const TilingSpace& tiling_space,
-                                         const HloInstruction& hlo,
-                                         const Tile& output_tile) {
+absl::StatusOr<Tiles> PropagateTileToInputForAllGatherOp(
+    const TilingSpace& tiling_space, const HloInstruction& hlo,
+    const Tile& output_tile, int64_t output_index) {
   const auto& all_gather = *Cast<HloAllGatherInstruction>(&hlo);
   int64_t gather_dim = all_gather.all_gather_dimension();
-  // Crash OK. Must be checked while forming the fusion.
-  CHECK_EQ(hlo.operand_count(), 1)
-      << "Multi-operand AllGather is not yet supported.";
-  const Shape& input_shape = hlo.operand(0)->shape();
+  if (output_index < 0 || output_index >= hlo.operand_count()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Output index ", output_index, " is out of range for ",
+                     hlo.ToString()));
+  }
+  // Each output of a (possibly variadic) all-gather depends only on the operand
+  // with the same index.
+  const Shape& input_shape = hlo.operand(output_index)->shape();
+  const Shape& output_shape = GetFirstShape(&hlo, output_index);
   int64_t local_size = input_shape.dimensions(gather_dim);
+  int64_t num_replicas = output_shape.dimensions(gather_dim) / local_size;
 
   const DimTile& output_dim_tile = output_tile.dim_tiles()[gather_dim];
+
+  if (!tiling_space.IsSymbolic()) {
+    DimTile simplified_dim_tile = output_dim_tile;
+    simplified_dim_tile.Simplify(tiling_space);
+    if (simplified_dim_tile.size.GetType() != SymbolicExprType::kConstant ||
+        simplified_dim_tile.size.GetValue() <= 0 ||
+        local_size % simplified_dim_tile.size.GetValue() != 0) {
+      return absl::UnimplementedError(absl::StrCat(
+          "Output ", output_index, " of ", hlo.name(), " is tiled with size ",
+          simplified_dim_tile.size.ToString(), " on gather dimension ",
+          gather_dim, ", expected tile size to divide per-rank size ",
+          local_size, " (one peer per tile)"));
+    }
+  }
 
   SymbolicExpr replica_id = output_dim_tile.offset / local_size;
   SymbolicExpr input_offset = output_dim_tile.offset % local_size;
@@ -1005,10 +1686,21 @@ Tiles PropagateTileToInputForAllGatherOp(const TilingSpace& tiling_space,
     }
   }
 
-  Tile input_tile(output_tile.tiling_space(), std::move(input_dim_tiles));
-  input_tile.set_replica_id(replica_id);
+  mlir::MLIRContext* ctx = output_tile.mlir_context();
+  llvm::SmallVector<DimTile> replica_id_dim_tiles =
+      llvm::to_vector(output_tile.replica_ids());
+  replica_id_dim_tiles.push_back(DimTile{
+      /*offset=*/replica_id,
+      /*size=*/CreateSymbolicConstant(1, ctx),
+      /*stride=*/CreateSymbolicConstant(1, ctx),
+      /*upper_bound=*/
+      CreateSymbolicConstant(num_replicas, ctx),
+  });
 
-  return {input_tile};
+  Tile input_tile(output_tile.tiling_space(), std::move(input_dim_tiles),
+                  std::move(replica_id_dim_tiles), output_tile.constraints());
+
+  return Tiles{input_tile};
 }
 
 absl::StatusOr<Tiles> PropagateTileToInput(TilingSpace& tiling_space,
@@ -1022,12 +1714,16 @@ absl::StatusOr<Tiles> PropagateTileToInput(TilingSpace& tiling_space,
   VLOG(2) << "tiling_space: " << tiling_space.ToString();
   if (HloInstruction::IsOpElementwise(hlo.opcode()) ||
       // For a single device, all-reduce is an elementwise op.
-      HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllReduceDone,
-                       HloOpcode::kMap>(&hlo)) {
+      HloPredicateIsOp<HloOpcode::kAllReduce, HloOpcode::kMap>(&hlo)) {
     return {PropagateTileToInputForCwiseOp(hlo, output_tile)};
   }
   if (hlo.opcode() == HloOpcode::kAllGather) {
-    return PropagateTileToInputForAllGatherOp(tiling_space, hlo, output_tile);
+    return PropagateTileToInputForAllGatherOp(tiling_space, hlo, output_tile,
+                                              output_index);
+  }
+  if (hlo.opcode() == HloOpcode::kReduceScatter) {
+    return PropagateTileToInputForReduceScatterOp(
+        tiling_space, *Cast<HloReduceScatterInstruction>(&hlo), output_tile);
   }
   if (hlo.opcode() == HloOpcode::kBitcast) {
     return PropagateTileToInputForBitcastOp(hlo, output_tile);
@@ -1050,6 +1746,9 @@ absl::StatusOr<Tiles> PropagateTileToInput(TilingSpace& tiling_space,
   if (hlo.opcode() == HloOpcode::kScaledDot) {
     return PropagateTileToInputForScaledDotOp(tiling_space, hlo, output_tile);
   }
+  if (hlo.opcode() == HloOpcode::kRaggedDot) {
+    return PropagateTileToInputForRaggedDotOp(tiling_space, hlo, output_tile);
+  }
   if (hlo.opcode() == HloOpcode::kPad) {
     const HloPadInstruction& pad = *Cast<HloPadInstruction>(&hlo);
     return PropagateTileToInputForPadOp(pad, output_tile);
@@ -1067,8 +1766,47 @@ absl::StatusOr<Tiles> PropagateTileToInput(TilingSpace& tiling_space,
   if (hlo.opcode() == HloOpcode::kReshape) {
     return PropagateTileToInputForReshapeOp(hlo, output_tile);
   }
-  return absl::InvalidArgumentError(absl::StrCat(
-      "Output to input tile propagation not implemented for ", hlo.opcode()));
+  if (hlo.opcode() == HloOpcode::kScan) {
+    return PropagateTileToInputForScanOp(hlo, output_tile, output_index);
+  }
+  if (hlo.opcode() == HloOpcode::kGetTupleElement) {
+    return PropagateTileToInputForGetTupleElementOp(hlo, output_tile);
+  }
+  return absl::InvalidArgumentError(
+      absl::StrCat("Output to input tile propagation not implemented for ",
+                   HloOpcodeString(hlo.opcode())));
+}
+
+absl::StatusOr<Tiles> PropagateTilesToInputs(
+    TilingSpace& tiling_space, const HloInstruction& hlo,
+    absl::Span<const Tile> output_tiles) {
+  if (IsIndexWiseVariadic(hlo)) {
+    if (output_tiles.size() != hlo.operand_count()) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected one tile per output of ", hlo.ToString(),
+                       ", got ", output_tiles.size()));
+    }
+    Tiles operand_tiles;
+    operand_tiles.reserve(hlo.operand_count());
+    for (int64_t k = 0; k < hlo.operand_count(); ++k) {
+      ABSL_ASSIGN_OR_RETURN(
+          Tiles tiles,
+          PropagateTileToInput(tiling_space, hlo, output_tiles[k], k));
+      if (tiles.size() != 1) {
+        return absl::InternalError(
+            absl::StrCat("Expected a single input tile for output ", k, " of ",
+                         hlo.ToString(), ", got ", tiles.size()));
+      }
+      operand_tiles.push_back(std::move(tiles[0]));
+    }
+    return operand_tiles;
+  }
+  if (output_tiles.size() != 1) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected a single output tile for ", hlo.ToString(),
+                     ", got ", output_tiles.size()));
+  }
+  return PropagateTileToInput(tiling_space, hlo, output_tiles[0], 0);
 }
 
 absl::StatusOr<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
@@ -1109,6 +1847,12 @@ absl::StatusOr<Tiles> PropagateTileToOutput(const TilingSpace& tiling_space,
   }
   if (hlo.opcode() == HloOpcode::kReshape) {
     return PropagateTileToOutputForReshapeOp(hlo, input_tile);
+  }
+  if (hlo.opcode() == HloOpcode::kScan) {
+    return PropagateTileToOutputForScanOp(hlo, input_tile, input_index);
+  }
+  if (hlo.opcode() == HloOpcode::kGetTupleElement) {
+    return PropagateTileToOutputForGetTupleElementOp(hlo, input_tile);
   }
   return absl::InvalidArgumentError(absl::StrCat(
       "Input to output tile propagation not implemented for ", hlo.opcode()));

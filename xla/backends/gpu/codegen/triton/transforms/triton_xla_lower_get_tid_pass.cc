@@ -17,7 +17,6 @@ limitations under the License.
 // This implementation uses tt.extern_elementwise to call a custom function
 // that will be implemented in platform-specific passes in the Triton pipeline.
 
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -29,9 +28,9 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 
@@ -82,9 +81,5 @@ class TritonXLALowerGetTidPass
 };
 
 }  // namespace
-
-std::unique_ptr<Pass> CreateTritonXLALowerGetTidPass() {
-  return std::make_unique<TritonXLALowerGetTidPass>();
-}
 
 }  // namespace mlir::triton::xla

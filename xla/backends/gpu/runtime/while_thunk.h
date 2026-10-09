@@ -21,20 +21,20 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "absl/base/thread_annotations.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/host_memory_pool.h"
+#include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -53,19 +53,23 @@ namespace xla::gpu {
 // statically and while loop is actually a for loop, and in this case at run
 // time condition thunk might not be executed and instead body thunk will be
 // executed for `trip_count` times.
-class WhileThunk : public Thunk {
+class WhileThunk : public Command {
  public:
   // Constructs a WhileThunk to compute while instruction 'hlo'.
   WhileThunk(ThunkInfo thunk_info,
              const BufferAllocation::Slice& condition_result_buffer_index,
              ThunkSequence condition_thunks, ThunkSequence body_thunks,
-             std::optional<int64_t> trip_count = std::nullopt);
+             std::optional<int64_t> trip_count, int devices_per_host);
   WhileThunk(const WhileThunk&) = delete;
   WhileThunk& operator=(const WhileThunk&) = delete;
 
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
 
   const ThunkExecutor& condition_executor() const {
     return condition_executor_;
@@ -81,7 +85,11 @@ class WhileThunk : public Thunk {
 
   std::optional<int64_t> trip_count() const { return trip_count_; }
 
-  absl::Status WalkNested(Walker callback) override;
+  absl::Status SetOrUpdateCommandBufferExecutors(
+      CommandExecutor condition_executor, CommandExecutor body_executor,
+      bool enable_loop_unroll);
+
+  absl::Status WalkNested(Walker pre_order, Walker post_order) override;
   absl::Status TransformNested(Transformer callback) override;
 
   std::string ToString(int indent) const override;
@@ -105,18 +113,25 @@ class WhileThunk : public Thunk {
   static absl::StatusOr<std::unique_ptr<WhileThunk>> FromProto(
       ThunkInfo thunk_info, const WhileThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations,
-      const Deserializer& deserializer);
+      const Deserializer& deserializer, int devices_per_host);
 
  private:
+  absl::Status WalkNestedCommands(CommandWalker callback) override;
+
   const BufferAllocation::Slice condition_result_buffer_index_;
   ThunkExecutor condition_executor_;
   ThunkExecutor body_executor_;
   std::optional<int64_t> trip_count_;
+  std::optional<CommandExecutor> command_condition_executor_;
+  std::optional<CommandExecutor> command_body_executor_;
+  bool enable_loop_unroll_ = false;
+  bool is_unrolled_loop_ = false;
 
   // Host memory pool for transferring predicate value from device to host.
-  absl::Mutex mutex_;
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<HostMemoryPool>>
-      host_memory_pools_ ABSL_GUARDED_BY(mutex_);
+  struct PoolState {
+    std::unique_ptr<HostMemoryPool> pool;
+  };
+  PerDeviceState<PoolState> host_memory_pools_;
 };
 
 }  // namespace xla::gpu

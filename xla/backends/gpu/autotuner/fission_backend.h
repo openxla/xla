@@ -21,12 +21,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "mlir/IR/MLIRContext.h"
+#include "absl/time/time.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
@@ -52,29 +54,32 @@ inline autotuner::Backend GetFissionBackend(autotuner::Backend backend) {
 // A proxy backend that wraps an actual codegen backend. The `rewriter_pipeline`
 // is used to transform unfused instructions to retarget them for the underlying
 // codegen backend.
-// For the get/apply config operations, the proxy backend only operates on the
-// *first* supported instruction by the underlying backend, found in the unfused
-// and transmormed HLO.
-// The assumption is that there is only one operation of interest in the fusion
-// (e.g., a 'dot' in a gemm fusion).
+// If multiple supported instructions are found, the first one is profiled, then
+// we use its config for the rest of the supported instructions, provided they
+// are identical. E.g. three 'dots' resulting from "_X3" or "_X6" algorithms are
+// identical.
 class FissionBackend : public GpuCodegenBackend {
  public:
   FissionBackend(const DebugOptions* debug_options, Compiler* compiler,
                  const Compiler::GpuTargetConfig* target_config,
                  std::unique_ptr<GpuCodegenBackend> backend,
                  std::unique_ptr<HloPassPipeline> rewriter_pipeline,
-                 const AliasInfo* alias_info, mlir::MLIRContext* mlir_context,
+                 const AliasInfo* alias_info,
+                 MlirContextPool* absl_nonnull mlir_context_pool,
                  stream_executor::StreamExecutor* stream_executor = nullptr)
       : GpuCodegenBackend(GetFissionBackend(backend->backend()), debug_options,
                           compiler, target_config, stream_executor),
         rewriter_pipeline_(std::move(rewriter_pipeline)),
         codegen_backend_(std::move(backend)),
         alias_info_(alias_info),
-        mlir_context_(mlir_context) {}
+        mlir_context_pool_(mlir_context_pool) {}
   ~FissionBackend() override = default;
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
   GetSupportedConfigs(const HloInstruction& instr) override;
+
+  absl::StatusOr<std::vector<EstimatedConfig>> GetSupportedConfigsWithEstimates(
+      const HloInstruction& instr) override;
 
   absl::StatusOr<std::unique_ptr<BackendConfig>> GetDefaultConfig(
       const HloInstruction& instr) override;
@@ -87,17 +92,37 @@ class FissionBackend : public GpuCodegenBackend {
                            const BackendConfig& config) override;
 
   bool IsSupported(const HloInstruction& instr) override;
+  std::string version() const override { return codegen_backend_->version(); }
 
  private:
+  // Estimates the combined runtime of prologue and epilogue fusion kernels.
+  // Returns zero runtime if there are no prologue or epilogue fusions (e.g. for
+  // pure dot fusions).
+  absl::StatusOr<absl::Duration> EstimateFissionPrologueEpilogue(
+      std::unique_ptr<HloModule> fissioned_and_rewritten_module) const;
+
+  struct FissionedModuleWithInstrs {
+    std::unique_ptr<HloModule> module;
+    std::vector<HloInstruction*> instructions;
+  };
+
+  absl::StatusOr<FissionedModuleWithInstrs>
+  GetFissionedModuleWithSupportedInstrs(const HloInstruction& instr);
+
   absl::StatusOr<std::unique_ptr<HloModule>> GetFissionedAndRewrittenModule(
-      const HloInstruction& fusion_instr);
-  absl::StatusOr<HloInstruction*> FindFirstSupportedInstruction(
-      const HloModule* module);
+      const HloInstruction& fusion_instr) const;
+
+  absl::StatusOr<std::vector<HloInstruction*>> FindSupportedInstructions(
+      const HloModule* module) const;
+
+  // Runs priority fusion to fuse prologues and epilogue after the fissioned
+  // module has been generated.
+  absl::Status RunPriorityFusion(HloModule* module) const;
 
   std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
   std::unique_ptr<GpuCodegenBackend> codegen_backend_;
   const AliasInfo* alias_info_;
-  mlir::MLIRContext* mlir_context_;
+  MlirContextPool* absl_nonnull mlir_context_pool_;
 };
 
 }  // namespace xla::gpu

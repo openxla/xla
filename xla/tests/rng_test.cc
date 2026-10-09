@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -32,7 +33,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using RngTest = HloPjRtTestBase;
+using RngTest = HloTestBase;
 
 void DisableHloPass(HloModule& module, absl::string_view pass_name) {
   auto debug_options = module.config().debug_options();
@@ -77,7 +78,7 @@ TEST_F(RngTest, ReturnsErrorWhenExpanderPassDisabled) {
               ::testing::HasSubstr("Rng should be expanded for CPU"));
 }
 
-using RngBitGeneratorTest = HloPjRtTestBase;
+using RngBitGeneratorTest = HloTestBase;
 
 TEST_F(RngBitGeneratorTest, ReturnsErrorWhenExpanderPassDisabled_Default) {
   const char* const kModuleStr = R"(

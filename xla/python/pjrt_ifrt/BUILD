@@ -26,11 +26,13 @@ pjrt_ifrt_package_groups()
 cc_library(
     name = "xla_ifrt",
     srcs = [
+        "xla_client.cc",
         "xla_compiler.cc",
         "xla_sharding.cc",
         "xla_sharding_spec.cc",
     ],
     hdrs = [
+        "xla_client.h",
         "xla_compiler.h",
         "xla_sharding.h",
         "xla_sharding_spec.h",
@@ -45,19 +47,22 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
-        "//xla/service:computation_placer_hdr",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
+        "//xla/python/ifrt:serdes_version",
+        "//xla/service:device_assignment",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -106,12 +111,12 @@ cc_library(
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt:sharding_serdes",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
     ],
     alwayslink = True,
 )
@@ -124,14 +129,16 @@ cc_library(
         ":xla_ifrt",
         ":xla_sharding_spec_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
     ],
     alwayslink = True,
 )
@@ -141,6 +148,7 @@ xla_cc_test(
     srcs = ["xla_sharding_serdes_test.cc"],
     deps = [
         ":xla_ifrt",
+        ":xla_sharding_proto_cc",
         ":xla_sharding_serdes",
         "//xla/hlo/ir:hlo",
         "//xla/python/ifrt",
@@ -149,7 +157,9 @@ xla_cc_test(
         "//xla/python/ifrt:serdes_test_util",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt:sharding_serdes",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
@@ -170,7 +180,6 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -181,12 +190,13 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/pjrt:pjrt_abi_version",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_proto_cc",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -200,16 +210,13 @@ cc_library(
         ":xla_executable_abi_version",
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
-        "//xla/python/ifrt:serdes_default_version_accessor",
         "//xla/python/ifrt:serdes_proto_cc",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt:serdes_week_4_old_version_accessor",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -220,12 +227,13 @@ cc_library(
     deps = [
         ":executable_metadata_proto_cc",
         ":xla_executable_version",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
     ],
     alwayslink = True,
 )
@@ -243,6 +251,33 @@ tf_proto_library(
         "//xla/python/ifrt:layout_proto",
         "//xla/python/ifrt:shape_proto",
     ],
+)
+
+# TODO(hyeontaek): Move this target out of pjrt_ifrt.
+cc_library(
+    name = "xla_array_impl_test_lib",
+    testonly = True,
+    srcs = ["xla_array_impl_test_lib.cc"],
+    deps = [
+        ":pjrt_layout",
+        "//xla:shape_util",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_layout",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:test_util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_for_library",
+    ],
+    alwayslink = True,
+)
+
+# TODO(hyeontaek): Move this target out of pjrt_ifrt.
+build_test(
+    name = "xla_array_impl_test_no_impl",
+    targets = [":xla_array_impl_test_lib"],
 )
 
 # TODO(hyeontaek): Move this target out of pjrt_ifrt.
@@ -274,9 +309,11 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:protobuf",
@@ -288,6 +325,30 @@ cc_library(
 build_test(
     name = "xla_executable_test_no_impl",
     targets = [":xla_executable_impl_test_lib"],
+)
+
+cc_library(
+    name = "pjrt_executable_impl_test_lib",
+    testonly = True,
+    srcs = ["pjrt_executable_impl_test_lib.cc"],
+    deps = [
+        ":pjrt_ifrt",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt:test_util",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/types:span",
+    ],
+    alwayslink = True,
+)
+
+build_test(
+    name = "pjrt_executable_test_no_impl",
+    targets = [":pjrt_executable_impl_test_lib"],
 )
 
 # TODO(hyeontaek): Move this target out of pjrt_ifrt.
@@ -306,7 +367,6 @@ xla_cc_test(
         "//xla/python/ifrt:device_test_util",
         "//xla/python/ifrt:tuple_impl_test_lib",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/hash:hash_testing",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/types:span",
@@ -322,11 +382,11 @@ xla_cc_test(
         ":xla_ifrt",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:tile_assignment",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:device_test_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/hash:hash_testing",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
@@ -349,9 +409,11 @@ cc_library(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo_sharding",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
+        "//xla/python/ifrt:value_util",
         "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -360,6 +422,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -406,15 +469,23 @@ cc_library(
     deps = [
         ":basic_string_array",
         ":executable_metadata_proto_cc",
+        ":gpu_xla_executable_abi_version",
+        ":gpu_xla_executable_abi_version_serdes",
         ":pjrt_attribute_map_util",
+        ":pjrt_buffer_hash_util",
         ":pjrt_dtype",
         ":pjrt_layout",
         ":pjrt_layout_serdes",
+        ":tpu_xla_executable_abi_version",
+        ":tpu_xla_executable_abi_version_serdes",
         ":transfer_server_interface",
+        ":xla_executable_abi_version",
         ":xla_executable_version",
         ":xla_executable_version_serdes",
         ":xla_ifrt",
         ":xla_sharding_serdes",
+        ":xla_sharding_spec_serdes",
+        "//xla:custom_options",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
@@ -446,7 +517,9 @@ cc_library(
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
+        "//xla/python/ifrt:basic_bundle",
         "//xla/python/ifrt:basic_device_list",
+        "//xla/python/ifrt:buffer_hash_util",
         "//xla/python/ifrt:client_impl_util",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt:serdes_week_4_old_version_accessor",
@@ -454,8 +527,9 @@ cc_library(
         "//xla/python/ifrt:user_context",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/runtime:device_id",
-        "//xla/service:computation_placer_hdr",
+        "//xla/service:device_assignment",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/concurrency:executor",
         "//xla/tsl/concurrency:future",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/distributed_runtime:call_options",
@@ -466,8 +540,8 @@ cc_library(
         "//xla/tsl/protobuf:coordination_service_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:config",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -479,8 +553,10 @@ cc_library(
         "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -488,7 +564,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:protobuf",
     ],
 )
@@ -504,6 +580,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
     ],
     alwayslink = True,
@@ -520,6 +597,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
     ],
     alwayslink = True,
@@ -529,6 +607,48 @@ cc_library(
 alias(
     name = "tfrt_cpu_client_test_lib",
     actual = ":pjrt_cpu_client_test_lib",
+)
+
+cc_library(
+    name = "hash_values_benchmark_lib",
+    testonly = True,
+    srcs = ["hash_values_benchmark_lib.cc"],
+    deps = [
+        ":pjrt_dtype",
+        ":xla_ifrt",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo_sharding",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:test_util",
+        "//xla/tsl/concurrency:future",
+        "//xla/tsl/platform:test_benchmark",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "pjrt_cpu_hash_values_benchmark",
+    srcs = [],
+    args = ["--benchmark_filter=all"],
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        ":hash_values_benchmark_lib",
+        ":pjrt_cpu_client_multi_process_test_lib",
+        "//xla/tsl/platform:test_main",
+    ],
 )
 
 cc_library(
@@ -583,10 +703,10 @@ cc_library(
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -625,14 +745,16 @@ cc_library(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_layout",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
     ],
     alwayslink = True,
 )
@@ -645,13 +767,13 @@ xla_cc_test(
         ":pjrt_layout_serdes",
         "//xla:shape_util",
         "//xla/pjrt:pjrt_layout",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_test_util",
         "//xla/python/ifrt:serdes_version",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -673,13 +795,13 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -701,6 +823,7 @@ xla_cc_test(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
@@ -708,7 +831,6 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -721,6 +843,75 @@ xla_cc_test(
         "//xla/python/ifrt:array_impl_test_lib",
         "//xla/python/ifrt:test_util",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "pjrt_buffer_hash_util",
+    srcs = ["pjrt_buffer_hash_util.cc"],
+    hdrs = ["pjrt_buffer_hash_util.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla:comparison_util",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_layout",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:buffer_hash_util",
+        "//xla/tsl/concurrency:executor",
+        "//xla/tsl/concurrency:future",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_xla_array_impl_test_cpu",
+    srcs = ["pjrt_xla_array_impl_test_cpu.cc"],
+    deps = [
+        ":pjrt_cpu_client_multi_process_test_lib",
+        ":xla_array_impl_test_lib",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_buffer_hash_util_test",
+    size = "small",
+    srcs = ["pjrt_buffer_hash_util_test.cc"],
+    deps = [
+        ":pjrt_buffer_hash_util",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:buffer_hash_util",
+        "//xla/tsl/concurrency:executor",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_bundle_impl_test_cpu",
+    size = "small",
+    srcs = ["pjrt_bundle_impl_test_cpu.cc"],
+    deps = [
+        ":pjrt_cpu_client_multi_process_test_lib",
+        "//xla/python/ifrt:bundle_impl_test_lib",
+        "//xla/python/ifrt:test_util",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -742,6 +933,7 @@ xla_cc_test(
     srcs = [],
     deps = [
         ":pjrt_cpu_client_multi_process_test_lib",
+        ":pjrt_executable_impl_test_lib",
         ":xla_executable_impl_test_lib",
         "//xla/python/ifrt:test_util",
         "@com_google_absl//absl/strings",
@@ -805,32 +997,39 @@ cc_library(
 
 cc_library(
     name = "tpu_xla_executable_abi_version",
+    srcs = ["tpu_xla_executable_abi_version.cc"],
     hdrs = ["tpu_xla_executable_abi_version.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":xla_executable_abi_version",
         "//xla/pjrt:pjrt_abi_version",
-        "//xla/python/pjrt_ifrt:xla_executable_abi_version",
-        "@llvm-project//llvm:Support",
+        "//xla/python/ifrt:rtti",
     ],
 )
 
 cc_library(
     name = "tpu_xla_executable_abi_version_serdes",
     srcs = ["tpu_xla_executable_abi_version_serdes.cc"],
-    hdrs = ["tpu_xla_executable_abi_version_serdes.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":tpu_xla_executable_abi_version",
         ":xla_executable_abi_version",
         "//xla/pjrt:pjrt_abi_version",
+        "//xla/pjrt:pjrt_api",
+        "//xla/pjrt/c:pjrt_c_api_abi_version_helpers",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/plugin:plugin_names",
         "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
-        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -838,17 +1037,7 @@ cc_library(
     srcs = ["pjrt_c_api_tpu_xla_executable_abi_version_serdes_register.cc"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "//xla/pjrt:pjrt_abi_version",
-        "//xla/pjrt:pjrt_api",
-        "//xla/pjrt/c:pjrt_c_api_abi_version_helpers",
-        "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/plugin:plugin_names",
-        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
-        "//xla/python/ifrt:serdes",
-        "//xla/python/pjrt_ifrt:tpu_xla_executable_abi_version",
-        "//xla/python/pjrt_ifrt:tpu_xla_executable_abi_version_serdes",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status:statusor",
+        ":tpu_xla_executable_abi_version_serdes",
     ],
     alwayslink = 1,
 )
@@ -861,32 +1050,48 @@ cc_library(
     deps = [
         ":xla_executable_abi_version",
         "//xla/pjrt:pjrt_abi_version",
-        "@llvm-project//llvm:Support",
+        "//xla/python/ifrt:rtti",
     ],
 )
 
 cc_library(
     name = "gpu_xla_executable_abi_version_serdes",
     srcs = ["gpu_xla_executable_abi_version_serdes.cc"],
-    hdrs = ["gpu_xla_executable_abi_version_serdes.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":gpu_xla_executable_abi_version",
         ":xla_executable_abi_version",
         "//xla/pjrt:pjrt_abi_version",
         "//xla/pjrt:pjrt_api",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/c:pjrt_c_api_abi_version_helpers",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/plugin:plugin_names",
         "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "//xla/python/ifrt:rtti",
         "//xla/python/ifrt:serdes",
-        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "stream_executor_gpu_xla_executable_abi_version_serdes_register",
+    srcs = ["stream_executor_gpu_xla_executable_abi_version_serdes_register.cc"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":gpu_xla_executable_abi_version_serdes",
+        "//xla/pjrt:pjrt_abi_version",
+        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "//xla/pjrt/se:stream_executor_pjrt_abi_version",
+        "@com_google_absl//absl/status:statusor",
+    ],
+    alwayslink = True,
 )
 
 xla_cc_test(
@@ -897,8 +1102,11 @@ xla_cc_test(
         ":gpu_xla_executable_abi_version_serdes",
         ":xla_executable_abi_version",
         "//xla/pjrt:pjrt_abi_version",
+        "//xla/pjrt:pjrt_api",
         "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/gpu:abi_helpers",
+        "//xla/pjrt/plugin:plugin_names",
         "//xla/pjrt/plugin/xla_gpu:gpu_static_registration",  # buildcleaner: keep
         "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
         "//xla/stream_executor:semantic_version",
@@ -908,7 +1116,7 @@ xla_cc_test(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/cuda:cuda_runtime_abi_version",
         "//xla/stream_executor/cuda:cuda_runtime_abi_version_registration",  # buildcleaner: keep
-        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",

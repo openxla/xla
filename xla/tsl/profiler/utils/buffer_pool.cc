@@ -19,9 +19,9 @@ limitations under the License.
 #include <ios>
 
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/mem.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
-#include "tsl/platform/mem.h"
 
 namespace tsl {
 namespace profiler {

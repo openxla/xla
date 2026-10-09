@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -61,7 +62,7 @@ class ConvertTritonGemmConfigTest : public HloHardwareIndependentTestBase {
   }
 };
 
-TEST_F(ConvertTritonGemmConfigTest, BasicTest) {
+TEST_F(ConvertTritonGemmConfigTest, BasicDot) {
   absl::string_view hlo = R"(
 dot {
   lhs = f32[8192,512] parameter(0)
@@ -91,12 +92,12 @@ ENTRY entry {
     CHECK: ENTRY
     CHECK: ROOT{{.*}}fusion(
     CHECK-SAME: kind=kCustom
-    CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
     CHECK-SAME: "block_level_fusion_config"
-    CHECK-SAME: "num_warps":"4"
-    CHECK-SAME: "output_tiles":[{"sizes":["64","256"]}]
     CHECK-SAME: "num_ctas":3
     CHECK-SAME: "num_stages":5
+    CHECK-SAME: "num_warps":"4"
+    CHECK-SAME: "output_tiles":[{"sizes":["64","256"]}]
+    CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
 )"));
   const HloInstruction* fusion = nullptr;
   ASSERT_THAT(module->entry_computation()->root_instruction(),
@@ -148,8 +149,8 @@ ENTRY entry {
     CHECK: ROOT {{.*}} = bf16[4,4]{1,0} scaled-dot({{.*}}backend_config={"sizes":["64"]}
     CHECK: ENTRY
     CHECK: ROOT{{.*}}fusion(
-    CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
     CHECK-SAME: "output_tiles":[{"sizes":["16","32"]}]
+    CHECK-SAME: "kind":"__triton_nested_gemm_fusion"
 )"));
 }
 
@@ -189,6 +190,66 @@ ENTRY entry {
   EXPECT_FALSE(fusion->backend_config<GpuBackendConfig>()
                    ->fusion_backend_config()
                    .has_triton_gemm_config());
+}
+
+TEST_F(ConvertTritonGemmConfigTest, TransposeDot) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = f32[8192,512] parameter(0)
+  rhs = f32[512,512] parameter(1)
+  dot = f32[8192,512] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT transpose = f32[512,8192] transpose(dot), dimensions={1,0}
+}
+
+ENTRY entry {
+  p0 = f32[8192,512] parameter(0)
+  p1 = f32[512,512] parameter(1)
+  ROOT fusion = f32[512,8192] fusion(p0, p1),
+    kind=kCustom, calls=dot, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm",  "triton_gemm_config": {
+          "block_m":"64", "block_n":"256", "block_k":"32",
+          "num_stages":"5", "num_warps":"4", "num_ctas":"3"
+        }
+      }
+    }
+})";
+
+  std::unique_ptr<VerifiedHloModule> module = RunConvertTritonGemmConfig(hlo);
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
+    CHECK: "output_tiles":[{"sizes":["256","64"]}]
+)"));
+}
+
+TEST_F(ConvertTritonGemmConfigTest, BatchGemm) {
+  absl::string_view hlo = R"(
+dot {
+  lhs = f32[2,8192,512] parameter(0)
+  rhs = f32[2,512,512] parameter(1)
+  ROOT dot = f32[2,8192,512] dot(lhs, rhs),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+}
+
+ENTRY entry {
+  p0 = f32[2,8192,512] parameter(0)
+  p1 = f32[2,512,512] parameter(1)
+  ROOT fusion = f32[2,8192,512] fusion(p0, p1),
+    kind=kCustom, calls=dot, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm", "triton_gemm_config": {
+          "block_m":"64", "block_n":"256", "block_k":"32",
+          "num_stages":"5", "num_warps":"4", "num_ctas":"3"
+        }
+      }
+    }
+})";
+
+  std::unique_ptr<VerifiedHloModule> module = RunConvertTritonGemmConfig(hlo);
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
+    CHECK: "output_tiles":[{"sizes":["1","64","256"]}]
+)"));
 }
 
 }  // namespace

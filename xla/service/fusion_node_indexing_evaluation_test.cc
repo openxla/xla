@@ -16,13 +16,13 @@ limitations under the License.
 #include "xla/service/fusion_node_indexing_evaluation.h"
 
 #include "absl/container/flat_hash_map.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/instruction_fusion.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 

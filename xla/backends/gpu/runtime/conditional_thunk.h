@@ -17,23 +17,24 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_CONDITIONAL_THUNK_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "absl/base/thread_annotations.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/host_memory_pool.h"
+#include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/shaped_slice.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/command_buffer.h"
 
 namespace xla::gpu {
 
@@ -47,11 +48,12 @@ namespace xla::gpu {
 // instruction of the true computation share the same allocation. Similarly, the
 // buffers of the false operand and that of the parameter instruction of the
 // false computation share the same allocation.
-class ConditionalThunk : public Thunk {
+class ConditionalThunk : public Command {
  public:
   ConditionalThunk(ThunkInfo thunk_info,
                    const ShapedSlice& branch_index_buffer_index,
-                   std::vector<ThunkSequence> branch_thunks);
+                   std::vector<ThunkSequence> branch_thunks,
+                   int devices_per_host);
 
   ConditionalThunk(const ConditionalThunk&) = delete;
   ConditionalThunk& operator=(const ConditionalThunk&) = delete;
@@ -59,6 +61,13 @@ class ConditionalThunk : public Thunk {
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  absl::Status SetOrUpdateCommandBufferBranchExecutors(
+      std::vector<CommandExecutor> branch_executors);
 
   absl::Span<const ThunkExecutor> branch_executors() const {
     return branch_executors_;
@@ -71,7 +80,7 @@ class ConditionalThunk : public Thunk {
     return branch_index_buffer_index_;
   }
 
-  absl::Status WalkNested(Walker callback) override;
+  absl::Status WalkNested(Walker pre_order, Walker post_order) override;
   absl::Status TransformNested(Transformer callback) override;
 
   bool branch_index_is_bool() const { return branch_index_is_bool_; }
@@ -97,19 +106,23 @@ class ConditionalThunk : public Thunk {
   static absl::StatusOr<std::unique_ptr<ConditionalThunk>> FromProto(
       ThunkInfo thunk_info, const ConditionalThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations,
-      const Deserializer& deserializer);
+      const Deserializer& deserializer, int devices_per_host);
 
   std::string ToString(int indent) const override;
 
  private:
+  absl::Status WalkNestedCommands(CommandWalker callback) override;
+
   const ShapedSlice branch_index_buffer_index_;
   std::vector<ThunkExecutor> branch_executors_;
+  std::optional<std::vector<CommandExecutor>> command_branch_executors_;
   bool branch_index_is_bool_;
 
   // Host memory pool for transferring predicate value from device to host.
-  absl::Mutex mutex_;
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<HostMemoryPool>>
-      host_memory_pools_ ABSL_GUARDED_BY(mutex_);
+  struct PoolState {
+    std::unique_ptr<HostMemoryPool> pool;
+  };
+  PerDeviceState<PoolState> host_memory_pools_;
 };
 
 }  // namespace xla::gpu

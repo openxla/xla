@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -20,9 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/pjrt_client_registry.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -68,7 +69,7 @@ namespace {
 using ::testing::SizeIs;
 
 class WhileTest : public ClientLibraryTestRunnerMixin<
-                      HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {};
+                      HloPjRtInterpreterReferenceMixin<HloTestBase>> {};
 
 // Tests a while node when the result type T is S32.
 //
@@ -1295,7 +1296,7 @@ std::unique_ptr<PjRtClient> GetPjRtClientForTest() {
 // HloRunnerPjRt is not thread-safe, so provide an easy way to get a new
 // runner for each execution thread in the ParallelExecution test.
 std::unique_ptr<HloRunnerInterface> NewTestRunner() {
-  return MakeHloRunnerPjRtAotAware(GetPjRtClientForTest());
+  return MakeAotAwareHloRunner(GetPjRtClientForTest());
 }
 
 using HloWhileTest = HloHardwareIndependentTestBase;

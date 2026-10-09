@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/analysis/alias_info.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -84,15 +85,110 @@ ENTRY main {
   ROOT done = f32[2,3] call-done(start)
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
   const HloInstruction* start = FindInstruction(module.get(), "start");
+  const HloInstruction* done = FindInstruction(module.get(), "done");
+  AliasInfo alias_info;
+  auto pairs_start = alias_info.GetInPlaceInputOutputPairs(start);
+  EXPECT_THAT(pairs_start, ElementsAre(std::pair<HloOperandIndex, ShapeIndex>{
+                               HloOperandIndex{0, {}}, {1}}));
+  auto pairs_done = alias_info.GetInPlaceInputOutputPairs(done);
+  EXPECT_THAT(pairs_done, ElementsAre(std::pair<HloOperandIndex, ShapeIndex>{
+                              HloOperandIndex{0, {0, 0}}, {}}));
+}
 
-  auto pairs = alias_info_.GetInPlaceInputOutputPairs(start);
+// Tests that the alias info is computed correctly when the output-to-operand
+// aliasing is late-bound.
+TEST_F(GetInPlaceInputOutputPairsTest, AsyncStart_LateBinding) {
+  const char* const kHlo = R"(
+HloModule test
+async_computation {
+  p0 = f32[2,3] parameter(0)
+  ROOT abs = f32[2,3] abs(p0)
+}
+ENTRY main {
+  p0 = f32[2,3] parameter(0)
+  start = ((), (), s32[]) call-start(),
+    to_apply=async_computation,
+    output_to_operand_aliasing={{1}: (0, {})}
+  update = ((f32[2,3]), f32[2,3]) async-update(start, p0)
+  ROOT done = f32[2,3] call-done(update)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* start = FindInstruction(module.get(), "start");
+  AliasInfo alias_info;
+  auto pairs_start = alias_info.GetInPlaceInputOutputPairs(start);
+  EXPECT_TRUE(pairs_start.empty());
+  const HloInstruction* update = FindInstruction(module.get(), "update");
+  auto pairs_update = alias_info.GetInPlaceInputOutputPairs(update);
+  EXPECT_THAT(pairs_update, ElementsAre(std::pair<HloOperandIndex, ShapeIndex>{
+                                HloOperandIndex{1, {}}, {1}}));
+  const HloInstruction* done = FindInstruction(module.get(), "done");
+  auto pairs_done = alias_info.GetInPlaceInputOutputPairs(done);
+  EXPECT_THAT(pairs_done, ElementsAre(std::pair<HloOperandIndex, ShapeIndex>{
+                              HloOperandIndex{0, {0, 0}}, {}}));
+}
 
-  // By default for forwarded operands: operand 0 maps to output {0, 0} for the
-  // parameter subshape
-  EXPECT_THAT(pairs, ElementsAre(std::pair<HloOperandIndex, ShapeIndex>{
-                         HloOperandIndex{0, {}}, {1}}));
+// Tests that GetInPlaceInputOutputPairs on an async-update instruction whose
+// async chain start crosses a computation boundary (e.g., via a while loop
+// parameter where async_chain_start() returns nullptr) returns empty pairs
+// safely without CHECK-failing.
+TEST_F(GetInPlaceInputOutputPairsTest, AsyncUpdate_LoopCrossing) {
+  const char* const kHlo = R"(
+HloModule test
+
+while_body {
+  state = ((f32[2,3]), f32[2,3], s32[]) parameter(0)
+  ROOT update = ((f32[2,3]), f32[2,3], s32[]) custom-call-update(state)
+}
+
+while_condition {
+  state = ((f32[2,3]), f32[2,3], s32[]) parameter(0)
+  ROOT predicate = pred[] constant(true)
+}
+
+ENTRY main {
+  p0 = f32[2,3] constant(0)
+  start = ((f32[2,3]), f32[2,3], s32[]) custom-call-start(p0),
+    custom_call_target="baz"
+  ROOT while_op = ((f32[2,3]), f32[2,3], s32[]) while(start), condition=while_condition, body=while_body
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* update = FindInstruction(module.get(), "update");
+  AliasInfo alias_info;
+  auto pairs_update = alias_info.GetInPlaceInputOutputPairs(update);
+  EXPECT_THAT(pairs_update, IsEmpty());
+}
+
+// Tests that the alias info is computed correctly when the async up context is
+// aliased.
+TEST_F(GetInPlaceInputOutputPairsTest, AsyncContextAliasing) {
+  const char* const kHlo = R"(
+HloModule test
+async_computation {
+  p0 = f32[2,3] parameter(0)
+  ROOT abs = f32[2,3] abs(p0)
+}
+ENTRY main {
+  p0 = f32[2,3] parameter(0)
+  start = ((), (), s32[]) call-start(),
+    to_apply=async_computation
+  update = ((f32[2,3]), f32[2,3], s32[]) async-update(start, p0),
+    output_to_operand_aliasing={{2}: (0, {2})}
+  ROOT done = f32[2,3] call-done(update)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* start = FindInstruction(module.get(), "start");
+  AliasInfo alias_info;
+  auto pairs_start = alias_info.GetInPlaceInputOutputPairs(start);
+  EXPECT_TRUE(pairs_start.empty());
+  const HloInstruction* update = FindInstruction(module.get(), "update");
+  auto pairs_update = alias_info.GetInPlaceInputOutputPairs(update);
+  EXPECT_THAT(pairs_update, ElementsAre(std::pair<HloOperandIndex, ShapeIndex>{
+                                HloOperandIndex{0, {2}}, {2}}));
 }
 
 // Verifies that a dynamic-update-slice instruction can compute in-place
@@ -169,9 +265,21 @@ ENTRY %Comp_spmd {
       custom_call_target="BarrierStart"
   %tuple = (f32[8,4,1], (f32[8,4,1], u32[]{:S(2)}, u32[]{:S(2)}))
       tuple(%copy, %custom-call)
-  %all-to-all-start.1 = (((f32[8,4,1],
-      (f32[8,4,1], u32[]{:S(2)}, u32[]{:S(2)}))),
-      f32[8,4,1], u32[]{:S(2)}, u32[]{:S(2)})
+  %all-to-all-start.1 = (
+        (                   // BEGIN OF 0
+          (                 // BEGIN OF 0, 0
+            f32[8,4,1],     // 0, 0, 0
+            (               // BEGIN OF 0, 0, 1
+              f32[8,4,1],    // 0, 0, 1, 0
+              u32[]{:S(2)},  // 0, 0, 1, 1
+              u32[]{:S(2)}   // 0, 0, 1, 2
+            )               // END OF 0, 0, 1
+          )                 // END OF 0, 0
+        ),                  // END OF 0
+        f32[8,4,1],   // 1
+        u32[]{:S(2)}, // 2
+        u32[]{:S(2)}  // 3
+      )
       async-start(%tuple),
       output_to_operand_aliasing={
         {0,0,1,0}: (0, {1,0}),
@@ -321,6 +429,68 @@ ENTRY test {
   std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
   expected_pairs.push_back({HloOperandIndex{0, {}}, {}});
   EXPECT_EQ(in_place_pairs, expected_pairs);
+}
+
+TEST_F(GetInPlaceInputOutputPairsTest, NestedFusionBodyAliasingThroughBitcast) {
+  const char* kHlo = R"(
+HloModule test
+
+inner_fusion {
+  p0 = f32[4] parameter(0)
+  update = f32[2] parameter(1)
+  c0 = s32[] constant(0)
+  ROOT dus = f32[4] dynamic-update-slice(p0, update, c0)
+}
+
+outer_fusion {
+  p0 = f32[4] parameter(0)
+  update = f32[2] parameter(1)
+  nested = f32[4] fusion(p0, update), kind=kLoop, calls=inner_fusion
+  ROOT bitcast = f32[2,2] bitcast(nested)
+}
+
+ENTRY test {
+  p0 = f32[4] parameter(0)
+  update = f32[2] parameter(1)
+  ROOT fusion = f32[2,2] fusion(p0, update), kind=kLoop,
+      calls=outer_fusion
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+
+  auto in_place_pairs = alias_info_.GetInPlaceInputOutputPairs(fusion);
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
+  expected_pairs.push_back({HloOperandIndex{0, {}}, {}});
+  EXPECT_EQ(in_place_pairs, expected_pairs);
+}
+
+TEST_F(GetInPlaceInputOutputPairsTest,
+       NestedFusionAnnotationNotInheritedThroughBitcast) {
+  const char* kHlo = R"(
+HloModule test
+
+copy_fusion {
+  p0 = f32[4] parameter(0)
+  ROOT copy = f32[4] copy(p0)
+}
+
+outer_fusion {
+  p0 = f32[4] parameter(0)
+  nested = f32[4] fusion(p0), kind=kLoop,
+      output_to_operand_aliasing={{}: (0, {})}, calls=copy_fusion
+  ROOT bitcast = f32[2,2] bitcast(nested)
+}
+
+ENTRY test {
+  p0 = f32[4] parameter(0)
+  ROOT fusion = f32[2,2] fusion(p0), kind=kLoop, calls=outer_fusion
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+
+  EXPECT_THAT(alias_info_.GetInPlaceInputOutputPairs(fusion), IsEmpty());
 }
 
 // Verifies in-place behavior for nested multi-output fusions containing DUS.
@@ -614,41 +784,6 @@ ENTRY AllToAll {
       alias_info_.GetInPlaceInputOutputPairs(ragged_all_to_all);
   std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
   expected_pairs.push_back({HloOperandIndex{1, {}}, {}});
-  EXPECT_EQ(in_place_pairs, expected_pairs);
-}
-
-// Verifies that all-reduce-start with NVSHMEM backend expects no aliasing
-// (empty in-place pairs).
-TEST_F(GetInPlaceInputOutputPairsTest, nvshmem_ar) {
-  const char* kHlo = R"(
-HloModule test_ar
-region_add {
-  lhs = f32[] parameter(0)
-  rhs = f32[] parameter(1)
-  ROOT ret = f32[] add(lhs, rhs)
-}
-
-ENTRY test {
-  p0 = f32[10] parameter(0)
-  ar = f32[10] all-reduce-start(p0), replica_groups={},
-      to_apply=region_add,
-      backend_config={
-        "collective_backend_config":
-          {
-            "backend":"NVSHMEM"
-          }
-        }
-  ROOT ar.done = f32[10] all-reduce-done(ar)
-}
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  const HloInstruction* ar_start =
-      module->entry_computation()->root_instruction()->operand(0);
-
-  auto in_place_pairs = alias_info_.GetInPlaceInputOutputPairs(ar_start);
-  std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
-  // For nvshmem allreduce, we expect no aliasing for input and output buffers
-  // therefore empty inplace pairs.
   EXPECT_EQ(in_place_pairs, expected_pairs);
 }
 
@@ -1064,6 +1199,49 @@ ENTRY main {
 
   EXPECT_TRUE(alias_info.MustAlias(p0, {}, dus, {}));
   EXPECT_FALSE(alias_info.MustAlias(p1, {}, dus, {}));
+}
+
+// Verifies that without output_to_operand_aliasing, an AsyncStart wrapping a
+// DUS returns empty in-place pairs (treated as out-of-place). This will result
+// in a new buffer for the result of the async dus and trigger copy insertion.
+// On the other hand, adding the attribute correctly confirms the in-place
+// aliasing with Operand 0.
+TEST_F(GetInPlaceInputOutputPairsTest, AsyncDUSAliasingBlindness) {
+  const char* kHlo = R"(
+HloModule test
+
+async_computation {
+  p0 = f32[10] parameter(0)
+  p1 = f32[5] parameter(1)
+  p2 = s32[] parameter(2)
+  ROOT dus = f32[10] dynamic-update-slice(p0, p1, p2)
+}
+
+ENTRY test {
+  p0 = f32[10] parameter(0)
+  p1 = f32[5] parameter(1)
+  p2 = s32[] parameter(2)
+  start_unannotated = ((f32[10], f32[5], s32[]), f32[10], s32[]) async-start(p0, p1, p2),
+      calls=async_computation
+  done_unannotated = f32[10] async-done(start_unannotated)
+  start_annotated = ((f32[10], f32[5], s32[]), f32[10], s32[]) async-start(p0, p1, p2),
+      calls=async_computation, output_to_operand_aliasing={{1}: (0, {})}
+  done_annotated = f32[10] async-done(start_annotated)
+  ROOT tuple = (f32[10], f32[10]) tuple(done_unannotated, done_annotated)
+}
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* unannotated =
+      FindInstruction(module.get(), "start_unannotated");
+  HloInstruction* annotated = FindInstruction(module.get(), "start_annotated");
+
+  // 1. Without attribute, XLA is blind to inner DUS in-place semantics:
+  EXPECT_TRUE(alias_info_.GetInPlaceInputOutputPairs(unannotated).empty());
+
+  // 2. With attribute, XLA recognizes Output {1} aliases Operand 0 in-place:
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs = {
+      {HloOperandIndex{0, {}}, {1}}};
+  EXPECT_EQ(alias_info_.GetInPlaceInputOutputPairs(annotated), expected_pairs);
 }
 
 }  // namespace

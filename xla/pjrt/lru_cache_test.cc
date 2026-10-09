@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/lru_cache.h"
 
+#include <gmock/gmock.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/random/random.h"
 #include "xla/hlo/testlib/test.h"
@@ -186,6 +187,20 @@ TEST(LRUCache, SharedLRUList) {
   EXPECT_EQ(0, cache1.Size());
   EXPECT_EQ(0, cache2.Size());
   EXPECT_EQ(2, cache1.GetOrCreateIfAbsent(2, [](int) { return 2; }));
+}
+
+TEST(LRUCache, SharedLRUListEvictOtherCache) {
+  LRUCache<int, int>::LRUList list(2);
+  LRUCache<int, int> cache1(&list);
+  LRUCache<int, int> cache2(&list);
+
+  cache1.GetOrCreateIfAbsent(0, [](int) { return 0; });
+  cache2.GetOrCreateIfAbsent(1, [](int) { return 1; });
+  cache1.GetOrCreateIfAbsent(0, [](int) { return 0; });
+  cache1.GetOrCreateIfAbsent(2, [](int) { return 2; });
+
+  EXPECT_EQ(cache1.Size(), 2);
+  EXPECT_EQ(cache2.Size(), 0);
 }
 
 TEST(LRUCache, RandomInsertions) {

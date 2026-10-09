@@ -26,14 +26,15 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/ndarray.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/ndarray.h"          // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -61,6 +62,8 @@ namespace {
 struct CustomDtypes {
   nb_dtype bfloat16;
   nb_dtype float4_e2m1fn;
+  nb_dtype float6_e2m3fn;
+  nb_dtype float6_e3m2fn;
   nb_dtype float8_e3m4;
   nb_dtype float8_e4m3;
   nb_dtype float8_e4m3fn;
@@ -85,6 +88,10 @@ const CustomDtypes& GetCustomDtypes() {
     dtypes->bfloat16 = nb_dtype::from_args(ml_dtypes.attr("bfloat16"));
     dtypes->float4_e2m1fn =
         nb_dtype::from_args(ml_dtypes.attr("float4_e2m1fn"));
+    dtypes->float6_e2m3fn =
+        nb_dtype::from_args(ml_dtypes.attr("float6_e2m3fn"));
+    dtypes->float6_e3m2fn =
+        nb_dtype::from_args(ml_dtypes.attr("float6_e3m2fn"));
     dtypes->float8_e3m4 = nb_dtype::from_args(ml_dtypes.attr("float8_e3m4"));
     dtypes->float8_e4m3 = nb_dtype::from_args(ml_dtypes.attr("float8_e4m3"));
     dtypes->float8_e4m3fn =
@@ -159,6 +166,8 @@ absl::StatusOr<PrimitiveType> DtypeToPrimitiveType(const nb_dtype& np_type) {
         absl::flat_hash_map<nb_dtype, PrimitiveType, DtypeHash, DtypeEq>>();
     map->emplace(custom_dtypes.bfloat16, BF16);
     map->emplace(custom_dtypes.float4_e2m1fn, F4E2M1FN);
+    map->emplace(custom_dtypes.float6_e2m3fn, F6E2M3FN);
+    map->emplace(custom_dtypes.float6_e3m2fn, F6E3M2FN);
     map->emplace(custom_dtypes.float8_e3m4, F8E3M4);
     map->emplace(custom_dtypes.float8_e4m3, F8E4M3);
     map->emplace(custom_dtypes.float8_e4m3fn, F8E4M3FN);
@@ -234,6 +243,12 @@ absl::StatusOr<nb_dtype> PrimitiveTypeToNbDtype(PrimitiveType type) {
       return to_nb_dtype(NPY_UINT64);
     case F4E2M1FN:
       return custom_dtypes.float4_e2m1fn;
+      break;
+    case F6E2M3FN:
+      return custom_dtypes.float6_e2m3fn;
+      break;
+    case F6E3M2FN:
+      return custom_dtypes.float6_e3m2fn;
       break;
     case F8E3M4:
       return custom_dtypes.float8_e3m4;
@@ -330,6 +345,10 @@ absl::StatusOr<nb_dtype> IfrtDtypeToNbDtype(ifrt::DType dtype) {
       return to_nb_dtype(NPY_COMPLEX128);
     case ifrt::DType::kF4E2M1FN:
       return custom_dtypes.float4_e2m1fn;
+    case ifrt::DType::kF6E2M3FN:
+      return custom_dtypes.float6_e2m3fn;
+    case ifrt::DType::kF6E3M2FN:
+      return custom_dtypes.float6_e3m2fn;
     case ifrt::DType::kF8E3M4:
       return custom_dtypes.float8_e3m4;
     case ifrt::DType::kF8E4M3:
@@ -365,7 +384,7 @@ absl::StatusOr<ifrt::DType> DtypeToIfRtDType(const nb_dtype& dtype) {
   if (dtype.kind() == 'T') {
     return ifrt::DType(ifrt::DType::kString);
   }
-  TF_ASSIGN_OR_RETURN(auto primitive_type, DtypeToPrimitiveType(dtype));
+  ABSL_ASSIGN_OR_RETURN(auto primitive_type, DtypeToPrimitiveType(dtype));
   return ifrt::ToDType(primitive_type);
 }
 
@@ -407,6 +426,8 @@ const NumpyScalarTypes& GetNumpyScalarTypes() {
     dtypes->np_uint64 = nb::object(numpy.attr("uint64"));
     dtypes->np_bfloat16 = nb::object(ml_dtypes.attr("bfloat16"));
     dtypes->np_float4_e2m1fn = nb::object(ml_dtypes.attr("float4_e2m1fn"));
+    dtypes->np_float6_e2m3fn = nb::object(ml_dtypes.attr("float6_e2m3fn"));
+    dtypes->np_float6_e3m2fn = nb::object(ml_dtypes.attr("float6_e3m2fn"));
     dtypes->np_float8_e3m4 = nb::object(ml_dtypes.attr("float8_e3m4"));
     dtypes->np_float8_e4m3 = nb::object(ml_dtypes.attr("float8_e4m3"));
     dtypes->np_float8_e4m3fn = nb::object(ml_dtypes.attr("float8_e4m3fn"));
@@ -516,34 +537,31 @@ absl::StatusOr<nb::object> LiteralToPython(
   xla::Literal& m = *literal;
   if (m.shape().IsTuple()) {
     std::vector<Literal> elems = m.DecomposeTuple();
-    std::vector<nb::object> arrays(elems.size());
+    nb::tuple_builder result(elems.size());
     for (int i = 0; i < elems.size(); ++i) {
-      TF_ASSIGN_OR_RETURN(
-          arrays[i],
+      ABSL_ASSIGN_OR_RETURN(
+          nb::object array,
           LiteralToPython(std::make_unique<Literal>(std::move(elems[i]))));
+      result.put(std::move(array));
     }
-    nb::tuple result = nb::steal<nb::tuple>(PyTuple_New(elems.size()));
-    for (int i = 0; i < elems.size(); ++i) {
-      PyTuple_SET_ITEM(result.ptr(), i, arrays[i].release().ptr());
-    }
-    return result;
+    return result.commit();
   }
   TF_RET_CHECK(m.shape().IsArray());
 
   nb::object literal_object = nb::cast(literal);
-  TF_ASSIGN_OR_RETURN(nb_dtype dtype,
-                      PrimitiveTypeToNbDtype(m.shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(nb_dtype dtype,
+                        PrimitiveTypeToNbDtype(m.shape().element_type()));
   return nb_numpy_ndarray(dtype, m.shape().dimensions(),
                           ByteStridesForShape(m.shape()), m.untyped_data(),
                           literal_object);
 }
 
 nb::tuple MutableSpanToNbTuple(absl::Span<nb::object> xs) {
-  nb::tuple out = nb::steal<nb::tuple>(PyTuple_New(xs.size()));
-  for (int i = 0; i < xs.size(); ++i) {
-    PyTuple_SET_ITEM(out.ptr(), i, xs[i].release().ptr());
+  nb::tuple_builder out(xs.size());
+  for (nb::object& x : xs) {
+    out.put(std::move(x));
   }
-  return out;
+  return out.commit();
 }
 
 std::optional<CastToArrayResult> CastToArray(nb::handle h) {

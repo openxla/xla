@@ -99,11 +99,11 @@ NB_MODULE(_mlirHlo, m) {
       m, "ScatterDimensionNumbers", mlirMhloAttributeIsAScatterDimensionNumbers)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::vector<int64_t> &updateWindowDims,
-             const std::vector<int64_t> &insertedWindowDims,
-             const std::vector<int64_t> &inputBatchingDims,
-             const std::vector<int64_t> &scatterIndicesBatchingDims,
-             const std::vector<int64_t> &scatteredDimsToOperandDims,
+          [](nb::object cls, const std::vector<int64_t>& updateWindowDims,
+             const std::vector<int64_t>& insertedWindowDims,
+             const std::vector<int64_t>& inputBatchingDims,
+             const std::vector<int64_t>& scatterIndicesBatchingDims,
+             const std::vector<int64_t>& scatteredDimsToOperandDims,
              int64_t indexVectorDim, MlirContext ctx) {
             return cls(mlirMhloScatterDimensionNumbersGet(
                 ctx, updateWindowDims.size(), updateWindowDims.data(),
@@ -161,11 +161,11 @@ NB_MODULE(_mlirHlo, m) {
       m, "GatherDimensionNumbers", mlirMhloAttributeIsAGatherDimensionNumbers)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::vector<int64_t> &offsetDims,
-             const std::vector<int64_t> &collapsedSliceDims,
-             const std::vector<int64_t> &operandBatchingDims,
-             const std::vector<int64_t> &startIndicesBatchingDims,
-             const std::vector<int64_t> &startIndexMap, int64_t indexVectorDim,
+          [](nb::object cls, const std::vector<int64_t>& offsetDims,
+             const std::vector<int64_t>& collapsedSliceDims,
+             const std::vector<int64_t>& operandBatchingDims,
+             const std::vector<int64_t>& startIndicesBatchingDims,
+             const std::vector<int64_t>& startIndexMap, int64_t indexVectorDim,
              MlirContext ctx) {
             return cls(mlirMhloGatherDimensionNumbersGet(
                 ctx, offsetDims.size(), offsetDims.data(),
@@ -225,10 +225,10 @@ NB_MODULE(_mlirHlo, m) {
       m, "DotDimensionNumbers", mlirMhloAttributeIsADotDimensionNumbers)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::vector<int64_t> &lhsBatchingDims,
-             const std::vector<int64_t> &rhsBatchingDims,
-             const std::vector<int64_t> &lhsContractingDims,
-             const std::vector<int64_t> &rhsContractingDims, MlirContext ctx) {
+          [](nb::object cls, const std::vector<int64_t>& lhsBatchingDims,
+             const std::vector<int64_t>& rhsBatchingDims,
+             const std::vector<int64_t>& lhsContractingDims,
+             const std::vector<int64_t>& rhsContractingDims, MlirContext ctx) {
             return cls(mlirMhloDotDimensionNumbersGet(
                 ctx, lhsBatchingDims.size(), lhsBatchingDims.data(),
                 rhsBatchingDims.size(), rhsBatchingDims.data(),
@@ -399,7 +399,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "ComparisonDirectionAttr", mlirMhloAttributeIsAComparisonDirectionAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloComparisonDirectionAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -414,7 +414,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "ComparisonTypeAttr", mlirMhloAttributeIsAComparisonTypeAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloComparisonTypeAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -429,7 +429,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "PrecisionAttr", mlirMhloAttributeIsAPrecisionAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloPrecisionAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -444,7 +444,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "FftTypeAttr", mlirMhloAttributeIsAFftTypeAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloFftTypeAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -459,7 +459,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "DequantizeModeAttr", mlirMhloAttributeIsADequantizeModeAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloDequantizeModeAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -474,7 +474,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "TransposeAttr", mlirMhloAttributeIsATransposeAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloTransposeAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -489,7 +489,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "FusionKindAttr", mlirMhloAttributeIsAFusionKindAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloFusionKindAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -504,7 +504,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "RngDistributionAttr", mlirMhloAttributeIsARngDistributionAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloRngDistributionAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -520,7 +520,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "RngAlgorithmAttr", mlirMhloAttributeIsARngAlgorithmAttr)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::string &value, MlirContext ctx) {
+          [](nb::object cls, const std::string& value, MlirContext ctx) {
             return cls(mlirMhloRngAlgorithmAttrGet(
                 ctx, mlirStringRefCreate(value.c_str(), value.size())));
           },
@@ -554,7 +554,7 @@ NB_MODULE(_mlirHlo, m) {
       m, "TypeExtensions", mlirMhloAttributeIsTypeExtensions)
       .def_classmethod(
           "get",
-          [](nb::object cls, const std::vector<int64_t> &bounds,
+          [](nb::object cls, const std::vector<int64_t>& bounds,
              MlirContext ctx) {
             return cls(
                 mlirMhloTypeExtensionsGet(ctx, bounds.size(), bounds.data()));

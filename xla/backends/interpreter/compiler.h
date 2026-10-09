@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/status.h"
 #include "xla/backends/interpreter/platform_id.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace interpreter {

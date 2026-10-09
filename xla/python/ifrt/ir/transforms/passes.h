@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "google/protobuf/repeated_ptr_field.h"
 #include "llvm/Support/CommandLine.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -28,13 +29,12 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassOptions.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "google/protobuf/repeated_ptr_field.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.pb.h"
 #include "xla/python/ifrt/ir/version.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -85,7 +85,7 @@ std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createIfrtToDotPass(
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 createIfrtAtomProgramsToVhloPass(
     tsl::protobuf::RepeatedPtrField<IfrtIrAtomProgramProto>* atom_programs,
-    std::string vhlo_target_version);
+    std::string vhlo_target_version, std::string sdy_target_version);
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 createIfrtAtomProgramsFromVhloPass(
@@ -156,6 +156,7 @@ absl::Status createOutlinedAtomProgramsToCompiledPipeline(
 void createIfrtToVersionedPipeline(mlir::OpPassManager& pm,
                                    std::string ifrt_target_version,
                                    std::string vhlo_target_version,
+                                   std::string sdy_target_version,
                                    IfrtIrProgramProto& ifrt_ir_program);
 
 // Creates a pipeline that converts a versioned IFRT IR program to an IFRT IR

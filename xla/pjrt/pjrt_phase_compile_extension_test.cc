@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -195,8 +196,8 @@ TEST_F(PhaseCompileExtensionTest, RunPhases) {
   // Run the partial compile phase.
   std::vector<std::string> phases_to_run = {std::string(kPhaseName)};
   auto partial_programs_out = phase_compile_extension_wrapper_->RunPhases(
-      xla::CompileOptions(), partial_programs_in, *topology_description_,
-      phases_to_run);
+      xla::CompileOptions(), std::move(partial_programs_in),
+      *topology_description_, phases_to_run);
   TF_ASSERT_OK(partial_programs_out);
 
   // Verify that the output programs are deserializable.
@@ -221,8 +222,8 @@ TEST_F(PhaseCompileExtensionTest,
   // Run the partial compile phase.
   std::vector<std::string> phases_to_run = {};
   auto partial_programs_out = phase_compile_extension_wrapper_->RunPhases(
-      xla::CompileOptions(), partial_programs_in, *topology_description_,
-      phases_to_run);
+      xla::CompileOptions(), std::move(partial_programs_in),
+      *topology_description_, phases_to_run);
   EXPECT_THAT(
       partial_programs_out,
       absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
@@ -241,8 +242,8 @@ TEST_F(PhaseCompileExtensionTest,
   // Run the partial compile phase.
   std::vector<std::string> phases_to_run = {"IllegalPhaseName"};
   auto partial_programs_out = phase_compile_extension_wrapper_->RunPhases(
-      xla::CompileOptions(), partial_programs_in, *topology_description_,
-      phases_to_run);
+      xla::CompileOptions(), std::move(partial_programs_in),
+      *topology_description_, phases_to_run);
   EXPECT_THAT(
       partial_programs_out,
       absl_testing::StatusIs(

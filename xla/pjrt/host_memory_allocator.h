@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/numa.h"
 #include "xla/runtime/device_id.h"
 #include "xla/tsl/framework/allocator.h"
-#include "tsl/platform/numa.h"
 
 namespace xla {
 

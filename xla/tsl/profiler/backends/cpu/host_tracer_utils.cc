@@ -18,13 +18,13 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
 #include "xla/tsl/profiler/utils/parse_annotation.h"
 #include "xla/tsl/profiler/utils/tf_op_utils.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -47,7 +47,9 @@ void ConvertCompleteEventsToXPlane(uint64_t start_timestamp_ns,
   for (auto& thread : events) {
     XLineBuilder xline = xplane.GetOrCreateLine(thread.thread.tid);
     xline.SetName(thread.thread.name);
-    xline.SetTimestampNs(start_timestamp_ns);
+    if (xline.TimestampNs() == 0) {
+      xline.SetTimestampNs(start_timestamp_ns);
+    }
     xline.ReserveEvents(thread.events.size());
     while (!thread.events.empty()) {
       auto event = std::move(thread.events.front());

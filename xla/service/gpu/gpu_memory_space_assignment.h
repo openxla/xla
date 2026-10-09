@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/layout.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu_topology.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -40,11 +40,11 @@ inline constexpr absl::string_view kResultsMemorySpacesAttr =
 enum class MemorySpaceColor {
   // Corresponds to stream_executor::MemoryTypes::kDefault or kUnified.
   // This memory can be allocated with any device allocation API.
-  kDefault = 0,
+  kDefault = Layout::kDefaultMemorySpace,
 
   // Corresponds to stream_executor::MemoryTypes::kCollective. This memory
   // should be compatible with symmetric memory requirements.
-  kCollective = 1,
+  kCollective = Layout::kCollectiveMemorySpace,
 
   // Temp buffers can be allocated within separate memory space (if
   // xla_gpu_temp_buffer_use_separate_color is set). This improves cuda-graphs
@@ -70,12 +70,11 @@ bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst);
 // Creates a buffer colorer that assigns memory space colors to HLO values
 // during buffer assignment. It handles:
 //  - Collective operations (all-reduce, all-gather, etc.) → kCollective
-//  - Mosaic with NVSHMEM/multimem → kCollective
 //  - Custom call `operands_memory_spaces` / `results_memory_spaces` frontend
-//    attributes → requested memory space
+//    attributes (e.g. emitted by Mosaic for multimem/symmetric buffers) →
+//    requested memory space
 //  - Everything else → kDefault
-BufferAssigner::Colorer CreateColorer(const DebugOptions& option,
-                                      const GpuTopology& gpu_topology);
+BufferAssigner::Colorer CreateColorer(const DebugOptions& option);
 
 }  // namespace xla::gpu
 

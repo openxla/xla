@@ -21,10 +21,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "xla/tsl/profiler/utils/xplane_builder.h"
-#include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/tsl/profiler/utils/xplane_builder.h"
+#include "xla/tsl/profiler/utils/xplane_schema.h"
 
 namespace tsl {
 namespace profiler {
@@ -87,6 +87,8 @@ CreateMutatorFactories() {
   mutator_factories.push_back(XplaneRootEventMutatorFactory::CreateFactory(
       HostEventType::kProcessBatch, 2));
   mutator_factories.push_back(XplaneRootEventMutatorFactory::CreateFactory(
+      HostEventType::kOrbaxProcessBatch, 2));
+  mutator_factories.push_back(XplaneRootEventMutatorFactory::CreateFactory(
       HostEventType::kBatchingSessionRun, 1));
   // Legacy asynchronous TPU execution dispatcher
   mutator_factories.push_back(
@@ -104,8 +106,8 @@ CreateMutatorFactories() {
       XplaneConnectedEventMutatorFactory<                                 \
           HostEventType::__enque_event__, HostEventType::__deque_event__, \
           ContextType::kTpuStream, /*unique_stats=*/true,                 \
-          XContextStatsAccessor<uint64, StatType::kRequestId>,            \
-          XContextStatsAccessor<uint64,                                   \
+          XContextStatsAccessor<uint64_t, StatType::kRequestId>,          \
+          XContextStatsAccessor<uint64_t,                                 \
                                 StatType::kQueueAddr>>::CreateFactory())
   ADD_QUEUE_CONNECTION(kEnqueueRequestLocked, kRunProgramRequest);
   ADD_QUEUE_CONNECTION(kEnqueueRequestLocked, kHostCallbackRequest);

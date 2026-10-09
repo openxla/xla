@@ -114,6 +114,10 @@ struct MhloToScalarOp<mhlo::ExpOp> {
   using COp = ::mlir::complex::ExpOp;
 };
 template <>
+struct MhloToScalarOp<mhlo::Exp2Op> {
+  using FOp = ::mlir::math::Exp2Op;
+};
+template <>
 struct MhloToScalarOp<mhlo::Expm1Op> {
   using FOp = ::mlir::math::ExpM1Op;
   using COp = ::mlir::complex::Expm1Op;
@@ -131,6 +135,10 @@ template <>
 struct MhloToScalarOp<mhlo::Log1pOp> {
   using FOp = ::mlir::math::Log1pOp;
   using COp = ::mlir::complex::Log1pOp;
+};
+template <>
+struct MhloToScalarOp<mhlo::Log2Op> {
+  using FOp = ::mlir::math::Log2Op;
 };
 template <>
 struct MhloToScalarOp<mhlo::MulOp> {
@@ -488,6 +496,60 @@ inline Value mapMhloOpToStdScalarOp<mhlo::CompareOp>(
       assert(predicate.has_value() && "expected valid comparison direction");
       return arith::CmpIOp::create(*b, loc, *predicate, lhsInt, rhsInt);
     }
+    if (adaptor.getCompareType() &&
+        *adaptor.getCompareType() == mhlo::ComparisonType::WEAKORDER) {
+      // Weak order treats -0.0 == +0.0 and orders all NaNs equal and > +Inf.
+      switch (comparisonDirection) {
+        case mhlo::ComparisonDirection::LE: {
+          Value ole = arith::CmpFOp::create(*b, loc, arith::CmpFPredicate::OLE,
+                                            lhs, rhs);
+          Value rhsNan = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::UNO, rhs, rhs);
+          return arith::OrIOp::create(*b, loc, ole, rhsNan);
+        }
+        case mhlo::ComparisonDirection::GE: {
+          Value oge = arith::CmpFOp::create(*b, loc, arith::CmpFPredicate::OGE,
+                                            lhs, rhs);
+          Value lhsNan = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::UNO, lhs, lhs);
+          return arith::OrIOp::create(*b, loc, oge, lhsNan);
+        }
+        case mhlo::ComparisonDirection::LT: {
+          Value ult = arith::CmpFOp::create(*b, loc, arith::CmpFPredicate::ULT,
+                                            lhs, rhs);
+          Value lhsOrd = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::ORD, lhs, lhs);
+          return arith::AndIOp::create(*b, loc, ult, lhsOrd);
+        }
+        case mhlo::ComparisonDirection::GT: {
+          Value ugt = arith::CmpFOp::create(*b, loc, arith::CmpFPredicate::UGT,
+                                            lhs, rhs);
+          Value rhsOrd = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::ORD, rhs, rhs);
+          return arith::AndIOp::create(*b, loc, ugt, rhsOrd);
+        }
+        case mhlo::ComparisonDirection::EQ: {
+          Value oeq = arith::CmpFOp::create(*b, loc, arith::CmpFPredicate::OEQ,
+                                            lhs, rhs);
+          Value lhsNan = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::UNO, lhs, lhs);
+          Value rhsNan = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::UNO, rhs, rhs);
+          Value bothNan = arith::AndIOp::create(*b, loc, lhsNan, rhsNan);
+          return arith::OrIOp::create(*b, loc, oeq, bothNan);
+        }
+        case mhlo::ComparisonDirection::NE: {
+          Value une = arith::CmpFOp::create(*b, loc, arith::CmpFPredicate::UNE,
+                                            lhs, rhs);
+          Value lhsOrd = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::ORD, lhs, lhs);
+          Value rhsOrd = arith::CmpFOp::create(
+              *b, loc, arith::CmpFPredicate::ORD, rhs, rhs);
+          Value anyOrd = arith::OrIOp::create(*b, loc, lhsOrd, rhsOrd);
+          return arith::AndIOp::create(*b, loc, une, anyOrd);
+        }
+      }
+    }
     std::optional<arith::CmpFPredicate> predicate =
         getCmpPredicate<arith::CmpFPredicate>(comparisonDirection,
                                               /*is_signed=*/true);
@@ -624,6 +686,50 @@ inline Value mapMhloOpToStdScalarOp<mhlo::ImagOp>(
       loc, resultTypes, argTypes, adaptor.getOperands(), attributes, b);
 }
 
+template <>
+inline Value mapMhloOpToStdScalarOp<mhlo::Exp2Op>(
+    Location loc, ArrayRef<Type> resultTypes, ArrayRef<Type> argTypes,
+    mhlo::Exp2Op::Adaptor adaptor, ArrayRef<NamedAttribute> attributes,
+    OpBuilder* b) {
+  Type type = adaptor.getOperand().getType();
+  if (!mlir::isa<ComplexType>(type)) {
+    return MapMhloOpToScalarOpImpl<IsFloatType, math::Exp2Op>{}(
+        loc, resultTypes, argTypes, adaptor.getOperands(), attributes, b);
+  }
+  auto complexTy = mlir::cast<ComplexType>(type);
+  auto floatTy = complexTy.getElementType();
+  Value ln2 =
+      arith::ConstantOp::create(*b, loc, b->getFloatAttr(floatTy, M_LN2));
+  Value re = complex::ReOp::create(*b, loc, floatTy, adaptor.getOperand());
+  Value im = complex::ImOp::create(*b, loc, floatTy, adaptor.getOperand());
+  Value scaled = complex::CreateOp::create(
+      *b, loc, complexTy, arith::MulFOp::create(*b, loc, re, ln2),
+      arith::MulFOp::create(*b, loc, im, ln2));
+  return complex::ExpOp::create(*b, loc, scaled);
+}
+
+template <>
+inline Value mapMhloOpToStdScalarOp<mhlo::Log2Op>(
+    Location loc, ArrayRef<Type> resultTypes, ArrayRef<Type> argTypes,
+    mhlo::Log2Op::Adaptor adaptor, ArrayRef<NamedAttribute> attributes,
+    OpBuilder* b) {
+  Type type = adaptor.getOperand().getType();
+  if (!mlir::isa<ComplexType>(type)) {
+    return MapMhloOpToScalarOpImpl<IsFloatType, math::Log2Op>{}(
+        loc, resultTypes, argTypes, adaptor.getOperands(), attributes, b);
+  }
+  auto complexTy = mlir::cast<ComplexType>(type);
+  auto floatTy = complexTy.getElementType();
+  Value logZ = complex::LogOp::create(*b, loc, adaptor.getOperand());
+  Value oneOverLn2 =
+      arith::ConstantOp::create(*b, loc, b->getFloatAttr(floatTy, M_LOG2E));
+  Value re = complex::ReOp::create(*b, loc, floatTy, logZ);
+  Value im = complex::ImOp::create(*b, loc, floatTy, logZ);
+  return complex::CreateOp::create(
+      *b, loc, complexTy, arith::MulFOp::create(*b, loc, re, oneOverLn2),
+      arith::MulFOp::create(*b, loc, im, oneOverLn2));
+}
+
 // 'target_types' is the unconverted type (signed or unsigned if integer),
 // 'ResultTypes' is the converted type (signless if integer).
 inline Value mapConvertOpToStdScalarOp(Location loc, ArrayRef<Type> targetTypes,
@@ -663,7 +769,12 @@ inline Value mapConvertOpToStdScalarOp(Location loc, ArrayRef<Type> targetTypes,
       // There are no ops for conversions between floats of equal width, so we
       // go through the next-larger standard type.
       sourceType = dst.getWidth() == 8 ? b->getF16Type() : b->getF32Type();
-      src = mlir::arith::ExtFOp::create(*b, loc, sourceType, src).getResult();
+      mlir::Type extType = sourceType;
+      if (mlir::ShapedType shapedType =
+              mlir::dyn_cast<mlir::ShapedType>(src.getType())) {
+        extType = shapedType.clone(extType);
+      }
+      src = mlir::arith::ExtFOp::create(*b, loc, extType, src).getResult();
     }
     assert(sourceType.getIntOrFloatBitWidth() != dst.getWidth());
 
@@ -1110,6 +1221,10 @@ inline Value mapMhloOpToStdScalarOp<mhlo::PowOp>(
           })
           .getResult(0);
 
+  if (IsUnsignedIntegerType{}(getElementTypeOrSelf(argTypes.front()))) {
+    return accum;
+  }
+
   Value rhsIsEven = arith::CmpIOp::create(
       lb, arith::CmpIPredicate::eq,
       arith::RemSIOp::create(lb, adaptor.getRhs(), two), zero);
@@ -1278,7 +1393,7 @@ struct MhloOpToStdScalarOp {
                                  ArrayRef<Type> argTypes, ValueRange args,
                                  ArrayRef<NamedAttribute> attributes,
                                  OpBuilder* b) {
-    static_assert(!std::is_same<MhloOpTy, mhlo::ConvertOp>::value);
+    static_assert(!std::is_same_v<MhloOpTy, mhlo::ConvertOp>);
     typename MhloOpTy::Adaptor adaptor(args, op->getAttrDictionary(),
                                        op->getPropertiesStorage(),
                                        op->getRegions());

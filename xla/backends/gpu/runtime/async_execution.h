@@ -19,13 +19,12 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 
-#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/node_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/synchronization/mutex.h"
+#include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/runtime/object_pool.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
@@ -75,17 +74,23 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncExecutionId, uint64_t);
 // id is used throughout the runtime as async execution id.
 class AsyncExecution {
  public:
-  using EventPool = ObjectPool<std::unique_ptr<se::Event>>;
+  using EventPool = ObjectPool<std::unique_ptr<se::Event>, se::StreamExecutor*>;
 
   // We need to know the thunk that starts an async execution, as we use its id
   // as a key in the execution scoped state and its profile annotation for
   // logging.
-  explicit AsyncExecution(Thunk::ThunkInfo start_thunk_info);
+  AsyncExecution(Thunk::ThunkInfo start_thunk_info, int devices_per_host);
+
+  ThunkId start_thunk_id() const { return start_thunk_info_.thunk_id; }
 
   // An RAII guard that automatically records an event on a given async stream
   // when it goes out of scope.
   class ExecutionGuard {
    public:
+    ExecutionGuard(const ExecutionGuard&) = delete;
+    ExecutionGuard& operator=(const ExecutionGuard&) = delete;
+    ExecutionGuard(ExecutionGuard&& other) noexcept;
+    ExecutionGuard& operator=(ExecutionGuard&&) = delete;
     ~ExecutionGuard();
 
    private:
@@ -116,14 +121,12 @@ class AsyncExecution {
   absl::Status Done(Thunk::ExecutionScopedState* state, se::Stream* stream);
 
  private:
-  // Returns or creates an event pool for the given executor.
-  EventPool& GetOrCreatePool(se::StreamExecutor* executor);
+  struct PoolState {
+    EventPool pool{[](se::StreamExecutor* e) { return e->CreateEvent(); }};
+  };
 
   const Thunk::ThunkInfo start_thunk_info_;
-
-  absl::Mutex mu_;
-  absl::node_hash_map<se::StreamExecutor*, EventPool> event_pools_
-      ABSL_GUARDED_BY(mu_);
+  PerDeviceState<PoolState> event_pools_;
 };
 
 // Map from AsyncExecutionId to shared AsyncExecution, used during

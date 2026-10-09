@@ -20,8 +20,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -31,19 +31,19 @@ using tensorflow::profiler::ProfiledInstructionsProto;
 TEST(AggregateProfiledInstructionsProtoTest, aggregateAndGetPercentile) {
   tensorflow::profiler::ProfiledInstructionsProto profile_a;
   {
-    auto *cost_a = profile_a.add_costs();
+    auto* cost_a = profile_a.add_costs();
     cost_a->set_cost_us(10);
     cost_a->set_name("reduce");
   }
   {
-    auto *cost_a = profile_a.add_costs();
+    auto* cost_a = profile_a.add_costs();
     cost_a->set_cost_us(30);
     cost_a->set_name("copy");
   }
 
   tensorflow::profiler::ProfiledInstructionsProto profile_c;
   {
-    auto *cost_c = profile_c.add_costs();
+    auto* cost_c = profile_c.add_costs();
     cost_c->set_cost_us(30);
     cost_c->set_name("reduce");
   }
@@ -56,7 +56,7 @@ TEST(AggregateProfiledInstructionsProtoTest, aggregateAndGetPercentile) {
   for (int cost : custom_call_costs) {
     tensorflow::profiler::ProfiledInstructionsProto profile_custom_call;
     {
-      auto *cost_c = profile_custom_call.add_costs();
+      auto* cost_c = profile_custom_call.add_costs();
       cost_c->set_cost_us(cost);
       cost_c->set_name("custom-call");
     }
@@ -71,7 +71,7 @@ TEST(AggregateProfiledInstructionsProtoTest, aggregateAndGetPercentile) {
 
   EXPECT_EQ(result_90th.costs_size(), 3);
   std::map<std::string, float> costs;
-  for (const auto &cost : result_90th.costs()) {
+  for (const auto& cost : result_90th.costs()) {
     costs[cost.name()] = cost.cost_us();
   }
   EXPECT_EQ(costs["copy"], 30);
@@ -85,7 +85,7 @@ TEST(AggregateProfiledInstructionsProtoTest, aggregateAndGetPercentile) {
       10, &result_10th);
 
   EXPECT_EQ(result_10th.costs_size(), 3);
-  for (const auto &cost : result_10th.costs()) {
+  for (const auto& cost : result_10th.costs()) {
     costs[cost.name()] = cost.cost_us();
   }
   EXPECT_EQ(costs["copy"], 30);
@@ -96,7 +96,7 @@ TEST(AggregateProfiledInstructionsProtoTest, aggregateAndGetPercentile) {
 TEST(AggregateProfiledInstructionsProtoTest, getIncorrectPercentile) {
   tensorflow::profiler::ProfiledInstructionsProto profile_a;
   {
-    auto *cost_a = profile_a.add_costs();
+    auto* cost_a = profile_a.add_costs();
     cost_a->set_cost_us(10);
     cost_a->set_name("reduce");
   }

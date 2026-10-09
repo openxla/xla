@@ -37,7 +37,6 @@ def TritonXLAExtractInsertToTritonPass : Pass<"triton-xla-extract-insert-to-trit
     "triton::TritonDialect",
     "::xla::XlaDialect"
   ];
-  let constructor = "CreateTritonXLAExtractInsertToTritonPass()";
 }
 
 def TritonXLASqueezeDimsPass : Pass<"triton-xla-squeeze-dims", "mlir::ModuleOp"> {
@@ -55,7 +54,6 @@ def TritonXLASqueezeDimsPass : Pass<"triton-xla-squeeze-dims", "mlir::ModuleOp">
     Option<"finalize_", "finalize", "bool", "true",
            "Convert squeeze_dims back to reshape. Disable for testing only.">,
   ];
-  let constructor = "CreateTritonXLASqueezeDimsPass()";
 }
 
 def TritonXLAFoldTransposePass : Pass<"triton-xla-fold-transpose", "mlir::ModuleOp"> {
@@ -67,7 +65,6 @@ def TritonXLAFoldTransposePass : Pass<"triton-xla-fold-transpose", "mlir::Module
     "::mlir::triton::xla::XlaTritonDialect",
     "::mlir::memref::MemRefDialect",
   ];
-  let constructor = "CreateTritonXLAFoldTransposePass()";
 }
 
 def GeneralizeKernelSignaturePass
@@ -77,7 +74,6 @@ def GeneralizeKernelSignaturePass
     Rewrite signatures of kernel functions from global pointers to generic
     pointers and cast them to global ones within the kernel.
   }];
-  let constructor = "CreateGeneralizeKernelSignaturePass()";
 }
 
 def ExtractTmaInfoPass
@@ -88,7 +84,6 @@ def ExtractTmaInfoPass
     pass extracts the information while it still exists and copies it into XLA's
     tma_descriptor attribute to be read at the LLVM IR level.
   }];
-  let constructor = "CreateExtractTmaInfoPass()";
 }
 
 def LoadInt4RewritePass
@@ -117,7 +112,6 @@ def RoundF32ToTF32ForTf32DotRewritePass
     by default does truncation. As a result, the dot with tf32 algorithm has too
     small precision. It is even less than for the dot with BF16 arguments.
   }];
-  let constructor = "CreateRoundF32ToTF32ForTf32DotRewritePass()";
 }
 
 def TritonXLALowerGetTidPass
@@ -127,7 +121,6 @@ def TritonXLALowerGetTidPass
     This pass lowers get_tid to the PTX intrinsic by loading the thread ID from
     the register and returning it.
   }];
-  let constructor = "CreateTritonXLALowerGetTidPass()";
 }
 
 def TritonXLALowerAtomicsPass
@@ -137,7 +130,6 @@ def TritonXLALowerAtomicsPass
     This pass lowers atomic operations to the PTX intrinsic with the given
     memory semantics.
   }];
-  let constructor = "CreateTritonXLALowerAtomicsPass()";
 }
 
 def TritonXLALowerBlockBarrierPass
@@ -147,7 +139,6 @@ def TritonXLALowerBlockBarrierPass
     This pass lowers a block barrier to Triton IR using atomic write and
     spin-wait operations.
   }];
-  let constructor = "CreateTritonXLALowerBlockBarrierPass()";
 }
 
 def TritonXLAConvertUnsupportedTypesPass
@@ -168,7 +159,6 @@ def TritonXLAConvertUnsupportedTypesPass
     replacement it performs do not preserve semantics in a vacuum (but may for
     specific ops, such as loads, stores, or bitcasts).
   }];
-  let constructor = "CreateTritonXLAConvertUnsupportedTypesPass()";
 }
 
 def TritonXLALowerRemoteAccessPass
@@ -177,7 +167,6 @@ def TritonXLALowerRemoteAccessPass
   let description = [{
     This pass lowers collective operations (get_rank, get_peer).
   }];
-  let constructor = "CreateTritonXLALowerRemoteAccessPass()";
 }
 
 def TritonXLAUnswitchLoopsPass :
@@ -194,7 +183,6 @@ def TritonXLAUnswitchLoopsPass :
     "mlir::func::FuncDialect", "mlir::scf::SCFDialect"
   ];
 
-  let constructor = "CreateTritonXLAUnswitchLoopsPass()";
 }
 
 def TritonXLALowerXTilePass :
@@ -208,7 +196,6 @@ def TritonXLALowerXTilePass :
     "triton::TritonDialect",
   ];
 
-  let constructor = "CreateTritonXLALowerXTilePass()";
 }
 
 def StableHLOLowerToTritonPass
@@ -235,7 +222,6 @@ def TensorLowerToTritonPass
     "triton::TritonDialect",
     "::xla::xtile::XTileDialect",
   ];
-  let constructor = "CreateTensorLowerToTritonPass()";
 }
 
 def TritonXLAMathToLibdevicePass
@@ -257,10 +243,11 @@ def XTileLowerToTritonPass
     : Pass<"xtile-lower-to-triton", "mlir::ModuleOp"> {
   let summary = "Lowers XTile operations to their Triton equivalent.";
   let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::stablehlo::StablehloDialect",
     "::mlir::triton::TritonDialect",
     "::xla::xtile::XTileDialect",
   ];
-  let constructor = "CreateXTileLowerToTritonPass()";
 }
 
 def ArithFP8ConversionToTritonPass
@@ -313,7 +300,34 @@ def TritonXLAFoldReshapeAroundForLoopPass
     "::mlir::scf::SCFDialect",
     "::mlir::triton::TritonDialect"
   ];
-  let constructor = "CreateTritonXLAFoldReshapeAroundForLoopPass()";
+}
+
+def TritonXLACollapseContiguousMinorDimsPass
+    : Pass<"triton-xla-collapse-contiguous-minor-dims", "mlir::ModuleOp"> {
+  let summary = "Collapse contiguous minor dims of triton_xla extract/insert ops.";
+  let description = [{
+    Collapses contiguous minor source/destination dimensions of
+    `triton_xla.extract` and `triton_xla.insert` ops when the minor dimension is
+    fully extracted/inserted, enabling 128-bit vectorization of small (<16
+    bytes) minor dimensions in Triton. Inserts a `tt.reshape` between the
+    collapsed and original tile shapes when needed.
+
+    Preconditions (assuming m = rank - 1, i.e. the minormost dimension):
+    - Default row-major layout on the merged dimensions
+      (layout[0] == rank - 1 and layout[1] == layout[0] - 1).
+    - Full minor tile (sizes[m] == shape[m]).
+    - Zero minor offset (offsets[m] == 0).
+    - Unit strides on both dimensions (strides[m] == 1 and strides[m - 1] == 1).
+    - Merged dimension and constant merged offset do not exceed INT32_MAX.
+
+    Gate:
+    - Minor tile size is less than 128 bits (sizes[m] * bit_width < 128).
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::triton::TritonDialect",
+    "::xla::XlaDialect",
+  ];
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_
