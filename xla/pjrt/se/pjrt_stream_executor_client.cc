@@ -888,14 +888,29 @@ static SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
   };
 }
 
+// Runs `callback` on the host after preceding work on `stream`. Uses event
+// polling instead of a stream host callback when `device_state` does (GPU
+// Confidential Computing), otherwise a stream host callback.
+static absl::Status ThenRunHostCallback(
+    LocalDeviceState* device_state, se::Stream* stream,
+    absl::AnyInvocable<void() &&> callback) {
+  if (device_state->uses_event_polling_callbacks()) {
+    return device_state->ThenExecuteCallback(stream, std::move(callback),
+                                             /*error_cb=*/nullptr,
+                                             "ThenRunHostCallback");
+  }
+  return stream->DoHostCallback(std::move(callback));
+}
+
 namespace {
 class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
  public:
   StreamExecutorCopyToDeviceStream(
-      int64_t channel_id, se::Stream* stream, se::DeviceAddressBase dst,
-      AsyncValueRef<std::unique_ptr<se::Event>> done)
+      int64_t channel_id, LocalDeviceState* device_state, se::Stream* stream,
+      se::DeviceAddressBase dst, AsyncValueRef<std::unique_ptr<se::Event>> done)
       : CopyToDeviceStream(dst.size(), /*granule_bytes=*/1),
         channel_id_(channel_id),
+        device_state_(device_state),
         stream_(stream),
         dst_(dst),
         done_(std::move(done)) {}
@@ -945,7 +960,8 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
 
     // Delete chunk once the memcpy operation completes.
     auto* chunk_ptr = std::make_unique<PjRtChunk>(std::move(chunk)).release();
-    auto deleted = stream_->DoHostCallback([chunk_ptr]() { delete chunk_ptr; });
+    auto deleted = ThenRunHostCallback(device_state_, stream_,
+                                       [chunk_ptr]() { delete chunk_ptr; });
     if (!deleted.ok()) {
       done_.SetError(deleted);
       return Future<>(done_.GetError());
@@ -968,6 +984,7 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
 
  private:
   int64_t channel_id_;
+  LocalDeviceState* device_state_;
   se::Stream* stream_;
   se::DeviceAddressBase dst_;
 
@@ -978,7 +995,8 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
 }  // namespace
 
 static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
-    int replica, const ExecuteOptions& options) {
+    int replica, const ExecuteOptions& options,
+    LocalDeviceState* device_state) {
   // Check if we have callbacks registered for the given replica.
   if (replica >= options.recv_callbacks.size()) {
     return [replica](int64_t channel_id, se::Stream*, const Shape&,
@@ -994,9 +1012,10 @@ static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
   // RecvCallbacks registered for a device ordinal. Can be empty.
   absl::Span<const RecvCallback> callbacks = options.recv_callbacks[replica];
 
-  return [callbacks](int64_t channel_id, se::Stream* stream, const Shape& shape,
-                     se::DeviceAddressBase* dst,
-                     const absl::flat_hash_map<std::string, std::string>&)
+  return [callbacks, device_state](
+             int64_t channel_id, se::Stream* stream, const Shape& shape,
+             se::DeviceAddressBase* dst,
+             const absl::flat_hash_map<std::string, std::string>&)
              -> absl::StatusOr<AsyncValueRef<std::unique_ptr<se::Event>>> {
     VLOG(3) << "Recv from channel #" << channel_id
             << " (shape=" << shape.ToString() << ")";
@@ -1021,8 +1040,9 @@ static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
     auto done_event = MakeConstructedAsyncValueRef<std::unique_ptr<se::Event>>(
         std::move(event));
 
-    recv->callback({shape}, std::make_unique<StreamExecutorCopyToDeviceStream>(
-                                channel_id, stream, *dst, done_event));
+    recv->callback({shape},
+                   std::make_unique<StreamExecutorCopyToDeviceStream>(
+                       channel_id, device_state, stream, *dst, done_event));
 
     return std::move(done_event);
   };
@@ -1336,7 +1356,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
   SendDeviceMemoryFunction send_device_memory =
       ConvertSendCallbacksToSendFunction(replica_, options, async_work_runner);
   RecvDeviceMemoryFunction recv_device_memory =
-      ConvertRecvCallbacksToRecvFunction(replica_, options);
+      ConvertRecvCallbacksToRecvFunction(replica_, options, device_state);
 
   // The choice of where we wait is arbitrary; the reason for the wait is
   // pacing to avoid problems such as memory fragmentation and running ahead
@@ -1513,7 +1533,8 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
 
     if (VLOG_IS_ON(2)) {
       absl::string_view executable_name = executable->executable()->name();
-      absl::Status host_callback_status = run_options.stream()->DoHostCallback(
+      absl::Status host_callback_status = ThenRunHostCallback(
+          device_state, run_options.stream(),
           [executable_name, launch_id(run_options.run_id().ToInt()), device]() {
             VLOG(2) << "Start device execution for " << executable_name
                     << ", launch_id: " << launch_id
@@ -1538,7 +1559,8 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
 
     if (VLOG_IS_ON(2)) {
       absl::string_view executable_name = executable->executable()->name();
-      absl::Status host_callback_status = run_options.stream()->DoHostCallback(
+      absl::Status host_callback_status = ThenRunHostCallback(
+          device_state, run_options.stream(),
           [executable_name, launch_id(run_options.run_id().ToInt()), device]() {
             VLOG(2) << "Finish device execution for " << executable_name
                     << ", launch_id: " << launch_id

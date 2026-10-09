@@ -889,15 +889,21 @@ void StreamExecutorGpuRawClient::ScheduleRemoteSend(
 
                 // Signal transfer completion via key-value store after GPU
                 // execution completes.
-                return stream->DoHostCallback(
-                    [worker = this->async_work_runner(), kv_store = kv_store_,
-                     key = desc.rendezvous_key(), on_done]() {
-                      worker->Execute(
-                          [kv_store, key = std::move(key), on_done]() {
-                            absl::Status s = kv_store->Set(key, "");
-                            on_done(s, /*sends_were_enqueued=*/s.ok());
-                          });
-                    });
+                auto signal_done = [worker = this->async_work_runner(),
+                                    kv_store = kv_store_,
+                                    key = desc.rendezvous_key(), on_done]() {
+                  worker->Execute([kv_store, key = std::move(key), on_done]() {
+                    absl::Status s = kv_store->Set(key, "");
+                    on_done(s, /*sends_were_enqueued=*/s.ok());
+                  });
+                };
+                if (local_device->uses_event_polling_callbacks()) {
+                  // Avoid stream host callbacks (see LocalDeviceState).
+                  return local_device->ThenExecuteCallback(
+                      stream, std::move(signal_done), /*error_cb=*/nullptr,
+                      "CrossHostSendBuffers");
+                }
+                return stream->DoHostCallback(std::move(signal_done));
               }();
               if (!status.ok()) {
                 std::move(on_done)(status, /*sends_were_enqueued=*/false);
