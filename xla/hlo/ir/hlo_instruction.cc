@@ -5769,24 +5769,24 @@ std::string RaggedDotDimensionNumbersToString(
 }
 
 std::string SparsityConfigToString(const SparsityConfig& sparsity_config) {
+  auto tensor_to_string =
+      [](absl::string_view side,
+         const SparsityConfig::TensorSparsityConfig& config) {
+        std::string str =
+            StrCat(side, "={sparsity=", config.num_non_zero(), "x",
+                   config.block_size(), " dimension=", config.dimension());
+        if (config.stride() != 0) {
+          StrAppend(&str, " stride=", config.stride());
+        }
+        StrAppend(&str, " idx=", config.idx(), "}");
+        return str;
+      };
   std::vector<std::string> result;
   if (sparsity_config.has_lhs()) {
-    std::string sparsity_str =
-        absl::StrCat(sparsity_config.lhs().num_non_zero(), "x",
-                     sparsity_config.lhs().block_size());
-    result.push_back(StrCat("lhs={sparsity=", sparsity_str,
-                            " dimension=", sparsity_config.lhs().dimension(),
-                            " stride=", sparsity_config.lhs().stride(),
-                            " idx=", sparsity_config.lhs().idx(), "}"));
+    result.push_back(tensor_to_string("lhs", sparsity_config.lhs()));
   }
   if (sparsity_config.has_rhs()) {
-    std::string sparsity_str =
-        absl::StrCat(sparsity_config.rhs().num_non_zero(), "x",
-                     sparsity_config.rhs().block_size());
-    result.push_back(StrCat("rhs={sparsity=", sparsity_str,
-                            " dimension=", sparsity_config.rhs().dimension(),
-                            " stride=", sparsity_config.rhs().stride(),
-                            " idx=", sparsity_config.rhs().idx(), "}"));
+    result.push_back(tensor_to_string("rhs", sparsity_config.rhs()));
   }
   return StrJoin(result, " ");
 }

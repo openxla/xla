@@ -7396,7 +7396,7 @@ TEST_F(HloParserTest, SparsityConfig_RHSOnly) {
     %input = f32[1,2] parameter(0)
     %filter = f32[2,2] parameter(1)
     ROOT %convolution = f32[1,2] convolution(%input, %filter), dim_labels=bf_io->bf,
-      sparsity_config={rhs={sparsity=3x4 dimension=0 stride=1}}
+      sparsity_config={rhs={sparsity=3x4 dimension=0}}
   }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
@@ -7405,7 +7405,7 @@ TEST_F(HloParserTest, SparsityConfig_RHSOnly) {
   EXPECT_EQ(config.rhs().block_size(), 4);
   EXPECT_EQ(config.rhs().num_non_zero(), 3);
   EXPECT_EQ(config.rhs().dimension(), 0);
-  EXPECT_EQ(config.rhs().stride(), 1);
+  EXPECT_EQ(config.rhs().stride(), 0);
 }
 
 TEST_F(HloParserTest, SparsityConfig_Both) {
@@ -7415,7 +7415,7 @@ TEST_F(HloParserTest, SparsityConfig_Both) {
     %input = f32[1,2] parameter(0)
     %filter = f32[2,2] parameter(1)
     ROOT %convolution = f32[1,2] convolution(%input, %filter), dim_labels=bf_io->bf,
-      sparsity_config={lhs={sparsity=1x4 dimension=1 stride=1} rhs={sparsity=3x4 dimension=0 stride=1}}
+      sparsity_config={lhs={sparsity=1x4 dimension=1} rhs={sparsity=3x4 dimension=0}}
   }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
@@ -7424,11 +7424,30 @@ TEST_F(HloParserTest, SparsityConfig_Both) {
   EXPECT_EQ(config.lhs().block_size(), 4);
   EXPECT_EQ(config.lhs().num_non_zero(), 1);
   EXPECT_EQ(config.lhs().dimension(), 1);
-  EXPECT_EQ(config.lhs().stride(), 1);
+  EXPECT_EQ(config.lhs().stride(), 0);
   EXPECT_EQ(config.rhs().block_size(), 4);
   EXPECT_EQ(config.rhs().num_non_zero(), 3);
   EXPECT_EQ(config.rhs().dimension(), 0);
-  EXPECT_EQ(config.rhs().stride(), 1);
+  EXPECT_EQ(config.rhs().stride(), 0);
+}
+
+TEST_F(HloParserTest, SparsityConfig_StridePrintedOnlyWhenNonZero) {
+  const char* const hlo_string = R"(
+  HloModule SparsityConfigModule
+  ENTRY SparsityConfig {
+    %input = f32[1,2] parameter(0)
+    %filter = f32[2,2] parameter(1)
+    ROOT %convolution = f32[1,2] convolution(%input, %filter), dim_labels=bf_io->bf,
+      sparsity_config={lhs={sparsity=1x4 dimension=1 stride=0} rhs={sparsity=3x4 dimension=0 stride=2}}
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  auto* conv = module->entry_computation()->root_instruction();
+  EXPECT_EQ(conv->sparsity_config().lhs().stride(), 0);
+  EXPECT_EQ(conv->sparsity_config().rhs().stride(), 2);
+  EXPECT_THAT(conv->ToString(),
+              HasSubstr("sparsity_config={lhs={sparsity=1x4 dimension=1 idx=0} "
+                        "rhs={sparsity=3x4 dimension=0 stride=2 idx=0}}"));
 }
 
 TEST_F(HloParserTest, BlockScalingConfig_RHSOnly) {
@@ -7506,7 +7525,7 @@ ENTRY DotBlockScalingConfig {
   %lhs_indices = s8[64,16] parameter(3)
   ROOT %dot = bf16[64,64] dot(%lhs, %rhs, %lhs_scale, %lhs_indices),
     lhs_contracting_dims={1}, rhs_contracting_dims={0},
-    sparsity_config={lhs={sparsity=2x4 dimension=1 stride=1 idx=3}},
+    sparsity_config={lhs={sparsity=2x4 dimension=1 idx=3}},
     block_scaling_config={lhs={scale_idx=2 strides=1x32 steps=1x1}}
 }
 )";
