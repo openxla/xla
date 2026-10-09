@@ -102,26 +102,27 @@ void AnnotationMap::Add(uint64_t correlation_id, const std::string& annotation,
           << ", annotation: " << annotation << ", roctx_range: " << roctx_range;
   absl::MutexLock lock(map_.mutex);
   // Each branch re-checks the size guard before inserting to avoid exceeding
-  // max_size_ by 1 when both annotation and roctx_range are non-empty (two
-  // insertions under a single size check would silently violate the capacity
-  // contract).
+  // max_annotation_strings_ by 1 when both annotation and roctx_range are
+  // non-empty (two insertions under a single size check would silently violate
+  // the capacity contract).
   // Only insert into correlation_map when annotation is non-empty; it may
   // be empty when only a ROCTX range (no XLA AnnotationStack text) is active.
-  if (!annotation.empty() && map_.annotations.size() < max_size_) {
+  if (!annotation.empty() &&
+      map_.annotations.size() < max_annotation_strings_) {
     const std::string& interned = *map_.annotations.insert(annotation).first;
     map_.correlation_map.emplace(correlation_id, std::cref(interned));
   }
-  if (!roctx_range.empty() && map_.annotations.size() < max_size_) {
+  if (!roctx_range.empty() &&
+      map_.annotations.size() < max_annotation_strings_) {
     const std::string& interned =
         *map_.annotations.insert(std::string(roctx_range)).first;
     map_.roctx_range_map.emplace(correlation_id, std::cref(interned));
   }
-  // max_size_ gates the whole map, not just the string pool: scope_range_id_map
-  // takes one entry per correlation id and would otherwise grow without bound
-  // for the rest of the session once the annotation cache fills. Keeping the
-  // same gate here preserves the "maximum number of annotation strings that we
-  // can accommodate" contract in rocm_tracer_utils.h.
-  if (!scope_range_ids.empty() && map_.annotations.size() < max_size_) {
+  // Gated on the same string cap as the maps above, so once the cap set by
+  // Reset() is reached no sub-map grows. Otherwise scope_range_id_map would
+  // keep taking one entry per correlation id for the rest of the session.
+  if (!scope_range_ids.empty() &&
+      map_.annotations.size() < max_annotation_strings_) {
     map_.scope_range_id_map.emplace(correlation_id, scope_range_ids.back());
     if (scope_range_ids.size() > 1) {
       const int64_t* head = scope_range_ids.data();
@@ -158,13 +159,14 @@ ScopeRangeIdTree AnnotationMap::TakeScopeRangeIdTree() {
   return std::move(map_.scope_range_id_tree);
 }
 
-void AnnotationMap::Clear() {
+void AnnotationMap::Reset(uint64_t max_annotation_strings) {
   absl::MutexLock lock(map_.mutex);
   map_.correlation_map.clear();
   map_.roctx_range_map.clear();
   map_.scope_range_id_map.clear();
   map_.scope_range_id_tree.clear();
   map_.annotations.clear();
+  max_annotation_strings_ = max_annotation_strings;
 }
 
 }  // namespace profiler
