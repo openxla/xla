@@ -903,7 +903,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test, RemapsAndMergesOperandMemorySpaces) {
       view = f32[8,8]{1,0} bitcast(slice)
       ROOT call = f32[8,8]{1,0} custom-call(input, view, view),
         custom_call_target="fake_target",
-        frontend_attributes={operands_memory_spaces="{0:1,1:7,2:7}"}
+        frontend_attributes={operands_memory_spaces="{0:1,1:7,2:7}", test_attribute="call"}
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
@@ -917,6 +917,59 @@ TEST_F(DynamicSliceFusionRewriterV2Test, RemapsAndMergesOperandMemorySpaces) {
   EXPECT_EQ(fusion->operand(1)->name(), "input");
   EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
             "{0:7,1:7}");
+  EXPECT_EQ(fusion->get_frontend_attribute("test_attribute"), "call");
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       PreservesFrontendAttributesWithDefaultMemorySpaces) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[2,8,8]{2,1,0} parameter(0)
+      slice = f32[1,8,8]{2,1,0} slice(input), slice={[1:2],[0:8],[0:8]}
+      ROOT call = f32[1,8,8]{2,1,0} custom-call(slice),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:0}", results_memory_spaces="{0:0}", test_attribute="call"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->get_frontend_attribute("test_attribute"), "call");
+  EXPECT_FALSE(
+      fusion->get_frontend_attribute("operands_memory_spaces").has_value());
+  EXPECT_FALSE(
+      fusion->get_frontend_attribute("results_memory_spaces").has_value());
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       PreservesUpdateSliceFrontendAttributes) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[1,8,8]{2,1,0} parameter(0)
+      destination = f32[4,8,8]{2,1,0} parameter(1)
+      zero = s32[] constant(0)
+      call = f32[1,8,8]{2,1,0} custom-call(input),
+        custom_call_target="fake_target",
+        frontend_attributes={results_memory_spaces="{0:7}", test_attribute="call"}
+      ROOT update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, call, zero, zero, zero),
+        frontend_attributes={test_attribute="update"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->operand(1)->name(), "destination");
+  EXPECT_EQ(fusion->get_frontend_attribute("test_attribute"), "update");
+  EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"), "{1:7}");
+  EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"), "{0:7}");
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {
@@ -929,10 +982,12 @@ TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {
       call = (f32[8,8]{1,0}, f32[8,8]{1,0}) custom-call(input),
         custom_call_target="fake_target",
         frontend_attributes={results_memory_spaces="{0:2,1:7}"}
-      first = f32[8,8]{1,0} get-tuple-element(call), index=0
+      first = f32[8,8]{1,0} get-tuple-element(call), index=0,
+        frontend_attributes={test_attribute="first"}
       second = f32[8,8]{1,0} get-tuple-element(call), index=1
       view = f32[1,8,8]{2,1,0} bitcast(second)
-      update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, view, zero, zero, zero)
+      update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, view, zero, zero, zero),
+        frontend_attributes={test_attribute="update"}
       ROOT result = (f32[8,8]{1,0}, f32[4,8,8]{2,1,0}) tuple(first, update)
     }
   )";
@@ -946,6 +1001,13 @@ TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {
   EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"), "{1:7}");
   EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"),
             "{0:2,1:7}");
+  EXPECT_FALSE(fusion->get_frontend_attribute("test_attribute").has_value());
+  const HloInstruction* result =
+      module->entry_computation()->root_instruction();
+  EXPECT_EQ(result->operand(0)->get_frontend_attribute("test_attribute"),
+            "first");
+  EXPECT_EQ(result->operand(1)->get_frontend_attribute("test_attribute"),
+            "update");
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
