@@ -887,7 +887,6 @@ absl::StatusOr<bool> RewriteHero(
                                    HloInstruction::FusionKind::kCustom,
                                    plan->external_operands, fusion_body));
   module->SetAndUniquifyInstrName(fusion, "dynamic_slice_fusion");
-  fusion->set_frontend_attributes(std::move(*memory_spaces));
   ABSL_RETURN_IF_ERROR(SetDynamicSliceFusionBackendConfig(fusion));
   ABSL_RETURN_IF_ERROR(fusion->CopyAllControlDepsFrom(hero));
   ABSL_RETURN_IF_ERROR(hero->DropAllControlDeps());
@@ -933,6 +932,13 @@ absl::StatusOr<bool> RewriteHero(
   } else {
     ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
   }
+
+  // ReplaceInstruction inherits frontend attributes only when the new map is
+  // empty. Preserve that inheritance before replacing maps with remapped
+  // indices.
+  fusion->erase_frontend_attribute(kOperandsMemorySpacesAttr);
+  fusion->erase_frontend_attribute(kResultsMemorySpacesAttr);
+  fusion->add_frontend_attributes(std::move(*memory_spaces));
 
   return true;
 }
