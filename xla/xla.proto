@@ -1967,7 +1967,14 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 560
+  // Fusion side-output recomputation: 0=off, 1=measure only, 2=apply measured
+  // improvements. Requires a GPU; analytical predictions alone never approve.
+  optional int32 xla_gpu_experimental_fusion_recomputation = 560;
+  // Candidate size and count limits bound autotuning overhead, not profitability.
+  optional int64 xla_gpu_fusion_recomputation_min_bytes = 561;
+  optional int64 xla_gpu_fusion_recomputation_max_candidates = 562;
+
+  // Next id: 563
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
