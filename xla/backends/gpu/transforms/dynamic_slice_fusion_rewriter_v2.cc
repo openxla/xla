@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
@@ -55,6 +56,8 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+using hlo_instruction_utils::ReplaceInstructionWithMergedFrontendAttributes;
 
 //===----------------------------------------------------------------------===//
 // Data structures
@@ -842,14 +845,6 @@ absl::StatusOr<std::optional<FrontendAttributes>> FusionMemorySpaces(
   return attributes;
 }
 
-void ReplaceMemorySpaceAttributes(HloInstruction* instruction,
-                                  FrontendAttributes memory_spaces) {
-  // Even an empty remap must discard inherited memory-space indices.
-  instruction->erase_frontend_attribute(kOperandsMemorySpacesAttr);
-  instruction->erase_frontend_attribute(kResultsMemorySpacesAttr);
-  instruction->add_frontend_attributes(std::move(memory_spaces));
-}
-
 absl::Status SetDynamicSliceFusionBackendConfig(HloInstruction* fusion) {
   GpuBackendConfig gpu_config;
   FusionBackendConfig& backend_config =
@@ -907,42 +902,47 @@ absl::StatusOr<bool> RewriteHero(
       auto* gte = parent->AddInstruction(
           HloInstruction::CreateGetTupleElement(fusion, i));
       if (sliced_results[i].update_slice != nullptr) {
-        ABSL_RETURN_IF_ERROR(
-            parent->ReplaceInstruction(sliced_results[i].update_slice, gte));
+        ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
+            sliced_results[i].update_slice, gte));
         any_result_replaced = true;
       } else if (!sliced_results[i].noops.empty()) {
         HloInstruction* original_leaf = sliced_results[i].noops.back();
-        ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(original_leaf, gte));
+        ABSL_RETURN_IF_ERROR(
+            ReplaceInstructionWithMergedFrontendAttributes(original_leaf, gte));
         any_result_replaced = true;
       }
     }
     if (!any_result_replaced) {
-      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
+      ABSL_RETURN_IF_ERROR(
+          ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
     } else if (hero_has_side_effect) {
       ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
     }
   } else if (sliced_results.size() == 1) {
     if (sliced_results[0].update_slice != nullptr) {
-      ABSL_RETURN_IF_ERROR(
-          parent->ReplaceInstruction(sliced_results[0].update_slice, fusion));
+      ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
+          sliced_results[0].update_slice, fusion));
       if (hero_has_side_effect) {
         ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
       }
     } else if (hero->shape().IsTuple() && !sliced_results[0].noops.empty()) {
-      ABSL_RETURN_IF_ERROR(
-          parent->ReplaceInstruction(sliced_results[0].noops.back(), fusion));
+      ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
+          sliced_results[0].noops.back(), fusion));
       if (hero_has_side_effect) {
         ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
       }
     } else {
-      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
+      ABSL_RETURN_IF_ERROR(
+          ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
     }
   } else {
-    ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
+    ABSL_RETURN_IF_ERROR(
+        ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
   }
 
-  // Preserve attribute inheritance by applying the remap after replacement.
-  ReplaceMemorySpaceAttributes(fusion, std::move(*memory_spaces));
+  hlo_instruction_utils::UpdateFrontendAttributes(
+      fusion, std::move(*memory_spaces),
+      {kOperandsMemorySpacesAttr, kResultsMemorySpacesAttr});
 
   return true;
 }

@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -47,6 +48,8 @@ namespace {
 
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
 
 class HloInstructionUtilsTest : public HloHardwareIndependentTestBase {};
 
@@ -113,6 +116,98 @@ TEST_F(HloInstructionUtilsTest, TestAddOrUpdateVectorOfPairsAsAttribute) {
   EXPECT_EQ(param->frontend_attributes().map().at("foo"), "bar");
   EXPECT_EQ(param->frontend_attributes().map().at("baz"), "qux");
   EXPECT_EQ(param->frontend_attributes().map().at("quux"), "{{5,6},{7,8}}");
+}
+
+TEST_F(HloInstructionUtilsTest,
+       UpdateFrontendAttributesPreservesUnrelatedAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+    ENTRY main {
+      ROOT input = s32[] parameter(0),
+        frontend_attributes={keep="unchanged", conflict="old", remove="old", restore="old"}
+    }
+  )"));
+  HloInstruction* input = module->entry_computation()->root_instruction();
+  FrontendAttributes updates;
+  (*updates.mutable_map())["conflict"] = "new";
+  (*updates.mutable_map())["empty"] = "";
+  (*updates.mutable_map())["restore"] = "new";
+
+  UpdateFrontendAttributes(input, updates, {"remove", "restore"});
+  UpdateFrontendAttributes(input, FrontendAttributes{});
+  UpdateFrontendAttributes(input, input->frontend_attributes(), {"keep"});
+
+  EXPECT_THAT(
+      input->frontend_attributes().map(),
+      UnorderedElementsAre(Pair("keep", "unchanged"), Pair("conflict", "new"),
+                           Pair("empty", ""), Pair("restore", "new")));
+}
+
+TEST_F(HloInstructionUtilsTest, ReplacementMergesFrontendAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+    ENTRY main {
+      input = s32[] parameter(0)
+      replacement = s32[] negate(input),
+        frontend_attributes={conflict="new", added="value"}
+      ROOT old = s32[] abs(input),
+        frontend_attributes={conflict="old", inherited="value"}
+    }
+  )"));
+  HloInstruction* old = module->entry_computation()->root_instruction();
+  HloInstruction* replacement = FindInstruction(module.get(), "replacement");
+
+  ASSERT_OK(ReplaceInstructionWithMergedFrontendAttributes(old, replacement));
+
+  EXPECT_EQ(module->entry_computation()->root_instruction(), replacement);
+  EXPECT_THAT(
+      replacement->frontend_attributes().map(),
+      UnorderedElementsAre(Pair("conflict", "new"), Pair("added", "value"),
+                           Pair("inherited", "value")));
+}
+
+TEST_F(HloInstructionUtilsTest,
+       ForwardedOperandDoesNotInheritFrontendAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+    ENTRY main {
+      input = s32[] parameter(0), frontend_attributes={source="kept"}
+      ROOT old = s32[] copy(input),
+        frontend_attributes={source="overwritten", inherited="value"}
+    }
+  )"));
+  HloInstruction* old = module->entry_computation()->root_instruction();
+  HloInstruction* input = old->mutable_operand(0);
+
+  ASSERT_OK(ReplaceInstructionWithMergedFrontendAttributes(old, input));
+
+  EXPECT_EQ(module->entry_computation()->root_instruction(), input);
+  EXPECT_THAT(input->frontend_attributes().map(),
+              UnorderedElementsAre(Pair("source", "kept")));
+}
+
+TEST_F(HloInstructionUtilsTest,
+       DeclinedReplacementPreservesFrontendAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test
+    ENTRY main {
+      input = s32[] parameter(0)
+      replacement = s32[] negate(input), frontend_attributes={existing="new"}
+      ROOT old = s32[] abs(input), frontend_attributes={inherited="old"}
+    }
+  )"));
+  HloInstruction* old = module->entry_computation()->root_instruction();
+  HloInstruction* replacement = FindInstruction(module.get(), "replacement");
+  ASSERT_OK(replacement->AddControlDependencyTo(old));
+
+  EXPECT_THAT(ReplaceInstructionWithMergedFrontendAttributes(old, replacement),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+
+  EXPECT_EQ(module->entry_computation()->root_instruction(), old);
+  EXPECT_THAT(old->frontend_attributes().map(),
+              UnorderedElementsAre(Pair("inherited", "old")));
+  EXPECT_THAT(replacement->frontend_attributes().map(),
+              UnorderedElementsAre(Pair("existing", "new")));
 }
 
 TEST_F(HloInstructionUtilsTest,
