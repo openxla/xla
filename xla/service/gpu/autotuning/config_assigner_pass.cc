@@ -425,6 +425,10 @@ ConfigAssignerPass::GetEnabledBackends(
     disabled_autotune_backends.push_back(autotuner::Backend::TRITON);
   }
 
+  if (!debug_options.xla_gpu_experimental_enable_tensor_ir()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::TENSOR_IR);
+  }
+
   autotune_backends.erase(
       std::remove_if(autotune_backends.begin(), autotune_backends.end(),
                      [&](autotuner::Backend backend) {
