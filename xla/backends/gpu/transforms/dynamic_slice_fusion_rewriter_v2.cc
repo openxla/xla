@@ -793,10 +793,8 @@ absl::StatusOr<std::optional<FrontendAttributes>> FusionMemorySpaces(
                           ParseIndexMemorySpacePairs(*operand_attr));
     for (auto [index, color] : spaces) {
       if (index < 0 || index >= cloned_hero->operand_count()) {
-        VLOG(2) << "Skipping dynamic-slice fusion for " << hero->name()
-                << ": operand memory-space index " << index
-                << " is outside [0, " << cloned_hero->operand_count() << ")";
-        return std::nullopt;
+        return absl::InvalidArgumentError(
+            absl::StrCat("Invalid operand memory-space index: ", index));
       }
       ABSL_ASSIGN_OR_RETURN(
           auto parameter, DynamicSliceFusion::ResolveParameter(
@@ -813,10 +811,8 @@ absl::StatusOr<std::optional<FrontendAttributes>> FusionMemorySpaces(
                                             cloned_hero, kOffsetResolution));
     for (auto [index, color] : spaces) {
       if (index < 0 || index >= outputs.size()) {
-        VLOG(2) << "Skipping dynamic-slice fusion for " << hero->name()
-                << ": result memory-space index " << index << " is outside [0, "
-                << outputs.size() << ")";
-        return std::nullopt;
+        return absl::InvalidArgumentError(
+            absl::StrCat("Invalid result memory-space index: ", index));
       }
       const auto& output = outputs[index];
       if (!merge(results, output.result_number, color) ||
