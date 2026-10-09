@@ -713,8 +713,8 @@ class BFCAllocator : public Allocator {
 
   // Bytes that an extension adjacent to `region` must add so that an
   // allocation of `rounded_bytes` aligned to `alignment` fits in the chunk
-  // formed by merging the extension with the region's free tail. Returns
-  // `rounded_bytes` when the tail cannot be merged into.
+  // formed by merging the extension with the region's free tail. Includes
+  // alignment padding even when the tail cannot be merged into.
   size_t TailExtensionBytes(const AllocationRegion& region, size_t alignment,
                             size_t rounded_bytes) const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -909,6 +909,10 @@ class BFCAllocator : public Allocator {
   // device visible memory which is not adjacent to the other region in the
   // device's address space).
   const bool coalesce_regions_;
+
+  // Suballocator configuration, including any VA reservation, must be complete
+  // before BFC construction. Region sizes also obey kMinAllocationSize.
+  const size_t allocation_granularity_;
 
   std::unique_ptr<SubAllocator> sub_allocator_;
   std::string name_;

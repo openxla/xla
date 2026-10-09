@@ -134,6 +134,12 @@ class SpatialGrowthSubAllocator : public FakeSubAllocator {
     if (padded > max_allocation_bytes) {
       return nullptr;
     }
+    if (next_address.has_value()) {
+      const uintptr_t address = *next_address;
+      *next_address += padded;
+      *bytes_received = padded;
+      return absl::bit_cast<void*>(address);
+    }
     if (adjacent_) {
       return FakeSubAllocator::Alloc(alignment, padded, bytes_received);
     }
@@ -142,11 +148,17 @@ class SpatialGrowthSubAllocator : public FakeSubAllocator {
   }
   bool SupportsCoalescing() const override { return supports_coalescing; }
   size_t GetAllocationGranularity() const override { return granularity; }
+  void Free(void* ptr, size_t num_bytes) override {
+    frees.emplace_back(ptr, num_bytes);
+  }
 
   bool supports_coalescing;
   size_t granularity = 1;
   size_t max_allocation_bytes = std::numeric_limits<size_t>::max();
+  // Override placement to exercise different region tails and alignments.
+  std::optional<uintptr_t> next_address;
   std::vector<size_t> requests;
+  std::vector<std::pair<void*, size_t>> frees;
 
  private:
   bool adjacent_;
@@ -1288,6 +1300,28 @@ TEST(BFCAllocatorTest, SpatialUpperAlignmentKeepsSlack) {
   }
 }
 
+TEST(BFCAllocatorDeathTest, RejectsIncompatibleAllocationGranularity) {
+  auto sub = std::make_unique<SpatialGrowthSubAllocator>();
+  sub->granularity = BFCAllocator::kMinAllocationSize + 1;
+  EXPECT_DEATH(BFCAllocator(std::move(sub), 1 << 20, "granularity",
+                            BFCAllocator::Options{}),
+               "allocation_granularity_ % kMinAllocationSize");
+}
+
+TEST(BFCAllocatorDeathTest, SpatialRejectsUnalignedInitialRegion) {
+  constexpr size_t kMiB = 1 << 20;
+  for (const size_t initial_bytes : {kMiB, 3 * kMiB}) {
+    SCOPED_TRACE(initial_bytes);
+    auto sub = std::make_unique<SpatialGrowthSubAllocator>();
+    sub->granularity = 2 * kMiB;
+    auto opts = SharedGpuPoolOptions();
+    opts.allow_growth = true;
+    opts.initial_region_bytes = initial_bytes;
+    EXPECT_DEATH(BFCAllocator(std::move(sub), 8 * kMiB, "initial", opts),
+                 "initial_region_bytes must be a multiple of the granularity");
+  }
+}
+
 TEST(BFCAllocatorTest, SpatialGrowsOnlyAfterUpperGapAllocationFails) {
   constexpr size_t kMiB = 1 << 20;
   auto sub = std::make_unique<SpatialGrowthSubAllocator>();
@@ -1666,6 +1700,124 @@ TEST(BFCAllocatorTest, SpatialNonAdjacentShortExtensionIsReturned) {
   EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 16 * kMiB);
   alloc.DeallocateRaw(upper);
   alloc.DeallocateRaw(lower);
+}
+
+TEST(BFCAllocatorTest, SpatialExtensionChecksActualRegionTail) {
+  constexpr size_t kMiB = 1 << 20;
+  constexpr uintptr_t kSecondRegion = FakeSubAllocator::kBase - 64 * kMiB;
+  auto sub = std::make_unique<SpatialGrowthSubAllocator>();
+  auto* source = sub.get();
+  source->supports_coalescing = true;
+  source->granularity = 2 * kMiB;
+  auto opts = SharedGpuPoolOptions();
+  opts.allow_growth = true;
+  opts.initial_region_bytes = 8 * kMiB;
+  BFCAllocator alloc(std::move(sub), 32 * kMiB, "actual_tail", opts);
+  void* lower = alloc.AllocateRaw(kAlignment, 6 * kMiB, *kLower);
+  ASSERT_NE(lower, nullptr);
+
+  // The first region has a 2 MiB free tail. Add a separate 6 MiB region
+  // whose occupied tail ends 2 MiB short of a 4 MiB alignment boundary.
+  source->next_address = kSecondRegion;
+  source->max_allocation_bytes = 6 * kMiB;
+  void* upper = alloc.AllocateRaw(kAlignment, 6 * kMiB, *kUpper);
+  ASSERT_EQ(absl::bit_cast<uintptr_t>(upper), kSecondRegion);
+  ASSERT_EQ(alloc.GetStats()->pool_bytes.value(), 14 * kMiB);
+
+  // A 4 MiB extension would suffice beside the first region, but the actual
+  // second region needs 6 MiB including alignment padding. Even though the
+  // returned extension equals the request size, it must be handed back.
+  source->max_allocation_bytes = 4 * kMiB;
+  EXPECT_EQ(alloc.AllocateRaw(4 * kMiB, 4 * kMiB, *kUpper), nullptr);
+  EXPECT_EQ(source->requests,
+            (std::vector<size_t>{8 * kMiB, 8 * kMiB, 6 * kMiB, 8 * kMiB,
+                                 6 * kMiB, 4 * kMiB}));
+  ASSERT_EQ(source->frees.size(), 1);
+  EXPECT_EQ(absl::bit_cast<uintptr_t>(source->frees[0].first),
+            kSecondRegion + 6 * kMiB);
+  EXPECT_EQ(source->frees[0].second, 4 * kMiB);
+  EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 14 * kMiB);
+
+  // Reuse the rejected address with enough backing for the aligned request.
+  source->next_address = kSecondRegion + 6 * kMiB;
+  source->max_allocation_bytes = 6 * kMiB;
+  void* aligned = alloc.AllocateRaw(4 * kMiB, 4 * kMiB, *kUpper);
+  ASSERT_NE(aligned, nullptr);
+  EXPECT_EQ(absl::bit_cast<uintptr_t>(aligned), kSecondRegion + 8 * kMiB);
+  EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 20 * kMiB);
+  alloc.DeallocateRaw(aligned);
+  alloc.DeallocateRaw(upper);
+  alloc.DeallocateRaw(lower);
+}
+
+TEST(BFCAllocatorTest, SpatialSeparateExtensionChecksAlignmentPadding) {
+  constexpr size_t kMiB = 1 << 20;
+  constexpr uintptr_t kSeparateRegion = FakeSubAllocator::kBase - 62 * kMiB;
+  auto sub = std::make_unique<SpatialGrowthSubAllocator>();
+  auto* source = sub.get();
+  source->supports_coalescing = true;
+  source->granularity = 2 * kMiB;
+  auto opts = SharedGpuPoolOptions();
+  opts.allow_growth = true;
+  opts.initial_region_bytes = 8 * kMiB;
+  BFCAllocator alloc(std::move(sub), 32 * kMiB, "separate_padding", opts);
+  void* lower = alloc.AllocateRaw(kAlignment, 6 * kMiB, *kLower);
+  ASSERT_NE(lower, nullptr);
+
+  // The new region is large enough for the request, but not its 2 MiB
+  // alignment prefix. It cannot use the initial region's free tail.
+  source->next_address = kSeparateRegion;
+  source->max_allocation_bytes = 4 * kMiB;
+  EXPECT_EQ(alloc.AllocateRaw(4 * kMiB, 4 * kMiB, *kUpper), nullptr);
+  ASSERT_EQ(source->frees.size(), 1);
+  EXPECT_EQ(absl::bit_cast<uintptr_t>(source->frees[0].first), kSeparateRegion);
+  EXPECT_EQ(source->frees[0].second, 4 * kMiB);
+  EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 8 * kMiB);
+
+  // The same size is sufficient when the separate region is aligned.
+  source->next_address = kSeparateRegion + 2 * kMiB;
+  void* upper = alloc.AllocateRaw(4 * kMiB, 4 * kMiB, *kUpper);
+  ASSERT_NE(upper, nullptr);
+  EXPECT_TRUE(IsAligned(upper, 4 * kMiB));
+  EXPECT_EQ(alloc.GetStats()->pool_bytes.value(), 12 * kMiB);
+  alloc.DeallocateRaw(upper);
+  alloc.DeallocateRaw(lower);
+}
+
+TEST(BFCAllocatorTest, SpatialGrowthOomLogsLowerUsableGap) {
+  constexpr size_t kMiB = 1 << 20;
+  for (const size_t lower_bytes : {4 * kMiB, 8 * kMiB}) {
+    SCOPED_TRACE(lower_bytes);
+    auto opts = SharedGpuPoolOptions();
+    opts.allow_growth = true;
+    opts.initial_region_bytes = 8 * kMiB;
+    BFCAllocator alloc(std::make_unique<SpatialGrowthSubAllocator>(true),
+                       64 * kMiB, "lower_gap", opts);
+    void* lower = alloc.AllocateRaw(kAlignment, lower_bytes, *kLower);
+    void* upper = alloc.AllocateRaw(kAlignment, 56 * kMiB, *kUpper);
+    ASSERT_NE(lower, nullptr);
+    ASSERT_NE(upper, nullptr);
+    alloc.DeallocateRaw(upper);
+
+    // The coalesced gap is 60 or 56 MiB, but the lower end can only use
+    // its initial-region prefix: 4 MiB or zero, respectively.
+    const int previous_vlog_level = absl::SetVLogLevel("bfc_allocator", 2);
+    absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+    EXPECT_CALL(
+        log,
+        Log(absl::LogSeverity::kInfo, _,
+            AllOf(
+                HasSubstr("Allocator memory summary:"),
+                HasSubstr(lower_bytes == 4 * kMiB
+                              ? "largest free chunk usable by lower end 4.00MiB"
+                              : "largest free chunk usable by lower end 0B"))))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_EQ(alloc.AllocateRaw(kAlignment, 8 * kMiB, *kLower), nullptr);
+    log.StopCapturingLogs();
+    absl::SetVLogLevel("bfc_allocator", previous_vlog_level);
+    alloc.DeallocateRaw(lower);
+  }
 }
 
 TEST(BFCAllocatorTest, SpatialContiguousGrowthAccountsForTailAlignmentPadding) {

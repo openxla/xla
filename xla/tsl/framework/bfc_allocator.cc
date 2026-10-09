@@ -85,15 +85,19 @@ BFCAllocator::BFCAllocator(std::unique_ptr<SubAllocator> sub_allocator,
       free_chunk_tag_(opts.enable_spatial_partitioning ? ChunkTag::kCentralGap
                                                        : ChunkTag::kLower),
       coalesce_regions_(sub_allocator->SupportsCoalescing()),
+      allocation_granularity_(std::max(
+          sub_allocator->GetAllocationGranularity(), kMinAllocationSize)),
       sub_allocator_(std::move(sub_allocator)),
       name_(name),
       unused_chunk_handle_head_(kInvalidChunkHandle),
       next_allocation_id_(1) {
+  CHECK_EQ(allocation_granularity_ % kMinAllocationSize, 0);
   if (opts.enable_spatial_partitioning && opts.allow_growth) {
     CHECK(!opts.garbage_collection) << "The shared region must remain stable";
     CHECK_GT(opts.initial_region_bytes, 0);
     CHECK_LE(opts.initial_region_bytes, total_memory);
-    CHECK_EQ(opts.initial_region_bytes % kMinAllocationSize, 0);
+    CHECK_EQ(opts.initial_region_bytes % allocation_granularity_, 0)
+        << "initial_region_bytes must be a multiple of the granularity";
     curr_region_allocation_bytes_ = opts.initial_region_bytes;
   } else if (opts.allow_growth) {
     // 2MiB smallest initial allocation, unless total memory available
@@ -223,13 +227,9 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
   // Rounds available_bytes down to the nearest multiple of kMinAllocationSize.
   available_bytes = (available_bytes / kMinAllocationSize) * kMinAllocationSize;
 
-  // Size requests in whole granules of the suballocator. Read it on every
-  // call: a reserving suballocator only knows it once the range is reserved.
-  const size_t granularity =
-      std::max(sub_allocator_->GetAllocationGranularity(), kMinAllocationSize);
-  DCHECK_EQ(granularity % kMinAllocationSize, 0);
-  DCHECK(!initial_spatial_region || rounded_bytes % granularity == 0)
-      << "initial_region_bytes must be a multiple of the granularity";
+  // Size requests in whole granules, validated at construction after the
+  // suballocator has completed any reservation.
+  const size_t granularity = allocation_granularity_;
 
   // The smallest allocation that can still serve this request. A contiguous
   // spatial extension lands right after an existing region, so it may be
@@ -309,14 +309,19 @@ bool BFCAllocator::Extend(size_t alignment, size_t rounded_bytes,
     sub_allocator_->Free(mem_addr, bytes_received);
     return false;
   }
-  if (may_complete_tail && bytes_received < rounded_bytes) {
-    // Sized to complete a free tail, so it is only useful if it extends that
-    // region. SupportsCoalescing does not promise adjacency, and keeping a
-    // too-small separate region would leak capacity on every retry.
+  if (may_complete_tail) {
+    // The minimum above may describe a different region. Check the actual
+    // address, including alignment padding even when we got the full request.
+    // SupportsCoalescing does not promise adjacency.
     const AllocationRegion* extended = region_manager_.RegionEndingAt(mem_addr);
-    if (extended == nullptr ||
-        TailExtensionBytes(*extended, alignment, rounded_bytes) >
-            bytes_received) {
+    const size_t padding =
+        LowEndAlignmentPadding(absl::bit_cast<uintptr_t>(mem_addr), alignment);
+    const bool fits = extended != nullptr
+                          ? TailExtensionBytes(*extended, alignment,
+                                               rounded_bytes) <= bytes_received
+                          : padding <= bytes_received &&
+                                rounded_bytes <= bytes_received - padding;
+    if (!fits) {
       sub_allocator_->Free(mem_addr, bytes_received);
       return false;
     }
@@ -1682,8 +1687,19 @@ void BFCAllocator::DumpMemoryLog(size_t num_bytes,
                                  : ChunkFromHandle(central_gap_)->size;
   size_t largest_free_chunk =
       std::max(largest_binned_free_chunk, central_gap_bytes);
-  size_t largest_compatible_free_chunk =
-      std::max(largest_compatible_binned_free_chunk, central_gap_bytes);
+  size_t compatible_central_gap_bytes = central_gap_bytes;
+  if (central_gap_ != kInvalidChunkHandle && opts_.allow_growth &&
+      allocation_end == AllocationEnd::kLower) {
+    const uintptr_t offset =
+        absl::bit_cast<uintptr_t>(ChunkFromHandle(central_gap_)->ptr) -
+        spatial_region_start_;
+    compatible_central_gap_bytes =
+        offset >= spatial_region_bytes_
+            ? 0
+            : std::min(central_gap_bytes, spatial_region_bytes_ - offset);
+  }
+  size_t largest_compatible_free_chunk = std::max(
+      largest_compatible_binned_free_chunk, compatible_central_gap_bytes);
 
   LOG(INFO) << "Sum Total of in-use chunks: "
             << strings::HumanReadableNumBytes(total_bytes);
