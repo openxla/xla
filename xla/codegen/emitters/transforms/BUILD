@@ -208,8 +208,8 @@ cc_library(
     deps = [
         ":atomic_rmw_utils",
         ":convert_pure_call_ops_pass",
+        ":expand_apply_indexing_pass",
         ":passes_inc_gen",
-        ":simplify_affine_pass",
         ":simplify_arith_pass",
         "//xla:shape_util",
         "//xla:util",
@@ -251,7 +251,6 @@ cc_library(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ComplexDialect",
         "@llvm-project//mlir:DataLayoutInterfaces",
-        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncUtils",
         "@llvm-project//mlir:GPUDialect",
@@ -295,9 +294,9 @@ cc_library(
 )
 
 cc_library(
-    name = "simplify_affine_pass",
+    name = "expand_apply_indexing_pass",
     srcs = [
-        "simplify_affine.cc",
+        "expand_apply_indexing.cc",
     ],
     hdrs = ["passes.h"],
     deps = [
@@ -305,11 +304,8 @@ cc_library(
         "//xla/codegen/emitters/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:symbolic_map",
-        "//xla/hlo/analysis:symbolic_map_converter",
         "@com_google_absl//absl/base:core_headers",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:AffineDialect",
-        "@llvm-project//mlir:AffineUtils",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
