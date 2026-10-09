@@ -11,6 +11,7 @@ load(
     "if_sycl_is_configured",
 )
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
@@ -23,6 +24,11 @@ load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//xla/tsl/platform:build_config.bzl",
     "tf_proto_library",
+)
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+    "tf_exec_properties",
 )
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
@@ -3968,4 +3974,15 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
     ],
+)
+
+sh_test(
+    name = "cache_determinism_test",
+    srcs = ["cache_determinism_test.sh"],
+    data = [
+        "//xla/tests:data/cudnn_reproducer.hlo",
+        "//xla/tools:run_hlo_module",
+    ],
+    exec_properties = tf_exec_properties({"tags": tf_cuda_tests_tags()}),
+    tags = tf_cuda_tests_tags() + ["cuda-only"],
 )
