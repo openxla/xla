@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -45,6 +45,10 @@ namespace xla {
 // fraction may exceed 1 to oversubscribe device memory.
 struct FixedMemFraction {
   double fraction = 0.75;
+
+  bool operator==(const FixedMemFraction& other) const {
+    return fraction == other.fraction;
+  }
 };
 
 // Preallocate `start` and let default-memory allocations grow the pool up to
@@ -52,6 +56,10 @@ struct FixedMemFraction {
 struct FlexMemFraction {
   double start = 0.75;
   double cap = 1.0;
+
+  bool operator==(const FlexMemFraction& other) const {
+    return start == other.start && cap == other.cap;
+  }
 };
 
 using MemFraction = std::variant<FixedMemFraction, FlexMemFraction>;
@@ -89,26 +97,21 @@ struct GpuAllocatorConfig {
   };
   Kind kind = Kind::kDefault;
 
-  // Only used if kind == kBFC (or kDefault). How much of total device memory
-  // the allocator may use; see MemFraction above. The default is a fixed cap
-  // of 75%, matching the default value of XLA_CLIENT_MEM_FRACTION.
+  // The fixed fraction of total device memory the allocator may use when
+  // memory_fraction_policy is unset. This is the default value of
+  // XLA_CLIENT_MEM_FRACTION.
   //
-  // If `gpu_system_memory_size` is set, it replaces the start fraction as the
-  // initial allocation; a growth cap from `memory_fraction` still applies.
-  // Other allocator kinds use only the start fraction (MemFractionStart).
-  //
-  // PJRT C API create options: "memory_fraction" (float, a bare fraction) and
-  // "memory_fraction_policy" (string, the full grammar; takes precedence).
-  MemFraction memory_fraction = FixedMemFraction{};
+  // If gpu_system_memory_size is set, it determines the initial allocation.
+  double memory_fraction = 0.75;
 
   // Only used if kind == kBFC. The absolute size of reserved memory space for
   // GPU system in bytes.
   //
-  // If null, the default value `memory_fraction` will be used.
+  // If null, the start fraction from GetMemoryFraction() will be used.
   std::optional<int64_t> gpu_system_memory_size = std::nullopt;
 
   // Only used if kind == kBFC. If true, the allocator will immediately allocate
-  // the maximum amount allowed by `memory_fraction`. This reduces
+  // the initial amount specified by GetMemoryFraction(). This reduces
   // fragmentation, allowing more of the total memory to be used. If false, the
   // allocator will allocate more memory as allocations are requested.
   bool preallocate = true;
@@ -124,6 +127,18 @@ struct GpuAllocatorConfig {
   // deallocates memory. See `SubAllocator::Visitor` for more details.
   std::vector<tsl::SubAllocator::Visitor> sub_allocator_alloc_visitors;
   std::vector<tsl::SubAllocator::Visitor> sub_allocator_free_visitors;
+
+  // Overrides memory_fraction when set. Growth requires an explicit flexible
+  // policy; other allocator kinds and modes use only its start fraction.
+  // If gpu_system_memory_size is set, it replaces the initial allocation,
+  // while the growth cap still applies.
+  //
+  // PJRT C API create options: "memory_fraction" (float, a fixed fraction) and
+  // "memory_fraction_policy" (string, the full grammar; takes precedence).
+  std::optional<MemFraction> memory_fraction_policy = std::nullopt;
+
+  // Resolves the optional policy, falling back to the legacy fixed fraction.
+  MemFraction GetMemoryFraction() const;
 };
 
 }  // namespace xla

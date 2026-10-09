@@ -114,4 +114,9 @@ std::string MemFractionToString(const MemFraction& fraction) {
   return absl::StrCat(flex.start, "-", flex.cap);
 }
 
+MemFraction GpuAllocatorConfig::GetMemoryFraction() const {
+  return memory_fraction_policy.value_or(
+      MemFractionFromFraction(memory_fraction));
+}
+
 }  // namespace xla

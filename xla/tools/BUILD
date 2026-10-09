@@ -557,10 +557,10 @@ cc_library(
         "//xla/hlo/evaluator:hlo_evaluator_interface",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/gpu:allocator_config",
         "//xla/pjrt/interpreter:interpreter_client",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "//xla/service:hlo_module_config",
@@ -809,7 +809,7 @@ cc_library(
         "//xla/backends/gpu/target_config",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
-        "//xla/pjrt/gpu:allocator_config",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "//xla/service:hlo_runner_interface",
@@ -818,14 +818,21 @@ cc_library(
         "//xla/service/gpu/model:hlo_op_profile_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:platform_port",
-    ],
+    ] + if_cuda([
+        "//xla/stream_executor:cuda_platform",  # buildcleaner: keep
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",  # buildcleaner: keep
+    ]),
 )
 
 cc_library(
@@ -842,7 +849,6 @@ cc_library(
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/utils:hlo_query",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/gpu:allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:backend",
         "//xla/service:hlo_module_config",
@@ -1001,7 +1007,7 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/target_config",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/gpu:allocator_config",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "//xla/service:hlo_runner_interface",

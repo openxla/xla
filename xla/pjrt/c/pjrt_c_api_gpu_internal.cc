@@ -160,9 +160,7 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   }
   if (auto it = create_options.find("memory_fraction");
       it != create_options.end()) {
-    // Preserve the fixed cap of the numeric option; growth is opt-in.
-    allocator_config.memory_fraction =
-        xla::MemFractionFromFraction(std::get<float>(it->second));
+    allocator_config.memory_fraction = std::get<float>(it->second);
   }
   if (auto it = create_options.find("preallocate");
       it != create_options.end()) {
@@ -181,7 +179,7 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       return StatusToPjRtError(absl::InvalidArgumentError(absl::StrFormat(
           "memory_fraction_policy: %s", fraction.status().message())));
     }
-    allocator_config.memory_fraction = *fraction;
+    allocator_config.memory_fraction_policy = *fraction;
   }
   std::optional<std::set<int>> visible_devices;
   if (auto it = create_options.find("visible_devices");

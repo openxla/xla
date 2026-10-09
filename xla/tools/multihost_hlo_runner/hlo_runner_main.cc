@@ -38,8 +38,10 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
-#include "xla/pjrt/gpu/allocator_config.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
@@ -50,8 +52,6 @@ limitations under the License.
 #include "xla/tsl/util/fixed_option_set_flag.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
 namespace {
 const char* const kUsage = R"(
 This tool lets you run an HLO module on one or more GPUs.
@@ -125,8 +125,7 @@ struct HloRunnerConfig {
   bool recreate_profiler_session_between_repeats = false;
   std::string execution_options_path = "";
   int64_t gpu_client_initialization_timeout_sec = 300;
-  float gpu_client_mem_fraction =
-      xla::MemFractionStart(xla::GpuAllocatorConfig{}.memory_fraction);
+  float gpu_client_mem_fraction = xla::GpuAllocatorConfig{}.memory_fraction;
   bool profile_execution = false;
   std::string append_profile_to_csv_file = "";
   std::string profile_csv_statistic = "mean";
@@ -434,8 +433,7 @@ static absl::Status RunMultihostHloRunner(int argc, char** argv,
     gpu_options.node_id = opts.task_id;
     gpu_options.num_nodes = opts.num_nodes;
     gpu_options.enable_mock_nccl = opts.enable_mock_nccl;
-    gpu_options.allocator_config.memory_fraction =
-        xla::MemFractionFromFraction(opts.gpu_client_mem_fraction);
+    gpu_options.allocator_config.memory_fraction = opts.gpu_client_mem_fraction;
     ABSL_ASSIGN_OR_RETURN(
         env, xla::GetPjRtEnvironmentForGpu(
                  opts.address_str, gpu_options,

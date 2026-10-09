@@ -23,12 +23,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
@@ -54,7 +54,7 @@ static void RunAddTwoScalars(benchmark::State* state = nullptr) {
   GpuClientOptions client_option;
   client_option.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   client_option.allocator_config.preallocate = true;
-  client_option.allocator_config.memory_fraction = FixedMemFraction{0.005};
+  client_option.allocator_config.memory_fraction = 0.005;
   client_option.allowed_devices = {0};
 
   auto client = GetStreamExecutorGpuClient(client_option);
@@ -135,7 +135,7 @@ static void RunAddManyScalars(benchmark::State* state = nullptr) {
   GpuClientOptions client_option;
   client_option.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   client_option.allocator_config.preallocate = true;
-  client_option.allocator_config.memory_fraction = FixedMemFraction{0.005};
+  client_option.allocator_config.memory_fraction = 0.005;
   client_option.allowed_devices = {0};
 
   auto client = GetStreamExecutorGpuClient(client_option);

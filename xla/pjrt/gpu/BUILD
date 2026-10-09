@@ -264,6 +264,7 @@ cc_library(
     ]) + if_rocm([
         # keep sorted
         "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
+        "@local_config_rocm//rocm:rocm_headers",
     ]) + if_sycl([
         # keep sorted
         "//xla/backends/gpu/runtime:thunk_executor",
@@ -307,6 +308,7 @@ cc_library(
         "//xla/pjrt/se:local_device_state",
         "//xla/pjrt/se:pjrt_stream_executor_client",
         "//xla/runtime:device_id",
+        "//xla/service:device_assignment",
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service/gpu:gpu_executable_run_options",
@@ -406,7 +408,6 @@ xla_test(
     tags = ["nofixdeps"],
     use_legacy_runtime = True,
     deps = [
-        ":allocator_config",
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_client_test_lib",
         ":se_gpu_topology_description",
@@ -439,6 +440,7 @@ xla_test(
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:raw_buffer",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/profiling:device_time_measurement",
         "//xla/pjrt/proto:compile_options_proto_cc",
@@ -738,13 +740,13 @@ xla_test(
     srcs = ["se_gpu_pjrt_client_benchmark_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":allocator_config",
         ":se_gpu_pjrt_client",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",

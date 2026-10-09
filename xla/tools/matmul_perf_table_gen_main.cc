@@ -27,10 +27,11 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/gpu/target_config/target_config.h"
-#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 constexpr absl::string_view kUsageText = R"(
 This tool runs specified matrix shapes and datatypes (HLO dots) on given hardware and
