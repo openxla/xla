@@ -70,7 +70,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/numa.h"
 
 namespace xla {
 

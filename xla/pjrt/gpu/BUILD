@@ -327,7 +327,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:platform_port",
     ] + if_rocm([
         ":se_gpu_pjrt_compiler_rocm_registration",
     ]) + if_sycl([
