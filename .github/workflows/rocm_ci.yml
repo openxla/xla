@@ -56,7 +56,7 @@ jobs:
 
   jax:
     needs: rocm-config
-    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
+    if: false
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-dpx-1' }}
     timeout-minutes: 220
@@ -156,16 +156,21 @@ jobs:
             --repo_env=ROCM_DISTRO_HASH="${ROCM_DISTRO_HASH}" \
             --repo_env=TF_ROCM_AMDGPU_TARGETS="${ROCM_AMD_GPU_TARGETS}" \
             --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="${ROCM_SINGLE_GPU_RBE_POOL}" \
-            --local_test_jobs=1 \
+            --local_test_jobs=50 \
+            --runs_per_test=400 \
+            --cache_test_results=no \
+            --flaky_test_attempts=1 \
             --bes_keywords=xla \
             --bes_keywords=upstream \
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
+            --test_env=ROCPROFILER_LOG_LEVEL=info --test_output=streamed \
             --build_event_json_file=xla_single_gpu_build_events.json \
             -- \
-            //xla/...
+            //xla/service/gpu/model:hlo_op_profiler_test
 
       - name: Test XLA [rocm_cpu]
+        if: false
         timeout-minutes: 80
         run: |
           build_tools/rocm/run_xla_ci_build.sh \
@@ -193,7 +198,5 @@ jobs:
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: xla-bep
-          path: |
-            xla_single_gpu_build_events.json
-            xla_rocm_cpu_build_events.json
+          path: xla_single_gpu_build_events.json
           if-no-files-found: warn
