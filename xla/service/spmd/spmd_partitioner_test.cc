@@ -10581,7 +10581,7 @@ ENTRY entry {
     ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_devices=*/4, options));
-    VLOG(1) << module->ToString();
+    VLOG(0) << module->ToString();
 
     auto in_group_partition_id =
         op::Reshape(op::DynamicSlice(op::Constant(), op::PartitionId()));
@@ -10623,7 +10623,7 @@ ENTRY entry {
     ASSERT_OK_AND_ASSIGN(
         auto module,
         PartitionComputation(hlo_string, /*num_devices=*/16, options));
-    VLOG(1) << module->ToString();
+    VLOG(0) << module->ToString();
 
     auto in_group_partition_id =
         op::Reshape(op::DynamicSlice(op::Constant(), op::PartitionId()));
