@@ -674,7 +674,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyChain) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::MultiplyAnyOrder(
@@ -695,7 +695,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyChain2) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::MultiplyAnyOrder(
                   m::Parameter(0), m::MultiplyAnyOrder(m::ConstantScalar(2),
@@ -718,7 +718,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyBroadcastReassoc) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::MultiplyAnyOrder(
                   m::Parameter(0), m::Broadcast(m::MultiplyAnyOrder(
@@ -1013,7 +1013,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeConstants) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Multiply(m::Parameter(0),
                                      m::Multiply(m::ConstantScalar(2.0),
@@ -1034,7 +1034,7 @@ TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeBroadcastedConstants) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::Multiply(
@@ -1130,7 +1130,7 @@ TEST_F(AlgebraicSimplifierTest,
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::Multiply(
@@ -2037,7 +2037,7 @@ TEST_F(AlgebraicSimplifierTest, AddReassociateMergeConstants) {
   auto computation = m->AddEntryComputationWithLayouts(builder.Build());
   HloInstruction* root = computation->root_instruction();
   EXPECT_EQ(root->opcode(), HloOpcode::kAdd);
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifier simplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }());
   ASSERT_TRUE(simplifier.Run(m.get()).value());
   root = computation->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Add(
@@ -2059,7 +2059,7 @@ TEST_F(AlgebraicSimplifierTest, AddReassociateMergeBroadcastedConstants) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Add(m::Parameter(0),
                                 m::Broadcast(m::Add(m::ConstantScalar(1.0),
@@ -2113,7 +2113,7 @@ TEST_F(AlgebraicSimplifierTest, SubAddReassociateMergeConstants) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Subtract(
                   m::Add(m::ConstantScalar(1.0), m::ConstantScalar(2.0)),
@@ -2151,7 +2151,7 @@ TEST_F(AlgebraicSimplifierTest, SubAddReassociateMergeBroadcastedConstants) {
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  ASSERT_TRUE(AlgebraicSimplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }()).Run(m.get()).value());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::Subtract(
@@ -2448,7 +2448,7 @@ TEST_F(AlgebraicSimplifierTest, LhsDivOfDiv) {
               GmockMatch(m::Divide(m::Divide(m::Parameter(0), m::Parameter(1)),
                                    m::Parameter(2))));
 
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifier simplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }());
   ASSERT_TRUE(simplifier.Run(m.get()).value());
 
   EXPECT_THAT(
@@ -2480,7 +2480,7 @@ TEST_F(AlgebraicSimplifierTest, RhsDivOfDiv) {
       GmockMatch(m::Divide(m::Parameter(0),
                            m::Divide(m::Parameter(1), m::Parameter(2)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifier simplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }());
   ASSERT_TRUE(simplifier.Run(m.get()).value());
 
   EXPECT_THAT(
@@ -2516,7 +2516,7 @@ TEST_F(AlgebraicSimplifierTest, DivOfDivAndDiv) {
       GmockMatch(m::Divide(m::Divide(m::Parameter(0), m::Parameter(1)),
                            m::Divide(m::Parameter(2), m::Parameter(3)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifier simplifier([this](){ auto opts = default_options_; opts.set_enable_fast_math(true); return opts; }());
   ASSERT_TRUE(simplifier.Run(m.get()).value());
 
   EXPECT_THAT(
@@ -15486,6 +15486,95 @@ TEST_F(AlgebraicSimplifierTest, CanonicalizesMultiDimShuffleRotate) {
   EXPECT_EQ(shuffle->rotate().shifts(0), 3);
   EXPECT_EQ(shuffle->dimensions()[1], 1);
   EXPECT_EQ(shuffle->rotate().shifts(1), 3);
+}
+
+
+// Regression test for GitHub issue #50214: floating-point constant
+// reassociation must not fire without enable_fast_math.
+TEST_F(AlgebraicSimplifierTest, AddReassociateConstantsRequiresFastMath) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = f32[4] parameter(0)
+      c0 = f32[] constant(3e38)
+      c1 = f32[] constant(3e38)
+      b0 = f32[4] broadcast(c0), dimensions={}
+      b1 = f32[4] broadcast(c1), dimensions={}
+      add0 = f32[4] add(p0, b0)
+      ROOT add1 = f32[4] add(add0, b1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, MulReassociateConstantsRequiresFastMath) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = f32[] parameter(0)
+      c0 = f32[] constant(1e30)
+      c1 = f32[] constant(1e30)
+      mul0 = f32[] multiply(p0, c0)
+      ROOT mul1 = f32[] multiply(mul0, c1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, DivReassociateRequiresFastMath) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      p2 = f32[] parameter(2)
+      div0 = f32[] divide(p0, p1)
+      ROOT div1 = f32[] divide(div0, p2)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+// Tests to ensure integer reassociation still works with default options
+TEST_F(AlgebraicSimplifierTest, AddReassociateMergeConstantsInteger) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[] parameter(0)
+      c0 = s32[] constant(1)
+      c1 = s32[] constant(2)
+      add0 = s32[] add(p0, c0)
+      ROOT add1 = s32[] add(add0, c1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Add(m::Parameter(0),
+                                m::Add(m::ConstantScalar(1),
+                                       m::ConstantScalar(2)))));
+}
+
+TEST_F(AlgebraicSimplifierTest, MultiplyReassociateMergeConstantsInteger) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[] parameter(0)
+      c0 = s32[] constant(2)
+      c1 = s32[] constant(3)
+      mul0 = s32[] multiply(p0, c0)
+      ROOT mul1 = s32[] multiply(mul0, c1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Multiply(m::Parameter(0),
+                                     m::Multiply(m::ConstantScalar(2),
+                                                 m::ConstantScalar(3)))));
 }
 
 }  // namespace
