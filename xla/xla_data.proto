@@ -877,11 +877,11 @@ message SparsityConfig {
     int64 block_size = 2;
     // The dimension along which the sparsity is applied.
     int64 dimension = 3;
-    // The stride of the sparsity.
-    // - If it is 1, every N consecutive elements (i.e., 0,1,2,...,N-1) are a
-    //   sparsity block.
-    // - If it is k, every N elements with distance k (i.e., 0,k,2k,...,(N-1)k)
-    //   are a sparsity block.
+    // The stride of the sparsity. Matches the BlockScalingConfig convention.
+    // - If it is 0 (the default), every N consecutive elements
+    //   (i.e., 0,1,2,...,N-1) are a sparsity block.
+    // - If it is k, every N elements with distance k
+    //   (i.e., 0,k,2k,...,(N-1)k) are a sparsity block.
     int64 stride = 4;
     // The operand index for the indices argument.
     int32 idx = 5;
