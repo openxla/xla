@@ -1,7 +1,10 @@
 load(
+    "@config_rocm_hipcc//rocm:build_defs.bzl",
+    "rocm_library",
+)
+load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
-    "rocm_library",
 )
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -1283,6 +1286,7 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
+        "@local_config_rocm//rocm:hip_runtime",
         "@roc_mori//:mori_application_headers",
         "@roc_mori//src/application:mori_application",  # build_cleaner: keep
         "@roc_mori//src/cco:mori_cco",  # build_cleaner: keep
