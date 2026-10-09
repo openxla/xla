@@ -157,7 +157,7 @@ jobs:
             --repo_env=TF_ROCM_AMDGPU_TARGETS="${ROCM_AMD_GPU_TARGETS}" \
             --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="${ROCM_SINGLE_GPU_RBE_POOL}" \
             --local_test_jobs=50 \
-            --runs_per_test=100 \
+            --runs_per_test=400 \
             --cache_test_results=no \
             --flaky_test_attempts=1 \
             --bes_keywords=xla \
