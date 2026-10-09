@@ -130,6 +130,9 @@ absl::Status LaunchMultiGpuBarrierWithNccl(
 
   TF_RET_CHECK(symmetric_memory != nullptr)
       << "Symmetric memory is required on rank " << rank.value();
+  TF_RET_CHECK(num_devices <= MultiGpuBarrierWithNcclKernel::kMaxPeers)
+      << "Number of participants exceeds "
+         "MultiGpuBarrierWithNcclKernel::kMaxPeers";
 
   ABSL_ASSIGN_OR_RETURN(
       MultiGpuBarrierWithNcclKernel::KernelType * kernel,

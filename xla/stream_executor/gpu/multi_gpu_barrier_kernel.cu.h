@@ -31,11 +31,10 @@ __device__ __forceinline__ void SyncRemoteBlocksAndUpdateCounter(
     const std::array<uint32_t* __restrict__, MultiGpuBarrierKernel::kMaxPeers>&
         signal_buffers,
     uint32_t* sync_counter) {
-  // 2. Read State & Pre-Increment
   // Pre-increment allows to initialize the counter to 0. We sync on 1.
-  // Every rank maintains its own counter, so this read is local and fast.
-  // Since we launch 1 block, a standard load is sufficient, as all threads see
-  // the same value.
+  // The plain load is race-free because we launch a single CTA and the
+  // __syncthreads() after SyncRemoteBlocks ensures all threads complete the
+  // load before thread 0 writes the updated value.
   uint32_t signal_value = *sync_counter + 1;
 
   // 3. Barrier
@@ -59,14 +58,14 @@ __global__ void MultiGpuBarrierKernelImpl(
     int64_t rank, int64_t num_ranks,
     std::array<void*, MultiGpuBarrierKernel::kMaxPeers> signal_buffers_void,
     uint32_t* sync_counter) {
-  // 1. Cast void* pointers
-  std::array<uint32_t* __restrict__, MultiGpuBarrierKernel::kMaxPeers>
-      signal_buffers;
+  __shared__
+      std::array<uint32_t* __restrict__, MultiGpuBarrierKernel::kMaxPeers>
+          signal_buffers;
 
-#pragma unroll
-  for (int64_t i = 0; i < MultiGpuBarrierKernel::kMaxPeers; ++i) {
+  for (int64_t i = threadIdx.x; i < num_ranks; i += blockDim.x) {
     signal_buffers[i] = reinterpret_cast<uint32_t*>(signal_buffers_void[i]);
   }
+  __syncthreads();
 
   SyncRemoteBlocksAndUpdateCounter<PlatformT>(rank, num_ranks, signal_buffers,
                                               sync_counter);
