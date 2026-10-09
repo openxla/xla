@@ -25,13 +25,16 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace hlo_instruction_utils {
@@ -48,6 +51,21 @@ bool KeepsBitwidth(const HloInstruction&);
 void AddOrUpdateVectorOfPairsAsAttribute(
     HloInstruction* instr, std::string attr_name,
     std::vector<std::pair<int64_t, int64_t>> intervals);
+
+// Removes the specified frontend attributes, then adds or overwrites `updates`.
+// Updates take precedence over removals. Other attributes are unchanged.
+void UpdateFrontendAttributes(
+    HloInstruction* instruction, FrontendAttributes updates,
+    absl::Span<const absl::string_view> attributes_to_remove = {});
+
+// Replaces an instruction and inherits missing frontend attributes from it,
+// even when the replacement already has attributes. Replacement values win.
+// Attributes are not inherited when forwarding an operand of the old
+// instruction. Both instructions must belong to the same computation and have
+// compatible shapes. Returns an error if control dependencies prevent
+// replacement. Frontend attributes are unchanged if replacement fails.
+absl::Status ReplaceInstructionWithMergedFrontendAttributes(
+    HloInstruction* old_instruction, HloInstruction* new_instruction);
 
 // Returns the nesting depth in computations from the top-level computation of
 // `hlo`. i.e. 0 = in the top-level computation, ...
