@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_replace.h"
 #include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
