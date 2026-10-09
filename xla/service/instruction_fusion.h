@@ -129,6 +129,22 @@ class InstructionFusion : public HloModulePass {
   virtual FusionDecision ShouldFuse(HloInstruction* consumer,
                                     int64_t operand_index);
 
+  // Escape hatch for the "don't duplicate expensive instructions" veto below.
+  //
+  // That veto is a boolean opcode judgement: it asks whether `producer`'s
+  // opcode is expensive, never how large its output is. Refusing the
+  // duplication does not avoid the work -- it forces `producer`'s whole
+  // output through memory instead. For a buffer larger than cache that round
+  // trip can cost far more than the duplicated arithmetic.
+  //
+  // A backend that can compare the two costs may override this to allow the
+  // duplication anyway. The default is `false`, i.e. the veto stands exactly
+  // as before, so backends that do not override this are unaffected.
+  virtual bool MayDuplicateExpensiveProducer(const HloInstruction& producer,
+                                             const HloInstruction& consumer) {
+    return false;
+  }
+
   // Returns whether a 'producer' at given operand index can be fused into the
   // consumer. It uses the provided function to check the legality of a possible
   // fusion when either the producer or the consumer contains an operation which
