@@ -162,9 +162,13 @@ absl::StatusOr<std::unique_ptr<llvm::TargetMachine>> NVPTXGetTargetMachine(
   std::string feature_str =
       absl::StrFormat("+ptx%d", highest_supported_ptx_version);
 
-  return GetTargetMachine(target_triple,
-                          nvptx::GetSmName(compute_capability, ptx_version),
-                          debug_options, feature_str);
+  const se::SemanticVersion ptx_version{
+      static_cast<unsigned>(highest_supported_ptx_version / 10),
+      static_cast<unsigned>(highest_supported_ptx_version % 10), 0};
+
+  return GetTargetMachine(
+      target_triple, nvptx::GetSmName(compute_capability, ptx_version),
+      debug_options, feature_str);
 }
 
 // One-time module initializer.
