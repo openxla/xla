@@ -3895,6 +3895,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Maximum number of ROCm trace events (applies to callback/activity/"
       "annotation). Set as high as memory allows; up to 1e9."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_rocm_triton_use_async_copy",
+      bool_setter_for(&DebugOptions::set_xla_gpu_rocm_triton_use_async_copy),
+      debug_options->xla_gpu_rocm_triton_use_async_copy(),
+      "Controls async copies from global memory to LDS in the ROCm Triton "
+      "pipeline. If unset, follows Triton's architecture-specific default; "
+      "otherwise, forces async copy on or off. Autotune cache keys do not "
+      "include this option; clear or use a separate cache when changing it."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_tiling_propagation",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_experimental_enable_tiling_propagation),

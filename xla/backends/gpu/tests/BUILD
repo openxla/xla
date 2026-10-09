@@ -739,6 +739,7 @@ lit_test_suite_for_gpus(
             "slice_to_dynamic.hlo",
             "sorting.hlo",
             "sub_byte_collectives.hlo",
+            "triton_async_copy.hlo",
             "triton_calling_convention.hlo",
             "triton_naming.hlo",
             "triton_tdm_elemwise.hlo",
@@ -759,6 +760,7 @@ lit_test_suite_for_gpus(
             "scatter_bf16.hlo",
             "reduce_unnested.hlo",
             "reduction_vectorization_sm_all.hlo",
+            "triton_async_copy.hlo",
             "pdl.hlo",
         ],
         "mi300": [

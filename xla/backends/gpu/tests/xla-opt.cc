@@ -78,7 +78,8 @@ mlir::PassPipelineRegistration<TritonPipelineOptions>
               options.enable_pdl);
 
           xla::gpu::CreateTritonPipeline(&pm, gpu_cc, options.num_warps,
-                                         options.num_ctas, options.num_stages);
+                                         options.num_ctas, options.num_stages,
+                                         xla::gpu::TritonPipelineOptions{});
         });
 
 }  // namespace
