@@ -2994,6 +2994,71 @@ ENTRY main {
   EXPECT_THAT(p1_value.ToString(), HasSubstr(" uses:\n"));
 }
 
+// A pass may remove instructions and compact a computation with
+// HloComputation::Cleanup while it still holds the analysis, which moves the
+// local ids of the instructions behind the removed one. Lookups must keep
+// resolving to the instruction they were made for.
+TEST_P(HloDataflowAnalysisTest, LookupsSurviveLocalIdCompaction) {
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(R"(
+HloModule LocalIdCompaction
+
+ENTRY main {
+  p0 = f32[] parameter(0)
+  a = f32[] negate(p0)
+  dead = f32[] exponential(p0)
+  c = f32[] negate(a)
+  ROOT t = (f32[], f32[]) tuple(a, c)
+}
+)"));
+  HloComputation* entry = module_->entry_computation();
+  HloInstruction* a = FindInstruction(module_.get(), "a");
+  HloInstruction* dead = FindInstruction(module_.get(), "dead");
+  HloInstruction* c = FindInstruction(module_.get(), "c");
+  HloInstruction* t = FindInstruction(module_.get(), "t");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloDataflowAnalysis> analysis,
+                       HloDataflowAnalysis::Run(*module_, GetParam()));
+
+  const int32_t c_local_id = c->local_id();
+  ASSERT_OK(entry->RemoveInstruction(dead));
+  EXPECT_EQ(analysis->GetValueDefinedAt(dead).defining_instruction(), dead);
+  entry->Cleanup();
+  ASSERT_NE(c->local_id(), c_local_id);
+
+  EXPECT_EQ(analysis->GetValueDefinedAt(c).defining_instruction(), c);
+  EXPECT_EQ(analysis->GetValueDefinedAt(t).defining_instruction(), t);
+  EXPECT_EQ(analysis->GetUniqueValueAt(t, {0}).defining_instruction(), a);
+  EXPECT_EQ(analysis->GetUniqueValueAt(t, {1}).defining_instruction(), c);
+  EXPECT_THAT(analysis->GetValueDefinedAt(a).GetUses(),
+              UnorderedElementsAre(HloUse{c, 0, {}}, HloUse{t, 0, {}}));
+}
+
+// Only the async thread is analyzed. When the root of the async computation
+// changes, its caller on the excluded main thread has no value set to update.
+TEST_P(HloDataflowAnalysisTest, IncludedCalleeOfExcludedCaller) {
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(R"(
+HloModule IncludedCalleeOfExcludedCaller
+
+async_callee {
+  c0 = f32[] constant(1.0)
+  ROOT r = (f32[]) tuple(c0)
+}
+
+ENTRY main {
+  start = ((), (f32[]), u32[]) async-start(), async_execution_thread="parallel", calls=async_callee
+  ROOT done = (f32[]) async-done(start), async_execution_thread="parallel", calls=async_callee
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> analysis,
+      HloDataflowAnalysis::Run(*module_, GetParam(),
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{"parallel"}));
+  const HloInstruction* c0 = FindInstruction(module_.get(), "c0");
+  const HloInstruction* r = FindInstruction(module_.get(), "r");
+  EXPECT_EQ(&analysis->GetUniqueValueAt(r, {0}),
+            &analysis->GetValueDefinedAt(c0));
+}
+
 INSTANTIATE_TEST_SUITE_P(HloDataflowAnalysisInstantiation,
                          HloDataflowAnalysisTest,
                          ::testing::Values(false, true));
