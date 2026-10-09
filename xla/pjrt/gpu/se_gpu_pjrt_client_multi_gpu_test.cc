@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -1957,6 +1958,64 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn(std::vector<ShardedAutotuningTestInfo>{
         {2, 0}, {2, 1}, {2, 2}}),
     ShardedAutotuningTestInfo::Name);
+
+TEST(StreamExecutorGpuClientTest,
+     DeviceErrorCallbackPropagatesToPeerNodesAndUserCallback) {
+  constexpr int kNumNodes = 2;
+  auto kv_store = std::make_shared<InMemoryKeyValueStore>();
+  ASSERT_OK(kv_store->Set("gpu_fatal_error", "stale_error_from_previous_run"));
+
+  absl::Status user_cb_status = absl::OkStatus();
+  absl::StatusOr<std::unique_ptr<PjRtClient>> client_0_or;
+  absl::StatusOr<std::unique_ptr<PjRtClient>> client_1_or;
+  {
+    tsl::thread::ThreadPool pool(tsl::Env::Default(), "create_clients",
+                                 kNumNodes);
+    pool.Schedule([&]() {
+      GpuClientOptions options = GetTestGpuClientOptions(2);
+      options.node_id = 0;
+      options.num_nodes = kNumNodes;
+      options.allowed_devices = {0};
+      options.kv_store = kv_store;
+      options.device_error_callback =
+          std::make_shared<absl::AnyInvocable<void(const absl::Status&) const>>(
+              [&](const absl::Status& status) { user_cb_status = status; });
+      client_0_or = GetStreamExecutorGpuClient(options);
+    });
+    pool.Schedule([&]() {
+      GpuClientOptions options = GetTestGpuClientOptions(2);
+      options.node_id = 1;
+      options.num_nodes = kNumNodes;
+      options.allowed_devices = {1};
+      options.kv_store = kv_store;
+      client_1_or = GetStreamExecutorGpuClient(options);
+    });
+  }
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client_0,
+                       std::move(client_0_or));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client_1,
+                       std::move(client_1_or));
+  EXPECT_THAT(kv_store->TryGet("gpu_fatal_error"),
+              StatusIs(absl::StatusCode::kNotFound));
+
+  auto* se_client_0 = absl::down_cast<CommonPjRtClientImpl*>(client_0.get());
+  auto* raw_client_0 =
+      absl::down_cast<PjRtStreamExecutorRawClient*>(se_client_0->raw_client());
+  ASSERT_NE(raw_client_0->gpu_run_options(), nullptr);
+  ASSERT_NE(raw_client_0->gpu_run_options()->device_error_callback(), nullptr);
+  ASSERT_TRUE(*raw_client_0->gpu_run_options()->device_error_callback());
+
+  (*raw_client_0->gpu_run_options()->device_error_callback())(
+      /*device_ordinal=*/0, absl::InternalError("CUDA_ERROR_ILLEGAL_ADDRESS"));
+
+  EXPECT_THAT(user_cb_status,
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS")));
+  ASSERT_OK_AND_ASSIGN(std::string kv_error,
+                       kv_store->Get("gpu_fatal_error", absl::Seconds(5)));
+  EXPECT_THAT(kv_error, HasSubstr("Fatal GPU device error on node 0 device 0"));
+  EXPECT_THAT(kv_error, HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS"));
+}
 
 }  // namespace
 }  // namespace xla

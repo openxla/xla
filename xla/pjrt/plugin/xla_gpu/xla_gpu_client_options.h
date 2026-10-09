@@ -21,6 +21,8 @@ limitations under the License.
 #include <set>
 #include <string>
 
+#include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
 #include "absl/time/time.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -54,6 +56,10 @@ struct GpuClientOptions {
   // Optional distributed runtime client used to report execution timeouts to
   // the coordination service when abort_collectives_on_failure is enabled.
   std::shared_ptr<DistributedRuntimeClient> distributed_client = nullptr;
+
+  // Optional callback invoked when an asynchronous device error is detected.
+  std::shared_ptr<absl::AnyInvocable<void(const absl::Status&) const>>
+      device_error_callback = nullptr;
 
   // If true, aborts local collectives when the coordination service reports
   // that a task failed or restarted with a new incarnation.
