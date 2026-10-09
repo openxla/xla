@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -101,12 +101,19 @@ class CpuRawBuffer : public CommonPjRtRawBufferImpl {
 
   void* GetHostPointer() const override;
 
+  void* GetHostPointerForInternalUse(HostAccess access) const override {
+    if (access == HostAccess::kWrite) {
+      buffer_->InvalidateCacheIdentity();
+    }
+    return buffer_->untyped_data();
+  }
+
   void* OpaqueDeviceMemoryDataPointer() const override {
     // We need to wait for the memory to be allocated before sharing it with
     // external frameworks like NumPy.
     tsl::BlockUntilReady(buffer_);
     CHECK(buffer_.IsConcrete());
-    return buffer_->untyped_data();
+    return CpuRawBuffer::GetHostPointer();
   }
 
   const tsl::AsyncValueRef<CpuDeviceMemory>& buffer() const { return buffer_; }

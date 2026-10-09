@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -133,7 +133,11 @@ CpuRawBuffer::ImportForeignMemory(
 
 size_t CpuRawBuffer::GetOnDeviceSizeInBytes() const { return buffer_size_; }
 
-void* CpuRawBuffer::GetHostPointer() const { return buffer_->untyped_data(); }
+void* CpuRawBuffer::GetHostPointer() const {
+  // Callers may retain the pointer and write after later executions complete.
+  buffer_->DisableCacheIdentity();
+  return buffer_->untyped_data();
+}
 
 absl::Status CpuRawBuffer::ValidateSlice(int64_t offset, int64_t slice_size) {
   size_t buffer_size = GetOnDeviceSizeInBytes();
@@ -162,7 +166,8 @@ CpuRawBuffer::CopyRawHostToDeviceAndReturnEvent(
   ABSL_RETURN_IF_ERROR(ValidateSlice(offset, transfer_size));
 
   if (dependencies.empty()) {
-    std::memcpy(static_cast<uint8_t*>(GetHostPointer()) + offset, src,
+    buffer_->InvalidateCacheIdentity();
+    std::memcpy(static_cast<uint8_t*>(buffer_->untyped_data()) + offset, src,
                 transfer_size);
     return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
   }
@@ -176,8 +181,9 @@ CpuRawBuffer::CopyRawHostToDeviceAndReturnEvent(
       event.SetError(dep_status);
       return;
     }
-    std::memcpy(static_cast<uint8_t*>(buf->GetHostPointer()) + offset, src,
-                transfer_size);
+    buf->buffer_->InvalidateCacheIdentity();
+    std::memcpy(static_cast<uint8_t*>(buf->buffer_->untyped_data()) + offset,
+                src, transfer_size);
     event.SetStateConcrete();
   };
 
@@ -195,7 +201,7 @@ CpuRawBuffer::CopyRawDeviceToHostAndReturnEvent(
   ABSL_RETURN_IF_ERROR(ValidateSlice(offset, transfer_size));
 
   if (dependencies.empty()) {
-    std::memcpy(dst, static_cast<uint8_t*>(GetHostPointer()) + offset,
+    std::memcpy(dst, static_cast<uint8_t*>(buffer_->untyped_data()) + offset,
                 transfer_size);
     return PjRtDeviceEventRef(tsl::MakeAvailableAsyncValueRef<CpuEvent>());
   }
@@ -209,7 +215,8 @@ CpuRawBuffer::CopyRawDeviceToHostAndReturnEvent(
       event.SetError(dep_status);
       return;
     }
-    std::memcpy(dst, static_cast<uint8_t*>(buf->GetHostPointer()) + offset,
+    std::memcpy(dst,
+                static_cast<uint8_t*>(buf->buffer_->untyped_data()) + offset,
                 transfer_size);
     event.SetStateConcrete();
   };
@@ -233,8 +240,10 @@ void CpuRawBuffer::CopyTo(
   if (allocation_event) {
     std::move(allocation_event)(absl::OkStatus());
   }
+  // Borrow the source without a mutable export; the completion callback
+  // retains its storage until the transfer finishes.
   auto other_event = dst_raw_buffer->CopyRawHostToDeviceAndReturnEvent(
-      GetHostPointer(), 0, GetOnDeviceSizeInBytes());
+      buffer_->untyped_data(), 0, GetOnDeviceSizeInBytes());
   if (!other_event.ok()) {
     definition_event_promise.SetError(other_event.status());
     src_usage_event_promise.SetError(other_event.status());
