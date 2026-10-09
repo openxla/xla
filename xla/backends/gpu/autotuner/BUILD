@@ -1199,6 +1199,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
