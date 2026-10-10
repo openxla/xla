@@ -17,6 +17,7 @@ limitations under the License.
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/CommonFolders.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -382,9 +384,12 @@ std::optional<std::string> MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
           dim, " is divisible by the tile dimension ", tile_dim,
           ". If it is, use tpu.assume_multiple to suppress this error.");
     }
-    // We only require alignment to compact 2nd minor for large 2nd minor.
-    if (tile_rank == 2 && i == 0) {
-      int64_t packing = tile_dim / sublane_count;
+    // We only require alignment to compact second minor for large second minor.
+    if (tile_rank == 2 && i == 0 &&
+        (source_ty.getElementType().isIntOrFloat() ||
+         isa<Float8EXMYType>(source_ty.getElementType()))) {
+      int64_t bitwidth = getElementTypeBitwidth(source_ty);
+      int64_t packing = bitwidth > 0 ? 32 / bitwidth : 1;
       if (tile_dim == sublane_count * packing &&
           first_tile.dimension(1) == lane_count && packing > 1 &&
           packing <= sublane_count) {
@@ -732,8 +737,8 @@ mlir::InFlightDiagnostic MemRefSqueezeOp::verifyTiling() {
     default: {
       auto first_tile = tiles.front();
       for (int dim : squeezed) {
-        int first_tiled = source_shape.size() - first_tile.dimensions().size();
-        if (dim >= first_tiled) {
+        if (dim >= static_cast<int>(source_shape.size() -
+                                    first_tile.dimensions().size())) {
           return emitOpError() << "When multiple tiles are present, no tiled "
                                   "dimensions can be squeezed.";
         }
@@ -881,6 +886,173 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
   const int64_t result_rank = result_shape.size();
   if (const auto input_tiled_layout = dyn_cast<TiledLayoutAttr>(input_layout)) {
     if (!input_tiled_layout.tilesAreKnownContiguous(input_type.getShape())) {
+      const TiledLayoutAttr stride1_layout = [&]() -> TiledLayoutAttr {
+        const ArrayRef<xla::Tile> tiles = input_tiled_layout.getTiles();
+        const ArrayRef<int64_t> strides = input_tiled_layout.getTileStrides();
+        if (tiles.empty() || tiles.size() > 2 ||
+            tiles.front().dimensions().size() != 2 || input_rank < 2 ||
+            result_rank < 2 || input_tiled_layout.hasDynamicStrides()) {
+          return nullptr;
+        }
+        const ArrayRef<int64_t> first_tile = tiles.front().dimensions();
+        const int64_t packing =
+            (tiles.size() > 1 && !tiles[1].dimensions().empty())
+                ? tiles[1].dimensions()[0]
+                : 1;
+        if (tiles.size() == 2 && tiles[1] != xla::Tile({packing, 1})) {
+          return nullptr;
+        }
+        if (first_tile[0] <= 0 || first_tile[0] % packing != 0 ||
+            first_tile[1] <= 0 || strides[input_rank - 2] != 1 ||
+            strides[input_rank - 1] <= 1 ||
+            ShapedType::isDynamic(input_shape.back()) ||
+            result_shape.back() != input_shape.back()) {
+          return nullptr;
+        }
+        const int64_t lane_chunks =
+            llvm::divideCeil(input_shape.back(), first_tile[1]);
+        if (lane_chunks <= 1) {
+          return nullptr;
+        }
+        const int64_t s_lane = strides[input_rank - 1];
+        if (ShapedType::isDynamic(input_shape[input_rank - 2])) {
+          if (!ShapedType::isDynamic(result_shape[result_rank - 2]) ||
+              !llvm::all_of(input_shape.drop_back(2),
+                            [](int64_t d) { return d == 1; }) ||
+              !llvm::all_of(result_shape.drop_back(2),
+                            [](int64_t d) { return d == 1; })) {
+            return nullptr;
+          }
+          SmallVector<int64_t> result_strides(result_rank, 1);
+          result_strides[result_rank - 1] = s_lane;
+          return TiledLayoutAttr::get(ctx, tiles, result_strides);
+        }
+        int64_t inner_tiles =
+            llvm::divideCeil(input_shape[input_rank - 2], first_tile[0]);
+        if (inner_tiles > s_lane) {
+          return nullptr;
+        }
+        int64_t split_in = input_rank - 2;
+        while (split_in > 0) {
+          const int64_t d = split_in - 1;
+          if (ShapedType::isStatic(input_shape[d]) && input_shape[d] > 1 &&
+              strides[d] == inner_tiles &&
+              inner_tiles * input_shape[d] <= s_lane) {
+            if (input_shape[input_rank - 2] % first_tile[0] != 0) {
+              return nullptr;
+            }
+            inner_tiles *= input_shape[d];
+            split_in = d;
+          } else if (input_shape[d] == 1 && strides[d] <= s_lane) {
+            split_in = d;
+          } else {
+            break;
+          }
+        }
+        int64_t expected_outer_stride = s_lane * lane_chunks;
+        for (int64_t d = split_in - 1; d >= 0; --d) {
+          if (input_shape[d] != 1 && strides[d] != expected_outer_stride) {
+            return nullptr;
+          }
+          if (ShapedType::isDynamic(input_shape[d])) {
+            if (d != 0) {
+              return nullptr;
+            }
+          } else {
+            expected_outer_stride *= input_shape[d];
+          }
+        }
+        const ArrayRef<int64_t> inner_in =
+            input_shape.slice(split_in, (input_rank - 1) - split_in);
+        const int64_t inner_elements = llvm::product_of(inner_in);
+        if (ShapedType::isDynamic(result_shape[result_rank - 2]) ||
+            result_shape[result_rank - 2] <= 0) {
+          return nullptr;
+        }
+        int64_t res_inner_elements = result_shape[result_rank - 2];
+        int64_t split_out = result_rank - 2;
+        while (res_inner_elements < inner_elements && split_out > 0) {
+          --split_out;
+          if (ShapedType::isDynamic(result_shape[split_out]) ||
+              result_shape[split_out] <= 0) {
+            return nullptr;
+          }
+          res_inner_elements *= result_shape[split_out];
+        }
+        if (res_inner_elements != inner_elements) {
+          return nullptr;
+        }
+        if (split_in == 0) {
+          while (split_out > 0 && result_shape[split_out - 1] == 1) {
+            --split_out;
+          }
+        }
+        const ArrayRef<int64_t> outer_in = input_shape.take_front(split_in);
+        const ArrayRef<int64_t> outer_out = result_shape.take_front(split_out);
+        if (!outer_in.empty() && ShapedType::isDynamic(outer_in[0])) {
+          if (outer_out.empty() || !ShapedType::isDynamic(outer_out[0]) ||
+              llvm::product_of(outer_in.drop_front()) !=
+                  llvm::product_of(outer_out.drop_front())) {
+            return nullptr;
+          }
+        } else {
+          if (llvm::any_of(outer_out, ShapedType::isDynamic) ||
+              llvm::product_of(outer_in) != llvm::product_of(outer_out)) {
+            return nullptr;
+          }
+        }
+        const ArrayRef<int64_t> inner_out =
+            result_shape.slice(split_out, (result_rank - 1) - split_out);
+        const int64_t res_second_minor = result_shape[result_rank - 2];
+        int64_t result_tile_dim0 = first_tile[0];
+        if (inner_in != inner_out) {
+          const bool has_multiple_inner_in = llvm::any_of(
+              inner_in.drop_back(), [](int64_t d) { return d != 1; });
+          const bool has_multiple_inner_out = llvm::any_of(
+              inner_out.drop_back(), [](int64_t d) { return d != 1; });
+          if (res_second_minor != input_shape[input_rank - 2] ||
+              has_multiple_inner_in || has_multiple_inner_out) {
+            if (input_shape[input_rank - 2] % packing != 0) {
+              return nullptr;
+            }
+            const int64_t aligned_res_dim0 =
+                llvm::alignTo(std::max<int64_t>(res_second_minor, 1), packing);
+            result_tile_dim0 = std::gcd(first_tile[0], aligned_res_dim0);
+            if (has_multiple_inner_out &&
+                res_second_minor % result_tile_dim0 != 0) {
+              return nullptr;
+            }
+          }
+        }
+        const int64_t ratio = first_tile[0] / result_tile_dim0;
+        const int64_t s_lane_new = s_lane * ratio;
+        SmallVector<xla::Tile> result_tiles(tiles.begin(), tiles.end());
+        result_tiles[0] = xla::Tile({result_tile_dim0, first_tile[1]});
+        SmallVector<int64_t> result_strides(result_rank, 1);
+        result_strides[result_rank - 1] = s_lane_new;
+        result_strides[result_rank - 2] = 1;
+        int64_t inner_stride =
+            llvm::divideCeil(res_second_minor, result_tile_dim0);
+        for (int64_t d = result_rank - 3; d >= split_out; --d) {
+          result_strides[d] = inner_stride;
+          inner_stride *= result_shape[d];
+        }
+        int64_t outer_stride = s_lane_new * lane_chunks;
+        for (int64_t d = split_out - 1; d >= 0; --d) {
+          result_strides[d] = outer_stride;
+          if (ShapedType::isDynamic(result_shape[d])) {
+            if (d != 0) {
+              return nullptr;
+            }
+          } else {
+            outer_stride *= result_shape[d];
+          }
+        }
+        return TiledLayoutAttr::get(ctx, result_tiles, result_strides);
+      }();
+      if (stride1_layout != nullptr) {
+        return MemRefLayoutAttrInterface(stride1_layout);
+      }
       return emit_error()
              << "Not implemented: Reshape on a non-contiguous memref.";
     }
@@ -898,6 +1070,52 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
       if (result_rank < input_first_tile_rank) {
         return nullptr;
       }
+      const int64_t packing =
+          (input_tiles.size() > 1 && !input_tiles[1].dimensions().empty())
+              ? input_tiles[1].dimensions()[0]
+              : 1;
+      const bool has_single_input_minor_tile =
+          input_first_tile_rank == 2 &&
+          ShapedType::isStatic(input_shape.back()) &&
+          input_shape.back() <= input_first_tile[1];
+      const bool has_no_inter_tile_second_minor_padding =
+          input_first_tile_rank == 2 &&
+          (input_shape[input_rank - 2] == input_first_tile[0] ||
+           result_shape[result_rank - 2] == input_shape[input_rank - 2] ||
+           llvm::all_of(input_shape.drop_back(2),
+                        [](int64_t d) { return d == 1; }));
+      const int64_t new_tile_dim0 =
+          (input_first_tile_rank == 2 &&
+           ShapedType::isStatic(result_shape[result_rank - 2]))
+              ? llvm::alignTo(
+                    std::max<int64_t>(result_shape[result_rank - 2], 1),
+                    packing)
+              : -1;
+      const bool is_single_second_minor_tile =
+          input_first_tile_rank == 2 && input_first_tile[0] > 1 &&
+          ShapedType::isStatic(input_shape[input_rank - 2]) &&
+          input_shape[input_rank - 2] <= input_first_tile[0] &&
+          has_no_inter_tile_second_minor_padding &&
+          ShapedType::isStatic(result_shape[result_rank - 2]) &&
+          result_shape[result_rank - 2] > 0 &&
+          ((result_shape[result_rank - 2] <= input_first_tile[0] &&
+            result_shape[result_rank - 2] == new_tile_dim0 &&
+            input_first_tile[0] % new_tile_dim0 == 0) ||
+           (has_single_input_minor_tile &&
+            (result_shape[result_rank - 2] <= input_first_tile[0] ||
+             (input_shape[input_rank - 2] == input_first_tile[0] &&
+              ShapedType::isStatic(result_shape.back()) &&
+              result_shape.back() <= input_first_tile[1]))));
+      const bool is_single_minor_tile =
+          is_single_second_minor_tile && has_single_input_minor_tile &&
+          ShapedType::isStatic(result_shape.back()) &&
+          result_shape.back() <= input_first_tile.back();
+      auto effective_tile_dim = [&](int64_t idx) {
+        if (idx == 0 && is_single_second_minor_tile) {
+          return packing;
+        }
+        return input_first_tile[idx];
+      };
       int64_t i = 0;
       // Leading tile dimensions of size 1 can be effectively ignored.
       while (i < input_first_tile_rank && input_first_tile[i] == 1) {
@@ -914,11 +1132,12 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
       //       dimension, it is preserved between input and result.
       auto input_dim_it = input_shape.end() - input_first_tile_rank + i;
       auto result_dim_it = result_shape.end() - input_first_tile_rank + i;
+      const int64_t first_tile_dim = effective_tile_dim(i);
       bool can_preserve_tiling = *input_dim_it == *result_dim_it ||
                                  (ShapedType::isStatic(*input_dim_it) &&
                                   ShapedType::isStatic(*result_dim_it) &&
-                                  *input_dim_it % input_first_tile[i] == 0 &&
-                                  *result_dim_it % input_first_tile[i] == 0);
+                                  *input_dim_it % first_tile_dim == 0 &&
+                                  *result_dim_it % first_tile_dim == 0);
       ++i;
       ++input_dim_it;
       ++result_dim_it;
@@ -928,13 +1147,75 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
       if (!can_preserve_tiling) {
         return nullptr;
       }
-      return TiledLayoutAttr::getContiguous(ctx, input_tiles, result_shape);
+      SmallVector<xla::Tile> result_tiles(input_tiles.begin(),
+                                          input_tiles.end());
+      if (is_single_second_minor_tile &&
+          ShapedType::isStatic(result_shape[result_rank - 2]) &&
+          result_shape[result_rank - 2] != input_first_tile[0]) {
+        int64_t adjusted_tile_dim0 = new_tile_dim0;
+        if (adjusted_tile_dim0 > input_first_tile[0] &&
+            !has_single_input_minor_tile) {
+          adjusted_tile_dim0 = input_first_tile[0];
+        }
+        result_tiles[0] = xla::Tile({adjusted_tile_dim0, input_first_tile[1]});
+        if (!is_single_minor_tile &&
+            input_first_tile[0] % adjusted_tile_dim0 == 0) {
+          const int64_t ratio = input_first_tile[0] / adjusted_tile_dim0;
+          SmallVector<int64_t> result_strides(result_rank, 1);
+          result_strides[result_rank - 1] =
+              input_tiled_layout.getTileStrides().back() * ratio;
+          result_strides[result_rank - 2] = 1;
+          const int64_t num_minor_tiles =
+              ShapedType::isDynamic(result_shape.back())
+                  ? ShapedType::kDynamic
+                  : llvm::divideCeil(result_shape.back(), input_first_tile[1]);
+          int64_t rows_in_second_minor = result_shape[result_rank - 2];
+          bool scaled_by_minor_tiles = false;
+          int64_t inner_stride = 1;
+          for (int64_t d = result_rank - 3; d >= 0; --d) {
+            if (!scaled_by_minor_tiles &&
+                rows_in_second_minor >= input_shape[input_rank - 2]) {
+              if (rows_in_second_minor != input_shape[input_rank - 2]) {
+                return nullptr;
+              }
+              scaled_by_minor_tiles = true;
+              inner_stride = ShapedType::isDynamic(num_minor_tiles)
+                                 ? ShapedType::kDynamic
+                                 : ratio * num_minor_tiles;
+            }
+            result_strides[d] = inner_stride;
+            if (ShapedType::isDynamic(result_shape[d]) ||
+                ShapedType::isDynamic(inner_stride)) {
+              inner_stride = ShapedType::kDynamic;
+            } else {
+              inner_stride *= result_shape[d];
+              if (rows_in_second_minor < input_shape[input_rank - 2]) {
+                rows_in_second_minor *= result_shape[d];
+              }
+            }
+          }
+          if (!scaled_by_minor_tiles &&
+              rows_in_second_minor > input_shape[input_rank - 2]) {
+            return nullptr;
+          }
+          return TiledLayoutAttr::get(ctx, result_tiles, result_strides);
+        }
+      }
+      return TiledLayoutAttr::getContiguous(ctx, result_tiles, result_shape);
     }();
     if (preserved_tile_layout != nullptr) {
       return MemRefLayoutAttrInterface(preserved_tile_layout);
     }
     const TiledLayoutAttr reshaped_tile_layout = [&]() -> TiledLayoutAttr {
-      if (input_tiles.size() != 1) {
+      const int64_t packing =
+          (input_tiles.size() > 1 && !input_tiles[1].dimensions().empty())
+              ? input_tiles[1].dimensions()[0]
+              : 1;
+      const bool has_packed_subtile =
+          input_tiles.size() == 2 && input_first_tile_rank >= 2 &&
+          packing > 1 && input_tiles[1] == xla::Tile({packing, 1}) &&
+          input_first_tile[input_first_tile_rank - 2] % packing == 0;
+      if (input_tiles.size() != 1 && !has_packed_subtile) {
         return nullptr;
       }
       // To reason about the reshape, it can be helpful to conceptually view it
@@ -1018,6 +1299,7 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
           tile_elements *= get_input_tile_size(input_dim);
           ++input_dim;
           if (input_dim == input_rank ||
+              (has_packed_subtile && input_dim == input_rank - 1) ||
               input_shape[input_dim] != get_input_tile_size(input_dim)) {
             break;
           }
@@ -1072,8 +1354,16 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
           return nullptr;
         }
       }
-      return TiledLayoutAttr::getContiguous(
-          ctx, /*tiles=*/{xla::Tile(result_tile)}, result_shape);
+      SmallVector<xla::Tile> result_tiles{xla::Tile(result_tile)};
+      if (has_packed_subtile) {
+        if (result_tile.size() < 2 ||
+            result_tile[result_tile.size() - 2] % packing != 0 ||
+            result_tile.back() != input_first_tile.back()) {
+          return nullptr;
+        }
+        result_tiles.push_back(input_tiles[1]);
+      }
+      return TiledLayoutAttr::getContiguous(ctx, result_tiles, result_shape);
     }();
     if (reshaped_tile_layout != nullptr) {
       return MemRefLayoutAttrInterface(reshaped_tile_layout);
