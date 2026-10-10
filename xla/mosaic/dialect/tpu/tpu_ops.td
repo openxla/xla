@@ -24,6 +24,7 @@ include "mlir/Pass/PassBase.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/ViewLikeInterface.td"
 include "xla/mosaic/dialect/tpu/tpu.td"
 include "xla/mosaic/dialect/tpu/tpu_enums.td"
 include "xla/mosaic/dialect/tpu/tpu_types.td"
@@ -1339,7 +1340,7 @@ def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResul
   let hasVerifier = 1;
 }
 
-def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]> {
+def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments, ViewLikeOpInterface]> {
   let arguments = (ins
     AnyMemRef:$mem_ref,
     Variadic<I32>:$base_idx,
@@ -1351,6 +1352,9 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]>
     attr-dict `:` type($mem_ref) `->` type($result)
   }];
   let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getMemRef(); }
+
     // Returns a message string on error, and nullopt on success.
     std::optional<std::string> verifyOffsetAndSizeTileAlignment(
         std::array<int64_t, 2> tc_target_shape,
@@ -1374,7 +1378,7 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]>
   let hasFolder = 1;
 }
 
-def TPU_SharedMemRefSliceOp : TPU_Op<"shared_memref_slice", [Pure]> {
+def TPU_SharedMemRefSliceOp : TPU_Op<"shared_memref_slice", [Pure, ViewLikeOpInterface]> {
   let summary = "Slices a shared VMEM memref to a subcore-local VMEM memref.";
   let description = [{
     Extracts a subcore-local VMEM slice from a shared VMEM memref by dividing
@@ -1406,6 +1410,9 @@ def TPU_SharedMemRefSliceOp : TPU_Op<"shared_memref_slice", [Pure]> {
     $mem_ref attr-dict `:` type($mem_ref) `->` type($result)
   }];
   let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getMemRef(); }
+
     static ::mlir::FailureOr<::mlir::tpu::TiledLayoutAttr> inferResultLayout(
         ::mlir::MemRefType source_type, ::mlir::ArrayRef<int64_t> target_shape,
         int64_t num_sc_tiles, int64_t spmem_stripe_granularity_bytes,
@@ -1415,26 +1422,32 @@ def TPU_SharedMemRefSliceOp : TPU_Op<"shared_memref_slice", [Pure]> {
   let hasVerifier = 1;
 }
 
-def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
+def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
   let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getInput(); }
+
     mlir::InFlightDiagnostic verifyTiling();
   }];
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
 
-def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure]> {
+def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
   let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getInput(); }
+
     static ::mlir::FailureOr<::mlir::MemRefLayoutAttrInterface> inferResultLayout(
         ::mlir::MemRefType input_type, ::mlir::ArrayRef<int64_t> result_shape,
         ::mlir::function_ref<::mlir::InFlightDiagnostic()> emit_error);
@@ -1442,13 +1455,16 @@ def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure]> {
   let hasVerifier = 1;
 }
 
-def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
+def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure, ViewLikeOpInterface]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
   let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getInput(); }
+
     static ::mlir::FailureOr<::mlir::MemRefType> inferResultType(
         ::mlir::MemRefType input_type, ::mlir::Type result_elem_type,
         ::mlir::function_ref<::mlir::InFlightDiagnostic()> emit_error);
@@ -1457,7 +1473,7 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
-def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure, AttrSizedOperandSegments]> {
+def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure, AttrSizedOperandSegments, ViewLikeOpInterface]> {
   let arguments = (ins
     AnyMemRef:$input,
     // Dynamic offset shifts the memref pointer by the specified number of
@@ -1476,6 +1492,10 @@ def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure, AttrSizedOperandSe
   let builders = [
     OpBuilder<(ins "::mlir::Type":$result_type, "::mlir::Value":$input, CArg<"::mlir::Value", "nullptr">:$dynamic_offset, CArg<"::mlir::ValueRange", "{}">:$dynamic_sizes, CArg<"::mlir::ValueRange", "{}">:$dynamic_strides)>
   ];
+  let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
   let hasVerifier = 1;
 }
 
@@ -1487,7 +1507,7 @@ def TPU_AssumeLayoutOp : TPU_Op<"assume_layout", [Pure]> {
   }];
 }
 
-def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure, SameOperandsAndResultShape, SameOperandsAndResultElementType]> {
+def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure, SameOperandsAndResultShape, SameOperandsAndResultElementType, ViewLikeOpInterface]> {
   let description = [{
     Erases the layout attribute and, optionally, the memory space from a memref.
     The resulting memref is otherwise identical to the input.
@@ -1504,11 +1524,15 @@ def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure, SameOperandsAndResu
   let assemblyFormat = [{
     $operand attr-dict `:` type($operand) `->` type($result)
   }];
+  let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getOperand(); }
+  }];
   let hasFolder = 1;
   let hasVerifier = 1;
 }
 
-def TPU_AnnotateOp : TPU_Op<"annotate", [Pure, SameOperandsAndResultType]> {
+def TPU_AnnotateOp : TPU_Op<"annotate", [Pure, SameOperandsAndResultType, ViewLikeOpInterface]> {
   let summary = "Annotates a memref with memory annotations.";
   let arguments = (ins
     AnyMemRef:$operand,
@@ -1520,6 +1544,10 @@ def TPU_AnnotateOp : TPU_Op<"annotate", [Pure, SameOperandsAndResultType]> {
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $operand attr-dict `:` type($operand)
+  }];
+  let extraClassDeclaration = [{
+    // ViewLikeOpInterface.
+    ::mlir::Value getViewSource() { return getOperand(); }
   }];
   let hasVerifier = 1;
 }
@@ -1571,7 +1599,9 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
 
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let arguments = (ins);
-  let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$result);
+  // The allocation is scoped to the enclosing function, like memref.alloca.
+  let results = (outs Res<MemRefOf<[TPU_SomeSemaphoreType]>, "",
+                          [MemAlloc<AutomaticAllocationScopeResource>]>:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
@@ -1637,12 +1667,21 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
 //                     source and destination.
+//
+// Memory effects: the DMA is asynchronous, so its effects are split between
+// this op and the matching tpu.wait_dma: tpu.enqueue_dma starts reading
+// `source`, writing `target` and signaling the semaphores, and tpu.wait_dma is
+// the point where these accesses are complete. Both ops therefore declare a
+// read of `source`, a write of `target` and a write of the semaphores (the wait
+// also reads the semaphore it awaits). This lets generic transformations
+// reorder ops across a DMA that is in flight exactly when the ops don't touch
+// the memory the DMA does.
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let arguments = (ins
-    AnyMemRef:$source,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
-    AnyMemRef:$target,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
+    Arg<AnyMemRef, "", [MemRead]>:$source,
+    Arg<Optional<MemRefOf<[TPU_SomeSemaphoreType]>>, "", [MemWrite]>:$source_semaphore,
+    Arg<AnyMemRef, "", [MemWrite]>:$target,
+    Arg<Optional<MemRefOf<[TPU_SomeSemaphoreType]>>, "", [MemWrite]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
     Optional<I32>:$subcore_id,
@@ -1730,11 +1769,13 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
 //
 // The number of bytes to wait for is determined based on the size of the
 // destination memref.
+//
+// See tpu.enqueue_dma for the memory effects of DMA ops.
 def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let arguments = (ins
-    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
-    AnyMemRef:$src,
-    AnyMemRef:$dst,
+    Arg<MemRefOf<[TPU_DMASemaphoreType]>, "", [MemRead, MemWrite]>:$semaphore,
+    Arg<AnyMemRef, "", [MemRead]>:$src,
+    Arg<AnyMemRef, "", [MemWrite]>:$dst,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
@@ -1755,12 +1796,14 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
 }
 
 // tpu.wait_dma waits for a DMA to complete.
+//
+// See tpu.enqueue_dma for the memory effects of DMA ops.
 def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
   let arguments = (ins
-    AnyMemRef:$source,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
-    AnyMemRef:$target,
-    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
+    Arg<AnyMemRef, "", [MemRead]>:$source,
+    Arg<Optional<MemRefOf<[TPU_SomeSemaphoreType]>>, "", [MemRead, MemWrite]>:$source_semaphore,
+    Arg<AnyMemRef, "", [MemWrite]>:$target,
+    Arg<Optional<MemRefOf<[TPU_SomeSemaphoreType]>>, "", [MemRead, MemWrite]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
     Optional<I32>:$subcore_id,
