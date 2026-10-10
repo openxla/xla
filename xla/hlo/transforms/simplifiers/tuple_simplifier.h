@@ -31,7 +31,7 @@ class TupleSimplifier : public HloModulePass {
  public:
   TupleSimplifier() : TupleSimplifier(/*exclude_entry_computation=*/false) {}
   explicit TupleSimplifier(bool exclude_entry_computation);
-  ~TupleSimplifier() override {}
+  ~TupleSimplifier() override = default;
   absl::string_view name() const override { return "tuple-simplifier"; }
 
  protected:
