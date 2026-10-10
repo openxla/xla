@@ -44,7 +44,7 @@ class HloDCE : public HloModulePass {
       : remove_cross_partition_collective_ops_(
             remove_cross_partition_collective_ops),
         use_call_analysis_(use_call_analysis) {}
-  ~HloDCE() override {}
+  ~HloDCE() override = default;
   absl::string_view name() const override { return "dce"; }
 
   // Run DCE on a computation.

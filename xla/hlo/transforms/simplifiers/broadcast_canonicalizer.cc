@@ -33,7 +33,7 @@ limitations under the License.
 
 namespace xla {
 
-BroadcastCanonicalizer::BroadcastCanonicalizer() {}
+BroadcastCanonicalizer::BroadcastCanonicalizer() = default;
 
 absl::StatusOr<bool> BroadcastCanonicalizer::RunImpl(
     HloModule* module,
