@@ -2163,4 +2163,21 @@ bool HloModule::IsEntryComputationUnboundedDynamic() const {
   return (*computations().begin())->IsEntryInstUnboundedDynamic();
 }
 
+void HloModule::AddCacheEntriesFrom(const HloModule& other) {
+  if (&other == this) {
+    return;
+  }
+  // Snapshot under the other module's lock only, so the two locks are never
+  // held together.
+  std::vector<std::pair<tsl::Fprint128, std::shared_ptr<CacheEntry>>> entries;
+  {
+    absl::MutexLock lock(other.cache_mutex_);
+    entries.assign(other.cache_.begin(), other.cache_.end());
+  }
+  absl::MutexLock lock(cache_mutex_);
+  for (auto& [key, entry] : entries) {
+    cache_.try_emplace(key, std::move(entry));
+  }
+}
+
 }  // namespace xla
