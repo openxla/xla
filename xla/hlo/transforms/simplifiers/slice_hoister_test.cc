@@ -51,15 +51,9 @@ TEST_F(SliceHoisterTest, HoistSliceThroughAdd) {
       ROOT slice_op = f32[2,9] slice(f32[8,9] add_op), slice={[0:2], [0:9]}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_str));
-
-  SliceHoister slice_hoister;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          RunHloPass(&slice_hoister, module.get()));
-
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(module_str, SliceHoister()));
   SCOPED_TRACE(module->ToString());
-  EXPECT_TRUE(changed);
   HloInstruction* root_instruction =
       module->entry_computation()->root_instruction();
   const HloInstruction* param_0_slice = nullptr;
@@ -189,15 +183,9 @@ TEST_F(SliceHoisterTest, HoistSliceThroughTranspose) {
       ROOT slice = f32[2,1,2] slice(transpose_op), slice={[1:3], [0:1:2], [0:4:3]}
     }
     )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  SliceHoister slice_hoister;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          RunHloPass(&slice_hoister, module.get()));
-
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(hlo_string, SliceHoister()));
   SCOPED_TRACE(module->ToString());
-  EXPECT_TRUE(changed);
   const HloInstruction* transpose_op = nullptr;
   const HloInstruction* slice_op = nullptr;
   EXPECT_THAT(module->entry_computation()->root_instruction(),
@@ -220,15 +208,9 @@ TEST_F(SliceHoisterTest, HoistSliceThroughTransposeAndAdd) {
       ROOT slice_op = f32[2,1,2] slice(transpose_op), slice={[1:3], [0:1:2], [0:4:3]}
     }
     )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-
-  SliceHoister slice_hoister;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          RunHloPass(&slice_hoister, module.get()));
-
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       RunAndCheckHloRewrite(hlo_string, SliceHoister()));
   SCOPED_TRACE(module->ToString());
-  EXPECT_TRUE(changed);
   const HloInstruction* transpose_op = nullptr;
   const HloInstruction* p0_slice = nullptr;
   const HloInstruction* p1_slice = nullptr;
