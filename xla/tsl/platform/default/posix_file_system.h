@@ -24,9 +24,9 @@ namespace tsl {
 
 class PosixFileSystem : public FileSystem {
  public:
-  PosixFileSystem() {}
+  PosixFileSystem() = default;
 
-  ~PosixFileSystem() override {}
+  ~PosixFileSystem() override = default;
 
   absl::Status NewRandomAccessFile(
       const std::string& filename,
