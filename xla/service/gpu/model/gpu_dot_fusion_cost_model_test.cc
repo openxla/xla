@@ -643,6 +643,9 @@ TEST_F(GpuDotFusionCostModelTest, CalculateMemoryUtilization) {
       0.0);
 }
 
+// Verifies that effective bandwidth never decreases with transfer size. Equal
+// consecutive entries are allowed because measured tables plateau once HBM is
+// saturated (e.g. the Hopper table above 4 GiB).
 TEST_F(GpuDotFusionCostModelTest,
        EffectiveHbmBandwidthMonotonicallyIncreasesWithTransferSize) {
   constexpr int64_t k8GiB = 8LL * (1LL << 30);
@@ -650,7 +653,7 @@ TEST_F(GpuDotFusionCostModelTest,
     float prev_bw = 0.0f;
     for (int64_t dma_size = 8192; dma_size <= k8GiB; dma_size *= 2) {
       float bw = GetEffectiveHbmBandwidth(dma_size, *dev);
-      EXPECT_GT(bw, prev_bw);
+      EXPECT_GE(bw, prev_bw);
       prev_bw = bw;
     }
   }
