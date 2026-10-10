@@ -17,12 +17,14 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -54,6 +56,34 @@ limitations under the License.
 using absl::StrAppend;
 
 namespace xla {
+namespace {
+
+// Returns whether merging the buffers of two live ranges interferes, given
+// rel1, the location of the dest live range relative to the src one, and
+// rel2, the location of src relative to dest.
+bool RelationsInterfere(const Relation& rel1, const Relation& rel2,
+                        CopyRemover::CombineLiveRangeOption merge_location) {
+  // If src and dest are interleaved with each other, they interfere.
+  if (rel1.RuntimeOrderOverlap() && rel2.RuntimeOrderOverlap()) {
+    return true;
+  }
+  if (rel1.RuntimeOrderOverlap()) {
+    return rel1.InterceptDefUse() ||
+           (merge_location != CopyRemover::kMergeFirstDestInSource &&
+            rel2.InterceptDefUse());
+  }
+  if (rel2.RuntimeOrderOverlap()) {
+    // Here src is at the end of a nested computation inside dest.
+    return rel2.InterceptDefUse() ||
+           (merge_location != CopyRemover::kMergeLastSourceInDest &&
+            rel1.InterceptDefUse());
+  }
+  // If src and dest belong to the same group of computations and do not
+  // overlap, they do not interfere.
+  return false;
+}
+
+}  // namespace
 
 // Summarize additional relations into a single runtime ordering, assuming
 // both relations are modeling constraints of the same source instruction.
@@ -130,10 +160,16 @@ bool Relation::OverwriteIfSubsumes(RuntimeOrder o2, RuntimeOrder* o1) {
 Relation ComputeRelativeLocation::ComputeBetweenInstructionEntries(
     const InstructionEntry& entry1, const InstructionEntry& entry2,
     bool instr2_can_modify) {
+  return ComputeBetweenInstructionEntries(
+      entry1, entry2, instr2_can_modify,
+      ComputeRuntimeOrdering(entry2.first, entry1.first));
+}
+
+Relation ComputeRelativeLocation::ComputeBetweenInstructionEntries(
+    const InstructionEntry& entry1, const InstructionEntry& entry2,
+    bool instr2_can_modify, Relation::RuntimeOrder order) {
   auto def = entry1.second.value_definition;
   auto use = entry1.first;
-  Relation::RuntimeOrder order =
-      ComputeRuntimeOrdering(entry2.first, entry1.first);
   if (order == Relation::kSameInstr &&
       entry1.second.is_definition != entry2.second.is_definition) {
     if (entry1.second.is_definition) {
@@ -250,7 +286,8 @@ Relation ComputeRelativeLocation::ComputeBetweenInstructionEntries(
 // Return the relative locations (defined above) of range2 in relation to
 // instructions in range1. Return kNoOverlap if range2 is outside of range1.
 Relation ComputeRelativeLocation::ComputeBetweenLiveRangeRegions(
-    const LiveRangeRegions& range1, const LiveRangeRegions& range2) {
+    const LiveRangeRegions& range1, const LiveRangeRegions& range2,
+    absl::FunctionRef<bool(const Relation&)> stop) {
   Relation dir_src_dest;
   for (const auto* computation1 : range1) {
     for (const auto* computation2 : range2) {
@@ -293,6 +330,9 @@ Relation ComputeRelativeLocation::ComputeBetweenLiveRangeRegions(
         dir_src_dest.UnionRelationFromDifferentSource(instr2_relation);
         VLOG(3) << "  Resulting relation: " << dir_src_dest.ToString();
         VLOG(3) << "--------------------------------------------------------";
+        if (stop(dir_src_dest)) {
+          return dir_src_dest;
+        }
       }
     }
   }
@@ -553,9 +593,154 @@ Relation::RuntimeOrder ComputeRelativeLocation::Save(
   return relation;
 }
 
+// ComputeRuntimeOrdering prefers an answer saved for the pair or, reversed,
+// for the reverse pair, and never saves kBeforeStartOrAfterEnd.
+// GetExecutionConstraint gives reverse answers for reverse pairs, except for an
+// instruction in a while condition against one in the body (kRunBeforeEnd and
+// kUnordered), and for a conditional against an instruction in one of its
+// branches (kRunAfter and kRunBeforeEnd). The kRunAfter of any conditional is
+// left out. Forced orders and control dependences only order kUnordered pairs
+// within one computation.
+std::optional<Relation::RuntimeOrder>
+ComputeRelativeLocation::StateIndependentRuntimeOrdering(
+    const HloInstruction* instr1, const HloInstruction* instr2) const {
+  switch (ordering_->GetExecutionConstraint(instr1, instr2)) {
+    case HloOrdering::ExecutionConstraint::kIsSame:
+      return Relation::kSameInstr;
+    case HloOrdering::ExecutionConstraint::kRunBeforeStart:
+      return Relation::kBeforeStart;
+    case HloOrdering::ExecutionConstraint::kRunAfter:
+      if (instr1->opcode() == HloOpcode::kConditional) {
+        return std::nullopt;
+      }
+      return Relation::kAfterEnd;
+    case HloOrdering::ExecutionConstraint::kRunExclusiveBefore:
+    case HloOrdering::ExecutionConstraint::kRunExclusiveAfter:
+      return Relation::kNoOverlap;
+    case HloOrdering::ExecutionConstraint::kRunBeforeEnd:
+      return std::nullopt;
+    case HloOrdering::ExecutionConstraint::kUnordered:
+      if (instr1->parent() != instr2->parent() &&
+          ordering_->GetExecutionConstraint(instr2, instr1) ==
+              HloOrdering::ExecutionConstraint::kUnordered) {
+        return Relation::kBeforeStartOrAfterEnd;
+      }
+      return std::nullopt;
+  }
+}
+
+bool ComputeRelativeLocation::SurelyInterferes(
+    const LiveRangeRegions& src, const LiveRangeRegions& dest,
+    absl::FunctionRef<bool(const Relation& rel1, const Relation& rel2)>
+        interferes) {
+  // The pairs that ComputeBetweenLiveRangeRegions(range1, range2) relates for
+  // one instruction of range2 and one computation of range1.
+  struct Group {
+    int direction;
+    InstructionEntry entry2;
+    bool instr2_can_modify;
+    // The instructions of range1 not visited yet.
+    LiveRangeRegions::InstructionMap::const_iterator first;
+    LiveRangeRegions::InstructionMap::const_iterator last;
+    bool from_last = false;
+    Relation relation;
+  };
+  // Unions never clear the overlap or the interception of a relation, so
+  // unions over some pairs bound those of rel1 and rel2 from below.
+  Relation bounds[2];
+  state_independent_orders_only_ = true;
+  absl::Cleanup restore = [this] {
+    state_independent_orders_only_ = false;
+    state_dependent_order_seen_ = false;
+  };
+  // Visits up to `max_pairs` more pairs of `group` and returns whether the
+  // bounds show interference. Instructions are ordered by unique id, which
+  // roughly follows program order, so visiting them from both ends finds the
+  // ones before and after entry2 early.
+  auto visit = [&](Group& group, int64_t max_pairs) {
+    for (; max_pairs > 0 && group.first != group.last; --max_pairs) {
+      const InstructionEntry& entry1 =
+          group.from_last ? *--group.last : *group.first++;
+      group.from_last = !group.from_last;
+      std::optional<Relation::RuntimeOrder> order =
+          StateIndependentRuntimeOrdering(group.entry2.first, entry1.first);
+      if (!order.has_value()) {
+        continue;
+      }
+      // A known unordered pair spans two computations. The full relation
+      // cannot force an order on it and adds it as unordered.
+      state_dependent_order_seen_ = false;
+      Relation rel = ComputeBetweenInstructionEntries(
+          entry1, group.entry2, group.instr2_can_modify, *order);
+      if (state_dependent_order_seen_) {
+        // Only the interception depends on what is saved or forced.
+        rel = Relation(rel.GetRuntimeOrder(), /*intercept_def_use=*/false);
+      }
+      Relation updated = group.relation;
+      updated.UnionRelationFromSameSource(rel);
+      if (updated == group.relation) {
+        continue;
+      }
+      group.relation = updated;
+      bounds[group.direction].UnionRelationFromDifferentSource(updated);
+      if (interferes(bounds[0], bounds[1])) {
+        return true;
+      }
+      // Without modification, all pairs of a group intercept alike.
+      if (updated.RuntimeOrderOverlap() &&
+          (updated.InterceptDefUse() || !group.instr2_can_modify)) {
+        group.first = group.last;
+      }
+    }
+    return false;
+  };
+  // A few pairs of every group first, so that a group whose first pairs show
+  // nothing does not hold up the others.
+  constexpr int64_t kFirstPairsPerGroup = 8;
+  std::vector<Group> unfinished;
+  for (int direction : {0, 1}) {
+    const LiveRangeRegions& range1 = direction == 0 ? src : dest;
+    const LiveRangeRegions& range2 = direction == 0 ? dest : src;
+    for (const HloComputation* computation1 : range1) {
+      for (const HloComputation* computation2 : range2) {
+        if (!ordering_->call_graph().Dominates(computation1, computation2)) {
+          continue;
+        }
+        const LiveRangeRegions::InstructionMap& entries1 = range1[computation1];
+        for (const InstructionEntry& entry2 : range2[computation2]) {
+          Group group{direction, entry2,
+                      InstructionCanIntercept(entry2, range1), entries1.begin(),
+                      entries1.end()};
+          if (visit(group, kFirstPairsPerGroup)) {
+            return true;
+          }
+          if (group.first != group.last) {
+            unfinished.push_back(std::move(group));
+          }
+        }
+      }
+    }
+  }
+  for (Group& group : unfinished) {
+    if (visit(group, std::numeric_limits<int64_t>::max())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Compute the runtime ordering constraints between two instructions.
 Relation::RuntimeOrder ComputeRelativeLocation::ComputeRuntimeOrdering(
     HloInstruction* instr1, HloInstruction* instr2) {
+  if (state_independent_orders_only_) {
+    std::optional<Relation::RuntimeOrder> order =
+        StateIndependentRuntimeOrdering(instr1, instr2);
+    if (order.has_value()) {
+      return *order;
+    }
+    state_dependent_order_seen_ = true;
+    return Relation::kBeforeStartOrAfterEnd;
+  }
   auto saved_relation = AlreadyComputed(instr1, instr2);
   VLOG(3) << "   ComputeRuntimeOrdering: " << instr1->name() << " vs "
           << instr2->name();
@@ -1448,42 +1633,41 @@ bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
           << dest_live_range.ToString();
 
   ComputeRelativeLocation relative_location_analysis(ordering_, alias_info_);
-  auto rel1 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
-      src_live_range, dest_live_range);
-  VLOG(3) << "    ValuesInterfere - location of dest in relation to src: ";
-  VLOG(3) << "            " << rel1.ToString();
-
-  auto rel2 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
-      dest_live_range, src_live_range);
-  VLOG(3) << "    ValuesInterfere - location of src in relation to dest: ";
-  VLOG(3) << "            " << rel2.ToString();
-
-  // If src and dest are interleaved with each other, they interfere.
-  if (rel1.RuntimeOrderOverlap() && rel2.RuntimeOrderOverlap()) {
-    VLOG(3) << "    ValuesInterfere: Both relations are overlapped.";
+  // Computing the relations forces orders on unordered pairs, which is slow
+  // when the live ranges are long. Interference often shows without that.
+  if (relative_location_analysis.SurelyInterferes(
+          src_live_range, dest_live_range,
+          [&](const Relation& rel1, const Relation& rel2) {
+            return RelationsInterfere(rel1, rel2, merge_location);
+          })) {
+    VLOG(3) << "    ValuesInterfere: shown without forced orders.";
     return true;
   }
-  // If src and dest belong to the same group of computations and do not
-  // overlap, they do not interfere.
-  if (rel1.RuntimeOrderOverlap() || rel2.RuntimeOrderOverlap()) {
-    VLOG(3) << "    ValuesInterfere: At least one relation is overlapped.";
-    if (rel1.RuntimeOrderOverlap()) {
-      VLOG(3) << "    ValuesInterfere: rel1 is overlapped, with interception = "
-              << rel1.InterceptDefUse();
-      if (rel1.InterceptDefUse() ||
-          (merge_location != kMergeFirstDestInSource &&
-           rel2.InterceptDefUse())) {
-        return true;
-      }
-    } else {
-      VLOG(3) << "    ValuesInterfere: rel2 is overlapped, with interception = "
-              << rel2.InterceptDefUse();
-      // Here src is at the end of a nested computation inside dest.
-      if (rel2.InterceptDefUse() || (merge_location != kMergeLastSourceInDest &&
-                                     rel1.InterceptDefUse())) {
-        return true;
-      }
-    }
+  // Unions never clear the overlap or the interception of a relation, and
+  // RelationsInterfere is monotone in both, so each relation is computed only
+  // until interference is certain. Interference with an empty rel2 implies
+  // interference with any rel2.
+  auto rel1 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
+      src_live_range, dest_live_range, [&](const Relation& partial_rel1) {
+        return RelationsInterfere(partial_rel1, Relation(), merge_location);
+      });
+  VLOG(3) << "    ValuesInterfere - location of dest in relation to src: ";
+  VLOG(3) << "            " << rel1.ToString();
+  if (RelationsInterfere(rel1, Relation(), merge_location)) {
+    VLOG(3) << "    ValuesInterfere: rel1 is overlapped and intercepts.";
+    return true;
+  }
+
+  auto rel2 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
+      dest_live_range, src_live_range, [&](const Relation& partial_rel2) {
+        return RelationsInterfere(rel1, partial_rel2, merge_location);
+      });
+  VLOG(3) << "    ValuesInterfere - location of src in relation to dest: ";
+  VLOG(3) << "            " << rel2.ToString();
+  if (RelationsInterfere(rel1, rel2, merge_location)) {
+    VLOG(3) << "    ValuesInterfere: Overlapped, with interception = "
+            << rel1.InterceptDefUse() << ", " << rel2.InterceptDefUse();
+    return true;
   }
   if (relative_location_analysis.AddControlDependenceForUnorderedOps()) {
     return false;
