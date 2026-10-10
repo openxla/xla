@@ -931,6 +931,11 @@ class BufferAssigner {
 
     GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
         heap_buffer_interval_compare;
+
+    // Try additional placements for unconstrained default-color temporary
+    // heaps when using the default spatial/temporal algorithm. Custom ordering,
+    // paged heaps and explicitly selected algorithms keep their behavior.
+    bool enable_heap_simulator_packing_search = false;
     // The packing strategy to use for multi-page (page_size > 0) heap
     // allocation.
     GlobalDecreasingSizeBestFitHeap<HloValue>::PackingStrategy

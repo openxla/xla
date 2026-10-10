@@ -604,8 +604,14 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     // Like kPhaseWindow but orders by END time, grouping buffers that expire
     // together onto the same page so whole pages become dead at once (which the
     // pager can then evict or discard cheaply).
-    kPhaseWindowEnd
+    kPhaseWindowEnd,
+    // Sort by size times the duration of the union of colocated live ranges.
+    kSpatialTemporal
   };
+
+  // Selection of a free chunk for an unsliced allocation. Sliced allocations
+  // continue to use the sliced allocation finder.
+  enum class ChunkPlacement { kBestFit, kLowestOffset };
 
   // BufferInterval stores a buffer's size and time interval.
   struct BufferInterval {
@@ -630,6 +636,8 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     // sorting.
     int64_t min_colocation_start_time = -1;
     int64_t max_colocation_end_time = -1;
+    int64_t colocation_size = 0;
+    int64_t colocation_live_duration = 0;
   };
 
   // Comparison function that is used to store buffer intervals.
@@ -926,7 +934,8 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
       int64_t alignment, PackingStrategy type = kSpatial,
       BufferIntervalCompare buffer_interval_compare = nullptr,
       SliceTimePermutationIterator::Ty slice_time_permutation_iterator_type =
-          SliceTimePermutationIterator::Ty::kAll);
+          SliceTimePermutationIterator::Ty::kAll,
+      ChunkPlacement chunk_placement = ChunkPlacement::kBestFit);
   ~GlobalDecreasingSizeBestFitHeap() override {}
 
   void Alloc(const BufferType* buffer, int64_t size) override;
@@ -1078,6 +1087,9 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
 
   int64_t alignment_;
 
+  const bool sort_by_area_;
+  const ChunkPlacement chunk_placement_;
+
   // The current time represented as an integer. It increments by 1 at each
   // Alloc or Free call.
   int64_t current_time_ = 0;
@@ -1130,9 +1142,11 @@ class ConstrainedGlobalDecreasingSizeBestFitHeap
   explicit ConstrainedGlobalDecreasingSizeBestFitHeap(
       uint64_t size_limit_per_heap, int64_t alignment,
       PackingStrategy packing_strategy = kSpatial,
-      BufferIntervalCompare buffer_interval_compare = nullptr)
-      : GlobalDecreasingSizeBestFitHeap<HloValue>(alignment, packing_strategy,
-                                                  buffer_interval_compare),
+      BufferIntervalCompare buffer_interval_compare = nullptr,
+      ChunkPlacement chunk_placement = ChunkPlacement::kBestFit)
+      : GlobalDecreasingSizeBestFitHeap<HloValue>(
+            alignment, packing_strategy, buffer_interval_compare,
+            SliceTimePermutationIterator::Ty::kAll, chunk_placement),
         size_limit_per_heap_(size_limit_per_heap),
         packing_strategy_(packing_strategy) {}
   ~ConstrainedGlobalDecreasingSizeBestFitHeap() override {}
@@ -1203,6 +1217,12 @@ class ChooseBestHeapAlgorithm : public HeapAlgorithm<BufferType> {
  private:
   std::vector<std::unique_ptr<HeapAlgorithm<BufferType>>> algorithms_;
 };
+
+// Tries six deterministic placements for an unconstrained heap. The existing
+// spatial and temporal best-fit algorithms are the first two candidates, so
+// equal-size results preserve the baseline placement.
+std::unique_ptr<HeapAlgorithm<HloValue>> CreateHeapWithPackingSearch(
+    int64_t alignment);
 
 // A heap algorithm that runs a primary algorithm, and if it results in OOM or
 // exceeds a provided memory limit, safely runs a fallback algorithm instead

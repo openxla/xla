@@ -176,6 +176,8 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
   opts.allocate_buffers_for_constants = true;
   opts.colorer = CreateColorer(options);
   opts.temp_buffer_color = color;
+  opts.enable_heap_simulator_packing_search =
+      options.xla_gpu_enable_heap_simulator_packing_search();
 
   // Allow S(0) buffers to reuse S(1) temp allocations. S(1) allocations
   // satisfy stricter alignment and symmetric-offset requirements, so they are

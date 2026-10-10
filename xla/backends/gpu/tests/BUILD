@@ -361,6 +361,19 @@ xla_test(
 )
 
 xla_test(
+    name = "temp_buffer_packing_test",
+    srcs = ["temp_buffer_packing_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gpu_pjrt_codegen_test",
+        "//xla:error_spec",
+        "//xla:xla_proto_cc",
+        "//xla/tests:hlo_interpreter_reference_mixin",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
     name = "gpu_copy_test",
     srcs = ["gpu_copy_test.cc"],
     backends = ["gpu"],
