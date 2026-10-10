@@ -1702,7 +1702,8 @@ template <typename AddOp>
 class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
   using OpRewritePattern<AddOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(AddOp op, PatternRewriter& rewriter) const {
+  LogicalResult matchAndRewrite(AddOp op,
+                                PatternRewriter& rewriter) const override {
     auto try_canonicalize = [&](Value maybe_matmul, Value maybe_acc) {
       auto matmul = dyn_cast_if_present<MatmulOp>(maybe_matmul.getDefiningOp());
       if (!matmul || !matmul->hasOneUse()) {
