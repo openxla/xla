@@ -5559,8 +5559,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleLog(HloInstruction* log) {
   }
 
   // ln(pow(A,B)) => B*ln(abs(A))
-  // or B*ln(A) if A is complex.
-  if (Match(log, m::Log(m::Power(m::Op(&a), m::Op(&b))))) {
+  // or B*ln(A) if A is complex. This is not valid for all IEEE 754 values
+  // (for example, a negative real base and a fractional exponent), so only
+  // apply it when fast math is enabled.
+  if (options_.enable_fast_math() &&
+      Match(log, m::Log(m::Power(m::Op(&a), m::Op(&b))))) {
     auto abs_a = ShapeUtil::ElementIsComplex(a->shape())
                      ? a
                      : log->AddInstruction(HloInstruction::CreateUnary(
