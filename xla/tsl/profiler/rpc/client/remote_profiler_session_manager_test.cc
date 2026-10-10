@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -270,6 +271,55 @@ TEST(RemoteProfilerSessionManagerTest, OverrideHostnamesMismatch) {
   std::unique_ptr<RemoteProfilerSessionManager> sessions =
       RemoteProfilerSessionManager::Create(options, request, status);
   EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+}
+
+TEST(RemoteProfilerSessionManagerTest, Ipv6Address) {
+  absl::Duration duration = absl::Milliseconds(30);
+  RemoteProfilerSessionManagerOptions options;
+  *options.mutable_profiler_options() = tsl::ProfilerSession::DefaultOptions();
+  options.mutable_profiler_options()->set_duration_ms(
+      absl::ToInt64Milliseconds(duration));
+
+  std::string service_address;
+  std::unique_ptr<ProfilerServer> server =
+      StartServer(duration, &service_address);
+  const size_t colon_pos = service_address.rfind(':');
+  ASSERT_NE(colon_pos, std::string::npos);
+  std::string ipv6_service_address =
+      absl::StrCat("[::1]", service_address.substr(colon_pos));
+  options.add_service_addresses(ipv6_service_address);
+
+  absl::Time approx_start = absl::Now();
+  absl::Duration grace = absl::Seconds(kGracePeriodSeconds);
+  absl::Duration max_duration = duration + grace;
+  options.set_max_session_duration_ms(absl::ToInt64Milliseconds(max_duration));
+  options.set_session_creation_timestamp_ns(absl::ToUnixNanos(approx_start));
+
+  ProfileRequest request = PopulateProfileRequest(
+      TmpDir(), "session_id", ipv6_service_address, options);
+  absl::Status status;
+  std::unique_ptr<RemoteProfilerSessionManager> sessions =
+      RemoteProfilerSessionManager::Create(options, request, status);
+  ASSERT_OK(status);
+  std::vector<Response> responses = sessions->WaitForCompletion();
+  absl::Duration elapsed = absl::Now() - approx_start;
+  ASSERT_EQ(responses.size(), 1);
+  EXPECT_EQ(responses.back().service_address, ipv6_service_address);
+  if (absl::IsUnavailable(responses.back().status) ||
+      absl::IsDeadlineExceeded(responses.back().status)) {
+    GTEST_SKIP() << "IPv6 loopback [::1] is unavailable in this test "
+                    "environment: "
+                 << responses.back().status;
+  }
+  EXPECT_OK(responses.back().status);
+  EXPECT_TRUE(responses.back().profile_response->empty_trace());
+  EXPECT_EQ(responses.back().profile_response->tool_data_size(), 0);
+  EXPECT_THAT(elapsed, DurationApproxLess(max_duration));
+
+  std::string expected_filename = absl::StrCat(
+      "[__1]_", service_address.substr(colon_pos + 1), ".xplane.pb");
+  EXPECT_OK(Env::Default()->FileExists(ProfilerJoinPath(
+      request.repository_root(), request.session_id(), expected_filename)));
 }
 
 }  // namespace
