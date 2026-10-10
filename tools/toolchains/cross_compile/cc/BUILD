@@ -155,7 +155,7 @@ cc_toolchain_config(
         "-fcolor-diagnostics",
         "-fno-omit-frame-pointer",
         "-mtune=generic",
-        "-march=armv8-a",
+        "-march=armv9-a+sve2",
     ],
     compiler = "clang",
     coverage_compile_flags = ["--coverage"],

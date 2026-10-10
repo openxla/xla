@@ -41,6 +41,7 @@ limitations under the License.
 #include "llvm/Support/Error.h"
 #include "xla/backends/cpu/codegen/builtin_fp16.h"
 #include "xla/backends/cpu/codegen/builtin_pow.h"
+#include "xla/service/cpu/runtime_tanh.h"
 
 namespace xla::cpu {
 
@@ -270,6 +271,9 @@ static Registry CreateRegistry() {
 #ifdef MEMORY_SANITIZER
   registry["__msan_unpoison"] = SymbolDef(__msan_unpoison);
 #endif
+
+  registry["__xla_cpu_runtime_Aarch64SveHyperbolicTangent"] =
+      SymbolDef(__xla_cpu_runtime_Aarch64SveHyperbolicTangent);
 
   return registry;
 }

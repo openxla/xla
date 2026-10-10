@@ -48,6 +48,7 @@ cc_library(
     deps = [
         ":builtin_fp16",
         ":builtin_pow",
+        "//xla/service/cpu:runtime_tanh",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Core",
