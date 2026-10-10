@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
