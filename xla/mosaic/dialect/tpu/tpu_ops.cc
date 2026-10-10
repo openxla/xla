@@ -52,6 +52,7 @@ limitations under the License.
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "xla/layout.h"
@@ -2514,6 +2515,20 @@ FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
   return mlir::tpu::isGather(*getOperation(), source_ms.getValue(),
                              source_ms.getCoreType(), target_ms.getValue(),
                              target_ms.getCoreType());
+}
+
+void EnqueueIndirectDMAOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
+        effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSourceMutable());
+  effects.emplace_back(MemoryEffects::Write::get(), &getTargetMutable());
+  if (getAdd()) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getTargetMutable());
+  }
+  if (isa<MemRefType>(getOffsets().getType())) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getOffsetsMutable());
+  }
+  effects.emplace_back(MemoryEffects::Write::get(), &getSemaphoreMutable());
 }
 
 LogicalResult EnqueueIndirectDMAOp::verify() {

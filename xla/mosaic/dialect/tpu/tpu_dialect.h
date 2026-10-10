@@ -29,6 +29,8 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -38,6 +40,12 @@ limitations under the License.
 
 namespace mlir::tpu {
 class TPUDialect;
+
+// The side-effect resource of the MXU state. See TPU_MxuResource in tpu_ops.td.
+struct MxuResource : public SideEffects::Resource::Base<MxuResource> {
+  StringRef getName() const final { return "Mxu"; }
+  bool isAddressable() const final { return false; }
+};
 }  // namespace mlir::tpu
 
 #define GET_ATTRDEF_CLASSES
