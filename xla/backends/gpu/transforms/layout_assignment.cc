@@ -35,6 +35,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/while_loop_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -44,6 +46,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -1145,6 +1148,233 @@ GpuLayoutAssignment::ChooseOutputLayoutFromOperandLayout(
 
   return LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
       operand_layout, user, operand_no);
+}
+
+namespace {
+
+// Require this size advantage even after accounting for repeated execution.
+// Below these sizes changing the large array's layout is cheap enough not to
+// bother. This is a conservative copy-volume estimate, not a runtime model.
+constexpr int64_t kSmallPieceMinRatio = 8;
+constexpr int64_t kSmallPieceMinLargeBytes = int64_t{64} << 20;
+
+// Trace only unary elementwise operations that preserve the array's storage
+// size and dimension order. A copy may already supply a different layout.
+Decision CanTraceLayoutThroughUnary(const HloInstruction* instruction) {
+  return Decision(instruction->IsElementwise() &&
+                      instruction->operand_count() == 1 &&
+                      instruction->opcode() != HloOpcode::kCopy &&
+                      instruction->opcode() != HloOpcode::kBitcastConvert &&
+                      instruction->shape().element_type() ==
+                          instruction->operand(0)->shape().element_type(),
+                  "Unary operation does not preserve the source layout");
+}
+
+Decision SmallCopyHasBoundedCost(const HloInstruction* instruction,
+                                 const Shape& piece, const Shape& large) {
+  if (!piece.IsArray() || !large.IsArray()) {
+    return Decision::Forbid("Non-array shape");
+  }
+  const int64_t large_bytes = ShapeUtil::ByteSizeOfElements(large);
+  const int64_t piece_bytes = ShapeUtil::ByteSizeOfElements(piece);
+  if (large_bytes < kSmallPieceMinLargeBytes || piece_bytes <= 0) {
+    return Decision::Forbid("Small array or empty piece");
+  }
+  // Divide the budget rather than multiplying trip counts or byte sizes, to
+  // avoid overflow for large arrays and deeply nested loops.
+  int64_t execution_budget = large_bytes / kSmallPieceMinRatio / piece_bytes;
+  if (execution_budget == 0) {
+    return Decision::Forbid("Insufficient copy-volume saving");
+  }
+  const HloComputation* computation = instruction->parent();
+  absl::flat_hash_set<const HloComputation*> visited;
+  while (!computation->IsEntryComputation()) {
+    if (!visited.insert(computation).second || visited.size() > 64) {
+      return Decision::Forbid("Cyclic or deep call chain");
+    }
+    const auto callers = computation->caller_instructions();
+    if (callers.size() != 1 || callers[0]->opcode() != HloOpcode::kWhile ||
+        callers[0]->while_body() != computation) {
+      return Decision::Forbid("Unknown execution count");
+    }
+    // Only use statically recognized counts; do not interpret loop bodies.
+    const std::optional<int64_t> trip_count =
+        ComputeWhileLoopTripCount(callers[0], /*max_brute_force_iters=*/0);
+    if (!trip_count.has_value() || *trip_count <= 0 ||
+        *trip_count > execution_budget) {
+      return Decision::Forbid("Unknown or excessive loop reuse");
+    }
+    execution_budget /= *trip_count;
+    computation = callers[0]->parent();
+  }
+  return Decision::Allow();
+}
+
+// Only cut propagation when the large array has an explicit source layout.
+// AUTO inputs and generated arrays may adopt the consumer's layout for free.
+// Keep the existing policy for shared values and source chains whose copy
+// costs we cannot establish. Dataflow resolves tuple leaves and forwarding.
+Decision HasFixedLayoutSource(
+    const HloInstruction* instruction, const HloDataflowAnalysis& dataflow,
+    const ComputationLayout& entry_computation_layout) {
+  const HloInstruction* source = instruction;
+  ShapeIndex index;
+  absl::flat_hash_set<const HloValue*> visited;
+  while (true) {
+    const HloValueSet& values = dataflow.GetValueSet(source, index);
+    if (values.values().size() != 1) {
+      return Decision::Forbid("Ambiguous source");
+    }
+    const HloValue* value = values.values().front();
+    if (!visited.insert(value).second || visited.size() > 64) {
+      return Decision::Forbid("Cyclic or deep source chain");
+    }
+    int64_t consumers = 0;
+    for (const HloUse& use : value->GetUses()) {
+      if (use.instruction->opcode() == HloOpcode::kTuple ||
+          use.instruction->opcode() == HloOpcode::kGetTupleElement) {
+        continue;
+      }
+      if (++consumers > 1) {
+        return Decision::Forbid("Shared source");
+      }
+    }
+    const HloInstruction* producer = value->defining_instruction();
+    if (producer->opcode() == HloOpcode::kParameter) {
+      if (producer->parent()->IsEntryComputation()) {
+        const Shape& shape =
+            ShapeUtil::GetSubshape(entry_computation_layout.parameter_shape(
+                                       producer->parameter_number()),
+                                   value->index());
+        return LayoutUtil::HasMinorToMajorSetInLayout(shape)
+                   ? Decision::Allow()
+                   : Decision::Forbid("AUTO entry layout");
+      }
+      const auto callers = producer->parent()->caller_instructions();
+      if (callers.size() != 1 || callers[0]->opcode() != HloOpcode::kWhile ||
+          callers[0]->while_body() != producer->parent()) {
+        return Decision::Forbid("Unknown caller");
+      }
+      source = callers[0]->operand(0);
+      index = value->index();
+    } else if (producer->opcode() == HloOpcode::kTranspose ||
+               CanTraceLayoutThroughUnary(producer).IsAllowed()) {
+      source = producer->operand(0);
+      index = {};
+    } else {
+      return Decision::Forbid("No fixed source layout");
+    }
+  }
+}
+
+// Resolve forwarded values and alternating loop/transpose chains before using
+// a layout hint. Entry constraints take precedence over provisional HLO shapes.
+std::optional<Shape> ShapeWithLayoutHint(
+    const HloValue& buffer, const HloDataflowAnalysis& dataflow,
+    const ComputationLayout& entry_computation_layout) {
+  const HloValue* value = &buffer;
+  absl::flat_hash_set<const HloValue*> visited;
+  std::vector<const HloInstruction*> transposes;
+  const Shape* shape = nullptr;
+  while (true) {
+    if (!visited.insert(value).second) {
+      return std::nullopt;
+    }
+    const HloInstruction* producer = value->defining_instruction();
+    const HloInstruction* source;
+    ShapeIndex index;
+    if (producer->opcode() == HloOpcode::kParameter) {
+      if (producer->parent()->IsEntryComputation()) {
+        shape =
+            &ShapeUtil::GetSubshape(entry_computation_layout.parameter_shape(
+                                        producer->parameter_number()),
+                                    value->index());
+        break;
+      }
+      const auto callers =
+          producer->parent()->caller_instructions(HloOpcode::kWhile);
+      if (callers.size() != 1) {
+        return std::nullopt;
+      }
+      source = callers[0]->operand(0);
+      index = value->index();
+    } else if (producer->opcode() == HloOpcode::kTranspose) {
+      transposes.push_back(producer);
+      source = producer->operand(0);
+    } else if (CanTraceLayoutThroughUnary(producer).IsAllowed()) {
+      source = producer->operand(0);
+    } else {
+      if (transposes.empty()) {
+        return std::nullopt;
+      }
+      shape = &value->shape();
+      break;
+    }
+    const HloValueSet& values = dataflow.GetValueSet(source, index);
+    if (values.values().size() != 1) {
+      return std::nullopt;
+    }
+    value = values.values().front();
+  }
+  if (!shape->IsArray() || !LayoutUtil::HasMinorToMajorSetInLayout(*shape)) {
+    return std::nullopt;
+  }
+  Shape hint = *shape;
+  for (auto it = transposes.rbegin(); it != transposes.rend(); ++it) {
+    hint = ShapeUtil::PermuteDimensions((*it)->dimensions(), hint);
+  }
+  return hint;
+}
+
+}  // namespace
+
+bool GpuLayoutAssignment::PreferCopyOfResultOverPropagation(
+    const HloInstruction* instruction, const HloInstruction* user) {
+  // A slice cannot change layout, so a layout wanted downstream of a small
+  // slice (for example by an all-gather, which needs its gather dimension to
+  // be most major) would be imposed on the whole array being sliced. When that
+  // array's layout is fixed elsewhere, as for a parameter or a value carried
+  // through a loop, this costs a copy of the whole array that stays live for
+  // as long as the slices are taken. Prefer copying the slice only when its
+  // total copy volume has a known, substantial advantage.
+  if (instruction->opcode() != HloOpcode::kDynamicSlice &&
+      instruction->opcode() != HloOpcode::kSlice) {
+    return false;
+  }
+  return instruction->user_count() == 1 &&
+         SmallCopyHasBoundedCost(instruction, instruction->shape(),
+                                 instruction->operand(0)->shape())
+             .IsAllowed() &&
+         HasFixedLayoutSource(instruction->operand(0), dataflow_analysis(),
+                              saved_entry_computation_layout())
+             .IsAllowed();
+}
+
+bool GpuLayoutAssignment::PreferCopyOfOperandOverSiblingPropagation(
+    const HloInstruction* user, int64_t operand_no) {
+  // The mirror case: the update of a dynamic-update-slice would otherwise
+  // impose its layout on the much larger array being updated.
+  if (user->opcode() != HloOpcode::kDynamicUpdateSlice || operand_no != 1) {
+    return false;
+  }
+  return SmallCopyHasBoundedCost(user, user->operand(1)->shape(),
+                                 user->operand(0)->shape())
+             .IsAllowed() &&
+         HasFixedLayoutSource(user->operand(0), dataflow_analysis(),
+                              saved_entry_computation_layout())
+             .IsAllowed();
+}
+
+Layout GpuLayoutAssignment::GetUnconstrainedLayout(const HloValue& buffer) {
+  if (buffer.instruction()->opcode() == HloOpcode::kParameter &&
+      !buffer.instruction()->parent()->IsEntryComputation()) {
+    std::optional<Shape> hint = ShapeWithLayoutHint(
+        buffer, dataflow_analysis(), saved_entry_computation_layout());
+    if (hint.has_value() && ShapeUtil::Compatible(*hint, buffer.shape())) {
+      return hint->layout();
+    }
+  }
+  return LayoutAssignment::GetUnconstrainedLayout(buffer);
 }
 
 }  // namespace gpu

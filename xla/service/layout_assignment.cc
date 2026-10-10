@@ -1892,6 +1892,14 @@ absl::Status LayoutAssignment::PropagateUseConstraintToDefs(
             if (buffer->shape().IsArray() &&
                 (buffer->instruction()->opcode() != HloOpcode::kReduce ||
                  !buffer->instruction()->shape().IsTuple())) {
+              if (PreferCopyOfResultOverPropagation(buffer->instruction(),
+                                                    user)) {
+                VLOG(3) << "Not propagating the layout preferred by "
+                        << (user != nullptr ? user->name() : "the result")
+                        << " into " << buffer->instruction()->name()
+                        << "; a copy of that result is cheaper";
+                continue;
+              }
               ABSL_RETURN_IF_ERROR(SetBufferLayout(subshape.layout(), *buffer,
                                                    /*mandatory=*/false,
                                                    /*dfs=*/true, priority,
@@ -1984,6 +1992,13 @@ absl::Status LayoutAssignment::PropagateOperandConstraint(
   // layout for the operands with the same ranks.
   const HloInstruction* operand = operand_constraint.operand();
   if (!operand->shape().IsArray() || IsLayoutConstrainedCollective(user)) {
+    return absl::OkStatus();
+  }
+  if (PreferCopyOfOperandOverSiblingPropagation(
+          user, operand_constraint.operand_no())) {
+    VLOG(3) << "Not propagating the layout of operand "
+            << operand_constraint.operand_no() << " of " << user->name()
+            << " to its siblings and result; a copy of the operand is cheaper";
     return absl::OkStatus();
   }
 

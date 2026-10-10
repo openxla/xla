@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/layout.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
@@ -83,6 +84,14 @@ class GpuLayoutAssignment : public LayoutAssignment {
 
   bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction) override;
+
+  bool PreferCopyOfResultOverPropagation(const HloInstruction* instruction,
+                                         const HloInstruction* user) override;
+
+  bool PreferCopyOfOperandOverSiblingPropagation(const HloInstruction* user,
+                                                 int64_t operand_no) override;
+
+  Layout GetUnconstrainedLayout(const HloValue& buffer) override;
 
   std::unique_ptr<Layout> ChooseOperandLayoutFromOutputLayout(
       const Layout& output_layout, const HloInstruction* instruction,
