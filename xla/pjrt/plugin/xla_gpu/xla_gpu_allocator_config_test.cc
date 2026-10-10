@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,10 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
-#define XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 
-// Compatibility header. New users should include allocator_config.h directly.
-#include "xla/pjrt/gpu/allocator_config.h"  // IWYU pragma: export
+#include <gtest/gtest.h>
+#include "absl/strings/numbers.h"
 
-#endif  // XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
+namespace xla {
+namespace {
+
+TEST(GpuAllocatorConfigCompatibilityTest, NumericMemoryFraction) {
+  GpuAllocatorConfig config;
+  double fraction = config.memory_fraction;
+  EXPECT_EQ(fraction, 0.75);
+  config.memory_fraction = 0.5;
+  EXPECT_TRUE(absl::SimpleAtod("0.25", &config.memory_fraction));
+  EXPECT_EQ(config.memory_fraction, 0.25);
+  EXPECT_EQ(MemFractionStart(config.GetMemoryFraction()), 0.25);
+}
+
+}  // namespace
+}  // namespace xla
