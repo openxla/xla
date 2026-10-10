@@ -221,7 +221,9 @@ class LatencyEstimator {
  public:
   using TimeCost = double;
   // Uses the approximate or cost model function for GetLatencyBetween based on
-  // a flag.
+  // a flag. The schedule graph stores the result for its edges and for each
+  // host send to send-done pair when it is built, so the value must depend on
+  // the two instructions only, not on scheduling state.
   virtual TimeCost GetLatencyBetween(const HloGraphNode& from,
                                      const HloGraphNode& target) const = 0;
   // Uses the approximate or cost model function for NodeCost based on a flag.
@@ -980,6 +982,11 @@ class HloGraphNode {
       const {
     return rare_->released_non_extendable_resources;
   }
+  // For a host send-done node: the node of its first operand (the send) and
+  // the latency estimator's latency from that node to this one, both set when
+  // the graph is built. nullptr and zero for every other node.
+  const HloGraphNode* GetHostSend() const { return rare_->host_send; }
+  TimeCost GetHostSendLatency() const { return rare_->host_send_latency; }
 
   absl::Span<HloEdge> GetPredecessors() { return predecessors_.GetSpan(); }
   absl::Span<const HloEdge> GetPredecessors() const {
@@ -1086,6 +1093,10 @@ class HloGraphNode {
     absl::flat_hash_map<int64_t, int64_t> recursive_resources;
     // AsyncResources used by the node.
     ResourcesVector resources;
+    // For a host send-done, the node of its send and the latency estimator's
+    // send to send-done latency; read by ReadySetLt::ShouldDelaySendHostDone.
+    const HloGraphNode* host_send = nullptr;
+    TimeCost host_send_latency = 0.0;
   };
 
   // Instruction this Graph node represents
@@ -1622,6 +1633,11 @@ class MemoryPressureTracker {
     }
   }
 
+  // Same as MemoryPressureTracker(metadata, caller.live_buffers()) for metadata
+  // of the same ModulePressureState, without a lookup per live buffer.
+  MemoryPressureTracker(const MemoryPressureMetadata* metadata,
+                        const MemoryPressureTracker& caller);
+
   // Reset the memory pressure tracker to the initialized state.
   void Reset(const HloComputation* /*computation*/,
              const LiveBufferSet& initial_live_buffers);
@@ -1640,9 +1656,7 @@ class MemoryPressureTracker {
   // amount of memory at the interfaces of the while loop instruction).
   std::pair<int64_t, int64_t> MemoryPressureDifference(
       const HloInstruction* instruction) const;
-  absl::flat_hash_set<HloBuffer::Id> live_buffers() const {
-    return live_buffers_set_;
-  }
+  const LiveBufferSet& live_buffers() const { return live_buffers_set_; }
   bool BufferIsLive(const HloValue* buffer) const {
     CHECK_LT(buffer->id(), live_buffers_.size());
     return live_buffers_[buffer->id()];
@@ -1657,6 +1671,10 @@ class MemoryPressureTracker {
 
   // Returns pressure state object for this MemoryPressureTracker object.
   const MemoryPressureState& pressure_state() const { return pressure_state_; }
+  // Moves the pressure state out of a tracker that is no longer used.
+  MemoryPressureState TakePressureState() && {
+    return std::move(pressure_state_);
+  }
 
  private:
   // Metadata for the computation containing schedule-independent information
@@ -1713,7 +1731,8 @@ class ModulePressureState {
   // Updates the memory pressure state cache.
   void UpdatePressureStateForComputation(const HloComputation* comp,
                                          MemoryPressureState state) {
-    auto [it, inserted] = memory_pressure_states_.insert_or_assign(comp, state);
+    auto [it, inserted] =
+        memory_pressure_states_.insert_or_assign(comp, std::move(state));
 
     if (!inserted) {
       // Rescheduling computation that has already been scheduled
@@ -1724,7 +1743,7 @@ class ModulePressureState {
         memory_peak_ = std::max(memory_peak_, memory_state.second.memory_peak);
       }
     } else {
-      memory_peak_ = std::max(memory_peak_, state.memory_peak);
+      memory_peak_ = std::max(memory_peak_, it->second.memory_peak);
     }
   }
   // Returns the underlying pressure state cache object
