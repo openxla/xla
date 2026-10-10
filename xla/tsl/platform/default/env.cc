@@ -130,7 +130,7 @@ class PThread : public Thread {
 
 class PosixEnv : public Env {
  public:
-  PosixEnv() {}
+  PosixEnv() = default;
 
   ~PosixEnv() override { LOG(FATAL) << "Env::Default() must not be destroyed"; }
 
