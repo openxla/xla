@@ -177,7 +177,7 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
     return async_work_runner_.get();
   }
 
-  HostMemoryAllocator* GetHostMemoryAllocator() const {
+  HostMemoryAllocator* GetHostMemoryAllocator() const override {
     return host_memory_allocator_.get();
   }
 
@@ -313,14 +313,15 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   absl::Status ClearMemoryStats(LocalDeviceId local_device_id) override;
 
-  virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostReceiveBuffersInto(
+  absl::StatusOr<PjRtDeviceEventRefVector> CrossHostReceiveBuffersInto(
       absl::Span<const PjRtRawBufferRef> buffers,
       PjRtCrossHostRecvNotifier notifier,
-      PjRtDeviceEventSpan transfer_dependency_avs);
+      PjRtDeviceEventSpan transfer_dependency_avs) override;
 
-  virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostTransferBuffers(
+  absl::StatusOr<PjRtDeviceEventRefVector> CrossHostTransferBuffers(
       PjRtDeviceEventRefVector transfer_dependencies,
-      std::vector<CommonPjRtClient::CrossHostTransferSpec> transfer_specs);
+      std::vector<CommonPjRtClient::CrossHostTransferSpec> transfer_specs)
+      override;
 
   absl::StatusOr<PjRtDeviceEventRef> CreateDeviceEvent(
       LocalDeviceId local_device_id, int memory_kind_id,
