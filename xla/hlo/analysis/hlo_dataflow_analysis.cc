@@ -658,7 +658,9 @@ bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
       async_update->operand(0)->opcode() == HloOpcode::kWhile ||
       async_update->operand(0)->opcode() == HloOpcode::kParameter;
   bool is_slice_or_copy =
-      is_loop_crossing && WrapsSliceOrCrossBufferSlice(async_update);
+      is_loop_crossing &&
+      (WrapsSliceOrCrossBufferSlice(async_update) ||
+       async_update->async_wrapped_opcode() == HloOpcode::kGather);
 
   if (!is_slice_or_copy) {
     // 2. Update the output values from wrapped computation (index 1)
@@ -694,11 +696,12 @@ bool HloDataflowAnalysis::UpdateAsyncDoneValueSet(HloInstruction* async_done) {
       async_done->operand(0)->opcode() == HloOpcode::kWhile ||
       async_done->operand(0)->opcode() == HloOpcode::kParameter;
   bool is_slice_or_copy =
-      is_loop_crossing && WrapsSliceOrCrossBufferSlice(async_done);
-  // For loop-crossing chains where async-done wraps a dynamic-slice,
-  // dynamic-update-slice or cross_buffer_slice fusion (e.g. a prefetch started
-  // in a previous iteration), forward the value set from operand tuple index 1
-  // directly.
+      is_loop_crossing &&
+      (WrapsSliceOrCrossBufferSlice(async_done) ||
+       async_done->async_wrapped_opcode() == HloOpcode::kGather);
+  // For loop-crossing chains where async-done wraps a dynamic-slice, gather,
+  // dynamic-update-slice or cross_buffer_slice fusion, forward the value set
+  // from operand tuple index 1 directly.
   if (!is_slice_or_copy) {
     return UpdateAsyncChainOutputValueSet(async_done);
   }
