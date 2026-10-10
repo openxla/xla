@@ -562,7 +562,7 @@ class EnvWrapper : public Env {
 /// Represents a thread used to run a TSL function.
 class Thread {
  public:
-  Thread() {}
+  Thread() = default;
 
   /// Blocks until the thread of control stops running.
   virtual ~Thread();

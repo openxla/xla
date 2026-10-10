@@ -33,7 +33,7 @@ class IntrusivePtr {
   IntrusivePtr(T* h, bool add_ref) { reset(h, add_ref); }
   IntrusivePtr(const IntrusivePtr& o) { reset(o.handle_, /*add_ref=*/true); }
   IntrusivePtr(IntrusivePtr&& o) noexcept { *this = std::move(o); }
-  IntrusivePtr() {}
+  IntrusivePtr() = default;
   void reset(T* h, bool add_ref) {
     if (h != handle_) {
       if (add_ref && h) h->Ref();

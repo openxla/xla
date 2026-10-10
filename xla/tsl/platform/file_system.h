@@ -402,7 +402,7 @@ class FileSystem {
     return absl::UnimplementedError("SetFileAcl");
   }
 
-  FileSystem() {}
+  FileSystem() = default;
 
   virtual ~FileSystem() = default;
 };
@@ -410,7 +410,7 @@ class FileSystem {
 /// A file abstraction for randomly reading the contents of a file.
 class RandomAccessFile {
  public:
-  RandomAccessFile() {}
+  RandomAccessFile() = default;
   virtual ~RandomAccessFile() = default;
 
   /// \brief Returns the name of the file.
@@ -480,7 +480,7 @@ class RandomAccessFile {
 /// small fragments at a time to the file.
 class WritableFile {
  public:
-  WritableFile() {}
+  WritableFile() = default;
   virtual ~WritableFile() = default;
 
   /// \brief Append 'data' to the file.
@@ -554,7 +554,7 @@ class WritableFile {
 /// object exists, independently from the Env that created it.
 class ReadOnlyMemoryRegion {
  public:
-  ReadOnlyMemoryRegion() {}
+  ReadOnlyMemoryRegion() = default;
   virtual ~ReadOnlyMemoryRegion() = default;
 
   /// \brief Returns a pointer to the memory region.

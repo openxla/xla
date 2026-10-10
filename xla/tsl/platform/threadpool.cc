@@ -155,7 +155,7 @@ ThreadPool::ThreadPool(thread::ThreadPoolInterface* user_threadpool)
       underlying_threadpool_, underlying_threadpool_->NumThreads(), nullptr);
 }
 
-ThreadPool::~ThreadPool() {}
+ThreadPool::~ThreadPool() = default;
 
 void ThreadPool::Schedule(std::function<void()> fn) {
   CHECK(fn != nullptr);
