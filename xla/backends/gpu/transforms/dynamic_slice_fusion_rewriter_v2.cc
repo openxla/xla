@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter_v2.h"
 
 #include <cstdint>
+#include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -31,6 +33,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
@@ -38,16 +41,23 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_constants.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
+
+using hlo_instruction_utils::ReplaceInstructionWithMergedFrontendAttributes;
 
 //===----------------------------------------------------------------------===//
 // Data structures
@@ -622,8 +632,8 @@ std::optional<DynamicSliceFusionPlan> BuildFusionPlan(
 // Create fusion
 //===----------------------------------------------------------------------===//
 
-absl::StatusOr<HloComputation*> CreateFusionBody(
-    HloModule* module, const DynamicSliceFusionPlan& plan,
+std::unique_ptr<HloComputation> CreateFusionBody(
+    const DynamicSliceFusionPlan& plan,
     absl::Span<const SlicedResult> sliced_results, HloInstruction* hero) {
   HloComputation::Builder builder("dynamic-slice-fusion");
 
@@ -675,7 +685,164 @@ absl::StatusOr<HloComputation*> CreateFusionBody(
     builder.AddInstruction(HloInstruction::CreateTuple(tuple_operands));
   }
 
-  return module->AddComputationAndUnifyNamesAndIds(builder.Build(), false);
+  return builder.Build();
+}
+
+absl::StatusOr<bool> PreservesCustomCallAliases(const HloComputation* body) {
+  const HloInstruction* hero = DynamicSliceFusion::FindHero(body);
+  if (hero == nullptr || hero->opcode() != HloOpcode::kCustomCall) {
+    return true;
+  }
+  const auto* call = Cast<HloCustomCallInstruction>(hero);
+  if (call->output_to_operand_aliasing().empty()) {
+    return true;
+  }
+
+  // The runtime uses these configs for addressing. Offset expressions are
+  // optional because the candidate body is not attached to a module yet.
+  constexpr auto kOffsetResolution =
+      DynamicSliceFusion::OffsetResolution::kOptional;
+  std::vector<DynamicSliceFusion::Parameter> parameters;
+  parameters.reserve(call->operand_count());
+  for (const HloInstruction* operand : call->operands()) {
+    ABSL_ASSIGN_OR_RETURN(auto parameter, DynamicSliceFusion::ResolveParameter(
+                                              operand, kOffsetResolution));
+    parameters.push_back(std::move(parameter));
+  }
+  ABSL_ASSIGN_OR_RETURN(auto results, DynamicSliceFusion::ResolveResults(
+                                          call, kOffsetResolution));
+
+  for (const auto& [result_index, operand_index] :
+       call->output_to_operand_aliasing()) {
+    const auto& parameter = parameters[operand_index.first];
+    int64_t result_number = result_index.empty() ? 0 : result_index[0];
+    const auto& result = results[result_number];
+
+    // Other accesses to the backing buffer may overlap the in-place update.
+    // Copy insertion cannot separate them behind a single fusion parameter.
+    if (absl::c_count_if(parameters,
+                         [&](const auto& other) {
+                           return other.parameter_number ==
+                                  parameter.parameter_number;
+                         }) != 1 ||
+        absl::c_any_of(results, [&](const auto& other) {
+          return other.result_number != result_number &&
+                 other.parameter_number == parameter.parameter_number;
+        })) {
+      return false;
+    }
+
+    if (!result.parameter_number.has_value()) {
+      // Alias analysis infers the direct alias through the fusion body.
+      if (parameter.slice_config.has_value()) {
+        return false;
+      }
+      continue;
+    }
+
+    // DUS aliases the outer result with its destination. Matching backing
+    // parameters, configs and byte sizes also give the inner call identical
+    // input/output pointers, including the runtime's offset clamping.
+    if (parameter.parameter_number != *result.parameter_number ||
+        !parameter.slice_config.has_value() ||
+        !result.update_config.has_value() ||
+        !(*parameter.slice_config == *result.update_config) ||
+        ShapeUtil::ByteSizeOfElements(parameter.parameter_shape) !=
+            ShapeUtil::ByteSizeOfElements(result.result_shape) ||
+        ShapeUtil::ByteSizeOfElements(parameter.slice_shape) !=
+            ShapeUtil::ByteSizeOfElements(result.update_shape)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Constraints belong to the buffers visible to allocation, not just the cloned
+// call. Slices share their source allocation; DUS results share their
+// destination. A conflicting merge requires keeping the original, separately
+// allocated slices.
+absl::StatusOr<std::optional<FrontendAttributes>> FusionMemorySpaces(
+    const HloInstruction* hero, const HloComputation* body) {
+  FrontendAttributes attributes;
+  auto operand_attr = hero->get_frontend_attribute(kOperandsMemorySpacesAttr);
+  auto result_attr = hero->get_frontend_attribute(kResultsMemorySpacesAttr);
+  if (!operand_attr.has_value() && !result_attr.has_value()) {
+    return attributes;
+  }
+
+  const HloInstruction* cloned_hero = DynamicSliceFusion::FindHero(body);
+  TF_RET_CHECK(cloned_hero != nullptr);
+  // Only buffer indices are needed here. Offset expressions can depend on
+  // module flags unavailable until the candidate body is attached.
+  constexpr auto kOffsetResolution =
+      DynamicSliceFusion::OffsetResolution::kOptional;
+  std::map<int64_t, int64_t> operands;
+  std::map<int64_t, int64_t> results;
+  auto merge = [](std::map<int64_t, int64_t>& spaces, int64_t index,
+                  MemorySpaceColor color) {
+    if (color == MemorySpaceColor::kDefault) {
+      return true;
+    }
+    auto [it, inserted] =
+        spaces.try_emplace(index, static_cast<int64_t>(color));
+    return inserted || it->second == static_cast<int64_t>(color);
+  };
+
+  if (operand_attr.has_value()) {
+    ABSL_ASSIGN_OR_RETURN(auto spaces,
+                          ParseIndexMemorySpacePairs(*operand_attr));
+    for (auto [index, color] : spaces) {
+      if (index < 0 || index >= cloned_hero->operand_count()) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Invalid operand memory-space index: ", index));
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          auto parameter, DynamicSliceFusion::ResolveParameter(
+                              cloned_hero->operand(index), kOffsetResolution));
+      if (!merge(operands, parameter.parameter_number, color)) {
+        return std::nullopt;
+      }
+    }
+  }
+  if (result_attr.has_value()) {
+    ABSL_ASSIGN_OR_RETURN(auto spaces,
+                          ParseIndexMemorySpacePairs(*result_attr));
+    ABSL_ASSIGN_OR_RETURN(auto outputs, DynamicSliceFusion::ResolveResults(
+                                            cloned_hero, kOffsetResolution));
+    for (auto [index, color] : spaces) {
+      if (index < 0 || index >= outputs.size()) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Invalid result memory-space index: ", index));
+      }
+      const auto& output = outputs[index];
+      if (!merge(results, output.result_number, color) ||
+          (output.parameter_number.has_value() &&
+           !merge(operands, *output.parameter_number, color))) {
+        return std::nullopt;
+      }
+    }
+  }
+
+  for (auto [index, color] : operands) {
+    const Shape& shape = body->parameter_instruction(index)->shape();
+    if (!shape.has_layout() || shape.layout().memory_space() == 0) {
+      continue;
+    }
+    auto layout_color = AsMemorySpaceColor(shape.layout().memory_space());
+    if (!layout_color.ok() || static_cast<int64_t>(*layout_color) != color) {
+      return std::nullopt;
+    }
+  }
+
+  for (const auto& [name, spaces] :
+       {std::pair{kOperandsMemorySpacesAttr, &operands},
+        std::pair{kResultsMemorySpacesAttr, &results}}) {
+    if (!spaces->empty()) {
+      (*attributes.mutable_map())[std::string(name)] = absl::StrCat(
+          "{", absl::StrJoin(*spaces, ",", absl::PairFormatter(":")), "}");
+    }
+  }
+  return attributes;
 }
 
 absl::Status SetDynamicSliceFusionBackendConfig(HloInstruction* fusion) {
@@ -702,8 +869,20 @@ absl::StatusOr<bool> RewriteHero(
     return false;
   }
 
-  ABSL_ASSIGN_OR_RETURN(HloComputation * fusion_body,
-                        CreateFusionBody(module, *plan, sliced_results, hero));
+  std::unique_ptr<HloComputation> body =
+      CreateFusionBody(*plan, sliced_results, hero);
+  ABSL_ASSIGN_OR_RETURN(bool preserves_aliases,
+                        PreservesCustomCallAliases(body.get()));
+  if (!preserves_aliases) {
+    return false;
+  }
+  ABSL_ASSIGN_OR_RETURN(auto memory_spaces,
+                        FusionMemorySpaces(hero, body.get()));
+  if (!memory_spaces.has_value()) {
+    return false;
+  }
+  HloComputation* fusion_body =
+      module->AddComputationAndUnifyNamesAndIds(std::move(body), false);
 
   HloComputation* parent = hero->parent();
   HloInstruction* fusion = parent->AddInstruction(
@@ -723,39 +902,47 @@ absl::StatusOr<bool> RewriteHero(
       auto* gte = parent->AddInstruction(
           HloInstruction::CreateGetTupleElement(fusion, i));
       if (sliced_results[i].update_slice != nullptr) {
-        ABSL_RETURN_IF_ERROR(
-            parent->ReplaceInstruction(sliced_results[i].update_slice, gte));
+        ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
+            sliced_results[i].update_slice, gte));
         any_result_replaced = true;
       } else if (!sliced_results[i].noops.empty()) {
         HloInstruction* original_leaf = sliced_results[i].noops.back();
-        ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(original_leaf, gte));
+        ABSL_RETURN_IF_ERROR(
+            ReplaceInstructionWithMergedFrontendAttributes(original_leaf, gte));
         any_result_replaced = true;
       }
     }
     if (!any_result_replaced) {
-      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
+      ABSL_RETURN_IF_ERROR(
+          ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
     } else if (hero_has_side_effect) {
       ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
     }
   } else if (sliced_results.size() == 1) {
     if (sliced_results[0].update_slice != nullptr) {
-      ABSL_RETURN_IF_ERROR(
-          parent->ReplaceInstruction(sliced_results[0].update_slice, fusion));
+      ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
+          sliced_results[0].update_slice, fusion));
       if (hero_has_side_effect) {
         ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
       }
     } else if (hero->shape().IsTuple() && !sliced_results[0].noops.empty()) {
-      ABSL_RETURN_IF_ERROR(
-          parent->ReplaceInstruction(sliced_results[0].noops.back(), fusion));
+      ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
+          sliced_results[0].noops.back(), fusion));
       if (hero_has_side_effect) {
         ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
       }
     } else {
-      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
+      ABSL_RETURN_IF_ERROR(
+          ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
     }
   } else {
-    ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
+    ABSL_RETURN_IF_ERROR(
+        ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
   }
+
+  hlo_instruction_utils::UpdateFrontendAttributes(
+      fusion, std::move(*memory_spaces),
+      {kOperandsMemorySpacesAttr, kResultsMemorySpacesAttr});
 
   return true;
 }
@@ -791,6 +978,8 @@ absl::StatusOr<bool> DynamicSliceFusionRewriterV2::RunImpl(
     }
 
     for (HloInstruction* hero : heroes) {
+      std::vector<HloInstruction*> original_operands(hero->operands().begin(),
+                                                     hero->operands().end());
       auto sliced_params = ResolveSlicedParameters(hero, options_.opt_level,
                                                    options_.capture_slice);
       auto sliced_results =
@@ -798,6 +987,13 @@ absl::StatusOr<bool> DynamicSliceFusionRewriterV2::RunImpl(
       ABSL_ASSIGN_OR_RETURN(
           bool hero_changed,
           RewriteHero(module, hero, sliced_params, sliced_results));
+      if (!hero_changed) {
+        // O2 slice resolution can bypass tuple barriers before fusion planning.
+        for (int64_t i = 0; i < original_operands.size(); ++i) {
+          ABSL_RETURN_IF_ERROR(
+              hero->ReplaceOperandWith(i, original_operands[i]));
+        }
+      }
       changed |= hero_changed;
     }
   }
