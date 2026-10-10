@@ -2382,53 +2382,53 @@ GlobalDecreasingSizeBestFitHeap<
 }
 
 template <typename BufferType>
-absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
-    SlicedAllocationFinder::DoesPermutationFit(
-        absl::Span<const int64_t> permutation_of_slice_times,
-        const FreeChunkRoot& root, int64_t offset) const {
-  absl::Status result =
-      DoesPermutationFitImpl(permutation_of_slice_times, root, offset);
-  VLOG(3) << "SlicedAllocationFinder::DoesPermutationFit\n"
-          << "  permutation of slice times: [ "
-          << absl::StrJoin(permutation_of_slice_times, ",") << " ]\n"
-          << "  offset: " << offset << "\n"
-          << "  root: " << root.ToString() << "\n"
-          << "  -> " << result;
-  return result;
-}
+bool GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::
+    DoesPermutationFit(absl::Span<const int64_t> permutation_of_slice_times,
+                       const FreeChunkRoot& root, int64_t offset,
+                       int64_t* min_next_offset) const {
+  CHECK(min_next_offset != nullptr);
+  auto vlog_prefix = [&]() {
+    return absl::StrCat("SlicedAllocationFinder::DoesPermutationFit\n",
+                        "  permutation of slice times: [ ",
+                        absl::StrJoin(permutation_of_slice_times, ","), " ]\n",
+                        "  offset: ", offset, "\n", "  root: ", root.ToString(),
+                        "\n  -> ");
+  };
 
-template <typename BufferType>
-absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
-    SlicedAllocationFinder::DoesPermutationFitImpl(
-        absl::Span<const int64_t> permutation_of_slice_times,
-        const FreeChunkRoot& root, int64_t offset) const {
   if (permutation_of_slice_times.size() != sorted_slice_sizes_.size()) {
-    return InvalidArgumentStrCat(
-        sorted_slice_sizes_.size(), " slices times expected in permutation. ",
-        permutation_of_slice_times.size(), " specified.");
+    *min_next_offset = std::numeric_limits<int64_t>::max();
+    VLOG(3) << vlog_prefix() << sorted_slice_sizes_.size()
+            << " slices times expected in permutation. "
+            << permutation_of_slice_times.size() << " specified.";
+    return false;
   }
   if (offset >= root.chunk.chunk_end()) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("Free chunk root ", root.chunk.ToString(),
-                           " does not overlap with offset ", offset, "."));
+    *min_next_offset = std::numeric_limits<int64_t>::max();
+    VLOG(3) << vlog_prefix() << "Free chunk root " << root.chunk.ToString()
+            << " does not overlap with offset " << offset << ".";
+    return false;
   }
-  if (offset + max_colocation_size_ > root.chunk.chunk_end()) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("Not enough space to fit enitre allocation [",
-                           offset, ", ", offset + max_colocation_size_,
-                           ") in free chunk root ", root.chunk.ToString()));
+  if (offset > root.chunk.chunk_end() - max_colocation_size_) {
+    *min_next_offset = std::numeric_limits<int64_t>::max();
+    VLOG(3) << vlog_prefix() << "Not enough space to fit entire allocation ["
+            << offset << ", " << offset + max_colocation_size_
+            << ") in free chunk root " << root.chunk.ToString();
+    return false;
   }
   if (!is_offset_allowed_(offset)) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("We are not permitted to place an allocation at ",
-                           "offset ", offset, "."));
+    *min_next_offset = offset + alignment_;
+    VLOG(3) << vlog_prefix()
+            << "We are not permitted to place an allocation at offset "
+            << offset << ".";
+    return false;
   }
 
   auto piece_fwd_it = root.pieces.lower_bound(offset);
   if (piece_fwd_it == root.pieces.end()) {
-    return FailedPrecondition(
-        "%s", absl::StrCat("Offset ", offset, " comes before free chunk root ",
-                           root.chunk.ToString()));
+    *min_next_offset = root.chunk.offset;
+    VLOG(3) << vlog_prefix() << "Offset " << offset
+            << " comes before free chunk root " << root.chunk.ToString();
+    return false;
   }
   ++piece_fwd_it;
   auto piece_reverse_it = std::make_reverse_iterator(piece_fwd_it);
@@ -2457,11 +2457,14 @@ absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
     if (current_piece_time > current_slice_time) {
       // The current piece is not free far enough back in time to support the
       // current slice.
-      return FailedPrecondition(
-          "%s",
-          absl::StrCat("At slice time t", current_slice_time, ", slice ",
-                       slice_index, " does not fit at offset ", current_offset,
-                       " in root ", root.chunk.ToString()));
+      int64_t current_slice_offset_from_start =
+          (current_offset - amount_of_current_slice_consumed) - offset;
+      *min_next_offset = piece_reverse_it->second.dimensions.chunk_end() -
+                         current_slice_offset_from_start;
+      VLOG(3) << vlog_prefix() << "At slice time t" << current_slice_time
+              << ", slice " << slice_index << " does not fit at offset "
+              << current_offset << " in root " << root.chunk.ToString();
+      return false;
     }
 
     if (remaining_in_slice >= remaining_in_piece) {
@@ -2477,25 +2480,21 @@ absl::Status GlobalDecreasingSizeBestFitHeap<BufferType>::
   }
 
   if (!out_of_slices(slice_index)) {
-    return InternalStrCat("Ran out of space in root ", root.chunk.ToString(),
-                          " to fit slice permutation; however, we should "
-                          "have caught such a condition earlier.");
+    *min_next_offset = std::numeric_limits<int64_t>::max();
+    VLOG(3) << vlog_prefix() << "Ran out of space in root "
+            << root.chunk.ToString()
+            << " to fit slice permutation; however, we should "
+               "have caught such a condition earlier.";
+    return false;
   }
 
-  return absl::OkStatus();
+  return true;
 }
 
-// Future opportunities:
-// 1) Potential optimization: We don't have to try every offset in
-//    [root.chunk.offset, root.chunk.chunk_end()). If a permutation doesn't fit
-//    at offset, it won't fit at offset + 1, unless the geometry of the free
-//    space changes at offset + 1. If we carefully choose which offsets to try,
-//    we don't have to try them all.
-// 2) Potential tuning: We don't have a specific way to prioritize 1 permutation
-//    or 1 offset over another. For example, it is likely better to place an
-//    allocation at the beginning or the end of a root, to minimize
-//    fragmentation. In the future, we may want to prioritize such
-//    considerations.
+// Future opportunity: We don't have a specific way to prioritize 1 permutation
+// or 1 offset over another. For example, it is likely better to place an
+// allocation at the beginning or the end of a root, to minimize fragmentation.
+// In the future, we may want to prioritize such considerations.
 template <typename BufferType>
 typename GlobalDecreasingSizeBestFitHeap<
     BufferType>::SlicedAllocationFinder::ChunksSortedBySliceTime
@@ -2514,25 +2513,33 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::SlicedAllocationFinder::FindInRoot(
     first_offset = first_offset + (alignment_ - (first_offset % alignment_));
   }
   CHECK_EQ(first_offset % alignment_, 0);
-  for (int64_t offset = first_offset; offset + max_colocation_size_ <= last_end;
-       offset += alignment_) {
+  const int64_t max_valid_offset = last_end - max_colocation_size_;
+  int64_t offset = first_offset;
+  while (offset <= max_valid_offset) {
+    int64_t next_offset = std::numeric_limits<int64_t>::max();
     for (slice_time_permutation_iterator_->Begin();
          !slice_time_permutation_iterator_->Done();
          slice_time_permutation_iterator_->Next()) {
+      int64_t min_next_offset_for_permutation =
+          std::numeric_limits<int64_t>::max();
       if (DoesPermutationFit(slice_time_permutation_iterator_->Get(), root,
-                             offset)
-              .ok()) {
+                             offset, &min_next_offset_for_permutation)) {
         return PermutationToChunks(slice_time_permutation_iterator_->Get(),
                                    offset);
       }
+      next_offset = std::min(next_offset, min_next_offset_for_permutation);
     }
 
     // Optimization: We can skip checking other offsets if the root
     // represents the same space at all slice times. In such a case, if we
     // don't fit at the first offset, we won't fit at any offset.
-    if (root.pieces.size() == 1) {
+    // Also break if next_offset exceeds max_valid_offset (which avoids signed
+    // integer overflow in RoundUpTo when next_offset is near INT64_MAX).
+    if (root.pieces.size() == 1 || next_offset > max_valid_offset) {
       break;
     }
+
+    offset = RoundUpTo(std::max(next_offset, offset + alignment_), alignment_);
   }
 
   return {};

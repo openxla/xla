@@ -872,24 +872,20 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
     // The latest slice time for the specified sliced allocation request.
     int64_t LatestSliceTime() const { return sorted_slice_sizes_.size() - 1; }
 
-    // Returns ok if the given permutation of slice times results in an
-    // allocation of free space in root, at the specified offset. Otherwise,
-    // returns the reason such an allocation would not fit.
+    // Returns whether the given permutation of slice times results in an
+    // allocation of free space in root, at the specified offset.
     //
-    // permutation_of_slice_times[i] is the slice time that the ith slice
-    // (spatially) should be allocated. Such a slice has size
+    // If it does not fit, *min_next_offset (which must be non-null) is set to
+    // the earliest offset > offset at which this permutation could possibly fit
+    // in root. If there is no chance of fitting in this root, *min_next_offset
+    // is set to INT64_MAX. permutation_of_slice_times[i] is the slice time that
+    // the ith slice (spatially) should be allocated. Such a slice has size
     // sorted_slice_sizes_[i] and would be allocated at offset +
     // sum(sorted_slice_sizes[j], for j in [0, i-1]).
-    absl::Status DoesPermutationFit(
+    bool DoesPermutationFit(
         absl::Span<const int64_t> permutation_of_slice_times,
-        const FreeChunkRoot& root, int64_t offset) const;
-
-    // Only DoesSlicedPermutationFit() should call this method directly. Other
-    // callers should call DoesSlicedPermutationFit(), which contains some
-    // wrapper VLOGGING.
-    absl::Status DoesPermutationFitImpl(
-        absl::Span<const int64_t> permutation_of_slice_times,
-        const FreeChunkRoot& root, int64_t offset) const;
+        const FreeChunkRoot& root, int64_t offset,
+        int64_t* min_next_offset) const;
 
     // Same as Find() except only checks root, to see if it can hold the sliced
     // allocation request. If only_try_this_offset is set, we only evaluate the
