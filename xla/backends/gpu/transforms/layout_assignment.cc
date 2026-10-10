@@ -193,6 +193,13 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     }
     return kAllNHWC;
   }
+  if (gpu_version.IsOneAPI()) {
+    // For OneAPI, we currently only support 2D convolutions in NHWC layout.
+    if (num_spatial_dimensions == 2) {
+      return kAllNHWC;
+    }
+    return kAllNCHW;
+  }
 
   VLOG(2) << "Using heuristic to figure out layouts for " << instr->ToString();
 

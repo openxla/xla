@@ -16,9 +16,14 @@ limitations under the License.
 #include "xla/service/gpu/intel_gpu_compiler.h"
 
 #include "absl/status/status_macros.h"
+#include "xla/backends/gpu/transforms/conv_padding_legalization.h"
+#include "xla/backends/gpu/transforms/conv_rewriter.h"
+#include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
 #include "xla/backends/gpu/transforms/sycl_gemm_workspace_pass.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/service/dump.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/service/gpu/llvm_gpu_backend/spirv_backend.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu_topology.h"
@@ -36,7 +41,21 @@ absl::Status IntelGpuCompiler::OptimizeHloConvolutionCanonicalization(
     se::dnn::VersionInfo dnn_version,
     const se::SemanticVersion& toolkit_version,
     CompilationStats* compilation_stats) {
-  // Return OkStatus as a stub.
+  HloPassPipeline pipeline("conv_canonicalization");
+  pipeline.AddInvariantCheckerDebug<HloVerifier>(
+      /*layout_sensitive=*/false,
+      /*allow_mixed_precision=*/false);
+
+  pipeline.AddPass<ConvRewriter>(gpu_version);
+  auto cc = gpu_version.oneapi_compute_capability();
+  TF_RET_CHECK(cc != nullptr);
+  pipeline.AddPass<CudnnFusedConvRewriter>(*cc, dnn_version, toolkit_version);
+  // ConvPaddingLegalization converts base dilation into explicit padding
+  // operations, which is required for backends that don't support base
+  // dilation natively.
+  pipeline.AddPass<ConvPaddingLegalization>();
+  pipeline.AddPass<HloConstantFolding>();
+  ABSL_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   return absl::OkStatus();
 }
 

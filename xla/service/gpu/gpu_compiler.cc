@@ -1890,11 +1890,15 @@ absl::Status GpuCompiler::OptimizeHloModule(
       /*default_thread_pool=*/options.thread_pool,
       /*default_parallelism=*/tsl::port::MaxParallelism());
 
+  // Treat SYCL like ROCM here: both route convs through non-cuDNN libraries
+  // (oneDNN for SYCL, MIOpen for ROCM), so they need conv operand swap
+  // disabled and must opt out of the cuDNN-specific conv fusion path.
   AlgebraicSimplifierOptions layout_insensitive_algsimp_opts =
       GetAlgebraicSimplifierOptions(
           AlgebraicSimplifierMode::kLayoutInsensitive,
           hlo_module->config().debug_options(),
-          gpu_topology.gpu_target_config().platform_name == "ROCM");
+          gpu_topology.gpu_target_config().platform_name == "ROCM" ||
+          gpu_topology.gpu_target_config().platform_name == "SYCL");
 
   {
     HloPassPipeline pipeline("annotate-host-compute", compilation_stats);
