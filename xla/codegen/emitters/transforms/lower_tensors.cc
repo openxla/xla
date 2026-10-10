@@ -1127,15 +1127,13 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
         ml::AtomicOrdering::monotonic, "agent-one-as");
 
     auto unitAttr = b.getUnitAttr();
-    auto* rocdl =
-        op->getContext()->getOrLoadDialect<mlir::ROCDL::ROCDLDialect>();
-    auto noRemoteMemHelper = rocdl->getNoRemoteMemoryAttrHelper();
-    auto noFineMemHelper = rocdl->getNoFineGrainedMemoryAttrHelper();
-    auto ignoreDenormalModeHelper = rocdl->getIgnoreDenormalModeAttrHelper();
-
-    noRemoteMemHelper.setAttr(op, unitAttr);
-    noFineMemHelper.setAttr(op, unitAttr);
-    ignoreDenormalModeHelper.setAttr(op, unitAttr);
+    auto* ctx = op->getContext();
+    mlir::ROCDL::ROCDLDialect::NoRemoteMemoryAttrHelper(ctx).setAttr(op,
+                                                                     unitAttr);
+    mlir::ROCDL::ROCDLDialect::NoFineGrainedMemoryAttrHelper(ctx).setAttr(
+        op, unitAttr);
+    mlir::ROCDL::ROCDLDialect::IgnoreDenormalModeAttrHelper(ctx).setAttr(
+        op, unitAttr);
 
     return success();
   }
