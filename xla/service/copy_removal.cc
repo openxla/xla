@@ -54,6 +54,34 @@ limitations under the License.
 using absl::StrAppend;
 
 namespace xla {
+namespace {
+
+// Returns whether merging the buffers of two live ranges interferes, given
+// rel1, the location of the dest live range relative to the src one, and
+// rel2, the location of src relative to dest.
+bool RelationsInterfere(const Relation& rel1, const Relation& rel2,
+                        CopyRemover::CombineLiveRangeOption merge_location) {
+  // If src and dest are interleaved with each other, they interfere.
+  if (rel1.RuntimeOrderOverlap() && rel2.RuntimeOrderOverlap()) {
+    return true;
+  }
+  if (rel1.RuntimeOrderOverlap()) {
+    return rel1.InterceptDefUse() ||
+           (merge_location != CopyRemover::kMergeFirstDestInSource &&
+            rel2.InterceptDefUse());
+  }
+  if (rel2.RuntimeOrderOverlap()) {
+    // Here src is at the end of a nested computation inside dest.
+    return rel2.InterceptDefUse() ||
+           (merge_location != CopyRemover::kMergeLastSourceInDest &&
+            rel1.InterceptDefUse());
+  }
+  // If src and dest belong to the same group of computations and do not
+  // overlap, they do not interfere.
+  return false;
+}
+
+}  // namespace
 
 // Summarize additional relations into a single runtime ordering, assuming
 // both relations are modeling constraints of the same source instruction.
@@ -250,7 +278,8 @@ Relation ComputeRelativeLocation::ComputeBetweenInstructionEntries(
 // Return the relative locations (defined above) of range2 in relation to
 // instructions in range1. Return kNoOverlap if range2 is outside of range1.
 Relation ComputeRelativeLocation::ComputeBetweenLiveRangeRegions(
-    const LiveRangeRegions& range1, const LiveRangeRegions& range2) {
+    const LiveRangeRegions& range1, const LiveRangeRegions& range2,
+    absl::FunctionRef<bool(const Relation&)> stop) {
   Relation dir_src_dest;
   for (const auto* computation1 : range1) {
     for (const auto* computation2 : range2) {
@@ -293,6 +322,9 @@ Relation ComputeRelativeLocation::ComputeBetweenLiveRangeRegions(
         dir_src_dest.UnionRelationFromDifferentSource(instr2_relation);
         VLOG(3) << "  Resulting relation: " << dir_src_dest.ToString();
         VLOG(3) << "--------------------------------------------------------";
+        if (stop(dir_src_dest)) {
+          return dir_src_dest;
+        }
       }
     }
   }
@@ -1448,42 +1480,31 @@ bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
           << dest_live_range.ToString();
 
   ComputeRelativeLocation relative_location_analysis(ordering_, alias_info_);
+  // Unions never clear the overlap or the interception of a relation, and
+  // RelationsInterfere is monotone in both, so each relation is computed only
+  // until interference is certain. Interference with an empty rel2 implies
+  // interference with any rel2.
   auto rel1 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
-      src_live_range, dest_live_range);
+      src_live_range, dest_live_range, [&](const Relation& partial_rel1) {
+        return RelationsInterfere(partial_rel1, Relation(), merge_location);
+      });
   VLOG(3) << "    ValuesInterfere - location of dest in relation to src: ";
   VLOG(3) << "            " << rel1.ToString();
-
-  auto rel2 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
-      dest_live_range, src_live_range);
-  VLOG(3) << "    ValuesInterfere - location of src in relation to dest: ";
-  VLOG(3) << "            " << rel2.ToString();
-
-  // If src and dest are interleaved with each other, they interfere.
-  if (rel1.RuntimeOrderOverlap() && rel2.RuntimeOrderOverlap()) {
-    VLOG(3) << "    ValuesInterfere: Both relations are overlapped.";
+  if (RelationsInterfere(rel1, Relation(), merge_location)) {
+    VLOG(3) << "    ValuesInterfere: rel1 is overlapped and intercepts.";
     return true;
   }
-  // If src and dest belong to the same group of computations and do not
-  // overlap, they do not interfere.
-  if (rel1.RuntimeOrderOverlap() || rel2.RuntimeOrderOverlap()) {
-    VLOG(3) << "    ValuesInterfere: At least one relation is overlapped.";
-    if (rel1.RuntimeOrderOverlap()) {
-      VLOG(3) << "    ValuesInterfere: rel1 is overlapped, with interception = "
-              << rel1.InterceptDefUse();
-      if (rel1.InterceptDefUse() ||
-          (merge_location != kMergeFirstDestInSource &&
-           rel2.InterceptDefUse())) {
-        return true;
-      }
-    } else {
-      VLOG(3) << "    ValuesInterfere: rel2 is overlapped, with interception = "
-              << rel2.InterceptDefUse();
-      // Here src is at the end of a nested computation inside dest.
-      if (rel2.InterceptDefUse() || (merge_location != kMergeLastSourceInDest &&
-                                     rel1.InterceptDefUse())) {
-        return true;
-      }
-    }
+
+  auto rel2 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
+      dest_live_range, src_live_range, [&](const Relation& partial_rel2) {
+        return RelationsInterfere(rel1, partial_rel2, merge_location);
+      });
+  VLOG(3) << "    ValuesInterfere - location of src in relation to dest: ";
+  VLOG(3) << "            " << rel2.ToString();
+  if (RelationsInterfere(rel1, rel2, merge_location)) {
+    VLOG(3) << "    ValuesInterfere: Overlapped, with interception = "
+            << rel1.InterceptDefUse() << ", " << rel2.InterceptDefUse();
+    return true;
   }
   if (relative_location_analysis.AddControlDependenceForUnorderedOps()) {
     return false;
