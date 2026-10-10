@@ -19,7 +19,6 @@ limitations under the License.
 #include <utility>
 
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/threadpool.h"
 #include "xla/backends/gpu/transforms/conv_canonicalizer.h"
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
 #include "xla/backends/gpu/transforms/multi_output_fusion.h"
@@ -28,7 +27,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/sort_iota_fusion.h"
 #include "xla/backends/gpu/transforms/variadic_op_splitter.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"

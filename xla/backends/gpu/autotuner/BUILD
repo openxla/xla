@@ -1156,3 +1156,51 @@ xla_test(
         ":factory_rocm",
     ]),
 )
+
+cc_library(
+    name = "fusion_recomputation",
+    srcs = ["fusion_recomputation.cc"],
+    hdrs = ["fusion_recomputation.h"],
+    deps = [
+        ":gpu_codegen_backend",
+        ":gpu_profiler",
+        "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:profiler",
+        "//xla/backends/gpu/transforms:recompute_fusion_side_outputs",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "//xla/service:compiler",
+        "//xla/service:decision",
+        "//xla/service:dump",
+        "//xla/service:executable",
+        "//xla/service:gpu_topology",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu/model:gpu_recomputation_cost_model",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+xla_test(
+    name = "fusion_recomputation_test",
+    srcs = ["fusion_recomputation_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":fusion_recomputation",
+        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/backends/gpu/transforms:recompute_fusion_side_outputs",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

@@ -41,7 +41,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "google/protobuf/text_format.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/DataLayout.h"
@@ -55,21 +54,16 @@ limitations under the License.
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/autotuner/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/cpu/target_machine_options.h"
+#include "xla/backends/gpu/autotuner/fusion_recomputation.h"
 #include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
@@ -138,6 +132,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/ragged_all_to_all_canonicalizer.h"
 #include "xla/backends/gpu/transforms/ragged_all_to_all_decomposer.h"
 #include "xla/backends/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
+#include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
 #include "xla/backends/gpu/transforms/reduce_scatter_creator.h"
 #include "xla/backends/gpu/transforms/reduction_degenerate_dim_remover.h"
 #include "xla/backends/gpu/transforms/reduction_dimension_grouper.h"
@@ -357,6 +352,13 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -2030,6 +2032,24 @@ absl::Status GpuCompiler::OptimizeHloModule(
 
     ABSL_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
     mlir_context_pool_.Clear();
+  }
+
+  // Profile the final native emitter configurations. Running before config
+  // assignment could approve a different emitter/unroll choice from the one
+  // ultimately compiled. Recompute within these fixed kernel boundaries.
+  const DebugOptions& debug = hlo_module->config().debug_options();
+  const int mode = debug.xla_gpu_experimental_fusion_recomputation();
+  if ((mode == 1 || mode == 2) && stream_exec != nullptr) {
+    HloPassPipeline recomputation("fusion-recomputation", compilation_stats);
+    recomputation.AddPass<RecomputeFusionSideOutputs>(
+        MakeFusionRecomputationEvaluator(this, gpu_topology.gpu_target_config(),
+                                         stream_exec, options.device_allocator),
+        debug.xla_gpu_fusion_recomputation_min_bytes(),
+        debug.xla_gpu_fusion_recomputation_max_candidates(),
+        /*analyze_only=*/mode == 1);
+    ABSL_RETURN_IF_ERROR(
+        recomputation.Run(hlo_module, {HloInstruction::kMainExecutionThread})
+            .status());
   }
 
   {

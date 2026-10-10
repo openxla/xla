@@ -2462,6 +2462,54 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "recompute_fusion_side_outputs",
+    srcs = ["recompute_fusion_side_outputs.cc"],
+    hdrs = ["recompute_fusion_side_outputs.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:hlo_dce",
+        "//xla/service:compilation_environments",
+        "//xla/service:decision",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_fusible",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
+    name = "recompute_fusion_side_outputs_test",
+    srcs = ["recompute_fusion_side_outputs_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":recompute_fusion_side_outputs",
+        "//xla:error_spec",
+        "//xla:shape_util",
+        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:decision",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "multi_output_fusion_test",
     srcs = ["multi_output_fusion_test.cc"],
