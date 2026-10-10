@@ -698,11 +698,6 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
       cancel = it->second;
     }
 
-    {  // At this point clique is no longer pending, it has a definitive state.
-      absl::MutexLock lock(state.mu);
-      state.pending_cliques.erase(CliqueCacheKey(collectives, clique_key));
-    }
-
     // Don't hold cliques.mu while creating the communicators, because creating
     // communicators can block.
     VLOG(5) << absl::StrFormat("[%s] [ranks=%s] Splitting communicators for %v",
@@ -710,6 +705,11 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
                                DeviceRanksToString(ranks), clique_key);
     auto split_comms = collectives->SplitCommunicatorsWithCancel(
         parent_comms, color, keys, config, ranks, cancel);
+
+    {  // At this point clique is no longer pending, it has a definitive state.
+      absl::MutexLock lock(state.mu);
+      state.pending_cliques.erase(CliqueCacheKey(collectives, clique_key));
+    }
 
     if (!split_comms.ok()) {
       return split_comms.status();
@@ -1007,10 +1007,25 @@ bool CliqueKeyContainsIncarnation(
 
 // Aborts and invalidates all cliques that have been created via AcquireClique
 // and have a clique key matching the `should_abort` predicate.
+//
+// Calls still inside CreateCommunicatorsWithCancel or
+// SplitCommunicatorsWithCancel are not in `cliques` yet. Their tokens are
+// cancelled here so PollUntilDone can return. Those tokens stay in
+// `pending_cliques` until the call itself removes them.
 static absl::Status AbortCliques(
     ProcessGpuCliques& state,
     absl::FunctionRef<bool(const GpuCliqueKey&)> should_abort)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu) {
+  // The in-progress init or split has no LockableGpuClique yet, and no
+  // communicators to Abort() here. Cancel() is an atomic store and does not
+  // require dropping `mu`.
+  for (auto& [cache_key, cancel] : state.pending_cliques) {
+    if (cancel != nullptr && should_abort(cache_key.second)) {
+      VLOG(1) << "Canceling pending GPU clique init " << cache_key.second;
+      cancel->Cancel();
+    }
+  }
+
   // Send cancellation signal to communicators in the cliques that are about
   // to be aborted, so that they can cancel pending collective operations.
   for (auto& [cache_key, lockable_clique] : state.cliques) {
