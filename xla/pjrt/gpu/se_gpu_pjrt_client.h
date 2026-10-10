@@ -140,7 +140,8 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
   void UpdateCompileOptionsTopology(const PjRtTopologyDescription& topology,
                                     CompileOptions* options) const override;
 
-  void UpdateGlobalProcessInfo(absl::Span<xla::coordination::TaskInfo> infos);
+  void UpdateGlobalProcessInfo(
+      absl::Span<xla::coordination::TaskInfo> infos) override;
 
   absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>> RuntimeAbiVersion()
       const override;
