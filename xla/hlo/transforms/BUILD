@@ -332,6 +332,7 @@ cc_library(
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:flatten_call_graph",
         "//xla/service:call_graph",
         "//xla/service:computation_layout",
         "//xla/service:hlo_buffer",

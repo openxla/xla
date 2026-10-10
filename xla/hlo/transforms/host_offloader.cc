@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/layout.h"
 #include "xla/literal_util.h"
 #include "xla/service/call_graph.h"
@@ -1087,7 +1088,49 @@ absl::Status HostOffloader::DynamifySlice(HloInstruction* slice) {
 absl::StatusOr<bool> HostOffloader::ApplySchedulingFix(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  // Collect candidate DynamicUpdateSlices with host memory space in non-entry
+  // computations. If none exist, we can skip alias analysis entirely. This
+  // avoids both unnecessary overhead and crashes when the call graph is not
+  // flat on control flow (e.g. shared while condition computations).
+  auto get_candidate_dus = [&]() {
+    std::vector<HloInstruction*> candidate_dus;
+    for (HloComputation* computation :
+         module->MakeComputationPostOrder(execution_threads)) {
+      if (computation == computation->parent()->entry_computation()) {
+        continue;
+      }
+      for (HloInstruction* instruction :
+           computation->MakeInstructionPostOrder()) {
+        if (instruction->opcode() == HloOpcode::kDynamicUpdateSlice &&
+            instruction->shape().layout().memory_space() ==
+                Layout::kHostMemorySpace) {
+          candidate_dus.push_back(instruction);
+        }
+      }
+    }
+    return candidate_dus;
+  };
+
+  std::vector<HloInstruction*> candidate_dus = get_candidate_dus();
+  if (candidate_dus.empty()) {
+    return false;
+  }
+
   bool changed = false;
+  // HloAliasAnalysis requires the call graph to be flat on control flow.
+  // If there are candidate DynamicUpdateSlices and the call graph is not flat,
+  // flatten it before running alias analysis.
+  if (!GetOrBuildCallGraph(module).IsFlatOnControlFlow()) {
+    FlattenCallGraph flatten_call_graph;
+    ABSL_ASSIGN_OR_RETURN(bool flattened,
+                          flatten_call_graph.Run(module, execution_threads));
+    if (flattened) {
+      call_graph_.reset();
+      changed = true;
+      candidate_dus = get_candidate_dus();
+    }
+  }
+
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                         HloAliasAnalysis::Run(module, alias_info_));
   auto uses_parameter_buffer = [&](HloInstruction* hlo) {
@@ -1103,34 +1146,20 @@ absl::StatusOr<bool> HostOffloader::ApplySchedulingFix(
     }
     return false;
   };
-  for (HloComputation* computation :
-       module->MakeComputationPostOrder(execution_threads)) {
-    if (computation == computation->parent()->entry_computation()) {
-      continue;
-    }
-    for (HloInstruction* instruction :
-         computation->MakeInstructionPostOrder()) {
-      if (instruction->opcode() != HloOpcode::kDynamicUpdateSlice) {
-        continue;
-      }
-      if (instruction->shape().layout().memory_space() !=
-          Layout::kHostMemorySpace) {
-        continue;
-      }
-      // Replace DynamicUpdateSlice's 1st operand with a copy in case it
-      // used parameter buffer directly because in case of aliasing with loop
-      // parameters control dependencies can mess with scheduling.
-      HloInstruction* operand = instruction->mutable_operand(1);
-      if (uses_parameter_buffer(operand)) {
-        HloInstruction* copy =
-            instruction->parent()->AddInstruction(HloInstruction::CreateUnary(
-                operand->shape(), HloOpcode::kCopy, operand));
-        VLOG(5) << "Added copy " << std::quoted(copy->name())
-                << " for DynamicUpdateSlice " << instruction->name()
-                << "'s 1st operand " << operand->name();
-        ABSL_RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, copy));
-        changed = true;
-      }
+  for (HloInstruction* instruction : candidate_dus) {
+    // Replace DynamicUpdateSlice's 1st operand with a copy in case it
+    // used parameter buffer directly because in case of aliasing with loop
+    // parameters control dependencies can mess with scheduling.
+    HloInstruction* operand = instruction->mutable_operand(1);
+    if (uses_parameter_buffer(operand)) {
+      HloInstruction* copy =
+          instruction->parent()->AddInstruction(HloInstruction::CreateUnary(
+              operand->shape(), HloOpcode::kCopy, operand));
+      VLOG(5) << "Added copy " << std::quoted(copy->name())
+              << " for DynamicUpdateSlice " << instruction->name()
+              << "'s 1st operand " << operand->name();
+      ABSL_RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, copy));
+      changed = true;
     }
   }
   return changed;
