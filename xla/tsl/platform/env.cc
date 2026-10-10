@@ -503,9 +503,9 @@ int32_t Env::GetProcessId() {
 #endif
 }
 
-Thread::~Thread() {}
+Thread::~Thread() = default;
 
-EnvWrapper::~EnvWrapper() {}
+EnvWrapper::~EnvWrapper() = default;
 
 absl::Status ReadFileToString(Env* env, const std::string& fname,
                               std::string* data) {

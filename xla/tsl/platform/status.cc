@@ -158,7 +158,7 @@ std::vector<StackFrame> GetStackTrace(const absl::Status& status) {
 
 }  // namespace errors
 
-StatusGroup::StatusGroup() {}
+StatusGroup::StatusGroup() = default;
 
 StatusGroup::StatusGroup(std::initializer_list<absl::Status> statuses) {
   for (const absl::Status& s : statuses) {
