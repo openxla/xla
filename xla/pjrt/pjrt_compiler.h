@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_abi_version.h"
+#include "xla/pjrt/pjrt_build_stamp.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler_variant.h"
 #include "xla/pjrt/pjrt_device_description.h"
@@ -551,6 +552,13 @@ class PjRtCompiler {
   GetTargetRuntimeAbiVersion() {
     return absl::UnimplementedError(
         "GetTargetRuntimeAbiVersion is not implemented.");
+  }
+
+  // Returns the build stamp representing the build provenance and identity of
+  // this compiler.
+  virtual absl::StatusOr<std::shared_ptr<const PjRtBuildStamp>> GetBuildStamp()
+      const {
+    return absl::UnimplementedError("GetBuildStamp is not implemented.");
   }
 
   // Deserializes a serialized executable as produced by

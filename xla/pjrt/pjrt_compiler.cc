@@ -35,6 +35,7 @@ limitations under the License.
 #include "riegeli/bytes/reader.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
+#include "xla/pjrt/pjrt_build_stamp.h"
 #include "xla/pjrt/pjrt_compiler_variant.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
@@ -148,6 +149,7 @@ absl::Status PjRtCompilerRegistry::InitializeAllVariants() {
   {
     absl::MutexLock l(factory_mutex_);
     keys.reserve(factories_.size());
+    // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
     for (const auto& [key, factory] : factories_) {
       keys.push_back(key);
     }
@@ -216,6 +218,7 @@ void PjRtRegisterDefaultCompiler(absl::string_view platform_name,
 void PjRtRegisterCompilerVariantPicker(absl::string_view platform_name,
                                        PjRtCompilerVariantPicker picker,
                                        bool is_weak) {
+  PjRtRegisterBuildStampVariantPicker(platform_name, picker);
   PjRtCompilerRegistry::Global().RegisterVariantPicker(
       platform_name, std::move(picker), is_weak);
 }
