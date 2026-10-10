@@ -13150,6 +13150,9 @@ TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrier) {
                 ->operand(0)
                 ->operand_count(),
             2);
+  const HloInstruction* b = FindInstruction(m.get(), "b");
+  const HloInstruction* add = FindInstruction(m.get(), "add.0");
+  EXPECT_THAT(b->control_predecessors(), ElementsAre(add));
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrierWithOriginalValue) {

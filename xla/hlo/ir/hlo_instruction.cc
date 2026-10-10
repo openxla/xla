@@ -3291,6 +3291,11 @@ absl::Status HloInstruction::SafelyDropAllControlDependencies() {
         ABSL_RETURN_IF_ERROR(predecessor->AddControlDependencyTo(successor));
       }
     }
+    for (HloInstruction* operand : operands_) {
+      for (HloInstruction* successor : rare()->control_successors) {
+        ABSL_RETURN_IF_ERROR(operand->AddControlDependencyTo(successor));
+      }
+    }
   }
   ABSL_RETURN_IF_ERROR(DropAllControlDeps());
   return absl::OkStatus();
