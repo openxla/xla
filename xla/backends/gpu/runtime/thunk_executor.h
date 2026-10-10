@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/service/buffer_assignment.h"
@@ -55,6 +56,9 @@ class ThunkExecutor {
 
   // Builds a buffer definition plan for `executor` and its nested thunks.
   static DefinitionPlan BuildDefinitionPlan(const ThunkExecutor& executor);
+
+  static LaunchDependencyMap BuildLaunchDependencyMap(
+      const ThunkExecutor& executor, bool ordering_enabled);
 
   // Callback invoked immediately after all work touching the buffer allocations
   // at `indices` has been scheduled. `stream` is ordered after that work and

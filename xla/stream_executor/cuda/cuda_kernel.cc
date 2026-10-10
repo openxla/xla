@@ -104,16 +104,17 @@ absl::Status CudaKernel::UpdateMaxDynamicSharedMemoryBytes(
 absl::Status CudaKernel::Launch(const ThreadDim& thread_dims,
                                 const BlockDim& block_dims,
                                 const std::optional<ClusterDim>& cluster_dims,
-                                Stream* stream, const KernelArgs& args) {
+                                Stream* stream, const KernelArgs& args,
+                                Event* launch_completion_event) {
   TraceMe trace([] { return TraceMeEncode("CudaKernel::Launch", {}); },
                 /*level=*/TraceMeLevel::kVerbose);
 
   CUfunction function = gpu_function();
 
   // Launch kernels with packed arguments.
-  auto launch =
-      [this, stream, &cluster_dims, &thread_dims, &block_dims,
-       function](const KernelArgsPackedArrayBase& packed) -> absl::Status {
+  auto launch = [this, stream, &cluster_dims, &thread_dims, &block_dims,
+                 function, launch_completion_event](
+                    const KernelArgsPackedArrayBase& packed) -> absl::Status {
     TraceMe trace([] { return TraceMeEncode("CudaKernel::Launch/launch", {}); },
                   /*level=*/TraceMeLevel::kVerbose);
 
@@ -133,7 +134,7 @@ absl::Status CudaKernel::Launch(const ThreadDim& thread_dims,
 
     return stream->LaunchKernel(thread_dims, block_dims, cluster_dims, function,
                                 name(), params, packed.number_of_shared_bytes(),
-                                use_pdl());
+                                use_pdl(), launch_completion_event);
   };
 
   // If arguments are already packed we can just launch the kernel.

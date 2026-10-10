@@ -2176,6 +2176,7 @@ xla_test(
         ":all_reduce_thunk",
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
+        ":event_pool",
         ":thunk",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -2186,6 +2187,7 @@ xla_test(
         "//xla/service:device_assignment",
         "//xla/service:shaped_slice",
         "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -3582,7 +3584,10 @@ xla_cc_test(
 cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
-    hdrs = ["thunk.h"],
+    hdrs = [
+        "launch_ordering.h",
+        "thunk.h",
+    ],
     visibility = internal_visibility([
         ":friends",
         "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
@@ -3593,6 +3598,7 @@ cc_library(
         ":collective_memory",
         ":collective_memory_requests",
         ":collective_params",
+        ":event_pool",
         ":thunk_id",
         ":thunk_kind_proto_cc",
         ":thunk_proto_cc",
@@ -4372,6 +4378,7 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:gpu_kernel_registry",

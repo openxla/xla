@@ -151,13 +151,15 @@ absl::Status CollectiveBroadcastThunk::RunCollective(
       per_device_cb_metadata_.Find(stream.parent()->device_ordinal());
 
   return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm,
-                                            cb_metadata, has_dynamic_root_);
+                                            cb_metadata, has_dynamic_root_,
+                                            params.TakeLaunchEvent(this));
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                                     se::Stream& stream, Communicator& comm,
                                     CollectiveBroadcastMetadata* cb_metadata,
-                                    bool has_dynamic_root) {
+                                    bool has_dynamic_root,
+                                    se::Event* launch_event) {
   if (has_dynamic_root && cb_metadata) {
     DeviceBufferPair& roots_device_buffer = buffers.back();
     CHECK(cb_metadata->bcast_roots != nullptr);
@@ -190,11 +192,13 @@ absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
       }
       se::DeviceAddressBase src_addr = buffer.source_buffer;
       se::DeviceAddressBase dest_addr = buffer.destination_buffer;
+
       ABSL_RETURN_IF_ERROR(gpu_comm->LaunchBroadcast(
           // Always use rank 0 since we always broadcast from the first id
           // in replica_groups
           src_addr, dest_addr, buffer.element_type, buffer.element_count, root,
-          GpuCollectives::On(stream)));
+          GpuCollectives::OnGroupMember(stream, launch_event,
+                                        i == num_broadcasts - 1)));
     }
     return absl::OkStatus();
   });

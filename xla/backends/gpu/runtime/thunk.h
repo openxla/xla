@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/future.h"
@@ -63,6 +64,8 @@ class CustomOptions;
 }  // namespace xla
 
 namespace xla::gpu {
+
+class LaunchOrdering;
 
 // Thunk acts as the bridge between IrEmitter and GpuExecutable. It stores the
 // metadata IrEmitter generates for GpuExecutable to invoke an HloInstruction.
@@ -307,7 +310,8 @@ class Thunk {
         std::vector<se::Stream*> additional_compute_streams = {},
         ExecutionScopedState* execution_scoped_state = nullptr,
         std::optional<absl::Span<const BufferAllocation::Index>>
-            persistent_alloc_indices = std::nullopt);
+            persistent_alloc_indices = std::nullopt,
+        const LaunchOrdering* launch_ordering = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -355,6 +359,10 @@ class Thunk {
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
+
+    const LaunchOrdering* launch_ordering = nullptr;
+
+    stream_executor::Event* TakeLaunchEvent(const Thunk* thunk) const;
 
     bool mock_collectives = false;
     int64_t execution_id = 0;
@@ -463,6 +471,8 @@ class Thunk {
 
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
+
+  virtual bool RecordsLaunchCompletion() const { return false; }
 
   // Return type for `Walk` callbacks. All callbacks must return `void` or all
   // must return `absl::Status`.

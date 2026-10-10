@@ -48,6 +48,7 @@ struct AllGatherConfig {
 // Thunk that performs an All-Gather among CUDA GPU-based replicas.
 class AllGatherThunk : public CollectiveThunk {
  public:
+  bool RecordsLaunchCompletion() const override { return true; }
   AllGatherThunk(ThunkInfo thunk_info, const HloAllGatherInstruction* inst,
                  std::vector<Buffer> buffers);
   AllGatherThunk(ThunkInfo thunk_info, AllGatherConfig config,
@@ -97,7 +98,8 @@ class AllGatherThunk : public CollectiveThunk {
 
 absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator& comm,
-                          bool use_symmetric_buffer = false);
+                          bool use_symmetric_buffer = false,
+                          se::Event* launch_event = nullptr);
 
 }  // namespace xla::gpu
 

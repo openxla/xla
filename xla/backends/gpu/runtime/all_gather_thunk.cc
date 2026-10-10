@@ -206,6 +206,9 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
   if (use_symmetric_memory() && clique_key.is_local()) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "AllGather: using one-sided mode (Put+Signal)";
+    if (se::Event* launch_event = params.TakeLaunchEvent(this)) {
+      ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
+    }
     return RunOneSidedAllGather(device_buffers, stream, clique_key, params,
                                 comm);
   }
@@ -219,6 +222,9 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
       const std::optional<RankId> rank =
           clique_key.rank(params.collective_params->global_device_id);
 
+      if (se::Event* launch_event = params.TakeLaunchEvent(this)) {
+        ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
+      }
       return gxl_nccl_comm->RunAllGatherGxl(
           &stream, device_buffers[0].element_type,
           device_buffers[0].source_buffer, device_buffers[0].destination_buffer,
@@ -226,12 +232,13 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
     }
   }
   return xla::gpu::RunAllGather(device_buffers, stream, comm,
-                                config_.config.use_symmetric_buffer);
+                                config_.config.use_symmetric_buffer,
+                                params.TakeLaunchEvent(this));
 }
 
 absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator& comm,
-                          bool use_symmetric_buffer) {
+                          bool use_symmetric_buffer, se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing all-gather";
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
@@ -239,7 +246,9 @@ absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
     for (DeviceBufferPair& buffer : buffers) {
       ABSL_RETURN_IF_ERROR(gpu_comm->LaunchAllGather(
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-          buffer.element_count, GpuCollectives::On(stream)));
+          buffer.element_count,
+          GpuCollectives::OnGroupMember(stream, launch_event,
+                                        &buffer == &buffers.back())));
     }
     return absl::OkStatus();
   });

@@ -65,6 +65,7 @@ class AllReduceReduceScatterThunkBase : public CollectiveThunk {
 
 class AllReduceThunk : public AllReduceReduceScatterThunkBase {
  public:
+  bool RecordsLaunchCompletion() const override { return true; }
   AllReduceThunk(ThunkInfo thunk_info, AllReduceConfig config,
                  std::vector<Buffer> buffers);
   AllReduceThunk(ThunkInfo thunk_info, const HloAllReduceInstruction* inst,
@@ -100,6 +101,7 @@ class AllReduceThunk : public AllReduceReduceScatterThunkBase {
 
 class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
  public:
+  bool RecordsLaunchCompletion() const override { return true; }
   ReduceScatterThunk(ThunkInfo thunk_info,
                      const HloReduceScatterInstruction* inst,
                      std::vector<Buffer> buffers,
@@ -137,12 +139,14 @@ class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator& comm,
-                          bool use_symmetric_buffer = false);
+                          bool use_symmetric_buffer = false,
+                          se::Event* launch_event = nullptr);
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
                               se::Stream& stream, Communicator& comm,
-                              bool use_symmetric_buffer = false);
+                              bool use_symmetric_buffer = false,
+                              se::Event* launch_event = nullptr);
 
 }  // namespace gpu
 }  // namespace xla

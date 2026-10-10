@@ -728,7 +728,8 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
   }
   return ExecuteKernelOnStream(*plan.kernel, plan.kernel_args,
                                launch_dimensions_,
-                               /*cluster_dim=*/std::nullopt, params.stream);
+                               /*cluster_dim=*/std::nullopt, params.stream,
+                               params.TakeLaunchEvent(this));
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(

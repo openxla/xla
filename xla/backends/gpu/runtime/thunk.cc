@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -65,7 +66,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     std::vector<se::Stream*> additional_compute_streams,
     ExecutionScopedState* execution_scoped_state,
     std::optional<absl::Span<const BufferAllocation::Index>>
-        persistent_alloc_indices) {
+        persistent_alloc_indices,
+    const LaunchOrdering* launch_ordering) {
   const gpu::GpuExecutableRunOptions* gpu_opts =
       run_options.run_options().gpu_executable_run_options();
 
@@ -75,7 +77,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
   uint64_t rng_seed =
       static_cast<uint64_t>(run_options.run_options().rng_seed());
 
-  return ExecuteParams(&buffer_allocations, stream, command_buffer_trace_stream,
+  ExecuteParams params(&buffer_allocations, stream, command_buffer_trace_stream,
                        collective_params, collective_cliques, collective_memory,
                        run_options.run_options().device_to_host_stream(),
                        run_options.run_options().host_to_device_stream(),
@@ -87,6 +89,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                        enable_mock_collectives,
                        run_options.run_options().run_id().ToInt(), rng_seed,
                        persistent_alloc_indices);
+  params.launch_ordering = launch_ordering;
+  return params;
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
@@ -427,6 +431,15 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
   thunk_info.thunk_id = thunk_id;
   auto gpu_backend_config = instr->backend_config<GpuBackendConfig>();
   return thunk_info;
+}
+
+se::Event* Thunk::ExecuteParams::TakeLaunchEvent(const Thunk* thunk) const {
+  if (launch_ordering == nullptr) return nullptr;
+  std::optional<LaunchDependencyMap::SlotId> slot =
+      launch_ordering->map.RecordSlot(thunk);
+  if (!slot.has_value()) return nullptr;
+  launch_ordering->ClaimSlot(*slot);
+  return launch_ordering->events[*slot]->get();
 }
 
 bool Thunk::IsCollective() const {

@@ -399,7 +399,8 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
 absl::Status ExecuteKernelOnStream(
     se::Kernel& kernel, absl::Span<const se::KernelArg> args,
     const LaunchDimensions& dims,
-    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream) {
+    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream,
+    se::Event* launch_completion_event) {
   TraceMe trace([] { return TraceMeEncode("ExecuteKernelOnStream", {}); },
                 /*level=*/TraceMeLevel::kVerbose);
 
@@ -415,7 +416,8 @@ absl::Status ExecuteKernelOnStream(
   }
 
   return kernel.Launch(dims.thread_counts_per_block(), dims.block_counts(),
-                       cluster_dim, stream, *kernel_args);
+                       cluster_dim, stream, *kernel_args,
+                       launch_completion_event);
 }
 
 // Unimplemented for integers yet.
