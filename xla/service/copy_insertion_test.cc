@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -2750,9 +2751,67 @@ void BM_ManyElementTuple(::testing::benchmark::State& state) {
   }
 }
 
+// Parallel while loops that update one parameter in place, under the region
+// based analysis: all the copies of the parameter interfere, and each check
+// relates live ranges that span every loop.
+void BM_ParallelWhilesRegionAnalysis(::testing::benchmark::State& state) {
+  const int num_whiles = state.range(0);
+  std::string hlo = "HloModule BM_ParallelWhilesRegionAnalysis\n";
+  std::vector<std::string> results;
+  std::string whiles;
+  for (int i = 0; i < num_whiles; ++i) {
+    absl::StrAppend(&hlo, absl::Substitute(R"(
+cond$0 {
+  cp$0 = (s32[], f32[64]) parameter(0)
+  ci$0 = s32[] get-tuple-element(cp$0), index=0
+  climit$0 = s32[] constant(3)
+  ROOT clt$0 = pred[] compare(ci$0, climit$0), direction=LT
+}
+
+body$0 {
+  bp$0 = (s32[], f32[64]) parameter(0)
+  bi$0 = s32[] get-tuple-element(bp$0), index=0
+  bv$0 = f32[64] get-tuple-element(bp$0), index=1
+  bone$0 = s32[] constant(1)
+  bnext$0 = s32[] add(bi$0, bone$0)
+  bupd$0 = f32[1] constant({1})
+  bdus$0 = f32[64] dynamic-update-slice(bv$0, bupd$0, bi$0)
+  ROOT bt$0 = (s32[], f32[64]) tuple(bnext$0, bdus$0)
+}
+)",
+                                           i));
+    absl::StrAppend(&whiles, absl::Substitute(R"(
+  w$0 = (s32[], f32[64]) while(init), condition=cond$0, body=body$0
+  g$0 = f32[64] get-tuple-element(w$0), index=1)",
+                                              i));
+    results.push_back(absl::StrCat("g", i));
+  }
+  absl::StrAppend(
+      &hlo, R"(
+ENTRY entry {
+  p = f32[64] parameter(0)
+  zero = s32[] constant(0)
+  init = (s32[], f32[64]) tuple(zero, p))",
+      whiles, "\n  ROOT t = (",
+      absl::StrJoin(std::vector<std::string>(num_whiles, "f32[64]"), ", "),
+      ") tuple(", absl::StrJoin(results, ", "), ")\n}\n");
+  AliasInfo alias_info;
+  for (auto s : state) {
+    state.PauseTiming();
+    absl::StatusOr<std::unique_ptr<HloModule>> module =
+        ParseAndReturnUnverifiedModule(hlo);
+    ASSERT_IS_OK(module.status());
+    CopyInsertion copy_insertion(&alias_info,
+                                 /*use_region_based_live_range_analysis=*/-1);
+    state.ResumeTiming();
+    ASSERT_IS_OK(copy_insertion.Run(module->get()).status());
+  }
+}
+
 BENCHMARK(BM_SequentialWhiles)->Arg(512)->Arg(1024)->Arg(2048)->Arg(4096);
 BENCHMARK(BM_ParallelWhiles)->Arg(512)->Arg(1024)->Arg(2048)->Arg(4096);
 BENCHMARK(BM_ManyElementTuple)->Arg(1024)->Arg(12288);
+BENCHMARK(BM_ParallelWhilesRegionAnalysis)->Arg(64)->Arg(128)->Arg(256);
 
 TEST_F(CopyInsertionTest, SimpleControlFlowTest) {
   const std::string& hlo_string = R"(
@@ -4225,6 +4284,40 @@ ENTRY entry {
   for (absl::string_view reader : {"reader, operand 0", "other, operand 0"}) {
     EXPECT_EQ(count(stack_uses, reader), 1) << stack_uses;
     EXPECT_EQ(count(view_uses, reader), 1) << view_uses;
+  }
+}
+
+// ValuesInterfere stops computing a relation once interference is certain,
+// which is exact only because a union never clears the overlap or the
+// interception of the relation it updates. Checks every reachable relation.
+TEST(CopyRemovalRelationTest, UnionNeverClearsOverlapOrInterception) {
+  std::vector<Relation> singles = {Relation()};
+  for (Relation::RuntimeOrder order :
+       {Relation::kNoOverlap, Relation::kSameInstr, Relation::kBeforeStart,
+        Relation::kBeforeStartOrSameInstr, Relation::kAfterEnd,
+        Relation::kAfterEndOrSameInstr, Relation::kBeforeStartOrAfterEnd,
+        Relation::kBeforeOrAfterOrOverlap}) {
+    for (bool intercept : {false, true}) {
+      singles.push_back(Relation(order, intercept));
+    }
+  }
+  std::vector<Relation> reached = {Relation()};
+  for (size_t i = 0; i < reached.size(); ++i) {
+    for (const Relation& single : singles) {
+      Relation updated = reached[i];
+      updated.UnionRelationFromDifferentSource(single);
+      if (reached[i].RuntimeOrderOverlap()) {
+        EXPECT_TRUE(updated.RuntimeOrderOverlap())
+            << reached[i].ToString() << " with " << single.ToString();
+      }
+      if (reached[i].InterceptDefUse()) {
+        EXPECT_TRUE(updated.InterceptDefUse())
+            << reached[i].ToString() << " with " << single.ToString();
+      }
+      if (!absl::c_linear_search(reached, updated)) {
+        reached.push_back(updated);
+      }
+    }
   }
 }
 
