@@ -77,8 +77,7 @@ namespace internal {
 // Eventually absl::strings will have native support for this and we will be
 // able to completely remove PrepareForStrCat().
 template <typename T>
-typename std::enable_if<!std::is_convertible<T, absl::AlphaNum>::value,
-                        std::string>::type
+std::enable_if_t<!std::is_convertible_v<T, absl::AlphaNum>, std::string>
 PrepareForStrCat(const T& t) {
   std::stringstream ss;
   ss << t;
