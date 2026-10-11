@@ -59,7 +59,7 @@ bool hasPrivateFeaturesNotInStablehlo(HloOpTy hloOp) {
           mhlo::XlaRngGetAndUpdateStateOp>(hloOp.getOperation())) {
     return true;
   }
-  if constexpr (std::is_same<HloOpTy, mhlo::ConvolutionOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::ConvolutionOp>) {
     // StableHLO convolution doesn't support "unknown" dimensions.
     // This is an esoteric feature of MHLO convolutions, and it's different
     // from the notion of dynamic dimensions. For more context, here's the
@@ -70,7 +70,7 @@ bool hasPrivateFeaturesNotInStablehlo(HloOpTy hloOp) {
     auto dimensionNumbers = debugString(hloOp.getDimensionNumbers());
     if (dimensionNumbers.find('?') != std::string::npos) return true;
   }
-  if constexpr (std::is_same<HloOpTy, mhlo::CustomCallOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::CustomCallOp>) {
     // To the best of our knowledge, none of the ML frontends are using this
     // enum, so we categorized it as private to XLA.
     // Please let us know if we missed something, and we'll recategorize it.
@@ -87,7 +87,7 @@ bool hasPrivateFeaturesNotInStablehlo(HloOpTy hloOp) {
 // for StableHLO, and they are usually accompanied by a StableHLO GitHub ticket.
 template <typename HloOpTy>
 bool hasExperimentalFeaturesNotInStablehlo(HloOpTy hloOp) {
-  if constexpr (std::is_same<HloOpTy, mhlo::AllToAllOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::AllToAllOp>) {
     // StableHLO AllToAll doesn't support the tuple form yet.
     // Proposal: https://github.com/openxla/stablehlo/issues/574.
     if (hloOp.getNumOperands() != 1) return true;
@@ -103,52 +103,52 @@ template <typename HloOpTy>
 std::optional<int64_t> getPublicFeaturesNotInStablehlo(HloOpTy hloOp) {
   // StableHLO doesn't support TopK yet.
   // Proposal: https://github.com/openxla/stablehlo/pull/1593
-  if constexpr (std::is_same<HloOpTy, mhlo::TopKOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::TopKOp>) {
     // Version 1: Initial version for TopK.
     return 1;
   }
   // StableHLO doesn't support TopK yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::ErfOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::ErfOp>) {
     // Version 1: Initial version for ErfOp.
     return 1;
   }
   // StableHLO doesn't support Acosh yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::AcoshOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::AcoshOp>) {
     // Version 1: Initial version for AcoshOp.
     return 1;
   }
   // StableHLO doesn't support Acos yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::AcosOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::AcosOp>) {
     // Version 1: Initial version for AcosOp.
     return 1;
   }
   // StableHLO doesn't support Atanh yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::AtanhOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::AtanhOp>) {
     // Version 1: Initial version for AtanhOp.
     return 1;
   }
   // StableHLO doesn't support Cosh yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::CoshOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::CoshOp>) {
     // Version 1: Initial version for CoshOp.
     return 1;
   }
   // StableHLO doesn't support Sinh yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::SinhOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::SinhOp>) {
     // Version 1: Initial version for CoshOp.
     return 1;
   }
   // StableHLO doesn't support Asin yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::AsinOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::AsinOp>) {
     // Version 1: Initial version for AsinOp.
     return 1;
   }
   // StableHLO doesn't support Asinh yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::AsinhOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::AsinhOp>) {
     // Version 1: Initial version for AsinhOp.
     return 1;
   }
   // StableHLO doesn't support Mulhi yet.
-  if constexpr (std::is_same<HloOpTy, mhlo::MulhiOp>::value) {
+  if constexpr (std::is_same_v<HloOpTy, mhlo::MulhiOp>) {
     // Version 1: Initial version for MulhiOp.
     return 1;
   }
@@ -167,50 +167,50 @@ bool hasPublicFeaturesNotInStablehlo(HloOpTy op) {
 
 template <typename StablehloOpTy>
 bool isDenseI64Array(mlir::StringAttr hloName) {
-  if (std::is_same<StablehloOpTy, stablehlo::BroadcastOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::BroadcastOp> &&
       hloName == "broadcast_sizes")
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::BroadcastInDimOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::BroadcastInDimOp> &&
       hloName == "broadcast_dimensions")
     return true;
-  if ((std::is_same<StablehloOpTy, stablehlo::ConvolutionOp>::value ||
-       std::is_same<StablehloOpTy, stablehlo::DynamicConvOp>::value) &&
+  if ((std::is_same_v<StablehloOpTy, stablehlo::ConvolutionOp> ||
+       std::is_same_v<StablehloOpTy, stablehlo::DynamicConvOp>) &&
       (hloName == "window_strides" || hloName == "lhs_dilation" ||
        hloName == "rhs_dilation"))
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::DynamicBroadcastInDimOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::DynamicBroadcastInDimOp> &&
       (hloName == "broadcast_dimensions" ||
        hloName == "known_expanding_dimensions" ||
        hloName == "known_nonexpanding_dimensions"))
     return true;
-  if ((std::is_same<StablehloOpTy, stablehlo::DynamicSliceOp>::value ||
-       std::is_same<StablehloOpTy, stablehlo::GatherOp>::value) &&
+  if ((std::is_same_v<StablehloOpTy, stablehlo::DynamicSliceOp> ||
+       std::is_same_v<StablehloOpTy, stablehlo::GatherOp>) &&
       hloName == "slice_sizes")
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::FftOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::FftOp> &&
       hloName == "fft_length")
     return true;
-  if ((std::is_same<StablehloOpTy, stablehlo::MapOp>::value ||
-       std::is_same<StablehloOpTy, stablehlo::ReduceOp>::value ||
-       std::is_same<StablehloOpTy, stablehlo::ReverseOp>::value) &&
+  if ((std::is_same_v<StablehloOpTy, stablehlo::MapOp> ||
+       std::is_same_v<StablehloOpTy, stablehlo::ReduceOp> ||
+       std::is_same_v<StablehloOpTy, stablehlo::ReverseOp>) &&
       hloName == "dimensions")
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::PadOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::PadOp> &&
       (hloName == "edge_padding_low" || hloName == "edge_padding_high" ||
        hloName == "interior_padding"))
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::ReduceWindowOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::ReduceWindowOp> &&
       (hloName == "window_dimensions" || hloName == "window_strides" ||
        hloName == "base_dilations" || hloName == "window_dilations"))
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::SelectAndScatterOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::SelectAndScatterOp> &&
       (hloName == "window_dimensions" || hloName == "window_strides"))
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::SliceOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::SliceOp> &&
       (hloName == "start_indices" || hloName == "limit_indices" ||
        hloName == "strides"))
     return true;
-  if (std::is_same<StablehloOpTy, stablehlo::TransposeOp>::value &&
+  if (std::is_same_v<StablehloOpTy, stablehlo::TransposeOp> &&
       hloName == "permutation")
     return true;
   return false;
@@ -221,8 +221,8 @@ Attribute convertDenseArray(mlir::StringAttr hloName, Attribute hloAttr) {
   auto denseInts = mlir::dyn_cast<DenseIntElementsAttr>(hloAttr);
   if (!denseInts) return {};
 
-  if ((std::is_same<StablehloOpTy, stablehlo::ConvolutionOp>::value ||
-       std::is_same<StablehloOpTy, stablehlo::DynamicConvOp>::value) &&
+  if ((std::is_same_v<StablehloOpTy, stablehlo::ConvolutionOp> ||
+       std::is_same_v<StablehloOpTy, stablehlo::DynamicConvOp>) &&
       hloName == "window_reversal") {
     return DenseBoolArrayAttr::get(
         hloAttr.getContext(), llvm::to_vector(denseInts.getValues<bool>()));
@@ -519,7 +519,7 @@ LogicalResult convertAttributes(ConversionPatternRewriter& rewriter,
     Attribute stablehloAttr;
 
     // Skip custom_call_schedule if using the default attribute
-    if constexpr (std::is_same<HloOpTy, mhlo::CustomCallOp>::value) {
+    if constexpr (std::is_same_v<HloOpTy, mhlo::CustomCallOp>) {
       // custom_call_schedule is private to XLA, but we still want to allow
       // #mhlo<custom_call_schedule NONE> (by ignoring it).
       if (hloAttr.getName() == "custom_call_schedule" &&
