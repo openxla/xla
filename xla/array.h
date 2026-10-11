@@ -46,7 +46,7 @@ namespace array_impl {
 
 template <typename T, typename T2>
 using overload_for_float = std::enable_if_t<
-    is_specialized_floating_point_v<T> && std::is_same<T2, float>::value, bool>;
+    is_specialized_floating_point_v<T> && std::is_same_v<T2, float>, bool>;
 
 // A type trait that is valid when all elements in a parameter pack are of
 // integral type. Not using an alias template to work around MSVC 14.00 bug.
@@ -388,8 +388,7 @@ class Array {
   // eagerly; a parameter pack can take zero or more elements, so we must
   // restrict this to only parameter packs that are all of integral type.
   template <typename... Dims>
-  typename std::enable_if<array_impl::pack_is_integral<Dims...>::value,
-                          const T&>::type
+  std::enable_if_t<array_impl::pack_is_integral<Dims...>::value, const T&>
   operator()(Dims... dims) const {
     DCHECK_EQ(sizeof...(dims), num_dimensions());
     // Check each index is within the bounds of the array.
@@ -405,9 +404,8 @@ class Array {
   // Returns the value at the cell specified by the indexes. The number of
   // arguments have to match with the number of dimensions for the array.
   template <typename... Dims>
-  typename std::enable_if<array_impl::pack_is_integral<Dims...>::value,
-                          T&>::type
-  operator()(Dims... dims) {
+  std::enable_if_t<array_impl::pack_is_integral<Dims...>::value, T&> operator()(
+      Dims... dims) {
     return const_cast<T&>(const_cast<const Array*>(this)->operator()(
         std::forward<Dims>(dims)...));
   }
