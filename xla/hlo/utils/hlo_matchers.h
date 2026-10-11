@@ -498,9 +498,8 @@ inline ::testing::Matcher<const ::xla::HloInstruction*> CustomCall(
 // overload above.
 template <
     typename FirstM, typename... M,
-    typename Dummy = typename std::enable_if<
-        !std::is_convertible<FirstM, ::testing::Matcher<std::string>>::value,
-        void>::type*>
+    typename Dummy = std::enable_if_t<
+        !std::is_convertible_v<FirstM, ::testing::Matcher<std::string>>, void>*>
 inline ::testing::Matcher<const ::xla::HloInstruction*> CustomCall(
     FirstM operands_first, M... operands_rest) {
   return ::testing::MakeMatcher(new ::xla::testing::HloMatcher(
