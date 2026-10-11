@@ -220,8 +220,7 @@ absl::Status RunGpuConvForwardActivation(
 // This is the specialization for double, float, and half types.  All kinds of
 // convolutions are supported here.
 template <typename ElementType, typename BiasType, typename OutputType,
-          typename std::enable_if<
-              !std::is_integral<ElementType>::value>::type* = nullptr>
+          std::enable_if_t<!std::is_integral_v<ElementType>>* = nullptr>
 absl::Status RunGpuConvInternalImpl(const GpuConvParams& params,
                                     se::Stream* stream, RunConvOptions options,
                                     DeviceAddress<ElementType> input_buf,
@@ -248,8 +247,7 @@ absl::Status RunGpuConvInternalImpl(const GpuConvParams& params,
 
 // Specialization for integer types.  Only two forward convolutions are allowed.
 template <typename ElementType, typename BiasType, typename OutputType,
-          typename std::enable_if<std::is_integral<ElementType>::value>::type* =
-              nullptr>
+          std::enable_if_t<std::is_integral_v<ElementType>>* = nullptr>
 absl::Status RunGpuConvInternalImpl(const GpuConvParams& params,
                                     se::Stream* stream, RunConvOptions options,
                                     DeviceAddress<ElementType> input_buf,

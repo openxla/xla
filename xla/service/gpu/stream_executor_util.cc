@@ -420,15 +420,12 @@ absl::Status ExecuteKernelOnStream(
 
 // Unimplemented for integers yet.
 template <typename T, typename Generator>
-typename std::enable_if<std::is_integral<T>::value,
-                        T>::type static UniformDistribution(T lhs, T rhs,
-                                                            Generator* gen) =
-    delete;
+std::enable_if_t<std::is_integral_v<T>, T> static UniformDistribution(
+    T lhs, T rhs, Generator* gen) = delete;
 
 template <typename T, typename Generator>
-typename std::enable_if<std::is_floating_point<T>::value,
-                        T>::type static UniformDistribution(T lhs, T rhs,
-                                                            Generator* gen) {
+std::enable_if_t<std::is_floating_point_v<T>, T> static UniformDistribution(
+    T lhs, T rhs, Generator* gen) {
   return std::uniform_real_distribution<T>(lhs, rhs)(*gen);
 }
 
@@ -452,8 +449,8 @@ static void InitializeTypedBuffer(se::Stream* stream,
                               std::numeric_limits<Eigen::half>::max_exponent;
       // Only double gets random values in double.  Other data types get random
       // values in float then cast them to the target data types.
-      using RandomType = typename std::conditional<std::is_same_v<T, double>,
-                                                   double, float>::type;
+      using RandomType =
+          std::conditional_t<std::is_same_v<T, double>, double, float>;
       // Scale down the values for fp16 to have less overflows.
       auto upper_bound = RandomType(kIsLowRange ? 0.1 : 1.0);
       auto rand_val = UniformDistribution(RandomType(0), upper_bound, &gen);
