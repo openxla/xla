@@ -280,7 +280,7 @@ class IntType {
   // The integer value of type ValueType.
   ValueType value_;
 
-  static_assert(std::is_integral<ValueType>::value, "invalid integer type");
+  static_assert(std::is_integral_v<ValueType>, "invalid integer type");
 } TF_PACKED;
 
 // -- NON-MEMBER STREAM OPERATORS ----------------------------------------------

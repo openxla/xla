@@ -39,7 +39,7 @@ class CompactPointerSet {
 
   ~CompactPointerSet() {
     static_assert(
-        std::is_pointer<T>::value,
+        std::is_pointer_v<T>,
         "CompactPointerSet<T> can only be used with T's that are pointers");
     if (isbig()) delete big();
   }
