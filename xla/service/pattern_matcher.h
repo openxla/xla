@@ -390,8 +390,7 @@ struct IsTrivialMatcher {
   static constexpr bool value = false;
 };
 template <typename T>
-struct IsTrivialMatcher<T,
-                        typename std::enable_if<T::kIsTrivialMatcher>::type> {
+struct IsTrivialMatcher<T, std::enable_if_t<T::kIsTrivialMatcher>> {
   static constexpr bool value = true;
 };
 
@@ -464,9 +463,8 @@ class AllOfPattern {
   template <size_t index>
   void DescribeToImpl(std::ostream* os, std::integral_constant<size_t, index>,
                       int64_t indent) const {
-    constexpr bool first_is_trivial =
-        IsTrivialMatcher<typename std::remove_reference<decltype(std::get<0>(
-            patterns_))>::type>::value;
+    constexpr bool first_is_trivial = IsTrivialMatcher<
+        std::remove_reference_t<decltype(std::get<0>(patterns_))>>::value;
     constexpr bool is_last = index == sizeof...(Patterns) - 1;
     const auto& submatcher = std::get<index>(patterns_);
 
@@ -513,8 +511,8 @@ class AllOfPattern {
 // patterns need to match in order to have the AllOf pattern match.
 template <typename Item, typename... Patterns>
 auto AllOf(const Patterns&... patterns) {
-  return detail::AllOfPattern<typename std::remove_const<Item>::type,
-                              Patterns...>(patterns...);
+  return detail::AllOfPattern<std::remove_const_t<Item>, Patterns...>(
+      patterns...);
 }
 
 // AllOf<AllOf<A, B...>, X, Y, ...> => AllOf<A, B, ..., X, Y, ...>.
@@ -526,9 +524,8 @@ auto AllOf(const detail::AllOfPattern<Item, InnerPs...>& inner_p,
   // Invoke constructor of AllOfPattern<Item, InnerPs..., OuterPs...>.
   auto make_all_of = [](const InnerPs&... inner_ps,
                         const OuterPs&... outer_ps) {
-    return detail::AllOfPattern<typename std::remove_const<Item>::type,
-                                InnerPs..., OuterPs...>(inner_ps...,
-                                                        outer_ps...);
+    return detail::AllOfPattern<std::remove_const_t<Item>, InnerPs...,
+                                OuterPs...>(inner_ps..., outer_ps...);
   };
   return std::apply(make_all_of, std::tuple_cat(inner_p.patterns(),
                                                 std::make_tuple(outer_ps...)));
@@ -2714,8 +2711,7 @@ class HloInstructionPattern {
 template <typename Item, typename... Patterns>
 struct AnyOfImpl {
   auto operator()(const Patterns&... patterns) const {
-    return AnyOfPattern<typename std::remove_const<Item>::type, Patterns...>(
-        patterns...);
+    return AnyOfPattern<std::remove_const_t<Item>, Patterns...>(patterns...);
   }
 };
 
@@ -3012,13 +3008,11 @@ auto CustomCall(HloInstructionType** matched_inst) {
   return Op(matched_inst).WithOpcode(HloOpcode::kCustomCall);
 }
 
-template <
-    typename Arg0, typename... Args,
-    typename std::enable_if<
-        !std::is_convertible<Arg0, absl::string_view>::value &&
-        !std::is_convertible<Arg0, HloInstruction**>::value &&
-        !std::is_convertible<Arg0, const HloInstruction**>::value>::type* =
-        nullptr>
+template <typename Arg0, typename... Args,
+          std::enable_if_t<
+              !std::is_convertible_v<Arg0, absl::string_view> &&
+              !std::is_convertible_v<Arg0, HloInstruction**> &&
+              !std::is_convertible_v<Arg0, const HloInstruction**>>* = nullptr>
 auto CustomCall(Arg0&& arg0, Args&&... args) {
   return detail::WithOperands(CustomCall().WithNumOperands(sizeof...(Args) + 1),
                               /*operand_num=*/0, std::forward<Arg0>(arg0),
@@ -3033,8 +3027,8 @@ auto CustomCall(absl::Span<const absl::string_view> custom_call_targets,
 }
 
 template <typename HloInstructionType, typename Arg0, typename... Args,
-          typename std::enable_if<!std::is_convertible<
-              Arg0, absl::string_view>::value>::type* = nullptr>
+          std::enable_if_t<!std::is_convertible_v<Arg0, absl::string_view>>* =
+              nullptr>
 auto CustomCall(HloInstructionType** matched_inst, Arg0&& arg0,
                 Args&&... args) {
   return detail::WithOperands(

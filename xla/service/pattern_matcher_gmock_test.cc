@@ -42,9 +42,8 @@ std::string Describe(const ::testing::Matcher<MatchedTy>& m) {
 }
 
 template <typename MatchedTy>
-std::string Explain(
-    const MatchedTy& val,
-    const ::testing::Matcher<typename std::remove_cv<MatchedTy>::type>& m) {
+std::string Explain(const MatchedTy& val,
+                    const ::testing::Matcher<std::remove_cv_t<MatchedTy>>& m) {
   ::testing::StringMatchResultListener listener;
   EXPECT_THAT(val, ::testing::Not(m));  // For the error message.
   EXPECT_FALSE(m.MatchAndExplain(val, &listener));
