@@ -5336,7 +5336,7 @@ bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc, ParsedElemT value) {
       primitive_util::NativeToPrimitiveType<LiteralNativeT>();
   if (!IsFinite(value)) {
     // Skip range checking for non-finite value.
-  } else if constexpr (std::is_unsigned<LiteralNativeT>::value) {
+  } else if constexpr (std::is_unsigned_v<LiteralNativeT>) {
     static_assert(std::is_same_v<ParsedElemT, int64_t> ||
                       std::is_same_v<ParsedElemT, bool>,
                   "Unimplemented checking for ParsedElemT");
