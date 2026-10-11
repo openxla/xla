@@ -47,14 +47,14 @@ union alignas(4) Vec<uint8_t> {
 
 template <typename T, xla::ReductionKind ReductionKindT>
 __device__ __forceinline__
-    typename std::enable_if<ReductionKindT == xla::ReductionKind::SUM, T>::type
+    std::enable_if_t<ReductionKindT == xla::ReductionKind::SUM, T>
     ApplyBinaryOp(T a, T b) {
   return a + b;
 }
 
 template <typename T, xla::ReductionKind ReductionKindT>
 __device__ __forceinline__
-    typename std::enable_if<ReductionKindT == xla::ReductionKind::MAX, T>::type
+    std::enable_if_t<ReductionKindT == xla::ReductionKind::MAX, T>
     ApplyBinaryOp(T a, T b) {
   return max(a, b);
 }
