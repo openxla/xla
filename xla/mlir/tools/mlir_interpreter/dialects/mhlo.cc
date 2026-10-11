@@ -219,10 +219,8 @@ llvm::SmallVector<InterpreterValue> Constant(InterpreterState&,
     if (ty.getElementType().isUnsignedInteger()) {
       if constexpr (!std::is_same_v<decltype(dummy), bool> &&
                     std::is_integral_v<decltype(dummy)>) {
-        auto values =
-            constant.getValue()
-                .getValues<
-                    typename std::make_unsigned<decltype(dummy)>::type>();
+        auto values = constant.getValue()
+                          .getValues<std::make_unsigned_t<decltype(dummy)>>();
         auto result = TensorOrMemref<decltype(dummy)>::Empty(ty.getShape());
         auto value_it = values.begin();
         for (const auto& index : result.view.Indices()) {
