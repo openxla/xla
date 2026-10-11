@@ -39,15 +39,14 @@ namespace xla {
 // truncation; in such cases, use an explicit cast.
 template <typename T>
 XlaOp ConstantR0WithType(XlaBuilder* builder, PrimitiveType type, T value) {
-  if (std::is_floating_point<T>::value &&
+  if (std::is_floating_point_v<T> &&
       !(primitive_util::IsFloatingPointType(type) ||
         primitive_util::IsComplexType(type))) {
     return builder->ReportError(InvalidArgument(
         "Invalid cast from floating point type to %s in ConstantR0WithType.",
         PrimitiveType_Name(type)));
   }
-  if (std::is_same<T, complex64>::value &&
-      !primitive_util::IsComplexType(type)) {
+  if (std::is_same_v<T, complex64> && !primitive_util::IsComplexType(type)) {
     return builder->ReportError(InvalidArgument(
         "Invalid cast from complex type to %s in ConstantR0WithType.",
         PrimitiveType_Name(type)));

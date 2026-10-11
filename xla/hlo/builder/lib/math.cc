@@ -53,7 +53,7 @@ namespace {
 // Evaluate the polynomial given `x` and coefficients in decreasing order.
 template <typename FP>
 XlaOp EvaluatePolynomial(XlaOp x, absl::Span<const FP> coefficients) {
-  static_assert(std::is_floating_point<FP>::value,
+  static_assert(std::is_floating_point_v<FP>,
                 "Template-argument 'FP' must be a floating-point type");
   if (coefficients.empty()) {
     return ScalarLike(x, FP(0.0));
@@ -70,7 +70,7 @@ XlaOp EvaluatePolynomial(XlaOp x, absl::Span<const FP> coefficients) {
 // order.
 template <typename FP>
 XlaOp EvaluateChebyshevPolynomial(XlaOp x, absl::Span<const FP> coefficients) {
-  static_assert(std::is_floating_point<FP>::value,
+  static_assert(std::is_floating_point_v<FP>,
                 "Template-argument 'FP' must be a floating-point type");
   XlaOp b0 = ScalarLike(x, 0.0);
   XlaOp b1 = ScalarLike(x, 0.0);

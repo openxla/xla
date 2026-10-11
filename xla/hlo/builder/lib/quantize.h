@@ -89,7 +89,7 @@ inline XlaOp Dequantize(XlaOp input, const QuantizedRange& range,
   XlaBuilder* const builder = input.builder();
   return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     float half_range =
-        !std::is_signed<T>::value
+        !std::is_signed_v<T>
             ? 0.0f
             : (static_cast<float>(std::numeric_limits<T>::max()) -
                std::numeric_limits<T>::min() + 1) /
