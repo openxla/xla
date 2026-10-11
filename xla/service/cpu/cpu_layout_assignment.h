@@ -34,7 +34,7 @@ class CpuLayoutAssignment : public LayoutAssignment {
       const TargetMachineFeatures* target_machine_features)
       : LayoutAssignment(entry_computation_layout),
         target_machine_features_(*target_machine_features) {}
-  ~CpuLayoutAssignment() override {}
+  ~CpuLayoutAssignment() override = default;
 
  protected:
   absl::Status AddBackendConstraints(LayoutConstraints* constraints) override;
