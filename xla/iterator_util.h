@@ -218,7 +218,7 @@ class WithIndex {
     using reference = const value_type&;
     using difference_type = size_t;
 
-    static_assert(std::is_trivially_destructible<value_type>::value);
+    static_assert(std::is_trivially_destructible_v<value_type>);
 
     iterator& operator++() {
       ++index_;
