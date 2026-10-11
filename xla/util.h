@@ -561,8 +561,7 @@ std::string HumanReadableNumTranscendentalOps(double trops, double nanoseconds);
 // Returns a mask with "width" number of least significant bits set.
 template <typename T>
 constexpr inline T LsbMask(int width) {
-  static_assert(std::is_unsigned<T>::value,
-                "T should be an unsigned integer type");
+  static_assert(std::is_unsigned_v<T>, "T should be an unsigned integer type");
   ABSL_ASSERT(width >= 0);
   ABSL_ASSERT(width <= std::numeric_limits<T>::digits);
   return width == 0
@@ -573,16 +572,14 @@ constexpr inline T LsbMask(int width) {
 // Return floor(log2(n)) for positive integer n.  Returns -1 iff n == 0.
 template <typename T>
 constexpr inline int Log2Floor(T x) {
-  static_assert(std::is_unsigned<T>::value,
-                "T should be an unsigned integer type");
+  static_assert(std::is_unsigned_v<T>, "T should be an unsigned integer type");
   return absl::bit_width(x) - 1;
 }
 
 // Return ceiling(log2(n)) for positive integer n.  Returns -1 iff n == 0.
 template <typename T>
 constexpr inline int Log2Ceiling(T x) {
-  static_assert(std::is_unsigned<T>::value,
-                "T should be an unsigned integer type");
+  static_assert(std::is_unsigned_v<T>, "T should be an unsigned integer type");
   return x == 0 ? -1 : absl::bit_width(x - 1);
 }
 
@@ -590,7 +587,7 @@ constexpr inline int Log2Ceiling(T x) {
 // numbers and the number of leading zeros for non-negative numbers).
 template <typename T>
 constexpr inline int CountLeadingSignBits(T x) {
-  static_assert(std::is_signed<T>::value, "T should be a signed integer type");
+  static_assert(std::is_signed_v<T>, "T should be a signed integer type");
   using UnsignedType = std::make_unsigned_t<T>;
   return x < T{0} ? absl::countl_one<UnsignedType>(x)
                   : absl::countl_zero<UnsignedType>(x);

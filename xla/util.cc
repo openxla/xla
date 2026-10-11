@@ -129,11 +129,11 @@ std::string Reindent(absl::string_view original,
 template <typename FloatT>
 static void RoundTripNanPayload(FloatT value, std::string* result) {
   static_assert(std::numeric_limits<FloatT>::has_quiet_NaN);
-  static_assert(!std::is_same<FloatT, tsl::float8_e4m3fn>::value,
+  static_assert(!std::is_same_v<FloatT, tsl::float8_e4m3fn>,
                 "RoundTripNanPayload does not support E4M3FN");
-  static_assert(!std::is_same<FloatT, tsl::float8_e4m3fnuz>::value,
+  static_assert(!std::is_same_v<FloatT, tsl::float8_e4m3fnuz>,
                 "RoundTripNanPayload does not support E4M3FNUZ");
-  static_assert(!std::is_same<FloatT, tsl::float8_e5m2fnuz>::value,
+  static_assert(!std::is_same_v<FloatT, tsl::float8_e5m2fnuz>,
                 "RoundTripNanPayload does not support E5M2FNUZ");
   const int kPayloadBits = NanPayloadBits<FloatT>();
   if (Eigen::numext::isnan(value) && kPayloadBits > 0) {
