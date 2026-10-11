@@ -136,7 +136,7 @@ class RocmTraceCollector {
  public:
   explicit RocmTraceCollector(const RocmTraceCollectorOptions& options)
       : options_(options) {}
-  virtual ~RocmTraceCollector() {}
+  virtual ~RocmTraceCollector() = default;
 
   // Agent data used by GetDeviceCapabilities instead of hipGetDeviceProperties
   // (which can set sticky hipGetLastError for non-visible devices on ROCm 7+).

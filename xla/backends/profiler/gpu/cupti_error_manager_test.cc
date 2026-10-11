@@ -68,7 +68,7 @@ class TestableCuptiTracer : public CuptiTracer {
 // MockCupti is used to simulate a CUPTI call failure.
 class CuptiErrorManagerTest : public ::testing::Test {
  protected:
-  CuptiErrorManagerTest() {}
+  CuptiErrorManagerTest() = default;
 
   void SetUp() override {
     ASSERT_GT(CuptiTracer::NumGpus(), 0) << "No devices found";
