@@ -85,7 +85,7 @@ TfAllocatorAdapter::TfAllocatorAdapter(tsl::Allocator* wrapped,
       min_alignment_(min_alignment),
       allocation_end_(allocation_end) {}
 
-TfAllocatorAdapter::~TfAllocatorAdapter() {}
+TfAllocatorAdapter::~TfAllocatorAdapter() = default;
 
 absl::StatusOr<ScopedDeviceAddress<uint8_t>> TfAllocatorAdapter::Allocate(
     int device_ordinal, uint64_t size, bool retry_on_failure,
