@@ -39,7 +39,7 @@ namespace xla {
 template <typename Pass>
 class HloPassFix : public Pass {
  public:
-  static_assert(std::is_base_of<HloPassInterface, Pass>::value,
+  static_assert(std::is_base_of_v<HloPassInterface, Pass>,
                 "Pass must be a subclass of HloPassInterface");
   using RunState = HloPassInterface::RunState;
   template <typename... Args>
@@ -128,8 +128,8 @@ class HloPassFix : public Pass {
       HloModule* module, RunState* run_state,
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
     // If Pass overrides RunOnChangedComputations, just forward to it.
-    if (!std::is_same<decltype(&HloPassInterface::RunOnChangedComputations),
-                      decltype(&Pass::RunOnChangedComputations)>::value) {
+    if (!std::is_same_v<decltype(&HloPassInterface::RunOnChangedComputations),
+                        decltype(&Pass::RunOnChangedComputations)>) {
       return Pass::RunOnChangedComputations(module, run_state,
                                             execution_threads);
     }
