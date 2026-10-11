@@ -372,7 +372,7 @@ int GetNumElements(const ArrayShape& shape) {
   return num_elements;
 }
 
-template <typename T, typename = std::enable_if_t<std::is_integral<T>::value>>
+template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
 void FillIntT(void* buffer, int num_elements) {
   std::mt19937 generator(kSeed);
   T* casted = static_cast<T*>(buffer);
@@ -382,8 +382,7 @@ void FillIntT(void* buffer, int num_elements) {
   }
 }
 
-template <typename T,
-          typename = std::enable_if_t<std::is_floating_point<T>::value>>
+template <typename T, typename = std::enable_if_t<std::is_floating_point_v<T>>>
 void FillFloatT(void* buffer, int num_elements) {
   std::mt19937 generator(kSeed);
   T* casted = static_cast<T*>(buffer);
