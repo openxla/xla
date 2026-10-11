@@ -50,9 +50,9 @@ struct HasOstreamOperator : std::false_type {};
 
 template <typename T>
 struct HasOstreamOperator<
-    T, std::enable_if_t<std::is_same<
-           std::ostream&, decltype(std::declval<std::ostream&>()
-                                   << std::declval<const T&>())>::value>>
+    T, std::enable_if_t<std::is_same_v<std::ostream&,
+                                       decltype(std::declval<std::ostream&>()
+                                                << std::declval<const T&>())>>>
     : std::true_type {};
 
 // This is an empty class not intended to be used. It exists so that
@@ -82,9 +82,8 @@ struct HasAbslStringify : std::false_type {};
 
 template <typename T>
 struct HasAbslStringify<
-    T,
-    std::enable_if_t<std::is_void<decltype(AbslStringify(
-        std::declval<UnimplementedSink&>(), std::declval<const T&>()))>::value>>
+    T, std::enable_if_t<std::is_void_v<decltype(AbslStringify(
+           std::declval<UnimplementedSink&>(), std::declval<const T&>()))>>>
     : std::true_type {};
 
 // Formats a value for a failing `TF_RET_CHECK` statement. Excepting a few
