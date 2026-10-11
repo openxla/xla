@@ -150,7 +150,7 @@ class TestLinspaceMaxParametric
       }
     }
     ErrorSpec error_spec(1e-6);
-    if (std::is_same<Eigen::half, T>::value) {
+    if (std::is_same_v<Eigen::half, T>) {
       error_spec = ErrorSpec(1e-6, 2e-4);
     }
     ComputeAndCompareR2<T>(&builder, expected, {}, error_spec);
