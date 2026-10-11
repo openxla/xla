@@ -25,9 +25,9 @@ namespace random {
 
 template <typename UintType, typename RandomBits>
 UintType ExactUniformInt(const UintType n, const RandomBits& random) {
-  static_assert(std::is_unsigned<UintType>::value,
+  static_assert(std::is_unsigned_v<UintType>,
                 "UintType must be an unsigned int");
-  static_assert(std::is_same<UintType, decltype(random())>::value,
+  static_assert(std::is_same_v<UintType, decltype(random())>,
                 "random() should return UintType");
   if (n == 0) {
     // Consume a value anyway

@@ -39,8 +39,7 @@ PHILOX_DEVICE_INLINE bfloat16 Uint16ToGfloat16(uint16_t x);
 // extremal case INT_MIN + UINT_MAX = INT_MAX, which this function cannot
 // compute.)
 template <typename Int>
-PHILOX_DEVICE_INLINE Int SignedAdd(Int a,
-                                   typename std::make_unsigned<Int>::type b) {
+PHILOX_DEVICE_INLINE Int SignedAdd(Int a, std::make_unsigned_t<Int> b) {
   // Implementation note: both b_div_2 and b - b_div_2 are positive and
   // representable as Int.
   auto b_div_2 = b >> 1;
