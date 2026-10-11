@@ -145,9 +145,8 @@ struct is_complex_t : absl::disjunction<std::is_same<T, xla::complex64>,
 //
 // In the event that there a component is not a subnormal, the value should
 // not be cached, so we return a kNonSubnormal value.
-template <
-    typename NativeRefT,
-    typename std::enable_if<!is_complex_t<NativeRefT>::value>::type* = nullptr>
+template <typename NativeRefT,
+          std::enable_if_t<!is_complex_t<NativeRefT>::value>* = nullptr>
 int GetCacheLocation(NativeRefT value) {
   bool positive = !std::signbit(value);
   if (std::abs(value) == std::numeric_limits<NativeRefT>::min()) {
@@ -160,9 +159,8 @@ int GetCacheLocation(NativeRefT value) {
   }
 }
 
-template <
-    typename NativeRefT,
-    typename std::enable_if<is_complex_t<NativeRefT>::value>::type* = nullptr>
+template <typename NativeRefT,
+          std::enable_if_t<is_complex_t<NativeRefT>::value>* = nullptr>
 int GetCacheLocation(NativeRefT value) {
   int real_loc =
       GetCacheLocation<typename NativeRefT::value_type>(value.real());
@@ -194,7 +192,7 @@ int GetCacheLocation(const std::array<NativeRefT, N>& input) {
 
 // The inverse function of GetCacheLocation.
 template <typename RetT,
-          typename std::enable_if<!is_complex_t<RetT>::value>::type* = nullptr>
+          std::enable_if_t<!is_complex_t<RetT>::value>* = nullptr>
 RetT FromCacheLocationComponent(int cache_loc) {
   switch (cache_loc) {
     case kPositiveMin:
@@ -210,8 +208,7 @@ RetT FromCacheLocationComponent(int cache_loc) {
   }
 }
 
-template <typename RetT,
-          typename std::enable_if<is_complex_t<RetT>::value>::type* = nullptr>
+template <typename RetT, std::enable_if_t<is_complex_t<RetT>::value>* = nullptr>
 RetT FromCacheLocationComponent(int cache_loc) {
   CHECK_LT(cache_loc,
            kNumSubnormalSubstitutionValues * kNumSubnormalSubstitutionValues);
@@ -241,9 +238,8 @@ std::array<NativeRefT, N> FromCacheLocation(int cache_loc) {
 }
 
 // Returns a string that describes the test value for the actual value.
-template <
-    typename NativeRefT,
-    typename std::enable_if<!is_complex_t<NativeRefT>::value>::type* = nullptr>
+template <typename NativeRefT,
+          std::enable_if_t<!is_complex_t<NativeRefT>::value>* = nullptr>
 std::string GetSubnormalDescription(NativeRefT test_val,
                                     NativeRefT actual_val) {
   std::string sp_min_normal = "sign-preserving min-normal-float";
@@ -263,9 +259,8 @@ std::string GetSubnormalDescription(NativeRefT test_val,
   }
 }
 
-template <
-    typename NativeRefT,
-    typename std::enable_if<is_complex_t<NativeRefT>::value>::type* = nullptr>
+template <typename NativeRefT,
+          std::enable_if_t<is_complex_t<NativeRefT>::value>* = nullptr>
 std::string GetSubnormalDescription(NativeRefT test_val,
                                     NativeRefT actual_val) {
   std::string real = GetSubnormalDescription<typename NativeRefT::value_type>(
@@ -304,9 +299,8 @@ std::string GetSubnormalDescription(std::array<NativeRefT, N> test_vals,
   return absl::StrCat("(", absl::StrJoin(str_vals, ", "), ")");
 }
 
-template <
-    typename NativeT, typename IntegralType,
-    typename std::enable_if<!is_complex_t<NativeT>::value>::type* = nullptr>
+template <typename NativeT, typename IntegralType,
+          std::enable_if_t<!is_complex_t<NativeT>::value>* = nullptr>
 std::string StringifyNum(NativeT x) {
   return absl::StrFormat("%0.*g (0x%0*x)",
                          std::numeric_limits<NativeT>::max_digits10,
@@ -316,9 +310,8 @@ std::string StringifyNum(NativeT x) {
                          sizeof(IntegralType) * 2, BitCast<IntegralType>(x));
 }
 
-template <
-    typename NativeT, typename IntegralType,
-    typename std::enable_if<is_complex_t<NativeT>::value>::type* = nullptr>
+template <typename NativeT, typename IntegralType,
+          std::enable_if_t<is_complex_t<NativeT>::value>* = nullptr>
 std::string StringifyNum(NativeT x) {
   return absl::StrCat(
       "(", StringifyNum<typename NativeT::value_type, IntegralType>(x.real()),
