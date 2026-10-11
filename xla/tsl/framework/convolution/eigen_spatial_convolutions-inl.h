@@ -480,9 +480,9 @@ class TensorContractionInputMapper<
   // for the TensorEvaluator or if the packet type does not support masked
   // load.
   template <typename PacketT, typename TensorEvaluatorT>
-  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE typename std::enable_if<
+  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE std::enable_if_t<
       !TensorEvaluatorHasPartialPacket<TensorEvaluatorT, PacketT, Index>::value,
-      PacketT>::type
+      PacketT>
   loadPacketStandard(Index patchId, Index rowIndex, Index colIndex,
                      Index otherIndex) const {
     const Index packetSize = internal::unpacket_traits<Packet>::size;
@@ -528,9 +528,9 @@ class TensorContractionInputMapper<
   // packet. The idea is to enable fast load (if possible) of these 'partial'
   // packets.
   template <typename PacketT, typename TensorEvaluatorT>
-  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE typename std::enable_if<
+  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE std::enable_if_t<
       TensorEvaluatorHasPartialPacket<TensorEvaluatorT, PacketT, Index>::value,
-      PacketT>::type
+      PacketT>
   loadPacketStandard(Index patchId, Index rowIndex, Index colIndex,
                      Index otherIndex) const {
     const Index packetSize = internal::unpacket_traits<PacketT>::size;
@@ -868,9 +868,9 @@ class TensorContractionSubMapper<
     return m_base_mapper.m_impl.coeff(inputIndex);
   }
   template <typename PacketT = Packet>
-  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE typename std::enable_if<
+  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE std::enable_if_t<
       TensorEvaluatorHasPartialPacket<TensorEvaluatorT, PacketT, Index>::value,
-      PacketT>::type
+      PacketT>
   partialPacketNoPadding(const Index depth, const Index baseIndex,
                          Index num_coeffs) const {
     const Index inputIndex = depth + baseIndex;
