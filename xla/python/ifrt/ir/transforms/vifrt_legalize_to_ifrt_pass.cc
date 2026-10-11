@@ -294,7 +294,7 @@ mlir::LogicalResult removeDefaultAttrs(
     const mlir::OpConversionPattern<VifrtOpTy>& pattern, VifrtOpTy vifrt_op,
     llvm::SmallVector<mlir::NamedAttribute>& vifrt_attrs) {
   absl::flat_hash_set<std::string> to_remove_attrs;
-  if constexpr (std::is_same<VifrtOpTy, FuncOpV1>::value) {
+  if constexpr (std::is_same_v<VifrtOpTy, FuncOpV1>) {
     if (auto attr =
             llvm::dyn_cast<mlir::StringAttr>(vifrt_op.getSymVisibility());
         !attr || attr.str() == kVifrtDefaultString) {
@@ -372,7 +372,7 @@ class VifrtToIfrtOpConverter : public mlir::OpConversionPattern<VifrtOpTy> {
     llvm::SmallVector<mlir::NamedAttribute> ifrt_attrs;
     llvm::DenseSet<mlir::StringAttr> already_converted_attrs;
     // Special case operations.
-    if constexpr (std::is_same<VifrtOpTy, CallOpV1>::value) {
+    if constexpr (std::is_same_v<VifrtOpTy, CallOpV1>) {
       auto call_op = static_cast<CallOpV1>(vifrt_op);
       auto callee_symbol_ref = getCalleeSymbolRef(call_op);
       if (mlir::failed(callee_symbol_ref)) {
