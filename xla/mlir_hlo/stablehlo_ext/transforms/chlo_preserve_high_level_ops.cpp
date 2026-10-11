@@ -130,7 +130,7 @@ FailureOr<Attribute> serializePrecisionConfigAttr(chlo::RaggedDotOp op,
 template <typename ChloOpTy>
 FailureOr<Attribute> serializeChloAttribute(ChloOpTy op, NamedAttribute attr) {
   // Handle RaggedDotOp.
-  if constexpr (std::is_same<ChloOpTy, chlo::RaggedDotOp>::value) {
+  if constexpr (std::is_same_v<ChloOpTy, chlo::RaggedDotOp>) {
     if (auto raggedDotAttr =
             llvm::dyn_cast<chlo::RaggedDotDimensionNumbersAttr>(
                 attr.getValue()))
