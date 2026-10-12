@@ -4252,6 +4252,7 @@ cc_library(
     deps = [
         ":all_gather",
         ":all_reduce",
+        ":all_to_all",
         ":reduce_scatter",
         "//xla/hlo/ir:hlo",
         "//xla/service:device_assignment",
@@ -4268,6 +4269,7 @@ xla_cc_test(
     deps = [
         ":all_gather",
         ":all_reduce",
+        ":all_to_all",
         ":collective_info_utils",
         ":reduce_scatter",
         "//xla/backends/gpu/target_config",
@@ -4319,6 +4321,33 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "all_to_all",
+    srcs = ["all_to_all.cc"],
+    hdrs = ["all_to_all.h"],
+    deps = [
+        ":collective_params",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:device_assignment",
+        "//xla/service:gpu_topology",
+        "//xla/service/gpu:gpu_constants",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:all_reduce_kernel",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
 xla_cc_test(
     name = "all_gather_build_info_test",
     srcs = ["all_gather_build_info_test.cc"],
@@ -4335,6 +4364,35 @@ xla_cc_test(
         "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
+    name = "all_to_all_build_info_test",
+    srcs = ["all_to_all_build_info_test.cc"],
+    deps = [
+        ":all_to_all",
+        ":collective_params",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/target_config",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:gpu_topology",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
