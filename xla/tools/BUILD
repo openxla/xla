@@ -785,6 +785,8 @@ xla_test(
     srcs = ["matmul_perf_table_gen_test.cc"],
     backends = ["gpu"],
     local_defines = if_cuda(["GOOGLE_CUDA"]),
+    # TODO: Remove once default CUDA version is >= 13.4 (CUPTI session leak fixed in 13.4).
+    tags = if_google(["noasan"]),
     deps = [
         ":matmul_perf_table_gen",
         "//xla:xla_data_proto_cc",
