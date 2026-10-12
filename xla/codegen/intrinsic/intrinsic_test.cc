@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status_matchers.h"
+#include "absl/strings/string_view.h"
 #include "xla/codegen/intrinsic/type.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"

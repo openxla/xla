@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -37,7 +38,9 @@ limitations under the License.
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
@@ -45,6 +48,19 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
+
+// Returns the first device executor of the default platform.
+se::StreamExecutor* GetDefaultStreamExecutor() {
+  absl::StatusOr<se::Platform*> platform = PlatformUtil::GetDefaultPlatform();
+  CHECK_OK(platform.status());
+  absl::StatusOr<se::StreamExecutor*> stream_executor =
+      (*platform)->ExecutorForDevice(0);
+  CHECK_OK(stream_executor.status());
+  return *stream_executor;
+}
+
+}  // namespace
 
 using CudnnBackendConfig = stream_executor::dnn::AlgorithmProto;
 
@@ -183,10 +199,7 @@ absl::string_view kUnsupportedHlo = R"hlo(
 class CudnnBackendTest : public HloHardwareIndependentTestBase {
  protected:
   CudnnBackendTest()
-      : stream_executor_(PlatformUtil::GetDefaultPlatform()
-                             .value()
-                             ->ExecutorForDevice(0)
-                             .value()),
+      : stream_executor_(GetDefaultStreamExecutor()),
         target_config_(stream_executor_),
         debug_options_(
             HloHardwareIndependentTestBase::GetDebugOptionsForTest()) {
@@ -323,14 +336,19 @@ TEST_F(CudnnBackendTest, GetDefaultConfigFromCudnnCustomCall) {
 }
 
 TEST_F(CudnnBackendTest, GetDefaultConfigSucceedsWithNullStreamExecutor) {
+  if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+    GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                 << se::gpu::kMinDevicelessCudnnVersion;
+  }
   ASSERT_OK_AND_ASSIGN(stream_executor::GpuTargetConfigProto proto,
                        GetGpuTargetConfig(GpuModel::H100_SXM));
   ASSERT_OK_AND_ASSIGN(Compiler::GpuTargetConfig target_config,
                        Compiler::GpuTargetConfig::FromProto(proto));
-  debug_options_.set_xla_gpu_cudnn_deviceless_compilation_mode(
+  DebugOptions debug_options = debug_options_;
+  debug_options.set_xla_gpu_cudnn_deviceless_compilation_mode(
       DebugOptions::CUDNN_DEVICELESS_COMPILATION_AUTO);
   CudnnBackend backend_without_stream_executor(
-      /*stream_executor=*/nullptr, &debug_options_, &compiler_, &target_config);
+      /*stream_executor=*/nullptr, &debug_options, &compiler_, &target_config);
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                        ParseAndReturnVerifiedModule(kCudnnFusionHlo));
 
@@ -346,10 +364,11 @@ TEST_F(CudnnBackendTest, CudnnDevicelessCompilationDisabledFails) {
                        GetGpuTargetConfig(GpuModel::H100_SXM));
   ASSERT_OK_AND_ASSIGN(Compiler::GpuTargetConfig target_config,
                        Compiler::GpuTargetConfig::FromProto(proto));
-  debug_options_.set_xla_gpu_cudnn_deviceless_compilation_mode(
+  DebugOptions debug_options = debug_options_;
+  debug_options.set_xla_gpu_cudnn_deviceless_compilation_mode(
       DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED);
   CudnnBackend backend_without_stream_executor(
-      /*stream_executor=*/nullptr, &debug_options_, &compiler_, &target_config);
+      /*stream_executor=*/nullptr, &debug_options, &compiler_, &target_config);
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                        ParseAndReturnVerifiedModule(kCudnnFusionHlo));
 

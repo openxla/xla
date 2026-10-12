@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
@@ -347,11 +348,11 @@ class Thunk {
   // buffer slices are valid, as overhead of buffer slices checks adds up and
   // become measurable on a hot path of executing tiny thunks.
   static constexpr bool ShouldCheckBufferSlices() {
-#ifdef NDEBUG
-    return false;
-#else
-    return true;
-#endif  // NDEBUG
+    if constexpr (tsl::kIsDebugBuild) {
+      return true;
+    } else {
+      return false;
+    }
   }
 
  private:

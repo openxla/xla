@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -140,8 +139,7 @@ absl::StatusOr<bool> AsyncCollectiveReplacer::RunImpl(
       }
     }
     ABSL_RETURN_IF_ERROR(
-        ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
-            computation, async_pairs));
+        computation->ReplaceAsyncInstructionsWithSync(async_pairs));
   }
   return changed;
 }

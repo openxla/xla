@@ -30,7 +30,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/base/call_once.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/base/optimization.h"
@@ -1717,6 +1716,12 @@ absl::StatusOr<ifrt::DeviceListRef> NanoIfrtClient::MakeDeviceList(
 }
 
 ifrt::Compiler* NanoIfrtClient::GetDefaultCompiler() { return compiler_.get(); }
+
+absl::StatusOr<std::vector<tsl::Future<ifrt::LoadedExecutableRef>>>
+NanoIfrtClient::Load(absl::Span<const ifrt::ExecutableRef> executables,
+                     absl::Span<std::unique_ptr<ifrt::LoadOptions>> options) {
+  return absl::UnimplementedError("Load is not implemented.");
+}
 
 absl::StatusOr<std::shared_ptr<ifrt::Topology>>
 NanoIfrtClient::GetTopologyForDevices(

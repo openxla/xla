@@ -45,6 +45,7 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -496,14 +497,16 @@ int64_t DotOpEmitter::EmitTiledLlvmIrGemv() {
           ? kUnknownTargetVectorRegisterSize
           : target_vector_register_element_size;
 
-// We parallelize the GEMV computation to have at least this many FMA
-// instructions per task. In debug builds we prefer smaller tasks to test that
-// we correctly parallelize the loop.
-#ifdef NDEBUG
-  static constexpr int64_t kFmaPerTask = 1 << 19;  // 0.5M FMA/task
-#else
-  static constexpr int64_t kFmaPerTask = 1 << 12;  // 4096 FMA/task
-#endif
+  // We parallelize the GEMV computation to have at least this many FMA
+  // instructions per task. In debug builds we prefer smaller tasks to test that
+  // we correctly parallelize the loop.
+  static constexpr int64_t kFmaPerTask = [] {
+    if constexpr (tsl::kIsDebugBuild) {
+      return 1 << 12;  // 4096 FMA/task
+    } else {
+      return 1 << 19;  // 0.5M FMA/task
+    }
+  }();
 
   // GEMV has very little data reuse, and we hit memory bandwidth bound
   // before we hit compute bound. So we limit the number of tasks to avoid

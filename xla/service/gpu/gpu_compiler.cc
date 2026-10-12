@@ -60,6 +60,7 @@ limitations under the License.
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -116,6 +117,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
 #include "xla/backends/gpu/transforms/dus_accumulator_zero_init_elimination.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_annotator.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_copy.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_copy_fusion_async_wrapper.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter_v2.h"
 #include "xla/backends/gpu/transforms/estimate_cub_scan_scratch_size.h"
@@ -136,7 +138,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/ragged_all_to_all_canonicalizer.h"
 #include "xla/backends/gpu/transforms/ragged_all_to_all_decomposer.h"
 #include "xla/backends/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
-#include "xla/backends/gpu/transforms/ragged_dot_fusion_rewriter.h"
 #include "xla/backends/gpu/transforms/reduce_scatter_creator.h"
 #include "xla/backends/gpu/transforms/reduction_degenerate_dim_remover.h"
 #include "xla/backends/gpu/transforms/reduction_dimension_grouper.h"
@@ -253,7 +254,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_inliner.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_pipeliner.h"
 #include "xla/service/collective_pipeliner_utils.h"
 #include "xla/service/collective_utils.h"
@@ -485,8 +485,16 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     cpu_target_options = options.cpu_target_config->cpu_target_machine_options;
   }
 
-  if (options.gpu_topology.has_value()) {
-    const GpuTopology& gpu_topology = *options.gpu_topology;
+  std::optional<GpuTopology> topology_from_options = options.gpu_topology;
+  if (!topology_from_options.has_value() &&
+      !debug_opts.xla_gpu_topology_filename().empty()) {
+    ABSL_ASSIGN_OR_RETURN(
+        topology_from_options,
+        ParseGpuTopology(debug_opts.xla_gpu_topology_filename()));
+  }
+
+  if (topology_from_options.has_value()) {
+    const GpuTopology& gpu_topology = *topology_from_options;
     if (gpu_topology.has_gpu_target_config()) {
       gpu_target_config = gpu_topology.gpu_target_config();
     }
@@ -529,7 +537,7 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
     }
   }
 
-  if (!gpu_target_config.has_value() &&
+  if ((!options.gpu_topology.has_value() || !gpu_target_config.has_value()) &&
       !debug_opts.xla_gpu_target_config_filename().empty()) {
     ABSL_ASSIGN_OR_RETURN(
         gpu_target_config,
@@ -556,7 +564,8 @@ absl::StatusOr<GpuTopology> InferGpuTopology(
         "Couldn't determine the target compilation environment. Either stream "
         "executor (GPU) has to be attached for JIT compilation, or a target "
         "config has to be passed in as a parameter or provided via "
-        "--xla_gpu_target_config_filename for AOT compilation.");
+        "--xla_gpu_target_config_filename or --xla_gpu_topology_filename for "
+        "AOT compilation.");
   }
 
   // If the CPU target options are not set, we infer them from the host CPU
@@ -1403,10 +1412,9 @@ absl::Status RunLayoutAssignmentPasses(
   // Layout assignment uses alias analysis, which requires the call graph to
   // be flattened.
   pipeline.AddPass<FlattenCallGraph>();
-  ChannelLayoutConstraints layout_constraints;
   pipeline.AddPass<GpuLayoutAssignment>(
       hlo_module->mutable_entry_computation_layout(), gpu_version,
-      device_description, &layout_constraints);
+      device_description);
   // Run SubByteNormalization because GpuLayoutAssignment may modify a
   // Layout's element_size_in_bits field.
   pipeline.AddPass<SubByteNormalization>(
@@ -2255,15 +2263,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // f32).
   add_float_normalization(pipeline);
 
-  // RaggedDotFusionRewriter converts ragged dots into cuDNN fusions, which is
-  // only supported on NVIDIA/CUDA devices. On AMD ROCm, ragged dots are handled
-  // by hipBLASLt GroupedMatMul via GemmRewriter instead.
-  if (!debug_options.xla_gpu_experimental_disable_binary_libraries() &&
-      debug_options.xla_gpu_experimental_use_ragged_dot_fusion() &&
-      gpu_target_config.device_description.gpu_compute_capability().IsCuda()) {
-    pipeline.AddPass<RaggedDotFusionRewriter>();
-  }
-
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
@@ -2327,19 +2326,19 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HostMemoryTransferAsyncifier>(
       static_cast<int64_t>(stream_executor::MemorySpace::kHost));
 
-#ifdef NDEBUG
-  // Verify the module in non-debug builds. For debug builds, the verifier
-  // already runs after every pass.
-  HloVerifierOpts opts = HloVerifierOpts{}
-                             .MakeLayoutSensitive()
-                             .WithInstructionCanChangeLayout(
-                                 LayoutAssignment::InstructionCanChangeLayout)
-                             .VerifyBroadcastDimensionsOrder()
-                             .VerifyReshapeIsBitcast();
-  pipeline.AddPass<HloVerifier>(
-      std::make_unique<DefaultVerifierMetadata>(std::move(opts)),
-      "end-of-post-layout_assignment");
-#endif  // NDEBUG
+  if constexpr (!tsl::kIsDebugBuild) {
+    // Verify the module in non-debug builds. For debug builds, the verifier
+    // already runs after every pass.
+    HloVerifierOpts opts = HloVerifierOpts{}
+                               .MakeLayoutSensitive()
+                               .WithInstructionCanChangeLayout(
+                                   LayoutAssignment::InstructionCanChangeLayout)
+                               .VerifyBroadcastDimensionsOrder()
+                               .VerifyReshapeIsBitcast();
+    pipeline.AddPass<HloVerifier>(
+        std::make_unique<DefaultVerifierMetadata>(std::move(opts)),
+        "end-of-post-layout_assignment");
+  }
 
   ABSL_RETURN_IF_ERROR(
       pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
@@ -2430,132 +2429,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   return std::move(module);
 }
 
-namespace {
-
-bool UsesCollectiveMemorySpaceFrontendAttr(const HloUse& use) {
-  if (use.instruction->opcode() != HloOpcode::kCustomCall) {
-    return false;
-  }
-  auto attr =
-      use.instruction->get_frontend_attribute(kOperandsMemorySpacesAttr);
-  if (!attr.has_value()) {
-    return false;
-  }
-  auto pairs = ParseIndexMemorySpacePairs(*attr);
-  if (!pairs.ok()) {
-    return false;
-  }
-  for (auto [index, memory_space] : *pairs) {
-    if (index == use.operand_number &&
-        memory_space == MemorySpaceColor::kCollective) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool DefinesCollectiveMemorySpaceFrontendAttr(const HloValue* value) {
-  const HloInstruction* def = value->defining_instruction();
-  if (def->opcode() != HloOpcode::kCustomCall) {
-    return false;
-  }
-
-  auto attr = def->get_frontend_attribute(kResultsMemorySpacesAttr);
-  if (!attr.has_value()) {
-    return false;
-  }
-
-  auto pairs = ParseIndexMemorySpacePairs(*attr);
-  if (!pairs.ok()) {
-    return false;
-  }
-
-  // Determine the logical result index. If the custom call returns a tuple,
-  // we look at the top-level index (e.g., element 0 or 1 of the tuple).
-  int64_t result_index = 0;
-  if (def->shape().IsTuple()) {
-    if (value->defining_index().empty()) {
-      // The buffer for the tuple pointer array itself is not S1.
-      return false;
-    }
-    result_index = value->defining_index()[0];
-  }
-
-  for (auto [index, memory_space] : *pairs) {
-    if (index == result_index &&
-        memory_space == MemorySpaceColor::kCollective) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& opts) {
-  HloInstruction* user = use.instruction;
-
-  // Handle standard non-fusion/fusion collectives under NCCL user buffers
-  if (IsCollective(user) &&
-      (opts.xla_gpu_enable_nccl_user_buffers() ||
-       IsNcclSymmetricBuffersEnabledForCollective(user, opts))) {
-    return true;
-  }
-  // Handle one-shot RaggedAllToAll with NCCL enabled.
-  if (IsOneShotRaggedAllToAllWithNcclEnabled(opts)) {
-    // User is RA2A or AsyncStart(RA2A). Used by operand 1 (output).
-    if ((IsRaggedAllToAllOrAsyncStartRaggedAllToAll(user)) &&
-        use.operand_number == 1) {
-      return true;
-    }
-  }
-
-  // Device-initiated and one-sided collectives require S1 memory for all
-  // buffers.
-  if (RequiresCollectiveSymmetricMemorySpace(user)) {
-    return true;
-  }
-
-  // Check custom calls with operands_memory_spaces attribute
-  if (UsesCollectiveMemorySpaceFrontendAttr(use)) {
-    return true;
-  }
-
-  return false;
-}
-
-bool RequiresCollectiveOutput(const HloValue* value, const DebugOptions& opts) {
-  HloInstruction* def = value->defining_instruction();
-
-  // Handle standard non-fusion/fusion collectives under NCCL user buffers
-  if (IsCollective(def) &&
-      (opts.xla_gpu_enable_nccl_user_buffers() ||
-       IsNcclSymmetricBuffersEnabledForCollective(def, opts))) {
-    return true;
-  }
-  // Handle one-shot RaggedAllToAll with NCCL enabled.
-  if (IsOneShotRaggedAllToAllWithNcclEnabled(opts)) {
-    // Defining Instruction is RA2A or AsyncDone(RA2A)
-    if (IsRaggedAllToAllOrAsyncDoneRaggedAllToAll(def)) {
-      return true;
-    }
-  }
-
-  // If the instruction requires symmetric memory, its output value is S1.
-  // If the output value is live-out of the module, we must convert is to S0.
-  if (RequiresCollectiveSymmetricMemorySpace(def)) {
-    return true;
-  }
-
-  // Check custom calls with results_memory_spaces attribute
-  if (DefinesCollectiveMemorySpaceFrontendAttr(value)) {
-    return true;
-  }
-
-  return false;
-}
-
-}  // namespace
-
 void GpuCollectiveBufferAnalysis(
     HloModule* module, const HloAliasAnalysis& alias_analysis,
     std::function<void(HloInstruction*, const ShapeIndex&)> add_index_to_copy,
@@ -2607,7 +2480,7 @@ void GpuCollectiveBufferAnalysis(
         live_out_values.push_back(value);
       }
 
-      if (RequiresCollectiveOutput(value, opts)) {
+      if (RequiresCollectiveOutput(*value, opts)) {
         defined_by_collective = true;
       }
     }
@@ -2942,7 +2815,8 @@ GpuCompiler::CompileToBackendResult(
     CubinCustomKernelCompiler kernel_compiler(
         std::move(llvm_compiler),
         gpu_topology.gpu_target_config().device_description,
-        module->config().debug_options(), thread_pool.get_mutable());
+        module->config().debug_options(), gpu_topology,
+        thread_pool.get_mutable());
     kernel_compiler.SetPreOptimizationHook([&](const llvm::Module& module) {
       CallUserPreOptimizationHook(module);
     });
@@ -3146,7 +3020,8 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
               : std::nullopt,
           /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
           /*buffer_allocations_debug_summary=*/
-          std::move(buffer_allocations_debug_summary)}));
+          std::move(buffer_allocations_debug_summary),
+          /*gpu_topology=*/gpu_topology}));
   IncrementCompiledProgramsCount();
 
   if (embed_debug_info && gpu_executable->has_module()) {
@@ -3240,9 +3115,7 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
   tsl::profiler::TraceMe traceme("RunPreSchedulingPasses");
   HloPassPipeline pipeline("pre-scheduling-passes");
   pipeline.AddPass<FusionWrapper>(gpu_device_info);
-  const auto* cuda_cc =
-      gpu_device_info.gpu_compute_capability().cuda_compute_capability();
-  if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
+  if (SupportsDynamicSliceCopyThunks(gpu_device_info)) {
     pipeline.AddPass<DynamicSliceCopyFusionAsyncWrapper>();
   }
   // GpuCopyAsyncWrapper is disabled when xla_gpu_async_copy_min_bytes is -1.

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/service/compilation_stats.h"
@@ -81,9 +82,9 @@ class HloPassPipeline : public HloPassInterface {
   // Add an invariant-checking pass to the pipeline on debug builds only.
   template <typename T, typename... Args>
   void AddInvariantCheckerDebug(Args&&... args) {
-#ifndef NDEBUG
-    AddInvariantChecker<T>(std::forward<Args>(args)...);
-#endif  // NDEBUG
+    if constexpr (tsl::kIsDebugBuild) {
+      AddInvariantChecker<T>(std::forward<Args>(args)...);
+    }
   }
 
   bool IsPassPipeline() const override { return true; }

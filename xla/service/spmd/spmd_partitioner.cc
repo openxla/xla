@@ -879,14 +879,17 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
           ? HloSharding::V3ToV2Sharding(raw_target.named_sharding())
           : raw_target;
   for (auto& entry : cache) {
-    if (std::get<0>(entry) == target &&
-        protobuf_util::HaveSameSerialization(std::get<1>(entry), window)) {
-      return std::get<2>(entry);
+    if (entry.mask_invalid_region == mask_invalid_region &&
+        entry.force_mask_in_compact == force_mask_in_compact &&
+        entry.sharding == target && entry.pad_value->Identical(*pad_value) &&
+        protobuf_util::HaveSameSerialization(entry.window, window)) {
+      return entry.result;
     }
   }
   auto update_cache = [&](WindowedInputShardReturnValue result) {
-    cache.emplace_back(target, window, std::move(result));
-    return std::get<2>(cache.back());
+    cache.push_back({target, window, pad_value, mask_invalid_region,
+                     force_mask_in_compact, std::move(result)});
+    return cache.back().result;
   };
   VLOG(2) << "ReshardAsWindowedInput()\n"
           << "\twindow:" << window_util::ToString(window)
@@ -1262,7 +1265,8 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
   }
   if (target != sharding() &&
       sharding_with_windowed_dims_replicated != sharding()) {
-    return Reshard(target).ReshardAsWindowedInput(window, target, pad_value);
+    return Reshard(target).ReshardAsWindowedInput(
+        window, target, pad_value, mask_invalid_region, force_mask_in_compact);
   }
   if (Product(trimmed_target_sharding_tile_shape) == 1) {
     // The trimmed sharding may have just one shard left. We can simply return
@@ -1370,7 +1374,8 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
         return handle_all_windowed_dimensions_are_replicated();
       }
       return Reshard(sharding_with_windowed_dims_replicated)
-          .ReshardAsWindowedInput(window, target, pad_value);
+          .ReshardAsWindowedInput(window, target, pad_value,
+                                  mask_invalid_region, force_mask_in_compact);
     }
     visiting_hlo = *resharded;
   }
@@ -2552,6 +2557,73 @@ SpmdPartitioningVisitor::SpmdPartitioningVisitor(
 std::unique_ptr<SpmdPartitioningVisitor> SpmdPartitioningVisitor::Clone()
     const {
   return std::make_unique<SpmdPartitioningVisitor>(*this);
+}
+
+SPMDCollectiveOpsCreator::~SPMDCollectiveOpsCreator() = default;
+SPMDCollectiveOpsCreator& SPMDCollectiveOpsCreator::operator=(
+    const SPMDCollectiveOpsCreator&) = default;
+
+PartitionedHlo::PartitioningState::PartitioningState() = default;
+PartitionedHlo::PartitioningState::~PartitioningState() = default;
+PartitionedHlo::PartitioningState::PartitioningState(const PartitioningState&) =
+    default;
+PartitionedHlo::PartitioningState::PartitioningState(
+    PartitioningState&& other) noexcept
+    : b(other.b),
+      module(other.module),
+      num_replicas(other.num_replicas),
+      partition_id(other.partition_id),
+      collective_ops_creator{
+          std::move(other.collective_ops_creator.create_partition_id),
+          std::move(other.collective_ops_creator.create_all_reduce),
+          std::move(other.collective_ops_creator.create_collective_permute),
+          std::move(other.collective_ops_creator.create_all_to_all),
+          std::move(other.collective_ops_creator.create_all_gather)},
+      next_channel_id(other.next_channel_id),
+      reshard_cache(other.reshard_cache),
+      partitioner(other.partitioner) {}
+PartitionedHlo::PartitioningState& PartitionedHlo::PartitioningState::operator=(
+    const PartitioningState&) = default;
+PartitionedHlo::PartitioningState& PartitionedHlo::PartitioningState::operator=(
+    PartitioningState&& other) noexcept {
+  b = other.b;
+  module = other.module;
+  num_replicas = other.num_replicas;
+  partition_id = other.partition_id;
+  collective_ops_creator.create_partition_id =
+      std::move(other.collective_ops_creator.create_partition_id);
+  collective_ops_creator.create_all_reduce =
+      std::move(other.collective_ops_creator.create_all_reduce);
+  collective_ops_creator.create_collective_permute =
+      std::move(other.collective_ops_creator.create_collective_permute);
+  collective_ops_creator.create_all_to_all =
+      std::move(other.collective_ops_creator.create_all_to_all);
+  collective_ops_creator.create_all_gather =
+      std::move(other.collective_ops_creator.create_all_gather);
+  next_channel_id = other.next_channel_id;
+  reshard_cache = other.reshard_cache;
+  partitioner = other.partitioner;
+  return *this;
+}
+
+PartitionedHlo::PartitionedHlo(HloInstruction* hlo, Shape base_shape,
+                               PartitioningState state)
+    : hlo_(hlo), base_shape_(std::move(base_shape)), state_(std::move(state)) {}
+PartitionedHlo::~PartitionedHlo() = default;
+PartitionedHlo::PartitionedHlo(PartitionedHlo&& other) noexcept = default;
+PartitionedHlo::PartitionedHlo(const PartitionedHlo& other) = default;
+PartitionedHlo& PartitionedHlo::operator=(PartitionedHlo&& other) noexcept =
+    default;
+PartitionedHlo& PartitionedHlo::operator=(const PartitionedHlo& other) =
+    default;
+
+PartitionedHlo PartitionedHlo::CloneWithNewHlo(HloInstruction* hlo) const {
+  PartitionedHlo new_phlo = *this;
+  new_phlo.hlo_ = hlo;
+  if (!hlo->has_sharding() && hlo_->has_sharding()) {
+    hlo->copy_sharding(hlo_);
+  }
+  return new_phlo;
 }
 
 PartitionedHlo::PartitioningState
@@ -4464,12 +4536,19 @@ absl::Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
   TF_RET_CHECK(literal.IsAllFirst());
   auto shard_shape = MakePartitionedShape(hlo->shape(), hlo->sharding());
   ABSL_ASSIGN_OR_RETURN(Literal shard_literal, Literal::Make(shard_shape));
-  primitive_util::ArrayTypeSwitch(
-      [&](auto type) {
-        using NativeT = primitive_util::NativeTypeOf<type>;
-        shard_literal.PopulateWithValue(literal.GetFirstElement<NativeT>());
-      },
-      literal.shape().element_type());
+  if (shard_literal.element_count() > 0) {
+    primitive_util::ByteWidthTypeSwitch(
+        [&](auto type) {
+          using NativeT = primitive_util::NativeTypeOf<type>;
+          const NativeT first =
+              *static_cast<const NativeT*>(literal.untyped_data());
+          absl::Span<NativeT> dest(
+              static_cast<NativeT*>(shard_literal.untyped_data()),
+              shard_literal.element_count());
+          absl::c_fill(dest, first);
+        },
+        literal.shape().element_type());
+  }
   auto constant = b_.AddInstruction(
       HloInstruction::CreateConstant(std::move(shard_literal)));
   *constant->mutable_shape() = shard_shape;
@@ -5257,12 +5336,10 @@ SpmdPartitioningVisitor::ProcessUpdatePieceExtractOperand(
               }
             }
             if (is_communication_free) {
-              for (int64_t i = 0;
-                   i < rep_sharding.tile_assignment().dimensions().size();
-                   ++i) {
+              for (int64_t i = 0; i < rep_sharding.TiledDataRank(); ++i) {
                 if (std::find(post_to_pre.begin(), post_to_pre.end(), i) ==
                     post_to_pre.end()) {
-                  if (rep_sharding.tile_assignment().dimensions()[i] > 1) {
+                  if (rep_sharding.dimension(i) > 1) {
                     is_communication_free = false;
                     break;
                   }
@@ -8193,7 +8270,15 @@ void SpmdPartitioningVisitor::SetPartitionedHlo(
         hlo, partitioned_hlo.hlo(), build_recovery_computation);
   }
 
-  partitioned_instructions_.emplace(hlo, partitioned_hlo);
+  partitioned_instructions_.emplace(hlo, std::move(partitioned_hlo));
+  changed_ = true;
+}
+
+void SpmdPartitioningVisitor::SetPartitionedHlo(const HloInstruction* hlo,
+                                                HloInstruction* new_hlo) {
+  new_hlo->set_sharding(hlo->sharding());
+  SetPartitionedHlo(
+      hlo, PartitionedHlo(new_hlo, hlo->shape(), MakePartitioningState()));
   changed_ = true;
 }
 

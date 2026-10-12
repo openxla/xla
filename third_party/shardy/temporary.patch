@@ -1,883 +1,826 @@
+diff --git a/shardy/dialect/sdy/ir/canonicalization.cc b/shardy/dialect/sdy/ir/canonicalization.cc
+index 55f7ebcf..9af43e32 100644
+--- a/shardy/dialect/sdy/ir/canonicalization.cc
++++ b/shardy/dialect/sdy/ir/canonicalization.cc
+@@ -25,6 +25,7 @@ limitations under the License.
+ #include "llvm/ADT/SmallVector.h"
+ #include "llvm/Support/MathExtras.h"
+ #include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/BuiltinTypes.h"
+ #include "mlir/IR/Diagnostics.h"
+ #include "mlir/IR/MLIRContext.h"
+ #include "mlir/IR/OperationSupport.h"
+@@ -203,6 +204,42 @@ std::optional<ReduceScatterFusionInfo> matchAndComputeReduceScatterFusionAxes(
+   SmallVector<DimensionShardingAttr> reduceScatterOutDimShardings;
+   reduceScatterOutDimShardings.reserve(rank);
+ 
++  // TODO(b/553078138): This is a conservative workaround. The proper fix is to
++  // make a reduce-scatter with unreduced axes exportable for the non-divisible
++  // case (in `convertReduceScatter`); once that lands, this bail-out (which
++  // falls back to the less efficient `all_reduce` + `all_slice` form) can be
++  // removed so these cases fuse as well.
++  // Bail out of the fusion if it would create an `sdy.reduce_scatter` that
++  // scatters a dimension by a group size that does not evenly divide the local
++  // (already-sharded) dimension size. Exporting a reduce-scatter with unreduced
++  // axes (see `convertReduceScatter` in export_manual_reduction_collectives)
++  // requires the scattered dimension to be divisible by the group size, and
++  // would otherwise fail. Keeping the `all_reduce` + `all_slice` form preserves
++  // correct behavior for these non-divisible cases.
++  if (auto operandType =
++          dyn_cast<RankedTensorType>(allReduceOp.getTensor().getType())) {
++    // Local (per-device) shape of the all-reduce operand under its existing
++    // sharding. `allowNonDivisible=true` handles the case where the existing
++    // sharding does not evenly divide a dimension: the local size is rounded up
++    // (ceil), matching how Shardy pads such dimensions.
++    RankedTensorType localType = allReduceInSharding.getLocalTensorType(
++        operandType, mesh, /*allowNonDivisible=*/true);
++    for (int64_t dim = 0; dim < rank; ++dim) {
++      int64_t groupSize =
++          getTotalAxesSize(reduceScatterAxes[dim].getValue(), mesh);
++      if (groupSize <= 1) {
++        continue;
++      }
++      int64_t localDimSize = localType.getDimSize(dim);
++      if (ShapedType::isDynamic(localDimSize)) {
++        continue;
++      }
++      if (localDimSize % groupSize != 0) {
++        return std::nullopt;
++      }
++    }
++  }
++
+   for (auto [operandDimSharding, reduceScatterAxesPerDim] : llvm::zip_equal(
+            allReduceInSharding.getDimShardings(), reduceScatterAxes)) {
+     SmallVector<AxisRefAttr> expectedDimShardingAxes =
+diff --git a/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc b/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc
+index d4825b2e..75aac4e0 100644
+--- a/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc
++++ b/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc
+@@ -70,20 +70,20 @@ struct WhileShardableDataFlowOpInterface
+   }
+ };
+ 
+-template <typename OpTy>
+-struct RegionBranchShardableDataFlowOpInterface
++struct CaseShardableDataFlowOpInterface
+     : public ShardableDataFlowOpInterface::ExternalModel<
+-          RegionBranchShardableDataFlowOpInterface<OpTy>, OpTy> {
++          CaseShardableDataFlowOpInterface, stablehlo::CaseOp> {
+   ResultRange getOpResultEdgeOwners(Operation *op) const {
+     return op->getResults();
+   }
+ 
+   SmallVector<OpOperand *> getEdgeSources(Operation *op, Value owner) const {
++    auto caseOp = cast<stablehlo::CaseOp>(op);
+     auto opResult = dyn_cast<OpResult>(owner);
+     assert(opResult && opResult.getOwner() == op);
+     SmallVector<OpOperand *> sources;
+-    sources.reserve(op->getNumRegions());
+-    for (Region& branch : op->getRegions()) {
++    sources.reserve(caseOp.getBranches().size());
++    for (Region &branch : caseOp.getBranches()) {
+       sources.push_back(&branch.front().getTerminator()->getOpOperand(
+           opResult.getResultNumber()));
+     }
+@@ -132,10 +132,7 @@ void registerStablehloExtensions(MLIRContext *ctx) {
+   // Ensure dialect is loaded before attaching interfaces.
+   ctx->loadDialect<stablehlo::StablehloDialect>();
+   stablehlo::WhileOp::attachInterface<WhileShardableDataFlowOpInterface>(*ctx);
+-  stablehlo::CaseOp::attachInterface<
+-      RegionBranchShardableDataFlowOpInterface<stablehlo::CaseOp>>(*ctx);
+-  stablehlo::IfOp::attachInterface<
+-      RegionBranchShardableDataFlowOpInterface<stablehlo::IfOp>>(*ctx);
++  stablehlo::CaseOp::attachInterface<CaseShardableDataFlowOpInterface>(*ctx);
+   stablehlo::OptimizationBarrierOp::attachInterface<
+       OptBarrierShardableDataFlowOpInterface>(*ctx);
+ }
+diff --git a/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir b/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
+index de616ede..14b0acf3 100644
+--- a/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
++++ b/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
+@@ -115,15 +115,33 @@ func.func @reduce_scatter_fusion4(%arg0 : tensor<64x8xf32> {sdy.sharding=#sdy.sh
+   return %1 : tensor<64x8xf32>
+ }
+ 
++// The local size of dim 0 is 2 / size("x"=2) = 1, which is not divisible by the
++// reduce-scatter group size (size("y"=2)). The fusion must be skipped and the
++// original `all_reduce` + `all_slice` preserved, otherwise the resulting
++// `reduce_scatter` cannot be exported (see `convertReduceScatter` in
++// export_manual_reduction_collectives).
+ // CHECK-LABEL: func @reduce_scatter_fusion_non_divisible
+ func.func @reduce_scatter_fusion_non_divisible(%arg0 : tensor<2x4xf32> {sdy.sharding=#sdy.sharding<@mesh, [{"x"}, {}]>}) -> tensor<2x4xf32> {
+-  // CHECK-NEXT: %0 = sdy.reduce_scatter [{"y"}, {}] %arg0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<2x4xf32>
+-  // CHECK-NEXT: return %0 : tensor<2x4xf32>
++  // CHECK-NEXT: %[[ALL_REDUCE:.*]] = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh, [{"x"}, {}]> : tensor<2x4xf32>
++  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{"y"}, {}] %[[ALL_REDUCE]] out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<2x4xf32>
++  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<2x4xf32>
+   %0 = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh, [{"x"}, {}]> : tensor<2x4xf32>
+   %1 = sdy.all_slice [{"y"}, {}] %0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<2x4xf32>
+   return %1 : tensor<2x4xf32>
+ }
+ 
++// The `all_reduce` operand is sharded indivisibly: dim 0 size 7 with
++// size("x"=2), so its local size is ceil(7 / 2) = 4, which is divisible by
++// the reduce-scatter group size (size("y"=2)). Therefore, fusion happens.
++// CHECK-LABEL: func @reduce_scatter_fusion_non_divisible_all_reduce
++func.func @reduce_scatter_fusion_non_divisible_all_reduce(%arg0 : tensor<7x4xf32> {sdy.sharding=#sdy.sharding<@mesh, [{"x"}, {}]>}) -> tensor<7x4xf32> {
++  // CHECK-NEXT: %0 = sdy.reduce_scatter [{"y"}, {}] %arg0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<7x4xf32>
++  // CHECK-NEXT: return %0 : tensor<7x4xf32>
++  %0 = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh, [{"x"}, {}]> : tensor<7x4xf32>
++  %1 = sdy.all_slice [{"y"}, {}] %0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<7x4xf32>
++  return %1 : tensor<7x4xf32>
++}
++
+ // CHECK-LABEL: func @reduce_scatter_fusion_missing_in_sharding
+ func.func @reduce_scatter_fusion_missing_in_sharding(%arg0 : tensor<16x8xf32>) -> tensor<16x8xf32> {
+   // CHECK-NEXT: %0 = sdy.reduce_scatter [{"x"}, {"y"}] %arg0 out_sharding=<@mesh2, [{"x"}, {"y"}]> : tensor<16x8xf32>
+diff --git a/shardy/dialect/sdy/ir/utils.cc b/shardy/dialect/sdy/ir/utils.cc
+index 590f7149..f6623986 100644
+--- a/shardy/dialect/sdy/ir/utils.cc
++++ b/shardy/dialect/sdy/ir/utils.cc
+@@ -247,13 +247,10 @@ TensorShardingPerValueAttr inlineMesh(
+                                          inlinedShardings);
+ }
+ 
+-namespace {
+-
+-template <typename SymbolTableOrOp>
+-std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+-    ArrayRef<TensorShardingAttr> operandShardings,
+-    ArrayRef<TensorShardingAttr> resultsShardings,
+-    SymbolTableOrOp symbolTableOrOp, const bool ignoreDeviceIds) {
++Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
++                             ArrayRef<TensorShardingAttr> resultsShardings,
++                             const SymbolTable& symbolTable,
++                             const bool ignoreDeviceIds) {
+   Attribute meshOrRef;
+   MeshAttr mesh;
+   for (TensorShardingAttr sharding : llvm::concat<const TensorShardingAttr>(
+@@ -261,7 +258,7 @@ std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+     if (!sharding || sharding.getMeshOrRef() == meshOrRef) {
+       continue;
+     }
+-    MeshAttr otherMesh = sharding.getMesh(symbolTableOrOp);
++    MeshAttr otherMesh = sharding.getMesh(symbolTable);
+     if (!mesh || mesh.empty()) {
+       mesh = otherMesh;
+       meshOrRef = sharding.getMeshOrRef();
+@@ -272,7 +269,7 @@ std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+     }
+     if (!otherMesh.equals(mesh, ignoreDeviceIds)) {
+       // Found more than one mesh name.
+-      return {nullptr, nullptr};
++      return nullptr;
+     }
+     // Prefer iota device id over non-iota.
+     if (ignoreDeviceIds && otherMesh.getDeviceIds().empty()) {
+@@ -281,18 +278,7 @@ std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+     }
+   }
+ 
+-  return {meshOrRef, mesh};
+-}
+-
+-}  // namespace
+-
+-Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
+-                             ArrayRef<TensorShardingAttr> resultsShardings,
+-                             const SymbolTable& symbolTable,
+-                             const bool ignoreDeviceIds) {
+-  return getCommonMeshAndRef(operandShardings, resultsShardings, symbolTable,
+-                             ignoreDeviceIds)
+-      .first;
++  return meshOrRef;
+ }
+ 
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings,
+@@ -300,24 +286,21 @@ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings,
+   return getCommonMesh(shardings, {}, symbolTable);
+ }
+ 
+-MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings, Operation* op) {
+-  return getCommonMesh(shardings, {}, op);
+-}
+-
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> operandShardings,
+                        ArrayRef<TensorShardingAttr> resultsShardings,
+                        const SymbolTable& symbolTable) {
+-  return getCommonMeshAndRef(operandShardings, resultsShardings, symbolTable,
+-                             /*ignoreDeviceIds=*/false)
+-      .second;
++  if (Attribute meshOrRef =
++          getCommonMeshOrRef(operandShardings, resultsShardings, symbolTable)) {
++    return getMeshOrLookup(symbolTable, meshOrRef);
++  }
++  return nullptr;
+ }
+ 
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> operandShardings,
+                        ArrayRef<TensorShardingAttr> resultsShardings,
+                        Operation* op) {
+-  return getCommonMeshAndRef(operandShardings, resultsShardings, op,
+-                             /*ignoreDeviceIds=*/false)
+-      .second;
++  return getCommonMesh(operandShardings, resultsShardings,
++                       SymbolTable(op->getParentOfType<ModuleOp>()));
+ }
+ 
+ std::optional<StringRef> getCommonMeshName(
+diff --git a/shardy/dialect/sdy/ir/utils.h b/shardy/dialect/sdy/ir/utils.h
+index 3b56a553..22e4d9cc 100644
+--- a/shardy/dialect/sdy/ir/utils.h
++++ b/shardy/dialect/sdy/ir/utils.h
+@@ -195,12 +195,6 @@ Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings,
+                        const SymbolTable& symbolTable);
+ 
+-// Returns the common `MeshAttr` bound by all the `TensorShardingAttr`s or
+-// nullptr if there is none.
+-//
+-// Ignores empty meshes unless all meshes are empty.
+-MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings, Operation* op);
+-
+ // Returns the common `MeshAttr` bound by all the `TensorShardingAttr`s or
+ // nullptr if there is none.
+ //
+diff --git a/shardy/dialect/sdy/ir/utils_test.cc b/shardy/dialect/sdy/ir/utils_test.cc
+index f76d2b16..8dbaf619 100644
+--- a/shardy/dialect/sdy/ir/utils_test.cc
++++ b/shardy/dialect/sdy/ir/utils_test.cc
+@@ -81,27 +81,11 @@ class UtilsTest : public ShardyTestBase {
+     return symbolTableCollection.getSymbolTable(moduleOp.get());
+   }
+ 
+-  Operation* getModuleOp() { return moduleOp.get(); }
+-  Operation* getNestedOp() {
+-    return moduleOp->lookupSymbol<func::FuncOp>("main");
+-  }
+-
+  private:
+   OwningOpRef<ModuleOp> moduleOp;
+   mlir::SymbolTableCollection symbolTableCollection;
+ };
+ 
+-TEST_F(UtilsTest, GetCommonMesh_SingleListWithOperation) {
+-  EXPECT_NE(getCommonMesh({createTensorSharding("mesh_ab_23")}, getModuleOp()),
+-            nullptr);
+-  EXPECT_EQ(
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getModuleOp()),
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getSymbolTable()));
+-  EXPECT_EQ(
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getNestedOp()),
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getSymbolTable()));
+-}
+-
+ TEST_F(UtilsTest, GetCommonMeshName_AllSame) {
+   EXPECT_EQ(getCommonMeshName({createTensorSharding("mesh_ab_23")},
+                               {createTensorSharding("mesh_ab_23")},
+diff --git a/shardy/dialect/sdy/ir/verifiers.cc b/shardy/dialect/sdy/ir/verifiers.cc
+index 09f70f28..65c6212b 100644
+--- a/shardy/dialect/sdy/ir/verifiers.cc
++++ b/shardy/dialect/sdy/ir/verifiers.cc
+@@ -1186,7 +1186,8 @@ LogicalResult verifyPropagationEdgesShardingAttr(
+         "expected propagation edges attr to reference a sharding.");
+   }
+ 
+-  MeshAttr mesh = getCommonMesh(shardings, op);
++  MeshAttr mesh =
++      getCommonMesh(shardings, SymbolTable(op->getParentOfType<ModuleOp>()));
+   if (!mesh) {
+     return op->emitOpError(
+         "expected a common mesh for propagation edges attr.");
+@@ -1195,7 +1196,12 @@ LogicalResult verifyPropagationEdgesShardingAttr(
+   for (PropagationOneStepAttr propagationEdge : propagationEdges) {
+     for (AxisToPropagationDetailsAttr axisEntry :
+          propagationEdge.getAxisEntries()) {
+-      if (!mesh.hasAxis(axisEntry.getAxisName().getName())) {
++      bool meshContainsAxis = false;
++      if (mesh.hasAxis(axisEntry.getAxisName().getName())) {
++        meshContainsAxis = true;
++      }
++
++      if (!meshContainsAxis) {
+         return op->emitOpError("expected axis ref to be in one of the meshes");
+       }
+ 
+@@ -1284,8 +1290,8 @@ LogicalResult NamedComputationOp::verifySymbolUses(
+ 
+   // TODO(pxy): remove this once the `ShardableDataFlowOpInterface` is verified.
+   // Verify the in/out shardings.
+-  const SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(
+-      getOperation()->getParentOfType<ModuleOp>());
++  const SymbolTable& symbolTable =
++      SymbolTable(getOperation()->getParentOfType<ModuleOp>());
+   if (inShardings && failed(verifyTensorShardingPerValueAttr(
+                          *inShardings, getOperandTypes(), *this, symbolTable,
+                          [this](StringRef msg) {
+diff --git a/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir b/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir
+index f287d6de..f2891d04 100644
+--- a/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir
++++ b/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir
+@@ -48,25 +48,6 @@ func.func @case_argument_used_outside_block(%arg0: tensor<210xf32> {sdy.sharding
+   return %3 : tensor<210xf32>
+ }
+ 
+-// CHECK-LABEL: func @if
+-func.func @if(%arg0: tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"x":(1)2}]>}, %arg1: tensor<i1>) -> (tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"y"}]>}) {
+-  %0 = "stablehlo.if"(%arg1) ({
+-    // CHECK: %[[RESHARD:.*]] = sdy.reshard %arg0 <@mesh, [{"x"}]> : tensor<210xf32>
+-    // CHECK-NEXT: stablehlo.abs %[[RESHARD]]
+-    %2 = stablehlo.abs %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"x"}]>]>} : tensor<210xf32>
+-    // CHECK: %[[RESHARD:.*]] = sdy.reshard %{{.*}} <@mesh, [{"y"}]> : tensor<210xf32>
+-    // CHECK-NEXT: stablehlo.return %[[RESHARD]] : tensor<210xf32>
+-    stablehlo.return %2 : tensor<210xf32>
+-  }, {
+-    %2 = stablehlo.abs %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"x":(1)2}]>]>} : tensor<210xf32>
+-    // CHECK: %[[RESHARD:.*]] = sdy.reshard %{{.*}} <@mesh, [{"y"}]> : tensor<210xf32>
+-    // CHECK-NEXT: stablehlo.return %[[RESHARD]] : tensor<210xf32>
+-    stablehlo.return %2 : tensor<210xf32>
+-  }) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"y"}]>]>} : (tensor<i1>) -> tensor<210xf32>
+-  %1 = stablehlo.negate %0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"y"}]>]>} : tensor<210xf32>
+-  return %1 : tensor<210xf32>
+-}
+-
+ // CHECK-LABEL: func @while
+ func.func @while(%arg0: tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"x"}]>}) -> (tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"y"}]>}) {
+   %c = stablehlo.constant dense<0> : tensor<i32>
+diff --git a/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir b/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir
+index 6b080b16..bd472047 100644
+--- a/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir
++++ b/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir
+@@ -55,24 +55,6 @@ func.func @case_token_result_skipped(
+   return %0#0, %0#1 : !stablehlo.token, tensor<4xi64>
+ }
+ 
+-// CHECK-LABEL: func @if
+-func.func @if(%arg0: tensor<i1>, %arg1: tensor<8xi64>, %arg2: tensor<8xi64>,
+-              %arg3: tensor<8xi64>, %arg4: tensor<8xi64>)
+-    -> (tensor<8xi64>, tensor<8xi64>) {
+-  // CHECK-NEXT: %[[IF:.*]]:2 = "stablehlo.if"(%arg0)
+-  // CHECK:      %[[EDGE_1:.*]] = sdy.data_flow_edge %[[IF]]#0 : tensor<8xi64>
+-  // CHECK-NEXT: %[[EDGE_2:.*]] = sdy.data_flow_edge %[[IF]]#1 : tensor<8xi64>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[EDGE_2]], %[[EDGE_2]]
+-  // CHECK-NEXT: return %[[EDGE_1]], %[[ADD]]
+-  %0:2 = "stablehlo.if"(%arg0) ({
+-    stablehlo.return %arg1, %arg2 : tensor<8xi64>, tensor<8xi64>
+-  }, {
+-    stablehlo.return %arg3, %arg4 : tensor<8xi64>, tensor<8xi64>
+-  }) : (tensor<i1>) -> (tensor<8xi64>, tensor<8xi64>)
+-  %1 = stablehlo.add %0#1, %0#1 : tensor<8xi64>
+-  return %0#0, %1 : tensor<8xi64>, tensor<8xi64>
+-}
+-
+ // CHECK-LABEL: func @optimization_barrier
+ func.func @optimization_barrier(%arg0: tensor<32x96xf32>, %arg1: tensor<32x96xf32>)
+     -> (tensor<32x96xf32>, tensor<32x96xf32>) {
+diff --git a/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir b/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir
+index 445f25fd..11d064d5 100644
+--- a/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir
++++ b/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir
+@@ -652,275 +652,6 @@ func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+ 
+ // -----
+ 
+-// A flat call graph (@main -> @foo) without func data flow edges, applying a
+-// single sharding constraint to the argument and call result. Without func data
+-// flow edges, closed shardings are attached directly to the function argument
+-// and call result and other uses are not replaced with the sharding constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @foo(
+-// CHECK-SAME:    %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a"}, {}]>}) -> tensor<8x8xf32> {
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  %1 = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %0 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @foo(%arg0) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {"b"}]>]>} : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL]], %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[CALL]] <@mesh, [{}, {"b"}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A flat call graph (@main -> @foo) applying a single sharding constraint to
+-// the func data flow edges. The func data flow edges is left unsharded, the
+-// constraint is moved right after the edge, and other uses are replaced with
+-// the constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE]] <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE]] <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = sdy.func_data_flow_edge %0 : tensor<8x8xf32>
+-  %2 = stablehlo.add %1, %1 : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %1 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %2 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A non-flat call graph (@main -> @foo -> @bar and @main -> @bar) without
+-// func data flow edges, applying a single sharding constraint to the argument
+-// and the call results. Without func data flow edges, closed shardings are
+-// attached directly to the argument and both results, and other uses are not
+-// replaced with the sharding constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar(
+-// CHECK-SAME:    %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a"}, {}]>}) -> tensor<8x8xf32> {
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  %1 = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %0 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%arg0) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {"b"}]>]>} : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL]], %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[CALL]] <@mesh, [{}, {"b"}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @bar(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[CALL_0]]) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {"b"}]>]>} : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL_1]], %[[CALL_1]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[CALL_1]] <@mesh, [{"a"}, {"b"}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %2 = stablehlo.add %1, %1 : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %1 <@mesh, [{"a"}, {"b"}]> : tensor<8x8xf32>
+-  return %2 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A non-flat call graph (@main -> @foo -> @bar and @main -> @bar) applying a
+-// single sharding constraint to the func data flow edges on @bar's argument
+-// and the call results in @foo and @main. Each func data flow edges is left
+-// unsharded, the constraint is moved right after the edge, and other uses are
+-// replaced with the constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE]] <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]])
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE_1]] <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %2 = sdy.func_data_flow_edge %1 : tensor<8x8xf32>
+-  %3 = stablehlo.add %2, %2 : tensor<8x8xf32>
+-  %4 = sdy.sharding_constraint %2 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %3 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %[[CALL_0]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]]) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL_1]] : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE_1]] <@mesh, [{"a"}, {"b"}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = sdy.func_data_flow_edge %0 : tensor<8x8xf32>
+-  %2 = call @bar(%1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %3 = sdy.func_data_flow_edge %2 : tensor<8x8xf32>
+-  %4 = stablehlo.add %3, %3 : tensor<8x8xf32>
+-  %5 = sdy.sharding_constraint %3 <@mesh, [{"a"}, {"b"}]> : tensor<8x8xf32>
+-  return %4 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// Non-flat call graph (@main -> @foo -> @bar and @main -> @bar) without
+-// func data flow edges, applying a chain of two sharding constraints
+-// to stablehlo.add in @bar and @foo. Verifies that the head constraint's
+-// sharding is attached to `stablehlo.add` and uses after the chain (including
+-// the func returns in @bar and @foo) are replaced with the tail of the chain.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  %1 = sdy.sharding_constraint %0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %1 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %0 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%arg0)
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL]], %[[CALL]] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = call @bar(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %1 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %2 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[CALL_0]]) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[CALL_1]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A non-flat call graph (@main -> @foo -> @bar and @main -> @bar) with func
+-// data flow edges on function arguments and call results, applying a chain of
+-// two sharding constraints to stablehlo.add in @bar and @foo.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[FUNC_DATA_FLOW_EDGE]], %[[FUNC_DATA_FLOW_EDGE]] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %1 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %2 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]])
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[FUNC_DATA_FLOW_EDGE_1]], %[[FUNC_DATA_FLOW_EDGE_1]] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %2 = sdy.func_data_flow_edge %1 : tensor<8x8xf32>
+-  %3 = stablehlo.add %2, %2 : tensor<8x8xf32>
+-  %4 = sdy.sharding_constraint %3 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %5 = sdy.sharding_constraint %4 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %3 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %[[CALL_0]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]]) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL_1]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[FUNC_DATA_FLOW_EDGE_1]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = sdy.func_data_flow_edge %0 : tensor<8x8xf32>
+-  %2 = call @bar(%1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %3 = sdy.func_data_flow_edge %2 : tensor<8x8xf32>
+-  return %3 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+ sdy.mesh @mesh = <["a"=2, "b"=2]>
+ 
+ // CHECK-LABEL: func @main
+diff --git a/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc b/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc
+index dc069471..e88aa109 100644
+--- a/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc
++++ b/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc
+@@ -1321,7 +1321,7 @@ OpShardingRuleAttr createOpShardingRule(Operation* op,
+             PropagationBarrierOp, ShardableDataFlowOpInterface, ShardingGroupOp,
+             ReshardOp, stablehlo::AfterAllOp, stablehlo::CaseOp,
+             stablehlo::ConstantOp, stablehlo::CreateTokenOp,
+-            stablehlo::GetTupleElementOp, stablehlo::IfOp, stablehlo::InfeedOp,
++            stablehlo::GetTupleElementOp, stablehlo::InfeedOp,
+             stablehlo::IotaOp, stablehlo::OutfeedOp,
+             stablehlo::OptimizationBarrierOp, stablehlo::PartitionIdOp,
+             stablehlo::RecvOp, stablehlo::SendOp, stablehlo::WhileOp>(
+diff --git a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc
+index f61c0dd3..2035990f 100644
+--- a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc
++++ b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc
+@@ -15,10 +15,12 @@ limitations under the License.
+ 
+ #include "shardy/dialect/sdy/transforms/propagation/sharding_group_map.h"
+ 
++#include <algorithm>
++#include <cassert>
+ #include <cstdint>
+ 
+ #include "llvm/ADT/DenseMap.h"
+-#include "llvm/ADT/MapVector.h"
++#include "llvm/ADT/STLExtras.h"
+ #include "llvm/Support/ErrorHandling.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/Diagnostics.h"
+@@ -34,19 +36,21 @@ namespace sdy {
+ 
+ ShardingGroupMap::ShardingGroupMap(ModuleOp moduleOp) {
+   moduleOp.walk([&](ShardingGroupOp op) {
+-    int64_t groupId = op.getGroupId();
++    // After canonicalization all group ids will take distinct values in the
++    // range 0,1,...,N. Because of this we can directly index these group ids
++    // into the shardingGroupToValues vector (resizing when necessary).
++    shardingGroupToValues.resize(
++        std::max(op.getGroupId() + 1,
++                 static_cast<uint64_t>(shardingGroupToValues.size())));
+     // Each value can only map to one sharding group id after
+     // canonicalization.
+     auto [it, inserted] =
+-        valueToShardingGroup.try_emplace(op.getInput(), groupId);
+-    if (!inserted) {
+-      if (it->getSecond() != groupId) {
+-        llvm::report_fatal_error(
+-            "Value can only map to one sharding group id after import.");
+-      }
+-      return;
++        valueToShardingGroup.try_emplace(op.getInput(), op.getGroupId());
++    if (!inserted && it->getSecond() != op.getGroupId()) {
++      llvm::report_fatal_error(
++          "Value can only map to one sharding group id after import.");
+     }
+-    shardingGroupToValues[groupId].push_back(op.getInput());
++    shardingGroupToValues[op.getGroupId()].push_back(op.getInput());
+   });
+ }
+ 
+@@ -96,7 +100,7 @@ CommonSharding findCommonSharding(int64_t groupId, ValueRange groupMembers) {
+ }  // namespace
+ 
+ void ShardingGroupMap::syncGroupMemberShardings(ModuleOp module) {
+-  for (auto& [groupId, groupMembers] : shardingGroupToValues) {
++  for (auto [groupId, groupMembers] : llvm::enumerate(shardingGroupToValues)) {
+     auto [sharding, hasConflict] = findCommonSharding(groupId, groupMembers);
+     if (!sharding) {
+       continue;
+@@ -130,7 +134,8 @@ void ShardingGroupMap::syncGroupMemberShardings(ModuleOp module) {
+ ValueRange ShardingGroupMap::getGroupMembers(const Value& value) const {
+   if (auto it = valueToShardingGroup.find(value);
+       it != valueToShardingGroup.end()) {
+-    return shardingGroupToValues.find(it->getSecond())->second;
++    int64_t shardingGroupId = it->getSecond();
++    return shardingGroupToValues[shardingGroupId];
+   }
+   return {};
+ }
+diff --git a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h
+index b924ca1a..90b38bd4 100644
+--- a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h
++++ b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h
+@@ -19,7 +19,6 @@ limitations under the License.
+ #include <cstdint>
+ 
+ #include "llvm/ADT/DenseMap.h"
+-#include "llvm/ADT/MapVector.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/Value.h"
+ #include "mlir/IR/ValueRange.h"
+@@ -46,7 +45,7 @@ class ShardingGroupMap {
+   ValueRange getGroupMembers(const Value& value) const;
+ 
+  private:
+-  llvm::MapVector<int64_t, SmallVector<Value>> shardingGroupToValues;
++  SmallVector<SmallVector<Value>> shardingGroupToValues;
+   llvm::SmallDenseMap<Value, int64_t> valueToShardingGroup;
+ };
+ 
+diff --git a/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir b/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir
+index 36ae5341..b9edf866 100644
+--- a/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir
++++ b/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir
+@@ -131,31 +131,6 @@ func.func @different_group_ids_greater_group_id_first(
+   return %arg0, %arg1, %arg2, %arg3 : tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>
+ }
+ 
+-// -----
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @undensified_negative_and_large_group_ids
+-// CHECK-SAME:    %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:    %arg1: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:    %arg2: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>},
+-// CHECK-SAME:    %arg3: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>})
+-// CHECK-SAME:    -> (tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:        tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:        tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>},
+-// CHECK-SAME:        tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>})
+-func.func @undensified_negative_and_large_group_ids(
+-  %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-  %arg1: tensor<8x8xf32>,
+-  %arg2: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>},
+-  %arg3: tensor<8x8xf32>)
+-   -> (tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>) {
+-  sdy.sharding_group %arg0 group_id=-1 : tensor<8x8xf32>
+-  sdy.sharding_group %arg1 group_id=-1 : tensor<8x8xf32>
+-  sdy.sharding_group %arg2 group_id=100000000000 : tensor<8x8xf32>
+-  sdy.sharding_group %arg3 group_id=100000000000 : tensor<8x8xf32>
+-  return %arg0, %arg1, %arg2, %arg3 : tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>
+-}
+-
+ // -----
+ 
+ // Tests for initial member sharding sync
 diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
-index 9da29843..a839b843 100644
+index e9c206ce..509398da 100644
 --- a/third_party/llvm/generated.patch
 +++ b/third_party/llvm/generated.patch
-@@ -1,59 +1,232 @@
+@@ -1,12 +1 @@
  Auto generated patch. Do not edit or delete it, even if empty.
--diff -ruN --strip-trailing-cr a/llvm/lib/CodeGen/SelectionDAG/LegalizeTypes.h b/llvm/lib/CodeGen/SelectionDAG/LegalizeTypes.h
----- a/llvm/lib/CodeGen/SelectionDAG/LegalizeTypes.h
--+++ b/llvm/lib/CodeGen/SelectionDAG/LegalizeTypes.h
--@@ -837,7 +837,7 @@
-+diff -ruN --strip-trailing-cr a/clang/lib/Analysis/LifetimeSafety/FactsGenerator.cpp b/clang/lib/Analysis/LifetimeSafety/FactsGenerator.cpp
-+--- a/clang/lib/Analysis/LifetimeSafety/FactsGenerator.cpp
-++++ b/clang/lib/Analysis/LifetimeSafety/FactsGenerator.cpp
-+@@ -1044,11 +1044,12 @@
-+           CapturingArgIdx == LifetimeCaptureByAttr::Unknown ||
-+           CapturingArgIdx == LifetimeCaptureByAttr::Invalid)
-+         continue;
-+-      ArrayRef<const Expr *> CallArgs = IsInstance ? Args.drop_front() : Args;
-+-      const Expr *CapturedByArg =
-+-          (CapturingArgIdx == LifetimeCaptureByAttr::This)
-+-              ? Args[0]
-+-              : CallArgs[CapturingArgIdx];
-++      // FIXME: Diagnose bad CapturingArgIdx.
-++      if (CapturingArgIdx != LifetimeCaptureByAttr::This &&
-++          (CapturingArgIdx < 0 ||
-++           static_cast<size_t>(CapturingArgIdx) >= Args.size()))
-++        continue;
-++      const Expr *CapturedByArg = Args[CapturingArgIdx];
-+       assert(CapturedByArg && "Capturer expression must be valid");
-  
--   SDValue ScalarizeVecRes_ADDRSPACECAST(SDNode *N);
--   SDValue ScalarizeVecRes_BITCAST(SDNode *N);
---  SDValue ScalarizeVecRes_BUILD_VECTOR(SDNode *N);
--+  SDValue ScalarizeVecRes_BUILD_VECTOR_OR_SPLAT(SDNode *N);
--   SDValue ScalarizeVecRes_EXTRACT_SUBVECTOR(SDNode *N);
--   SDValue ScalarizeVecRes_FP_ROUND(SDNode *N);
--   SDValue ScalarizeVecRes_CONVERT_FROM_ARBITRARY_FP(SDNode *N);
--diff -ruN --strip-trailing-cr a/llvm/lib/CodeGen/SelectionDAG/LegalizeVectorTypes.cpp b/llvm/lib/CodeGen/SelectionDAG/LegalizeVectorTypes.cpp
----- a/llvm/lib/CodeGen/SelectionDAG/LegalizeVectorTypes.cpp
--+++ b/llvm/lib/CodeGen/SelectionDAG/LegalizeVectorTypes.cpp
--@@ -63,7 +63,10 @@
--     break;
--   case ISD::MERGE_VALUES:      R = ScalarizeVecRes_MERGE_VALUES(N, ResNo);break;
--   case ISD::BITCAST:           R = ScalarizeVecRes_BITCAST(N); break;
---  case ISD::BUILD_VECTOR:      R = ScalarizeVecRes_BUILD_VECTOR(N); break;
--+  case ISD::SPLAT_VECTOR:
--+  case ISD::BUILD_VECTOR:
--+    R = ScalarizeVecRes_BUILD_VECTOR_OR_SPLAT(N);
--+    break;
--   case ISD::EXTRACT_SUBVECTOR: R = ScalarizeVecRes_EXTRACT_SUBVECTOR(N); break;
--   case ISD::FP_ROUND:          R = ScalarizeVecRes_FP_ROUND(N); break;
--   case ISD::CONVERT_FROM_ARBITRARY_FP:
--@@ -475,10 +478,10 @@
--                      NewVT, Op);
-- }
-+       OriginList *Dest = readValue(CapturedByArg);
-+diff -ruN --strip-trailing-cr a/clang/lib/Sema/SemaTemplateDeduction.cpp b/clang/lib/Sema/SemaTemplateDeduction.cpp
-+--- a/clang/lib/Sema/SemaTemplateDeduction.cpp
-++++ b/clang/lib/Sema/SemaTemplateDeduction.cpp
-+@@ -497,6 +497,16 @@
-+   if (auto *Expansion = dyn_cast<PackExpansionType>(ParamType))
-+     ParamType = Expansion->getPattern();
-  
---SDValue DAGTypeLegalizer::ScalarizeVecRes_BUILD_VECTOR(SDNode *N) {
--+SDValue DAGTypeLegalizer::ScalarizeVecRes_BUILD_VECTOR_OR_SPLAT(SDNode *N) {
--   EVT EltVT = N->getValueType(0).getVectorElementType();
--   SDValue InOp = N->getOperand(0);
---  // The BUILD_VECTOR operands may be of wider element types and
--+  // The BUILD_VECTOR / SPLAT operands may be of wider element types and
--   // we may need to truncate them back to the requested return type.
--   if (EltVT.isInteger())
--     return DAG.getNode(ISD::TRUNCATE, SDLoc(N), EltVT, InOp);
--diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/AArch64/lowmaskedlanes.ll b/llvm/test/CodeGen/AArch64/lowmaskedlanes.ll
----- a/llvm/test/CodeGen/AArch64/lowmaskedlanes.ll
--+++ b/llvm/test/CodeGen/AArch64/lowmaskedlanes.ll
--@@ -245,3 +245,14 @@
--   tail call void @llvm.masked.store(<vscale x 8 x i16> %a, ptr align 1 %p, <vscale x 8 x i1> %m)
--   ret void
-++  // FIXME: It's not clear how deduction of a parameter of reference type from
-++  // an argument should be performed. For now, we just make the argument have
-++  // the same kind of reference type as the parameter.
-++  if (ParamType->isReferenceType()) {
-++    ValueType = ValueType.getNonReferenceType();
-++    ValueType = ParamType->isRValueReferenceType()
-++                    ? S.Context.getRValueReferenceType(ValueType)
-++                    : S.Context.getLValueReferenceType(ValueType);
-++  }
-++
-+   return DeduceTemplateArgumentsByTypeMatch(
-+       S, TemplateParams, ParamType, ValueType, Info, Deduced,
-+       TDF_SkipNonDependent | TDF_IgnoreQualifiers,
-+diff -ruN --strip-trailing-cr a/clang/test/Sema/LifetimeSafety/safety.cpp b/clang/test/Sema/LifetimeSafety/safety.cpp
-+--- a/clang/test/Sema/LifetimeSafety/safety.cpp
-++++ b/clang/test/Sema/LifetimeSafety/safety.cpp
-+@@ -4076,6 +4076,30 @@
-+     use(v);                         // expected-note 2 {{later used here}}
-  }
-+ 
-++namespace off_by_one_crash {
-++struct Item {
-++  const int* ptr;
-++};
-++
-++struct Container {
-++  const Item* saved;
-++  void size();
-++};
-++
-++struct Helper {
-++  void AddItem(const Item& item [[clang::lifetime_capture_by(c)]],
-++               Container& c) const;
-++  void Populate() const {
-++    Container c{};
-++    {
-++      Item item;
-++      AddItem(item, c); // expected-warning {{local variable 'item' does not live long enough}}
-++    }                   // expected-note {{local variable 'item' is destroyed here}}
-++    c.size();           // expected-note {{later used here}}
-++  }
-++};
-++} // namespace off_by_one_crash
-++
-+ struct [[gsl::Pointer()]] PtrWithInt { int x; };
-+ PtrWithInt f() {
-+   return PtrWithInt{10};
-+diff -ruN --strip-trailing-cr a/clang/test/SemaTemplate/temp_arg_nontype_ref.cpp b/clang/test/SemaTemplate/temp_arg_nontype_ref.cpp
-+--- a/clang/test/SemaTemplate/temp_arg_nontype_ref.cpp
-++++ b/clang/test/SemaTemplate/temp_arg_nontype_ref.cpp
-+@@ -45,3 +45,27 @@
-+   template <bool &v> int *f(A<bool &, v>);
-+   int *p = f(A<bool &, b>());
-+ } // namespace GH40328
-++
-++#if __cplusplus >= 201703L
-++// Partial specializations of templates whose constant template parameter is
-++// declared as `auto &&`.
-++namespace auto_ref_primary {
-++  int i;
-++  long l;
-++
-++  template <auto &&> struct A { static const int k = 0; };
-++  template <int &v> struct A<v> { static const int k = 1; };
-++  static_assert(A<i>::k == 1, "");
-++  static_assert(A<l>::k == 0, "");
-++
-++  template <auto &&, class> struct B { static const int k = 0; };
-++  template <auto &v> struct B<v, int> { static const int k = 1; };
-++  static_assert(B<i, int>::k == 1, "");
-++  static_assert(B<i, long>::k == 0, "");
-++
-++  template <auto &&> const int V = 0;
-++  template <int &v> const int V<v> = 1;
-++  static_assert(V<i> == 1, "");
-++  static_assert(V<l> == 0, "");
-++} // namespace auto_ref_primary
-++#endif
-+diff -ruN --strip-trailing-cr a/clang/test/SemaTemplate/temp_arg_template_p0522.cpp b/clang/test/SemaTemplate/temp_arg_template_p0522.cpp
-+--- a/clang/test/SemaTemplate/temp_arg_template_p0522.cpp
-++++ b/clang/test/SemaTemplate/temp_arg_template_p0522.cpp
-+@@ -175,3 +175,121 @@
-+   template <class ...Ts> struct B {};
-+   using T = decltype(f<B>());
-+ } // namespace GH181166
-++
-++// Matching of template template arguments whose constant parameters have
-++// reference type. The argument value is an expression, so its type drops the
-++// top-level reference (`auto &` is seen as `auto`).
-++//
-++// Names spell out the types of constant template parameters: `TakesFoo` has a
-++// template template parameter P whose parameter has type `Foo`, and `Foo_Bar`
-++// matches P against a template template argument A whose parameter has type
-++// `Bar`. A is a template template parameter, a class template `BarClass`, or a
-++// member template `MemberBar`.
-++namespace nttp_ref {
-++  template <template <auto &> class> struct TakesAutoRef; // #TakesAutoRef
-++  template <template <auto &> class TT> using AutoRef_AutoRef = TakesAutoRef<TT>;
-++  template <template <auto> class TT> using AutoRef_Auto = TakesAutoRef<TT>;
-++  template <template <auto &&> class TT> using AutoRef_AutoRRef = TakesAutoRef<TT>;
-++
-++  template <template <auto> class> struct TakesAuto; // #TakesAuto
-++  template <template <auto &> class TT> using Auto_AutoRef = TakesAuto<TT>;
-++  template <template <auto &&> class TT> using Auto_AutoRRef = TakesAuto<TT>;
-++  template <template <const auto &> class TT> using Auto_ConstAutoRef = TakesAuto<TT>;
-++
-++  template <template <const auto &> class> struct TakesConstAutoRef; // #TakesConstAutoRef
-++  template <template <const auto &> class TT> using ConstAutoRef_ConstAutoRef = TakesConstAutoRef<TT>;
-++  template <template <auto &> class TT> using ConstAutoRef_AutoRef = TakesConstAutoRef<TT>;
-++  template <template <auto> class TT> using ConstAutoRef_Auto = TakesConstAutoRef<TT>;
-++
-++  template <template <auto &...> class> struct TakesAutoRefPack;
-++  template <template <auto &...> class TT> using AutoRefPack_AutoRefPack = TakesAutoRefPack<TT>;
-++
-++  template <template <decltype(auto)> class> struct TakesDecltypeAuto; // #TakesDecltypeAuto
-++  template <template <decltype(auto)> class TT> using DecltypeAuto_DecltypeAuto = TakesDecltypeAuto<TT>;
-++
-++  // A class template argument has its parameters at the same depth as those
-++  // of the template template parameter.
-++  template <auto &> struct AutoRefClass;
-++  template <auto &&> struct AutoRRefClass;
-++  template <auto> struct AutoClass;
-++  using AutoRef_AutoRefClass = TakesAutoRef<AutoRefClass>;
-++  using AutoRef_AutoRRefClass = TakesAutoRef<AutoRRefClass>;
-++  using Auto_AutoRefClass = TakesAuto<AutoRefClass>;
-++  using AutoRef_AutoClass = TakesAutoRef<AutoClass>;
-++
-++  template <class U, template <U &> class> struct TakesDependentRef;
-++  template <class U, template <U &> class TT> using DependentRef_DependentRef = TakesDependentRef<U, TT>;
-++
-++  template <class U> struct Outer {
-++    template <template <U &> class> struct TakesOuterRef;
-++    template <template <U &> class TT> using OuterRef_OuterRef = TakesOuterRef<TT>;
-++  };
-++
-++  template <template <class T, T &> class> struct TakesTypeAndRef;
-++  template <template <class T, T &> class TT> using TypeAndRef_TypeAndRef = TakesTypeAndRef<TT>;
-++  template <template <class T, T> class TT> using TypeAndRef_TypeAndValue = TakesTypeAndRef<TT>;
-++  template <class T, T &> struct TypeAndRefClass;
-++  using TypeAndRef_TypeAndRefClass = TakesTypeAndRef<TypeAndRefClass>;
-++
-++  // The argument for P's parameter must be a valid argument for A's parameter.
-++  template <template <int> class> struct TakesInt; // #TakesInt
-++  // expected-error@-1 {{value of type 'int' is not implicitly convertible to 'int &'}}
-++  template <template <int &> class TT> using Int_IntRef = TakesInt<TT>;
-++  // expected-note@-1 {{different template parameters}}
-++  template <template <const int &> class TT> using Int_ConstIntRef = TakesInt<TT>;
-++  // expected-error@#TakesInt {{conversion from 'int' to 'const int &' in converted constant expression would bind reference to a temporary}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto &> class TT> using Int_AutoRef = TakesInt<TT>;
-++  // expected-error@#TakesInt {{value of type 'int' is not implicitly convertible to 'int &'}}
-++  // expected-note@-2 {{different template parameters}}
-++  using Int_AutoRefClass = TakesInt<AutoRefClass>;
-++  // expected-error@#TakesInt {{value of type 'int' is not implicitly convertible to 'int &'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto &&> class TT> using Int_AutoRRef = TakesInt<TT>;
-++  // expected-error@#TakesInt {{non-type template parameter has rvalue reference type 'int &&'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <const auto &> class TT> using Int_ConstAutoRef = TakesInt<TT>;
-++  // expected-error@#TakesInt {{conversion from 'int' to 'const int &' in converted constant expression would bind reference to a temporary}}
-++  // expected-note@-2 {{different template parameters}}
-++
-++  template <template <int...> class> struct TakesIntPack; // #TakesIntPack
-++  template <template <auto &...> class TT> using IntPack_AutoRefPack = TakesIntPack<TT>;
-++  // expected-error@#TakesIntPack {{value of type 'int' is not implicitly convertible to 'int &'}}
-++  // expected-note@-2 {{different template parameters}}
-++
-++  template <template <const int &> class> struct TakesConstIntRef; // #TakesConstIntRef
-++  template <template <int &> class TT> using ConstIntRef_IntRef = TakesConstIntRef<TT>;
-++  // expected-error@#TakesConstIntRef {{value of type 'const int' is not implicitly convertible to 'int &'}}
-++  // expected-note@-2 {{different template parameters}}
-++
-++  template <template <int *> class> struct TakesIntPtr; // #TakesIntPtr
-++  template <template <int> class TT> using IntPtr_Int = TakesIntPtr<TT>;
-++  // expected-error@#TakesIntPtr {{value of type 'int *' is not implicitly convertible to 'int'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto &> class TT> using IntPtr_AutoRef = TakesIntPtr<TT>;
-++  // expected-error@#TakesIntPtr {{value of type 'int *' is not implicitly convertible to 'int *&'}}
-++  // expected-note@-2 {{different template parameters}}
- +
--+define void @store_low1_nxv8f16_splat(ptr %0) {
--+; CHECK-LABEL: store_low1_nxv8f16_splat:
--+; CHECK:       // %bb.0:
--+; CHECK-NEXT:    fmov h0, #1.00000000
--+; CHECK-NEXT:    str h0, [x0]
--+; CHECK-NEXT:    ret
--+  %2 = tail call <vscale x 8 x i1> @llvm.get.active.lane.mask.nxv8i1.i32(i32 0, i32 1)
--+  tail call void @llvm.masked.store.nxv8f16.p0(<vscale x 8 x half> splat (half 0xH3C00), ptr align 2 %0, <vscale x 8 x i1> %2)
--+  ret void
--+}
-++  // Only a pointer can initialize a parameter of type `auto *`.
-++  template <template <auto *> class TT> using Int_AutoPtr = TakesInt<TT>;
-++  // expected-error@#TakesInt {{with type 'auto *' has incompatible initializer of type 'int'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto *> class TT> using AutoRef_AutoPtr = TakesAutoRef<TT>;
-++  // expected-error@#TakesAutoRef {{with type 'auto *' has incompatible initializer of type 'auto'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto *> class TT> using Auto_AutoPtr = TakesAuto<TT>;
-++  // expected-error@#TakesAuto {{with type 'auto *' has incompatible initializer of type 'auto'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto *> class TT> using ConstAutoRef_AutoPtr = TakesConstAutoRef<TT>;
-++  // expected-error@#TakesConstAutoRef {{with type 'auto *' has incompatible initializer of type 'const auto'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <template <auto *> class TT> using DecltypeAuto_AutoPtr = TakesDecltypeAuto<TT>;
-++  // expected-error@#TakesDecltypeAuto {{with type 'auto *' has incompatible initializer of type 'decltype(auto)'}}
-++  // expected-note@-2 {{different template parameters}}
-++  template <class> struct DependentAutoPtr {
-++    template <auto *> struct MemberAutoPtr;
-++    using Auto_MemberAutoPtr = TakesAuto<MemberAutoPtr>;
-++    // expected-error@#TakesAuto {{with type 'auto *' has incompatible initializer of type 'auto'}}
-++    // expected-note@-2 {{different template parameters}}
-++  };
-++} // namespace nttp_ref
+-diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll b/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll
+---- a/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll
+-+++ b/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll
+-@@ -1,5 +1,7 @@
+- ; Checks if conversion is only inserted for the spilled register
+- ; instead of 2 conversions for the W register
+-+
+-+; REQUIRES: asserts
+- ; RUN: llc -O2 -march=hexagon -mcpu=hexagonv81 -enable-xqf-gen=true \
+- ; RUN: -hexagon-qfloat-mode=ieee -mattr=+hvxv81,+hvx-length128B \
+- ; RUN: -enable-postra-xqf-check -debug-only=handle-qfp 2>&1 < %s -o /dev/null | FileCheck %s
 diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index ea77ef6b..6a5c025a 100644
+index 68a14533..e42d7dbd 100644
 --- a/third_party/llvm/workspace.bzl
 +++ b/third_party/llvm/workspace.bzl
 @@ -19,8 +19,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
  
  def repo(name):
      """Imports LLVM."""
--    LLVM_COMMIT = "6ec87e7ec4b3ca6f665a02e05d0e5fe9c37cd6cc"
--    LLVM_SHA256 = "75300dbf9232d135c1ee2819216b7b7597fd9d36a90312c2b0c45938097d806f"
-+    LLVM_COMMIT = "e40e0bc36b14d296df5798c52792f662c715b445"
-+    LLVM_SHA256 = "ed7e226f70358ea38776b73c817e723d5afa59d0c42973c3f77be68c144da3bb"
+-    LLVM_COMMIT = "b08e005995ed29a2f89aa9a3f599a9d45db65523"
+-    LLVM_SHA256 = "3f4f1765816e22a21ac41dbf71d91d519b0b371b05d7e33ef2a0a862c838420c"
++    LLVM_COMMIT = "2e0d9e12b36e853d9b108c4da09509cd54d1f3f9"
++    LLVM_SHA256 = "8e4a851780af109d623fa6d6db9b1e62d7126272d17268fed1b149f0e737c1d7"
  
      tf_http_archive(
          name = name,
-diff --git a/third_party/stablehlo/temporary.patch b/third_party/stablehlo/temporary.patch
-index 32d1ceba..001568a7 100644
---- a/third_party/stablehlo/temporary.patch
-+++ b/third_party/stablehlo/temporary.patch
-@@ -260,6 +260,15 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/binary.mlir b/stablehlo/
-    %0 = "stablehlo.concatenate"(%arg0, %arg1) {dimension = 0 : i64} : (tensor<3x3xf32>, tensor<3x3xf32>) -> tensor<6x3xf32>
-    return %0 : tensor<6x3xf32>
-  }
-+@@ -52,7 +52,7 @@
-+ 
-+ // CHECK-LABEL: @divide_f32
-+ func.func @divide_f32(%arg0 : tensor<10xf32>, %arg1 : tensor<10xf32>) -> tensor<10xf32> {
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"() <{values = dense<0> : tensor<1xi8>}
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const values(dense<0> : tensor<1xi8>)
-+   // CHECK-DAG: %[[VAR1:.*]] = tosa.reciprocal %arg1
-+   // CHECK: tosa.mul %arg0, %[[VAR1]], %[[VAR0]]
-+   %0 = "stablehlo.divide"(%arg0, %arg1) : (tensor<10xf32>, tensor<10xf32>) -> tensor<10xf32>
- @@ -61,10 +61,10 @@
-  
-  // CHECK-LABEL: @dot_vector_vector
-@@ -375,12 +384,26 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/binary.mlir b/stablehlo/
- diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir b/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
- --- stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
- +++ stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_tosa_rescale.mlir
--@@ -11,10 +11,10 @@
--   // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -4,17 +4,17 @@
-+ // CHECK-LABEL: @add
-+ func.func @add(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-+                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>> {
-+-  // CHECK-DAG: %[[SHIFT50:.+]] = "tosa.const"() <{values = dense<50> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT11:.+]] = "tosa.const"() <{values = dense<11> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT13:.+]] = "tosa.const"() <{values = dense<13> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT13]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT11]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[SHIFT50:.+]] = tosa.const values(dense<50> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT11:.+]] = tosa.const values(dense<11> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT13:.+]] = tosa.const values(dense<13> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT13]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT11]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.add %[[V0]], %[[V1]] : tensor<2x2xi32>
-@@ -389,12 +412,26 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-1>>
-    %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>)
-              -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>>
--@@ -32,10 +32,10 @@
--   // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -25,17 +25,17 @@
-+ // CHECK-LABEL: @sub
-+ func.func @sub(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-+                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>> {
-+-  // CHECK-DAG: %[[SHIFT50:.+]] = "tosa.const"() <{values = dense<50> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT11:.+]] = "tosa.const"() <{values = dense<11> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT13:.+]] = "tosa.const"() <{values = dense<13> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT13]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT11]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[SHIFT50:.+]] = tosa.const values(dense<50> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT11:.+]] = tosa.const values(dense<11> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT13:.+]] = tosa.const values(dense<13> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT13]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT11]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.subtract %[[V0]], %[[V1]] : tensor<2x2xi32>
-@@ -403,12 +440,24 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-1>>
-    %0 = "stablehlo.subtract"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>)
-              -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>>
--@@ -52,10 +52,10 @@
--   // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1717986918> : tensor<1xi32>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -46,16 +46,16 @@
-+ // CHECK-LABEL: @mul
-+ func.func @mul(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-+                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>> {
-+-  // CHECK-DAG: %[[SHIFT37:.+]] = "tosa.const"() <{values = dense<37> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT30:.+]] = "tosa.const"() <{values = dense<30> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1717986918> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[SHIFT37:.+]] = tosa.const values(dense<37> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT30:.+]] = tosa.const values(dense<30> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1717986918> : tensor<1xi32>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.multiply %[[V0]], %[[V1]] : tensor<2x2xi32>
-@@ -417,12 +466,28 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-1>>
-    %0 = "stablehlo.multiply"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-1>>)
-              -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-1>>
--@@ -74,10 +74,10 @@
--   // CHECK-DAG: %[[ZP_MINUS_2:.+]] = "tosa.const"() <{values = dense<-2> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -66,18 +66,18 @@
-+ // CHECK-LABEL: @div
-+ func.func @div(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-+                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>> {
-+-  // CHECK-DAG: %[[SHIFT37:.+]] = "tosa.const"() <{values = dense<37> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT30:.+]] = "tosa.const"() <{values = dense<30> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1717986918> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_3:.+]] = "tosa.const"() <{values = dense<-3> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = "tosa.const"() <{values = dense<-2> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_2]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[SHIFT37:.+]] = tosa.const values(dense<37> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT30:.+]] = tosa.const values(dense<30> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1717986918> : tensor<1xi32>)
-++  // CHECK-DAG: %[[ZP_MINUS_3:.+]] = tosa.const values(dense<-3> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = tosa.const values(dense<-2> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT30]], %[[ZP_MINUS_2]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.divide %[[V0]], %[[V1]] : tensor<2x2xi32>
-@@ -431,12 +496,30 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-3>>
-    %0 = "stablehlo.divide"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>)
-              -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>>
--@@ -97,10 +97,10 @@
--   // CHECK-DAG: %[[SHIFT12:.+]] = "tosa.const"() <{values = dense<12> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -88,19 +88,19 @@
-+ // CHECK-LABEL: @max
-+ func.func @max(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-+                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>> {
-+-  // CHECK-DAG: %[[ZP_MINUS_3:.+]] = "tosa.const"() <{values = dense<-3> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT51:.+]] = "tosa.const"() <{values = dense<51> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = "tosa.const"() <{values = dense<-2> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT10:.+]] = "tosa.const"() <{values = dense<10> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[SHIFT12:.+]] = "tosa.const"() <{values = dense<12> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT12]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT10]], %[[ZP_MINUS_2]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[ZP_MINUS_3:.+]] = tosa.const values(dense<-3> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT51:.+]] = tosa.const values(dense<51> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = tosa.const values(dense<-2> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT10:.+]] = tosa.const values(dense<10> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[SHIFT12:.+]] = tosa.const values(dense<12> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT12]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT10]], %[[ZP_MINUS_2]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.maximum %[[V0]], %[[V1]] : tensor<2x2xi32>
-@@ -445,12 +528,30 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-3>>
-    %0 = "stablehlo.maximum"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>)
-              -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>>
--@@ -120,10 +120,10 @@
--   // CHECK-DAG: %[[SHIFT12:.+]] = "tosa.const"() <{values = dense<12> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -111,19 +111,19 @@
-+ // CHECK-LABEL: @min
-+ func.func @min(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>,
-+                %arg1 : tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>> {
-+-  // CHECK-DAG: %[[ZP_MINUS_3:.+]] = "tosa.const"() <{values = dense<-3> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT51:.+]] = "tosa.const"() <{values = dense<51> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = "tosa.const"() <{values = dense<-2> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT10:.+]] = "tosa.const"() <{values = dense<10> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[SHIFT12:.+]] = "tosa.const"() <{values = dense<12> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT12]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT10]], %[[ZP_MINUS_2]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[ZP_MINUS_3:.+]] = tosa.const values(dense<-3> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT51:.+]] = tosa.const values(dense<51> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = tosa.const values(dense<-2> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT10:.+]] = tosa.const values(dense<10> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[SHIFT12:.+]] = tosa.const values(dense<12> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK-DAG: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT12]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK-DAG: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT10]], %[[ZP_MINUS_2]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.minimum %[[V0]], %[[V1]] : tensor<2x2xi32>
-@@ -459,11 +560,25 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<2x2x!quant.uniform<i8:f32, 1.500000e-01:-3>>
-    %0 = "stablehlo.minimum"(%arg0, %arg1) : (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<2x2x!quant.uniform<i8:f32, 0.075:-2>>)
-              -> tensor<2x2x!quant.uniform<i8:f32, 1.5e-01:-3>>
--@@ -140,9 +140,9 @@
--   // CHECK-DAG: %[[SHIFT30:.+]] = "tosa.const"() <{values = dense<30> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -133,16 +133,16 @@
-+ // -----
-+ // CHECK-LABEL: @abs
-+ func.func @abs(%arg0 : tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<20x20x!quant.uniform<i8:f32, 1.5e-01:-128>> {
-+-  // CHECK-DAG: %[[ZP_MINUS_128:.+]] = "tosa.const"() <{values = dense<-128> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT33:.+]] = "tosa.const"() <{values = dense<33> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[SHIFT30:.+]] = "tosa.const"() <{values = dense<30> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[ZP_MINUS_128:.+]] = tosa.const values(dense<-128> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT33:.+]] = tosa.const values(dense<33> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[SHIFT30:.+]] = tosa.const values(dense<30> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT30]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V1:.+]] = stablehlo.abs %[[V0]] : tensor<20x20xi32>
- -  // CHECK: %[[V3:.+]] = tosa.rescale %[[V1]], %[[MULTIPLIER_1]], %[[SHIFT33]], %[[ZP_0]], %[[ZP_MINUS_128]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-@@ -471,23 +586,49 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
-    // CHECK: return %[[V3]] : tensor<20x20x!quant.uniform<i8:f32, 1.500000e-01:-128>>
-    %0 = "stablehlo.abs"(%arg0) : (tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<20x20x!quant.uniform<i8:f32, 1.5e-01:-128>>
-    return %0 : tensor<20x20x!quant.uniform<i8:f32, 1.5e-01:-128>>
--@@ -159,8 +159,8 @@
--   // CHECK-DAG: %[[SHIFT12:.+]] = "tosa.const"() <{values = dense<12> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -152,15 +152,15 @@
-+ // CHECK-LABEL: @compareGE
-+ func.func @compareGE(%arg0 : tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>,
-+                    %arg1 : tensor<20x20x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<20x20xi1> {
-+-  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = "tosa.const"() <{values = dense<-2> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[SHIFT10:.+]] = "tosa.const"() <{values = dense<10> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[SHIFT12:.+]] = "tosa.const"() <{values = dense<12> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = "tosa.const"() <{values = dense<-1> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT12]], %[[ZP_MINUS_1]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT10]], %[[ZP_MINUS_2]], %[[ZP_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[ZP_MINUS_2:.+]] = tosa.const values(dense<-2> : tensor<1xi8>)
-++  // CHECK-DAG: %[[SHIFT10:.+]] = tosa.const values(dense<10> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[SHIFT12:.+]] = tosa.const values(dense<12> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_MINUS_1:.+]] = tosa.const values(dense<-1> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT12]], %[[ZP_MINUS_1]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT10]], %[[ZP_MINUS_2]], %[[ZP_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.compare GE, %[[V0]], %[[V1]], TOTALORDER :
-    // CHECK: return %[[V2]]
-    %0 = stablehlo.compare GE, %arg0, %arg1, TOTALORDER : (tensor<20x20x!quant.uniform<i8:f32, 0.025:-1>>, tensor<20x20x!quant.uniform<i8:f32, 0.075:-2>>) -> tensor<20x20xi1>
--@@ -177,8 +177,8 @@
--   // CHECK-DAG: %[[SHIFT15:.+]] = "tosa.const"() <{values = dense<15> : tensor<1xi8>}>
--   // CHECK-DAG: %[[ZP16_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi16>}>
--   // CHECK-DAG: %[[ZP32_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
-+@@ -171,14 +171,14 @@
-+ // CHECK-LABEL: @compareLT
-+ func.func @compareLT(%arg0 : tensor<20x20x!quant.uniform<i16:f32, 0.025:0>>,
-+                    %arg1 : tensor<20x20x!quant.uniform<i16:f32, 0.075:0>>) -> tensor<20x20xi1> {
-+-  // CHECK-DAG: %[[SHIFT17:.+]] = "tosa.const"() <{values = dense<17> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = "tosa.const"() <{values = dense<1073741824> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = "tosa.const"() <{values = dense<1431655765> : tensor<1xi32>}>
-+-  // CHECK-DAG: %[[SHIFT15:.+]] = "tosa.const"() <{values = dense<15> : tensor<1xi8>}>
-+-  // CHECK-DAG: %[[ZP16_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi16>}>
-+-  // CHECK-DAG: %[[ZP32_0:.+]] = "tosa.const"() <{values = dense<0> : tensor<1xi32>}>
- -  // CHECK: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT17]], %[[ZP16_0]], %[[ZP32_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
- -  // CHECK: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT15]], %[[ZP16_0]], %[[ZP32_0]] {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true}
-++  // CHECK-DAG: %[[SHIFT17:.+]] = tosa.const values(dense<17> : tensor<1xi8>)
-++  // CHECK-DAG: %[[MULTIPLIER_1:.+]] = tosa.const values(dense<1073741824> : tensor<1xi32>)
-++  // CHECK-DAG: %[[MULTIPLIER_2:.+]] = tosa.const values(dense<1431655765> : tensor<1xi32>)
-++  // CHECK-DAG: %[[SHIFT15:.+]] = tosa.const values(dense<15> : tensor<1xi8>)
-++  // CHECK-DAG: %[[ZP16_0:.+]] = tosa.const values(dense<0> : tensor<1xi16>)
-++  // CHECK-DAG: %[[ZP32_0:.+]] = tosa.const values(dense<0> : tensor<1xi32>)
- +  // CHECK: %[[V0:.+]] = tosa.rescale %arg0, %[[MULTIPLIER_2]], %[[SHIFT17]], %[[ZP16_0]], %[[ZP32_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
- +  // CHECK: %[[V1:.+]] = tosa.rescale %arg1, %[[MULTIPLIER_1]], %[[SHIFT15]], %[[ZP16_0]], %[[ZP32_0]] scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false)
-    // CHECK: %[[V2:.+]] = stablehlo.compare LT, %[[V0]], %[[V1]], TOTALORDER :
-@@ -496,11 +637,19 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_quant_ops_to_to
- diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir b/stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir
- --- stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir
- +++ stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to_stablehlo.mlir
--@@ -7,7 +7,7 @@
--   %shift = "tosa.const"() {values = dense<13> : tensor<1xi8>} : () -> tensor<1xi8>
--   %input_zp = "tosa.const"() {values = dense<-1> : tensor<1xi8>} : () -> tensor<1xi8>
--   %output_zp = "tosa.const"() {values = dense<0> : tensor<1xi32>} : () -> tensor<1xi32>
-+@@ -3,11 +3,11 @@
-+ // -----
-+ // CHECK-LABEL: @rescale
-+ func.func @rescale(%arg0 : tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>) -> tensor<2x2xi32> {
-+-  %multiplier = "tosa.const"() {values = dense<1431655765> : tensor<1xi32>} : () -> tensor<1xi32>
-+-  %shift = "tosa.const"() {values = dense<13> : tensor<1xi8>} : () -> tensor<1xi8>
-+-  %input_zp = "tosa.const"() {values = dense<-1> : tensor<1xi8>} : () -> tensor<1xi8>
-+-  %output_zp = "tosa.const"() {values = dense<0> : tensor<1xi32>} : () -> tensor<1xi32>
- -  %0 = tosa.rescale %arg0, %multiplier, %shift, %input_zp, %output_zp {input_unsigned = false, output_unsigned = false, per_channel = false, rounding_mode = SINGLE_ROUND, scale32 = true} :
-++  %multiplier = tosa.const values(dense<1431655765> : tensor<1xi32>) : () -> tensor<1xi32>
-++  %shift = tosa.const values(dense<13> : tensor<1xi8>) : () -> tensor<1xi8>
-++  %input_zp = tosa.const values(dense<-1> : tensor<1xi8>) : () -> tensor<1xi8>
-++  %output_zp = tosa.const values(dense<0> : tensor<1xi32>) : () -> tensor<1xi32>
- +  %0 = tosa.rescale %arg0, %multiplier, %shift, %input_zp, %output_zp scale32(true) rounding_mode<SINGLE_ROUND> per_channel(false) input_unsigned(false) output_unsigned(false) :
-              (tensor<2x2x!quant.uniform<i8:f32, 0.025:-1>>, tensor<1xi32>, tensor<1xi8>, tensor<1xi8>, tensor<1xi32>) -> tensor<2x2xi32>
-  
-@@ -508,20 +657,28 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/legalize_tosa_rescale_to
- diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/nullary.mlir b/stablehlo/stablehlo/conversions/tosa/tests/nullary.mlir
- --- stablehlo/stablehlo/conversions/tosa/tests/nullary.mlir
- +++ stablehlo/stablehlo/conversions/tosa/tests/nullary.mlir
--@@ -18,7 +18,7 @@
-+@@ -16,9 +16,9 @@
-+ 
-+ // CHECK-LABEL: @iota_dimension_0
-  func.func @iota_dimension_0() -> tensor<4x8xf32> {
--   // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"()
--   // CHECK-SAME{LITERAL}: <{values = dense<[[0.000000e+00], [1.000000e+00], [2.000000e+00], [3.000000e+00]]> : tensor<4x1xf32>}> : () -> tensor<4x1xf32>
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"()
-+-  // CHECK-SAME{LITERAL}: <{values = dense<[[0.000000e+00], [1.000000e+00], [2.000000e+00], [3.000000e+00]]> : tensor<4x1xf32>}> : () -> tensor<4x1xf32>
- -  // CHECK-DAG: %[[VAR1:.*]] = tosa.const_shape  {values = dense<[1, 8]> : vector<2xindex>} : () -> !tosa.shape<2>
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const
-++  // CHECK-SAME{LITERAL}: values(dense<[[0.000000e+00], [1.000000e+00], [2.000000e+00], [3.000000e+00]]> : tensor<4x1xf32>) : () -> tensor<4x1xf32>
- +  // CHECK-DAG: %[[VAR1:.*]] = tosa.const_shape values(dense<[1, 8]> : vector<2xindex>) : () -> !tosa.shape<2>
-    // CHECK-DAG: %[[VAR2:.*]] = tosa.tile %[[VAR0]], %[[VAR1]]
-    %0 = "stablehlo.iota"() {iota_dimension = 0 : i64} : () -> (tensor<4x8xf32>)
-    return %0 : tensor<4x8xf32>
--@@ -28,7 +28,7 @@
-+@@ -26,9 +26,9 @@
-+ 
-+ // CHECK-LABEL: @iota_dimension_1
-  func.func @iota_dimension_1() -> tensor<4x8xi32> {
--   // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"()
--   // CHECK-SAME{LITERAL}: <{values = dense<[[0, 1, 2, 3, 4, 5, 6, 7]]> : tensor<1x8xi32>}> : () -> tensor<1x8xi32>
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"()
-+-  // CHECK-SAME{LITERAL}: <{values = dense<[[0, 1, 2, 3, 4, 5, 6, 7]]> : tensor<1x8xi32>}> : () -> tensor<1x8xi32>
- -  // CHECK-DAG: %[[VAR1:.*]] = tosa.const_shape  {values = dense<[4, 1]> : vector<2xindex>} : () -> !tosa.shape<2>
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const
-++  // CHECK-SAME{LITERAL}: values(dense<[[0, 1, 2, 3, 4, 5, 6, 7]]> : tensor<1x8xi32>) : () -> tensor<1x8xi32>
- +  // CHECK-DAG: %[[VAR1:.*]] = tosa.const_shape values(dense<[4, 1]> : vector<2xindex>) : () -> !tosa.shape<2>
-    // CHECK-DAG: %[[VAR2:.*]] = tosa.tile %[[VAR0]], %[[VAR1]]
-    %0 = "stablehlo.iota"() {iota_dimension = 1 : i64} : () -> (tensor<4x8xi32>)
-@@ -541,6 +698,33 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/ternary.mlir b/stablehlo
- diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/unary.mlir b/stablehlo/stablehlo/conversions/tosa/tests/unary.mlir
- --- stablehlo/stablehlo/conversions/tosa/tests/unary.mlir
- +++ stablehlo/stablehlo/conversions/tosa/tests/unary.mlir
-+@@ -30,7 +30,7 @@
-+ 
-+ // CHECK-LABEL: @exponential_minus_one
-+ func.func @exponential_minus_one(%arg : tensor<10xf32>) -> tensor<10xf32> {
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"() <{values = dense<1.000000e+00>
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const values(dense<1.000000e+00>
-+   // CHECK-DAG: %[[VAR1:.*]] = tosa.exp %arg0
-+   // CHECK-DAG: %[[VAR2:.*]] = tosa.sub %[[VAR1]], %[[VAR0]]
-+   %0 = "stablehlo.exponential_minus_one"(%arg) : (tensor<10xf32>) -> tensor<10xf32>
-+@@ -46,7 +46,7 @@
-+ 
-+ // CHECK-LABEL: @is_finite
-+ func.func @is_finite(%arg : tensor<10xf32>) -> tensor<10xi1> {
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"() <{values = dense<0x7F800000>
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const values(dense<0x7F800000>
-+   // CHECK-DAG: %[[VAR1:.*]] = tosa.abs %arg0
-+   // CHECK-DAG: %[[VAR2:.*]] = tosa.equal %[[VAR1]], %[[VAR0]]
-+   // CHECK-DAG: %[[VAR3:.*]] = tosa.logical_not %[[VAR2]]
-+@@ -63,7 +63,7 @@
-+ 
-+ // CHECK-LABEL: @log_plus_one
-+ func.func @log_plus_one(%arg : tensor<10xf16>) -> tensor<10xf16> {
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"() <{values = dense<1.000000e+00>
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const values(dense<1.000000e+00>
-+   // CHECK-DAG: %[[VAR1:.*]] = tosa.add %arg0, %[[VAR0]]
-+   // CHECK-DAG: %[[VAR2:.*]] = tosa.log %[[VAR1]]
-+   %0 = "stablehlo.log_plus_one"(%arg) : (tensor<10xf16>) -> tensor<10xf16>
- @@ -79,8 +79,8 @@
-  
-  // CHECK-LABEL: @slice
-@@ -552,7 +736,7 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/unary.mlir b/stablehlo/s
-    // CHECK: tosa.slice %arg0, %[[SIZE]], %[[START]]
-    %0 = "stablehlo.slice"(%arg) {
-      start_indices = array<i64: 2, 1>,
--@@ -123,7 +123,7 @@
-+@@ -123,15 +123,15 @@
-  
-  // CHECK-LABEL: @transpose
-  func.func @transpose(%arg0: tensor<1x2x3xf32>) -> tensor<3x2x1xf32> {
-@@ -561,6 +745,16 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/unary.mlir b/stablehlo/s
-    %0 = "stablehlo.transpose"(%arg0) {permutation = array<i64: 2, 1, 0>} : (tensor<1x2x3xf32>) -> tensor<3x2x1xf32>
-    return %0 : tensor<3x2x1xf32>
-  }
-+ 
-+ // CHECK-LABEL: @while
-+ func.func @while(%arg0: tensor<i32>) -> tensor<i32> {
-+-  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"() <{values = dense<3> : tensor<i32>}
-+-  // CHECK-DAG: %[[VAR1:.*]] = "tosa.const"() <{values = dense<1> : tensor<i32>}
-++  // CHECK-DAG: %[[VAR0:.*]] = tosa.const values(dense<3> : tensor<i32>)
-++  // CHECK-DAG: %[[VAR1:.*]] = tosa.const values(dense<1> : tensor<i32>)
-+   // CHECK:     %[[VAR2:.*]] = tosa.while_loop (%[[ARG1:.+]] = %arg0) : (tensor<i32>) -> tensor<i32> {
-+   // CHECK:       %[[VAR3:.*]] = tosa.equal %[[ARG1]], %[[VAR0]]
-+   // CHECK:       tosa.yield %[[VAR3]]
- @@ -158,7 +158,7 @@
-  
-  // CHECK-LABEL: @reshape
-@@ -1887,6 +2081,68 @@ diff --ruN a/stablehlo/stablehlo/reference/Index.h b/stablehlo/stablehlo/referen
-    IndexSpaceIterator operator++(int);
-  
-   private:
-+diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.cpp b/stablehlo/stablehlo/reference/InterpreterOps.cpp
-+--- stablehlo/stablehlo/reference/InterpreterOps.cpp
-++++ stablehlo/stablehlo/reference/InterpreterOps.cpp
-+@@ -22,6 +22,7 @@
-+ #include <mutex>
-+ #include <queue>
-+ #include <string>
-++#include <utility>
-+ 
-+ #include "llvm/Support/Casting.h"
-+ #include "llvm/Support/Errc.h"
-+@@ -175,36 +176,39 @@
-+     SmallVector<SmallVector<StringAttr>> programs, SymbolTable& symbolTable,
-+     InterpreterFallback* fallback) {
-+   llvm::DefaultThreadPool threadPool;
-+-  SmallVector<std::shared_future<SmallVector<InterpreterValue>>> futures;
-++  llvm::ThreadPoolTaskGroup taskGroup(threadPool);
-+ 
-+   uint32_t numReplicas = programs.size();
-+   uint32_t numPartitions = programs[0].size();
-+   ProcessGrid processGrid(numReplicas, numPartitions, infeed);
-+ 
-++  SmallVector<SmallVector<InterpreterValue>> taskOutputs(numReplicas *
-++                                                         numPartitions);
-++
-+   auto inputsIt = inputs.begin();
-+ 
-+   for (uint32_t i = 0; i < numReplicas; ++i) {
-+     for (uint32_t j = 0; j < numPartitions; ++j) {
-+       auto funcName = programs[i][j];
-+       auto func = llvm::cast<func::FuncOp>(symbolTable.lookup(funcName));
-+-      auto evalWrapper = [&](Region& region, ArrayRef<InterpreterValue> args,
-+-                             ProcessId processId) {
-+-        Process process{processId, &processGrid};
-+-        return eval(region, args, fallback, &process,
-+-                    /*parent=*/nullptr);
-+-      };
-+-
-+       auto numArgs = func.getBody().front().getArguments().size();
-+       SmallVector<InterpreterValue> args(inputsIt, inputsIt + numArgs);
-+       inputsIt += numArgs;
-+ 
-+-      futures.emplace_back(threadPool.async(
-+-          evalWrapper, std::ref(func.getBody()), args, ProcessId{i, j}));
-++      uint32_t flatIndex = i * numPartitions + j;
-++      taskGroup.async([&, flatIndex, func, args = std::move(args),
-++                       processId = ProcessId{i, j}]() mutable {
-++        Process process{processId, &processGrid};
-++        taskOutputs[flatIndex] = eval(func.getBody(), args, fallback, &process,
-++                                      /*parent=*/nullptr);
-++      });
-+     }
-+   }
-+ 
-++  taskGroup.wait();
-++
-+   SmallVector<InterpreterValue> results;
-+-  for (auto& future : futures) results.append(future.get());
-++  for (auto& output : taskOutputs) results.append(output);
-+   // TODO(#1725): Figure out how to test the outfeed queue.
-+   return results;
-+ }
- diff --ruN a/stablehlo/stablehlo/reference/Process.cpp b/stablehlo/stablehlo/reference/Process.cpp
- --- stablehlo/stablehlo/reference/Process.cpp
- +++ stablehlo/stablehlo/reference/Process.cpp
-@@ -2292,68 +2548,17 @@ diff --ruN a/stablehlo/stablehlo/tests/CheckOps.h b/stablehlo/stablehlo/tests/Ch
-                                uint64_t min_ulp_difference,
-                                uint64_t max_ulp_difference);
-  
--diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.cpp b/stablehlo/stablehlo/reference/InterpreterOps.cpp
----- stablehlo/stablehlo/reference/InterpreterOps.cpp
--+++ stablehlo/stablehlo/reference/InterpreterOps.cpp
--@@ -22,6 +22,7 @@
-- #include <mutex>
-- #include <queue>
-- #include <string>
--+#include <utility>
-- 
-- #include "llvm/Support/Casting.h"
-- #include "llvm/Support/Errc.h"
--@@ -175,11 +176,14 @@
--     SmallVector<SmallVector<StringAttr>> programs, SymbolTable& symbolTable,
--     InterpreterFallback* fallback) {
--   llvm::DefaultThreadPool threadPool;
---  SmallVector<std::shared_future<SmallVector<InterpreterValue>>> futures;
--+  llvm::ThreadPoolTaskGroup taskGroup(threadPool);
-- 
--   uint32_t numReplicas = programs.size();
--   uint32_t numPartitions = programs[0].size();
--   ProcessGrid processGrid(numReplicas, numPartitions, infeed);
--+
--+  SmallVector<SmallVector<InterpreterValue>> taskOutputs(numReplicas *
--+                                                         numPartitions);
-- 
--   auto inputsIt = inputs.begin();
-- 
--@@ -187,24 +191,24 @@
--     for (uint32_t j = 0; j < numPartitions; ++j) {
--       auto funcName = programs[i][j];
--       auto func = llvm::cast<func::FuncOp>(symbolTable.lookup(funcName));
---      auto evalWrapper = [&](Region& region, ArrayRef<InterpreterValue> args,
---                             ProcessId processId) {
---        Process process{processId, &processGrid};
---        return eval(region, args, fallback, &process,
---                    /*parent=*/nullptr);
---      };
---
--       auto numArgs = func.getBody().front().getArguments().size();
--       SmallVector<InterpreterValue> args(inputsIt, inputsIt + numArgs);
--       inputsIt += numArgs;
-+diff --ruN a/stablehlo/stablehlo/tests/CheckOps.td b/stablehlo/stablehlo/tests/CheckOps.td
-+--- stablehlo/stablehlo/tests/CheckOps.td
-++++ stablehlo/stablehlo/tests/CheckOps.td
-+@@ -24,6 +24,7 @@
-  
---      futures.emplace_back(threadPool.async(
---          evalWrapper, std::ref(func.getBody()), args, ProcessId{i, j}));
--+      uint32_t flatIndex = i * numPartitions + j;
--+      taskGroup.async([&, flatIndex, func, args = std::move(args),
--+                       processId = ProcessId{i, j}]() mutable {
--+        Process process{processId, &processGrid};
--+        taskOutputs[flatIndex] = eval(func.getBody(), args, fallback, &process,
--+                                      /*parent=*/nullptr);
--+      });
--     }
--   }
-+ def CHECK_Dialect : Dialect {
-+   let name = "check";
-++  let useStrictPropertiesInAssemblyFormat = 0;
-+   let cppNamespace = "::mlir::stablehlo::check";
-  
--+  taskGroup.wait();
--+
--   SmallVector<InterpreterValue> results;
---  for (auto& future : futures) results.append(future.get());
--+  for (auto& output : taskOutputs) results.append(output);
--   // TODO(#1725): Figure out how to test the outfeed queue.
--   return results;
-- }
-+   let description = [{
- diff --ruN a/stablehlo/stablehlo/tests/TestUtils.cpp b/stablehlo/stablehlo/tests/TestUtils.cpp
- --- stablehlo/stablehlo/tests/TestUtils.cpp
- +++ stablehlo/stablehlo/tests/TestUtils.cpp
-@@ -6047,6 +6252,8 @@ diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.1_21_0.ml
- +func.func @composite_target(%arg0: tensor<f32>) -> tensor<f32> {
- +  return %arg0: tensor<f32>
- +}
-+diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.1_21_0.mlir.bc b/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.1_21_0.mlir.bc
-+Binary files /dev/null and stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.1_21_0.mlir.bc differ
- diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir b/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
- --- stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
- +++ stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir

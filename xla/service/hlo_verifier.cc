@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -469,12 +470,12 @@ static absl::Status CheckReplicaGroups(HloInstruction* hlo,
     // on the second pass we only add to `seen_replica_ids` iff we see a replica
     // id in the range [0, n) for the first time. So, there is no need to check
     // that all `seen_replica_ids` values are true.
-#ifndef NDEBUG
-    for (int64_t i = 0; i < n; ++i) {
-      CHECK(seen_replica_ids[i])
-          << "Programming error: seen_replica_ids[" << i << "] is false!";
+    if constexpr (tsl::kIsDebugBuild) {
+      for (int64_t i = 0; i < n; ++i) {
+        CHECK(seen_replica_ids[i])
+            << "Programming error: seen_replica_ids[" << i << "] is false!";
+      }
     }
-#endif  // NDEBUG
 
     // replica-groups have numbers [0, n). This n should be either replica or
     // partition count, or their product. In some cases, replica and/or

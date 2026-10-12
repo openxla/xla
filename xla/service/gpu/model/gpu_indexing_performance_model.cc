@@ -100,6 +100,49 @@ struct OperandReadInfo {
   double read_bandwidth_utilization_rate = 1.0;
 };
 
+using OperandReadMap =
+    absl::flat_hash_map<const HloInstruction*, OperandReadInfo>;
+
+// Accumulates `tile_bytes_read` and tracks the minimum
+// `bandwidth_utilization_rate` for `hlo` in `read_map`.
+void RecordOperandRead(const HloInstruction* hlo, int64_t tile_bytes_read,
+                       double bandwidth_utilization_rate,
+                       OperandReadMap& read_map) {
+  OperandReadInfo& operand_read_info = read_map[hlo];
+  operand_read_info.total_bytes_read += tile_bytes_read;
+  // TODO(b/332714755): using std::min is more pessimistic than it needs
+  // to be since it'll end up assuming that if one read is done with lower
+  // bandwidth, all other reads of the same operand will also be done with
+  // lower bandwidth. But it's a start. We should refactor this function
+  // to properly track each read independently later.
+  operand_read_info.read_bandwidth_utilization_rate =
+      std::min(operand_read_info.read_bandwidth_utilization_rate,
+               bandwidth_utilization_rate);
+}
+
+// Computes the memory read time across all operands in `read_map`.
+absl::Duration ComputeReadTime(
+    const OperandReadMap& read_map, const se::DeviceDescription& device_info,
+    int64_t num_blocks, const HloCostAnalysis::ShapeSizeFunction& shape_size) {
+  absl::Duration read_time = absl::ZeroDuration();
+  // `absl::Duration` addition uses exact fixed-point integer arithmetic, so
+  // map iteration order does not affect the accumulated result.
+  // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
+  for (const auto& [hlo, operand_read_info] : read_map) {
+    int64_t operand_size = shape_size(hlo->shape());
+    int64_t n_bytes_net =
+        std::min(operand_size, operand_read_info.total_bytes_read);
+
+    read_time += GpuPerformanceModelBase::ReadTimeWithDRAMHeuristic(
+        device_info, num_blocks, n_bytes_net,
+        operand_read_info.total_bytes_read,
+        /*element_type=*/hlo->shape().element_type(),
+        /*hbm_bandwidth_utilization_rate=*/
+        operand_read_info.read_bandwidth_utilization_rate);
+  }
+  return read_time;
+}
+
 // Returns the number of elements in the tile after each dimension is padded to
 // the next power of 2.
 // TODO(b/353484968): Delete this function once we have constraints to only
@@ -191,8 +234,8 @@ int64_t GetNumBlocksForRegion(const TiledHloInstructionType* tiled_hlo,
 }
 
 // Visits all tiled HLOs in the computation (including those within regions)
-// using a visitor that receives the tiled HLO and the root num_blocks that
-// access that tiled HLO.
+// using a visitor that receives the tiled HLO, the root num_blocks that
+// access that tiled HLO, and whether the instruction is within a dot region.
 //
 // Note: Set num_blocks_at_root to 1 if the visitor doesn't use the block count.
 template <typename TiledHloComputationType>
@@ -200,27 +243,37 @@ void ForEachInstructionInTiledHloComputation(
     const TiledHloComputationType& tiled_hlo_computation,
     int64_t num_blocks_at_root,
     absl::FunctionRef<
-        void(const typename TiledHloComputationType::InstructionType*, int64_t)>
+        void(const typename TiledHloComputationType::InstructionType*, int64_t,
+             bool)>
         visitor) {
-  std::vector<std::pair<
-      const typename TiledHloComputationType::InstructionType*, int64_t>>
-      worklist;
+  struct WorkItem {
+    const typename TiledHloComputationType::InstructionType* instruction;
+    int64_t num_blocks_cur_hlo;
+    bool in_dot_region;
+  };
+  std::vector<WorkItem> worklist;
   for (const auto* instruction : tiled_hlo_computation.instructions()) {
-    worklist.push_back({instruction, num_blocks_at_root});
+    worklist.push_back(
+        {instruction, num_blocks_at_root, /*in_dot_region=*/false});
   }
 
   while (!worklist.empty()) {
-    auto [instruction, num_blocks_cur_hlo] = worklist.back();
+    auto [instruction, num_blocks_cur_hlo, in_dot_region] = worklist.back();
     worklist.pop_back();
 
-    visitor(instruction, num_blocks_cur_hlo);
+    visitor(instruction, num_blocks_cur_hlo, in_dot_region);
 
+    bool child_in_dot_region =
+        in_dot_region ||
+        HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kScaledDot>(
+            instruction->hlo());
     for (const auto& [i, region] :
          llvm::enumerate(instruction->hlo_regions())) {
       int64_t num_blocks_cur_region =
           GetNumBlocksForRegion(instruction, num_blocks_cur_hlo, i);
       for (const auto& tiled_hlo : region.instructions()) {
-        worklist.push_back({&*tiled_hlo, num_blocks_cur_region});
+        worklist.push_back(
+            {&*tiled_hlo, num_blocks_cur_region, child_in_dot_region});
       }
     }
   }
@@ -250,7 +303,7 @@ bool DoesComputationFitInRegisters(
       tiled_hlo_computation,
       /*num_blocks_at_root=*/1,
       [&](const typename TiledHloComputationType::InstructionType* tiled_hlo,
-          int64_t unused_num_blocks_cur_hlo) {
+          int64_t /*num_blocks_cur_hlo*/, bool /*in_dot_region*/) {
         if (!fits) {
           return;
         }
@@ -335,20 +388,40 @@ int64_t GetNumWarps(int64_t largest_live_tile_size) {
   return 8;
 }
 
+// Holds dot launch resource footprints and compute/runtime estimates.
+struct DotEstimates {
+  absl::Duration compute_time = absl::ZeroDuration();
+  absl::Duration exec_time = absl::ZeroDuration();
+  int64_t shared_memory_per_block_bytes = 0;
+  int registers_per_thread = 0;
+};
+
+// Combines two dot estimates within the same fusion by summing sequential
+// compute work and taking the maximum of per-block resource footprints.
+DotEstimates MergeDotEstimates(DotEstimates dst, const DotEstimates& src) {
+  dst.compute_time += src.compute_time;
+  // TODO: b/495346904 - integrate the dot stats more completely.
+  dst.exec_time = std::max(dst.exec_time, src.exec_time);
+  dst.shared_memory_per_block_bytes = std::max(
+      dst.shared_memory_per_block_bytes, src.shared_memory_per_block_bytes);
+  dst.registers_per_thread =
+      std::max(dst.registers_per_thread, src.registers_per_thread);
+  return dst;
+}
+
+// Computes block launch resource footprints and dot runtime estimates.
 template <typename TiledHloInstructionType>
-absl::StatusOr<EstimateRunTimeData> GetDotEstimates(
+absl::StatusOr<DotEstimates> BuildDotEstimates(
     const TiledHloInstructionType* tiled_hlo,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_params) {
-  const auto* dot_instr = Cast<const HloDotInstruction>(tiled_hlo->hlo());
+  const HloDotInstruction* dot_instr =
+      Cast<HloDotInstruction>(tiled_hlo->hlo());
   ABSL_RETURN_IF_ERROR(gpu_dot_fusion_cost_model::IsSupported(dot_instr));
 
-  int64_t block_k = 0;
-  if (!tiled_hlo->operands().empty()) {
-    int64_t lhs_contracting_dim =
-        dot_instr->dot_dimension_numbers().lhs_contracting_dimensions(0);
-    block_k = tiled_hlo->operand(0)->tile_size(lhs_contracting_dim);
-  }
+  int64_t lhs_contracting_dim =
+      dot_instr->dot_dimension_numbers().lhs_contracting_dimensions(0);
+  int64_t block_k = tiled_hlo->operand(0)->tile_size(lhs_contracting_dim);
 
   // Use the provided block parameters which contain num_stages and num_warps.
   // The output_tile_sizes from the block parameters represent the fusion roots,
@@ -360,9 +433,18 @@ absl::StatusOr<EstimateRunTimeData> GetDotEstimates(
   const llvm::SmallVector<int64_t>& tile_sizes = tiled_hlo->tile_sizes();
   dot_block_params.output_tile_sizes.emplace_back(tile_sizes.begin(),
                                                   tile_sizes.end());
+  ABSL_ASSIGN_OR_RETURN(
+      EstimateRunTimeData dot_perf_stats,
+      gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
+          dot_instr, dot_block_params, device_info, block_k));
 
-  return gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
-      dot_instr, dot_block_params, device_info, block_k);
+  return DotEstimates{
+      /*compute_time=*/dot_perf_stats.compute_time,
+      /*exec_time=*/dot_perf_stats.exec_time,
+      /*shared_memory_per_block_bytes=*/
+      dot_perf_stats.shared_memory_per_block_bytes,
+      /*registers_per_thread=*/dot_perf_stats.registers_per_thread,
+  };
 }
 
 int64_t GetShapeSizeRecursive(
@@ -387,16 +469,16 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
     const se::DeviceDescription& device_info,
     HloCostAnalysis::ShapeSizeFunction shape_size,
     absl::FunctionRef<int64_t(const HloInstruction*)> flops_per_element_fn) {
-  absl::flat_hash_map<const HloInstruction*, OperandReadInfo> n_bytes_total_map;
+  OperandReadMap n_bytes_total_map;
 
   // Compute time for dot flops is counted separately.
   int64_t dot_flops = 0;
   int64_t flops = 0;
   int64_t bytes_read = 0;
+  int64_t dot_l2_bytes_read = 0;
   int64_t num_blocks = tiled_hlo_computation.num_output_tiles();
 
-  absl::Duration dot_compute_time = absl::ZeroDuration();
-  absl::Duration dot_exec_time = absl::ZeroDuration();
+  DotEstimates dot_estimates;
 
   // Check if the computation is too large to fit in registers and would result
   // in spilling.
@@ -410,7 +492,7 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
   ForEachInstructionInTiledHloComputation(
       tiled_hlo_computation, num_blocks,
       [&](const typename TiledHloComputationType::InstructionType* tiled_hlo,
-          int64_t num_blocks_cur_hlo) {
+          int64_t num_blocks_cur_hlo, bool in_dot_region) {
         const HloInstruction* hlo = tiled_hlo->hlo();
         if (fusion_adaptor.ContainsInstruction(hlo)) {
           // Number of elements in the tile after padding.
@@ -424,24 +506,20 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
           int64_t num_elements = num_blocks_cur_hlo * padded_tile_size;
 
           if (hlo->opcode() == HloOpcode::kDot) {
-            absl::StatusOr<EstimateRunTimeData> dot_perf_stats =
-                GetDotEstimates(tiled_hlo, device_info, block_level_parameters);
-            if (dot_perf_stats.ok()) {
-              // We're only using compute time for now - memory and L2 access
-              // data needs to be adjusted more carefully so that the model
-              // doesn't overlap their counting.
-              // TODO: b/495346904 - integrate the dot stats more completely.
-              dot_compute_time += dot_perf_stats->compute_time;
-              dot_exec_time =
-                  std::max(dot_exec_time, dot_perf_stats->exec_time);
+            if (absl::StatusOr<DotEstimates> cur_dot_estimates =
+                    BuildDotEstimates(tiled_hlo, device_info,
+                                      block_level_parameters);
+                cur_dot_estimates.ok()) {
+              dot_estimates =
+                  MergeDotEstimates(dot_estimates, *cur_dot_estimates);
 
               // The dot cost model operates on the tile- and wave- quantized
               // FLOPS which is more accurate for performance estimates but
               // the flops reported by the indexing model are naive algorithm
               // flops.
               // Since the compute time for these flops is already accounted
-              // for in dot_compute_time, we're accumulating it separately
-              // from `flops`.
+              // for in dot_estimates.compute_time, we're accumulating it
+              // separately from `flops`.
               dot_flops += flops_per_element_fn(hlo) * num_elements;
               return;
             }
@@ -476,39 +554,21 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
         int64_t tile_bytes_read = element_type_size * num_elements;
 
         bytes_read += tile_bytes_read;
+        if (in_dot_region) {
+          dot_l2_bytes_read += tile_bytes_read;
+        }
 
         double effective_bandwidth_utilization_rate =
             BandwidthUtilizationRateHeuristicForTiledMemoryAccess(*tiled_hlo,
                                                                   device_info);
 
-        OperandReadInfo& operand_read_info = n_bytes_total_map[hlo];
-        operand_read_info.total_bytes_read += tile_bytes_read;
-        // TODO(b/332714755): using std::min is more pessimistic than it needs
-        // to be since it'll end up assuming that if one read is done with lower
-        // bandwidth, all other reads of the same operand will also be done with
-        // lower bandwidth. But it's a start. We should refactor this function
-        // to properly track each read independently later.
-        operand_read_info.read_bandwidth_utilization_rate =
-            std::min(operand_read_info.read_bandwidth_utilization_rate,
-                     effective_bandwidth_utilization_rate);
+        RecordOperandRead(hlo, tile_bytes_read,
+                          effective_bandwidth_utilization_rate,
+                          n_bytes_total_map);
       });
 
-  absl::Duration read_time = absl::ZeroDuration();
-  for (const auto& [hlo, operand_read_info] : n_bytes_total_map) {
-    int64_t operand_size = shape_size(hlo->shape());
-    int64_t n_bytes_net =
-        std::min(operand_size, operand_read_info.total_bytes_read);
-
-    // TODO(b/332714755): use
-    // `BandwidthUtilizationRateHeuristicForTiledMemoryAccess` to compute read
-    // time as well.
-    read_time += GpuPerformanceModelBase::ReadTimeWithDRAMHeuristic(
-        device_info, num_blocks, n_bytes_net,
-        operand_read_info.total_bytes_read,
-        /*element_type=*/hlo->shape().element_type(),
-        /*hbm_bandwidth_utilization_rate=*/
-        operand_read_info.read_bandwidth_utilization_rate);
-  }
+  absl::Duration read_time =
+      ComputeReadTime(n_bytes_total_map, device_info, num_blocks, shape_size);
 
   auto roots = tiled_hlo_computation.roots();
   int64_t bytes_written = 0;
@@ -529,7 +589,7 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
       GpuPerformanceModelBase::ComputeTime(
           device_info, flops, num_blocks,
           block_level_parameters.num_warps * WarpSize(device_info)) +
-      dot_compute_time;
+      dot_estimates.compute_time;
 
   absl::Duration memory_access_time = read_time + write_time;
   absl::Duration exec_time =
@@ -541,15 +601,20 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
   // accounting for any work in the epilogue or prologue properly. We are
   // planning to do it in the future but the cost model will need to be
   // significantly more complex for that.
-  exec_time = std::max(exec_time, dot_exec_time);
+  exec_time = std::max(exec_time, dot_estimates.exec_time);
 
-  return EstimateRunTimeData{/*flops=*/flops + dot_flops,
-                             /*bytes_read=*/bytes_read,
-                             /*bytes_written=*/bytes_written,
-                             /*read_time=*/read_time,
-                             /*write_time=*/write_time,
-                             /*compute_time=*/compute_time,
-                             /*exec_time=*/exec_time};
+  return EstimateRunTimeData{
+      /*flops=*/flops + dot_flops,
+      /*bytes_read=*/bytes_read,
+      /*bytes_written=*/bytes_written,
+      /*read_time=*/read_time,
+      /*write_time=*/write_time,
+      /*compute_time=*/compute_time,
+      /*exec_time=*/exec_time,
+      /*l2_bytes_read=*/dot_l2_bytes_read,
+      /*shared_memory_per_block_bytes=*/
+      dot_estimates.shared_memory_per_block_bytes,
+      /*registers_per_thread=*/dot_estimates.registers_per_thread};
 }
 
 template <typename TiledHloComputationType>
@@ -561,7 +626,7 @@ int64_t EstimateNumWarpsImpl(
   ForEachInstructionInTiledHloComputation(
       tiled_hlo_computation, /*num_blocks_at_root=*/1,
       [&](const typename TiledHloComputationType::InstructionType* tiled_hlo,
-          int64_t unused_num_blocks_cur_hlo) {
+          int64_t /*num_blocks_cur_hlo*/, bool /*in_dot_region*/) {
         largest_live_tile_size = std::max(
             largest_live_tile_size, GetPaddedTileSize(tiled_hlo->tile_sizes()));
       });
@@ -670,7 +735,12 @@ FilterAndSortCandidates(
   return candidates;
 }
 
-// Evaluates a single tiling candidate: clones `base_tiling_space`, assigns
+struct BaseTilingSpace {
+  PooledOrFallbackMlirContext context;
+  std::unique_ptr<experimental::TilingSpace> tiling_space;
+};
+
+// Evaluates a single tiling candidate: clones `base->tiling_space`, assigns
 // `padded_tile_sizes` to the clone, tiles the fusion and estimates its run
 // time. Returns std::nullopt if the candidate cannot be tiled or if it
 // violates Triton constraints.
@@ -680,7 +750,7 @@ FilterAndSortCandidates(
 // single mlir::MLIRContext.
 absl::StatusOr<std::optional<TiledRunTimeData>> EvaluateCandidate(
     const HloFusionAdaptor& fusion_adaptor,
-    const experimental::TilingSpace& base_tiling_space,
+    std::shared_ptr<const BaseTilingSpace> base,
     absl::Span<const int64_t> padded_tile_sizes,
     MlirContextPool* mlir_context_pool,
     const se::DeviceDescription& device_info,
@@ -690,9 +760,10 @@ absl::StatusOr<std::optional<TiledRunTimeData>> EvaluateCandidate(
   // candidate.
   ABSL_ASSIGN_OR_RETURN(
       PooledOrFallbackMlirContext context,
-      BorrowMlirContextOr(mlir_context_pool, base_tiling_space.mlir_context()));
+      BorrowMlirContextOr(mlir_context_pool,
+                          base->tiling_space->mlir_context()));
   std::unique_ptr<experimental::TilingSpace> tiling_space =
-      base_tiling_space.Clone(context.get());
+      base->tiling_space->Clone(context.get());
   ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(padded_tile_sizes));
   VLOG(3) << "Trying tile sizes " << absl::StrJoin(padded_tile_sizes, ",");
 
@@ -744,10 +815,6 @@ tsl::Future<TopKTiledRunTimeDataOrError> TryFindTopKBestTilingsWithTilingSpace(
   // single-threaded `mlir_context`. Candidates clone from the base TilingSpace
   // asynchronously, so the context stays borrowed until the last candidate
   // releases `base`.
-  struct BaseTilingSpace {
-    PooledOrFallbackMlirContext context;
-    std::unique_ptr<experimental::TilingSpace> tiling_space;
-  };
   ABSL_ASSIGN_OR_RETURN(PooledOrFallbackMlirContext context,
                         BorrowMlirContextOr(mlir_context_pool, mlir_context));
   auto base = std::make_shared<BaseTilingSpace>(
@@ -787,10 +854,11 @@ tsl::Future<TopKTiledRunTimeDataOrError> TryFindTopKBestTilingsWithTilingSpace(
     }
 
     candidate_futures.push_back(tsl::MakeFutureOn(
-        *executor, [base, &fusion_adaptor, device_info = &device_info,
-                    shape_size, flops_fn, mlir_context_pool,
-                    padded_tile_sizes = std::move(padded_tile_sizes)]() {
-          return EvaluateCandidate(fusion_adaptor, *base->tiling_space,
+        *executor,
+        [base, &fusion_adaptor, device_info = &device_info, shape_size,
+         flops_fn, mlir_context_pool,
+         padded_tile_sizes = std::move(padded_tile_sizes)]() mutable {
+          return EvaluateCandidate(fusion_adaptor, std::move(base),
                                    padded_tile_sizes, mlir_context_pool,
                                    *device_info, shape_size, flops_fn);
         }));
@@ -887,6 +955,7 @@ int64_t GpuPerformanceModelWithIndexingAnalysis::FlopsPerElement(
     case HloOpcode::kBitcast:
     case HloOpcode::kBroadcast:
     case HloOpcode::kConstant:
+    case HloOpcode::kCopy:
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kGather:

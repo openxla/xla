@@ -69,6 +69,7 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/dialect/Version.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/translate/stablehlo.h"
@@ -343,9 +344,9 @@ absl::Status SerializeToRiegeli(mlir::ModuleOp mlir_module,
   mlir::PassManager pm(context);
   // Only enable verifier in debug builds.
   bool enableVerifier = false;
-#ifndef NDEBUG
-  enableVerifier = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    enableVerifier = true;
+  }
   pm.enableVerifier(enableVerifier);
   // Expand stablehlo complex math functions such as log_plus_one, etc.
   pm.addNestedPass<mlir::func::FuncOp>(

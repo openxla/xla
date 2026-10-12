@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/StorageUniquer.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
@@ -93,7 +94,13 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
         mlir_context_pool_(mlir_context_pool),
         use_experimental_tiling_(use_experimental_tiling),
         enable_same_shape_multi_output_fusion_(
-            enable_same_shape_multi_output_fusion) {}
+            enable_same_shape_multi_output_fusion) {
+    // TODO(b/514293537): Delete this condition once SymbolicTileAnalysis is
+    // deleted.
+    if (!use_experimental_tiling_ && mlir_context_ != nullptr) {
+      mlir_context_->getAffineUniquer().disableMultithreading(false);
+    }
+  }
 
   // Returns the number of warps for the given tiled HLO computation.
   static int64_t EstimateNumWarps(

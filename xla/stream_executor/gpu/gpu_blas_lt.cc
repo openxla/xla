@@ -392,7 +392,8 @@ absl::StatusOr<GemmConfig> GemmConfig::FromProto(
       proto.grad_x(),
       proto.grad_y(),
       static_cast<ScaleMode>(proto.scale_mode()),
-      compute_type};
+      compute_type,
+      proto.has_d_scale()};
 }
 
 xla::GemmConfigProto GemmConfig::ToProto() const {
@@ -415,6 +416,7 @@ xla::GemmConfigProto GemmConfig::ToProto() const {
   if (compute_type.has_value()) {
     proto.set_compute_type(blas::ToProto(*compute_type));
   }
+  proto.set_has_d_scale(has_d_scale);
   return proto;
 }
 

@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -487,6 +488,106 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   // This lets you calculate LI given the multidimensional indices in any order.
   static DimensionVector MakeDimMultipliers(const Shape& shape);
 
+  static absl::Status UnsupportedTypeError(const HloInstruction* instruction);
+
+  // Returns `shape`, if it has a layout, or a copy of `shape` with the default
+  // layout if it doesn't. Some functions require shapes to have layouts, so we
+  // simply always set one.
+  static Shape GetShapeWithLayout(const Shape& shape);
+
+  bool TryEvaluateDotFastPathF32(const HloInstruction* dot);
+
+  struct ShapeInfo {
+    static std::pair<DimensionVector, DimensionVector> dims(
+        const DimensionVector& dim_indexes, const Shape& literal_shape,
+        const Shape& scale_shape);
+
+    ShapeInfo(const Literal& literal, const Literal& scale_literal,
+              absl::Span<const int64_t> contracting_dims_field,
+              absl::Span<const int64_t> batch_dims_field);
+    ~ShapeInfo();
+
+    const int64_t rank;
+    DimensionVector batch_dim_indexes;
+    DimensionVector batch_dim_sizes;
+    DimensionVector batch_dim_scale_divisors;
+
+    DimensionVector non_contracting_dim_indexes;
+    DimensionVector non_contracting_dim_sizes;
+    DimensionVector non_contracting_dim_scale_divisors;
+
+    DimensionVector contracting_dim_indexes;
+    DimensionVector contracting_dim_sizes;
+    DimensionVector contracting_dim_scale_divisors;
+  };
+
+  struct DotDimensionInfo {
+    DotDimensionInfo(
+        const Shape& lhs_shape, const Shape& rhs_shape,
+        const DotDimensionNumbers& dnums,
+        std::optional<int64_t> extra_rhs_contracting_dim = std::nullopt);
+    ~DotDimensionInfo();
+
+    int64_t lhs_rank;
+    int64_t rhs_rank;
+    DimensionVector lhs_non_contracting_dims;
+    DimensionVector rhs_non_contracting_dims;
+    DimensionVector lhs_contracting_dims;
+    DimensionVector rhs_contracting_dims;
+    DimensionVector contracting_dim_sizes;
+    int64_t total_contraction_size;
+  };
+
+  absl::Status EvaluateConvolution(
+      const HloInstruction* conv, bool use_f32_fast_path,
+      absl::FunctionRef<absl::Status(
+          const Literal& lhs_literal, const Literal& rhs_literal,
+          const Shape& window_shape, const DimensionVector& lhs_dim_multipliers,
+          const DimensionVector& rhs_dim_multipliers, Literal* result)>
+          evaluate_impl);
+
+  absl::Status EvaluateDotSlowPath(
+      const HloInstruction* dot,
+      absl::FunctionRef<
+          absl::Status(const Literal& lhs_literal, const Literal& rhs_literal,
+                       const DotDimensionInfo& dot_info, Literal* result)>
+          evaluate_impl);
+
+  absl::Status EvaluateRaggedDot(
+      const HloInstruction* dot,
+      absl::FunctionRef<absl::Status(
+          const Literal& lhs_literal, const Literal& rhs_literal,
+          const Literal& gs_literal, const DotDimensionInfo& dot_info,
+          int64_t ragged_dim_as_contracting_dim, Literal* result)>
+          contracting_impl,
+      absl::FunctionRef<
+          absl::Status(const Literal& lhs_literal, const Literal& rhs_literal,
+                       const Literal& gs_literal,
+                       const DotDimensionInfo& dot_info, Literal* result)>
+          batch_impl,
+      absl::FunctionRef<
+          absl::Status(const Literal& lhs_literal, const Literal& rhs_literal,
+                       const Literal& gs_literal,
+                       const DotDimensionInfo& dot_info, Literal* result)>
+          non_contracting_impl);
+
+  absl::Status EvaluateScaledDot(
+      const HloInstruction* dot,
+      absl::FunctionRef<absl::Status(
+          const Literal& lhs_literal, const Literal& rhs_literal,
+          const Literal& lhs_scale_literal, const Literal& rhs_scale_literal,
+          const ShapeInfo& lhs_info, const ShapeInfo& rhs_info,
+          int64_t total_contraction_size, Literal* result)>
+          evaluate_impl);
+
+  absl::Status EvaluatePad(
+      const HloInstruction* pad,
+      absl::FunctionRef<absl::Status(
+          const Literal& evaluated_operand, const Literal& evaluated_padding,
+          absl::Span<int64_t> target_index, absl::Span<const int64_t> zero_base,
+          absl::Span<const int64_t> step, Literal* result)>
+          evaluate_impl);
+
   // Make HloEvaluatorTypedVisitor a friend because it is logically part of this
   // class.
   //
@@ -769,9 +870,10 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     bool same_layout =
         LayoutUtil::Equal(operand->shape().layout(), shape.layout());
     if (same_layout) {
+      const NativeT* operand_data = operand_literal.data<NativeT>().data();
       ABSL_RETURN_IF_ERROR(result.PopulateLinearParallel<ReturnT>(
           [&](int64_t linear_index, int /*thread_id*/) {
-            return unary_op(operand_literal.GetLinear<NativeT>(linear_index));
+            return unary_op(operand_data[linear_index]);
           }));
     } else {
       ABSL_RETURN_IF_ERROR(result.PopulateParallel<ReturnT>(
