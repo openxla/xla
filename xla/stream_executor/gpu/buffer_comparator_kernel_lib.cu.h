@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_BUFFER_COMPARATOR_KERNEL_LIB_CU_H_
 #define XLA_STREAM_EXECUTOR_GPU_BUFFER_COMPARATOR_KERNEL_LIB_CU_H_
 
-#include <sys/types.h>
-
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -32,6 +30,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace stream_executor::gpu {
 
@@ -57,12 +56,36 @@ __device__ __inline__ auto Canonicalize(double elem) {
   return elem;
 }
 
+// Accumulates `block_mismatches` into the global `mismatch_count` using a
+// single atomic per block.
+//
+// Each thread first reduces its own mismatches into a block-wide shared
+// counter, and only thread 0 performs one global atomicAdd for the whole block.
+__device__ __inline__ void AccumulateBlockMismatches(uint32_t thread_mismatches,
+                                                     int* mismatch_count) {
+  __shared__ uint32_t block_mismatches;
+  if (threadIdx.x == 0) {
+    block_mismatches = 0;
+  }
+  __syncthreads();
+  if (thread_mismatches != 0) {
+    atomicAdd(&block_mismatches, thread_mismatches);
+  }
+  __syncthreads();
+  if (threadIdx.x == 0 && block_mismatches != 0) {
+    atomicAdd(mismatch_count, static_cast<int>(block_mismatches));
+  }
+}
+
 template <typename T>
 __global__ void xla_fp_comparison(T* buffer_a, T* buffer_b,
                                   float rel_error_threshold,
                                   uint64_t buffer_length, int* mismatch_count) {
   const uint64_t block_dim_x = static_cast<uint64_t>(blockDim.x),
                  stride = block_dim_x * gridDim.x;
+  // Per-thread mismatch count, kept in a register and flushed to the global
+  // counter once at the end of the kernel via AccumulateBlockMismatches.
+  uint32_t thread_mismatches = 0;
   for (uint64_t idx = threadIdx.x + blockIdx.x * block_dim_x;
        idx < buffer_length; idx += stride) {
     auto elem_a = Canonicalize(buffer_a[idx]);
@@ -84,9 +107,10 @@ __global__ void xla_fp_comparison(T* buffer_a, T* buffer_b,
                        1);
 
     if (rel_error > rel_error_threshold || Eigen::numext::isnan(rel_error)) {
-      atomicAdd(mismatch_count, 1);
+      ++thread_mismatches;
     }
   }  // for
+  AccumulateBlockMismatches(thread_mismatches, mismatch_count);
 }
 
 // TODO(b/191520348): The comparison below requires exact equality.
@@ -97,6 +121,9 @@ __global__ void xla_int_comparison(T* buffer_a, T* buffer_b,
                                    int* mismatch_count) {
   const uint64_t block_dim_x = static_cast<uint64_t>(blockDim.x),
                  stride = block_dim_x * gridDim.x;
+  // Per-thread mismatch count, kept in a register and flushed to the global
+  // counter once at the end of the kernel via AccumulateBlockMismatches.
+  uint32_t thread_mismatches = 0;
   for (uint64_t idx = threadIdx.x + blockIdx.x * block_dim_x;
        idx < buffer_length; idx += stride) {
     float elem_a;
@@ -111,9 +138,10 @@ __global__ void xla_int_comparison(T* buffer_a, T* buffer_b,
     float rel_error =
         fabs(elem_a - elem_b) / (fmax(fabs(elem_a), fabs(elem_b)) + 1);
     if (rel_error > rel_error_threshold || isnan(rel_error)) {
-      atomicAdd(mismatch_count, 1);
+      ++thread_mismatches;
     }
   }  // for
+  AccumulateBlockMismatches(thread_mismatches, mismatch_count);
 }
 
 template <typename NativeT>
