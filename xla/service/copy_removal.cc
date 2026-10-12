@@ -142,7 +142,8 @@ Relation ComputeRelativeLocation::ComputeBetweenInstructionEntries(
       order = Relation::kAfterEnd;
     }
   }
-  bool intercept = AlwaysForceInterception(entry2.first);
+  instr2_can_modify |= AlwaysForceInterception(entry2.first);
+  bool intercept = false;
   if (def == nullptr || !instr2_can_modify) {
     return Relation(order, intercept);
   }

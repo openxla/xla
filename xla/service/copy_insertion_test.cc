@@ -6242,6 +6242,100 @@ ENTRY main {
             &alias_analysis->GetUniqueBufferAt(cond, {0}));
 }
 
+TEST_F(CopyInsertionTest, ChainedConditionalsWithAsyncDusNoCopy) {
+  constexpr absl::string_view kHloString = R"(
+HloModule ChainedAsyncDusConds, input_output_alias={ {}: (1, {}, may-alias) }
+
+async_dus_0 (dst: f32[8], upd: f32[2], idx: s32[]) -> f32[8] {
+  dst = f32[8] parameter(0)
+  upd = f32[2] parameter(1)
+  idx = s32[] parameter(2)
+  ROOT out = f32[8] dynamic-update-slice(dst, upd, idx)
+}
+
+async_dus_1 (dst: f32[8], upd: f32[2], idx: s32[]) -> f32[8] {
+  dst = f32[8] parameter(0)
+  upd = f32[2] parameter(1)
+  idx = s32[] parameter(2)
+  ROOT out = f32[8] dynamic-update-slice(dst, upd, idx)
+}
+
+async_dus_2 (dst: f32[8], upd: f32[2], idx: s32[]) -> f32[8] {
+  dst = f32[8] parameter(0)
+  upd = f32[2] parameter(1)
+  idx = s32[] parameter(2)
+  ROOT out = f32[8] dynamic-update-slice(dst, upd, idx)
+}
+
+pass_0 {
+  p = (f32[8]) parameter(0)
+  v = f32[8] get-tuple-element(p), index=0
+  ROOT r = (f32[8]) tuple(v)
+}
+
+dus_0 {
+  p = (f32[8]) parameter(0)
+  v = f32[8] get-tuple-element(p), index=0
+  upd = f32[2] constant({1, 2})
+  idx = s32[] constant(0)
+  start = ((f32[8], f32[2], s32[]), f32[8], s32[]) async-start(v, upd, idx),
+      output_to_operand_aliasing={{1}: (0, {})}, calls=async_dus_0
+  done = f32[8] async-done(start), calls=async_dus_0
+  ROOT r = (f32[8]) tuple(done)
+}
+
+pass_1 {
+  p = (f32[8]) parameter(0)
+  v = f32[8] get-tuple-element(p), index=0
+  ROOT r = (f32[8]) tuple(v)
+}
+
+dus_1 {
+  p = (f32[8]) parameter(0)
+  v = f32[8] get-tuple-element(p), index=0
+  upd = f32[2] constant({3, 4})
+  idx = s32[] constant(2)
+  start = ((f32[8], f32[2], s32[]), f32[8], s32[]) async-start(v, upd, idx),
+      output_to_operand_aliasing={{1}: (0, {})}, calls=async_dus_1
+  done = f32[8] async-done(start), calls=async_dus_1
+  ROOT r = (f32[8]) tuple(done)
+}
+
+pass_2 {
+  p = (f32[8]) parameter(0)
+  v = f32[8] get-tuple-element(p), index=0
+  ROOT r = (f32[8]) tuple(v)
+}
+
+dus_2 {
+  p = (f32[8]) parameter(0)
+  v = f32[8] get-tuple-element(p), index=0
+  upd = f32[2] constant({5, 6})
+  idx = s32[] constant(4)
+  start = ((f32[8], f32[2], s32[]), f32[8], s32[]) async-start(v, upd, idx),
+      output_to_operand_aliasing={{1}: (0, {})}, calls=async_dus_2
+  done = f32[8] async-done(start), calls=async_dus_2
+  ROOT r = (f32[8]) tuple(done)
+}
+
+ENTRY main {
+  b = s32[] parameter(0)
+  x = f32[8] parameter(1)
+  t0 = (f32[8]) tuple(x)
+  c0 = (f32[8]) conditional(b, t0, t0), branch_computations={pass_0, dus_0}
+  c1 = (f32[8]) conditional(b, c0, c0), branch_computations={pass_1, dus_1}
+  c2 = (f32[8]) conditional(b, c1, c1), branch_computations={pass_2, dus_2}
+  ROOT out = f32[8] get-tuple-element(c2), index=0
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
+  CopyInsertion copy_insertion(&alias_info_,
+                               /*use_region_based_live_range_analysis=*/-1);
+  ASSERT_OK(copy_insertion.Run(module.get()).status());
+  EXPECT_EQ(CountCopies(*module), 0);
+}
+
 INSTANTIATE_TEST_SUITE_P(CondOrder, CopyInsertionCondOrderTest,
                          ::testing::Combine(::testing::Bool(),
                                             ::testing::Values(int64_t{0},
