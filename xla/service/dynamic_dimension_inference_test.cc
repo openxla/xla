@@ -802,6 +802,61 @@ TEST_F(DynamicDimensionInferenceTest, WhileTest) {
             nullptr);
 }
 
+TEST_F(DynamicDimensionInferenceTest, NonTupleWhileTest) {
+  // A while whose loop state is a bare array with a dynamic dimension. The
+  // loop is canonicalized into tuple form; the clones made along the way
+  // must not be left behind as dead computations.
+  const char* hlo = R"(
+HloModule module
+
+body {
+  stack_buffer = s32[<=4, 2] parameter(0)
+  stack_size = s32[] get-dimension-size(stack_buffer), dimensions={0}
+  zero = s32[] constant(0)
+  one = s32[] constant(1)
+  new_data = s32[1, 2] broadcast(s32[] stack_size), dimensions={}
+  new_stack_size = s32[] add(stack_size, one)
+  new_stack_buffer = s32[<=4, 2] set-dimension-size(stack_buffer, new_stack_size), dimensions={0}
+  ROOT new_stack = s32[<=4, 2] dynamic-update-slice(new_stack_buffer, new_data, stack_size, zero)
+}
+
+condition {
+  stack_buffer = s32[<=4, 2] parameter(0)
+  stack_size = s32[] get-dimension-size(stack_buffer), dimensions={0}
+  three = s32[] constant(3)
+  ROOT less-than = pred[] compare(s32[] stack_size, s32[] three), direction=LT
+}
+
+ENTRY entry {
+  zero = s32[] constant(0)
+  stack_buffer_input = s32[4, 2] parameter(0)
+  stack_buffer_input_dynamic = s32[<=4, 2] set-dimension-size(stack_buffer_input, zero), dimensions={0}
+  ROOT while = s32[<=4, 2] while(stack_buffer_input_dynamic), body=body, condition=condition
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK(RunInference());
+
+  // The root now reads the loop state out of a tuple-shaped while that also
+  // carries the dynamic size, and the size is recorded for it.
+  HloInstruction* root = module_->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kGetTupleElement);
+  EXPECT_NE(inference_->GetDynamicSize(root, {}, 0), nullptr);
+  HloInstruction* while_hlo = nullptr;
+  for (HloInstruction* inst : module_->entry_computation()->instructions()) {
+    if (inst->opcode() == HloOpcode::kWhile) {
+      while_hlo = inst;
+    }
+  }
+  ASSERT_NE(while_hlo, nullptr);
+  EXPECT_EQ(while_hlo->shape().tuple_shapes().size(), 2);
+  for (HloComputation* computation : module_->computations()) {
+    EXPECT_NE(computation->name(), "body.non_tuple");
+    EXPECT_NE(computation->name(), "condition.non_tuple");
+  }
+}
+
 TEST_F(DynamicDimensionInferenceTest, ConditionalInputTest) {
   // Test the ability to trace into conditional loops.
   auto builder = HloComputation::Builder(TestName());
