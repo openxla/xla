@@ -295,7 +295,10 @@ cc_library(
     hdrs = ["hlo_op_metadata.h"],
     deps = [
         "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 

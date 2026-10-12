@@ -30,7 +30,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "absl/types/span.h"
 #include "google/protobuf/descriptor.h"
+#include "Eigen/Core"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_original_value_util.h"
@@ -348,6 +349,7 @@ class HloParserImpl : public HloParser {
     kShapeList,
     kEnum,
     kRandomAlgorithm,
+    kSchedulerCostSource,
     kShuffleMode,
     kPrecisionAlgorithm,
     kResultAccuracyType,
@@ -641,6 +643,7 @@ class HloParserImpl : public HloParser {
   bool ParseRandomDistribution(RandomDistribution* result);
   bool ParseConvKind(ConvolutionKind* result);
   bool ParseRandomAlgorithm(RandomAlgorithm* result);
+  bool ParseSchedulerCostSource(OpMetadata::SchedulerCostSource* result);
   bool ParseShuffleMode(ShuffleMode::ModeCase* result);
   bool ParsePrecision(PrecisionConfig::Precision* result);
   bool ParseAlgorithm(PrecisionConfig::Algorithm* result);
@@ -6488,6 +6491,15 @@ bool HloParserImpl::ParseAttributeHelper(
         static_cast<optional<RandomAlgorithm>*>(attr_out_ptr)->emplace(result);
         return true;
       }
+      case AttrTy::kSchedulerCostSource: {
+        OpMetadata::SchedulerCostSource result;
+        if (!ParseSchedulerCostSource(&result)) {
+          return false;
+        }
+        static_cast<optional<OpMetadata::SchedulerCostSource>*>(attr_out_ptr)
+            ->emplace(result);
+        return true;
+      }
       case AttrTy::kShuffleMode: {
         ShuffleMode::ModeCase result;
         if (!ParseShuffleMode(&result)) {
@@ -8300,6 +8312,8 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   optional<std::string> deduplicated_name;
   optional<std::string> scheduling_name;
   optional<std::string> metadata_payload;
+  optional<float> scheduler_cost_us;
+  optional<OpMetadata::SchedulerCostSource> scheduler_cost_source;
   attrs["op_type"] = {/*required=*/false, AttrTy::kString, &op_type};
   attrs["op_name"] = {/*required=*/false, AttrTy::kString, &op_name};
   attrs["source_file"] = {/*required=*/false, AttrTy::kString, &source_file};
@@ -8319,6 +8333,10 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
                              &stack_frame_id};
   attrs["metadata_payload"] = {/*required=*/false, AttrTy::kString,
                                &metadata_payload};
+  attrs["scheduler_cost_us"] = {/*required=*/false, AttrTy::kFloat,
+                                &scheduler_cost_us};
+  attrs["scheduler_cost_source"] = {
+      /*required=*/false, AttrTy::kSchedulerCostSource, &scheduler_cost_source};
   if (!ParseSubAttributes(attrs)) {
     return false;
   }
@@ -8359,6 +8377,12 @@ bool HloParserImpl::ParseMetadata(OpMetadata& metadata) {
   }
   if (stack_frame_id) {
     metadata.set_stack_frame_id(*stack_frame_id);
+  }
+  if (scheduler_cost_us) {
+    metadata.set_scheduler_cost_us(*scheduler_cost_us);
+  }
+  if (scheduler_cost_source) {
+    metadata.set_scheduler_cost_source(*scheduler_cost_source);
   }
   if (metadata_payload) {
     metadata.mutable_metadata_payload()->set_value(*metadata_payload);
@@ -8639,6 +8663,24 @@ bool HloParserImpl::ParseRandomAlgorithm(RandomAlgorithm* result) {
   if (!status_or_result.ok()) {
     return TokenError(
         StrFormat("expects random algorithm but sees: %s, error: %s", val,
+                  status_or_result.status().message()));
+  }
+  *result = status_or_result.value();
+  lexer_.Lex();
+  return true;
+}
+
+bool HloParserImpl::ParseSchedulerCostSource(
+    OpMetadata::SchedulerCostSource* result) {
+  VLOG(kDebugLevel) << "ParseSchedulerCostSource";
+  if (lexer_.GetKind() != TokKind::kIdent) {
+    return TokenError("expects scheduler cost source");
+  }
+  std::string val = lexer_.GetStrVal();
+  auto status_or_result = StringToSchedulerCostSource(val);
+  if (!status_or_result.ok()) {
+    return TokenError(
+        StrFormat("expects scheduler cost source but sees: %s, error: %s", val,
                   status_or_result.status().message()));
   }
   *result = status_or_result.value();

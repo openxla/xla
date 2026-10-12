@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -24,11 +25,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/latency_hiding_scheduler.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 
@@ -76,13 +77,37 @@ void HandleFoundInstructionLatency(ProfileStatisticsAggregator* aggregator,
 
 LatencyEstimator::TimeCost ProfileGuidedLatencyEstimator::GetLatencyBetween(
     const HloGraphNode& from, const HloGraphNode& target) const {
+  return EstimateLatencyBetween(from, target).value;
+}
+
+LatencyEstimator::Estimate
+ProfileGuidedLatencyEstimator::EstimateLatencyBetween(
+    const HloGraphNode& from, const HloGraphNode& target) const {
   static constexpr HloGraphNode::TimeCost kLowLatency = 1.0;
   const HloOpcode from_op = from.GetInstr().opcode();
   if (!config_.schedule_send_recvs &&
       (from_op == HloOpcode::kSend || from_op == HloOpcode::kRecv)) {
-    return kLowLatency;
+    return {kLowLatency, Source()};
   }
 
+  if (std::optional<TimeCost> latency = ProfiledLatency(from, target);
+      latency.has_value()) {
+    VLOG(2) << "PGLE found latency between " << from.GetInstr().name()
+            << " and " << target.GetInstr().name();
+    HandleFoundInstructionLatency(aggregator_.get(), from, target);
+    return {*latency * CyclesPerMicrosecond(), Source()};
+  }
+
+  VLOG(1) << "PGLE did not find relevant profiling info for '"
+          << from.GetInstr().name() << "', and '" << target.GetInstr().name()
+          << "'.";
+  HandleMissingInstructionLatency(aggregator_.get(), from, target);
+  return latency_estimator_->EstimateLatencyBetween(from, target);
+}
+
+std::optional<LatencyEstimator::TimeCost>
+ProfileGuidedLatencyEstimator::ProfiledLatency(
+    const HloGraphNode& from, const HloGraphNode& target) const {
   auto it = instr_map_.find(from.GetInstr().name());
   if (it == instr_map_.end() &&
       (from.GetInstr().opcode() == HloOpcode::kAsyncStart ||
@@ -95,11 +120,7 @@ LatencyEstimator::TimeCost ProfileGuidedLatencyEstimator::GetLatencyBetween(
   }
 
   if (it == instr_map_.end()) {
-    VLOG(1)
-        << "PGLE did NOT find wrapped instruction name or async start. From: "
-        << from.GetInstr().name();
-    HandleMissingInstructionLatency(aggregator_.get(), from, target);
-    return latency_estimator_->GetLatencyBetween(from, target);
+    return std::nullopt;
   }
 
   auto it2 = it->second.latencies.find(target.GetInstr().name());
@@ -110,46 +131,39 @@ LatencyEstimator::TimeCost ProfileGuidedLatencyEstimator::GetLatencyBetween(
         target.GetInstr().async_wrapped_instruction()->name());
   }
   if (it2 != it->second.latencies.end()) {
-    VLOG(2) << "PGLE found latency between " << from.GetInstr().name()
-            << " and " << target.GetInstr().name() << " in latency info";
-    HandleFoundInstructionLatency(aggregator_.get(), from, target);
-    return it2->second * CyclesPerMicrosecond();
+    return it2->second;
   }
 
   // For async-start/done instructions, if there is no entry in latencies, fall
   // back to using instruction cost as the latency.
   if (it->second.cost.has_value() &&
       (IsAsyncPair(from, target) || IsP2pPair(from, target))) {
-    VLOG(2) << "PGLE found latency for async op " << from.GetInstr().name()
-            << " and (assumed)" << target.GetInstr().name()
-            << " in instruction costs";
-    HandleFoundInstructionLatency(aggregator_.get(), from, target);
-    return *it->second.cost * CyclesPerMicrosecond();
+    return *it->second.cost;
   }
-
-  VLOG(1) << "PGLE did not find relevant profiling info for '"
-          << from.GetInstr().name() << "', and '" << target.GetInstr().name()
-          << "'.";
-  HandleMissingInstructionLatency(aggregator_.get(), from, target);
-  return latency_estimator_->GetLatencyBetween(from, target);
+  return std::nullopt;
 }
 
 LatencyEstimator::TimeCost ProfileGuidedLatencyEstimator::NodeCost(
     const HloInstruction* instr) const {
+  return EstimateNodeCost(instr).value;
+}
+
+LatencyEstimator::Estimate ProfileGuidedLatencyEstimator::EstimateNodeCost(
+    const HloInstruction* instr) const {
   if (hlo_query::IsAsyncCollectiveStartOp(instr, /*include_send_recv=*/true) ||
       hlo_query::IsAsyncCollectiveDoneOp(instr, /*include_send_recv=*/true)) {
     static constexpr TimeCost kLowCost = 1.0;
-    return kLowCost;
+    return {kLowCost, Source()};
   }
   if (auto it = instr_map_.find(instr->name());
       it != instr_map_.end() && it->second.cost.has_value()) {
     VLOG(2) << "PGLE found cost for: " << instr->name();
     HandleFoundInstructionCost(aggregator_.get(), instr);
-    return *it->second.cost;
+    return {*it->second.cost, Source()};
   }
   VLOG(1) << "PGLE missed cost for: " << instr->name();
   HandleMissingInstructionCost(aggregator_.get(), instr);
-  return latency_estimator_->NodeCost(instr);
+  return latency_estimator_->EstimateNodeCost(instr);
 }
 
 ProfileStatisticsAggregator::Statistics
