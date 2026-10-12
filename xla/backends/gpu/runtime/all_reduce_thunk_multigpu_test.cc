@@ -67,9 +67,8 @@ class DirectAllReduceThunk : public AllReduceReduceScatterThunkBase {
   }
 
   bool RequiresRendezvous() const override { return true; }
-  bool RecordsLaunchCompletion() const override { return true; }
 
-  // Set once the thunk has been handed its slot's event.
+  // Set once the thunk has been handed a launch event.
   std::atomic<bool> received_launch_event{false};
 
  protected:
@@ -80,7 +79,8 @@ class DirectAllReduceThunk : public AllReduceReduceScatterThunkBase {
         std::vector<DeviceBufferPair> device_buffers,
         ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                config_.config.operand_element_type));
-    se::Event* launch_event = params.TakeLaunchEvent(this);
+    ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                          params.TakeLaunchEvent(this, &stream));
     received_launch_event = launch_event != nullptr;
     return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm,
                         /*use_symmetric_buffer=*/false, launch_event);
@@ -334,21 +334,14 @@ static absl::Status RunWithLaunchEvent(
   Thunk::ExecuteParams params = MakeExecuteParams(slot, allocations);
 
   se::StreamExecutor* executor = GetGpuExecutor(d);
-  EventPool* pool = executor->GetOrConstructResource<EventPool>(executor);
-  ABSL_ASSIGN_OR_RETURN(EventPool::Event event, pool->GetOrCreateEvent());
-  se::Event* recorded = event->get();
-  const Thunk* execution_order[] = {thunk};
-  LaunchDependencyMap map(execution_order);
-  std::vector<EventPool::Event> launch_events;
-  launch_events.push_back(std::move(event));
-  LaunchOrdering launch_ordering{map, launch_events};
+  LaunchOrdering launch_ordering(
+      executor->GetOrConstructResource<LaunchEventPool>(executor));
   params.launch_ordering = &launch_ordering;
 
   ABSL_RETURN_IF_ERROR(ExecuteOnStreamAndBlock(*thunk, params));
   if (!thunk->received_launch_event) {
-    return absl::InternalError("Thunk was not handed its launch event");
+    return absl::InternalError("Thunk was not handed a launch event");
   }
-  ABSL_RETURN_IF_ERROR(slot.stream->WaitFor(recorded));
   ABSL_RETURN_IF_ERROR(slot.stream->BlockHostUntilDone());
 
   return VerifyDeviceBuffer(

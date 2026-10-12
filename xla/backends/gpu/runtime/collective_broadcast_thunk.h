@@ -45,7 +45,6 @@ struct CollectiveBroadcastMetadata {
 // Thunk that performs a collective broadcast.
 class CollectiveBroadcastThunk : public CollectiveThunk {
  public:
-  bool RecordsLaunchCompletion() const override { return true; }
   static absl::Status CheckImplementable(const HloInstruction* instr,
                                          int64_t replica_count,
                                          int64_t partition_count);

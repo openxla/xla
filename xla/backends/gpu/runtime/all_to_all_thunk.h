@@ -49,7 +49,6 @@ struct AllToAllConfig {
 // Thunk that performs an All-to-All among CUDA GPU-based replicas.
 class AllToAllThunk : public CollectiveThunk {
  public:
-  bool RecordsLaunchCompletion() const override { return true; }
   AllToAllThunk(ThunkInfo thunk_info, const HloAllToAllInstruction* instr,
                 std::vector<Buffer> buffers, bool p2p_memcpy_enabled,
                 int devices_per_host);
@@ -118,14 +117,11 @@ absl::Status RunAllToAll(bool has_split_dimension,
                          bool use_symmetric_buffer = false,
                          se::Event* launch_event = nullptr);
 
-absl::Status RunMemCpyAllToAll(bool has_split_dimension,
-                               std::vector<DeviceBufferPair>& buffers,
-                               se::Stream& stream, Communicator& comm,
-                               uint64_t receive_pointer_map[],
-                               const GpuCliqueKey& clique_key, RankId rank,
-                               se::Event* event,
-                               absl::Span<se::Event* const> events,
-                               se::Event* launch_event = nullptr);
+absl::Status RunMemCpyAllToAll(
+    bool has_split_dimension, std::vector<DeviceBufferPair>& buffers,
+    se::Stream& stream, Communicator& comm, uint64_t receive_pointer_map[],
+    const GpuCliqueKey& clique_key, RankId rank, se::Event* event,
+    absl::Span<se::Event* const> events, se::Event* launch_event = nullptr);
 
 }  // namespace gpu
 }  // namespace xla

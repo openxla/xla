@@ -154,8 +154,6 @@ class RaggedAllToAllThunk : public CollectiveThunk {
   CollectiveCliqueRequests::CliqueRequirements GetCliqueRequirements(
       const GpuCliqueKey& clique_key, const PrepareParams& params) override;
 
-  bool RecordsLaunchCompletion() const override { return true; }
-
   absl::Status Initialize(const InitializeParams& params) override;
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(

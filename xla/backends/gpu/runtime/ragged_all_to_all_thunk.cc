@@ -946,7 +946,8 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
 
-  se::Event* launch_event = params.TakeLaunchEvent(this);
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
 
   ABSL_ASSIGN_OR_RETURN(
       bool peer_access_enabled,

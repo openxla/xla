@@ -249,20 +249,14 @@ bool NcclCommunicator::SupportsGin() const {
   return capabilities_.supports_gin;
 }
 
-// XLA loads NCCL by soname, so the library can be older than the headers this
-// was built against, and the config entry points then resolve to a stub that
-// fails every call.
+// Headers and the soname-loaded library must both have the 2.32 config calls.
 bool NcclCommunicator::SupportsLaunchCompletion() const {
-#if NCCL_VERSION_CODE >= 23200
   static const bool supported = [] {
     int version = 0;
-    return ncclGetVersion(&version) == ncclSuccess &&
-           version >= NCCL_VERSION_CODE;
+    return NCCL_VERSION_CODE >= 23200 &&
+           ncclGetVersion(&version) == ncclSuccess && version >= 23200;
   }();
   return supported;
-#else
-  return false;
-#endif
 }
 
 std::optional<int> NcclCommunicator::LsaSize() const {

@@ -150,9 +150,11 @@ absl::Status CollectiveBroadcastThunk::RunCollective(
   CollectiveBroadcastMetadata* cb_metadata =
       per_device_cb_metadata_.Find(stream.parent()->device_ordinal());
 
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm,
                                             cb_metadata, has_dynamic_root_,
-                                            params.TakeLaunchEvent(this));
+                                            launch_event);
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,

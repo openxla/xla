@@ -65,7 +65,6 @@ class AllReduceReduceScatterThunkBase : public CollectiveThunk {
 
 class AllReduceThunk : public AllReduceReduceScatterThunkBase {
  public:
-  bool RecordsLaunchCompletion() const override { return true; }
   AllReduceThunk(ThunkInfo thunk_info, AllReduceConfig config,
                  std::vector<Buffer> buffers);
   AllReduceThunk(ThunkInfo thunk_info, const HloAllReduceInstruction* inst,
@@ -101,7 +100,6 @@ class AllReduceThunk : public AllReduceReduceScatterThunkBase {
 
 class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
  public:
-  bool RecordsLaunchCompletion() const override { return true; }
   ReduceScatterThunk(ThunkInfo thunk_info,
                      const HloReduceScatterInstruction* inst,
                      std::vector<Buffer> buffers,

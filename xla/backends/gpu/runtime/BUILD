@@ -3704,6 +3704,7 @@ xla_test(
     srcs = ["thunk_executor_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":event_pool",
         ":memset_thunk",
         ":sequential_thunk",
         ":thunk",
@@ -3718,6 +3719,7 @@ xla_test(
         "//xla/service:shaped_slice",
         "//xla/service/gpu:buffer_allocations",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
@@ -3727,6 +3729,7 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",

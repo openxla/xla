@@ -113,7 +113,6 @@ class CollectiveKernelThunk : public TracedCommand {
   absl::Status Initialize(const InitializeParams& params) final;
 
   // Execute the kernel on all devices.
-  bool RecordsLaunchCompletion() const override { return true; }
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) final;
 

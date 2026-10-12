@@ -1960,8 +1960,7 @@ TEST_P(CollectivesModeOps, CombinedCollectivePermuteInWhileLoop) {
   LiteralTestUtil::ExpectR1Equal<float>({11.0, 11.0}, r1[1]);
 }
 
-// Several collectives with compute between them, in a while loop, under
-// explicit launch ordering.
+// Collectives and compute in a while loop under explicit launch ordering.
 TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingWhileLoopWithCollectives) {
   const absl::string_view kModuleStr = R"(
   HloModule test
@@ -2016,14 +2015,9 @@ TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingWhileLoopWithCollectives) {
   ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
                        ExecuteReplicated(std::move(module)));
 
-  // Four iterations from data = [0, 0]: shifted = data + replica,
-  // reduced = shifted_r0 + shifted_r1, permuted = the other replica's
-  // shifted, mixed = permuted + reduced, next = gathered[1:3].
-  //   iteration: shifted r0/r1, reduced, mixed r0/r1, next
-  //   1: [0,0]/[1,1]     [1,1]   [2,2]/[1,1]     [2,1]
-  //   2: [2,1]/[3,2]     [5,3]   [8,5]/[7,4]     [5,7]
-  //   3: [5,7]/[6,8]     [11,15] [17,23]/[16,22] [23,16]
-  //   4: [23,16]/[24,17] [47,33] [71,50]/[70,49] [50,70]
+  // Each iteration adds the replica id to data, all-reduces that, permutes it
+  // to the other replica, adds both, all-gathers and keeps elements 1 and 2.
+  // Four iterations from 0,0 give 50,70 on both replicas.
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({50, 70}, results[0]);

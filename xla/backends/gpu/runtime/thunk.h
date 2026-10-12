@@ -311,7 +311,7 @@ class Thunk {
         ExecutionScopedState* execution_scoped_state = nullptr,
         std::optional<absl::Span<const BufferAllocation::Index>>
             persistent_alloc_indices = std::nullopt,
-        const LaunchOrdering* launch_ordering = nullptr);
+        LaunchOrdering* launch_ordering = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -360,9 +360,11 @@ class Thunk {
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
 
-    const LaunchOrdering* launch_ordering = nullptr;
+    LaunchOrdering* launch_ordering = nullptr;
 
-    stream_executor::Event* TakeLaunchEvent(const Thunk* thunk) const;
+    // Event the thunk records on its launch on stream, null without ordering.
+    absl::StatusOr<stream_executor::Event*> TakeLaunchEvent(
+        const Thunk* thunk, stream_executor::Stream* stream) const;
 
     bool mock_collectives = false;
     int64_t execution_id = 0;
@@ -471,8 +473,6 @@ class Thunk {
 
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
-
-  virtual bool RecordsLaunchCompletion() const { return false; }
 
   // Return type for `Walk` callbacks. All callbacks must return `void` or all
   // must return `absl::Status`.

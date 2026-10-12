@@ -15,21 +15,24 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/event_pool.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -42,6 +45,7 @@ limitations under the License.
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
@@ -65,58 +69,42 @@ static Thunk::ThunkInfo ThunkInfo(absl::string_view name) {
   return info;
 };
 
-// Executes nothing. `records` makes the map treat it as a producer.
-class FakeThunk : public Thunk {
- public:
-  explicit FakeThunk(bool records)
-      : Thunk(records ? Thunk::kAllReduce : Thunk::kKernel, Thunk::ThunkInfo()),
-        records_(records) {}
-  bool RecordsLaunchCompletion() const override { return records_; }
-  absl::Status ExecuteOnStream(const ExecuteParams&) override {
-    return absl::OkStatus();
-  }
-  BufferUses buffer_uses() const override { return {}; }
-  absl::StatusOr<ThunkProto> ToProto() const override {
-    return absl::UnimplementedError("not needed");
-  }
+TEST(ThunkExecutorTest, LaunchOrderingHoldsOtherStreams) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> producer_stream,
+                       executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> consumer_stream,
+                       executor->CreateStream());
+  LaunchOrdering ordering(
+      executor->GetOrConstructResource<LaunchEventPool>(executor));
 
- private:
-  bool records_;
-};
+  // Hold the producer stream, so its event stays pending.
+  absl::Notification release;
+  ASSERT_OK(
+      producer_stream->DoHostCallback([&] { release.WaitForNotification(); }));
+  ASSERT_OK_AND_ASSIGN(
+      se::Event * event,
+      ordering.TakeLaunchEvent(producer_stream.get(), "producer"));
+  ASSERT_OK(producer_stream->RecordEvent(event));
 
-TEST(ThunkExecutorTest, LaunchDependencyMap) {
-  // Nested, so the builder has to flatten.
-  ThunkSequence body;
-  body.push_back(std::make_unique<FakeThunk>(true));
-  body.push_back(std::make_unique<FakeThunk>(false));
-  body.push_back(std::make_unique<FakeThunk>(true));
-  body.push_back(std::make_unique<FakeThunk>(false));
-  const Thunk* first = body[0].get();
-  const Thunk* after_first = body[1].get();
-  const Thunk* second = body[2].get();
-  const Thunk* after_second = body[3].get();
+  // The consumer waits once on the other stream, nobody waits on itself.
+  ASSERT_OK_AND_ASSIGN(
+      int waits, ordering.WaitForProducers(consumer_stream.get(), "consumer"));
+  EXPECT_EQ(waits, 1);
+  std::atomic<bool> consumer_ran = false;
+  ASSERT_OK(consumer_stream->DoHostCallback([&] { consumer_ran = true; }));
+  EXPECT_EQ(event->PollForStatus(), se::Event::Status::kPending);
+  EXPECT_FALSE(consumer_ran);
+  ASSERT_OK_AND_ASSIGN(
+      waits, ordering.WaitForProducers(producer_stream.get(), "producer"));
+  EXPECT_EQ(waits, 0);
+  ASSERT_OK_AND_ASSIGN(
+      waits, ordering.WaitForProducers(consumer_stream.get(), "consumer"));
+  EXPECT_EQ(waits, 0);
 
-  ThunkSequence sequence;
-  sequence.push_back(std::make_unique<WhileThunk>(
-      ThunkInfo("while"), BufferAllocation::Slice(), ThunkSequence(),
-      std::move(body), /*trip_count=*/2, /*devices_per_host=*/1));
-  ThunkExecutor executor(std::move(sequence));
-
-  LaunchDependencyMap map =
-      ThunkExecutor::BuildLaunchDependencyMap(executor, true);
-
-  EXPECT_EQ(map.num_slots(), 2);
-  EXPECT_TRUE(map.RecordSlot(first).has_value());
-  EXPECT_NE(map.RecordSlot(first), map.RecordSlot(second));
-  EXPECT_FALSE(map.RecordSlot(after_first).has_value());
-
-  // Everything after a producer waits on it.
-  EXPECT_EQ(map.LastProducerSlot(after_first), map.RecordSlot(first));
-  EXPECT_EQ(map.LastProducerSlot(second), map.RecordSlot(first));
-  EXPECT_EQ(map.LastProducerSlot(after_second), map.RecordSlot(second));
-
-  EXPECT_EQ(
-      ThunkExecutor::BuildLaunchDependencyMap(executor, false).num_slots(), 0);
+  release.Notify();
+  ASSERT_OK(consumer_stream->BlockHostUntilDone());
+  EXPECT_TRUE(consumer_ran);
 }
 
 TEST(ThunkExecutorDefinitionTrackerTest, InvokesCallbackAfterLastUse) {

@@ -67,7 +67,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     ExecutionScopedState* execution_scoped_state,
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices,
-    const LaunchOrdering* launch_ordering) {
+    LaunchOrdering* launch_ordering) {
   const gpu::GpuExecutableRunOptions* gpu_opts =
       run_options.run_options().gpu_executable_run_options();
 
@@ -433,13 +433,10 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
   return thunk_info;
 }
 
-se::Event* Thunk::ExecuteParams::TakeLaunchEvent(const Thunk* thunk) const {
+absl::StatusOr<se::Event*> Thunk::ExecuteParams::TakeLaunchEvent(
+    const Thunk* thunk, se::Stream* stream) const {
   if (launch_ordering == nullptr) return nullptr;
-  std::optional<LaunchDependencyMap::SlotId> slot =
-      launch_ordering->map.RecordSlot(thunk);
-  if (!slot.has_value()) return nullptr;
-  launch_ordering->ClaimSlot(*slot);
-  return launch_ordering->events[*slot]->get();
+  return launch_ordering->TakeLaunchEvent(stream, thunk->profile_annotation());
 }
 
 bool Thunk::IsCollective() const {
