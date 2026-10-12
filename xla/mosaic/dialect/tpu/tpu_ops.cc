@@ -2681,6 +2681,25 @@ LogicalResult RegionOp::verify() {
   return success();
 }
 
+LogicalResult IndirectSwitchOp::verify() {
+  // The jump table holds one word per case.
+  constexpr int kMaxCases = 1024;
+  if (getCases().size() < 2 || getCases().size() > kMaxCases) {
+    return emitOpError("Expected between 2 and ")
+           << kMaxCases << " cases, got " << getCases().size();
+  }
+  for (Region& region : getCases()) {
+    if (region.front().getTerminator()->getNumOperands() != 0) {
+      return emitOpError("Cases must not yield values");
+    }
+  }
+  CoreType core_type = GetCoreTypeOfParentOp(**this);
+  if (core_type != CoreType::kTc) {
+    return emitOpError("Unsupported core type: ") << core_type;
+  }
+  return success();
+}
+
 LogicalResult ShuffledLoadOp::verify() {
   if (getBase().getType().getRank() != getIndices().size()) {
     return emitOpError("Base memref's rank and indices size do not match: ")
