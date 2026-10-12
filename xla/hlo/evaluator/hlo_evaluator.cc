@@ -3376,6 +3376,22 @@ absl::Status HloEvaluator::HandleCopy(const HloInstruction* copy) {
   return absl::OkStatus();
 }
 
+namespace {
+
+// Moves `src` into `dest` at `dest_shape_index`. Handlers may produce a layout
+// that differs from the instruction's only in fields the post visit relayout
+// ignores (such as tiling); such a literal cannot be moved and is copied.
+absl::Status MoveOrCopyFrom(Literal& dest, Literal&& src,
+                            const ShapeIndex& dest_shape_index) {
+  if (ShapeUtil::Equal(ShapeUtil::GetSubshape(dest.shape(), dest_shape_index),
+                       src.shape())) {
+    return dest.MoveFrom(std::move(src), dest_shape_index);
+  }
+  return dest.CopyFrom(src, dest_shape_index, /*src_shape_index=*/{});
+}
+
+}  // namespace
+
 absl::Status HloEvaluator::PropagateAsyncOutputs(
     const HloInstruction* start_async_inst,
     const LiteralSlice& result_literal) {
@@ -3459,8 +3475,7 @@ absl::Status HloEvaluator::HandleAsyncStart(const HloInstruction* async_start) {
         embedded_evaluator->Evaluate(*async_start->async_wrapped_computation(),
                                      arg_literals));
     // Move the output value to the index {1} of the output.
-    ABSL_RETURN_IF_ERROR(
-        literal.MoveFrom(std::move(result), /*dest_shape_index=*/{1}));
+    ABSL_RETURN_IF_ERROR(MoveOrCopyFrom(literal, std::move(result), {1}));
   }
 
   SetEvaluatedLiteralFor(async_start, std::move(literal));
@@ -3521,8 +3536,7 @@ absl::Status HloEvaluator::HandleAsyncUpdate(
         embedded_evaluator->Evaluate(*async_update->async_wrapped_computation(),
                                      sub_literals));
     // Move the output value to the index {1} of the output.
-    ABSL_RETURN_IF_ERROR(
-        literal.MoveFrom(std::move(result), /*dest_shape_index=*/{1}));
+    ABSL_RETURN_IF_ERROR(MoveOrCopyFrom(literal, std::move(result), {1}));
 
     // propagate the output subshapes back to previous async ops
     ABSL_RETURN_IF_ERROR(

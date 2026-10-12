@@ -6888,6 +6888,41 @@ TEST_F(HloEvaluatorTest, AsyncOpsWithLayout) {
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
 }
 
+TEST_F(HloEvaluatorTest, AsyncStartWithTiledLayout) {
+  // Some handlers (here the reshape) produce untiled literals, so the wrapped
+  // computation's result lacks the tiling of the async ops' shapes.
+  const absl::string_view hlo_text = R"(
+  HloModule test
+
+  called {
+    p0 = f32[8,128]{1,0:T(8,128)} parameter(0)
+    negate = f32[8,128]{1,0:T(8,128)} negate(p0)
+    ROOT reshape = f32[8,128]{1,0:T(8,128)} reshape(negate)
+  }
+
+  async_computation {
+    p0 = f32[8,128]{1,0:T(8,128)} parameter(0)
+    ROOT call = f32[8,128]{1,0:T(8,128)} call(p0), to_apply=called
+  }, execution_thread="thread"
+
+  ENTRY entry {
+    x = f32[8,128]{1,0:T(8,128)} parameter(0)
+    async-start = ((f32[8,128]{1,0:T(8,128)}), f32[8,128]{1,0:T(8,128)}) async-start(x), calls=async_computation, async_execution_thread="thread"
+    ROOT async-done = f32[8,128]{1,0:T(8,128)} async-done(async-start)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  Array2D<float> input(8, 128);
+  input.FillIota(1.0f);
+  Literal arg = LiteralUtil::CreateR2FromArray2D<float>(input);
+  Array2D<float> negated(8, 128);
+  negated.Each([&](int64_t i, int64_t j, float* v) { *v = -input(i, j); });
+  ASSERT_OK_AND_ASSIGN(Literal result, HloEvaluator().Evaluate(
+                                           *m_->entry_computation(), {&arg}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR2FromArray2D<float>(negated), result));
+}
+
 TEST_F(HloEvaluatorTest, LateBindingAsyncStartAndUpdate) {
   const absl::string_view hlo_text = R"(
   HloModule test
