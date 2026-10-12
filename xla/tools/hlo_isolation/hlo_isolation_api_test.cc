@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/tools/hlo_isolation/hlo_isolation_api.h"
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -35,6 +37,7 @@ limitations under the License.
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/tools/hlo_dump/hlo_dump_utils.h"
 #include "xla/tools/hlo_isolation/hlo_inf_nan_intent_analyzer.h"
+#include "xla/tools/hlo_isolation/hlo_isolation.pb.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -401,6 +404,75 @@ ENTRY main {
   EXPECT_DOUBLE_EQ(details[0].actual, 3.0);
   EXPECT_DOUBLE_EQ(details[0].expected, 4.0);
   EXPECT_DOUBLE_EQ(details[0].rel_error, 0.25);
+}
+
+TEST(HloIsolationApiTest, SubnormalFlushToZeroTrappedUnderDefaultTolerance) {
+  const absl::string_view kHlo = R"hlo(
+HloModule subnormal_flush
+ENTRY main {
+  p0 = f32[4] parameter(0)
+  ROOT add = f32[4] add(p0, p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       xla::ParseAndReturnUnverifiedModule(kHlo));
+
+  const float subnormal_f32 = std::numeric_limits<float>::denorm_min();
+  std::vector<Literal> inputs;
+  inputs.push_back(LiteralUtil::CreateR1<float>(
+      {subnormal_f32, subnormal_f32, subnormal_f32, subnormal_f32}));
+
+  ModuleIsolationOptions options;
+  // Both fused and defused device runs flush the subnormal to 0.0f, while the
+  // interpreter reference preserves 2 * denorm_min(). Even under the default
+  // tolerance (abs=0.01, rel=0.1), the subnormal flush to zero must fail.
+  options.run_module_fn =
+      [subnormal_f32](
+          std::unique_ptr<HloModule> m, HloRunnerInterface* r,
+          absl::Span<const Literal> i,
+          const RunModuleOptions& run_opts) -> absl::StatusOr<Literal> {
+    if (r == FakeReferenceRunner()) {
+      const float expected = subnormal_f32 * 2.0f;
+      Literal ref = LiteralUtil::CreateR1<float>(
+          {expected, expected, expected, expected});
+      if (run_opts.expected_literals != nullptr) {
+        (*run_opts.expected_literals)["add"] =
+            std::make_shared<Literal>(ref.Clone());
+      }
+      return ref;
+    }
+    Literal flushed = LiteralUtil::CreateR1<float>({0.0f, 0.0f, 0.0f, 0.0f});
+    for (const auto& cb : run_opts.hlo_output_callbacks) {
+      auto ptr = std::make_shared<Literal>(flushed.Clone());
+      cb.callback(0, 0, {ptr});
+    }
+    return flushed;
+  };
+  int mismatch_reports = 0;
+  std::string reported_message;
+  options.on_mismatch_fn = [&](const HloModule& m, const Literal& test_output,
+                               const Literal& ref_output,
+                               const absl::Status& status) {
+    ++mismatch_reports;
+    reported_message = std::string(status.message());
+  };
+
+  ::testing::TestPartResultArray failures;
+  HloIsolationTestResult result;
+  {
+    ::testing::ScopedFakeTestPartResultReporter reporter(
+        ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ALL_THREADS,
+        &failures);
+    ASSERT_OK_AND_ASSIGN(
+        result, RunIsolationTestOnModule(
+                    *module, nullptr, FakeReferenceRunner(), options, inputs));
+  }
+  EXPECT_EQ(result.state(), State::FAILURE);
+  EXPECT_EQ(result.reason(), "NUMERIC_MISMATCH");
+  EXPECT_EQ(mismatch_reports, 1);
+  EXPECT_TRUE(
+      absl::StrContains(reported_message, "SUBNORMAL FLUSH-TO-ZERO DETECTED"));
+  EXPECT_EQ(failures.size(), 1);
 }
 
 }  // namespace

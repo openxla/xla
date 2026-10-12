@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tools/hlo_isolation/hlo_isolation_api.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -38,6 +39,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
@@ -64,6 +66,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_comparison.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/primitive_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/shape.h"
@@ -228,6 +231,15 @@ void ApplyBoundingBoxToMismatch(
     }
     mismatch.set_mismatch_count(bbox.mismatch_count);
     mismatch.set_total_elements(bbox.total_elements);
+    if (bbox.total_elements > 0 &&
+        mismatch.percentage_of_elems_exceeding_both_errors() == 0.0 &&
+        bbox.mismatch_count > 0) {
+      const double pct = 100.0 * static_cast<double>(bbox.mismatch_count) /
+                         static_cast<double>(bbox.total_elements);
+      mismatch.set_percentage_of_elems_exceeding_both_errors(pct);
+      mismatch.set_percentage_of_elems_exceeding_abs_error(pct);
+      mismatch.set_percentage_of_elems_exceeding_rel_error(pct);
+    }
   }
 }
 
@@ -259,6 +271,220 @@ auto MakeMiscompareCallback(
   };
 }
 
+bool IsBf16Subnormal(uint16_t val) {
+  return (val & 0x7F80) == 0 && (val & 0x007F) != 0;
+}
+
+bool IsF16Subnormal(uint16_t val) {
+  return (val & 0x7C00) == 0 && (val & 0x03FF) != 0;
+}
+
+bool Is16BitFloatZero(uint16_t val) { return (val & 0x7FFF) == 0; }
+
+bool IsF8Subnormal(PrimitiveType type, uint8_t val) {
+  switch (type) {
+    case F8E5M2:
+    case F8E5M2FNUZ:
+      return (val & 0x7C) == 0 && (val & 0x03) != 0;
+    case F8E4M3:
+    case F8E4M3FN:
+    case F8E4M3FNUZ:
+    case F8E4M3B11FNUZ:
+      return (val & 0x78) == 0 && (val & 0x07) != 0;
+    case F8E3M4:
+      return (val & 0x70) == 0 && (val & 0x0F) != 0;
+    case F8E8M0FNU:
+    default:
+      return false;
+  }
+}
+
+bool IsF8Zero(PrimitiveType type, uint8_t val) {
+  switch (type) {
+    case F8E5M2FNUZ:
+    case F8E4M3FNUZ:
+    case F8E4M3B11FNUZ:
+      return val == 0x00;
+    case F8E5M2:
+    case F8E4M3:
+    case F8E4M3FN:
+    case F8E3M4:
+      return (val & 0x7F) == 0;
+    case F8E8M0FNU:
+    default:
+      return false;
+  }
+}
+
+bool IsF32Subnormal(uint32_t val) {
+  return (val & 0x7F800000) == 0 && (val & 0x007FFFFF) != 0;
+}
+
+bool IsF32Zero(uint32_t val) { return (val & 0x7FFFFFFF) == 0; }
+
+template <typename UintT, typename IsSubnormalFn, typename IsZeroFn>
+std::optional<std::string> ScanForSubnormalFlush(
+    absl::string_view type_name, absl::PadSpec hex_pad,
+    const uint8_t* expected_ptr, const uint8_t* actual_ptr,
+    int64_t size_in_bytes, IsSubnormalFn is_subnormal, IsZeroFn is_zero) {
+  const int64_t num_elements = size_in_bytes / sizeof(UintT);
+  for (int64_t i = 0; i < num_elements; ++i) {
+    UintT exp_v, act_v;
+    std::memcpy(&exp_v, expected_ptr + i * sizeof(UintT), sizeof(UintT));
+    std::memcpy(&act_v, actual_ptr + i * sizeof(UintT), sizeof(UintT));
+    if (is_subnormal(exp_v) && is_zero(act_v)) {
+      return absl::StrCat(
+          "SUBNORMAL FLUSH-TO-ZERO DETECTED at element ", i,
+          ": Expected subnormal ", type_name, " 0x", absl::Hex(exp_v, hex_pad),
+          ", but actual produced flushed zero 0x", absl::Hex(act_v, hex_pad));
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> DetectSubnormalFlushInArray(
+    PrimitiveType element_type, const uint8_t* expected_ptr,
+    const uint8_t* actual_ptr, int64_t size_in_bytes) {
+  if (element_type == BF16) {
+    return ScanForSubnormalFlush<uint16_t>(
+        "BF16", absl::kZeroPad4, expected_ptr, actual_ptr, size_in_bytes,
+        IsBf16Subnormal, Is16BitFloatZero);
+  }
+  if (element_type == F16) {
+    return ScanForSubnormalFlush<uint16_t>("F16", absl::kZeroPad4, expected_ptr,
+                                           actual_ptr, size_in_bytes,
+                                           IsF16Subnormal, Is16BitFloatZero);
+  }
+  if (primitive_util::IsF8Type(element_type)) {
+    std::string type_name = absl::AsciiStrToUpper(
+        primitive_util::LowercasePrimitiveTypeName(element_type));
+    return ScanForSubnormalFlush<uint8_t>(
+        type_name, absl::kZeroPad2, expected_ptr, actual_ptr, size_in_bytes,
+        [element_type](uint8_t v) { return IsF8Subnormal(element_type, v); },
+        [element_type](uint8_t v) { return IsF8Zero(element_type, v); });
+  }
+  if (element_type == F32) {
+    return ScanForSubnormalFlush<uint32_t>("F32", absl::kZeroPad8, expected_ptr,
+                                           actual_ptr, size_in_bytes,
+                                           IsF32Subnormal, IsF32Zero);
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> DetectSubnormalFlushInLiteral(
+    const LiteralSlice& expected, const LiteralSlice& actual) {
+  if (expected.shape().IsTuple() && actual.shape().IsTuple()) {
+    const int64_t count = std::min(expected.shape().tuple_shapes_size(),
+                                   actual.shape().tuple_shapes_size());
+    for (int64_t i = 0; i < count; ++i) {
+      if (auto flush = DetectSubnormalFlushInLiteral(
+              LiteralSlice(expected, {i}), LiteralSlice(actual, {i}));
+          flush.has_value()) {
+        return flush;
+      }
+    }
+    return std::nullopt;
+  }
+  if (expected.shape().IsArray() && actual.shape().IsArray() &&
+      expected.shape().element_type() == actual.shape().element_type() &&
+      expected.size_bytes() == actual.size_bytes()) {
+    return DetectSubnormalFlushInArray(
+        expected.shape().element_type(),
+        static_cast<const uint8_t*>(expected.untyped_data()),
+        static_cast<const uint8_t*>(actual.untyped_data()),
+        expected.size_bytes());
+  }
+  return std::nullopt;
+}
+
+template <typename UintT, typename IsSubnormalFn>
+bool ArrayContainsSubnormal(const uint8_t* ptr, int64_t size_in_bytes,
+                            IsSubnormalFn is_subnormal) {
+  const int64_t num_elements = size_in_bytes / sizeof(UintT);
+  for (int64_t i = 0; i < num_elements; ++i) {
+    UintT val;
+    std::memcpy(&val, ptr + i * sizeof(UintT), sizeof(UintT));
+    if (is_subnormal(val)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool LiteralContainsSubnormal(const LiteralSlice& literal) {
+  if (literal.shape().IsTuple()) {
+    for (int64_t i = 0; i < literal.shape().tuple_shapes_size(); ++i) {
+      if (LiteralContainsSubnormal(LiteralSlice(literal, {i}))) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (!literal.shape().IsArray()) {
+    return false;
+  }
+  const PrimitiveType element_type = literal.shape().element_type();
+  const auto* ptr = static_cast<const uint8_t*>(literal.untyped_data());
+  const int64_t size_in_bytes = literal.size_bytes();
+  if (element_type == BF16) {
+    return ArrayContainsSubnormal<uint16_t>(ptr, size_in_bytes,
+                                            IsBf16Subnormal);
+  }
+  if (element_type == F16) {
+    return ArrayContainsSubnormal<uint16_t>(ptr, size_in_bytes, IsF16Subnormal);
+  }
+  if (primitive_util::IsF8Type(element_type)) {
+    return ArrayContainsSubnormal<uint8_t>(
+        ptr, size_in_bytes,
+        [element_type](uint8_t v) { return IsF8Subnormal(element_type, v); });
+  }
+  if (element_type == F32) {
+    return ArrayContainsSubnormal<uint32_t>(ptr, size_in_bytes, IsF32Subnormal);
+  }
+  return false;
+}
+
+bool InputsContainSubnormal(absl::Span<const Literal> inputs) {
+  for (const Literal& input : inputs) {
+    if (LiteralContainsSubnormal(LiteralSlice(input))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+absl::StatusOr<Literal> CoerceActualLiteralToExpectedShape(
+    const Literal& actual, const Shape& expected_shape) {
+  Shape host_expected = ShapeUtil::DeviceShapeToHostShape(expected_shape);
+  if (ShapeUtil::Compatible(host_expected, actual.shape())) {
+    return actual.Clone();
+  }
+  if (actual.shape().IsArray() && host_expected.IsArray() &&
+      ShapeUtil::SameDimensions(host_expected, actual.shape()) &&
+      actual.shape().element_type() == F32) {
+    const PrimitiveType expected_type = host_expected.element_type();
+    if (primitive_util::IsFloatingPointType(expected_type)) {
+      return actual.Convert(expected_type);
+    }
+    if (primitive_util::IsIntegralType(expected_type)) {
+      const int bit_width = primitive_util::BitWidth(expected_type);
+      if (bit_width == 32) {
+        return actual.BitcastConvert(host_expected);
+      }
+      if (bit_width < 32) {
+        ABSL_ASSIGN_OR_RETURN(
+            Literal as_u32, actual.BitcastConvert(ShapeUtil::ChangeElementType(
+                                actual.shape(), U32)));
+        return as_u32.Convert(expected_type);
+      }
+    }
+  }
+  return absl::InvalidArgumentError(
+      absl::StrCat("Reference literal shape ", expected_shape.ToString(),
+                   " is not compatible with actual literal shape ",
+                   actual.shape().ToString()));
+}
+
 // Compares `test_output` against `reference_output` and records a NumericCheck
 // named `check_name` on `result`.
 //
@@ -284,6 +510,18 @@ absl::Status CompareOutputs(const HloModule& module, const Literal& test_output,
   absl::Status status = literal_comparison::Near(
       reference_output, test_output, error_spec, true,
       MakeMiscompareCallback(std::string(literal_prefix), &computed_bboxes));
+  std::optional<std::string> subnormal_flush = DetectSubnormalFlushInLiteral(
+      LiteralSlice(reference_output), LiteralSlice(test_output));
+  if (subnormal_flush.has_value()) {
+    if (status.ok()) {
+      status = literal_comparison::Near(
+          reference_output, test_output, ErrorSpec(0, 0), true,
+          MakeMiscompareCallback(std::string(literal_prefix),
+                                 &computed_bboxes));
+    }
+    status = absl::InternalError(
+        absl::StrCat(status.message(), "\n", *subnormal_flush));
+  }
   NumericCheck* numeric_check = result.add_numeric_checks();
   numeric_check->set_name(check_name);
   numeric_check->set_expected_contains_inf_or_nan(
@@ -472,31 +710,45 @@ std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
           return;
         }
 
-        Literal expected_literal;
-        if (ShapeUtil::Compatible(expected_literal_ptr->shape(),
-                                  literals[0]->shape())) {
-          expected_literal = expected_literal_ptr->Clone();
-        } else {
-          LOG(WARNING) << "Reference literal shape "
-                       << expected_literal_ptr->shape().ToString()
-                       << " is not compatible with actual literal shape "
-                       << literals[0]->shape().ToString() << " for op "
+        Literal expected_literal = expected_literal_ptr->Clone();
+        absl::StatusOr<Literal> actual_literal_or =
+            CoerceActualLiteralToExpectedShape(*literals[0],
+                                               expected_literal.shape());
+        if (!actual_literal_or.ok()) {
+          LOG(WARNING) << actual_literal_or.status().message() << " for op "
                        << op_name << " within fusion " << module_name;
           return;
         }
+        const Literal& actual_literal = *actual_literal_or;
 
         absl::flat_hash_map<int64_t, numerics::debug_info::MismatchBoundingBox>
             computed_bboxes;
         xla::ErrorSpec error_spec(static_cast<float>(abs_error),
                                   static_cast<float>(rel_error));
+        std::string cb_prefix = absl::StrCat(module_name, "-", op_name);
         absl::Status matched = xla::literal_comparison::Near(
             /*expected=*/expected_literal,
-            /*actual=*/*literals[0],
+            /*actual=*/actual_literal,
             /*error=*/error_spec,
             /*detailed_message=*/true,
             /*miscompare_callback=*/
-            MakeMiscompareCallback(absl::StrCat(module_name, "-", op_name),
-                                   &computed_bboxes));
+            MakeMiscompareCallback(cb_prefix, &computed_bboxes));
+        std::optional<std::string> subnormal_flush =
+            DetectSubnormalFlushInLiteral(LiteralSlice(expected_literal),
+                                          LiteralSlice(actual_literal));
+        if (subnormal_flush.has_value()) {
+          if (matched.ok()) {
+            matched = xla::literal_comparison::Near(
+                /*expected=*/expected_literal,
+                /*actual=*/actual_literal,
+                /*error=*/xla::ErrorSpec(0, 0),
+                /*detailed_message=*/true,
+                /*miscompare_callback=*/
+                MakeMiscompareCallback(cb_prefix, &computed_bboxes));
+          }
+          matched = absl::InternalError(
+              absl::StrCat(matched.message(), "\n", *subnormal_flush));
+        }
 
         if (!matched.ok()) {
           std::string error_message = absl::StrFormat(
@@ -512,11 +764,11 @@ std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
           numeric_check->set_expected_contains_inf_or_nan(
               LiteralContainsInfOrNan(expected_literal));
           numeric_check->set_actual_contains_inf_or_nan(
-              LiteralContainsInfOrNan(*literals[0]));
+              LiteralContainsInfOrNan(actual_literal));
 
           absl::StatusOr<std::vector<NumericMismatch>> top_mismatches =
               ExtractTopMismatches(std::string(matched.message()),
-                                   literals[0]->shape().IsTuple());
+                                   actual_literal.shape().IsTuple());
           if (top_mismatches.ok()) {
             for (NumericMismatch& mismatch : *top_mismatches) {
               ApplyBoundingBoxToMismatch(computed_bboxes, mismatch);
@@ -686,7 +938,7 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
                          const absl::Status& status,
                          absl::string_view module_name) {
     result.set_state(State::FAILURE);
-    result.set_reason(std::string(reason));
+    result.set_reason(reason);
     log_failure(prefix, status, module_name);
     report_mismatches();
     return result;
@@ -716,39 +968,28 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
                  << defused_output.status();
   }
 
+  const bool inputs_have_subnormals =
+      reference_runner != nullptr && InputsContainSubnormal(input_data);
   if (defused_output.ok()) {
     // Compare Test vs Defused Test.
+    // When the inputs contain subnormal floats and an interpreter reference is
+    // available, do not short-circuit on a matching defused run because the
+    // backend may flush subnormals to zero in both fused and defused execution.
     absl::Status compare_status =
         CompareOutputs(module, test_literal, *defused_output, result, options,
                        "TPU_VS_DEFUSED_TPU", module.name(), mismatch_messages);
     if (compare_status.ok()) {
-      result.set_state(State::SUCCESS);
-      result.set_reason("STAGE_1_DEFUSED_TPU_SUCCESS");
-      return result;
-    }
-
-    // Compare Test vs Defused Test again, this time with excess precision
-    // disabled on both sides.
-    //
-    // XLA lets a backend evaluate an instruction in a wider type than the HLO
-    // declares. A fusion can therefore hold an intermediate in f32 where the
-    // defused module, which materializes that intermediate in its declared
-    // (say bf16) type, is forced to round. Both results are correct, but they
-    // differ, and the difference is unbounded relative to the reference
-    // wherever the rounded reference cancels to exactly zero. Pinning both
-    // sides to the declared types removes that degree of freedom.
-    //
-    // Note that this recompiles the module under test, not just the reference,
-    // so it cannot distinguish "the two runs merely rounded differently" from
-    // "the backend miscompiles this fusion only on the excess-precision path".
-    // Set retry_without_excess_precision to false to investigate the latter.
-    //
-    // This is best effort: any failure to produce the comparison leaves the
-    // original mismatch standing.
-    if (options.retry_without_excess_precision &&
-        module.config().debug_options().xla_allow_excess_precision() &&
-        RetryWithoutExcessPrecision(module, test_runner, input_data, result,
-                                    options, mismatch_messages)) {
+      if (!inputs_have_subnormals) {
+        result.set_state(State::SUCCESS);
+        result.set_reason("STAGE_1_DEFUSED_TPU_SUCCESS");
+        return result;
+      }
+    } else if (options.retry_without_excess_precision &&
+               module.config().debug_options().xla_allow_excess_precision() &&
+               RetryWithoutExcessPrecision(module, test_runner, input_data,
+                                           result, options,
+                                           mismatch_messages) &&
+               !inputs_have_subnormals) {
       result.set_state(State::SUCCESS);
       result.set_reason("STAGE_1B_NO_EXCESS_PRECISION_SUCCESS");
       return result;
@@ -1190,6 +1431,36 @@ absl::StatusOr<std::vector<NumericMismatch>> ExtractTopMismatches(
   }
   if (current_mismatch.has_value()) {
     mismatches.push_back(std::move(*current_mismatch));
+  }
+  if (mismatches.empty()) {
+    std::string index_str, expected_str, actual_str;
+    if (RE2::PartialMatch(
+            error_message,
+            R"(first mismatch at array index\s*\{([^}]*)\}:\s*expected value:\s*([^\s]+)\s*actual value:\s*([^\s]+))",
+            &index_str, &expected_str, &actual_str)) {
+      double expected_double = 0.0;
+      double actual_double = 0.0;
+      if (absl::SimpleAtod(expected_str, &expected_double) &&
+          absl::SimpleAtod(actual_str, &actual_double)) {
+        NumericMismatch data;
+        data.set_output_shape_index(shape_index.value_or(0));
+        data.set_expected(expected_double);
+        data.set_actual(actual_double);
+        const double abs_diff = std::abs(actual_double - expected_double);
+        const double rel_err = expected_double != 0.0
+                                   ? abs_diff / std::abs(expected_double)
+                                   : (actual_double != 0.0 ? 1.0 : 0.0);
+        data.set_rel_error(rel_err);
+        for (absl::string_view idx_part :
+             absl::StrSplit(index_str, ',', absl::SkipEmpty())) {
+          int64_t coord;
+          if (absl::SimpleAtoi(absl::StripAsciiWhitespace(idx_part), &coord)) {
+            data.add_top_mismatch_index(coord);
+          }
+        }
+        mismatches.push_back(std::move(data));
+      }
+    }
   }
   return mismatches;
 }
