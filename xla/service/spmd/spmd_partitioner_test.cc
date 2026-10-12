@@ -21,6 +21,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -8621,6 +8622,47 @@ ENTRY entry {
                 output_tuple, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
+// Verify that a reduce moved into a windowed einsum loop initialises its
+// accumulator buffer with the reduce's init value.
+TEST_P(SpmdPartitioningTest, EinsumWindowedNonContractingMaxReduceUsesInit) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+max {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(a, b)
+}
+
+ENTRY entry {
+  %x = f32[8,16] parameter(0), sharding={devices=[4,1]<=[4]}
+  %w = f32[16,256] parameter(1), sharding={devices=[1,4]<=[4]}
+  %dot = f32[8,256] dot(%x, %w), lhs_contracting_dims={1},
+    rhs_contracting_dims={0}, sharding={devices=[1,4]<=[4]}
+  %init = f32[] constant(-inf)
+  ROOT %reduce = f32[256] reduce(%dot, %init), dimensions={0}, to_apply=max,
+    sharding={devices=[4]<=[4]}
+})";
+
+  SpmdPartitionerOptions options;
+  options.threshold_for_windowed_einsum_mib = 0;
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      PartitionComputation(hlo_string, /*num_devices=*/4, options));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  const auto neg_inf = op::Constant(
+      LiteralUtil::CreateR0<float>(-std::numeric_limits<float>::infinity()));
+  const auto input_subtuple =
+      op::Tuple(neg_inf, AllOf(op::Broadcast(neg_inf), op::Shape("f32[64]")));
+
+  EXPECT_THAT(root,
+              AllOf(op::GetTupleElement(op::GetTupleElement(op::While(
+                        op::Tuple(_, _, input_subtuple, _, op::Constant())))),
+                    op::Shape("f32[64]")));
+}
+
 TEST_P(SpmdPartitioningTest,
        BidirectionalEinsumRHSWindowedNonContractingReduce2) {
   absl::string_view hlo_string = R"(
@@ -9254,6 +9296,31 @@ ENTRY entry {
   %operand = f32[1,4,4] parameter(1), sharding={devices=[1,2,1]<=[2]}
   %slice = f32[1,2,4] slice(%operand), slice={[0:1], [0:2], [0:4]}
   %reshape = f32[2,4] reshape(%slice)
+  %input = f32[4,4] parameter(0), sharding={devices=[2,1]<=[2]}
+  %constant.0 = s32[] constant(0)
+  %constant.1 = s32[] constant(0)
+  ROOT %dus = f32[4,4] dynamic-update-slice(%input, %reshape, %constant.0, %constant.1), sharding={devices=[2,1]<=[2]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2,
+                                            SpmdPartitionerOptions(),
+                                            /*enable_enzyme_opt=*/true));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::Select());
+}
+
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceOfReshapeOfSliceShardedWithEnzymeOpt) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %operand = f32[1,4,4] parameter(1), sharding={devices=[1,2,1]<=[2]}
+  %slice = f32[1,2,4] slice(%operand), slice={[0:1], [0:2], [0:4]}, sharding={devices=[1,2,1]<=[2]}
+  %reshape = f32[2,4] reshape(%slice), sharding={devices=[2,1]<=[2]}
   %input = f32[4,4] parameter(0), sharding={devices=[2,1]<=[2]}
   %constant.0 = s32[] constant(0)
   %constant.1 = s32[] constant(0)
