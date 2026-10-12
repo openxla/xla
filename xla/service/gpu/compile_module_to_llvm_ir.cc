@@ -47,9 +47,6 @@ limitations under the License.
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
@@ -83,6 +80,9 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -103,9 +103,7 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
                       .xla_gpu_experimental_enable_collective_multi_streaming()
                   ? kDefaultNumCommunicationStreams
                   : 1,
-              // Keep disabled by default until the 14-day AOT
-              // forward-compatibility window has elapsed (9th of October 2026).
-              /*enable_dedicated_memcpy_streams=*/false,
+              /*enable_dedicated_memcpy_streams=*/true,
           });
   return results;
 }
