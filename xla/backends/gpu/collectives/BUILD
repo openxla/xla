@@ -1289,8 +1289,6 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
-        "@local_config_rocm//rocm:hip_runtime",
-        "@roc_mori//:mori_application_headers",
         "@roc_mori//src/application:mori_application",  # build_cleaner: keep
         "@roc_mori//src/cco:mori_cco",  # build_cleaner: keep
     ],

@@ -1533,7 +1533,7 @@ rocm_library(
         "//xla/stream_executor/gpu:topk_kernel",
         "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/base",
-        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
@@ -1554,7 +1554,7 @@ rocm_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:repeat_buffer_kernel",
-        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
@@ -1575,7 +1575,7 @@ rocm_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:redzone_allocator_kernel",
-        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
@@ -1599,7 +1599,7 @@ rocm_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:gpu_test_kernel_traits",
-        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
@@ -1609,14 +1609,12 @@ rocm_library(
     hdrs = [
         "collective_signal_rocm.cu.h",
         "//xla/stream_executor/gpu:collective_signal.cu.h",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
         "rocm-only",
-    ],
-    deps = [
-        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
@@ -1640,7 +1638,7 @@ rocm_library(
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:multi_gpu_barrier_kernel",
         "@com_google_absl//absl/base",
-        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,
 )
