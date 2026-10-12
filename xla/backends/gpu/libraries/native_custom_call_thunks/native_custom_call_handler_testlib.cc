@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/memory/memory.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/target_config/target_config.h"
+#include "xla/backends/gpu/transforms/custom_call_scratch_assigner.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/ffi/attributes.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/gpu_constants.h"
+#include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/shaped_slice.h"
@@ -94,11 +97,13 @@ class NativeCustomCallHandlerTester::ContextImpl
  public:
   ContextImpl(const HloCustomCallInstruction& instr,
               const BufferAssignment& buffer_assignment,
-              const GpuTopology& topology, DebugOptions debug_options)
+              const GpuTopology& topology, DebugOptions debug_options,
+              mlir::MLIRContext* mlir_context)
       : instr_(instr),
         buffer_assignment_(buffer_assignment),
         topology_(topology),
-        debug_options_(std::move(debug_options)) {}
+        debug_options_(std::move(debug_options)),
+        mlir_context_(mlir_context) {}
 
   const GpuTopology& GetTargetTopology() const override { return topology_; }
 
@@ -148,7 +153,7 @@ class NativeCustomCallHandlerTester::ContextImpl
   }
 
   absl::StatusOr<xla::ffi::Attributes> GetFfiAttributes() const override {
-    return FfiAttributesFromBackendConfig(instr_, mlir_context_);
+    return FfiAttributesFromBackendConfig(instr_, *mlir_context_);
   }
 
  private:
@@ -173,7 +178,7 @@ class NativeCustomCallHandlerTester::ContextImpl
   const BufferAssignment& buffer_assignment_;
   const GpuTopology& topology_;
   DebugOptions debug_options_;
-  mutable mlir::MLIRContext mlir_context_;
+  mlir::MLIRContext* mlir_context_;
   mutable int64_t next_thunk_id_ = 0;
 };
 
@@ -194,25 +199,46 @@ NativeCustomCallHandlerTester::Create(absl::string_view hlo_text,
       FindCustomCall(*tester->module_, options.instruction_name));
 
   ABSL_ASSIGN_OR_RETURN(
-      tester->buffer_assignment_,
-      BufferAssigner::Run(
-          tester->module_.get(),
-          std::make_unique<DependencyHloOrdering>(tester->module_.get()),
-          &BufferSizeBytes, &tester->alias_info_,
-          [](LogicalBuffer::Color) { return 0; },
-          BufferAssigner::Options{/*allocate_buffers_for_constants=*/true}));
-
-  ABSL_ASSIGN_OR_RETURN(
       stream_executor::GpuTargetConfigProto target_config_proto,
       GetGpuTargetConfig(options.gpu_model));
   ABSL_ASSIGN_OR_RETURN(GpuTargetConfig target_config,
                         GpuTargetConfig::FromProto(target_config_proto));
   tester->topology_ = std::make_unique<GpuTopology>(
       GetSingleDeviceGpuTopology(target_config.platform_name, target_config));
+  tester->mlir_context_ = std::make_unique<mlir::MLIRContext>();
+  tester->module_->mutable_config().set_debug_options(options.debug_options);
+
+  if (options.run_scratch_assigner) {
+    // The pass replaces the custom call with a new instruction of the same
+    // name, so look it up again afterwards.
+    std::string instruction_name(tester->instruction_->name());
+    CustomCallScratchAssigner scratch_assigner(tester->topology_.get(),
+                                               tester->mlir_context_.get());
+    ABSL_RETURN_IF_ERROR(scratch_assigner.Run(tester->module_.get()).status());
+    ABSL_ASSIGN_OR_RETURN(tester->instruction_,
+                          FindCustomCall(*tester->module_, instruction_name));
+  }
+
+  // Mirror the buffer assignment the GPU compiler runs: GPU memory space
+  // colors, and S(0) buffers may reuse S(1) allocations.
+  BufferAssigner::Options assigner_options;
+  assigner_options.allocate_buffers_for_constants = true;
+  assigner_options.colorer = CreateColorer(options.debug_options);
+  assigner_options.can_use_allocation = BufferAssigner::AllowCrossColorReuse(
+      static_cast<int>(MemorySpaceColor::kDefault),
+      static_cast<int>(MemorySpaceColor::kCollective));
+  ABSL_ASSIGN_OR_RETURN(
+      tester->buffer_assignment_,
+      BufferAssigner::Run(
+          tester->module_.get(),
+          std::make_unique<DependencyHloOrdering>(tester->module_.get()),
+          &BufferSizeBytes, &tester->alias_info_,
+          [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },
+          std::move(assigner_options)));
 
   tester->context_ = std::make_unique<ContextImpl>(
       *tester->instruction_, *tester->buffer_assignment_, *tester->topology_,
-      std::move(options.debug_options));
+      std::move(options.debug_options), tester->mlir_context_.get());
   return tester;
 }
 

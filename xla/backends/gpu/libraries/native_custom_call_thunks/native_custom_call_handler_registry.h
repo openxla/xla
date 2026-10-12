@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_constants.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_emitter_context.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_scratch_context.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -80,12 +80,6 @@ using NativeCustomCallScratchHandlerRef =
     absl::FunctionRef<absl::StatusOr<std::vector<Shape>>(
         const HloCustomCallInstruction&,
         const NativeCustomCallScratchContext&)>;
-
-// Frontend attribute that `CustomCallScratchAssigner` sets on a custom call
-// whose result it extended by scratch buffers. Its value is the number of
-// appended scratch buffers; a custom call without the attribute has none.
-inline constexpr absl::string_view kNativeCustomCallNumScratchBuffersAttr =
-    "xla_gpu_native_custom_call_num_scratch_buffers";
 
 // All handlers registered for one custom-call target.
 struct NativeCustomCallHandlerBundle {

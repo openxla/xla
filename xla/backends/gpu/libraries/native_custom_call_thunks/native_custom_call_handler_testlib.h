@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_emitter_context.h"
 #include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_handler_registry.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -47,8 +48,10 @@ namespace xla::gpu {
 //   )"));
 //   ASSERT_OK_AND_ASSIGN(ThunkSequence thunks, tester->EmitThunks());
 //
-// The tester parses the module and runs a real buffer assignment over it, so
-// the slices a handler sees are the ones it would see during compilation.
+// The tester parses the module, runs `CustomCallScratchAssigner` (so that
+// custom calls with a scratch handler get their scratch buffers) and a real
+// buffer assignment over it, so the slices a handler sees are the ones it would
+// see during compilation.
 //
 // The emitted thunks point into the module and the buffer assignment that the
 // tester owns, so the tester must outlive them.
@@ -65,6 +68,12 @@ class NativeCustomCallHandlerTester {
     // Debug options the handler sees. Defaults to the same values the compiler
     // would use in the absence of any flag.
     DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
+
+    // Whether to run `CustomCallScratchAssigner` before buffer assignment, so
+    // that the custom call gets the scratch buffers its scratch handler asks
+    // for (just like in a real compilation). Set to false to test a thunk
+    // handler against HLO that already spells out the scratch buffers.
+    bool run_scratch_assigner = true;
   };
 
   static absl::StatusOr<std::unique_ptr<NativeCustomCallHandlerTester>> Create(
@@ -101,6 +110,7 @@ class NativeCustomCallHandlerTester {
   NativeCustomCallHandlerTester() = default;
 
   std::unique_ptr<HloModule> module_;
+  std::unique_ptr<mlir::MLIRContext> mlir_context_;
   AliasInfo alias_info_;
   std::unique_ptr<BufferAssignment> buffer_assignment_;
   std::unique_ptr<GpuTopology> topology_;

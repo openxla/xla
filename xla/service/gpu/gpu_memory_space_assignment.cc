@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "xla/backends/gpu/libraries/native_custom_call_thunks/native_custom_call_constants.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
@@ -246,10 +247,21 @@ static absl::StatusOr<MemorySpaceColor> GetCustomCallResultMemorySpace(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto pairs, ParseIndexMemorySpacePairs(*attr));
-  const ShapeIndex& idx = value.defining_index();
+  ShapeIndexView idx = value.defining_index();
+  bool is_tuple = instr->shape().IsTuple();
+
+  if (instr->get_frontend_attribute(kNativeCustomCallNumScratchBuffersAttr)
+          .has_value()) {
+    if (idx.empty() || idx[0] != 0) {
+      return MemorySpaceColor::kDefault;
+    }
+    idx.remove_prefix(1);
+    is_tuple = instr->shape().tuple_shapes(0).IsTuple();
+  }
+
   for (auto [index, memory_space] : pairs) {
-    if (instr->shape().IsTuple() ? (idx.size() == 1 && idx[0] == index)
-                                 : (idx.empty() && index == 0)) {
+    if (is_tuple ? (idx.size() == 1 && idx[0] == index)
+                 : (idx.empty() && index == 0)) {
       return memory_space;
     }
   }
