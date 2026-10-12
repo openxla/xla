@@ -414,12 +414,9 @@ message DebugOptions {
   //   local device pointers before they can make progress.
   //
   // COLLECTIVES_SYMMETRIC_MEMORY:
-  //   Collective operations working on symmetric device memory, which gives
-  //   a global view of device memory across all participating ranks. With
-  //   symmetric memory, collective operations can be implemented as one-sided
-  //   operations where data can be written directly to a remote buffer, or as
-  //   device-initiated collectives that run as device kernels and do not
-  //   require any device-to-host synchronization.
+  //   NCCL collective operations on symmetric device memory. The buffers are
+  //   placed in the collective memory space and registered as NCCL windows,
+  //   and NCCL selects the kernel.
   //
   // COLLECTIVES_PEER_MEMORY:
   //   Collective operations implemented directly on top of peer memory access,
@@ -428,11 +425,17 @@ message DebugOptions {
   //   within a single process, where all ranks can use rendezvous to exchange
   //   device buffers.
   //
+  // COLLECTIVES_ONE_SIDED:
+  //   One sided operations of XLA on symmetric device memory, data is put and
+  //   signaled directly into the remote buffer without an NCCL collective
+  //   kernel. Used within one node, elsewhere the NCCL path runs.
+  //
   enum CollectivesMode {
     COLLECTIVES_MODE_INVALID = 0;
     COLLECTIVES_PRIVATE_MEMORY = 1;
     COLLECTIVES_SYMMETRIC_MEMORY = 2;
     COLLECTIVES_PEER_MEMORY = 3;
+    COLLECTIVES_ONE_SIDED = 4;
   }
 
   // Command buffer scheduling mode.

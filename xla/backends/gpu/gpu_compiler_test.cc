@@ -2622,6 +2622,96 @@ struct RequiresCollectiveSymmetricMemorySpaceParams {
   bool use_input_output_alias;
 };
 
+// Record and placement per collective under the list with a size bound.
+TEST_F(GpuCompilerTest,
+       SymmetricMemoryRuleRecordsAndPlacesSelectedCollectives) {
+  constexpr absl::string_view kHloText = R"(
+HloModule test
+
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT s = f32[] add(a, b)
+}
+
+ENTRY test_computation {
+  p0 = f32[512] parameter(0)
+  p1 = f32[512] parameter(1)
+  p2 = f32[4096] parameter(2)
+  ag = f32[1024] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+  rs = f32[256] reduce-scatter(p0), dimensions={0}, to_apply=add,
+    replica_groups={{0,1}}
+  a2a = f32[512] all-to-all(p0), dimensions={0}, replica_groups={{0,1}}
+  single = f32[512] collective-permute(p0), source_target_pairs={{0,1},{1,0}}
+  mixed = f32[512] add(single, p1)
+  combined = (f32[512], f32[512]) collective-permute(mixed, p1),
+    source_target_pairs={{0,1},{1,0}}
+  cb = f32[512] collective-broadcast(p1), replica_groups={{0,1}}
+  ar = f32[4096] all-reduce(p2), to_apply=add, replica_groups={{0,1}}
+  ROOT result = (f32[1024], f32[256], f32[512], f32[512], (f32[512], f32[512]),
+    f32[512], f32[4096]) tuple(ag, rs, a2a, single, combined, cb, ar)
+}
+  )";
+  HloModuleConfig config = GetModuleConfigForTest(/*replica_count=*/2);
+  auto* filter = config.mutable_debug_options()
+                     .add_xla_enable_nccl_symmetric_buffers_for_collectives();
+  filter->set_collective(DebugOptions::ALLCOLLECTIVES);
+  filter->set_max_size_bytes(8192);
+  ASSERT_OK_AND_ASSIGN(auto optimized_module_and_executable,
+                       GetOptimizedModuleForExecutable(kHloText, config));
+  const HloModule* optimized_module = optimized_module_and_executable.first;
+
+  int collectives = 0;
+  for (const HloComputation* computation : optimized_module->computations()) {
+    if (computation->IsAsyncComputation()) {
+      continue;
+    }
+    for (const HloInstruction* instr : computation->instructions()) {
+      const HloInstruction* collective =
+          instr->opcode() == HloOpcode::kAsyncStart
+              ? instr->async_wrapped_instruction()
+              : instr;
+      bool selected;
+      switch (collective->opcode()) {
+        case HloOpcode::kAllGather:
+        case HloOpcode::kAllGatherStart:
+        case HloOpcode::kReduceScatter:
+        case HloOpcode::kAllToAll:
+          selected = true;
+          break;
+        case HloOpcode::kCollectivePermute:
+        case HloOpcode::kCollectivePermuteStart:
+          selected = collective->operand_count() == 1;
+          break;
+        case HloOpcode::kCollectiveBroadcast:
+        case HloOpcode::kAllReduce:
+        case HloOpcode::kAllReduceStart:
+          selected = false;
+          break;
+        default:
+          continue;
+      }
+      ++collectives;
+      ASSERT_OK_AND_ASSIGN(auto gpu_config,
+                           instr->backend_config<GpuBackendConfig>());
+      EXPECT_EQ(gpu_config.collective_backend_config().collectives_mode() ==
+                    DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
+                selected)
+          << instr->name();
+      bool in_collective_memory = false;
+      ShapeUtil::ForEachSubshape(
+          instr->shape(), [&](const Shape& subshape, const ShapeIndex&) {
+            if (subshape.has_layout() && subshape.layout().memory_space() ==
+                                             Layout::kCollectiveMemorySpace) {
+              in_collective_memory = true;
+            }
+          });
+      EXPECT_EQ(in_collective_memory, selected) << instr->name();
+    }
+  }
+  EXPECT_EQ(collectives, 7);
+}
+
 class RequiresCollectiveSymmetricMemorySpaceTest
     : public GpuCompilerTest,
       public ::testing::WithParamInterface<

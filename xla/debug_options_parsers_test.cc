@@ -765,6 +765,11 @@ TEST(CollectivesModeParsingTest, CaseInsensitive) {
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
   EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
             DebugOptions::COLLECTIVES_PEER_MEMORY);
+
+  SetXlaFlagsEnvVar("--xla_gpu_collective_permute_mode=one_sided");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(debug_options.xla_gpu_collective_permute_mode(),
+            DebugOptions::COLLECTIVES_ONE_SIDED);
 }
 
 TEST(CollectivesModeParsingTest, DisplaysConfiguredValues) {

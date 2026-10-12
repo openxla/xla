@@ -15,19 +15,19 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/transforms/collectives/collective_backend_assigner.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -57,6 +57,10 @@ using ::testing::IsTrue;
 using ::testing::Not;
 using ::testing::NotNull;
 using ::testing::SizeIs;
+
+void AssignSymmetricMemory(HloModule* module) {
+  ASSERT_OK(CollectiveBackendAssigner().Run(module));
+}
 
 class GpuMemorySpaceAssignmentTest : public HloHardwareIndependentTestBase {};
 
@@ -133,6 +137,7 @@ TEST_P(GpuCollectiveMemorySpaceAssignmentTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloModule, config));
+  AssignSymmetricMemory(module.get());
   AliasInfo alias_info;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                        HloAliasAnalysis::Run(module.get(), &alias_info));
@@ -226,6 +231,7 @@ TEST_F(GpuMemorySpaceAssignmentTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloModule, config));
+  AssignSymmetricMemory(module.get());
   AliasInfo alias_info;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                        HloAliasAnalysis::Run(module.get(), &alias_info));
@@ -290,6 +296,7 @@ TEST_F(GpuMemorySpaceAssignmentTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloModule, config));
+  AssignSymmetricMemory(module.get());
   AliasInfo alias_info;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                        HloAliasAnalysis::Run(module.get(), &alias_info));
@@ -360,6 +367,7 @@ TEST_F(GpuMemorySpaceAssignmentTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloModule, config));
+  AssignSymmetricMemory(module.get());
   AliasInfo alias_info;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                        HloAliasAnalysis::Run(module.get(), &alias_info));
@@ -426,6 +434,7 @@ TEST_F(GpuMemorySpaceAssignmentTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(kHloModule, config));
+  AssignSymmetricMemory(module.get());
   AliasInfo alias_info;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                        HloAliasAnalysis::Run(module.get(), &alias_info));

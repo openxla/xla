@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -26,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/log/globals.h"
@@ -283,7 +282,7 @@ class CollectivesModeOps
   void SetUp() override {
     CollectiveOpsE2ETestBase::SetUp();
     if (!IsHopperAndHigher() &&
-        (collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
+        (collectives_mode_ == DebugOptions::COLLECTIVES_ONE_SIDED ||
          collectives_mode_ == DebugOptions::COLLECTIVES_PEER_MEMORY)) {
       GTEST_SKIP() << "Test requires Hopper or higher";
     }
@@ -315,7 +314,7 @@ class CollectivesModeOps
  private:
   static bool RequiresCollectiveMemory() {
     auto mode = std::get<1>(GetParam());
-    return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
+    return mode == DebugOptions::COLLECTIVES_ONE_SIDED;
   }
 
   bool enable_async_;
@@ -330,6 +329,8 @@ std::string GetCollectivesModeTestName(DebugOptions::CollectivesMode mode) {
       return "peer";
     case DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY:
       return "symmetric";
+    case DebugOptions::COLLECTIVES_ONE_SIDED:
+      return "one_sided";
     default:
       return absl::StrCat("mode_", static_cast<int>(mode));
   }
@@ -1968,6 +1969,154 @@ TEST_P(CollectivesModeOps, CombinedCollectivePermuteInWhileLoop) {
   LiteralTestUtil::ExpectR1Equal<float>({11.0, 11.0}, r1[1]);
 }
 
+struct SymmetricMemoryRuleCase {
+  std::string name;
+  std::string hlo;
+  std::vector<std::vector<uint32_t>> expected;
+  int collectives;
+};
+
+class SymmetricMemoryRule
+    : public CollectiveOpsE2ETestBase,
+      public ::testing::WithParamInterface<SymmetricMemoryRuleCase> {
+ public:
+  SymmetricMemoryRule() : CollectiveOpsE2ETestBase(32 * kMB, 32 * kMB) {}
+
+ protected:
+  void SetUp() override {
+    CollectiveOpsE2ETestBase::SetUp();
+    if (!IsHopperAndHigher()) {
+      GTEST_SKIP() << "Test requires Hopper or higher";
+    }
+  }
+
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        CollectiveOpsE2ETestBase::GetDebugOptionsForTest();
+    for (DebugOptions::CollectiveOpType collective :
+         {DebugOptions::ALLREDUCE, DebugOptions::ALLGATHER,
+          DebugOptions::REDUCESCATTER, DebugOptions::ALLTOALL}) {
+      debug_options.add_xla_enable_nccl_symmetric_buffers_for_collectives()
+          ->set_collective(collective);
+    }
+    debug_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
+    return debug_options;
+  }
+};
+
+TEST_P(SymmetricMemoryRule, RunsOnSymmetricMemory) {
+  const SymmetricMemoryRuleCase& c = GetParam();
+  const int replicas = c.expected.size();
+  if (device_count() < replicas) {
+    GTEST_SKIP() << "Test requires at least " << replicas << " devices";
+  }
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(c.hlo, replicas));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module)));
+  ASSERT_EQ(execution_result.results.size(), replicas);
+  for (int i = 0; i < replicas; ++i) {
+    LiteralTestUtil::ExpectR1Equal<uint32_t>(c.expected[i],
+                                             execution_result.results[i]);
+  }
+
+  int collectives = 0;
+  for (const HloComputation* computation :
+       execution_result.optimized_module->computations()) {
+    if (computation->IsAsyncComputation()) {
+      continue;
+    }
+    for (const HloInstruction* instr : computation->instructions()) {
+      const HloInstruction* collective =
+          instr->opcode() == HloOpcode::kAsyncStart
+              ? instr->async_wrapped_instruction()
+              : instr;
+      switch (collective->opcode()) {
+        case HloOpcode::kAllReduce:
+        case HloOpcode::kAllReduceStart:
+        case HloOpcode::kAllGather:
+        case HloOpcode::kAllGatherStart:
+        case HloOpcode::kAllToAll:
+        case HloOpcode::kReduceScatter:
+          break;
+        default:
+          continue;
+      }
+      ++collectives;
+      ASSERT_OK_AND_ASSIGN(auto config,
+                           instr->backend_config<gpu::GpuBackendConfig>());
+      EXPECT_EQ(config.collective_backend_config().collectives_mode(),
+                DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY)
+          << instr->name();
+      bool in_collective_memory = false;
+      ShapeUtil::ForEachSubshape(
+          instr->shape(), [&](const Shape& subshape, const ShapeIndex&) {
+            if (subshape.has_layout() && subshape.layout().memory_space() ==
+                                             Layout::kCollectiveMemorySpace) {
+              in_collective_memory = true;
+            }
+          });
+      EXPECT_TRUE(in_collective_memory) << instr->name();
+    }
+  }
+  EXPECT_EQ(collectives, c.collectives);
+}
+
+std::vector<SymmetricMemoryRuleCase> SymmetricMemoryRuleCases() {
+  return {
+      {"AllGatherAndAllToAll",
+       R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id2 = u32[2] broadcast(id), dimensions={}
+    id4 = u32[4] broadcast(id), dimensions={}
+    a0 = u32[2] constant({10, 15})
+    a1 = u32[2] add(id2, a0)
+    b0 = u32[4] constant({10, 20, 30, 40})
+    b1 = u32[4] add(id4, b0)
+    ag = u32[4] all-gather(a1), dimensions={0}
+    a2a = u32[4] all-to-all(b1), dimensions={0}, replica_groups={{0,1}}
+    ROOT result = u32[8] concatenate(ag, a2a), dimensions={0}
+  })",
+       {{10, 15, 11, 16, 10, 20, 11, 21}, {10, 15, 11, 16, 30, 40, 31, 41}},
+       /*collectives=*/2},
+      {"SplitCommunicators",
+       R"(
+  HloModule test
+  add {
+    a = u32[] parameter(0)
+    b = u32[] parameter(1)
+    ROOT s = u32[] add(a, b)
+  }
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id2 = u32[2] broadcast(id), dimensions={}
+    ten = u32[2] constant({10, 10})
+    offsets = u32[2] constant({0, 1})
+    scaled = u32[2] multiply(id2, ten)
+    x = u32[2] add(scaled, offsets)
+    ar = u32[2] all-reduce(x), replica_groups={{0,1,2,3}}, to_apply=add
+    ag = u32[4] all-gather(x), dimensions={0}, replica_groups={{0,1},{2,3}}
+    a2a = u32[2] all-to-all(x), dimensions={0}, replica_groups={{0,2},{1,3}}
+    ROOT result = u32[8] concatenate(ar, ag, a2a), dimensions={0}
+  })",
+       {{60, 64, 0, 1, 10, 11, 0, 20},
+        {60, 64, 0, 1, 10, 11, 10, 30},
+        {60, 64, 20, 21, 30, 31, 1, 21},
+        {60, 64, 20, 21, 30, 31, 11, 31}},
+       /*collectives=*/3},
+  };
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SymmetricMemoryRule, SymmetricMemoryRule,
+    ::testing::ValuesIn(SymmetricMemoryRuleCases()),
+    [](const ::testing::TestParamInfo<SymmetricMemoryRuleCase>& info) {
+      return info.param.name;
+    });
+
 INSTANTIATE_TEST_SUITE_P(AsyncCollectiveOps, AsyncCollectiveOps,
                          ::testing::Combine(::testing::Bool(),
                                             ::testing::Bool()),
@@ -1987,7 +2136,7 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::Bool(),
         ::testing::Values(DebugOptions::COLLECTIVES_PRIVATE_MEMORY,
                           DebugOptions::COLLECTIVES_PEER_MEMORY,
-                          DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY)),
+                          DebugOptions::COLLECTIVES_ONE_SIDED)),
     GetCollectivesModeTestSuiteName);
 
 // Tests for HLO level transforms.

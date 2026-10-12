@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/rendezvous.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
@@ -208,6 +209,16 @@ CollectiveConfig CollectiveConfig::FromProto(
   return config;
 }
 
+bool RecordedOnSymmetricMemory(const HloInstruction* hlo) {
+  auto config = hlo->backend_config<GpuBackendConfig>();
+  if (!config.ok()) {
+    return false;
+  }
+  const auto mode = config->collective_backend_config().collectives_mode();
+  return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
+         mode == DebugOptions::COLLECTIVES_ONE_SIDED;
+}
+
 CollectiveConfig GetCollectiveConfig(
     const HloInstruction* hlo, std::optional<bool> use_global_device_ids) {
   CollectiveConfig config;
@@ -221,9 +232,7 @@ CollectiveConfig GetCollectiveConfig(
                                                use_global_device_ids)
                           .value();
 
-  config.use_symmetric_buffer =
-      hlo->GetModule() && IsNcclSymmetricBuffersEnabledForCollective(
-                              hlo, hlo->GetModule()->config().debug_options());
+  config.use_symmetric_buffer = RecordedOnSymmetricMemory(hlo);
   return config;
 }
 
@@ -242,6 +251,9 @@ bool CollectiveThunk::use_private_memory() const {
 }
 bool CollectiveThunk::use_symmetric_memory() const {
   return collectives_mode_ == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
+}
+bool CollectiveThunk::use_one_sided() const {
+  return collectives_mode_ == DebugOptions::COLLECTIVES_ONE_SIDED;
 }
 bool CollectiveThunk::use_peer_memory() const {
   return collectives_mode_ == DebugOptions::COLLECTIVES_PEER_MEMORY;

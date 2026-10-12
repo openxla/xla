@@ -143,7 +143,8 @@ static bool RequiresCollectiveSymmetricMemorySpace(const HloInstruction* inst) {
     return false;
   }
   const auto mode = gpu_config->collective_backend_config().collectives_mode();
-  return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY;
+  return mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY ||
+         mode == DebugOptions::COLLECTIVES_ONE_SIDED;
 }
 
 static bool RequiresTritonSymmetricOutput(const HloInstruction* inst) {
@@ -163,8 +164,7 @@ bool IsNcclSymmetricOrUserBuffersEnabledForInstruction(
   if (!IsCollectiveMemoryInstruction(inst)) {
     return false;
   }
-  return option.xla_gpu_enable_nccl_user_buffers() ||
-         IsNcclSymmetricBuffersEnabledForCollective(inst, option);
+  return option.xla_gpu_enable_nccl_user_buffers();
 }
 
 // Returns the memory space requested for the given operand use, or
