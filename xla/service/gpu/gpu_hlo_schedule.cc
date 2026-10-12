@@ -39,11 +39,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -74,6 +71,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_latency_estimator.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_early_buffer_release.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -86,6 +84,10 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -831,6 +833,45 @@ absl::Status RunLatencyHidingSchedulerPasses(
   }
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));
+  if (options.xla_gpu_experimental_enable_early_buffer_release()) {
+    BufferValue::SizeFunction buffer_size =
+        [shape_size_in_bytes](const BufferValue& buffer) {
+          const Shape& shape = buffer.shape();
+          return shape.has_layout() && shape.layout().memory_space() ==
+                                           Layout::kHostMemorySpace
+                     ? int64_t{0}
+                     : shape_size_in_bytes(shape);
+        };
+    HloEarlyBufferRelease::ScheduleCost schedule_cost =
+        [scheduling_context, module,
+         pressure_state = std::shared_ptr<ModulePressureState>()](
+            const HloComputation* computation,
+            absl::Span<const HloInstruction* const> instructions) mutable {
+          // Statistics also report memory, but this callback only consumes
+          // time. Reuse the original pressure state rather than recomputing it
+          // for every trial; the repair pass evaluates memory independently.
+          if (!pressure_state) {
+            pressure_state = std::make_shared<ModulePressureState>(
+                module, scheduling_context->GetAliasAnalysis().get(),
+                scheduling_context->GetShapeSizeBytes(),
+                scheduling_context->GetAsyncTracker()->IsTopDownScheduling());
+            pressure_state->InitializePressureStates();
+          }
+          // Embedded computations (e.g. reducers inside fusions) can have a
+          // schedule without a device-level pressure state. They cannot be
+          // evaluated by LatencyHidingStatistics.
+          if (!pressure_state->ComputationIsMemoryTracked(computation)) {
+            return std::numeric_limits<double>::infinity();
+          }
+          return LatencyHidingScheduler::LatencyHidingStatistics(
+                     computation, instructions, scheduling_context,
+                     pressure_state.get())
+              .total_cycles;
+        };
+    pipeline.AddPass<HloEarlyBufferRelease>(alias_info, std::move(buffer_size),
+                                            std::move(schedule_cost),
+                                            HloEarlyBufferRelease::Options{});
+  }
   pipeline.AddPass<SchedulingInstructionAnnotator>();
 
   return pipeline.Run(module).status();
