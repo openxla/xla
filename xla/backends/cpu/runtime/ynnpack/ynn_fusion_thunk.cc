@@ -51,6 +51,7 @@ namespace xla::cpu {
 struct YnnFusionThunk::YnnExecutable {
   tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> Invoke(
       const YnnThreadpool& threadpool,
+      const Thunk::YnnParams::Allocator& allocator,
       absl::Span<se::DeviceAddressBase> arguments,
       absl::Span<se::DeviceAddressBase> results,
       absl::FunctionRef<bool(size_t)> is_captured_argument);
@@ -60,6 +61,9 @@ struct YnnFusionThunk::YnnExecutable {
 
   YnnSubgraph subgraph = nullptr;
   YnnRuntime runtime = nullptr;
+
+  // Allocator currently set in the YNNPACK runtime.
+  Thunk::YnnParams::Allocator allocator;
 
   // TODO(ezhulenev): Today we rely on device memory as an identity of the
   // captured argument, and this is not correct as we can have multiple
@@ -89,6 +93,7 @@ static enum ynn_status set_external_values(
 tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent>
 YnnFusionThunk::YnnExecutable::Invoke(
     const YnnThreadpool& threadpool,
+    const Thunk::YnnParams::Allocator& allocator,
     absl::Span<se::DeviceAddressBase> arguments,
     absl::Span<se::DeviceAddressBase> results,
     absl::FunctionRef<bool(size_t)> is_captured_argument) {
@@ -119,6 +124,15 @@ YnnFusionThunk::YnnExecutable::Invoke(
   YNN_RETURN_IF_ERROR(ynn_update_runtime_with_threadpool(
       runtime.get(), reinterpret_cast<ynn_threadpool_t>(threadpool.get())));
 
+  // Update allocator used by the YNNPACK runtime for its internal buffers.
+  if (allocator.allocate != this->allocator.allocate ||
+      allocator.free != this->allocator.free ||
+      allocator.context != this->allocator.context) {
+    YNN_RETURN_IF_ERROR(ynn_set_runtime_allocator(
+        runtime.get(), allocator.allocate, allocator.free, allocator.context));
+    this->allocator = allocator;
+  }
+
   // Execute YNNPACK runtime in the caller thread.
   YNN_RETURN_IF_ERROR(ynn_invoke_runtime(runtime.get()));
   return OkExecuteEvent();
@@ -127,6 +141,7 @@ YnnFusionThunk::YnnExecutable::Invoke(
 absl::Status YnnFusionThunk::YnnExecutable::Reset() {
   runtime.reset();
   subgraph.reset();
+  allocator = {};
   return absl::OkStatus();
 }
 
@@ -289,6 +304,12 @@ const YnnThreadpool& GetYnnThreadpool(const Thunk::ExecuteParams& params) {
   return params.ynn_params ? params.ynn_params->threadpool : *no_threadpool;
 }
 
+static const Thunk::YnnParams::Allocator& GetYnnAllocator(
+    const Thunk::ExecuteParams& params) {
+  static constexpr Thunk::YnnParams::Allocator kDefaultAllocator;
+  return params.ynn_params ? params.ynn_params->allocator : kDefaultAllocator;
+}
+
 tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
     const ExecuteParams& params) {
   VLOG(3) << absl::StreamFormat("YNN %s `%s`: %s", fusion_kind(),
@@ -336,7 +357,8 @@ tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
 
   auto invoke = [&](typename YnnExecutablePool::BorrowedObject executable) {
     auto executed = executable->Invoke(
-        GetYnnThreadpool(params), absl::MakeSpan(arguments_buffers),
+        GetYnnThreadpool(params), GetYnnAllocator(params),
+        absl::MakeSpan(arguments_buffers),
         absl::MakeSpan(results_buffers), [&](size_t id) {
           return absl::c_linear_search(captured_arguments_ids_, id);
         });

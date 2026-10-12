@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk_executor.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
+#include "xla/backends/cpu/runtime/ynnpack/ynn_memory_pool.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
@@ -1626,10 +1627,17 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
         cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,
         cpu::Thunk::CustomCallExecuteParams::Create(&run_options));
 
+    // Outlives the thunks: the execution is complete when this lambda returns.
+    std::optional<cpu::YnnMemoryPool> ynn_memory_pool;
     std::optional<cpu::Thunk::YnnParams> ynn_params;
     if (cpu_executable->has_ynn_fusions()) {
       ABSL_ASSIGN_OR_RETURN(ynn_params,
                             cpu::Thunk::YnnParams::Create(&run_options));
+      // YNNPACK frees its internal buffers after every invocation; keep them
+      // for the rest of the execution, e.g. for the next loop iteration.
+      ynn_params->allocator = {cpu::YnnMemoryPool::Allocate,
+                               cpu::YnnMemoryPool::Free,
+                               &ynn_memory_pool.emplace()};
     }
 
     cpu::ThreadPoolTaskRunner task_runner(

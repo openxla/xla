@@ -264,7 +264,16 @@ class Thunk {
     static absl::StatusOr<YnnParams> Create(
         const ExecutableRunOptions* run_options);
 
+    // Allocator for the internal buffers of YNNPACK runtimes. YNNPACK uses its
+    // default allocator if `allocate` is null.
+    struct Allocator {
+      ynn_allocate_fn allocate = nullptr;
+      ynn_free_fn free = nullptr;
+      void* context = nullptr;
+    };
+
     YnnThreadpool threadpool = nullptr;
+    Allocator allocator;
 
     explicit YnnParams(YnnThreadpool threadpool);
   };

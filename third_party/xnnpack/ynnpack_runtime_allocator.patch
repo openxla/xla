@@ -1,0 +1,128 @@
+diff --git a/ynnpack/include/ynnpack.h b/ynnpack/include/ynnpack.h
+index 72c9cb2f..3a84c360 100644
+--- a/ynnpack/include/ynnpack.h
++++ b/ynnpack/include/ynnpack.h
+@@ -685,6 +685,18 @@ enum ynn_status ynn_create_runtime(ynn_subgraph_t subgraph,
+ enum ynn_status ynn_update_runtime_with_threadpool(ynn_runtime_t runtime,
+                                                    ynn_threadpool_t threadpool);
+ 
++// Allocates `size` bytes aligned to `alignment`. Returns NULL on failure.
++typedef void* (*ynn_allocate_fn)(void* context, size_t size, size_t alignment);
++
++// Frees `ptr`, allocated with `size` by a `ynn_allocate_fn`.
++typedef void (*ynn_free_fn)(void* context, void* ptr, size_t size);
++
++// Sets the allocator for the internal buffers of `runtime`. Both functions may
++// be called concurrently. Passing NULL for both restores the default allocator.
++enum ynn_status ynn_set_runtime_allocator(ynn_runtime_t runtime,
++                                          ynn_allocate_fn allocate_fn,
++                                          ynn_free_fn free_fn, void* context);
++
+ enum ynn_status ynn_set_external_value_shape(ynn_runtime_t runtime,
+                                              uint32_t external_id, size_t rank,
+                                              const size_t* dims);
+diff --git a/ynnpack/subgraph/runtime.cc b/ynnpack/subgraph/runtime.cc
+index 2e3c4900..d0af5649 100644
+--- a/ynnpack/subgraph/runtime.cc
++++ b/ynnpack/subgraph/runtime.cc
+@@ -1300,6 +1300,31 @@ ynn_status ynn_update_runtime_with_threadpool(ynn_runtime_t runtime,
+   return ynn_status_success;
+ }
+ 
++ynn_status ynn_set_runtime_allocator(ynn_runtime_t runtime,
++                                     ynn_allocate_fn allocate_fn,
++                                     ynn_free_fn free_fn, void* context) {
++  YNN_RETURN_IF_ERROR(ynn::validate_runtime(runtime));
++  if ((allocate_fn == nullptr) != (free_fn == nullptr)) {
++    YNN_LOG_ERROR() << "allocate_fn and free_fn must both be null or non-null";
++    return ynn_status_invalid_parameter;
++  }
++  runtime->eval_context.free_pool();
++  if (allocate_fn == nullptr) {
++    const slinky::eval_config defaults;
++    runtime->eval_config.allocate = defaults.allocate;
++    runtime->eval_config.free = defaults.free;
++    return ynn_status_success;
++  }
++  runtime->eval_config.allocate = [allocate_fn, context](
++                                      std::size_t size, std::size_t alignment) {
++    return allocate_fn(context, size, alignment);
++  };
++  runtime->eval_config.free = [free_fn, context](void* ptr, std::size_t size) {
++    free_fn(context, ptr, size);
++  };
++  return ynn_status_success;
++}
++
+ ynn_status ynn_runtime::invoke() {
+   if (!pipeline.body.defined()) {
+     // This pipeline is a no-op.
+diff --git a/ynnpack/subgraph/test/runtime.cc b/ynnpack/subgraph/test/runtime.cc
+index 3a70c0c0..6303b030 100644
+--- a/ynnpack/subgraph/test/runtime.cc
++++ b/ynnpack/subgraph/test/runtime.cc
+@@ -3,9 +3,13 @@
+ // This source code is licensed under the BSD-style license found in the
+ // LICENSE file in the root directory of this source tree.
+ 
++#include <atomic>
++#include <cstddef>
+ #include <cstdint>
++#include <new>
+ 
+ #include <gtest/gtest.h>
++#include "ynnpack/base/test/tensor.h"
+ #include "ynnpack/base/test/util.h"
+ #include "ynnpack/base/type.h"
+ #include "ynnpack/include/ynnpack.h"
+@@ -110,4 +114,50 @@ TEST(runtime, cross_runtime_isolation) {
+   }
+ }
+ 
++constexpr std::align_val_t kAlignment{256};
++std::atomic<int> allocations{0};
++std::atomic<int> frees{0};
++
++void* Allocate(void* context, size_t size, size_t alignment) {
++  if (alignment > static_cast<size_t>(kAlignment)) return nullptr;
++  ++allocations;
++  return ::operator new(size, kAlignment);
++}
++
++void Free(void* context, void* ptr, size_t size) {
++  ++frees;
++  ::operator delete(ptr, kAlignment);
++}
++
++TEST(runtime, allocator) {
++  constexpr uint32_t a_id = 0;
++  constexpr uint32_t b_id = 1;
++  constexpr uint32_t c_id = 2;
++  uint32_t exp_id = YNN_INVALID_VALUE_ID;
++
++  // dot(a, exp(b)) needs an internal buffer for exp(b).
++  SubgraphBuilder builder(3);
++  builder.AddInput(type_of<float>(), 2, a_id)
++      .AddInput(type_of<float>(), 2, b_id)
++      .AddOutput(type_of<float>(), 2, c_id)
++      .AddTensor(type_of<float>(), 2, exp_id)
++      .AddUnary(ynn_unary_exp, b_id, exp_id)
++      .AddDot(1, a_id, exp_id, YNN_INVALID_VALUE_ID, c_id);
++
++  Runtime runtime(builder.GetSubgraph());
++  ASSERT_EQ(ynn_set_runtime_allocator(runtime.get(), Allocate, Free, nullptr),
++            ynn_status_success);
++
++  Tensor<float> a({16, 512});
++  Tensor<float> b({512, 1024});
++  Tensor<float> c({16, 1024});
++  runtime.ReshapeExternalTensor({16, 512}, a.data(), a_id)
++      .ReshapeExternalTensor({512, 1024}, b.data(), b_id)
++      .ReshapeRuntime()
++      .SetupExternalTensor(c.data(), c_id)
++      .InvokeRuntime();
++  ASSERT_EQ(runtime.Status(), ynn_status_success);
++  EXPECT_GT(allocations, 0);
++  EXPECT_EQ(frees, allocations);
++}
+ }  // namespace ynn

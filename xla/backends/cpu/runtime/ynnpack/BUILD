@@ -77,6 +77,29 @@ cc_library(
 )
 
 cc_library(
+    name = "ynn_memory_pool",
+    srcs = ["ynn_memory_pool.cc"],
+    hdrs = ["ynn_memory_pool.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
+        "@slinky//slinky/base",
+        "@slinky//slinky/runtime",
+    ],
+)
+
+xla_cc_test(
+    name = "ynn_memory_pool_test",
+    srcs = ["ynn_memory_pool_test.cc"],
+    deps = [
+        ":ynn_memory_pool",
+        "@com_google_absl//absl/log:check",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "ynn_threadpool",
     srcs = ["ynn_threadpool.cc"],
     hdrs = ["ynn_threadpool.h"],
